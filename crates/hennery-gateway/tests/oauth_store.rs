@@ -165,7 +165,7 @@ fn a_hat_purge_takes_its_oauth_clients() {
             .set_oauth_client(id, "pre-1", SecretInput::Clear, &w.key, unix_now())
             .unwrap();
     }
-    w.store.purge_hat(&work).unwrap();
+    w.revocations.cut(w.store.purge_hat(&work).unwrap());
     let count: i64 = w
         .raw()
         .query_row("SELECT count(*) FROM gw_oauth_clients", [], |r| r.get(0))
@@ -181,7 +181,7 @@ fn a_hat_purge_takes_its_oauth_clients() {
             .client_id
             .is_some()
     );
-    w.store.purge_hat(&work).unwrap();
+    w.revocations.cut(w.store.purge_hat(&work).unwrap());
 }
 
 /// The review's R1: a grant is stored only for the connection as its flow
