@@ -4,7 +4,7 @@
 
 **Goal:** an early tester can go from the README to a working hennery, and every shell example on the way is run by a test or by CI (fleet rule):
 - **Status** says what works now and what does not, instead of "Pre-alpha. Nothing is usable yet".
-- **Quickstart:** build from source (the web UI, then the binary that embeds it) or with Nix; `hennery up`; the setup link; pairing another machine; starting a session; one line on the MCP screen.
+- **Quickstart:** build from source (the web UI, then the binary that embeds it) or with Nix; `hennery up`; the setup link; pairing another machine; starting a session; connecting static-token, OAuth and local stdio MCP servers.
 - **Recovery:** `hennery admin reset-password` and `hennery admin reset-public-url`, replacing the raw SQL against the database (the lane's ruling, 2026-10-03).
 - The operator's bar, and nothing beyond it: testers build from source, the README has a quickstart, the embedded web UI drives sessions, the MCP gateway is usable.
 
@@ -16,19 +16,159 @@
   - the blocks `up`, `up-public`, `join`, `host-run`, `reset-password` and `reset-public-url`, run as written through `sh -c` with this build's binary on `PATH`, each machine a scratch home of its own.
 - `.github/workflows/ci.yml`: a `readme` job (ubuntu, macOS) runs the `clone` and `build` blocks.
 - `.github/workflows/nix.yml`: the `flake` job runs the `nix` block.
-- `README.md`: Status, Quickstart and Recovery rewritten; the rest untouched.
+- `README.md`: introduction, Status, Quickstart and Recovery checked against the current code.
 
 **Tech Stack:** Rust (edition 2024), POSIX `sh` and `awk` (BSD awk on macOS, mawk on ubuntu). No new crates; `libc::openpty` from the existing `libc` dependency.
 
-**Spec:** client view §8, the row for 4f: "A README quickstart: build from source, `hennery up`, setup, pair", after 4c. Kernel §3.1 (setup link), §4.1 (pairing codes), §4.2 (admin commands); distribution §8 (data directories). Every anchor is from `main` at `1e09a0c`. Every command and flag in the README was read from `hennery … --help` on that commit, not from the specs.
+**Spec:** client view §8, the row for 4f: "A README quickstart: build from source, `hennery up`, setup, pair", after 4c. Kernel §3.1 (setup link), §4.1 (pairing codes), §4.2 (admin commands); distribution §8 (data directories). The current code blocks are anchored on `main` at `82d41c0f`; the original execution below used `1e09a0c`. Commands and flags were checked against the built binary's help; claims, defaults and UI labels against the current source.
 
-**Status:** written 2026-10-03; amended after its review of 2026-10-03 (opus, binding on the maintainer's behalf): "approve with amendments". A1 to A4 are taken, with O1 to O4 and N1 to N5, and the scoped re-confirmation (opus) "confirmed" them (see "What the review changed"). Its merge condition is A4.
+**Status:** written 2026-10-03; executed 2026-10-03 (see "Execution status"). Amended after its review of 2026-10-03 (opus, binding on the maintainer's behalf): "approve with amendments". A1 to A4 are taken, with O1 to O4 and N1 to N5, and the scoped re-confirmation (opus) "confirmed" them (see "What the review changed"). The 2026-10-13 accuracy review required B1/S1/S2 and the minors; they are implemented in the consolidated execution record. Current review and CI remain the parent's checks.
 
 **How the code blocks were made and checked:**
 - The code was built first on `scratch/4f`, and its CI ran on draft PR #122.
-- Every block below is generated from that branch.
+- The initial blocks were generated from that branch. The current blocks were refreshed from the actual files on `plan/frontend-4f` after its 2026-10-13 rebase.
 - The plan was replayed from its own text onto `1e09a0c`, and the tree matched the scratch branch byte for byte.
 - Every local probe in Step 6 was run and failed as written; the CI probes are recorded with their runs.
+
+## Execution status (2026-10-13, consolidated)
+
+Executed on `plan/frontend-4f`. The initial refresh rebased onto `4684d1d9`; after #133 merged, the final OAuth documentation rebased without conflicts onto `82d41c0f`. Both 4e-ii-b and 4f index entries were preserved.
+The original 2026-10-03 plan and whole-branch opus reviews approved after
+amendments; their historical CI/probe evidence is recorded below. The
+2026-10-13 accuracy review of `4684d1d9..b30c11d6` returned **Needs fixes**.
+Its B1, S1, S2 and all minors are now implemented. The opus re-check of
+`f4519f2c` confirmed the changes and guardrail, apart from the HTTP URL
+wording and unverified expired-link issuance. Both are addressed below;
+current PR #125 checks remain the parent's responsibility. This is the
+single execution record for plan 4f.
+
+Review amendments, per the parent's wave-1 ruling:
+
+- **B1:** `join` rejects HTTPS before enrollment. Remote hosts use an SSH
+  tunnel and pair with `http://127.0.0.1:<port>`. The SSH command stays in
+  prose, since CI has no remote SSH destination. The README explains that
+  Add host's printed public-URL command must be adapted; the tunnel must
+  stay open while the host runs, including reconnects. `host run` reads
+  the stored `ws://127.0.0.1:<port>/api/hosts/ws` URL.
+- **Guardrail:** only the `7117` port and `ABCD-EFGH` code explicitly marked
+  as placeholders may be replaced. `pairing_script` validates the
+  documented scheme/host and checks they remain unchanged. No complete
+  URL substitution remains. `every_readme_block_is_run` invokes this
+  validation before considering the README covered. Positive/unmarked,
+  scheme-change and host-change tests were added. The integration test
+  stops the joined host, waits until it is disconnected, and restarts it
+  without a URL override, proving it reads the saved address again.
+- **S1:** the Codex limitation now says default hat only, no hennery MCP
+  servers in other hats, no per-hat isolation, and own `~/.codex` servers.
+  The same default-hat restriction for Claude with `--use-cli` is stated.
+- **S2:** bundled CLIs are not put on PATH. After runtime installation,
+  run `hennery doctor` on each agent machine; check 4, `logged in`, reports
+  each supported agent's login and prints a fix when not logged in.
+- **Minors:** an expired link is refreshed with `admin setup-url`;
+  same-machine proxies share the loopback password rate-limit budget;
+  Add host may require password step-up; HTTP MCP URLs require the
+  Internal network checkbox, including loopback; an empty project list is addressed with
+  Browse under home or the repeatable `--workspace-root` flag on up/run.
+
+The earlier refresh also corrected published-artifact wording, connected
+host requirements, hats' role, passkey UI, supported architectures, download
+contents, setup labels/origin, static-token and local stdio instructions,
+delivery timing/restrictions and browser-session recovery wording.
+The source audits and logs are in `.superpowers/sdd/4f/refresh-2026-10-13/`
+and `.superpowers/sdd/4f/review-fixes-2026-10-13/`.
+
+Verification before the final two re-check amendments (inside plain `nix develop`, scratch tool home,
+worktree-local target):
+
+- fmt and both required Clippy commands: exit 0.
+- README suite before guardrail probes: exit 0, 23 passed.
+- **G1–G6 probes:** removing the scheme, host, port-marker and code-marker
+  guards each fails its intended existing test; changing the README join
+  block's scheme or host fails `every_readme_block_is_run`. Each probe
+  returned exit 101; Rust and README bytes were restored after each.
+- Final README suite: exit 0, 23 passed. Guardrail suite alone: exit 0,
+  3 passed. Script/guard suite excluding the two process tests: exit 0,
+  21 passed. Four concurrent README copies: exit 0 each, 92 passes total.
+- Workspace: exit 0, 1,971 passed, zero failures or ignored tests, 131
+  result groups. Both generator `--check` commands: exit 0.
+- Fresh replay from `4684d1d9` in the review-fixes ledger's `replay-1`:
+  five extracted operations, five identical implementation files;
+  complete tracked tree matched across 593 files after copying the
+  plan/index records separately.
+- `readme-blocks.sh --list` still covers nine named blocks; only `join`
+  changes. The other eight blocks and their CI runners are unchanged.
+- The earlier six exit-status probes covered success 0, refusal 1, bad
+  arguments/unreadable file 2 and awk failure 3, all biting; those tests
+  remain in the current suite.
+
+Original CI evidence (2026-10-03, historical): C01 clone failed in run
+37105283992, C02 nix failed in 37105283979, C03 omitted web build failed in
+37106839944 on both OSes. Green runs 37106159259 (ci) and 37106159239 (nix)
+on `eaf3aa7` met the original A4 condition; the current PR still needs its
+own checks. Historical probes Q01–Q22 and R01–R11 also bit. Process cleanup
+guards, such as kill/drop and timeout waits, remain guards rather than
+independently reachable verdicts.
+
+No web source changes; typecheck is not needed. The SSH route is checked
+at its loopback endpoint without running SSH in the harness. Clone,
+release build and Nix build stay with their existing CI runners.
+No `.rulesync/` exists in this worktree. Plans 8g and 8h are deferred;
+maintainer open questions stay out of the README.
+
+Final re-check amendments:
+
+- **N1:** the gateway's `model::parse_url` rejects every HTTP URL unless
+  `internal_network` is true, for both create and update. The egress
+  loopback exception does not bypass this API validation. The README now
+  requires Internal network for plain HTTP, loopback included.
+- **Expired setup link:** the admin handler calls `Operator::setup_link`;
+  when `expires_at > now` is false, it calls `announce_setup`, which calls
+  `issue_setup_token` and writes a new setup-url file. The README claim
+  stays. A time-controlled readme test checks reuse just before expiry,
+  a new link/file at the exact expiry, refusal of the old token and success
+  of the fresh token. The process test also invokes the CLI and checks it
+  prints the live link. No hour-long sleep or production time seam was added.
+- Final README suite: exit 0, 24 passed; fmt and both Clippy commands:
+  exit 0. Replacing expiry reissuance with cached-link reuse makes the
+  new test fail at "the expired link was reused" (exit 101); the kernel
+  source was restored byte for byte. The fresh re-check `replay-1` matched
+  all five implementation files and all 593 tracked files after copying
+  plan/index records. No production code change remains.
+
+OAuth completion after #133 (2026-10-13):
+
+- Both README TODOs are removed. Status now includes OAuth and the new
+  prose subsection follows `ConnectionForm`, `OauthClientForm`,
+  `OauthConnect`, `useMcpOauth`, `McpStatus`, `mcpOauth` and the merged
+  4e-ii-b plan. No web or Rust code changed in this completion step.
+- Exact choices: OAuth: automatic registration / OAuth: pre-registered
+  client. Pre-registered Client ID, Client secret action, Public client
+  (no secret), Set a new secret, Client secret and Save client match the UI.
+  Saved client secrets are write-only. OAuth addresses require HTTPS or
+  HTTP to this machine, matching the form and authorize URL checks.
+- `GatewayState::redirect_uri` appends `CALLBACK_PATH` to the stored
+  public_url origin: `<public_url>/api/mcp/oauth/callback`. The README
+  says the vendor must allow it and names its location in pre-registered
+  add/edit and client settings: Register this redirect URI at the vendor:.
+- Connect/Reconnect opens vendor consent; blocked popups expose Open vendor
+  sign-in. Password/passkey step-up is in the main window after closing
+  the blank popup; a fresh offered action click is required, never an
+  automatic authorize retry.
+- Cards show the gateway's last report, Status recorded and Last checked.
+  Probe now and Working do not establish live health. May need sign-in
+  (needs_auth) calls for Reconnect, with the gateway note and outage caveat.
+  No completed-sign-in promise, vendor wording parser or service-worker
+  subscription claim is introduced.
+- All nine README shell blocks are unchanged from `bb8922c8`; OAuth is
+  prose. Final README tests: exit 0, 24 passed. Script-only suite: exit 0,
+  18 passed; `readme-blocks.sh --list`: exit 0, nine names. Fresh replay
+  from `82d41c0f`: five extracted operations, five identical implementation
+  files, complete tracked tree matched across 611 files after copying
+  plan/index records separately. Fmt/clippy are not repeated because no
+  Rust source changed; no web typecheck is needed.
+- Parent owns the final accuracy review, PR #125 checks/reviewDecision/
+  mergeStateStatus/unresolved threads and merge. No current CI or new
+  review approval is inferred.
 
 ## What the review changed
 
@@ -48,9 +188,9 @@ Its scoped re-confirmation (opus, 2026-10-03): "confirmed", A1 to A3 and every O
 
 **Out:**
 - releases, installers, Homebrew and images (plan 7's publishing is the operator's);
-- the MCP gateway screens (4e): the README's one line names the **MCP** screen;
-- the passkey screens: the README says they have an API and no screen yet;
-- a tester's reverse proxy: the README says what it must do (HTTPS, WebSocket upgrades), not how to set one up.
+- implementing MCP gateway screens (4e): this plan documents the merged **MCP** screen;
+- new passkey screens: the README describes the existing setup offer and sign-in;
+- configuring a tester's SSH server/tunnel or reverse proxy: the README names the working host route and optional browser HTTPS route, but implements neither.
 
 ## Decisions
 
@@ -80,11 +220,8 @@ Its scoped re-confirmation (opus, 2026-10-03): "confirmed", A1 to A3 and every O
    - `HENNERY_LISTEN=127.0.0.1:0`: `up` takes a free port, not 7117, so parallel tests and a developer's own hennery never clash.
    - **The adapter mirrors point at `127.0.0.1:1`,** so nothing is downloaded (no test reaches the network, #54). `up`'s host only warns. `host join` pairs, prints `paired as host-…`, then exits 1 with "but the adapter runtime was not installed". The test asserts exactly that, so a join that failed to pair fails the test.
    - **Each machine is a home of its own under `/tmp`** (`HOME` and `XDG_*`), so the default data directory is used as a tester's would be. `/tmp`, not the platform's temp dir, keeps the admin socket's path under the 104-byte limit on macOS. Every `HENNERY_*` variable of the runner's environment is removed, and so are `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `CODEX_SQLITE_HOME`.
-   - **The join block's example address and code** (`https://hennery.example`, `ABCD-EFGH`) are replaced by the collector's loopback address and a code minted for the test. The test first asserts each occurs exactly once.
-6. **Pairing another machine needs HTTPS.** A host reaches the collector over plain `http` only on loopback (`collector_ws_url`). The Hosts screen prints `hennery host join <public_url> <code>` with the stored `public_url`. So the README tells testers to:
-   - put the collector behind a reverse proxy that serves `https://` and passes WebSocket upgrades;
-   - start it with `hennery up --public-url https://…` before setup.
-   The `up-public` block is run as written: its setup link must start with `https://hennery.example/setup#`.
+   - **Only the explicitly marked join port and code** (`7117`, `ABCD-EFGH`) are replaced. The scheme and host remain `http://127.0.0.1`; `pairing_script` refuses anything else. The local listener stands in for the SSH tunnel's forwarded endpoint; SSH is prose, not a shell block. Three guardrail tests and G1–G6 prove this boundary.
+6. **Remote hosts use an SSH tunnel, not HTTPS pairing.** `join` rejects any `https` URL because `wss` is not supported yet. The tunnel exposes the collector on the other machine's `http://127.0.0.1:<port>`. `join` stores `ws://127.0.0.1:<port>/api/hosts/ws`; `host run` uses that saved URL on later runs and reconnects. The Hosts panel prints the browser's stored public URL, so the README explains how to adapt it. A reverse proxy and `up --public-url` are for browser HTTPS only; their shared loopback password budget is stated. The `up-public` block is still run as written and its setup link must start with `https://hennery.example/setup#`.
 7. **The setup link's origin is `localhost`.** `up` on `127.0.0.1:<port>` writes `http://localhost:<port>/setup#…`. The test signs in from that origin, as a browser opening the link would.
 8. **The admin commands need a terminal** (kernel §4.2). The test runs them on a pseudo-terminal (`openpty`) and answers each prompt only once it shows. It then checks the effects:
    - `reset-password`: the old session is refused (401), the old password is refused, and the new one signs in (204). The password is never echoed.
@@ -97,7 +234,8 @@ Its scoped re-confirmation (opus, 2026-10-03): "confirmed", A1 to A3 and every O
     - "The MCP gateway" bullet and step 4's MCP line: **4e**, the gateway screens;
     - Push: the Settings screen, where the browser subscribes, is not on the testers' path. The lane's ruling (2026-10-03): Push moves to the limitations ("built on the collector, no subscribe button in the web UI yet"), and the hats bullet no longer mentions notification settings.
     The lane decides, at the rebase, between waiting and dropping a bullet. Its ruling of 2026-10-03: 4f merges after 4e-i and 4e-ii and keeps the MCP lines, which are checked against `main` then; the sessions claims are checked once 4c-ii merges.
-11. **The Codex line is the gateway lane's wording,** verbatim (parent ruling, 2026-10-03): "Codex sessions also load the user's own ~/.codex MCP servers until per-hat isolation lands."
+    The parent's 2026-10-13 brief narrows the remaining wait to OAuth Connect (4e-ii-b). All other claims are checked against `4684d1d9`, with static-token and local stdio quickstarts added. That merge is now main `82d41c0f` (#133); both OAuth TODOs are replaced with source-checked prose. Plans 8g and 8h remain deferred.
+11. **The Codex limitation stays one line** (parent ruling, 2026-10-13): "Codex sessions get hennery MCP servers only in the host's default hat, without per-hat isolation, and also load the user's own `~/.codex` MCP servers; other hats get none, until per-hat isolation lands." Claude with `--use-cli` has the same default-hat-only restriction.
 12. **Cost:** the `readme` job does a release build on each OS (about 15 minutes cold), with its own cache key. `-p hennery` builds the shipped binary only, as the existing `web` job does in debug.
 
 ## Global Constraints
@@ -115,7 +253,7 @@ Its scoped re-confirmation (opus, 2026-10-03): "confirmed", A1 to A3 and every O
 3. **Is the real home safe?** Expected: every spawn goes through `Machine::sh`, with a scratch home.
 4. **Is the README honest for a tester?** Expected:
    - no command or flag that `--help` on `main` does not show;
-   - the HTTPS requirement for a second machine stated up front;
+   - the SSH tunnel and loopback-only host route stated up front, with no scheme/host repair hidden in the tests;
    - the first start's download and `master.key`'s backup said.
 
 **Reading the steps.** Each block is one of:
@@ -275,8 +413,9 @@ Create `crates/hennery/tests/readme.rs`:
 //! - `HENNERY_LISTEN=127.0.0.1:0`: `up` listens on a free port, not 7117;
 //! - the adapter mirrors point at a port nothing listens on, so nothing is
 //!   downloaded: `host join` pairs and then fails on the download;
-//! - the join block's example address and code are replaced by the
-//!   collector's loopback address and a code minted for the test.
+//! - only the join block's explicitly marked port and code placeholders
+//!   are replaced; its documented scheme and host must remain unchanged.
+//!   The local listener stands in for the SSH tunnel's forwarded endpoint.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -297,6 +436,8 @@ const NEW_PASSWORD: &str = "a new password, typed twice";
 const EXAMPLE_URL: &str = "https://hennery.example";
 /// The README's example pairing code.
 const EXAMPLE_CODE: &str = "ABCD-EFGH";
+/// The README's explicitly marked tunnel-port placeholder.
+const EXAMPLE_PORT: u16 = 7117;
 
 /// Every block name in the README, in order, with what runs it.
 const BLOCKS: [(&str, Runner); 9] = [
@@ -344,6 +485,66 @@ fn block(name: &str) -> String {
     let (status, out, err) = blocks(&repo().join("README.md"), name);
     assert_eq!(status, Some(0), "{err}");
     out
+}
+
+/// Replace only the port and code the README explicitly marks as
+/// placeholders. Never repair an unsupported URL by changing its origin.
+fn pairing_script(script: &str, readme: &str, port: u16, code: &str) -> String {
+    assert!(readme.contains(&format!("`{EXAMPLE_PORT}` is a placeholder")));
+    assert!(readme.contains(&format!("`{EXAMPLE_CODE}` is a placeholder")));
+    let address = |command: &str| {
+        reqwest::Url::parse(command.split_whitespace().nth(3).expect("join URL")).expect("join URL parses")
+    };
+    let before = address(script);
+    assert_eq!(
+        before.scheme(),
+        "http",
+        "pairing substitution must not hide a scheme change"
+    );
+    assert_eq!(
+        before.host_str(),
+        Some("127.0.0.1"),
+        "pairing substitution must not hide a host change"
+    );
+    assert_eq!(before.port(), Some(EXAMPLE_PORT));
+    let port_placeholder = format!(":{EXAMPLE_PORT}");
+    assert_eq!(script.matches(&port_placeholder).count(), 1, "{script}");
+    assert_eq!(script.matches(EXAMPLE_CODE).count(), 1, "{script}");
+    let substituted = script
+        .replace(&port_placeholder, &format!(":{port}"))
+        .replace(EXAMPLE_CODE, code);
+    let after = address(&substituted);
+    assert_eq!(after.scheme(), before.scheme(), "substitution changed the scheme");
+    assert_eq!(after.host_str(), before.host_str(), "substitution changed the host");
+    substituted
+}
+
+#[test]
+fn pairing_substitution_only_changes_marked_port_and_code() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    assert_eq!(
+        pairing_script(&block("join"), &readme, 12345, "EFGH-IJKL"),
+        "hennery host join http://127.0.0.1:12345 EFGH-IJKL\n"
+    );
+    for unmarked in ["`7117` is an example", "`ABCD-EFGH` is an example"] {
+        let original = unmarked.replace("is an example", "is a placeholder");
+        let changed = readme.replace(&original, unmarked);
+        assert!(std::panic::catch_unwind(|| pairing_script(&block("join"), &changed, 12345, "EFGH-IJKL")).is_err());
+    }
+}
+
+#[test]
+fn pairing_substitution_cannot_hide_a_scheme_change() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let changed = block("join").replace("http://", "https://");
+    assert!(std::panic::catch_unwind(|| pairing_script(&changed, &readme, 12345, "EFGH-IJKL")).is_err());
+}
+
+#[test]
+fn pairing_substitution_cannot_hide_a_host_change() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let changed = block("join").replace("127.0.0.1", "localhost");
+    assert!(std::panic::catch_unwind(|| pairing_script(&changed, &readme, 12345, "EFGH-IJKL")).is_err());
 }
 
 /// A scratch file holding `text`, removed on drop.
@@ -554,6 +755,8 @@ fn every_readme_block_is_run() {
     assert_eq!(status, Some(0), "{err}");
     let expected: Vec<&str> = BLOCKS.iter().map(|(name, _)| *name).collect();
     assert_eq!(names.lines().collect::<Vec<_>>(), expected);
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    pairing_script(&block("join"), &readme, 12345, "EFGH-IJKL");
     let here = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/readme.rs")).unwrap();
     for (name, runner) in BLOCKS {
         if let Runner::Here = runner {
@@ -989,6 +1192,38 @@ fn on_a_terminal(machine: &Machine, script: &str, answers: &[(&str, &str)]) -> (
     (status, stdout, shown)
 }
 
+/// The admin command calls this time-aware method: a live link is reused,
+/// but at its expiry it mints and writes a fresh one without a restart.
+#[test]
+fn an_expired_setup_link_is_reissued_as_the_readme_says() {
+    use hennery_kernel::operator::{Operator, SETUP_TOKEN_TTL_SECS, SetupOutcome};
+
+    let dir = tempfile::tempdir().unwrap();
+    let operator = Operator::open(&dir.path().join("hennery.db")).unwrap();
+    let origin = "http://localhost:7117";
+    let now = 1000;
+    let old = operator.announce_setup(dir.path(), origin, now).unwrap().unwrap();
+    let expiry = now + SETUP_TOKEN_TTL_SECS;
+    let live = operator.setup_link(dir.path(), origin, expiry - 1).unwrap().unwrap();
+    assert!(live.url == old.url, "a live link was replaced");
+    let fresh = operator.setup_link(dir.path(), origin, expiry).unwrap().unwrap();
+    assert!(fresh.url != old.url, "the expired link was reused");
+    assert!(
+        std::fs::read_to_string(&fresh.file).unwrap().trim_end() == fresh.url,
+        "the setup-url file does not hold the fresh link"
+    );
+    let old_token = old.url.rsplit_once('#').unwrap().1;
+    let fresh_token = fresh.url.rsplit_once('#').unwrap().1;
+    assert_eq!(
+        operator.set_up(old_token, PASSWORD, origin, expiry).unwrap(),
+        SetupOutcome::InvalidToken
+    );
+    assert!(matches!(
+        operator.set_up(fresh_token, PASSWORD, origin, expiry).unwrap(),
+        SetupOutcome::Done { .. }
+    ));
+}
+
 /// Quickstart step 2 and the recovery commands: `hennery up` writes a setup
 /// link that sets the collector up; `reset-password` sets a password that
 /// signs in where the old one no longer does; `reset-public-url` moves the
@@ -1003,6 +1238,12 @@ fn up_and_the_recovery_commands_work_as_the_readme_says() {
     let port = listen.rsplit_once(':').unwrap().1;
     let origin = format!("http://localhost:{port}");
     assert!(link.starts_with(&format!("{origin}/setup#")), "{link}");
+    let setup_command = output_within(&mut machine.sh("hennery admin setup-url"), Duration::from_secs(60));
+    assert!(setup_command.status.success(), "setup-url command failed");
+    assert!(
+        String::from_utf8(setup_command.stdout).unwrap().trim_end() == link,
+        "setup-url did not print the live link"
+    );
     let session = set_up(&listen, &link, &origin);
     assert_eq!(hosts(&listen, &session).0, 200);
 
@@ -1044,8 +1285,8 @@ fn up_and_the_recovery_commands_work_as_the_readme_says() {
 }
 
 /// Quickstart step 3: `up --public-url` sets up at that address, and the
-/// join block, given the collector's address and a code from "Add host",
-/// pairs another machine whose `host run` then connects.
+/// join block, given only a tunnel port and a code from "Add host", pairs
+/// another machine whose `host run` reconnects through the saved URL.
 #[test]
 fn pairing_another_machine_works_as_the_readme_says() {
     let collector = Machine::new("collector");
@@ -1075,12 +1316,9 @@ fn pairing_another_machine_works_as_the_readme_says() {
         .to_string();
 
     let other = Machine::new("other");
-    let join = block("join");
-    assert_eq!(join.matches(EXAMPLE_URL).count(), 1, "{join}");
-    assert_eq!(join.matches(EXAMPLE_CODE).count(), 1, "{join}");
-    let join = join
-        .replace(EXAMPLE_URL, &format!("http://{listen}"))
-        .replace(EXAMPLE_CODE, &code);
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let port = listen.rsplit_once(':').unwrap().1.parse().unwrap();
+    let join = pairing_script(&block("join"), &readme, port, &code);
     let out = output_within(other.sh(&join).stdin(Stdio::null()), Duration::from_secs(60));
     let (stdout, stderr) = (
         String::from_utf8_lossy(&out.stdout),
@@ -1097,18 +1335,40 @@ fn pairing_another_machine_works_as_the_readme_says() {
         listed.len() == 2 && listed.iter().all(|h| h["connected"] == true)
     });
     host.stop();
+    up.wait_until("the stopped host disconnected", || {
+        let listed = hosts(&listen, &session).1;
+        listed.len() == 2 && listed.iter().filter(|h| h["connected"] == true).count() == 1
+    });
+    // A later run reads the saved loopback URL, without a URL override.
+    let mut host = other.start(&block("host-run"), "host-restarted.log");
+    host.wait_until("the restarted host connected through its saved URL", || {
+        let listed = hosts(&listen, &session).1;
+        listed.len() == 2 && listed.iter().all(|h| h["connected"] == true)
+    });
+    host.stop();
     up.stop();
 }
 `````
 
 Run: `nix develop -c cargo test -p hennery --test readme --locked`
-Expected: FAIL. The script's seventeen tests pass. `every_readme_block_is_run` fails, because the README has no tagged block yet. The two run tests fail with "no block named up" and "no block named up-public".
+Expected: FAIL. The script's seventeen parser tests and the expiry unit test pass. The runner/placeholder guard tests fail because the README has no tagged blocks yet; the two process tests fail with "no block named up" and "no block named up-public".
 
 - [ ] **Step 3: The README**
 
 In `README.md`, replace:
 
 `````markdown
+# hennery
+
+hennery is a self-hosted cockpit for coding agents. It lets one developer drive
+[Agent Client Protocol](https://agentclientprotocol.com) (ACP) sessions — Claude
+Code, Codex, or any other ACP adapter — running on any of their machines, from a
+single browser tab or a phone. It also includes an MCP gateway: authorize an
+integration once, then choose which hosts and projects are allowed to use it.
+
+hennery never proxies agent licences. You bring your own subscriptions and log in
+to each agent CLI on your own machines; hennery only drives the sessions.
+
 ## Status
 
 **Pre-alpha.** Nothing is usable yet. A walking skeleton exists: a Rust
@@ -1146,35 +1406,52 @@ Open it with `nix shell nixpkgs#sqlite -c sqlite3 <path to hennery.db>`.
   `DELETE FROM auth_sessions; DELETE FROM password_credentials; DELETE FROM settings; DELETE FROM owners;`
   On its next start the collector has no owner and writes a fresh setup link.
 
+## Licence
+
+hennery is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
 `````
 
 with:
 
 `````markdown
+# hennery
+
+hennery is a self-hosted cockpit for coding agents. It lets one developer drive
+[Agent Client Protocol](https://agentclientprotocol.com) (ACP) sessions — Claude
+Code, Codex, or any other ACP adapter — running on any of their machines, from a
+single browser tab or a phone. It also includes an MCP gateway: connect a
+server once, then choose its hat and the hosts whose sessions may use it.
+
+hennery never proxies agent licences. You bring your own subscriptions and log in
+to each agent CLI on your own machines; hennery only drives the sessions.
+
 ## Status
 
 **Early testing.** hennery is ready for early testers who build it from
-source. There are no releases, installers or images yet, and stored data may
-not survive an upgrade: expect things to change.
+source. There are no published releases, installers or images yet, and stored
+data may not survive an upgrade: expect things to change.
 
 What works:
 
 - **Sessions from the browser.** The collector serves its web UI from the
-  binary. From it you start Claude Code and Codex sessions on any paired
-  machine, prompt them, answer their permission requests, and park and
-  resume them.
+  binary. From it you start Claude Code and Codex sessions on a connected,
+  paired machine, prompt them, answer their permission requests, and park
+  and resume them.
 - **Hats.** Path rules put each session in a hat by its project directory,
-  and each hat keeps its sessions apart.
-- **The MCP gateway.** Connect an MCP server once, and choose the hosts
-  whose sessions may use it.
+  for organising sessions and choosing their MCP servers.
+- **MCP servers.** Connect a server with a static token or OAuth through the
+  gateway, or configure local stdio servers for a host and hat, on the **MCP** screen.
 
 Known limitations:
 
-- One owner per collector, and a password to sign in; passkeys have an API
-  but no screen yet.
+- One owner per collector. Setup requires a password; it also offers a
+  passkey, which you can use to sign in afterwards.
 - Web Push is built on the collector, but the web UI has no subscribe
   button yet.
-- Codex sessions also load the user's own ~/.codex MCP servers until per-hat isolation lands.
+- Codex sessions get hennery MCP servers only in the host's default hat, without per-hat isolation, and also load the user's own `~/.codex` MCP servers; other hats get none, until per-hat isolation lands.
+- Hosts cannot connect over `wss://` yet; remote hosts reach the collector
+  through an SSH tunnel.
 - The designs are in [`docs/specs/`](docs/specs/) and the plans in
   [`docs/plans/`](docs/plans/); [`docs/README.md`](docs/README.md) lists
   them.
@@ -1182,9 +1459,13 @@ Known limitations:
 ## Quickstart
 
 You need [Nix](https://nixos.org/download/) with flakes enabled, and on
-every machine that runs agents, the agents' own CLIs logged in (Claude Code
-and Codex, each with your own subscription). hennery runs on macOS and
-Linux.
+every machine that runs agents, the CLI for each agent you want to use
+already logged in with your own subscription. The flake supports Apple
+Silicon macOS, and x86_64 and aarch64 Linux.
+The bundled CLIs are not added to your `PATH`. After `up` or `host join`
+installs the runtime, run `hennery doctor` on each agent machine. Check 4,
+**logged in**, reports whether each agent is logged in and prints a fix when
+it is not; doctor does not log in for you.
 
 ### 1. Build
 
@@ -1230,20 +1511,33 @@ hennery up
 `hennery up` runs the collector and a host for this machine, and pairs the
 two. It listens on `http://127.0.0.1:7117` and keeps its data in
 `~/Library/Application Support/hennery` (macOS) or `$XDG_DATA_HOME/hennery`,
-by default `~/.local/share/hennery` (Linux). The first start downloads the
-agents' adapters, about 272 MB.
+by default `~/.local/share/hennery` (Linux). The first start downloads Node
+and the managed adapter set, including its bundled agent CLIs.
 
-On its first start it prints a one-time setup link, valid for an hour, and
-keeps it in `collector/setup-url` in the data directory until setup. Open it, choose a password, and you are signed in. Back up
+On its first start it writes a one-time setup link, valid for an hour, to
+`collector/setup-url` in the data directory until setup, and prints the link
+when running in a terminal. Open that link: by default it uses
+`http://localhost:7117`, which is the browser origin to keep using. Choose
+and confirm a password of at least 12 characters, check **Public URL** and
+**Default hat**, then press **Set up**. You are signed in; add a passkey or
+press **Skip** (or **Continue** if passkeys are unavailable). Back up
 `collector/master.key` together with `collector/hennery.db`: the gateway's
 credentials cannot be read without it.
+If the setup link has expired, `hennery admin setup-url` prints a fresh one.
 
 ### 3. Pair another machine
 
-A host on another machine reaches the collector over HTTPS only. `up`
-listens on loopback, so put a reverse proxy on the same machine that serves
-it at an `https://` address and passes WebSocket upgrades on. Start `up`
-with that address before you set it up:
+Hosts currently connect only over loopback HTTP. On the other machine,
+open an SSH tunnel to the collector with
+`ssh -N -L 7117:127.0.0.1:7117 <collector-machine>`; replace
+`<collector-machine>` with your SSH destination. Keep this terminal open
+while pairing and while `hennery host run` runs. If local port 7117 is
+already in use, choose another local port in the tunnel and join command.
+
+For browser access over HTTPS, a reverse proxy on the collector's machine
+can serve `up` at an `https://` address. This does not enable secure
+WebSockets for hosts; they still use the tunnel. If `up` is already running,
+stop it with Ctrl-C and restart it with that address before setup:
 
 <!-- check: up-public -->
 ```sh
@@ -1253,16 +1547,23 @@ hennery up --public-url https://hennery.example
 Already set up at `localhost`? Then `--public-url` is ignored: move it
 with `hennery admin reset-public-url` (see [Recovery](#recovery)), and from
 then on open hennery at the new address, since the old one is refused.
+With a same-machine reverse proxy, all remote clients share the loopback
+rate-limit budget, so exposing the collector lets anyone lock out password
+sign-in by submitting wrong passwords.
 
 In the web UI, **Hosts → Add host** shows a pairing code, valid for ten
-minutes, and the command that uses it. Build hennery on the other machine,
-run that command there (it too downloads the adapters; leave the code out
-to type it instead, which keeps it out of your shell history), then start
-the host:
+minutes, after asking for your password again if a fresh step-up is needed.
+Its printed command uses the public URL; adapt it to the tunnel's
+`http://127.0.0.1` address as below. Build hennery on the other machine and
+run the join command in another terminal (it also downloads the runtime).
+In this block, `7117` is a placeholder for the tunnel's local port, and
+`ABCD-EFGH` is a placeholder for the code shown by **Add host**. Replace
+them with your port and code; leave the code out to type it instead and
+keep it out of shell history. Keep the `http://127.0.0.1` scheme and host:
 
 <!-- check: join -->
 ```sh
-hennery host join https://hennery.example ABCD-EFGH
+hennery host join http://127.0.0.1:7117 ABCD-EFGH
 ```
 
 <!-- check: host-run -->
@@ -1270,12 +1571,78 @@ hennery host join https://hennery.example ABCD-EFGH
 hennery host run
 ```
 
+`host run` uses the saved `ws://127.0.0.1:<port>/api/hosts/ws` URL, including
+when it reconnects. Keep the same tunnel port available on future runs.
+
 ### 4. Start a session
 
-**New session**: pick a host, an agent and a project directory, then
+**New session**: pick a connected host, an agent and a project directory, then
 **Start session**, and type your first prompt.
+Unless workspace roots are configured, the project list is empty: use
+**Browse** under the host user's home, or pass `--workspace-root <directory>`
+to `up` or `host run` to list repositories under that root. The flag is
+repeatable.
 
-MCP servers are connected, and given to hosts, on the **MCP** screen.
+### 5. Connect an MCP server
+
+For a remote server with a static token, open **MCP → Add connection**.
+Fill in **Name**, **Slug**, **Server URL** and **Hat**; choose **Token** under
+**Authentication**, and set **Header** and **Prefix** as the server requires
+(the prefix includes any trailing space). Press **Create**, then enter the
+**Token** and press **Save token**. Under **Hosts whose sessions get it**,
+tick the hosts to use it; each tick saves immediately. Where delivery is
+supported, sessions in that hat on those hosts receive it as
+`hennery-<slug>` at their next start or resume.
+The status stays **Not used yet** until traffic goes through it.
+Use an HTTPS server URL; **Internal network** permits plain HTTP only to
+internal addresses (loopback included), for a server you run there.
+
+For a local stdio server, use **MCP → Local MCP servers**. Choose **Host**
+and **Hat**, then **Add local server**. Fill in **Server name** and
+**Command** (on that host); use **Add argument** for each argument and
+**Add environment variable** for secrets. Press **Review local servers**,
+check the commands, then **Save local servers**. Saving replaces the whole
+set for that host and hat, including removals, at the next start or resume.
+Environment values cannot be read back from hennery.
+
+Agents without per-hat isolation receive hennery MCP servers only in the
+host's default hat. Check the delivery prediction beside the host or on
+**New session** for the agent you chose; the session reports what it was
+given at its last start or resume.
+This default-hat restriction also applies to Claude with `--use-cli`.
+
+These actions may ask you to confirm your password again.
+
+#### OAuth
+
+In **MCP → Add connection**, fill in the connection fields and choose
+**OAuth: automatic registration** under **Authentication** if the vendor
+supports dynamic registration, or **OAuth: pre-registered client** if you
+register the client yourself. Press **Create**. OAuth addresses must use
+HTTPS, or HTTP to this machine.
+
+The vendor must allow hennery's redirect URI:
+`<public_url>/api/mcp/oauth/callback`, using the collector's configured
+browser origin as `public_url`. The exact URI is shown in the pre-registered
+add/edit form and client settings beside **Register this redirect URI at the vendor:**
+For a pre-registered client, enter **Client ID**, then choose
+**Public client (no secret)** or **Set a new secret** under **Client secret action**.
+Enter **Client secret** if you chose **Set a new secret**. Press **Save client**.
+Saved secrets are write-only and cannot be read back from hennery.
+
+Click **Connect** or **Reconnect** when offered to open the vendor consent
+popup. If popups are blocked, use **Open vendor sign-in**. Return to hennery
+after consent. If a fresh confirmation is required before authorization,
+the popup closes and you confirm your password in the main window (or use
+**Confirm with passkey** if offered). Then follow the card and click
+**Connect** or **Reconnect** again if offered; authorization is not retried
+automatically.
+
+The card shows the gateway's last report, with **Status recorded** and
+**Last checked**. **Probe now** requests a report;
+it does not establish live health, and **Working** is a recorded status.
+**May need sign-in** (`needs_auth`) calls for **Reconnect**; read the
+gateway note, since an authorization-server outage can also cause this state.
 
 ## Recovery
 
@@ -1283,7 +1650,7 @@ Run these on the collector's machine while hennery runs, as the user that
 runs it; each asks for confirmation on the terminal. For a collector not in
 the default place, give `--data-dir <dir>` right after `admin`.
 
-- **A forgotten password:** set a new one. It signs out every session and
+- **A forgotten password:** set a new one. It signs out every browser session and
   removes every passkey.
 
   <!-- check: reset-password -->
@@ -1294,7 +1661,7 @@ the default place, give `--data-dir <dir>` right after `admin`.
 - **The collector moved** (another address, or behind a proxy): every
   sign-in and change is refused with `origin_mismatch` until hennery knows
   the address the browser now uses. Give it that origin: `https://`, or
-  `http://` to a loopback address, with no path. It signs out every
+  `http://` to a loopback address, with no path. It signs out every browser
   session; passkeys stop working if the host name changes, and are then
   removed.
 
@@ -1303,6 +1670,9 @@ the default place, give `--data-dir <dir>` right after `admin`.
   hennery admin reset-public-url https://hennery.example
   ```
 
+## Licence
+
+hennery is licensed under the [GNU Affero General Public License v3.0](LICENSE).
 `````
 
 - [ ] **Step 4: The workflows**
@@ -1379,7 +1749,7 @@ with:
 - [ ] **Step 5: The checks**
 
 Run: `nix develop -c cargo test -p hennery --test readme --locked`
-Expected: PASS, 20 tests.
+Expected: PASS, 24 tests.
 
 Then the five checks (fleet rules): `cargo fmt --all --check`, both clippy runs, `cargo test --workspace --locked`, and `cargo run -p hennery-proto --bin gen -- --check`.
 
@@ -1423,6 +1793,12 @@ Each probe changes one line, runs the named test, and must fail. Then it is undo
 | R09 | `nix.yml`: the nix step names `xin` | `every_readme_block_is_run` |
 | R10 | README: a tagged block `extra` added | `every_readme_block_is_run` |
 | R11 | `ci.yml`: the clone step names `enolc` | `every_readme_block_is_run` |
+| G1 | remove the documented scheme guard | `pairing_substitution_cannot_hide_a_scheme_change` |
+| G2 | remove the documented host guard | `pairing_substitution_cannot_hide_a_host_change` |
+| G3 | remove the explicit port-marker guard | `pairing_substitution_only_changes_marked_port_and_code` |
+| G4 | remove the explicit code-marker guard | `pairing_substitution_only_changes_marked_port_and_code` |
+| G5 | README join URL changed to HTTPS | `every_readme_block_is_run` |
+| G6 | README join host changed to localhost | `every_readme_block_is_run` |
 | C01 (CI) | README: the clone address of a repository that does not exist | the `readme` job's clone step, on both OSes (run 37105283992) |
 | C02 (CI) | README: `./result/bin/hennery --bogus` | the `flake` job's nix step, on both OSes (run 37105283979) |
 | C03 (CI) | README: the `pnpm --dir web build` line removed | the `readme` job's build step: the release build fails on `HENNERY_WEB_REQUIRE=1` |
@@ -1451,10 +1827,9 @@ git commit -m "docs(readme): a quickstart for early testers, every shell block r
 
 ## After this plan
 
-- **4e** (the gateway screens): when they land, check the README's MCP line against the screen's name and what it does.
+- **Future MCP changes:** update the README against the actual API and UI; static-token, local stdio and OAuth steps are verified on `82d41c0f`. Keep last-report and fresh-click semantics accurate.
 - **Releases** (plan 7, the operator's): when there is one, the Quickstart's build step becomes the second route, after installing. The installer's and Homebrew's commands get tagged blocks and runners too.
-- **The Push subscribe button:** when the Settings screen lands, move Push back from the limitations to what works.
-- **Passkey screens:** when they land, remove the Status line saying passkeys have no screen.
-- **Codex isolation:** when per-hat isolation for Codex lands, remove the limitation line.
+- **The Push subscribe button:** when subscription UI lands, move Push back from the limitations to what works. It is outside the early-tester scope.
+- **Codex isolation:** when per-hat isolation for Codex lands, revisit the limitation line. Plans 8g and 8h are deferred; no screens or maintainer open questions belong in the README.
 
 _Generated with Claude AI — please review before distribution._
