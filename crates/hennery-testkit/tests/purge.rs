@@ -711,7 +711,14 @@ async fn a_reader_holding_the_wal_holds_a_purge_up_once_not_once_per_session() {
 /// 8e, as `hennery`'s `gateway()` does).
 fn gateway(c: &Collector) -> hennery_gateway::api::GatewayState {
     let keys = hennery_gateway::key::KeySource::from_vars(c._dir.path(), Some("07".repeat(32).into()), None).unwrap();
-    let gateway = hennery_gateway::open(&c.db, &keys, c.state.operator.clone()).unwrap();
+    let gateway = hennery_gateway::open(
+        &c.db,
+        &keys,
+        c.state.operator.clone(),
+        hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap(),
+        std::sync::Arc::new(hennery_gateway::notify::Silent),
+    )
+    .unwrap();
     c.state
         .store
         .set_session_mcp(std::sync::Arc::new(hennery_gateway::session::GatewayMcp::new(&gateway)));
@@ -734,7 +741,7 @@ fn gateway_rows(c: &Collector, gateway: &hennery_gateway::api::GatewayState, hat
         internal_network: false,
     };
     assert!(matches!(
-        gateway.store.create(&new, NOW).unwrap(),
+        gateway.runtime.store.create(&new, NOW).unwrap(),
         hennery_gateway::model::Change::Done(_)
     ));
     let stdio = hennery_gateway::stdio::StdioInput {
@@ -745,14 +752,15 @@ fn gateway_rows(c: &Collector, gateway: &hennery_gateway::api::GatewayState, hat
     };
     assert!(matches!(
         gateway
+            .runtime
             .store
-            .replace_stdio_set(HOST, hat, &[stdio], &gateway.key, NOW)
+            .replace_stdio_set(HOST, hat, &[stdio], &gateway.runtime.key, NOW)
             .unwrap(),
         hennery_gateway::stdio::StdioChange::Done(_)
     ));
     let mut conn = Connection::open(&c.db).unwrap();
     let tx = conn.transaction().unwrap();
-    hennery_gateway::tokens::mint_in(&tx, gateway.store.owner_id(), session, HOST, hat, NOW).unwrap();
+    hennery_gateway::tokens::mint_in(&tx, gateway.runtime.store.owner_id(), session, HOST, hat, NOW).unwrap();
     tx.commit().unwrap();
 }
 

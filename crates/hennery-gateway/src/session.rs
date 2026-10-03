@@ -120,10 +120,10 @@ impl GatewayMcp {
     /// `Revocations` its proxy watches.
     pub fn new(gateway: &GatewayState) -> Self {
         Self {
-            store: gateway.store.clone(),
-            key: gateway.key.clone(),
+            store: gateway.runtime.store.clone(),
+            key: gateway.runtime.key.clone(),
             operator: gateway.operator.clone(),
-            revocations: gateway.revocations.clone(),
+            revocations: gateway.runtime.revocations.clone(),
         }
     }
 

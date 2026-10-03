@@ -201,12 +201,7 @@ async fn serve_edited(
     limits: Limits,
     edit: impl FnOnce(&mut ProxyState),
 ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
-    let egress = Egress::new(Timeouts {
-        connect: Duration::from_secs(2),
-        request: Duration::from_secs(10),
-    })
-    .unwrap();
-    let gateway = world.gateway();
+    let egress = test_egress();
     let mut state = ProxyState::for_sessions(world.runtime(egress, Arc::new(Recorder::default())), limits);
     edit(&mut state);
     let app = router(state);
