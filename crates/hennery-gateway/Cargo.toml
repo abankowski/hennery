@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+# OAuth (plan 8f): PKCE's base64url and a client's Basic credentials.
+base64.workspace = true
 chacha20poly1305.workspace = true
 # The proxy (plan 8d): its bodies are streams.
 futures.workspace = true
@@ -27,6 +29,7 @@ rusqlite.workspace = true
 # What the proxy reads of JSON-RPC (plan 8d): duplicate keys refused.
 serde.workspace = true
 serde_json.workspace = true
+# Session identifiers and OAuth PKCE use SHA-256.
 sha2.workspace = true
 thiserror.workspace = true
 # The proxy answers refused server requests in the background (plan 8d).
