@@ -264,12 +264,34 @@ pub(crate) async fn authorize(
                 // The first authorize with this client pins it (the
                 // review's R2).
                 None => {
-                    if let Err(err) =
-                        runtime
-                            .store
-                            .pin_client(&id, slot, &held.client_id, &discovered.issuer, &token_endpoint)
+                    match runtime
+                        .store
+                        .pin_client(&id, slot, &held.client_id, &discovered.issuer, &token_endpoint)
                     {
-                        return internal(err);
+                        Ok(true) => {}
+                        Ok(false) => {
+                            // Security review F3: another authorize may have
+                            // pinned this slot while discovery was in flight.
+                            let current = match runtime.store.oauth_clients(&id, &runtime.key) {
+                                Ok(Some(slots)) => match slot {
+                                    Slot::Active if slots.pending.is_none() => slots.active,
+                                    Slot::Pending => slots.pending,
+                                    _ => None,
+                                },
+                                Ok(None) => None,
+                                Err(err) => return internal(err),
+                            };
+                            if !current.is_some_and(|current| {
+                                current.client_id == held.client_id
+                                    && current.secret == held.secret
+                                    && current.issuer.as_deref() == Some(discovered.issuer.as_str())
+                                    && current.token_endpoint.as_deref() == Some(token_endpoint.as_str())
+                            }) {
+                                return fail(StatusCode::CONFLICT, "issuer_changed",
+                                    "the client's authorization server changed during discovery: enter the client again".into());
+                            }
+                        }
+                        Err(err) => return internal(err),
                     }
                 }
             }

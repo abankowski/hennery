@@ -88,7 +88,7 @@ impl std::fmt::Debug for Refreshed {
 /// Whether an access token expiring at `expires_at` is to be refreshed
 /// before it is used, at `now`.
 pub fn due(expires_at: Option<i64>, now: i64) -> bool {
-    expires_at.is_some_and(|at| at - now <= PROACTIVE)
+    expires_at.is_some_and(|at| at <= now.saturating_add(PROACTIVE))
 }
 
 /// Refresh `connection_id`'s grant, single-flight. `failed` is the access

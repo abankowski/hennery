@@ -40,11 +40,17 @@ pub const MAX_DOCUMENT: usize = 1024 * 1024;
 /// How long one OAuth request may take, body included.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// One bound for the complete discovery sequence, including its bodies.
+pub const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// The most authorization servers of one PR document tried.
 const MAX_SERVERS: usize = 4;
 
 /// The `expires_in` margin (gateway spec §4.4).
 pub const EXPIRY_MARGIN: i64 = 60;
+
+/// Vendor lifetimes are bounded to one year (security review F5).
+pub const MAX_EXPIRES_IN: i64 = 365 * 24 * 60 * 60;
 
 /// The RFC 6749 §5.2 errors a refusal's message may name; any other is
 /// shown only as its HTTP status (api-8e-8f B5 step 7).
@@ -291,46 +297,63 @@ pub fn same_issuer(a: &str, b: &str) -> bool {
 /// The `resource_metadata` of a `WWW-Authenticate` challenge (RFC 9728
 /// §5.1), if any header names one.
 pub fn challenge_metadata(headers: &header::HeaderMap) -> Option<String> {
-    headers
+    let challenges: Vec<_> = headers
         .get_all(header::WWW_AUTHENTICATE)
         .iter()
-        .filter_map(|value| value.to_str().ok())
-        .find_map(param_resource_metadata)
+        .map(|value| value.to_str())
+        .collect::<Result<_, _>>()
+        .ok()?;
+    param_resource_metadata(&challenges.join(","))
 }
 
 fn param_resource_metadata(challenge: &str) -> Option<String> {
-    let lower = challenge.to_ascii_lowercase();
-    let mut from = 0;
-    while let Some(found) = lower[from..].find("resource_metadata") {
-        let start = from + found;
-        from = start + "resource_metadata".len();
-        // A parameter's name starts the challenge's parameters or follows a
-        // space or comma.
-        let boundary = start == 0 || matches!(lower.as_bytes()[start - 1], b' ' | b',' | b'\t');
-        let rest = challenge[from..].trim_start();
-        let Some(rest) = rest.strip_prefix('=') else {
-            continue;
-        };
-        if !boundary {
+    // Read auth-params, including quoted-pair escapes; never scan a realm
+    // or error_description for a parameter-looking substring.
+    let mut chars = challenge.chars().peekable();
+    let mut found = None;
+    while chars.peek().is_some() {
+        while chars.peek().is_some_and(|c| matches!(c, ' ' | '\t' | ',')) {
+            chars.next();
+        }
+        let mut name = String::new();
+        while chars.peek().is_some_and(|c| !matches!(c, '=' | ' ' | '\t' | ',')) {
+            name.push(chars.next()?);
+        }
+        while chars.peek().is_some_and(|c| matches!(c, ' ' | '\t')) {
+            chars.next();
+        }
+        if chars.peek() != Some(&'=') {
             continue;
         }
-        let rest = rest.trim_start();
-        if let Some(quoted) = rest.strip_prefix('"') {
-            let mut value = String::new();
-            let mut chars = quoted.chars();
-            while let Some(c) = chars.next() {
-                match c {
+        chars.next();
+        while chars.peek().is_some_and(|c| matches!(c, ' ' | '\t')) {
+            chars.next();
+        }
+        let mut value = String::new();
+        if chars.peek() == Some(&'"') {
+            chars.next();
+            loop {
+                match chars.next()? {
                     '\\' => value.push(chars.next()?),
-                    '"' => return Some(value),
+                    '"' => break,
                     c => value.push(c),
                 }
             }
+            if chars.peek().is_some_and(|c| !matches!(c, ',' | ' ' | '\t')) {
+                return None;
+            }
+        } else {
+            while chars.peek().is_some_and(|c| !matches!(c, ',' | ' ' | '\t')) {
+                value.push(chars.next()?);
+            }
+        }
+        if name.eq_ignore_ascii_case("resource_metadata")
+            && (value.is_empty() || !clean(&value) || found.replace(value).is_some())
+        {
             return None;
         }
-        let value: String = rest.chars().take_while(|c| !matches!(c, ',' | ' ' | '\t')).collect();
-        return (!value.is_empty()).then_some(value);
     }
-    None
+    found
 }
 
 /// One unauthenticated `initialize` to the resource: the challenge's
@@ -372,6 +395,20 @@ async fn challenge(client: &EgressClient, resource: &Url) -> Result<Option<Strin
 
 /// Discover `resource`'s authorization server (gateway spec §4.1).
 pub async fn discover(client: &EgressClient, resource: &Url) -> Result<Discovered, DiscoveryError> {
+    discover_with_deadline(client, resource, DISCOVERY_TIMEOUT).await
+}
+
+async fn discover_with_deadline(
+    client: &EgressClient,
+    resource: &Url,
+    deadline: Duration,
+) -> Result<Discovered, DiscoveryError> {
+    tokio::time::timeout(deadline, discover_candidates(client, resource))
+        .await
+        .unwrap_or_else(|_| Err(DiscoveryError::Unreachable("OAuth discovery timed out".into())))
+}
+
+async fn discover_candidates(client: &EgressClient, resource: &Url) -> Result<Discovered, DiscoveryError> {
     let origin = url_for_logs(resource.as_str());
     let mut unreachable = false;
     let mut candidates = Vec::new();
@@ -457,6 +494,22 @@ pub async fn discover(client: &EgressClient, resource: &Url) -> Result<Discovere
             if let Some(url) = &registration_endpoint {
                 secure(url, "the registration endpoint")?;
             }
+            let iss_parameter = document
+                .get("authorization_response_iss_parameter_supported")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            // Security review F1: without RFC 9207, a code must never go
+            // to an origin other than the one that authorized it.
+            if !iss_parameter
+                && (authorization_endpoint.origin() != token_endpoint.origin()
+                    || registration_endpoint
+                        .as_ref()
+                        .is_some_and(|endpoint| endpoint.origin() != authorization_endpoint.origin()))
+            {
+                return Err(DiscoveryError::Failed(
+                    "authorization, token and registration endpoints must share one origin without iss support".into(),
+                ));
+            }
             return Ok(Discovered {
                 resource: resource_named,
                 scopes,
@@ -468,10 +521,7 @@ pub async fn discover(client: &EgressClient, resource: &Url) -> Result<Discovere
                     .iter()
                     .any(|m| m == "S256"),
                 auth_methods: strings(&document, "token_endpoint_auth_methods_supported"),
-                iss_parameter: document
-                    .get("authorization_response_iss_parameter_supported")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
+                iss_parameter,
             });
         }
     }
@@ -696,7 +746,7 @@ impl std::fmt::Debug for Issued {
 /// `now + expires_in − 60 s`; `None` when the server said nothing
 /// (unknown, not expired: gateway spec §4.4).
 pub fn expires_at(now: i64, expires_in: Option<i64>) -> Option<i64> {
-    expires_in.map(|secs| now + (secs - EXPIRY_MARGIN).max(0))
+    expires_in.map(|secs| now.saturating_add((secs.clamp(0, MAX_EXPIRES_IN) - EXPIRY_MARGIN).max(0)))
 }
 
 /// Why the token endpoint gave nothing. None of them carries its body.
@@ -809,8 +859,10 @@ pub async fn token(
         // A whole number of seconds, or a string of one; anything else is
         // unknown (not expired: gateway spec §4.4).
         let expires_in = match parsed.get("expires_in") {
-            Some(Value::Number(n)) => n.as_i64(),
-            Some(Value::String(s)) if s.bytes().all(|b| b.is_ascii_digit()) && !s.is_empty() => s.parse().ok(),
+            Some(Value::Number(n)) => n.as_u64().map(|secs| secs.min(MAX_EXPIRES_IN as u64) as i64),
+            Some(Value::String(s)) if s.bytes().all(|b| b.is_ascii_digit()) && !s.is_empty() => {
+                Some(s.parse::<u64>().unwrap_or(u64::MAX).min(MAX_EXPIRES_IN as u64) as i64)
+            }
             _ => None,
         }
         .filter(|secs| *secs >= 0);
