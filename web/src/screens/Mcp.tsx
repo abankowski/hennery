@@ -198,6 +198,8 @@ export default function Mcp() {
             editBusy={editBusy}
             editError={editing?.id === connection.id ? editError : null}
             onEdit={() => {
+              // A pending save still owns this form, its error and its focus.
+              if (updating.current) return
               setEditError(null)
               setEditing(connection)
             }}

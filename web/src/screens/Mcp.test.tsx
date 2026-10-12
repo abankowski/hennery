@@ -355,6 +355,43 @@ describe('editing a connection', () => {
     expect(await card('Docs!')).toBeInTheDocument()
   })
 
+  it.each(['success', 'failure'] as const)('ignores another card’s Edit during a slow save (%s)', async (outcome) => {
+    let answer: (response: Response) => void = () => {}
+    const server = open({
+      'GET /api/mcp/connections': json(200, [
+        connection(),
+        connection({ id: 'conn-2', label: 'Other', slug: 'other' }),
+      ]),
+      [`PATCH ${ITEM}`]: () => new Promise<Response>((done) => (answer = done)),
+    })
+    const docs = await card('Docs')
+    const other = await card('Other')
+    await userEvent.click(within(docs).getByRole('button', { name: 'Edit' }))
+    await userEvent.type(within(docs).getByRole('textbox', { name: 'Name' }), '!')
+    await userEvent.click(within(docs).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(sent(server, 'PATCH', ITEM)).toHaveLength(1))
+    await userEvent.click(within(other).getByRole('button', { name: 'Edit' }))
+    expect(within(other).queryByRole('textbox', { name: 'Name' })).toBeNull()
+    expect(within(docs).getByRole('textbox', { name: 'Name' })).toHaveValue('Docs!')
+
+    answer(outcome === 'success'
+      ? json(200, connection({ label: 'Docs!' }))
+      : json(400, { code: 'invalid', message: 'Docs save refused' }))
+    if (outcome === 'success') {
+      await waitFor(() => expect(within(docs).getByRole('button', { name: 'Edit' })).toHaveFocus())
+    } else {
+      expect(await within(docs).findByRole('alert')).toHaveTextContent('Docs save refused')
+    }
+    expect(within(other).queryByRole('alert')).toBeNull()
+    await userEvent.click(within(other).getByRole('button', { name: 'Edit' }))
+    expect(within(other).getByRole('textbox', { name: 'Name' })).toHaveValue('Other')
+    expect(within(other).getByRole('textbox', { name: 'Name' })).toHaveFocus()
+    expect(within(other).queryByRole('alert')).toBeNull()
+    await userEvent.click(within(other).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(within(other).getByRole('button', { name: 'Edit' })).toHaveFocus())
+    expect(sent(server, 'PATCH', ITEM).map((request) => request.body)).toEqual([{ label: 'Docs!' }])
+  })
+
   it('sends nothing when nothing changed', async () => {
     const server = open({})
     const docs = await card('Docs')
