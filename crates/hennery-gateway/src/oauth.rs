@@ -1047,3 +1047,32 @@ mod tests {
         assert!(!same_issuer("", "https://as.example"));
     }
 }
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+    /// Review note: one deadline covers the entire candidate sequence,
+    /// rather than allowing each candidate another fifteen seconds.
+    #[tokio::test]
+    async fn discovery_has_one_deadline() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let resource = Url::parse(&format!("http://{}/mcp", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let egress = egress::Egress::new(egress::Timeouts {
+            connect: Duration::from_secs(2),
+            request: Duration::from_secs(10),
+        })
+        .unwrap();
+        let client = egress.client(egress::Allowance::InternalNetwork);
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            discover_with_deadline(&client, &resource, Duration::from_millis(30)),
+        )
+        .await;
+        server.abort();
+        assert!(matches!(result.unwrap(), Err(DiscoveryError::Unreachable(_))));
+    }
+}

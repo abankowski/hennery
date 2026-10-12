@@ -25,7 +25,11 @@ pub fn mode() -> DeploymentMode {
 /// served, alongside stdio servers and plan 8f's OAuth (`…/authorize`, the callback, the
 /// pre-registered client, the probe).
 pub fn features() -> Vec<String> {
-    vec!["mcp_connections".to_owned(), "mcp_stdio".to_owned(), "mcp_oauth".to_owned()]
+    vec![
+        "mcp_connections".to_owned(),
+        "mcp_stdio".to_owned(),
+        "mcp_oauth".to_owned(),
+    ]
 }
 
 /// What `GET /api/capabilities` answers.

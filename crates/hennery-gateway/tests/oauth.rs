@@ -8,6 +8,7 @@ mod support;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
+use axum::response::IntoResponse;
 use hennery_gateway::api::{GatewayState, router};
 use hennery_gateway::model::{ConnectionPatch, CredKind, NewConnection, Status};
 use hennery_gateway::notify::Alert;
@@ -829,6 +830,7 @@ async fn a_connection_changed_meanwhile_gets_no_grant() {
         .unwrap();
     let page = h.callback(&location, Some(&flow_cookie(&headers)), &[]).await;
     assert_eq!(page.result(), "connection_changed");
+    assert_eq!(fake.with(|r| r.exchanges), 0, "no code sent after an edit");
     assert_eq!(h.item(&id).await["has_credential"], false);
 }
 
@@ -1826,7 +1828,7 @@ async fn a_registration_refused_by_egress_or_failing_has_its_code() {
     let refused_at = format!("https://u:p@127.0.0.1:{}/register", fake.addr.port());
     fake.configure(|c| {
         c.raw_meta = Some(format!(
-            r#"{{"issuer":"{o}","authorization_endpoint":"{o}/authorize","token_endpoint":"{o}/token","registration_endpoint":"{refused_at}","code_challenge_methods_supported":["S256"]}}"#
+            r#"{{"issuer":"{o}","authorization_endpoint":"{o}/authorize","token_endpoint":"{o}/token","registration_endpoint":"{refused_at}","code_challenge_methods_supported":["S256"],"authorization_response_iss_parameter_supported":true}}"#
         ));
     });
     let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthDcr);
@@ -1896,7 +1898,11 @@ async fn a_registration_s_answer_is_checked_before_use() {
 #[tokio::test]
 async fn an_exchange_refused_by_egress_or_unreachable_has_its_code() {
     let h = Harness::new();
-    let fake = FakeAs::start(Config::default()).await;
+    let fake = FakeAs::start(Config {
+        iss_parameter: true,
+        ..Config::default()
+    })
+    .await;
     let port = fake.addr.port();
     fake.configure(|c| c.token_endpoint = Some(format!("https://u:p@127.0.0.1:{port}/token")));
     let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthDcr);
@@ -1918,7 +1924,11 @@ async fn an_exchange_refused_by_egress_or_unreachable_has_its_code() {
         "{error}"
     );
     let h = Harness::new();
-    let fake = FakeAs::start(Config::default()).await;
+    let fake = FakeAs::start(Config {
+        iss_parameter: true,
+        ..Config::default()
+    })
+    .await;
     let closed = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -2111,4 +2121,338 @@ async fn the_callback_stores_the_grant_under_the_lock() {
     assert_eq!(h.item(&id).await["has_credential"], false);
     drop(held);
     assert_eq!(callback.await.result(), "connected");
+}
+
+/// F1: without RFC 9207, the three endpoints must have one origin.
+#[tokio::test]
+async fn endpoints_without_iss_share_one_origin() {
+    for endpoint in ["authorization_endpoint", "token_endpoint", "registration_endpoint"] {
+        for iss in [false, true] {
+            let h = Harness::new();
+            let fake = FakeAs::start(Config::default()).await;
+            let o = fake.origin();
+            let mut meta = json!({ "issuer": o, "authorization_endpoint": format!("{o}/authorize"),
+                "token_endpoint": format!("{o}/token"), "registration_endpoint": format!("{o}/register"),
+                "code_challenge_methods_supported": ["S256"],
+                "authorization_response_iss_parameter_supported": iss });
+            meta[endpoint] = json!(format!("https://other.example/{endpoint}"));
+            fake.configure(|c| c.raw_meta = Some(meta.to_string()));
+            // A pre-registered client avoids actually calling a foreign registration endpoint.
+            let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthClient);
+            h.world
+                .store
+                .set_oauth_client(
+                    &id,
+                    "pre-1",
+                    hennery_gateway::store::SecretInput::Clear,
+                    &h.world.key,
+                    unix_now(),
+                )
+                .unwrap();
+            let (status, _, answer) = h.authorize(&id, json!({})).await;
+            assert_eq!(
+                status,
+                if iss { StatusCode::OK } else { StatusCode::BAD_GATEWAY },
+                "{endpoint}, iss={iss}: {answer}"
+            );
+            if !iss {
+                assert_eq!(answer["code"], "discovery_failed");
+            }
+        }
+    }
+}
+
+/// F2: check every part of the generation before sending the code, even if
+/// the edit bypassed flow invalidation (the purge hook cannot hold this lock).
+#[tokio::test]
+async fn a_changed_connection_never_exchanges_its_code() {
+    for change in ["deleted", "kind", "allowance", "client", "pending", "secret"] {
+        let h = Harness::new();
+        let fake = FakeAs::start(Config {
+            registration: false,
+            ..Config::default()
+        })
+        .await;
+        let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthClient);
+        h.world
+            .store
+            .set_oauth_client(
+                &id,
+                "pre-1",
+                hennery_gateway::store::SecretInput::Clear,
+                &h.world.key,
+                unix_now(),
+            )
+            .unwrap();
+        let (_, headers, answer) = h.authorize(&id, json!({})).await;
+        let location = fake.consent(answer["consent_url"].as_str().unwrap()).await;
+        match change {
+            "deleted" => {
+                h.world.store.delete(&id).unwrap();
+            }
+            "kind" => {
+                h.world
+                    .raw()
+                    .execute("UPDATE gw_connections SET cred_kind = 'static' WHERE id = ?1", [&id])
+                    .unwrap();
+            }
+            "allowance" => {
+                h.world
+                    .raw()
+                    .execute("UPDATE gw_connections SET internal_network = 0 WHERE id = ?1", [&id])
+                    .unwrap();
+            }
+            "client" => {
+                h.world
+                    .raw()
+                    .execute(
+                        "UPDATE gw_oauth_clients SET client_id = 'pre-other' WHERE connection_id = ?1",
+                        [&id],
+                    )
+                    .unwrap();
+            }
+            "pending" => {
+                h.world
+                    .raw()
+                    .execute(
+                        "UPDATE gw_oauth_clients SET pending_client_id = 'pre-other' WHERE connection_id = ?1",
+                        [&id],
+                    )
+                    .unwrap();
+            }
+            "secret" => {
+                h.world
+                    .store
+                    .set_oauth_client(
+                        &id,
+                        "pre-1",
+                        hennery_gateway::store::SecretInput::Set(zeroize::Zeroizing::new("replacement-secret".into())),
+                        &h.world.key,
+                        unix_now(),
+                    )
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let page = h.callback(&location, Some(&flow_cookie(&headers)), &[]).await;
+        assert_eq!(page.result(), "connection_changed", "{change}");
+        assert_eq!(fake.with(|r| r.exchanges), 0, "{change}: no exchange");
+    }
+}
+
+/// F3: discovery may race another authorize's successful issuer pin.
+#[tokio::test]
+async fn a_lost_client_pin_is_reread_before_consent() {
+    use hennery_gateway::store::{SecretInput, Slot};
+    for slot in [Slot::Active, Slot::Pending] {
+        for winner in ["same", "issuer", "endpoint", "client", "secret", "missing"] {
+            let h = Harness::new();
+            let server = support::upstream::FakeUpstream::start().await;
+            let o = server.url("");
+            let id = h.connection("linear", &server.url("/mcp"), CredKind::OauthClient);
+            h.world
+                .store
+                .set_oauth_client(&id, "pre-1", SecretInput::Clear, &h.world.key, unix_now())
+                .unwrap();
+            if matches!(slot, Slot::Pending) {
+                let fake = FakeAs::start(Config::default()).await;
+                let (a, r) = fake.issue();
+                support::oauth::seed_grant(&h.world, &id, &fake, &a, Some(&r), None);
+                h.world
+                    .store
+                    .set_oauth_client(&id, "pre-1", SecretInput::Clear, &h.world.key, unix_now())
+                    .unwrap();
+            }
+            let store = h.world.store.clone();
+            let pin_id = id.clone();
+            let key = h.world.key.clone();
+            let db = h.world.db.clone();
+            server.reply(move |seen, _| {
+                if seen.uri.contains("oauth-authorization-server") {
+                    let pinned = if winner == "issuer" {
+                        "https://other.example".to_string()
+                    } else {
+                        o.clone()
+                    };
+                    let endpoint = if winner == "endpoint" {
+                        format!("{o}/other-token")
+                    } else {
+                        format!("{o}/token")
+                    };
+                    assert!(store.pin_client(&pin_id, slot, "pre-1", &pinned, &endpoint).unwrap());
+                    let conn = rusqlite::Connection::open(&db).unwrap();
+                    match winner {
+                        "client" => {
+                            let column = if slot == Slot::Active {
+                                "client_id"
+                            } else {
+                                "pending_client_id"
+                            };
+                            conn.execute(
+                                &format!("UPDATE gw_oauth_clients SET {column} = 'pre-other' WHERE connection_id = ?1"),
+                                [&pin_id],
+                            )
+                            .unwrap();
+                        }
+                        "secret" => {
+                            let (column, field) = if slot == Slot::Active {
+                                ("client_secret_ciphertext", hennery_gateway::crypto::CLIENT_SECRET)
+                            } else {
+                                (
+                                    "pending_secret_ciphertext",
+                                    hennery_gateway::crypto::PENDING_CLIENT_SECRET,
+                                )
+                            };
+                            let sealed = hennery_gateway::crypto::seal(&key, &pin_id, field, b"new-secret");
+                            conn.execute(
+                                &format!("UPDATE gw_oauth_clients SET {column} = ?2 WHERE connection_id = ?1"),
+                                rusqlite::params![pin_id, sealed],
+                            )
+                            .unwrap();
+                        }
+                        "missing" => {
+                            conn.execute("DELETE FROM gw_oauth_clients WHERE connection_id = ?1", [&pin_id])
+                                .unwrap();
+                        }
+                        _ => {}
+                    }
+                    support::upstream::json(
+                        StatusCode::OK,
+                        &json!({ "issuer": o,
+                        "authorization_endpoint": format!("{o}/authorize"), "token_endpoint": format!("{o}/token"),
+                        "code_challenge_methods_supported": ["S256"] }),
+                    )
+                } else {
+                    StatusCode::NOT_FOUND.into_response()
+                }
+            });
+            let (status, _, answer) = h.authorize(&id, json!({})).await;
+            assert_eq!(
+                status,
+                if winner == "same" {
+                    StatusCode::OK
+                } else {
+                    StatusCode::CONFLICT
+                },
+                "{answer}"
+            );
+            if winner != "same" {
+                assert_eq!(answer["code"], "issuer_changed");
+            }
+        }
+    }
+}
+
+/// Cheap review note: after the pre-exchange check, a same-ID secret edit
+/// still must not be overwritten when the exchange finally finishes.
+#[tokio::test]
+async fn a_secret_changed_during_exchange_is_not_overwritten() {
+    let h = Harness::new();
+    let fake = FakeAs::start(Config {
+        gate_token: true,
+        ..Config::default()
+    })
+    .await;
+    let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthClient);
+    h.world
+        .store
+        .set_oauth_client(
+            &id,
+            "pre-1",
+            hennery_gateway::store::SecretInput::Clear,
+            &h.world.key,
+            unix_now(),
+        )
+        .unwrap();
+    let (_, headers, answer) = h.authorize(&id, json!({})).await;
+    let location = fake.consent(answer["consent_url"].as_str().unwrap()).await;
+    let cookie = flow_cookie(&headers);
+    let change = async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !fake.paths().iter().any(|p| p == "/token") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        h.world
+            .store
+            .set_oauth_client(
+                &id,
+                "pre-1",
+                hennery_gateway::store::SecretInput::Set(zeroize::Zeroizing::new("replacement-secret".into())),
+                &h.world.key,
+                unix_now(),
+            )
+            .unwrap();
+        fake.open_gate();
+    };
+    let (page, _) = tokio::join!(h.callback(&location, Some(&cookie), &[]), change);
+    assert_eq!(page.result(), "connection_changed");
+    assert_eq!(
+        h.world
+            .store
+            .oauth_clients(&id, &h.world.key)
+            .unwrap()
+            .unwrap()
+            .active
+            .unwrap()
+            .secret
+            .as_deref()
+            .map(String::as_str),
+        Some("replacement-secret")
+    );
+}
+
+#[tokio::test]
+async fn an_unreadable_connection_before_exchange_sends_nothing() {
+    let h = Harness::new();
+    let fake = FakeAs::start(Config::default()).await;
+    let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthClient);
+    h.world
+        .store
+        .set_oauth_client(
+            &id,
+            "pre-1",
+            hennery_gateway::store::SecretInput::Clear,
+            &h.world.key,
+            unix_now(),
+        )
+        .unwrap();
+    let (_, headers, answer) = h.authorize(&id, json!({})).await;
+    let location = fake.consent(answer["consent_url"].as_str().unwrap()).await;
+    h.world.raw().execute("DROP TABLE gw_oauth_clients", []).unwrap();
+    let page = h.callback(&location, Some(&flow_cookie(&headers)), &[]).await;
+    assert_eq!(
+        (page.status, page.result()),
+        (StatusCode::INTERNAL_SERVER_ERROR, "internal".into())
+    );
+    assert_eq!(fake.with(|r| r.exchanges), 0);
+}
+
+/// F2 on the merged 8e hook: purge drops only that hat's pending flows.
+#[tokio::test]
+async fn a_hat_purge_drops_its_oauth_flows() {
+    use hennery_gateway::session::{GatewayMcp, SessionMcp};
+    let h = Harness::new();
+    let fake = FakeAs::start(Config::default()).await;
+    let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthDcr);
+    let other_hat = h.world.other_hat();
+    let mut new = h.world.new_connection("other", &other_hat);
+    new.url = fake.mcp_url();
+    new.cred_kind = CredKind::OauthDcr;
+    new.internal_network = true;
+    new.hat_id = other_hat;
+    let other = h.world.connection_with(new);
+    assert_eq!(h.authorize(&id, json!({})).await.0, StatusCode::OK);
+    assert_eq!(h.authorize(&other, json!({})).await.0, StatusCode::OK);
+    assert_eq!(h.runtime.flows.live("", unix_now()), 2);
+    let gateway = GatewayState {
+        runtime: h.runtime.clone(),
+        operator: h.operator.clone(),
+    };
+    GatewayMcp::new(&gateway).purge_hat(&h.world.hat()).unwrap();
+    assert_eq!(h.runtime.flows.live("", unix_now()), 1);
+    assert!(h.world.store.connection(&id).unwrap().is_none());
+    assert!(h.world.store.connection(&other).unwrap().is_some());
 }

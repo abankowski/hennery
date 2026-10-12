@@ -107,7 +107,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
 ];
 
 /// The gateway store's statements, including stdio and OAuth clients.
-const GATEWAY_STATEMENTS: usize = 46;
+const GATEWAY_STATEMENTS: usize = 48;
 
 /// Files under `crates/*/src` with SQL that the audit does not read, and
 /// why (3b-iii review, A3). Any other such file fails
