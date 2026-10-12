@@ -35,7 +35,7 @@ async function refuseOnce(page: Page, pattern: string, method: string): Promise<
 }
 
 async function stepUp(page: Page) {
-  const dialog = page.getByRole('dialog', { name: 'This needs a fresh confirmation' })
+  const dialog = page.getByRole('dialog', { name: 'This needs a fresh confirmation', exact: true })
   await expect(dialog).toBeVisible()
   await dialog.getByLabel('Your password', { exact: true }).fill(PASSWORD)
   await dialog.getByRole('button', { name: 'Confirm', exact: true }).click()
@@ -99,7 +99,7 @@ for (const width of [1280, 390]) {
 
     test('a host is paired to mount connections on', async () => {
       await page.goto('/hosts')
-      await page.getByRole('button', { name: 'Add host' }).click()
+      await page.getByRole('button', { name: 'Add host', exact: true }).click()
       const command = (await page.getByLabel('Pairing command', { exact: true }).textContent())!
       expect(await host.join(command, ['--name', 'e2e host', '--no-runtime'])).toBe(0)
       await expect(page.getByText('Paired: e2e host', { exact: true })).toBeVisible({ timeout: 15_000 })
@@ -107,18 +107,18 @@ for (const width of [1280, 390]) {
 
     test('a connection is created after a fresh confirmation', async () => {
       await page.goto('/mcp')
-      await expect(page.getByRole('region', { name: 'How sessions get these' })).toContainText(
+      await expect(page.getByRole('region', { name: 'How sessions get these', exact: true })).toContainText(
         'Changes apply to new and resumed sessions.',
       )
       const refused = await refuseOnce(page, '**/api/mcp/connections', 'POST')
-      await page.getByRole('button', { name: 'Add connection' }).click()
-      const form = page.getByRole('region', { name: 'Add a connection' })
+      await page.getByRole('button', { name: 'Add connection', exact: true }).click()
+      const form = page.getByRole('region', { name: 'Add a connection', exact: true })
       await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Docs')
       await form.getByRole('textbox', { name: 'Slug', exact: true }).fill('docs')
       await form.getByRole('textbox', { name: 'Server URL', exact: true }).fill('https://mcp.example.com/mcp')
       await form.getByRole('button', { name: 'Create', exact: true }).click()
       await stepUp(page)
-      const card = page.getByRole('listitem', { name: 'Docs' })
+      const card = page.getByRole('listitem', { name: 'Docs', exact: true })
       await expect(card.getByRole('heading', { name: 'Docs', exact: true })).toBeFocused()
       await expect(card.getByText('hennery-docs', { exact: true })).toBeVisible()
       await expect(card.getByText('Not used yet', { exact: true })).toBeVisible()
@@ -128,17 +128,17 @@ for (const width of [1280, 390]) {
     })
 
     test('its token is set after a fresh confirmation, and is gone from the page at once', async () => {
-      const card = page.getByRole('listitem', { name: 'Docs' })
+      const card = page.getByRole('listitem', { name: 'Docs', exact: true })
       const refused = await refuseOnce(page, '**/api/mcp/connections/*/credential', 'PUT')
       const field = card.getByLabel('Token', { exact: true })
       await field.fill(TOKEN)
-      await card.getByRole('button', { name: 'Save token' }).click()
+      await card.getByRole('button', { name: 'Save token', exact: true }).click()
       await expect(field).toHaveValue('')
       await stepUp(page)
       await expect(card.getByRole('status')).toHaveText('Token saved. It is never shown again.')
       await expect(card.getByText('Set', { exact: true })).toBeVisible()
       // Focus is back where the operator left it, not on the page's body.
-      await expect(card.getByRole('button', { name: 'Save token' })).toBeFocused()
+      await expect(card.getByRole('button', { name: 'Save token', exact: true })).toBeFocused()
       expect(refused()).toBe(1)
       await page.unroute('**/api/mcp/connections/*/credential')
       expect(await page.content()).not.toContain(TOKEN)
@@ -153,7 +153,7 @@ for (const width of [1280, 390]) {
     })
 
     test('it is mounted on the host, and stays so after a reload', async () => {
-      const card = page.getByRole('listitem', { name: 'Docs' })
+      const card = page.getByRole('listitem', { name: 'Docs', exact: true })
       const tick = card.getByRole('checkbox', { name: 'e2e host', exact: true })
       await expect(tick).not.toBeChecked()
       // Ticked once the server's answer lands, not before: a click, not
@@ -163,7 +163,7 @@ for (const width of [1280, 390]) {
       await expect(tick).toBeFocused()
       await expect(page.getByRole('dialog')).toHaveCount(0)
       await page.reload()
-      await expect(page.getByRole('listitem', { name: 'Docs' }).getByRole('checkbox', { name: 'e2e host', exact: true })).toBeChecked()
+      await expect(page.getByRole('listitem', { name: 'Docs', exact: true }).getByRole('checkbox', { name: 'e2e host', exact: true })).toBeChecked()
     })
 
     test('broke no Content-Security-Policy rule', async () => {
