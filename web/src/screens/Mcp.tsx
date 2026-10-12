@@ -195,7 +195,8 @@ export default function Mcp() {
             hatName={hatName(connection.hat_id)}
             hosts={hosts.data}
             editing={editing?.id === connection.id ? editing : null}
-            editBusy={editBusy}
+            editBusy={editing?.id === connection.id && editBusy}
+            locked={editing?.id !== connection.id && editBusy}
             editError={editing?.id === connection.id ? editError : null}
             onEdit={() => {
               // A pending save still owns this form, its error and its focus.
@@ -264,6 +265,7 @@ interface CardProps {
   /** The connection as its form opened, while it is edited. */
   editing: McpConnectionItem | null
   editBusy: boolean
+  locked: boolean
   editError: string | null
   onEdit: () => void
   onSave: (form: Form, base: McpConnectionItem) => void
@@ -360,7 +362,13 @@ function ConnectionCard(props: CardProps) {
         />
       ) : (
         <div className="card-actions">
-          <button type="button" className="btn btn-ghost btn-sm" id={`${id}-edit`} onClick={props.onEdit}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            id={`${id}-edit`}
+            onClick={props.onEdit}
+            aria-disabled={props.locked}
+          >
             Edit
           </button>
           <span className="spacer" />

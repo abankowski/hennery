@@ -356,40 +356,53 @@ describe('editing a connection', () => {
   })
 
   it.each(['success', 'failure'] as const)('ignores another card’s Edit during a slow save (%s)', async (outcome) => {
-    let answer: (response: Response) => void = () => {}
-    const server = open({
-      'GET /api/mcp/connections': json(200, [
-        connection(),
-        connection({ id: 'conn-2', label: 'Other', slug: 'other' }),
-      ]),
-      [`PATCH ${ITEM}`]: () => new Promise<Response>((done) => (answer = done)),
-    })
-    const docs = await card('Docs')
-    const other = await card('Other')
-    await userEvent.click(within(docs).getByRole('button', { name: 'Edit' }))
-    await userEvent.type(within(docs).getByRole('textbox', { name: 'Name' }), '!')
-    await userEvent.click(within(docs).getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(sent(server, 'PATCH', ITEM)).toHaveLength(1))
-    await userEvent.click(within(other).getByRole('button', { name: 'Edit' }))
-    expect(within(other).queryByRole('textbox', { name: 'Name' })).toBeNull()
-    expect(within(docs).getByRole('textbox', { name: 'Name' })).toHaveValue('Docs!')
+    const removeCss = loadManageCss()
+    try {
+      let answer: (response: Response) => void = () => {}
+      const server = open({
+        'GET /api/mcp/connections': json(200, [
+          connection(),
+          connection({ id: 'conn-2', label: 'Other', slug: 'other' }),
+        ]),
+        [`PATCH ${ITEM}`]: () => new Promise<Response>((done) => (answer = done)),
+      })
+      const docs = await card('Docs')
+      const other = await card('Other')
+      const otherEdit = within(other).getByRole('button', { name: 'Edit' })
+      expect(otherEdit).toHaveAttribute('aria-disabled', 'false')
+      await userEvent.click(within(docs).getByRole('button', { name: 'Edit' }))
+      await userEvent.type(within(docs).getByRole('textbox', { name: 'Name' }), '!')
+      await userEvent.click(within(docs).getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(sent(server, 'PATCH', ITEM)).toHaveLength(1))
+      expect(otherEdit).toHaveAttribute('aria-disabled', 'true')
+      expect(otherEdit).toHaveStyle({ opacity: '0.45', cursor: 'not-allowed' })
+      expect(otherEdit).not.toBeDisabled()
+      await userEvent.click(otherEdit)
+      expect(otherEdit).toHaveFocus()
+      expect(within(other).queryByRole('textbox', { name: 'Name' })).toBeNull()
+      expect(within(docs).getByRole('textbox', { name: 'Name' })).toHaveValue('Docs!')
 
-    answer(outcome === 'success'
-      ? json(200, connection({ label: 'Docs!' }))
-      : json(400, { code: 'invalid', message: 'Docs save refused' }))
-    if (outcome === 'success') {
-      await waitFor(() => expect(within(docs).getByRole('button', { name: 'Edit' })).toHaveFocus())
-    } else {
-      expect(await within(docs).findByRole('alert')).toHaveTextContent('Docs save refused')
+      answer(outcome === 'success'
+        ? json(200, connection({ label: 'Docs!' }))
+        : json(400, { code: 'invalid', message: 'Docs save refused' }))
+      if (outcome === 'success') {
+        await waitFor(() => expect(within(docs).getByRole('button', { name: 'Edit' })).toHaveFocus())
+      } else {
+        expect(await within(docs).findByRole('alert')).toHaveTextContent('Docs save refused')
+      }
+      expect(within(other).queryByRole('alert')).toBeNull()
+      expect(otherEdit).toHaveAttribute('aria-disabled', 'false')
+      expect(getComputedStyle(otherEdit).cursor).not.toBe('not-allowed')
+      await userEvent.click(otherEdit)
+      expect(within(other).getByRole('textbox', { name: 'Name' })).toHaveValue('Other')
+      expect(within(other).getByRole('textbox', { name: 'Name' })).toHaveFocus()
+      expect(within(other).queryByRole('alert')).toBeNull()
+      await userEvent.click(within(other).getByRole('button', { name: 'Cancel' }))
+      await waitFor(() => expect(within(other).getByRole('button', { name: 'Edit' })).toHaveFocus())
+      expect(sent(server, 'PATCH', ITEM).map((request) => request.body)).toEqual([{ label: 'Docs!' }])
+    } finally {
+      removeCss()
     }
-    expect(within(other).queryByRole('alert')).toBeNull()
-    await userEvent.click(within(other).getByRole('button', { name: 'Edit' }))
-    expect(within(other).getByRole('textbox', { name: 'Name' })).toHaveValue('Other')
-    expect(within(other).getByRole('textbox', { name: 'Name' })).toHaveFocus()
-    expect(within(other).queryByRole('alert')).toBeNull()
-    await userEvent.click(within(other).getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(within(other).getByRole('button', { name: 'Edit' })).toHaveFocus())
-    expect(sent(server, 'PATCH', ITEM).map((request) => request.body)).toEqual([{ label: 'Docs!' }])
   })
 
   it('sends nothing when nothing changed', async () => {
