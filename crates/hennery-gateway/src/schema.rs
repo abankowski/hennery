@@ -146,6 +146,8 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         pending_client_id TEXT,
         pending_has_secret INTEGER NOT NULL DEFAULT 0 CHECK (pending_has_secret IN (0, 1)),
         pending_secret_ciphertext BLOB,
+        pending_key_version INTEGER,
+        pending_updated_at INTEGER,
         pending_issuer TEXT,
         pending_token_endpoint TEXT,
         FOREIGN KEY (connection_id, owner_id) REFERENCES gw_connections(id, owner_id));

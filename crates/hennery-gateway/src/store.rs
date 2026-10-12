@@ -468,23 +468,30 @@ impl GatewayStore {
             [id, &self.owner],
             |r| r.get(0),
         )?;
-        type Row = (String, Option<u32>, Option<Vec<u8>>, Option<String>, Option<Vec<u8>>);
+        type Row = (
+            String,
+            Option<u32>,
+            Option<Vec<u8>>,
+            Option<String>,
+            Option<Vec<u8>>,
+            Option<u32>,
+        );
         let stored: Option<Row> = tx
             .query_row(
-                "SELECT client_id, key_version, client_secret_ciphertext, pending_client_id, pending_secret_ciphertext
+                "SELECT client_id, key_version, client_secret_ciphertext, pending_client_id, pending_secret_ciphertext, pending_key_version
                  FROM gw_oauth_clients WHERE connection_id = ?1 AND owner_id = ?2",
                 [id, &self.owner],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
             )
             .optional()?;
         // The client this replaces, and its secret, opened.
         let replaced: Option<(String, Option<Zeroizing<String>>)> = match &stored {
             None => None,
-            Some((_, version, _, Some(pending), pending_blob)) => Some((
+            Some((_, _, _, Some(pending), pending_blob, version)) => Some((
                 pending.clone(),
                 open_secret(key, id, PENDING_CLIENT_SECRET, *version, pending_blob)?,
             )),
-            Some((active, version, blob, None, _)) => {
+            Some((active, version, blob, None, _, _)) => {
                 Some((active.clone(), open_secret(key, id, CLIENT_SECRET, *version, blob)?))
             }
         };
@@ -508,9 +515,9 @@ impl GatewayStore {
             tx.execute(
                 "UPDATE gw_oauth_clients SET pending_client_id = ?3, pending_has_secret = ?4,
                      pending_secret_ciphertext = ?5, pending_issuer = NULL, pending_token_endpoint = NULL,
-                     key_version = ?6
+                     pending_key_version = ?6, pending_updated_at = ?7
                  WHERE connection_id = ?1 AND owner_id = ?2",
-                params![id, self.owner, client_id, has_secret, sealed, key.version()],
+                params![id, self.owner, client_id, has_secret, sealed, key.version(), now],
             )?;
         } else {
             let sealed = secret
@@ -527,7 +534,7 @@ impl GatewayStore {
                      authorization_endpoint = NULL, token_endpoint = NULL, redirect_uri = NULL, scopes = NULL,
                      resource = NULL, resource_param_accepted = 1, registered_at = excluded.registered_at,
                      pending_client_id = NULL, pending_has_secret = 0, pending_secret_ciphertext = NULL,
-                     pending_issuer = NULL, pending_token_endpoint = NULL
+                     pending_issuer = NULL, pending_token_endpoint = NULL, pending_key_version = NULL, pending_updated_at = NULL
                      WHERE gw_oauth_clients.owner_id = excluded.owner_id",
                 params![id, self.owner, client_id, has_secret, sealed, key.version(), now],
             )?;
@@ -565,12 +572,13 @@ impl GatewayStore {
             Option<Vec<u8>>,
             Option<String>,
             Option<String>,
+            Option<u32>,
         );
         let row: Option<Row> = conn
             .query_row(
                 "SELECT client_id, key_version, client_secret_ciphertext, token_endpoint_auth_method, issuer,
                         token_endpoint, redirect_uri, pending_client_id, pending_secret_ciphertext, pending_issuer,
-                        pending_token_endpoint
+                        pending_token_endpoint, pending_key_version
                  FROM gw_oauth_clients WHERE connection_id = ?1 AND owner_id = ?2",
                 [id, &self.owner],
                 |r| {
@@ -586,6 +594,7 @@ impl GatewayStore {
                         r.get(8)?,
                         r.get(9)?,
                         r.get(10)?,
+                        r.get(11)?,
                     ))
                 },
             )
@@ -603,6 +612,7 @@ impl GatewayStore {
             pending_blob,
             pending_issuer,
             pending_token_endpoint,
+            pending_version,
         )) = row
         else {
             return Ok(Some(ClientSlots {
@@ -621,7 +631,7 @@ impl GatewayStore {
         };
         let pending = match pending_id {
             Some(client_id) => Some(ClientSlot {
-                secret: open_secret(key, id, PENDING_CLIENT_SECRET, version, &pending_blob)?,
+                secret: open_secret(key, id, PENDING_CLIENT_SECRET, pending_version, &pending_blob)?,
                 client_id,
                 auth_method: None,
                 issuer: pending_issuer,
@@ -662,6 +672,33 @@ impl GatewayStore {
             .conn()
             .execute(sql, params![id, self.owner, client_id, issuer, token_endpoint])?
             == 1)
+    }
+
+    /// Security review F2: an unlocked pre-exchange check. This is only
+    /// an early refusal; store_grant repeats the check under the lock.
+    pub fn flow_matches(&self, snapshot: &crate::flows::Snapshot, key: &MasterKey) -> Result<bool> {
+        let conn = self.conn();
+        let current: Option<(String, String, bool)> = conn
+            .query_row(
+                "SELECT url, cred_kind, internal_network FROM gw_connections WHERE id = ?1 AND owner_id = ?2",
+                [&snapshot.connection_id, &self.owner],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((url, kind, internal)) = current else {
+            return Ok(false);
+        };
+        if url != snapshot.url || kind != snapshot.cred_kind.as_str() || internal != snapshot.internal_network {
+            return Ok(false);
+        }
+        client_matches(
+            &conn,
+            &self.owner,
+            &snapshot.connection_id,
+            snapshot.source,
+            &snapshot.client,
+            key,
+        )
     }
 
     /// An OAuth connection's grant with where it goes and how it is
@@ -802,23 +839,7 @@ impl GatewayStore {
         if url != grant.url || kind != grant.cred_kind.as_str() || internal_network != grant.internal_network {
             return Ok(GrantStored::ConnectionChanged);
         }
-        let clients: Option<(String, Option<String>)> = tx
-            .query_row(
-                "SELECT client_id, pending_client_id FROM gw_oauth_clients WHERE connection_id = ?1 AND owner_id = ?2",
-                [id, &self.owner],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        let same_client = match grant.source {
-            ClientSource::Registered => true,
-            ClientSource::Active => {
-                matches!(&clients, Some((active, None)) if *active == grant.client.client_id)
-            }
-            ClientSource::Pending => {
-                matches!(&clients, Some((_, Some(pending))) if *pending == grant.client.client_id)
-            }
-        };
-        if !same_client {
+        if !client_matches(&tx, &self.owner, id, grant.source, grant.client, key)? {
             return Ok(GrantStored::ConnectionChanged);
         }
         let secret = grant
@@ -840,7 +861,7 @@ impl GatewayStore {
                  redirect_uri = excluded.redirect_uri, scopes = excluded.scopes, resource = excluded.resource,
                  resource_param_accepted = excluded.resource_param_accepted, registered_at = excluded.registered_at,
                  pending_client_id = NULL, pending_has_secret = 0, pending_secret_ciphertext = NULL,
-                 pending_issuer = NULL, pending_token_endpoint = NULL
+                 pending_issuer = NULL, pending_token_endpoint = NULL, pending_key_version = NULL, pending_updated_at = NULL
                  WHERE gw_oauth_clients.owner_id = excluded.owner_id",
             params![
                 id,
@@ -963,6 +984,15 @@ impl GatewayStore {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
+        let pending: Option<(String, u32, Vec<u8>)> = conn
+            .query_row(
+                "SELECT connection_id, pending_key_version, pending_secret_ciphertext FROM gw_oauth_clients
+                 WHERE owner_id = ?1 AND pending_secret_ciphertext IS NOT NULL
+                 ORDER BY pending_updated_at DESC, connection_id LIMIT 1",
+                [&self.owner],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
         drop(conn);
         let refused = |id: &str| {
             format!(
@@ -981,6 +1011,11 @@ impl GatewayStore {
         }
         if let Some((id, version, blob)) = secret {
             crypto::open(key, &id, CLIENT_SECRET, version, &blob)
+                .map(drop)
+                .with_context(|| refused(&id))?;
+        }
+        if let Some((id, version, blob)) = pending {
+            crypto::open(key, &id, PENDING_CLIENT_SECRET, version, &blob)
                 .map(drop)
                 .with_context(|| refused(&id))?;
         }
@@ -1161,6 +1196,50 @@ pub enum GrantStored {
     /// The connection was edited, deleted or given another client since
     /// the flow started: nothing was stored.
     ConnectionChanged,
+}
+
+// The ID alone is not a generation: a same-ID secret edit also invalidates
+// a consumed flow. Called on the same transaction that writes the grant.
+fn client_matches(
+    conn: &Connection,
+    owner: &str,
+    id: &str,
+    source: ClientSource,
+    client: &TokenClient,
+    key: &MasterKey,
+) -> Result<bool> {
+    if source == ClientSource::Registered {
+        return Ok(true);
+    }
+    type Row = (
+        String,
+        Option<String>,
+        Option<u32>,
+        Option<Vec<u8>>,
+        Option<u32>,
+        Option<Vec<u8>>,
+    );
+    let row: Option<Row> = conn
+        .query_row(
+            "SELECT client_id, pending_client_id, key_version, client_secret_ciphertext, pending_key_version,
+                pending_secret_ciphertext FROM gw_oauth_clients WHERE connection_id = ?1 AND owner_id = ?2",
+            [id, owner],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .optional()?;
+    let Some((active, pending, version, blob, pending_version, pending_blob)) = row else {
+        return Ok(false);
+    };
+    let secret = match source {
+        ClientSource::Active if pending.is_none() && active == client.client_id => {
+            open_secret(key, id, CLIENT_SECRET, version, &blob)?
+        }
+        ClientSource::Pending if pending.as_deref() == Some(client.client_id.as_str()) => {
+            open_secret(key, id, PENDING_CLIENT_SECRET, pending_version, &pending_blob)?
+        }
+        _ => return Ok(false),
+    };
+    Ok(secret == client.secret)
 }
 
 /// A secret column opened under `field`; `None` when there is none.

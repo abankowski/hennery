@@ -109,6 +109,7 @@ impl SessionMcp for NoSessionMcp {
 /// The collector's gateway, on the same `hennery.db` as the sessions
 /// store, whose transactions it is handed.
 pub struct GatewayMcp {
+    runtime: Arc<crate::runtime::Runtime>,
     store: Arc<GatewayStore>,
     key: Arc<MasterKey>,
     operator: Arc<Operator>,
@@ -120,6 +121,7 @@ impl GatewayMcp {
     /// `Revocations` its proxy watches.
     pub fn new(gateway: &GatewayState) -> Self {
         Self {
+            runtime: gateway.runtime.clone(),
             store: gateway.runtime.store.clone(),
             key: gateway.runtime.key.clone(),
             operator: gateway.operator.clone(),
@@ -220,7 +222,19 @@ impl SessionMcp for GatewayMcp {
     }
 
     fn purge_hat(&self, hat_id: &str) -> Result<()> {
+        // The kernel has frozen the hat before this hook (kernel §5.5).
+        // Do not take asynchronous refresh locks in this synchronous purge.
+        let ids: Vec<_> = self
+            .store
+            .list()?
+            .into_iter()
+            .filter(|connection| connection.hat_id == hat_id)
+            .map(|connection| connection.id)
+            .collect();
         let cut = self.store.purge_hat(hat_id)?;
+        for id in ids {
+            self.runtime.flows.drop_connection(&id);
+        }
         self.revocations.cut(cut);
         Ok(())
     }

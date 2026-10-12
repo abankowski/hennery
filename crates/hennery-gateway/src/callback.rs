@@ -340,6 +340,27 @@ async fn finish(
             "The authorization server answered with no code.",
         );
     };
+    // Security review F2: refuse a stale snapshot before disclosing its
+    // code or secret. A purge cannot take the refresh lock; persistence
+    // still re-checks in its transaction after the exchange.
+    match runtime.store.flow_matches(snapshot, &runtime.key) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Outcome::failed(
+                StatusCode::BAD_REQUEST,
+                "connection_changed",
+                "The connection was changed while this sign-in ran. Start it again.",
+            );
+        }
+        Err(err) => {
+            tracing::error!(connection_id = %snapshot.connection_id, error = %err, "gateway: the flow's connection not read");
+            return Outcome::failed(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "Something went wrong in hennery.",
+            );
+        }
+    }
     // 7. The exchange: the verifier and `resource` as recorded; the token
     // endpoint's body is never logged or echoed.
     let client = runtime.client(snapshot.internal_network);
