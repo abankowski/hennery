@@ -37,8 +37,8 @@ async function refuseOnce(page: Page, pattern: string, method: string): Promise<
 async function stepUp(page: Page) {
   const dialog = page.getByRole('dialog', { name: 'This needs a fresh confirmation' })
   await expect(dialog).toBeVisible()
-  await dialog.getByLabel('Your password').fill(PASSWORD)
-  await dialog.getByRole('button', { name: 'Confirm' }).click()
+  await dialog.getByLabel('Your password', { exact: true }).fill(PASSWORD)
+  await dialog.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(dialog).toBeHidden()
 }
 
@@ -100,9 +100,9 @@ for (const width of [1280, 390]) {
     test('a host is paired to mount connections on', async () => {
       await page.goto('/hosts')
       await page.getByRole('button', { name: 'Add host' }).click()
-      const command = (await page.getByLabel('Pairing command').textContent())!
+      const command = (await page.getByLabel('Pairing command', { exact: true }).textContent())!
       expect(await host.join(command, ['--name', 'e2e host', '--no-runtime'])).toBe(0)
-      await expect(page.getByText('Paired: e2e host')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByText('Paired: e2e host', { exact: true })).toBeVisible({ timeout: 15_000 })
     })
 
     test('a connection is created after a fresh confirmation', async () => {
@@ -146,7 +146,10 @@ for (const width of [1280, 390]) {
       expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain(TOKEN)
       // The server answers whether one is stored, never the token.
       const listed = await page.request.get('/api/mcp/connections', { headers: { Origin: collector.origin } })
-      expect(await listed.text()).not.toContain(TOKEN)
+      expect(listed.status()).toBe(200)
+      const body = await listed.text()
+      expect(body).not.toContain(TOKEN)
+      expect(JSON.parse(body)).toEqual([expect.objectContaining({ slug: 'docs', has_credential: true })])
     })
 
     test('it is mounted on the host, and stays so after a reload', async () => {
