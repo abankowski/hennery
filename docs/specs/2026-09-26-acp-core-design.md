@@ -41,24 +41,36 @@ The Cargo workspace (Rust, umbrella §9.1):
 | `hennery` | bin | CLI (including `hennery mcp apply`, which wires the gateway's renderers), supervisor, wiring. |
 | `hennery-testkit` | lib + bin (dev only) | The fake ACP adapter (§12) and shared test helpers. Never a dependency of a shipped crate. |
 
-*Built so far:* the `hennery-gateway` crate exists (plan 8a): connections,
-mounts and static credentials at rest, and their API. No `SessionMcp` trait
-yet (plan 8e), so `hennery-sessions` does not depend on the gateway; the
-binary merges the two routers side by side.
+*Built so far:* the `hennery-gateway` crate (plans 8a–8d): connections,
+mounts and static credentials at rest, their API, and the proxy. Plan 8e
+built `SessionMcp` as below, amended: the sessions store calls it inside its
+own transitions' transactions (gateway spec §3.1, §3.2).
 
 **Sessions → gateway interface.** `hennery-sessions` obtains a session's MCP
 servers through a trait that `hennery-gateway` defines and implements:
 
 ```rust
 trait SessionMcp {
-    /// Mints the per-session gateway token and returns the servers to pass
-    /// in `session/new` / `session/load` for this session.
-    fn servers_for(&self, host_id: HostId, hat_id: HatId, session_id: SessionId)
-        -> Result<Vec<McpServerSpec>>;
-    /// Revokes the session's token (park, close, adapter exit, host revoke).
-    fn revoke(&self, session_id: SessionId);
+    /// In the start's or resume's transaction: for a delivering `mode`,
+    /// mints the per-session gateway token and returns the servers to pass
+    /// in `session/new` / `session/load`; otherwise none, and the previous
+    /// token revoked. An error rolls the transition back.
+    fn servers_in(&self, tx: &Transaction<'_>, session: SessionRef<'_>, mode: McpSessionDeliveryMode)
+        -> Result<Delivered>;
+    /// Revokes the session's token in the caller's transaction (park,
+    /// close, adapter exit, re-assignment, delete, a failed start or resume).
+    fn revoke_in(&self, tx: &Transaction<'_>, session_id: &str) -> Result<Cut>;
+    /// Revokes every live token of a host (host revoke).
+    fn revoke_host_in(&self, tx: &Transaction<'_>, host_id: &str) -> Result<Cut>;
+    /// Ends what is open on the tokens a committed transaction invalidated.
+    fn cut(&self, cut: Cut);
+    /// The gateway's part of a hat's purge (kernel §5.5).
+    fn purge_hat(&self, hat_id: &str) -> Result<()>;
 }
 ```
+
+The sessions module decides the delivery (umbrella §8.5) and passes it in;
+it owns `sessions.hat_id`.
 
 The dependency points sessions → gateway; the gateway never sees session
 types. In `hennery gateway` (standalone) the trait is simply unused.
@@ -482,12 +494,15 @@ since plan 5b: probes, answered only by the connection they went out on.
   `session/load` with each agent's isolation, and refuses those it cannot
   isolate unless waived (`mcp_isolation_unavailable`). `mcp_servers[]`,
   `isolation_waived` and `hat_id` have been on the wire since plan 8c; the
-  collector sends no servers until the gateway mints them (plan 8e).
+  collector sends servers, minted by the gateway, since plan 8e, only to a
+  host that announces this capability.
 - `mcp_isolation` (plan 8c): per agent id, how the host keeps its sessions to
   the servers it is given: `claude_strict` (the strict flag, §6) or `none`.
   An agent left out is `none`. Deserialized leniently like `capabilities`:
-  an unknown value reads as `none`, never as isolated. The collector keeps
-  it with the live connection (the hub), not in the host registry.
+  an unknown value reads as `none`, never as isolated. The collector decides
+  delivery from what the live connection announced (the hub), and records
+  the latest accepted `hello`'s in the host registry for the host list
+  (`hosts.mcp_isolation`, plan 8e).
 - `agents[]`: per agent `{id, version, available, auth, catalog}` where
   `catalog` is the profile's **static default catalogue** (§6), so the
   New-session pickers work before the first session on a host exists.
@@ -758,7 +773,8 @@ the resume.
 
 **Built so far:** the first prompt is not built yet; start and resume carry
 agent, cwd, the config, the hat and (plan 8c) the MCP servers with Claude's
-`_meta`. The collector sends no servers until plan 8e.
+`_meta`. Since plan 8e the collector sends the session's servers
+(gateway spec §3.2).
 
 **Config axes.** Axes are ACP config options, and model and mode are two of
 them. The model is the option in category `model`; without one, the option
@@ -1089,8 +1105,14 @@ is killed before the final fact.
   attaches a fresh adapter (§2.2). The reachable case is reconciliation's
   `close_session` followed at once by an operator's resume.
 - The session's gateway token is revoked on host-reported `session_parked`
-  and `session_closed`, on adapter exit, on a close of an unattached session
-  and on host revoke (`SessionMcp::revoke`). A presumed park
+  and `session_closed`, on adapter exit, on a close of an unattached session,
+  on host revoke, on re-assignment, on delete, on a failed start or resume
+  (the route's, a host's `start_failed`, reconciliation's
+  `start_not_delivered`) and on reconciliation's park or close of a session
+  its restarted host no longer has (`SessionMcp::revoke_in`,
+  `revoke_host_in`), in the
+  transition's transaction; what was open on it is cut once that commits
+  (gateway spec §3.1). A presumed park
   (`presumed_parked{host_offline}`) does **not** revoke it: the host may still
   be running the session, which would then return with a dead token and no
   resume to mint a new one.
@@ -1570,7 +1592,10 @@ shipped):
    agent, agent session id, home, state, attempts, last result) — the
    agent's transcript on its host (9d-i);
 15. `host_forgets.app_server_timeouts` (an integer, default 0, no backfill):
-   Codex app-server timeouts in a row, for the bounded hybrid (9d-ii).
+   Codex app-server timeouts in a row, for the bounded hybrid (9d-ii);
+16. `sessions.mcp_delivery_mode`, `mcp_delivery_servers` and
+   `mcp_delivery_at`: what the latest start or resume was given, the mode
+   and a count (plan 8e decision E10). A delete scrubs them.
 
 `sessions` has no `hat_id`, `source_kind`, `title`, git columns or
 `last_event_id` yet, `turns` keeps only `content`, `state`, `outcome` and its
@@ -1647,7 +1672,9 @@ other tables arrive with the plans that need them.
   `turn_ended.error`, `host_note`, the stderr tail of `adapter_exited`, its
   `error` answers and its own log lines. Whether ACP payloads are redacted
   too (a token an agent prints into a tool's output, against §2.3's
-  verbatim payloads) is open, for the maintainer before plan 8e.
+  verbatim payloads) was the maintainer's open question; plan 8e took the
+  default, reversible: a session token in an ACP payload is stored and
+  published redacted by shape (gateway spec §3.1, plan 8e decision 11).
 
 ---
 
@@ -1659,12 +1686,12 @@ All endpoints require an operator session (kernel spec §3). Types come from
 | Method & path | Purpose |
 |---|---|
 | `GET /api/sessions?cursor&limit&q&hat&lifecycle` | Paginated list, newest `last_event_at` first. `q` searches title, cwd, branch, id across all sessions regardless of filters except hat. Each item carries `hat_id` (`''`: a session from before hats that got none). `hat=<id>` lists that hat's sessions (an unknown hat lists none); an empty `hat=` is 400 `invalid` (plan 5c). |
-| `POST /api/sessions` | Start: `{host_id, agent, cwd, model?, mode?, axes?, first_prompt?{content[]}}` → 202 `{session_id, turn_id?}` once `session_started` is ingested; 400 `unknown_host`; 400 `invalid_cwd`; 409 `hat_ambiguous`; 409 `host_offline` (no session is created, plan 5c); 502 with the host's code (`start_failed`, `unknown_agent`, …); 503 `delivery_unknown` **with `session_id`** (the session exists and may still start; the caller has no other way to learn its id). |
-| `GET /api/sessions/{id}` | Session detail `SessionDetail`: the list item (lifecycle, activity, failure reason, `presumed_parked`), the open turn `{turn_id, state: sent \| started}`, and `pending[]`: the open questions as `PendingItem {pending_id, session_id, kind, state, reason?, turn_id?, option_ids?, payload, answered, delivered?}`, oldest first (`answered`: an answer is queued; `delivered`: its verdict, absent until one comes). |
+| `POST /api/sessions` | Start: `{host_id, agent, cwd, model?, mode?, axes?, first_prompt?{content[]}}` → 202 `{session_id, turn_id?}` once `session_started` is ingested; 400 `unknown_host`; 400 `invalid_cwd`; 409 `hat_ambiguous`; 409 `host_offline` (no session is created, plan 5c); 409 `mcp_isolation_unavailable`, whether the hub or the host refused the session's MCP servers (the session becomes `failed` with it; plan 8e); 502 with the host's code (`start_failed`, `unknown_agent`, …); 503 `delivery_unknown` **with `session_id`** (the session exists and may still start; the caller has no other way to learn its id). |
+| `GET /api/sessions/{id}` | Session detail `SessionDetail`: the list item (lifecycle, activity, failure reason, `presumed_parked`), the open turn `{turn_id, state: sent \| started}`, `mcp_delivery?` (what its latest start or resume was given, plan 8e: `McpSessionDelivery {mode: isolated \| unisolated \| fallback \| unsupported, servers, at}`, a mode and a count, never a token; absent for a session not started or resumed since), and `pending[]`: the open questions as `PendingItem {pending_id, session_id, kind, state, reason?, turn_id?, option_ids?, payload, answered, delivered?}`, oldest first (`answered`: an answer is queued; `delivered`: its verdict, absent until one comes). |
 | `GET /api/sessions/{id}/events?before=<event_id>&limit` | Timeline page ending before an event; without `before`, the tail. The frontend opens at the tail. |
 | `GET /api/sessions/{id}/events?after=<event_id>&limit` | Timeline page after an event (applied rows only, §8). |
 | `GET /api/sessions/{id}/catalog` | `SessionCatalog {session_id, config_options[], model?, mode?, axes{}}`; commands, plan and usage join it with the plans that produce them. |
-| `POST /api/sessions/{id}/resume` | 202 `LifecycleResponse {session_id, lifecycle}` once `session_started` is ingested; 409 `starting` / `active` (its lifecycle); 409 `agent_has_no_record` (no agent session id, host not contacted); 409 `host_offline` (nothing changes); 409 `hat_mismatch`, `cwd_moved`, `hat_ambiguous` (§4.3); 400 `invalid_cwd`; 502 with the host's code for any rejection or `start_failed` (the session becomes `failed` with it); 503 `delivery_unknown` (stays `starting`, reconciled like a start). |
+| `POST /api/sessions/{id}/resume` | 202 `LifecycleResponse {session_id, lifecycle}` once `session_started` is ingested; 409 `starting` / `active` (its lifecycle); 409 `agent_has_no_record` (no agent session id, host not contacted); 409 `host_offline` (nothing changes); 409 `hat_mismatch`, `cwd_moved`, `hat_ambiguous` (§4.3); 400 `invalid_cwd`; 409 `mcp_isolation_unavailable`, whether the hub or the host refused its MCP servers (the session becomes `failed` with it; plan 8e); 502 with the host's code for any other rejection or `start_failed` (the session becomes `failed` with it); 503 `delivery_unknown` (stays `starting`, reconciled like a start). |
 | `POST /api/sessions/{id}/prompt` | `{content[]}` → 202 `{turn_id}` once `turn_started` is ingested; 409 `not_attached` (not `active`) / `host_offline` (host not ready) / `turn_in_progress` / `images_unsupported` (the host lacks `images`, nothing sent; or its agent takes none); 400 `empty_prompt`, 400 `invalid_content` (a block other than text or image, an image of another type, or bytes that are not the type they claim), 400 `invalid` (host); 413 `content_too_large` (§11's image and text limits; a body over 24 MiB gets 413 `body_too_large`); 503 `delivery_unknown` (the turn stays open until reconciled). Everything the collector refuses is checked before a turn opens or a file is written, except the host's per-agent refusal, a failed send and a turn that opens between the files and the turn row, which leave the prompt's images stored but unreferenced. |
 | `POST /api/sessions/{id}/cancel` | Cancel the open turn → 202 `CancelResponse {turn_id, outcome}` once that turn's `turn_ended` is ingested, with its real outcome (`cancelled`; `completed` or `failed` if it ended first; `interrupted` if the session was parked or closed meanwhile, or its adapter exited); 409 `not_attached` / `no_open_turn` / `not_running` (§4.4). |
 | `POST /api/sessions/{id}/park` | Explicit park → 202 `LifecycleResponse` once `session_parked` is ingested; 409 `not_attached` (not `active`, or host not ready); 409 `park_unsupported` (host lacks the `park` capability, nothing sent). |
