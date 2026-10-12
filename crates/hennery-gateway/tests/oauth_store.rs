@@ -67,7 +67,7 @@ async fn each_secret_is_sealed_under_its_own_field() {
     assert!(crypto::open(&w.key, &id, STATIC_TOKEN, version, &grant).is_err());
     let (version, pending) = blob(
         &w,
-        "SELECT key_version, pending_secret_ciphertext FROM gw_oauth_clients WHERE connection_id = ?1",
+        "SELECT pending_key_version, pending_secret_ciphertext FROM gw_oauth_clients WHERE connection_id = ?1",
         &id,
     );
     assert_eq!(
@@ -475,17 +475,20 @@ async fn a_completed_connect_leaves_no_stale_columns() {
     w.store
         .set_oauth_error(&id, Some(("consent_denied", "x")), unix_now())
         .unwrap();
-    let columns = || -> (Option<i64>, Option<String>, Option<String>) {
+    type Columns = (Option<i64>, Option<String>, Option<String>, Option<u32>, Option<i64>);
+    let columns = || -> Columns {
         w.raw()
             .query_row(
-                "SELECT c.oauth_error_at, o.pending_issuer, o.pending_token_endpoint
+                "SELECT c.oauth_error_at, o.pending_issuer, o.pending_token_endpoint, o.pending_key_version, o.pending_updated_at
                  FROM gw_connections c JOIN gw_oauth_clients o ON o.connection_id = c.id WHERE c.id = ?1",
                 [&id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .unwrap()
     };
     assert!(columns().0.is_some());
+    assert!(columns().3.is_some());
+    assert!(columns().4.is_some());
     // The pending client's Connect completes.
     let (access, refresh) = fake.issue();
     let tokens = hennery_gateway::model::GrantTokens {
@@ -524,7 +527,7 @@ async fn a_completed_connect_leaves_no_stale_columns() {
         )
         .unwrap();
     assert!(matches!(stored, hennery_gateway::store::GrantStored::Stored(_)));
-    assert_eq!(columns(), (None, None, None));
+    assert_eq!(columns(), (None, None, None, None, None));
     // Clearing a failure clears its time.
     w.store
         .set_oauth_error(&id, Some(("consent_denied", "x")), unix_now())
@@ -565,7 +568,7 @@ fn a_pending_secret_alone_counts_as_ciphertext() {
     w.raw()
         .execute(
             "UPDATE gw_oauth_clients SET pending_client_id = 'pre-2', pending_has_secret = 1,
-                 pending_secret_ciphertext = x'0102', key_version = 1 WHERE connection_id = ?1",
+                 pending_secret_ciphertext = x'0102', pending_key_version = 1 WHERE connection_id = ?1",
             [&id],
         )
         .unwrap();
@@ -629,4 +632,119 @@ fn traffic_and_checks_record_only_for_the_url_reached() {
     assert_eq!(checked(), Some(400));
     w.proxy_store.record_traffic_ok(&id, url, 460).unwrap();
     assert_eq!(checked(), Some(460));
+}
+
+/// F4: a pending PUT has its own key version; it never relabels the active blob.
+#[tokio::test]
+async fn a_pending_secret_has_its_own_key_version() {
+    let w = World::new();
+    let fake = FakeAs::start(Config::default()).await;
+    let id = w.connection("linear", &fake.mcp_url(), CredKind::OauthClient);
+    let (a, r) = fake.issue();
+    seed_grant(&w, &id, &fake, &a, Some(&r), None);
+    w.raw()
+        .execute(
+            "UPDATE gw_oauth_clients SET key_version = 73 WHERE connection_id = ?1",
+            [&id],
+        )
+        .unwrap();
+    w.store
+        .set_oauth_client(
+            &id,
+            "pre-new",
+            SecretInput::Set(Zeroizing::new("pending-secret".into())),
+            &w.key,
+            500,
+        )
+        .unwrap();
+    let active: u32 = w
+        .raw()
+        .query_row(
+            "SELECT key_version FROM gw_oauth_clients WHERE connection_id = ?1",
+            [&id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 73);
+    let (version, sealed) = blob(
+        &w,
+        "SELECT pending_key_version, pending_secret_ciphertext FROM gw_oauth_clients WHERE connection_id = ?1",
+        &id,
+    );
+    assert_eq!(version, w.key.version());
+    assert_eq!(
+        &*crypto::open(&w.key, &id, PENDING_CLIENT_SECRET, version, &sealed).unwrap(),
+        b"pending-secret"
+    );
+    let slots = w.store.oauth_clients(&id, &w.key).unwrap().unwrap();
+    assert_eq!(
+        slots.pending.unwrap().secret.as_deref().map(String::as_str),
+        Some("pending-secret")
+    );
+    w.store
+        .set_oauth_client(&id, "pre-new", SecretInput::Keep, &w.key, 600)
+        .unwrap();
+}
+
+/// F4: a public active client + a live grant can still hold a damaged pending
+/// secret; checking the grant alone must not let the collector start.
+#[tokio::test]
+async fn the_key_check_opens_the_newest_pending_secret() {
+    let w = World::new();
+    let fake = FakeAs::start(Config::default()).await;
+    for (slug, at) in [("first", 500), ("newest", 600)] {
+        let id = w.connection(slug, &fake.mcp_url(), CredKind::OauthClient);
+        let (a, r) = fake.issue();
+        seed_grant(&w, &id, &fake, &a, Some(&r), None);
+        w.store
+            .set_oauth_client(
+                &id,
+                "pre-new",
+                SecretInput::Set(Zeroizing::new("pending-secret".into())),
+                &w.key,
+                at,
+            )
+            .unwrap();
+        w.store.check_key(&w.key).unwrap();
+        w.raw()
+            .execute(
+                "UPDATE gw_oauth_clients SET pending_secret_ciphertext = x'00' WHERE connection_id = ?1",
+                [&id],
+            )
+            .unwrap();
+        if slug == "newest" {
+            assert!(w.store.check_key(&w.key).is_err());
+        }
+    }
+}
+
+/// Removing a grant does not make a pending client's old version/timestamp
+/// survive the next client PUT (the no-grant upsert).
+#[tokio::test]
+async fn a_client_put_without_a_grant_clears_pending_key_columns() {
+    let w = World::new();
+    let fake = FakeAs::start(Config::default()).await;
+    let id = w.connection("linear", &fake.mcp_url(), CredKind::OauthClient);
+    let (a, r) = fake.issue();
+    seed_grant(&w, &id, &fake, &a, Some(&r), None);
+    w.store
+        .set_oauth_client(&id, "pre-new", SecretInput::Clear, &w.key, 500)
+        .unwrap();
+    let columns = || -> (Option<u32>, Option<i64>) {
+        w.raw()
+            .query_row(
+                "SELECT pending_key_version, pending_updated_at FROM gw_oauth_clients WHERE connection_id = ?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+    };
+    assert_eq!(columns(), (Some(w.key.version()), Some(500)));
+    w.raw()
+        .execute("DELETE FROM gw_credentials WHERE connection_id = ?1", [&id])
+        .unwrap();
+    w.store
+        .set_oauth_client(&id, "pre-new", SecretInput::Clear, &w.key, 600)
+        .unwrap();
+    assert_eq!(columns(), (None, None));
 }

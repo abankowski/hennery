@@ -26,6 +26,7 @@ const PATH_CANARY: &str = "pathcanary0a1b2c3d";
 const QUERY_CANARY: &str = "querycanary4e5f6a7b";
 const SECRET_CANARY: &str = "secretcanary8c9d0e1f";
 const BODY_CANARY: &str = "bodycanary2a3b4c5d";
+const VENDOR_CANARY: &str = "vendorcanary-failure";
 const TOKEN_PREFIX: &str = "tokcanary6e7f8a9b-";
 
 #[derive(Clone, Default)]
@@ -191,6 +192,111 @@ async fn no_url_secret_code_verifier_token_or_client_secret_is_logged_or_answere
     assert_eq!(resp.status(), 502);
     let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
     answers.borrow_mut().push_str(&String::from_utf8_lossy(&bytes));
+
+    // F6: exercise each callback failure, asserting its verdict so a dead
+    // branch cannot make the hygiene assertion pass.
+    let start = async || {
+        let (headers, text) = call(
+            "POST",
+            &format!("/api/mcp/connections/{id}/authorize"),
+            Some(json!({})),
+            None,
+        )
+        .await;
+        let answer: Value = serde_json::from_str(&text).unwrap();
+        let consent = answer["consent_url"].as_str().expect("authorize succeeded").to_string();
+        let flow = headers
+            .split("set-cookie\": \"")
+            .nth(1)
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        (fake.consent(&consent).await, flow)
+    };
+    fake.configure(|c| c.deny = Some(VENDOR_CANARY.into()));
+    let (location, flow) = start().await;
+    let (_, page) = call("GET", location.strip_prefix(ORIGIN).unwrap(), None, Some(flow)).await;
+    assert!(page.contains("data-result=\"consent_denied\""));
+    assert!(
+        page.contains(VENDOR_CANARY),
+        "vendor provenance is shown as escaped text"
+    );
+    fake.configure(|c| c.deny = None);
+    let (location, flow) = start().await;
+    let mut location = url::Url::parse(&location).unwrap();
+    let pairs: Vec<_> = location
+        .query_pairs()
+        .map(|(k, v)| {
+            let value = if k == "code" {
+                format!("{TOKEN_PREFIX}unknown")
+            } else {
+                v.into_owned()
+            };
+            (k.into_owned(), value)
+        })
+        .collect();
+    location.set_query(None);
+    location.query_pairs_mut().extend_pairs(pairs);
+    let (_, page) = call("GET", location.as_str().strip_prefix(ORIGIN).unwrap(), None, Some(flow)).await;
+    assert!(page.contains("data-result=\"exchange_failed\""));
+    assert!(!page.contains(BODY_CANARY));
+    // With iss advertised, split endpoints are allowed, but the exchange
+    // still uses egress. Userinfo is refused under every allowance.
+    fake.configure(|c| {
+        c.iss_parameter = true;
+        c.token_endpoint = Some(format!(
+            "https://u:p@127.0.0.1:{}/{PATH_CANARY}?q={QUERY_CANARY}",
+            fake.addr.port()
+        ));
+    });
+    world
+        .store
+        .set_oauth_client(
+            &id,
+            "pre-1",
+            hennery_gateway::store::SecretInput::Set(zeroize::Zeroizing::new(SECRET_CANARY.into())),
+            &world.key,
+            unix_now(),
+        )
+        .unwrap();
+    let (location, flow) = start().await;
+    let (_, page) = call("GET", location.strip_prefix(ORIGIN).unwrap(), None, Some(flow)).await;
+    assert!(page.contains("data-result=\"egress_refused\""));
+    fake.configure(|c| {
+        c.iss_parameter = false;
+        c.token_endpoint = None;
+    });
+    // A DCR refusal's cleaned vendor message is intentionally displayed,
+    // while its raw body and secrets stay out of traces.
+    let dcr = world.connection("dcr", &url, CredKind::OauthDcr);
+    fake.configure(|c| { c.registration = true; c.dcr_refusal = Some((400, json!({ "error": "invalid_client_metadata", "error_description": VENDOR_CANARY, "client_secret": SECRET_CANARY }))); });
+    let (_, text) = call(
+        "POST",
+        &format!("/api/mcp/connections/{dcr}/authorize"),
+        Some(json!({})),
+        None,
+    )
+    .await;
+    let failure: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(failure["code"], "registration_refused");
+    fake.configure(|c| {
+        c.registration = false;
+        c.dcr_refusal = None;
+        c.mcp_status = Some(503);
+    });
+    let (fresh_access, fresh_refresh) = fake.issue();
+    support::oauth::seed_grant(&world, &id, &fake, &fresh_access, Some(&fresh_refresh), None);
+    let (_, text) = call(
+        "POST",
+        &format!("/api/mcp/connections/{id}/probe"),
+        Some(json!({})),
+        None,
+    )
+    .await;
+    assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["status"], "error");
+
     // Refused authorizes, each naming the URL in its own way.
     fake.configure(|c| c.resource = Some(format!("{}/other/{PATH_CANARY}?q={QUERY_CANARY}", fake.origin())));
     call(
@@ -222,6 +328,7 @@ async fn no_url_secret_code_verifier_token_or_client_secret_is_logged_or_answere
     assert!(logs.contains(&id), "the log names the connection");
     assert!(!logs.is_empty());
     let mut canaries = vec![
+        VENDOR_CANARY.to_string(),
         PATH_CANARY.to_string(),
         QUERY_CANARY.to_string(),
         SECRET_CANARY.to_string(),
@@ -231,7 +338,7 @@ async fn no_url_secret_code_verifier_token_or_client_secret_is_logged_or_answere
     ];
     canaries.extend(fake.with(|r| r.verifiers.clone()));
     canaries.extend(fake.with(|r| r.issued.clone()));
-    assert!(fake.with(|r| r.verifiers.len()) == 1);
+    assert!(!fake.with(|r| r.verifiers.is_empty()));
     for canary in &canaries {
         assert!(!logs.contains(canary.as_str()), "{canary} is in the log");
     }

@@ -98,7 +98,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
 /// The gateway store's statements (plan 8a; plan 8f's OAuth clients and
 /// grants), apart from the list above so that other lanes' changes to it
 /// stay apart from this one.
-const GATEWAY_STATEMENTS: usize = 44;
+const GATEWAY_STATEMENTS: usize = 46;
 
 /// Files under `crates/*/src` with SQL that the audit does not read, and
 /// why (3b-iii review, A3). Any other such file fails

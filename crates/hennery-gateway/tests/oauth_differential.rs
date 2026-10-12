@@ -179,6 +179,7 @@ const SERVER_FIELDS: &[&str] = &[
     "token_endpoint",
     "registration_endpoint",
     "code_challenge_methods_supported",
+    "authorization_response_iss_parameter_supported",
 ];
 
 /// The metadata vectors: `{o}` is the fake's origin.
@@ -243,6 +244,35 @@ fn server_vectors() -> Vec<(&'static str, Expect, String)> {
             Expect::Refused,
             base.replace("[\"S256\"]", "[\"S256\\u0000x\"]")
                 .pipe(|b| format!("{{{b}}}")),
+        ),
+        (
+            "iss twice",
+            Expect::Refused,
+            doc(
+                r#", "authorization_response_iss_parameter_supported":true, "authorization_response_iss_parameter_supported":false"#,
+            ),
+        ),
+        (
+            "iss escaped twice",
+            Expect::Refused,
+            doc(
+                r#", "authorization_response_iss_parameter_supported":true, "\u0061uthorization_response_iss_parameter_supported":false"#,
+            ),
+        ),
+        (
+            "iss case",
+            Expect::Refused,
+            doc(r#", "Authorization_Response_Iss_Parameter_Supported":true"#),
+        ),
+        (
+            "iss folded",
+            Expect::Refused,
+            doc(r#", "authorizationresponseissparametersupported":true"#),
+        ),
+        (
+            "url tab",
+            Expect::Refused,
+            format!("{{{}}}", base.replace("{o}/token", "https://as.exa\\tmple/token")),
         ),
         ("a byte-order mark", Expect::Refused, format!("\u{feff}{{{base}}}")),
         ("odd whitespace", Expect::Refused, format!("{{\u{a0}{base}}}")),
@@ -527,7 +557,7 @@ async fn a_registration_is_taken_only_as_every_decoder_reads_it() {
         });
         let o = fake.origin();
         let meta = format!(
-            r#"{{"issuer":"{o}","authorization_endpoint":"{o}/authorize","token_endpoint":"{o}/token","registration_endpoint":"{}","code_challenge_methods_supported":["S256"]}}"#,
+            r#"{{"issuer":"{o}","authorization_endpoint":"{o}/authorize","token_endpoint":"{o}/token","registration_endpoint":"{}","code_challenge_methods_supported":["S256"],"authorization_response_iss_parameter_supported":true}}"#,
             registration.url("/register")
         );
         fake.configure(|c| c.raw_meta = Some(meta));
@@ -625,4 +655,42 @@ async fn the_callback_acts_only_on_a_query_every_reader_reads_alike() {
         failures.push(format!("the real redirect: {result}"));
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[tokio::test]
+async fn vendor_lifetimes_have_one_bounded_interpretation() {
+    const YEAR: i64 = 365 * 24 * 60 * 60;
+    for lifetime in [
+        "9223372036854775807",
+        "18446744073709551615",
+        r#""99999999999999999999999999999999999""#,
+        r#""000000000000000000003600""#,
+    ] {
+        let h = Harness::new();
+        let raw = format!(r#"{{"access_token":"good-1","expires_in":{lifetime}}}"#);
+        let fake = FakeAs::start(Config {
+            raw_token: Some(raw),
+            ..Config::default()
+        })
+        .await;
+        let id = h.connection(&fake.mcp_url());
+        let (_, headers, answer) = h.authorize(&id).await;
+        let location = fake.consent(answer["consent_url"].as_str().unwrap()).await;
+        let before = unix_now();
+        assert_eq!(
+            h.callback(location.strip_prefix(ORIGIN).unwrap(), &flow_cookie(&headers))
+                .await,
+            "connected"
+        );
+        let expiry = h
+            .world
+            .store
+            .oauth_credential(&id, &h.world.key)
+            .unwrap()
+            .unwrap()
+            .expires_at
+            .expect("known lifetime");
+        let seconds = if lifetime.contains("3600") { 3600 } else { YEAR };
+        assert!((before + seconds - 60..=unix_now() + seconds - 60).contains(&expiry));
+    }
 }
