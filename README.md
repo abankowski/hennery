@@ -32,7 +32,9 @@ Known limitations:
   passkey, which you can use to sign in afterwards.
 - Web Push is built on the collector, but the web UI has no subscribe
   button yet.
-- Codex sessions get MCP without per-hat isolation and also load the user's own `~/.codex` MCP servers, until per-hat isolation lands.
+- Codex sessions get hennery MCP servers only in the host's default hat, without per-hat isolation, and also load the user's own `~/.codex` MCP servers; other hats get none, until per-hat isolation lands.
+- Hosts cannot connect over `wss://` yet; remote hosts reach the collector
+  through an SSH tunnel.
 - **TODO (4e-ii-b):** OAuth is built on the collector; the browser's OAuth Connect flow is pending.
 - The designs are in [`docs/specs/`](docs/specs/) and the plans in
   [`docs/plans/`](docs/plans/); [`docs/README.md`](docs/README.md) lists
@@ -44,6 +46,10 @@ You need [Nix](https://nixos.org/download/) with flakes enabled, and on
 every machine that runs agents, the CLI for each agent you want to use
 already logged in with your own subscription. The flake supports Apple
 Silicon macOS, and x86_64 and aarch64 Linux.
+The bundled CLIs are not added to your `PATH`. After `up` or `host join`
+installs the runtime, run `hennery doctor` on each agent machine. Check 4,
+**logged in**, reports whether each agent is logged in and prints a fix when
+it is not; doctor does not log in for you.
 
 ### 1. Build
 
@@ -101,14 +107,21 @@ and confirm a password of at least 12 characters, check **Public URL** and
 press **Skip** (or **Continue** if passkeys are unavailable). Back up
 `collector/master.key` together with `collector/hennery.db`: the gateway's
 credentials cannot be read without it.
+If the setup link has expired, `hennery admin setup-url` prints a fresh one.
 
 ### 3. Pair another machine
 
-A host on another machine reaches the collector over HTTPS only. `up`
-listens on loopback, so put a reverse proxy on the same machine that serves
-it at an `https://` address and passes WebSocket upgrades on. If `up` is
-already running, stop it with Ctrl-C. Restart it with that address before
-setup:
+Hosts currently connect only over loopback HTTP. On the other machine,
+open an SSH tunnel to the collector with
+`ssh -N -L 7117:127.0.0.1:7117 <collector-machine>`; replace
+`<collector-machine>` with your SSH destination. Keep this terminal open
+while pairing and while `hennery host run` runs. If local port 7117 is
+already in use, choose another local port in the tunnel and join command.
+
+For browser access over HTTPS, a reverse proxy on the collector's machine
+can serve `up` at an `https://` address. This does not enable secure
+WebSockets for hosts; they still use the tunnel. If `up` is already running,
+stop it with Ctrl-C and restart it with that address before setup:
 
 <!-- check: up-public -->
 ```sh
@@ -118,16 +131,23 @@ hennery up --public-url https://hennery.example
 Already set up at `localhost`? Then `--public-url` is ignored: move it
 with `hennery admin reset-public-url` (see [Recovery](#recovery)), and from
 then on open hennery at the new address, since the old one is refused.
+With a same-machine reverse proxy, all remote clients share the loopback
+rate-limit budget, so exposing the collector lets anyone lock out password
+sign-in by submitting wrong passwords.
 
 In the web UI, **Hosts → Add host** shows a pairing code, valid for ten
-minutes, and the command that uses it. Build hennery on the other machine,
-run that command there (it too downloads the adapters; leave the code out
-to type it instead, which keeps it out of your shell history), then start
-the host:
+minutes, after asking for your password again if a fresh step-up is needed.
+Its printed command uses the public URL; adapt it to the tunnel's
+`http://127.0.0.1` address as below. Build hennery on the other machine and
+run the join command in another terminal (it also downloads the runtime).
+In this block, `7117` is a placeholder for the tunnel's local port, and
+`ABCD-EFGH` is a placeholder for the code shown by **Add host**. Replace
+them with your port and code; leave the code out to type it instead and
+keep it out of shell history. Keep the `http://127.0.0.1` scheme and host:
 
 <!-- check: join -->
 ```sh
-hennery host join https://hennery.example ABCD-EFGH
+hennery host join http://127.0.0.1:7117 ABCD-EFGH
 ```
 
 <!-- check: host-run -->
@@ -135,10 +155,17 @@ hennery host join https://hennery.example ABCD-EFGH
 hennery host run
 ```
 
+`host run` uses the saved `ws://127.0.0.1:<port>/api/hosts/ws` URL, including
+when it reconnects. Keep the same tunnel port available on future runs.
+
 ### 4. Start a session
 
 **New session**: pick a connected host, an agent and a project directory, then
 **Start session**, and type your first prompt.
+Unless workspace roots are configured, the project list is empty: use
+**Browse** under the host user's home, or pass `--workspace-root <directory>`
+to `up` or `host run` to list repositories under that root. The flag is
+repeatable.
 
 ### 5. Connect an MCP server
 
@@ -152,7 +179,7 @@ supported, sessions in that hat on those hosts receive it as
 `hennery-<slug>` at their next start or resume.
 The status stays **Not used yet** until traffic goes through it.
 Use an HTTPS server URL; **Internal network** permits plain HTTP only to
-internal addresses, for a server you run there.
+internal addresses (loopback included), for a server you run there.
 
 For a local stdio server, use **MCP → Local MCP servers**. Choose **Host**
 and **Hat**, then **Add local server**. Fill in **Server name** and
@@ -166,6 +193,7 @@ Agents without per-hat isolation receive hennery MCP servers only in the
 host's default hat. Check the delivery prediction beside the host or on
 **New session** for the agent you chose; the session reports what it was
 given at its last start or resume.
+This default-hat restriction also applies to Claude with `--use-cli`.
 
 These actions may ask you to confirm your password again.
 

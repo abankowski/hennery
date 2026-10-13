@@ -9,8 +9,9 @@
 //! - `HENNERY_LISTEN=127.0.0.1:0`: `up` listens on a free port, not 7117;
 //! - the adapter mirrors point at a port nothing listens on, so nothing is
 //!   downloaded: `host join` pairs and then fails on the download;
-//! - the join block's example address and code are replaced by the
-//!   collector's loopback address and a code minted for the test.
+//! - only the join block's explicitly marked port and code placeholders
+//!   are replaced; its documented scheme and host must remain unchanged.
+//!   The local listener stands in for the SSH tunnel's forwarded endpoint.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -31,6 +32,8 @@ const NEW_PASSWORD: &str = "a new password, typed twice";
 const EXAMPLE_URL: &str = "https://hennery.example";
 /// The README's example pairing code.
 const EXAMPLE_CODE: &str = "ABCD-EFGH";
+/// The README's explicitly marked tunnel-port placeholder.
+const EXAMPLE_PORT: u16 = 7117;
 
 /// Every block name in the README, in order, with what runs it.
 const BLOCKS: [(&str, Runner); 9] = [
@@ -78,6 +81,66 @@ fn block(name: &str) -> String {
     let (status, out, err) = blocks(&repo().join("README.md"), name);
     assert_eq!(status, Some(0), "{err}");
     out
+}
+
+/// Replace only the port and code the README explicitly marks as
+/// placeholders. Never repair an unsupported URL by changing its origin.
+fn pairing_script(script: &str, readme: &str, port: u16, code: &str) -> String {
+    assert!(readme.contains(&format!("`{EXAMPLE_PORT}` is a placeholder")));
+    assert!(readme.contains(&format!("`{EXAMPLE_CODE}` is a placeholder")));
+    let address = |command: &str| {
+        reqwest::Url::parse(command.split_whitespace().nth(3).expect("join URL")).expect("join URL parses")
+    };
+    let before = address(script);
+    assert_eq!(
+        before.scheme(),
+        "http",
+        "pairing substitution must not hide a scheme change"
+    );
+    assert_eq!(
+        before.host_str(),
+        Some("127.0.0.1"),
+        "pairing substitution must not hide a host change"
+    );
+    assert_eq!(before.port(), Some(EXAMPLE_PORT));
+    let port_placeholder = format!(":{EXAMPLE_PORT}");
+    assert_eq!(script.matches(&port_placeholder).count(), 1, "{script}");
+    assert_eq!(script.matches(EXAMPLE_CODE).count(), 1, "{script}");
+    let substituted = script
+        .replace(&port_placeholder, &format!(":{port}"))
+        .replace(EXAMPLE_CODE, code);
+    let after = address(&substituted);
+    assert_eq!(after.scheme(), before.scheme(), "substitution changed the scheme");
+    assert_eq!(after.host_str(), before.host_str(), "substitution changed the host");
+    substituted
+}
+
+#[test]
+fn pairing_substitution_only_changes_marked_port_and_code() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    assert_eq!(
+        pairing_script(&block("join"), &readme, 12345, "EFGH-IJKL"),
+        "hennery host join http://127.0.0.1:12345 EFGH-IJKL\n"
+    );
+    for unmarked in ["`7117` is an example", "`ABCD-EFGH` is an example"] {
+        let original = unmarked.replace("is an example", "is a placeholder");
+        let changed = readme.replace(&original, unmarked);
+        assert!(std::panic::catch_unwind(|| pairing_script(&block("join"), &changed, 12345, "EFGH-IJKL")).is_err());
+    }
+}
+
+#[test]
+fn pairing_substitution_cannot_hide_a_scheme_change() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let changed = block("join").replace("http://", "https://");
+    assert!(std::panic::catch_unwind(|| pairing_script(&changed, &readme, 12345, "EFGH-IJKL")).is_err());
+}
+
+#[test]
+fn pairing_substitution_cannot_hide_a_host_change() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let changed = block("join").replace("127.0.0.1", "localhost");
+    assert!(std::panic::catch_unwind(|| pairing_script(&changed, &readme, 12345, "EFGH-IJKL")).is_err());
 }
 
 /// A scratch file holding `text`, removed on drop.
@@ -288,6 +351,8 @@ fn every_readme_block_is_run() {
     assert_eq!(status, Some(0), "{err}");
     let expected: Vec<&str> = BLOCKS.iter().map(|(name, _)| *name).collect();
     assert_eq!(names.lines().collect::<Vec<_>>(), expected);
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    pairing_script(&block("join"), &readme, 12345, "EFGH-IJKL");
     let here = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/readme.rs")).unwrap();
     for (name, runner) in BLOCKS {
         if let Runner::Here = runner {
@@ -723,6 +788,38 @@ fn on_a_terminal(machine: &Machine, script: &str, answers: &[(&str, &str)]) -> (
     (status, stdout, shown)
 }
 
+/// The admin command calls this time-aware method: a live link is reused,
+/// but at its expiry it mints and writes a fresh one without a restart.
+#[test]
+fn an_expired_setup_link_is_reissued_as_the_readme_says() {
+    use hennery_kernel::operator::{Operator, SETUP_TOKEN_TTL_SECS, SetupOutcome};
+
+    let dir = tempfile::tempdir().unwrap();
+    let operator = Operator::open(&dir.path().join("hennery.db")).unwrap();
+    let origin = "http://localhost:7117";
+    let now = 1000;
+    let old = operator.announce_setup(dir.path(), origin, now).unwrap().unwrap();
+    let expiry = now + SETUP_TOKEN_TTL_SECS;
+    let live = operator.setup_link(dir.path(), origin, expiry - 1).unwrap().unwrap();
+    assert!(live.url == old.url, "a live link was replaced");
+    let fresh = operator.setup_link(dir.path(), origin, expiry).unwrap().unwrap();
+    assert!(fresh.url != old.url, "the expired link was reused");
+    assert!(
+        std::fs::read_to_string(&fresh.file).unwrap().trim_end() == fresh.url,
+        "the setup-url file does not hold the fresh link"
+    );
+    let old_token = old.url.rsplit_once('#').unwrap().1;
+    let fresh_token = fresh.url.rsplit_once('#').unwrap().1;
+    assert_eq!(
+        operator.set_up(old_token, PASSWORD, origin, expiry).unwrap(),
+        SetupOutcome::InvalidToken
+    );
+    assert!(matches!(
+        operator.set_up(fresh_token, PASSWORD, origin, expiry).unwrap(),
+        SetupOutcome::Done { .. }
+    ));
+}
+
 /// Quickstart step 2 and the recovery commands: `hennery up` writes a setup
 /// link that sets the collector up; `reset-password` sets a password that
 /// signs in where the old one no longer does; `reset-public-url` moves the
@@ -737,6 +834,12 @@ fn up_and_the_recovery_commands_work_as_the_readme_says() {
     let port = listen.rsplit_once(':').unwrap().1;
     let origin = format!("http://localhost:{port}");
     assert!(link.starts_with(&format!("{origin}/setup#")), "{link}");
+    let setup_command = output_within(&mut machine.sh("hennery admin setup-url"), Duration::from_secs(60));
+    assert!(setup_command.status.success(), "setup-url command failed");
+    assert!(
+        String::from_utf8(setup_command.stdout).unwrap().trim_end() == link,
+        "setup-url did not print the live link"
+    );
     let session = set_up(&listen, &link, &origin);
     assert_eq!(hosts(&listen, &session).0, 200);
 
@@ -778,8 +881,8 @@ fn up_and_the_recovery_commands_work_as_the_readme_says() {
 }
 
 /// Quickstart step 3: `up --public-url` sets up at that address, and the
-/// join block, given the collector's address and a code from "Add host",
-/// pairs another machine whose `host run` then connects.
+/// join block, given only a tunnel port and a code from "Add host", pairs
+/// another machine whose `host run` reconnects through the saved URL.
 #[test]
 fn pairing_another_machine_works_as_the_readme_says() {
     let collector = Machine::new("collector");
@@ -809,12 +912,9 @@ fn pairing_another_machine_works_as_the_readme_says() {
         .to_string();
 
     let other = Machine::new("other");
-    let join = block("join");
-    assert_eq!(join.matches(EXAMPLE_URL).count(), 1, "{join}");
-    assert_eq!(join.matches(EXAMPLE_CODE).count(), 1, "{join}");
-    let join = join
-        .replace(EXAMPLE_URL, &format!("http://{listen}"))
-        .replace(EXAMPLE_CODE, &code);
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let port = listen.rsplit_once(':').unwrap().1.parse().unwrap();
+    let join = pairing_script(&block("join"), &readme, port, &code);
     let out = output_within(other.sh(&join).stdin(Stdio::null()), Duration::from_secs(60));
     let (stdout, stderr) = (
         String::from_utf8_lossy(&out.stdout),
@@ -827,6 +927,17 @@ fn pairing_another_machine_works_as_the_readme_says() {
 
     let mut host = other.start(&block("host-run"), "host.log");
     host.wait_until("both hosts connected", || {
+        let listed = hosts(&listen, &session).1;
+        listed.len() == 2 && listed.iter().all(|h| h["connected"] == true)
+    });
+    host.stop();
+    up.wait_until("the stopped host disconnected", || {
+        let listed = hosts(&listen, &session).1;
+        listed.len() == 2 && listed.iter().filter(|h| h["connected"] == true).count() == 1
+    });
+    // A later run reads the saved loopback URL, without a URL override.
+    let mut host = other.start(&block("host-run"), "host-restarted.log");
+    host.wait_until("the restarted host connected through its saved URL", || {
         let listed = hosts(&listen, &session).1;
         listed.len() == 2 && listed.iter().all(|h| h["connected"] == true)
     });
