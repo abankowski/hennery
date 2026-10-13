@@ -77,3 +77,4 @@
 @media (max-width:767px) {
   .check { min-height:44px; }
 }
+.mcp-prediction { font-size:13px; color:var(--fg-muted); margin:4px 0 10px; }

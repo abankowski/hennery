@@ -10,6 +10,7 @@ import { useClient } from '../app-client'
 import type { HostItem, McpConnectionItem } from '../generated/protocol'
 import { mountsWith } from '../lib/mcp'
 import { Text } from '../lib/text'
+import McpPrediction from './McpPrediction'
 
 interface Props {
   connection: McpConnectionItem
@@ -48,7 +49,8 @@ export default function Mounts({ connection, hosts, onChanged }: Props) {
       <legend>Hosts whose sessions get it</legend>
       {hosts !== null && live.length === 0 && <p className="hint">No host is paired yet.</p>}
       {live.map((host) => (
-        <label key={host.host_id} className="check">
+        <div key={host.host_id}>
+        <label className="check">
           <input
             type="checkbox"
             checked={connection.mounts.includes(host.host_id)}
@@ -56,6 +58,12 @@ export default function Mounts({ connection, hosts, onChanged }: Props) {
           />
           <Text>{host.name}</Text>
         </label>
+        {Object.keys(host.mcp_delivery ?? {}).length === 0
+          ? <p className="hint">MCP delivery is unknown for this host’s agents.</p>
+          : Object.keys(host.mcp_delivery ?? {}).map((agent) => (
+            <McpPrediction key={agent} host={host} agent={agent} hatId={connection.hat_id} />
+          ))}
+        </div>
       ))}
       {error && (
         <p className="form-error" role="alert">

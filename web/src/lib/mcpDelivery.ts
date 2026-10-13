@@ -45,3 +45,9 @@ export const CODEX_MCP_NOTE =
 export function runningLifecycle(lifecycle: string | undefined): boolean {
   return lifecycle === 'starting' || lifecycle === 'active'
 }
+
+/** A resolution of another input must never name this draft's hat. */
+export function predictionHat(resolved: { hostId: string; path: string; hat: string } | undefined, hostId: string, path: string): string | undefined {
+  if (resolved?.hostId === hostId && resolved.path === path) return resolved.hat
+  return undefined
+}

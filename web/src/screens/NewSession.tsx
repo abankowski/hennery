@@ -1,3 +1,5 @@
+import McpPrediction from '../components/McpPrediction'
+import { predictionHat } from '../lib/mcpDelivery'
 // New session (frontend spec §7): a host, an agent, a project, the hat the
 // project resolves to, an optional first prompt, then Start.
 //
@@ -50,7 +52,7 @@ export function offeredHosts(hosts: HostItem[]): HostItem[] {
 type Resolved =
   | { state: 'idle' }
   | { state: 'pending' }
-  | { state: 'ok'; resolution: HatResolution }
+  | { state: 'ok'; resolution: HatResolution; hostId: string; path: string }
   | { state: 'failed'; error: string }
 
 export default function NewSession() {
@@ -189,7 +191,7 @@ export default function NewSession() {
       client
         .request<HatResolution>('POST', '/api/hats/resolve', { host_id: hostId, path: cwd.trim() }, { signal: abort.signal })
         .then(
-          (resolution) => live && setResolved({ state: 'ok', resolution }),
+          (resolution) => live && setResolved({ state: 'ok', resolution, hostId, path: cwd }),
           (err) => live && setResolved({ state: 'failed', error: startRefusal(err) }),
         )
     }, RESOLVE_DEBOUNCE_MS)
@@ -400,6 +402,10 @@ export default function NewSession() {
                 </div>
               )}
               <HatPreview resolved={resolved} hatName={hatName} />
+              <McpPrediction host={host} agent={agentName} hatId={predictionHat(
+                resolved.state === 'ok' ? { hostId: resolved.hostId, path: resolved.path, hat: resolved.resolution.hat_id } : undefined,
+                hostId, cwd,
+              )} />
             </div>
 
             <div className="field">

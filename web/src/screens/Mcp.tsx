@@ -155,11 +155,6 @@ export default function Mcp() {
           A connection reaches the agent sessions in its hat on the hosts ticked below, as an MCP server named{' '}
           <code>hennery-&lt;slug&gt;</code>. Changes apply to new and resumed sessions.
         </p>
-        <p>
-          Codex, Claude run with your own CLI, and any other agent command (this may change): a session gets a
-          connection only when both are in its host’s default hat, and it also loads your own MCP servers (such as <code>~/.codex</code>), so it is not
-          isolated. Sessions in other hats on that host get none.
-        </p>
       </section>
       {[list.error, hats.error, hosts.error].map(
         (shown, i) =>
