@@ -45,6 +45,14 @@ const sent = (server: ReturnType<typeof stubServer>, method: string, path: strin
 
 const card = (name: string) => screen.findByRole('listitem', { name })
 
+it('names the OAuth grant and client settings in deletion', async () => {
+  open({ 'GET /api/mcp/connections': json(200, [connection({ cred_kind: 'oauth_dcr', oauth: { redirect_uri: 'https://hennery.example/callback', has_client_secret: false } })]), 'GET /api/mcp/oauth/redirect-uri': json(200, { redirect_uri: 'https://hennery.example/callback' }) }, { mode: 'full', features: ['mcp_connections', 'mcp_oauth'] })
+  const c = await card('Docs')
+  await userEvent.click(within(c).getByRole('button', { name: 'Delete' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Delete this connection?' })
+  expect(dialog.textContent).toContain('OAuth grant'); expect(dialog.textContent).toContain('client settings')
+})
+
 describe('the MCP screen behind its feature', () => {
   it('serves local sets only with their separate stdio feature', async () => {
     const path = '/api/mcp/stdio-servers?host_id=host-1&hat_id=hat-a'

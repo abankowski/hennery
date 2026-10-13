@@ -8,6 +8,8 @@ import { kindLabel, serverName, toolList, type ConnectionForm as Form } from '..
 import { Text, visible } from '../lib/text'
 
 interface Props {
+  oauth?: boolean
+  redirectUri?: string
   initial: Form
   /** On create: the hats to pick from, and the one picked first. */
   create?: { hats: HatItem[]; hatId: string }
@@ -18,7 +20,7 @@ interface Props {
   onCancel: () => void
 }
 
-export default function ConnectionForm({ initial, create, submit, busy, error, onSubmit, onCancel }: Props) {
+export default function ConnectionForm({ initial, create, submit, busy, error, onSubmit, onCancel, oauth = false, redirectUri }: Props) {
   const [form, setForm] = useState(initial)
   const [slug, setSlug] = useState('')
   const [hatId, setHatId] = useState(create?.hatId ?? '')
@@ -103,13 +105,17 @@ export default function ConnectionForm({ initial, create, submit, busy, error, o
         <select value={form.credKind} onChange={(e) => set('credKind', e.target.value as Form['credKind'])}>
           <option value="none">None</option>
           <option value="static">Token</option>
-          {form.credKind !== 'none' && form.credKind !== 'static' && (
+          {oauth && <><option value="oauth_dcr">OAuth: automatic registration</option><option value="oauth_client">OAuth: pre-registered client</option></>}
+          {!oauth && form.credKind !== 'none' && form.credKind !== 'static' && (
             <option value={form.credKind} disabled>
               {kindLabel(form.credKind)}
             </option>
           )}
         </select>
       </label>
+      {oauth && (form.credKind === 'oauth_client' || form.credKind === 'oauth_dcr') && <p className="hint">OAuth addresses use https (or http to this machine). You connect after saving.
+        {form.credKind === 'oauth_client' && <> Register this redirect URI at the vendor: <Text className="mono">{redirectUri ?? 'Loading…'}</Text>. Enter its client settings after saving.</>}
+      </p>}
       {form.credKind === 'static' && (
         <>
           <div className="field-row">

@@ -88,3 +88,8 @@
 .stdio-env, .stdio-row { padding: .5rem 0; }
 .stdio-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 .stdio-servers [aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
+
+.oauth-client { margin-top:16px; padding-top:12px; border-top:1px solid var(--border); }
+.oauth-client p { overflow-wrap:anywhere; }
+.oauth-client form { display:grid; gap:12px; }
+.oauth-client select { min-height:44px; max-width:100%; }
