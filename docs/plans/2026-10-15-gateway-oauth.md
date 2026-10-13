@@ -27,45 +27,51 @@ It implements Part B of the lane's pre-designed API ("API design, implementation
 
 It builds on plans 8a (the store, the master key, the API; its `is_supported` seam and decision 10), 8b and 8b-ii (egress; OAuth URLs `https` or loopback even under the internal-network marking), 8d (the proxy's 401 seam, `ProxyStore`'s status writes, the owner audit), the gateway differential and JSON-answers plans (`tests/support/differential.rs`, lane L16), 4b (`GET /api/capabilities`, lane L14) and 10b-ii (the collector's `Push`, lane L9).
 
-**Base:** `origin/main` at `7a8dab28` (8e and 4e-i merged). All executable blocks below are extracted from the Phase B feature commits on that base. OAuth is gateway migration 4, after the unchanged merged stdio migration 3.
+**Base:** `origin/main` at `94121391` (8e, 4e-i, 4e-ii-a and #130 refusal drain merged). All executable blocks below are extracted from the Phase B feature commits on that base. OAuth is gateway migration 4, after the unchanged merged stdio migration 3.
 
-**Status:** v4 executed 2026-10-13 after the scoped security re-confirmation; OAuth remains in wave 1 by the maintainer’s 2026-10-12 decision. Phase B task reviews are requested from the parent.
+**Status:** v5 executed 2026-10-13 after the scoped security re-confirmation; OAuth remains in wave 1 by the maintainer’s 2026-10-12 decision. Tasks 1–4 and 6–9 were approved by the parent’s reviewers; Task 5’s Important finding led to Task 10. Task 10’s scoped re-review was CONFIRMED WITH NOTES; the four parent-ruled follow-ups are implemented here and await final follow-up review.
 
 **How the code blocks were made and checked:**
 - The code was built first, TDD, on a scratch branch, and cut into the task series below by a script (every file and every hunk of a file assigned to a task's test or code step, plus the few intermediate edits no commit of the scratch branch holds; "File structure" lists them). Each test step was run and seen to fail as its Step 2 says, and Phase B ran targeted tests per task and the complete gate on its finished implementation.
 - Every block below was generated from that series' commits by a script, one region of a file per block.
-- The plan was replayed from its own text onto `d54c704c` in a scratch worktree, task by task; 282 blocks over 56 changed files applied (count > 0); every test and implementation snapshot matched its Phase B commit. Cargo.lock is embedded in the task blocks (the gateway adds base64; SHA-256 was already present from 8e), then locked metadata resolution is validated. After both generators, the complete tree equals pre-rebase implementation tip `0e643efb`, tree `d61af5fab40a8c5498b6b585ac5f8be557703037`, with nothing excluded. The prebuilt generators run only after their replayed sources match; no target is shared or built in the replay tree. The final execution-record documentation is installed from this plan artifact and the README record, then compared byte for byte with the final feature tip.
-- 326 code anchors match once; the complete Phase B rerun yields **325 BITE and one previously accepted equivalent (C23)**, with zero invalid probes, hangs or unresolved survivors. The nine new re-confirmation/integration probes bite, as do all probes whose anchor files conflicted with 8e. F7’s separate D9 document wording probe also bites. O38 was refreshed for F5’s unsigned parsing and AP10 includes its existing api_log positive test; both fresh reruns bite, with original observations retained in the ledger.
+- The final plan was freshly replayed from its own text onto `94121391` in `gateway-8f-replay-v5-4`: **397 blocks** over **57 implementation files** (count > 0), with all **20 test/code/drain snapshots matching** their commits. Both prebuilt generators ran only after their source trees matched, and locked metadata validated Cargo.lock. No Cargo target was shared or built in the replay tree. After installing the final plan and README, the complete tree is compared byte for byte with the published tip, with nothing excluded. Earlier replay-v5-1/-2/-3 trees remain for parent cleanup.
+- **384 code anchors match once: 383 BITE plus historical accepted C23 equivalence.** All **26 final confirmation probes (14 new and 12 moved) BITE**, including each committed cache eviction, wiping retained plaintext, and rollback preserving the original cache. PX16’s mutation constructor was adapted to the boxed stamp and observed BITE again; all anchors still match once. The prior 64 Task 10 probes retain their evidence; the final moved anchors were freshly re-probed. The OAuth refusal-drain and SF7doc wording mutations also freshly BITE. No invalid probe, hang or unresolved survivor remains; raw evidence is retained and no test or rule was weakened.
 
 ## Execution status
 
-Rebased onto 4e-i (`7a8dab28`) on 2026-10-13. Both README plan entries were retained automatically; all 18 commits initially compared equal in `git range-diff`. No task content changed, so the earlier byte-for-byte replay remains the replay evidence and was not repeated, as directed by the parent. Both real generators produced no diff. Web typecheck, test (**1368 passed, 75 files**), build and full CI browser checks (**50 passed, 11 skipped**) passed; the embedded hennery/testkit binary build, formatting, both Clippy runs and workspace tests (**1907 passed**) each exited 0. No web compatibility fix was required. The record alone updates the base, commit mapping and verification evidence.
+Executed Tasks 1–10 on `feat/gateway-8f-oauth`, base `94121391` (8e, 4e-i, 4e-ii-a and #130 refusal drain merged), final implementation tip `300f0659`. The completed checks exit 0 for formatting, workspace/all-targets Clippy, hennery Clippy, workspace tests (**1948 passed, 0 failed**), protocol and view generator checks, frozen web install, typecheck, **1465 web tests across 84 files**, and build. Embedded hennery/testkit bins exit 0; the full browser suite exits 0 with **58 passed and 11 expected skips**. The complete OAuth/proxy/probe binaries pass **four copies × two rounds after boxing: 24 runs, 1144 passes, 0 failures**. Both Clippy checks and all 382 gateway tests pass after boxing. Web/generator/embedded/browser counts are from the completed preceding gate, since boxing changes no UI or generated code. The final documentation tip receives fmt and the full workspace test run after this record is installed; the record changes no implementation or generated bytes.
 
-Executed Tasks 1–9 in order on `feat/gateway-8f-oauth`, base `7a8dab28`, implementation tip `4d4f98d0`. Each test step was seen red before implementation, and each task received its targeted green run. The final Rust gate passed: formatting, workspace/all-targets Clippy, hennery Clippy, workspace tests (**1907 passed, 0 failed**), protocol generator check and view generator check; each exit 0. Web frozen install, typecheck, test (**1303 passed across 73 files**) and build each exit 0. The complete `oauth`, `oauth_proxy` and `probe` test binaries ran in four parallel copies, two rounds: **24 runs, 936 passes, zero failures**. The final documentation commit repeats the gate on its tip; it changes no implementation or generated bytes.
+**Review chain:** opus security-auditor approved v2 after amendments (`a9d476818216bffca`, 2026-10-03); scoped F1–F7 re-confirmation on the maintainer’s behalf returned CONFIRMED WITH NOTES on 2026-10-13 for `648788c6..46699185`, with no Critical/Important finding or regression. The parent’s reviewers approved Tasks 1–4 and 6–9 and the earlier record. Task 5’s Important refresh-failure finding led to Task 10 under the parent/advisor ruling. The Task 10 opus review returned Needs fixes for I1 and M1/M2/M3/M5. Those fixes were implemented test first; scoped re-review returned **CONFIRMED WITH NOTES** for `629bad91..1900ae6a`, closing I1/M1/M2/M3/M5 with no regression, no weakened tests and 378 gateway tests green. The four follow-up notes were ruled by the **parent on the maintainer's behalf, 2026-10-13**, built test first and folded into Task 10 here. Final follow-up review is requested for `629bad91..300f0659`; the earlier confirmation is not approval of these new follow-ups.
 
-The security amendments were confirmed with notes by the opus security-auditor on the maintainer’s behalf on 2026-10-13 for `648788c6..46699185`. Phase B takes m2 and the F6 probe-body canary; m1 is a rotation follow-up and m4 is noted below. The maintainer’s PQ1–4 retain their built defaults. Task reviews of the integrated execution are requested from the parent; the earlier security confirmation does not substitute for those reviews.
+**Final confirmation follow-ups (Decisions 22–25):** only HTTP 400 with invalid_grant retires; 401/403/404 with that name remains Unavailable. Known expiry with Unsaved answers credential_unsaved without status or push. Authentication failure compares the credential stamp read with its token, including expiry fail-fast, a 401 refusal and a retried token or successful retirement’s exact new stamp. Committed delete, purge, static replacement, Connect, refresh rotation and kind/origin replacement evict Attempts slots and wipe outcomes even while callers retain their state; rollback evicts nothing. Refresh-lock and probe-slot pruning remain deferred. The noninteractive autosquash first proved its tracked tree identical to `24622b3b`; only the expired-Unsaved drain-test additions moved to the later drain commit. Both Clippy checks then exposed `large_enum_variant` in `Prepared` and `Sent`. The parent clarified that equality was a no-loss proof and authorized boxing only `Upstream.observed`, 2026-10-13. That representation-only fix is folded into Task 10; before this record amendment, the diff against `2aa137c2` contained exactly five boxing changes. No behavior, assertion or rule changed, and no lint was suppressed. Both Clippy checks pass afterwards.
 
-**Conflicts with 8e:** preserve all stdio/OAuth protocol exports and regenerate schema/TypeScript; append OAuth migration 4 after byte-identical merged migrations 1–3; retain stdio ciphertext/key checks, owner filtering and transactional purge/revocation; share Runtime and revocations across API, proxy and SessionMcp; retain validated/wrapped MCP session IDs, Last-Event-ID restriction and JSON-answer deadline through refresh; preserve both collector startup tests and session/purge fixture assertions; retain stdio/OAuth routes and both capability flags; preserve the complete stdio API spec row. Owner audit counts are 46 at Task 3 and 48 after Task 7. The merged hat-purge hook now drops only its hat’s pending OAuth flows after commit without asynchronous refresh locks.
+**Test-first evidence:** original Task 10: five proxy and three probe failures, plus unknown-expiry dead-token fail-fast (exit 101). Scoped I1/M1/M2/M3/M5: classifier 0 passed/1 failed, proxy 37 passed/4 failed, probe 20 passed/1 failed (all exit 101). Final notes: classifier 0 passed/1 failed on HTTP 401 invalid_grant; cache cleanup 0 passed/1 failed on delete; proxy 41 passed/4 failed for expired Unsaved, both stale-auth paths and the expired-Unsaved drain row (all exit 101). The commit-time deferred-FK rollback test passes with the implementation and BITE when eviction is moved before commit. Disabling the merged refusal drain fails the gated **eight-row** test (exit 101); restoring it passes one test (exit 0), without changing merged drain behavior. All 382 gateway tests pass on the final implementation.
 
-SSH pushes for Tasks 4–8 initially failed because the operator’s YubiKey PIN was not cached and SSH fell back to the work key. No other key, remote or transport was tried. The parent authorized local continuation; one attempt was made after each finished task. After the operator unlocked the key, Task 9’s push succeeded and published every finished task. The final record is pushed after author and data-hygiene checks.
+**Task 10 state-machine rulings retained:** failure outcomes share the attempt counter; unavailable and unsaved issuance back off 30 seconds, doubling to five minutes. Valid proactive access changes neither status nor push. Only HTTP 400 invalid_grant retires with a sealed dead marker, removing the refresh token under the sealed-blob CAS and preserving access/expiry. Every other token-endpoint error is Unavailable, including invalid_target after retry without resource, because gateway §4.3 establishes no permanent invalidity for it. A shared Retry containing the caller’s failed token takes its own path. Probes compare original kind/blob before status or checked-at writes; short-token lead is half original usable lifetime, capped at 300 seconds. Paused Tokio time replaces real backoff sleeps between real HTTP exchanges.
+
+**Integration retained:** stdio/OAuth routes and capabilities; immutable merged gateway migrations 1–3, with OAuth migration 4 appended; sealed fields and key checks; owner audit 48 and scope minimum 14; shared Runtime/revocations across API/proxy/SessionMcp; MCP session-ID and Last-Event-ID binding; JSON-answer deadline; existing session/purge/startup assertions; OAuth flows dropped only after committed hat purge. The #130 drain test covers refused, dead needs_auth, expired access, second 401, unavailable, unsaved, expired Unsaved and changed outcomes. The 4e-i/4e-ii-a integration needed no compatibility fix.
 
 | Task | Test commit | Implementation/spec commit | Review range |
 |---|---|---|---|
-| 1 | `80be77aa` | `3809362e` | `7a8dab28..3809362e` |
-| 2 | `2f98b141` | `6e09ab87` | `3809362e..6e09ab87` |
-| 3 | `a69327fc` | `392488f2` | `6e09ab87..392488f2` |
-| 4 | `d5429841` | `3b4f1d90` | `392488f2..3b4f1d90` |
-| 5 | `0f548939` | `9a21e6a2` | `3b4f1d90..9a21e6a2` |
-| 6 | `2f95ea16` | `ebd15ba9` | `9a21e6a2..ebd15ba9` |
-| 7 | `de36f0d3` | `cc7cf683` | `ebd15ba9..cc7cf683` |
-| 8 | — | `38e189ba` | `cc7cf683..38e189ba` |
-| 9 | `d87abd0d` | `4d4f98d0` | `38e189ba..4d4f98d0` |
+| 1 | `089fbbe4` | `35a00c0b` | `94121391..35a00c0b` |
+| 2 | `970f8cf3` | `2735711a` | `35a00c0b..2735711a` |
+| 3 | `9be86f5f` | `bcd43f3a` | `2735711a..bcd43f3a` |
+| 4 | `196e3d8d` | `13990a4c` | `bcd43f3a..13990a4c` |
+| 5 | `3d8adf17` | `e1a554c8` | `13990a4c..e1a554c8` |
+| 6 | `b227a18d` | `faf3bf67` | `e1a554c8..faf3bf67` |
+| 7 | `4592fd2b` | `92a8cf59` | `faf3bf67..92a8cf59` |
+| 8 | — | `ba9c2aed` | `92a8cf59..ba9c2aed` |
+| 9 | `020e9584` | `da705f1b` | `ba9c2aed..da705f1b` |
+| 10 | `697dea2a` | `1a74788c` + drain `300f0659` | `629bad91..300f0659` |
 
-**Test-first evidence:** Tasks 1, 3 and 4 fail to compile for the new APIs; Task 2 has 7 passing/2 failing protocol tests; Task 5 fails for missing Runtime APIs; Task 6 fails 75 route/canary tests and the capability assertion; Task 7 fails the security and purge-flow regressions, with the deadline helper separately absent; Task 8’s D9 wording validator changes from exit 1 to 0; Task 9’s lost-pin row fails 409 vs 404 and its fake-body field is absent before implementation. Erroneous intermediate test edits were corrected before counting red evidence or publishing their commits. The capability-list formatting correction is in Task 7’s test snapshot.
+The historical record `629bad91` sits between Tasks 9 and 10. Every executable block is freshly extracted from commits on `94121391`; record artifacts are excluded only during task snapshots, then installed for the complete-tree comparison with no exclusions.
 
-**Documentation record:** save this complete plan as `docs/plans/2026-10-15-gateway-oauth.md`, update its entry in `docs/README.md`, and commit `docs(plan): record the execution of plan 8f`. The replay compares all implementation bytes, then applies those prepared record artifacts and compares the complete final tree. No PR action is performed by this child.
+**Probe history:** prior survivors SC06 and T10permanent were caught by stronger direct observed-URL and post-backoff tests; SF6e’s mutation delimiter was corrected. Their raw observations remain in the ledger. All current outcomes are BITE apart from the previously accepted equivalent C23.
 
-**Probe evidence:** 326 exact-once anchors; 325 BITE plus accepted C23 EQUIVALENT, zero invalids/hangs/unresolved survivors; SF7doc BITE separately. The nine new probes cover deleted pin rereads (M2), the 503 body canary (SF6body), both sides of shared revocations (I01/I07), collector SessionMcp installation (I02), validated external/internal MCP session forwarding (I03/I04), and hat-scoped OAuth flow cleanup (I05/I06). Original O38 filter removal became redundant after F5’s unsigned parser; its replacement changes the negative-number verdict and bites the existing token-response test. AP10 adds the existing unknown-status api_log test target and bites it. No feature code, test or rule was weakened. Verification shards used separate targets on identical pre-rebase `0e643efb` worktrees; their clean restoration, selected manifests and output were checked on disk, then their trees/targets removed.
+**Deferrals and PQ1–5:** M4’s expired-access outage still gives needs_auth/reconnect push, one problem/recovery pair per outage. M6 now defers only refresh-lock and probe-slot pruning; Attempts eviction and retained cached plaintext cleanup are implemented in Decision 25. Answerer refresh, rotation/startup active-secret selection, scheduling/parser work and live vendor testing remain after this plan. PQ1 strict no-iss origin binding, PQ2 resource-drop display, PQ3 all advertised scopes, PQ4 cleaned callback error_description, and PQ5 no early dead-refresh warning retain their built defaults. 4e-ii must retain opener=null before popup navigation. The parent/operator owns all PR, CI, review and product decisions.
+
+**Documentation record:** install this regenerated plan and the updated README entry; amend `docs(plan): record the final execution of plan 8f`. Compare the complete replay tree after record artifacts are installed. The authorized boxing, final-tip checks and push are recorded in the ledger; this child performs no GitHub action.
+
 
 ## Scope
 
@@ -78,6 +84,7 @@ SSH pushes for Tasks 4–8 initially failed because the operator’s YubiKey PIN
 7. The security-review amendments, tests then code (Task 7).
 8. The spec write-back, including those amendments (Task 8).
 9. The scoped re-confirmation notes: deleted connections during a pin race and a probe failure-body canary (Task 9).
+10. Shared refresh failures/backoff, sealed invalid_grant retirement, quiet proactive failure, and the scoped Task 10 review fixes (Task 10).
 
 **Out:**
 - Standalone clients, renderers, `hennery gateway`, `rotate-key` and `up`'s multi-hat warning (8g, deferred past the first test, lane L22).
@@ -91,7 +98,7 @@ The API decisions F1–F5 and B1–B7 are the lane's pre-designed API (lane L13)
 1. **Hand-written on the kernel's egress clients, not `rmcp`'s `auth` module.** `rmcp` 3.5 tries the authorization server's metadata in another order than §4.1, follows redirects during discovery itself, and brings `reqwest` 0.13 beside the workspace's 0.12. Every OAuth request goes through `hennery_kernel::egress` under the connection's allowance; no redirect is followed; every metadata URL, endpoint and the consent URL is `https`, or plain `http` to loopback, checked by the gateway before sending, even on a connection marked internal network (plan 8b-ii's hand-off).
 2. **Refresh has five outcomes, `Refreshed`**: `Retry(Fresh)`, `NotRefreshable`, `Refused`, `Unavailable`, `Unsaved`. 8d's 401 seam (`refreshed`) becomes `proxy::send_through`, which maps them: `needs_auth` and 502 `upstream_auth` for a second 401, `NotRefreshable` and `Refused`; 502 `upstream_unreachable` and 502 `credential_unsaved` without `needs_auth` (§4.5: a click cannot fix a disk). The probe goes through the same function (§7: "through the same forwarding path").
 3. **One `Runtime` per collector**, one `Arc` for the API's state and the proxy's: two would be two lock tables, and no refresh would be single-flight. Its refresh lock is taken by every credential write: a refresh, a callback's grant, a static token's `PUT`, a URL or kind edit, a delete (§4.5).
-4. **A started refresh runs to completion and persists**: it is spawned and awaited, so a caller that goes away drops the wait, not the task (G-11), and only the task sets `needs_auth` (G-12); it is bounded at 20 s at the vendor. A proactive refresh is done only for a grant with a refresh token, so a request never waits for the lock of a grant that cannot be refreshed.
+4. **A started refresh runs to completion and persists**: it is spawned and awaited, so a caller that goes away drops the wait, not the task (G-11), and the forwarding path records actual authentication failure (G-12; amended by Task 10); it is bounded at 20 s at the vendor. A proactive refresh is done only for a grant with a refresh token, so a request never waits for the lock of a grant that cannot be refreshed.
 5. **A discovery candidate that answers anything but 200** (a 3xx: redirects are not followed; a 5xx: the next may answer), or a body over 1 MiB, **is "not here"**, and the next candidate is tried. A 5xx at every candidate is 502 `upstream_unreachable`, not `discovery_failed`.
 6. **Two issuer identifiers are the same when equal but for one final `/`.** RFC 8414 §3.3 wants them identical; vendors differ on the slash. Anything else is 502 `discovery_failed`.
 7. **A protected-resource document without `resource` is not one** (RFC 9728 §3.2 requires it): the next candidate is tried.
@@ -104,15 +111,29 @@ The API decisions F1–F5 and B1–B7 are the lane's pre-designed API (lane L13)
 14. **A stale `accept_resource` is 409 `resource_mismatch`** (the lane parent's ruling of 2026-10-03, keeping the [firm] F3): an acceptance that is not what discovery finds now is a mismatch again, the new value kept in `oauth.resource_mismatch`, so the frontend's one refetch rule (on 409) shows it. 400 `invalid` is left for an `accept_resource` where no protected-resource document names one.
 15. **`resource` is omitted after `invalid_target`** (the lane parent's ruling of 2026-10-03): the contract's B4 reads "the `resource` sent on consent, exchange and refresh stays the connection URL, accepted or not". Gateway §4.3 requires the retry without the parameter, and the spec wins: `resource` is the connection URL or nothing, never another value (an accepted mismatching value included). Recorded in the PR body.
 16. **The callback is its own router**, outside the operator's session and the browser-`GET` `Sec-Fetch-Site` layer (the vendor's redirect arrives `cross-site` without the `SameSite=Strict` session cookie), authenticated by `state` and the flow cookie: the one `GET` that changes state (kernel §3.3's write-back, R7). It answers `no-store`, `no-referrer`, `nosniff`, and layers the kernel's `csp::on_html` itself: the kernel's layer is on the sessions router and covers nothing merged beside it ("After this plan").
-17. **Nine tasks after scoped re-confirmation** (the advisor's split of 2026-10-03): the modules' own dependencies decide the order. The runtime holds the probes in flight and the `Notifier`, the probe goes through the proxy's forwarding path, and the proxy through the refresh, so the `Notifier`, runtime, refresh, proxy and probe are one task (5), before the Connect API (6). The API's state moves to the runtime in Task 5, its OAuth routes in 6. The store takes the OAuth kinds from Task 3 (its tests make OAuth connections); the API refuses them (400 `unsupported_cred_kind`, as 8a's seam did) until Task 6 serves Connect, so no tree in the series lets an operator create an OAuth connection that cannot be connected. The status writes take their new signatures in Task 3, and the old proxy is adapted to them until Task 5 rewrites it. The security review adds Task 7 (tests then amendments); the original spec write-back is Task 8; the scoped re-confirmation adds Task 9.
+17. **Ten tasks after scoped re-confirmation** (the advisor's split of 2026-10-03): the modules' own dependencies decide the order. The runtime holds the probes in flight and the `Notifier`, the probe goes through the proxy's forwarding path, and the proxy through the refresh, so the `Notifier`, runtime, refresh, proxy and probe are one task (5), before the Connect API (6). The API's state moves to the runtime in Task 5, its OAuth routes in 6. The store takes the OAuth kinds from Task 3 (its tests make OAuth connections); the API refuses them (400 `unsupported_cred_kind`, as 8a's seam did) until Task 6 serves Connect, so no tree in the series lets an operator create an OAuth connection that cannot be connected. The status writes take their new signatures in Task 3, and the old proxy is adapted to them until Task 5 rewrites it. The security review adds Task 7 (tests then amendments); the original spec write-back is Task 8; the scoped re-confirmation adds Task 9; Task 10 follows the parent’s refresh-failure ruling.
 
 18. **Security review F1–F5:** without advertised `iss`, the authorization, token and registration endpoints share one origin (502 `discovery_failed`); a callback checks its connection generation before exchange and again under the lock, including a same-ID secret edit; a lost client pin is re-read before consent (404 `not_found` if deleted, otherwise 409 `issuer_changed` on a different winner); pending secrets have `pending_key_version` and `pending_updated_at`, and startup opens the newest pending secret; lifetimes are capped at one year and expiry/due arithmetic saturates. Discovery is bounded at 60 seconds in total, and quoted challenge text cannot name metadata.
+
+19. **Failures are single-flight too** (T5's Important spec gap; parent ruling confirmed by the advisor on the maintainer's behalf, 2026-10-13): each caller records a per-connection attempt counter before waiting on the refresh lock, then takes that attempt's outcome if it moved, unless Retry carries its own failed token. Unavailable and unsaved issuance outcomes back off for 30 seconds, doubling to a five-minute cap. The cap bounds vendor pressure and permits recovery sooner than the 15-minute probe interval. Valid proactive access keeps its status and sends no push; known expiry fails fast with 502 `upstream_auth`, except Unsaved which keeps its local-failure verdict (Decision 23). The 401 path and probe tick share the state machine, and a new sealed grant resets old attempt state.
+
+20. **Only HTTP 400 invalid_grant permanently retires a refresh token inside the sealed blob** (parent approval, 2026-10-13): store `refresh_dead = true` and remove `refresh_token` with Decision 9's sealed-blob CAS, retaining valid access and expiry. Never resend that refresh token; `needs_auth` with a dead refresh fails before the vendor. A retirement persist failure is `Unsaved` and remains stopped in this runtime. The five-minute backoff cap and this representation were explicitly accepted by the parent. Every other token-endpoint refusal, including invalid_client, unauthorized_client and invalid_target after retry without resource, remains Unavailable. No push debounce is added; the forwarding path records actual authentication failure.
+
+21. **Short-token refresh and stale probes** (Task 10 scoped review): proactive lead is `min(300 seconds, usable lifetime/2)` from the stored grant’s issuance stamp to its safety-adjusted expiry. Probe status and checked-at writes compare both the credential kind and original sealed blob. A same-URL reconnect, a kind switch or an owned refresh replaces that observation; the probe cannot overwrite the stored grant’s status with its old result.
+
+22. **Permanent refusal is HTTP 400 only** (parent on the maintainer's behalf, 2026-10-13): only HTTP 400 + `invalid_grant` retires. A 401, 403 or 404 carrying `invalid_grant` follows Unavailable. The classifier table and gateway §4.5 pin this boundary.
+
+23. **Known expiry preserves Unsaved** (parent on the maintainer's behalf, 2026-10-13): known expiry + Unsaved answers 502 `credential_unsaved`, with status unchanged and no push. Expired access is never sent. The gated refusal-drain matrix includes this eighth outcome.
+
+24. **Authentication status belongs to the token read** (parent on the maintainer's behalf, 2026-10-13): `mark_needs_auth` compares the original credential kind/sealed-blob stamp in its transaction. Known-expiry fail-fast and the final 401 use the stamp read with their token; a successful retry or retirement carries its exact committed new stamp. A reconnect between read and write leaves the new grant’s status alone.
+
+25. **Committed credential changes clear Attempts** (parent on the maintainer's behalf, 2026-10-13): after committed delete, purge or credential replacement (static, Connect, rotation, kind/origin), evict every live runtime’s connection slot and wipe its cached outcome, including retained queued state. Failed commit/rollback preserves the original cache. Weak registrations keep no runtime alive. Refresh-lock and probe-slot pruning remain separate deferrals.
 
 ## The security review's answers
 
 **Reviewer:** opus security-auditor `a9d476818216bffca`, 2026-10-03, on v2 and `ac2a7279..194ac4ee`. **Verdict:** approve after amendments. The amendments were built by the Codex child on 2026-10-12, keeping that base. **Scoped re-confirmation:** opus security-auditor on the maintainer’s behalf, 2026-10-13, `648788c6..46699185`: **CONFIRMED WITH NOTES**. F1–F7 closed; no Critical or Important finding and no regression. m2 (deleted connection during pin race → 404) and the F6 503 response-body canary are taken as Task 9, test first. m1 (newest active secret selected by registration time rather than last seal) is deferred to rotate-key; m3 remains PQ1 with the strict no-iss default; m4’s malformed/duplicate challenge fallback fails safe and is documented. All deferrals accepted. Opener-null is acceptable only if 4e-ii lands before shipping the popup. PQ1–4 remain open, defaults unchanged.
 
-| Finding / ruling | Answer in v4 | Evidence |
+| Finding / ruling | Answer in v5 | Evidence |
 |---|---|---|
 | F1 blocking: no-iss mix-up | Authorization/token/registration endpoints share an origin, else discovery_failed | Endpoint rows, iss differential rows, SF1a–c |
 | F2 exchange before re-check | Unlocked pre-exchange generation/client check; retained transaction check; merged purge hook drops its hat’s flows after commit (I05/I06) | Edited/unreadable connection and gated same-ID secret tests, SF2a–g |
@@ -127,6 +148,8 @@ The API decisions F1–F5 and B1–B7 are the lane's pre-designed API (lane L13)
 | m2 | Deleted connection on a lost-pin reread is 404; missing client row remains 409 | Both slots and no flow/cookie/consent URL; M2 |
 | F6 partial probe leg | 503 serves a unique body canary, absent from logs/answers | Fixed HTTP status note; SF6body |
 | m1 / m4 / opener-null | Rotation follow-up, safe challenge fallback, 4e-ii before popup shipping | After this plan; approved deferrals |
+
+Task 5’s Important refresh-failure finding led to Task 10 under the parent/advisor ruling of 2026-10-13. Task 10’s opus re-review returned **Needs fixes** (I1 and minors M1/M2/M3/M5); those fixes are taken test first here, with invalid_target transient after its no-resource retry. M4/M6 and PQ5 are recorded below. The parent reports the new scoped re-review CONFIRMED WITH NOTES, I1/M1/M2/M3/M5 closed with 378 gateway tests green; the four final notes are implemented as Decisions 22–25, with RED, BITE and fresh replay evidence above; final follow-up review belongs to the parent.
 
 
 ## Global Constraints
@@ -164,23 +187,23 @@ Each line below was removed or neutered on the scratch branch, the named test bi
 | Id | Line (file) | Test that failed |
 |---|---|---|
 | R01 | single-flight: a token another refresh stored is used (Retry without a send) (`refresh.rs`) | `concurrent_401s_share_one_refresh` |
-| R02 | proactive refresh only if still due under the lock (`refresh.rs`) | `concurrent_requests_near_expiry_refresh_once` |
+| R02 | proactive refresh only if still due under the lock (`refresh.rs`) | `a_refresh_rechecks_due_after_waiting_for_the_lock` |
 | R03 | Refreshed::NotRefreshable (no refresh token) (`refresh.rs`) | `a_grant_without_a_refresh_token_is_needs_auth_on_401` |
-| R04 | Refreshed::NotRefreshable (no grant) (`refresh.rs`) | `a_grant_gone_before_its_refresh_is_needs_auth` |
+| R04 | Refreshed::NotRefreshable (no grant) (`refresh.rs`) | `a_grant_gone_before_its_refresh_has_no_stale_status_transition` |
 | R05 | Refreshed::Unsaved (grant unreadable) (`refresh.rs`) | `a_grant_that_does_not_open_at_its_refresh_is_not_needs_auth` |
 | R06 | resource sent on refresh (G-10) (`refresh.rs`) | `a_401_is_refreshed_and_retried_once`, `a_refresh_is_retried_once_without_resource` |
 | R07 | invalid_target on refresh retried once without resource (`refresh.rs`) | `a_refresh_is_retried_once_without_resource` |
 | R08 | refresh records resource_param_accepted = false after invalid_target (`refresh.rs`) | `a_refresh_is_retried_once_without_resource` |
 | R09 | Refreshed::Unavailable (timeout) (`refresh.rs`) | `an_unreachable_token_endpoint_is_not_needs_auth` |
 | R10 | a response without a refresh token keeps the old one (`refresh.rs`) | `a_refresh_without_a_new_refresh_token_keeps_the_old_one` |
-| R11 | CAS lost: use what is stored, not our token (`refresh.rs`) | `a_retry_keeps_the_allowance_it_was_read_with`, `a_retry_never_sends_another_url_s_token` |
+| R11 | CAS lost: use what is stored, not our token (`refresh.rs`) | `a_lost_refresh_cas_returns_the_reconnected_token_and_destination` |
 | R12 | Refreshed::Unsaved (store failed) (`refresh.rs`) | `a_probe_the_gateway_fails_changes_nothing`, `an_unsaved_refresh_is_not_needs_auth` |
-| R13 | refused refresh sets needs_auth (+ alert) (`refresh.rs`) | `a_refused_refresh_is_needs_auth` |
-| R14 | Refreshed::Refused outcome (`refresh.rs`) | `a_refused_refresh_is_needs_auth` |
-| R15 | Refreshed::Unavailable (vendor unreachable) (`refresh.rs`) | `a_failing_token_endpoint_is_not_needs_auth`, `a_redirect_an_unreachable_refresh_or_a_timeout_probes_error` |
+| R13 | refusal after 401 records needs_auth, not proactive refusal (`proxy.rs`) | `a_refused_refresh_is_needs_auth` |
+| R14 | Refreshed::Refused outcome (`refresh.rs`) | `needs_auth_with_a_dead_refresh_fails_fast_even_without_an_expiry` |
+| R15 | Refreshed::Unavailable (vendor unreachable) (`refresh.rs`) | `a_failing_token_endpoint_is_not_needs_auth` |
 | R16 | a started refresh runs to completion though the caller goes (`refresh.rs`) | `a_caller_cancelled_mid_refresh_leaves_it_to_complete` |
 | R17 | the refresh lock (single-flight) (`refresh.rs`) | `a_grant_gone_before_its_refresh_is_needs_auth`, `a_grant_that_does_not_open_at_its_refresh_is_not_needs_auth` … |
-| R18 | proactive window 5 min (`refresh.rs`) | `a_refresh_before_use_never_sends_another_url_s_token`, `a_token_about_to_expire_is_refreshed_first` … |
+| R18 | proactive window 5 min (`refresh.rs`) | `a_fresh_short_lived_token_waits_until_half_its_usable_lifetime_to_refresh` |
 | RU01 | client from the stored flag (`runtime.rs`) | `a_401_is_refreshed_and_retried_once`, `a_callback_after_the_session_ended_is_refused` … |
 | RU02 | status transitions are announced (`runtime.rs`) | `a_failing_upstream_probes_error`, `a_healthy_connection_probes_ok_with_a_whole_handshake` … |
 | RU03 | startup announce (`runtime.rs`) | `a_problem_at_startup_is_announced_once` |
@@ -200,7 +223,7 @@ Each line below was removed or neutered on the scratch branch, the named test bi
 | P02 | timeout is error (`probe.rs`) | `a_redirect_an_unreachable_refresh_or_a_timeout_probes_error` |
 | P03 | the probe records its verdict (`probe.rs`) | `a_failing_upstream_probes_error`, `a_healthy_connection_probes_ok_with_a_whole_handshake` … |
 | P04 | the verdict is kept for reuse (`probe.rs`) | `a_probe_within_ten_seconds_reuses_the_last` |
-| P05 | Verdict::Ok -> ok (`probe.rs`) | `a_healthy_connection_probes_ok_with_a_whole_handshake`, `the_background_probe_takes_oauth_connections_with_a_grant_only` |
+| P05 | Verdict::Ok -> ok (`probe.rs`) | `a_healthy_connection_probes_ok_with_a_whole_handshake`, `a_tick_keeps_valid_access_ok_when_proactive_refresh_is_unavailable` … |
 | P06 | Verdict::Error -> error (`probe.rs`) | `a_failing_upstream_probes_error`, `a_problem_at_startup_is_announced_once` … |
 | P07 | Verdict::NoChange moves checked_at (`probe.rs`) | `another_4xx_changes_nothing` |
 | P08 | Verdict::NoCredential (`probe.rs`) | `a_connection_without_a_credential_is_not_probed` |
@@ -386,20 +409,20 @@ Each line below was removed or neutered on the scratch branch, the named test bi
 | SC03 | traffic ok only for the URL it reached (`scope.rs`) | `traffic_and_checks_record_only_for_the_url_reached` |
 | SC04 | the same status keeps status_at (`scope.rs`) | `the_same_status_again_keeps_status_at` |
 | SC05 | a transition only when it moved (dedupe at the source) (`scope.rs`) | `the_same_status_again_keeps_status_at` |
-| SC06 | status only for the URL (`scope.rs`) | `a_late_refresh_never_resurrects_a_deleted_grant` |
+| SC06 | status only for the URL (`scope.rs`) | `a_probe_observation_is_invalid_after_its_url_changes` |
 | SC07 | checked only for the URL (`scope.rs`) | `traffic_and_checks_record_only_for_the_url_reached` |
 | SC08 | C6: problems() lists only problems (`scope.rs`) | `startup_problems_are_the_needs_auth_and_error_connections_only` |
 | SC09 | probe targets: OAuth only (`scope.rs`) | `the_background_probe_takes_oauth_connections_with_a_grant_only` |
 | SC10 | probe targets: with a grant (`scope.rs`) | `the_background_probe_takes_oauth_connections_with_a_grant_only` |
 | SC11 | traffic ok only with a credential (`scope.rs`) | `traffic_and_checks_record_only_for_the_url_reached` |
-| PX01 | proactive refresh before use (`proxy.rs`) | `a_refresh_before_use_never_sends_another_url_s_token`, `a_token_about_to_expire_is_refreshed_first` … |
+| PX01 | proactive refresh before use (`proxy.rs`) | `a_fresh_short_lived_token_waits_until_half_its_usable_lifetime_to_refresh`, `a_reconnect_clears_the_dead_marker_and_old_backoff` … |
 | PX02 | no proactive refresh without a refresh token (`proxy.rs`) | `an_unrefreshable_grant_does_not_wait_for_the_lock` |
 | PX03 | O8 OAuth upstream arms (`proxy.rs`) | `a_401_is_refreshed_and_retried_once`, `a_caller_cancelled_mid_refresh_leaves_it_to_complete` … |
 | PX04 | bearer header applied (`proxy.rs`) | `a_401_is_refreshed_and_retried_once`, `a_failing_upstream_probes_error` … |
-| PX05 | a 401 nothing fixes is needs_auth (`proxy.rs`) | `a_grant_gone_before_its_refresh_is_needs_auth`, `a_grant_without_a_refresh_token_is_needs_auth_on_401` … |
-| PX06 | static 401 sets needs_auth (`proxy.rs`) | `a_static_connection_s_401_is_not_refreshed`, `an_upstream_401_is_502_upstream_auth_and_needs_auth` |
-| PX07 | second 401 -> needs_auth + 502 (`proxy.rs`) | `a_refused_credential_probes_needs_auth_after_one_refresh`, `a_second_401_is_needs_auth` |
-| PX08 | NotRefreshable sets needs_auth (`proxy.rs`) | `a_grant_gone_before_its_refresh_is_needs_auth`, `a_grant_without_a_refresh_token_is_needs_auth_on_401` |
+| PX05 | a 401 nothing fixes is needs_auth (`proxy.rs`) | `a_grant_without_a_refresh_token_is_needs_auth_on_401`, `a_refused_refresh_is_needs_auth` … |
+| PX06 | static 401 sets needs_auth (`proxy.rs`) | `a_static_connection_s_401_is_not_refreshed` |
+| PX07 | second 401 -> needs_auth + 502 (`proxy.rs`) | `a_second_401_is_needs_auth`, `every_oauth_refusal_drains_the_unread_request_before_answering` |
+| PX08 | NotRefreshable sets needs_auth (`proxy.rs`) | `a_grant_without_a_refresh_token_is_needs_auth_on_401` |
 | PX09 | Refreshed::Refused -> upstream_auth (`proxy.rs`) | `a_refused_refresh_is_needs_auth` |
 | PX10 | Sent::RefreshUnavailable (`proxy.rs`) | `a_failing_token_endpoint_is_not_needs_auth`, `a_redirect_an_unreachable_refresh_or_a_timeout_probes_error` … |
 | PX11 | Sent::RefreshUnsaved (`proxy.rs`) | `a_grant_that_does_not_open_at_its_refresh_is_not_needs_auth`, `a_probe_the_gateway_fails_changes_nothing` … |
@@ -434,7 +457,7 @@ Each line below was removed or neutered on the scratch branch, the named test bi
 | D13b | decision 13: a retry only with the allowance its token was read with (`proxy.rs`) | `a_retry_keeps_the_allowance_it_was_read_with` |
 | D13c | Sent::Changed outcome (`proxy.rs`) | `a_probe_whose_connection_moved_during_its_refresh_changes_nothing`, `a_retry_keeps_the_allowance_it_was_read_with` … |
 | D13d | Sent::Changed -> 502 upstream_changed (`proxy.rs`) | `a_retry_keeps_the_allowance_it_was_read_with`, `a_retry_never_sends_another_url_s_token` … |
-| D13e | CAS lost: the stored token comes with the stored URL, not the one read before (`refresh.rs`) | `a_retry_keeps_the_allowance_it_was_read_with`, `a_retry_never_sends_another_url_s_token` |
+| D13e | CAS lost: the stored token comes with the stored URL, not the one read before (`refresh.rs`) | `a_lost_refresh_cas_returns_the_reconnected_token_and_destination` |
 | D13f | single-flight Retry carries the URL read with its token (`refresh.rs`) | `concurrent_401s_share_one_refresh` |
 | D13g | probe: Sent::Changed is no change (`probe.rs`) | `a_probe_whose_connection_moved_during_its_refresh_changes_nothing` |
 | CB01 | egress_refused: the operator's oauth_error keeps the policy's reason (`callback.rs`) | `an_exchange_refused_by_egress_or_unreachable_has_its_code` |
@@ -489,6 +512,64 @@ Each line below was removed or neutered on the scratch branch, the named test bi
 | I06 | hat purge preserves another hat flows (`session.rs`) | `a_hat_purge_drops_its_oauth_flows` |
 | I02 | collector installs session gateway on the shared runtime (`main.rs`) | `the_collector_gives_its_sessions_the_gateway` |
 | I07 | session transitions cut the runtime registry (`session.rs`) | `a_revoke_committed_during_the_resolve_ends_the_request`, `a_revoke_cuts_the_tokens_open_stream_and_not_another_tokens` … |
+| T10counter | counter check shares failed outcomes (`refresh.rs`) | `queued_failures_share_outcome_even_after_the_backoff_window_elapsed` |
+| T10increment | counter publication (`refresh.rs`) | `queued_failures_share_outcome_even_after_the_backoff_window_elapsed` |
+| T10cache | record the attempt outcome (`refresh.rs`) | `concurrent_failed_refreshes_share_the_recorded_unsaved_outcome` |
+| T10backoff | no vendor inside backoff (`refresh.rs`) | `unavailable_backoff_doubles_between_attempts_and_resets_on_success` |
+| T10deadline | persist the backoff deadline (`refresh.rs`) | `unavailable_backoff_doubles_between_attempts_and_resets_on_success` |
+| T10exponential | exponential and saturated backoff (`refresh.rs`) | `backoff_starts_at_thirty_seconds_and_saturates_at_five_minutes` |
+| T10cap | five-minute cap (`refresh.rs`) | `backoff_starts_at_thirty_seconds_and_saturates_at_five_minutes` |
+| T10generation | attempt state reset on new sealed grant (`refresh.rs`) | `a_reconnect_clears_the_dead_marker_and_old_backoff` |
+| T10quiet | proactive refusal never changes status or pushes (`refresh.rs`) | `concurrent_proactive_invalid_grant_is_dead_but_keeps_valid_access_ok` |
+| T10deadstop | durable dead-token stop (`refresh.rs`) | `needs_auth_with_a_dead_refresh_fails_fast_even_without_an_expiry` |
+| T10permanent | never resend even when retirement persist fails (`refresh.rs`) | `a_refusal_with_an_unsaved_dead_marker_never_resends_the_token` |
+| T10retire | erase dead refresh token from blob (`refresh.rs`) | `concurrent_proactive_invalid_grant_is_dead_but_keeps_valid_access_ok` |
+| T10mark | mark dead under CAS (`refresh.rs`) | `needs_auth_with_a_dead_refresh_fails_fast_even_without_an_expiry` |
+| T10cas | retirement CAS never overwrites reconnect (`refresh.rs`) | `a_refusal_never_marks_a_concurrent_reconnect_dead` |
+| T10unsaved | retirement persist failure verdict (`refresh.rs`) | `a_refusal_with_an_unsaved_dead_marker_never_resends_the_token` |
+| T10classrefused | classifier refused verdict (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| T10classunavailable | classifier unavailable verdict (`refresh.rs`) | `unavailable_classifier_backs_off_every_transient_error` |
+| T10seal | sealed dead marker roundtrip (`model.rs`) | `sealed_tokens_keep_legacy_grants_live_and_round_trip_the_dead_marker` |
+| T10open | open durable dead marker (`model.rs`) | `needs_auth_with_a_dead_refresh_fails_fast_even_without_an_expiry` |
+| T10connect | new Connect clears dead marker (`callback.rs`) | `a_connect_clears_the_last_failure_and_recovers_the_status` |
+| T10expiry | expired access fails fast (`proxy.rs`) | `concurrent_proactive_unavailable_refreshes_use_the_valid_token_without_pushes` |
+| T10failfast | needs_auth dead refresh fails before upstream (`proxy.rs`) | `needs_auth_with_a_dead_refresh_fails_fast_even_without_an_expiry` |
+| T10status | expired/dead preparation verdict (`proxy.rs`) | `a_tick_keeps_valid_access_ok_then_marks_expired_dead_refresh_once` |
+| T10scope | stale probe status guard (`scope.rs`) | `a_probe_drops_its_verdict_after_a_same_url_credential_replacement` |
+| T10failures | failure count advances between windows (`refresh.rs`) | `unavailable_backoff_doubles_between_attempts_and_resets_on_success` |
+| T10announce | expired token announces needs_auth once (`proxy.rs`) | `concurrent_proactive_invalid_grant_is_dead_but_keeps_valid_access_ok` |
+| I1redirect | I1 redirect remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1unnamed | I1 unnamed remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1named | I1 named remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1temporary | I1 temporary remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1401 | I1 401 remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1403 | I1 403 remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1404 | I1 404 remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1408 | I1 408 remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1client | I1 client remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1unauthorized | I1 unauthorized remains transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| I1target | invalid_target without resource is transient (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| M1unsaved | unsaved issuance starts backoff (`refresh.rs`) | `an_unsaved_refresh_backs_off_before_another_vendor_call` |
+| M2same | shared Retry cannot contain the failed token (`refresh.rs`) | `a_shared_retry_of_the_token_that_just_failed_takes_its_own_refresh_path` |
+| M5lead | short-token lead is half usable lifetime (`refresh.rs`) | `a_fresh_short_lived_token_waits_until_half_its_usable_lifetime_to_refresh` |
+| M5lifetime | lead uses original lifetime not current remaining time (`refresh.rs`) | `a_fresh_short_lived_token_waits_until_half_its_usable_lifetime_to_refresh` |
+| M5read | issued_at read with expiry (`store.rs`) | `a_fresh_short_lived_token_waits_until_half_its_usable_lifetime_to_refresh` |
+| M3checked | stale NoChange cannot stamp checked_at (`scope.rs`) | `a_probe_drops_its_verdict_after_a_same_url_credential_replacement` |
+| M3kind | probe identity includes credential kind (`scope.rs`) | `a_probe_observation_is_invalid_when_only_the_credential_kind_changes` |
+| CN400 | only HTTP 400 invalid_grant is permanent (`refresh.rs`) | `refusal_classifier_retires_only_invalid_grant` |
+| CNunsaved | expired Unsaved returns credential_unsaved without status/push (`proxy.rs`) | `an_expired_unsaved_refresh_never_changes_status_or_asks_for_reconnect` |
+| CNauthstamp | auth verdict uses token-read stamp, on fail-fast and refused paths (`scope.rs`) | `a_needs_auth_write_for_an_old_token_cannot_mark_a_reconnected_grant`, `a_static_401_after_credential_replacement_has_no_stale_needs_auth_write` |
+| CNregister | register Attempts cleanup with store (`runtime.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNremove | eviction removes slot rather than retaining empty entry (`refresh.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNwipe | wipe cached plaintext retained by queued callers (`refresh.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNdispatch | notify live refresh caches after committed writes (`store.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNdelete | delete clears Attempts after commit (`store.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNpurge | purge clears each connection Attempts (`store.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNstatic | static replacement clears Attempts (`store.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNconnect | Connect replacement clears Attempts (`store.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNrefresh | refresh replacement clears Attempts (`store.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNkind | kind/origin replacement clears Attempts (`store.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
+| CNrollback | rollback preserves cache: no eviction before failed commit (`store.rs`) | `committed_credential_changes_erase_cached_refresh_outcomes` |
 
 **C23** (an unreadable query refused before anything else) remains the previously accepted equivalent: a failed parse has no `state`, so both paths answer `flow_unknown`. It is not counted as a bite. Phase B re-ran the entire probe set on the integrated tip, including every conflicted file and all nine new probes; 325 bite. O38 was updated to mutate the negative-number parser decision after F5 made its old filter-removal mutation redundant. AP10 now includes its existing `api_log` positive test. Both fresh reruns bite; raw prior observations are retained. Every anchor occurs once, every BITE has named failing tests, and no source/test weakening was used. F7’s separate document-wording probe bites.
 
@@ -504,6 +585,7 @@ Each line below was removed or neutered on the scratch branch, the named test bi
 | `crates/hennery-gateway/src/oauth_api.rs`, `callback.rs` (new); `api.rs` (routes, item; OAuth kinds taken); `crates/hennery-kernel/src/capabilities.rs` | the Connect API | 6 |
 | `crates/hennery-gateway/src/{oauth,callback,oauth_api,refresh,store,schema}.rs`, OAuth tests and owner audit | security amendments, regression tests and failure canaries | 7 |
 | `docs/specs/…` | write-back including the amendments | 8 |
+| Refresh, proxy, probe, store/model, scope and regression fixtures | refresh failure state machine and scoped review fixes | 10 |
 | `src/oauth_api.rs`, OAuth/log tests and fake server | re-confirmation notes m2 and F6 body leg | 9 |
 
 **The intermediate edits** (what no commit of the scratch branch holds; each is undone by a later task's block): from Task 3 to Task 6, the API's create and update refuse the OAuth kinds (`Change::Unsupported`, kept until Task 6); from Task 3 to Task 5, the old proxy calls the status writes' new signatures; from Task 2 to Task 6 the wire item's `checked_at`, `oauth` and `oauth_error` are `None`; in Task 5 the list builds items without a redirect URI and `update` reads nothing before; `lib.rs` declares each module from the task that brings it.
@@ -17730,7 +17812,3636 @@ with:
    git add -A && git -c commit.gpgsign=false commit -m "fix(gateway): report deleted connections and serve probe body canaries"
    ```
 
+### Task 10: Share refresh failures, retire only invalid_grant and close the scoped review findings
+
+**Files:** Modify refresh, proxy, probe, scope, model and store; strengthen OAuth/probe/expiry/owner-audit tests and fake-server fixtures; adapt the merged drain-test constructor; write back gateway §4.4–4.5 and the Task 10 documentation notes.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+              tracing::warn!(connection_id = %id, why = %err.message(), "gateway: a refresh did not reach the vendor");
+              Refreshed::Unavailable
+          }
+      }
+  }
+  ```
+
+with:
+
+  ```rust
+              tracing::warn!(connection_id = %id, why = %err.message(), "gateway: a refresh did not reach the vendor");
+              Refreshed::Unavailable
+          }
+      }
+  }
+
+  #[cfg(test)]
+  mod tests {
+      use super::*;
+
+      #[test]
+      fn refusal_classifier_retires_only_invalid_grant() {
+          for (status, error, expected) in [
+              (302, None, Failure::Unavailable),
+              (302, Some("invalid_grant"), Failure::Unavailable),
+              (400, None, Failure::Unavailable),
+              (400, Some("invalid_request"), Failure::Unavailable),
+              (400, Some("temporarily_unavailable"), Failure::Unavailable),
+              (401, None, Failure::Unavailable),
+              (401, Some("invalid_grant"), Failure::Unavailable),
+              (403, None, Failure::Unavailable),
+              (403, Some("invalid_grant"), Failure::Unavailable),
+              (404, None, Failure::Unavailable),
+              (404, Some("invalid_grant"), Failure::Unavailable),
+              (408, None, Failure::Unavailable),
+              (400, Some("invalid_client"), Failure::Unavailable),
+              (400, Some("unauthorized_client"), Failure::Unavailable),
+              (400, Some("invalid_grant"), Failure::Refused),
+          ] {
+              assert_eq!(
+                  classify(&TokenError::Refused { error, status }),
+                  expected,
+                  "HTTP {status}: {error:?}"
+              );
+          }
+          assert_eq!(classify(&TokenError::InvalidTarget), Failure::Unavailable);
+      }
+
+      #[test]
+      fn unavailable_classifier_backs_off_every_transient_error() {
+          for error in [
+              TokenError::Unavailable,
+              TokenError::Invalid,
+              TokenError::EgressRefused("refused".into()),
+          ] {
+              assert_eq!(classify(&error), Failure::Unavailable);
+          }
+      }
+
+      #[test]
+      fn backoff_starts_at_thirty_seconds_and_saturates_at_five_minutes() {
+          for (failure, seconds) in [
+              (1, 30),
+              (2, 60),
+              (3, 120),
+              (4, 240),
+              (5, 300),
+              (32, 300),
+              (u32::MAX, 300),
+          ] {
+              assert_eq!(backoff_delay(failure), Duration::from_secs(seconds));
+          }
+      }
+      #[test]
+      fn committed_credential_changes_erase_cached_refresh_outcomes() {
+          use crate::model::{AuthMethod, Change, CredKind, GrantTokens, NewConnection, TokenClient};
+          use crate::notify::Silent;
+          use crate::scope::ProxyStore;
+          use crate::store::{ClientSource, GatewayStore, GrantToStore, RefreshedGrant};
+          use hennery_kernel::egress::{Egress, Timeouts};
+          use hennery_kernel::hosts::Hosts;
+          for action in ["delete", "purge", "static", "connect", "refresh", "kind"] {
+              let dir = tempfile::tempdir().unwrap();
+              let db = dir.path().join("hennery.db");
+              let hosts = Hosts::open(&db).unwrap();
+              let store = Arc::new(GatewayStore::open(&db).unwrap());
+              let key = Arc::new(crate::key::MasterKey::from_bytes([7; 32]));
+              let runtime = Runtime::new(
+                  store.clone(),
+                  Arc::new(ProxyStore::open(&db).unwrap()),
+                  key.clone(),
+                  Egress::new(Timeouts {
+                      connect: Duration::from_secs(2),
+                      request: Duration::from_secs(10),
+                  })
+                  .unwrap(),
+                  Arc::new(Silent),
+              );
+              let hat = hosts.default_hat_for_new_hosts().unwrap();
+              let kind = if action == "static" {
+                  CredKind::Static
+              } else {
+                  CredKind::OauthDcr
+              };
+              let url = "https://mcp.vendor.example/mcp";
+              let Change::Done(record) = store
+                  .create(
+                      &NewConnection {
+                          slug: "cached".into(),
+                          label: "Cached".into(),
+                          url: url.into(),
+                          hat_id: hat.clone(),
+                          cred_kind: kind,
+                          static_header: None,
+                          static_prefix: None,
+                          tool_allowlist: None,
+                          internal_network: false,
+                      },
+                      1,
+                  )
+                  .unwrap()
+              else {
+                  panic!("connection not created")
+              };
+              let id = record.id;
+              let client = TokenClient {
+                  client_id: "seeded".into(),
+                  secret: None,
+                  auth_method: AuthMethod::None,
+                  token_endpoint: "https://auth.vendor.example/token".into(),
+              };
+              let tokens = GrantTokens {
+                  access_token: Zeroizing::new("access".into()),
+                  refresh_token: Some(Zeroizing::new("refresh".into())),
+                  refresh_dead: false,
+              };
+              let grant = GrantToStore {
+                  connection_id: &id,
+                  url,
+                  cred_kind: kind,
+                  internal_network: false,
+                  source: ClientSource::Registered,
+                  client: &client,
+                  issuer: "https://auth.vendor.example",
+                  authorization_endpoint: "https://auth.vendor.example/authorize",
+                  redirect_uri: "https://hennery.example/api/mcp/oauth/callback",
+                  scopes: &[],
+                  resource: url,
+                  resource_param_accepted: true,
+                  registered_at: 1,
+                  tokens: &tokens,
+                  expires_at: None,
+              };
+              if action == "static" {
+                  store.set_static_credential(&id, "initial", &key, 1).unwrap();
+              } else {
+                  assert!(matches!(
+                      store.store_grant(&grant, &key, 1).unwrap(),
+                      crate::store::GrantStored::Stored(_)
+                  ));
+              }
+              let state = runtime.attempts.slot(&id);
+              *state.last.lock().unwrap() = Some(Attempt {
+                  sealed: vec![],
+                  outcome: Refreshed::Retry(Fresh {
+                      access_token: Zeroizing::new("cached-plaintext-canary".into()),
+                      url: url.into(),
+                      internal_network: false,
+                  }),
+                  permanent: false,
+                  failures: 0,
+                  retry_after: None,
+              });
+              let other = runtime.attempts.slot("other-connection");
+              match action {
+                  "delete" => {
+                      assert!(store.delete(&id).unwrap());
+                  }
+                  "purge" => {
+                      store.purge_hat(&hat).unwrap();
+                  }
+                  "static" => {
+                      store.set_static_credential(&id, "replacement", &key, 2).unwrap();
+                  }
+                  "connect" => {
+                      assert!(matches!(
+                          store.store_grant(&grant, &key, 2).unwrap(),
+                          crate::store::GrantStored::Stored(_)
+                      ));
+                  }
+                  "refresh" => {
+                      let read = store.oauth_credential(&id, &key).unwrap().unwrap();
+                      assert!(
+                          store
+                              .store_refreshed(
+                                  &id,
+                                  &read,
+                                  &RefreshedGrant {
+                                      tokens: &tokens,
+                                      expires_at: None,
+                                      resource_param_accepted: true
+                                  },
+                                  &key,
+                                  2
+                              )
+                              .unwrap()
+                      );
+                  }
+                  "kind" => {
+                      assert!(matches!(
+                          store
+                              .update(
+                                  &id,
+                                  &crate::model::ConnectionPatch {
+                                      cred_kind: Some(CredKind::None),
+                                      ..Default::default()
+                                  },
+                                  2
+                              )
+                              .unwrap(),
+                          Change::Done(_)
+                      ));
+                  }
+                  _ => unreachable!(),
+              }
+              assert!(
+                  !runtime.attempts.slots.lock().unwrap().contains_key(&id),
+                  "{action}: slot stays cached"
+              );
+              assert!(
+                  state.last.lock().unwrap().is_none(),
+                  "{action}: retained state still holds plaintext"
+              );
+              assert!(
+                  Arc::ptr_eq(&runtime.attempts.slot("other-connection"), &other),
+                  "unrelated slot remains"
+              );
+          }
+      }
+  }
+  ```
+
+In `crates/hennery-gateway/tests/oauth_expiry.rs`, replace:
+
+  ```rust
+      assert!(!refresh::due(Some(i64::MAX), i64::MIN));
+      assert!(refresh::due(Some(i64::MIN), i64::MAX));
+      assert!(refresh::due(Some(i64::MAX), i64::MAX - 300));
+      assert!(!refresh::due(Some(i64::MAX), i64::MAX - 301));
+      assert!(!refresh::due(None, i64::MAX));
+  ```
+
+with:
+
+  ```rust
+      assert!(!refresh::due(Some(i64::MAX), 0, i64::MIN));
+      assert!(refresh::due(Some(i64::MIN), i64::MIN, i64::MAX));
+      assert!(refresh::due(Some(i64::MAX), 0, i64::MAX - 300));
+      assert!(!refresh::due(Some(i64::MAX), 0, i64::MAX - 301));
+      assert!(!refresh::due(None, 0, i64::MAX));
+  ```
+
+In `crates/hennery-gateway/tests/oauth_proxy.rs`, replace:
+
+  ```rust
+  /// refresh, so the 401 stands: `needs_auth`, 502 `upstream_auth`.
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn a_grant_gone_before_its_refresh_is_needs_auth() {
+  ```
+
+with:
+
+  ```rust
+  /// refresh, so the 401 stands as 502 `upstream_auth`; the status guard
+  /// does not announce a stale result for the deleted credential.
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn a_grant_gone_before_its_refresh_has_no_stale_status_transition() {
+  ```
+
+In `crates/hennery-gateway/tests/oauth_proxy.rs`, replace:
+
+  ```rust
+      assert_eq!(a.with(|r| r.refreshes), 0);
+      assert_eq!(h.status(&id), "needs_auth");
+  }
+  ```
+
+with:
+
+  ```rust
+      assert_eq!(a.with(|r| r.refreshes), 0);
+      assert_eq!(h.status(&id), "ok");
+      assert!(h.alerts.alerts().is_empty());
+  }
+  ```
+
+In `crates/hennery-gateway/tests/oauth_proxy.rs`, replace:
+
+  ```rust
+      assert!(b.with(|r| r.bearers.is_empty()), "nothing was retried at b either");
+      assert_ne!(h.status(&id), "needs_auth");
+  }
+  ```
+
+with:
+
+  ```rust
+      assert!(b.with(|r| r.bearers.is_empty()), "nothing was retried at b either");
+      assert_ne!(h.status(&id), "needs_auth");
+  }
+
+  fn count_status_changes(h: &Harness) {
+      h.raw()
+          .execute_batch(
+              "CREATE TABLE refresh_status_changes (id TEXT);
+          CREATE TRIGGER count_refresh_status AFTER UPDATE OF status ON gw_connections
+          WHEN OLD.status <> NEW.status BEGIN INSERT INTO refresh_status_changes VALUES (NEW.id); END;",
+          )
+          .unwrap();
+  }
+
+  fn status_changes(h: &Harness) -> i64 {
+      h.raw()
+          .query_row("SELECT count(*) FROM refresh_status_changes", [], |r| r.get(0))
+          .unwrap()
+  }
+
+  async fn concurrent_posts(h: &Harness, token: &str) -> Vec<reqwest::Response> {
+      futures::future::join_all((0..8).map(|i| async move { h.post("linear", token, &list(i)).await })).await
+  }
+
+  /// Task 10: failures share the attempt too; while the access token is
+  /// valid, a proactive failure has no status transition or notification.
+  #[tokio::test]
+  async fn concurrent_proactive_unavailable_refreshes_use_the_valid_token_without_pushes() {
+      let (h, fake, id, token) = setup(
+          Config {
+              token_status: Some(503),
+              ..Config::default()
+          },
+          Some(unix_now() + 120),
+      )
+      .await;
+      count_status_changes(&h);
+      for _ in 0..2 {
+          let answers = concurrent_posts(&h, &token).await;
+          assert!(answers.iter().all(|r| r.status() == 200));
+          assert_eq!(token_requests(&fake), 1, "one vendor call in the backoff window");
+          assert_eq!(h.status(&id), "ok");
+          assert_eq!(status_changes(&h), 0);
+          assert!(h.alerts.alerts().is_empty());
+      }
+      // Advance timers between real HTTP exchanges.
+      advance_backoff(31).await;
+      let answers = concurrent_posts(&h, &token).await;
+      assert!(answers.iter().all(|r| r.status() == 200));
+      assert_eq!(token_requests(&fake), 2);
+      assert_eq!(status_changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+      h.raw()
+          .execute(
+              "UPDATE gw_credentials SET expires_at = ?2 WHERE connection_id = ?1",
+              rusqlite::params![id, unix_now() - 1],
+          )
+          .unwrap();
+      let before = fake.with(|r| r.bearers.len());
+      for answer in concurrent_posts(&h, &token).await {
+          assert_eq!(answer.status(), 502);
+          assert_eq!(
+              answer.json::<serde_json::Value>().await.unwrap()["code"],
+              "upstream_auth"
+          );
+      }
+      assert_eq!(token_requests(&fake), 2, "no refresh during backoff");
+      assert_eq!(fake.with(|r| r.bearers.len()), before, "expired token is not sent");
+      assert_eq!(status_changes(&h), 1);
+      assert_eq!(h.alerts.alerts(), [(id, Alert::NeedsAuth)]);
+  }
+
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn concurrent_proactive_invalid_grant_is_dead_but_keeps_valid_access_ok() {
+      let (h, fake, id, token) = setup(Config::default(), Some(unix_now() + 120)).await;
+      let access = grant(&h, &id).tokens.access_token.clone();
+      seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), Some(unix_now() + 120));
+      count_status_changes(&h);
+      for _ in 0..2 {
+          assert!(concurrent_posts(&h, &token).await.iter().all(|r| r.status() == 200));
+          assert_eq!(token_requests(&fake), 1, "never resend invalid_grant");
+          assert_eq!(h.status(&id), "ok");
+          assert_eq!(status_changes(&h), 0);
+          assert!(h.alerts.alerts().is_empty());
+      }
+      assert!(
+          grant(&h, &id).tokens.refresh_token.is_none(),
+          "dead token is removed from the sealed blob"
+      );
+      h.raw()
+          .execute(
+              "UPDATE gw_credentials SET expires_at = ?2 WHERE connection_id = ?1",
+              rusqlite::params![id, unix_now() - 1],
+          )
+          .unwrap();
+      let before = fake.with(|r| r.bearers.len());
+      for _ in 0..2 {
+          for answer in concurrent_posts(&h, &token).await {
+              assert_eq!(answer.status(), 502);
+              assert_eq!(
+                  answer.json::<serde_json::Value>().await.unwrap()["code"],
+                  "upstream_auth"
+              );
+          }
+      }
+      assert_eq!(fake.with(|r| r.bearers.len()), before);
+      assert_eq!(token_requests(&fake), 1);
+      assert_eq!(status_changes(&h), 1);
+      assert_eq!(h.alerts.alerts(), [(id, Alert::NeedsAuth)]);
+  }
+
+  /// All futures enter refresh before the gated attempt can finish. An
+  /// unsaved success is shared, and subsequent callers back off too.
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn concurrent_failed_refreshes_share_the_recorded_unsaved_outcome() {
+      use hennery_gateway::refresh::{self, Refreshed};
+      let (h, fake, id, _) = setup(
+          Config {
+              gate_token: true,
+              ..Config::default()
+          },
+          None,
+      )
+      .await;
+      count_status_changes(&h);
+      h.raw()
+          .execute_batch(
+              "CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+          )
+          .unwrap();
+      let failed = grant(&h, &id).tokens.access_token.clone();
+      let held = h.runtime.lock(&id).await;
+      let calls = (0..8).map(|_| refresh::refresh(h.runtime.clone(), id.clone(), Some(failed.clone())));
+      let mut joined = Box::pin(futures::future::join_all(calls));
+      assert!(futures::poll!(&mut joined).is_pending());
+      drop(held);
+      tokio::select! {
+          _ = &mut joined => panic!("refresh answered at the gate"),
+          () = until(|| token_requests(&fake) == 1) => {}
+      }
+      fake.open_gate();
+      assert_eq!(joined.await, vec![Refreshed::Unsaved; 8]);
+      assert_eq!(
+          token_requests(&fake),
+          1,
+          "queued callers share the recorded unsaved outcome"
+      );
+      assert_eq!(status_changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+  }
+
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn concurrent_401s_share_an_unavailable_attempt() {
+      let (h, fake, id, token) = setup(
+          Config {
+              token_status: Some(503),
+              ..Config::default()
+          },
+          None,
+      )
+      .await;
+      fake.expire_access();
+      count_status_changes(&h);
+      for answer in concurrent_posts(&h, &token).await {
+          assert_eq!(answer.status(), 502);
+          assert_eq!(
+              answer.json::<serde_json::Value>().await.unwrap()["code"],
+              "upstream_unreachable"
+          );
+      }
+      assert_eq!(token_requests(&fake), 1);
+      assert_eq!(status_changes(&h), 0, "transient outage does not ask for reconnect");
+      assert!(h.alerts.alerts().is_empty());
+      assert_eq!(h.status(&id), "ok");
+  }
+
+  #[tokio::test]
+  async fn needs_auth_with_a_dead_refresh_fails_fast_even_without_an_expiry() {
+      let (h, fake, id, token) = setup(Config::default(), None).await;
+      let access = grant(&h, &id).tokens.access_token.clone();
+      seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), None);
+      fake.expire_access();
+      count_status_changes(&h);
+      for _ in 0..3 {
+          let answer = h.post("linear", &token, &list(1)).await;
+          assert_eq!(answer.status(), 502);
+          assert_eq!(
+              answer.json::<serde_json::Value>().await.unwrap()["code"],
+              "upstream_auth"
+          );
+      }
+      assert_eq!(token_requests(&fake), 1);
+      assert_eq!(
+          fake.with(|r| r.bearers.len()),
+          1,
+          "needs_auth and dead refresh fail before sending access again"
+      );
+      assert_eq!(status_changes(&h), 1);
+      assert_eq!(h.alerts.alerts(), [(id, Alert::NeedsAuth)]);
+      let restarted = std::sync::Arc::new(hennery_gateway::runtime::Runtime::new(
+          h.store.clone(),
+          h.proxy_store.clone(),
+          h.key.clone(),
+          h.runtime.egress.clone(),
+          h.alerts.clone(),
+      ));
+      assert_eq!(
+          hennery_gateway::refresh::refresh(restarted, h.store.list().unwrap()[0].id.clone(), Some(access)).await,
+          hennery_gateway::refresh::Refreshed::Refused,
+          "the sealed dead marker survives restart with unknown expiry"
+      );
+      assert_eq!(token_requests(&fake), 1);
+  }
+
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn a_refusal_never_marks_a_concurrent_reconnect_dead() {
+      use hennery_gateway::refresh;
+      let (h, fake, id, _) = setup(
+          Config {
+              gate_token: true,
+              ..Config::default()
+          },
+          Some(unix_now() + 60),
+      )
+      .await;
+      let access = grant(&h, &id).tokens.access_token.clone();
+      seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), Some(unix_now() + 60));
+      count_status_changes(&h);
+      let mut attempt = Box::pin(refresh::refresh(h.runtime.clone(), id.clone(), None));
+      tokio::select! {
+          _ = &mut attempt => panic!("refresh answered at the gate"),
+          () = until(|| token_requests(&fake) == 1) => {}
+      }
+      let (new_access, new_refresh) = fake.issue();
+      seed_grant(&h, &id, &fake, &new_access, Some(&new_refresh), None);
+      fake.open_gate();
+      let _ = attempt.await;
+      assert_eq!(
+          grant(&h, &id).tokens.refresh_token.as_deref().map(String::as_str),
+          Some(new_refresh.as_str())
+      );
+      assert_eq!(h.status(&id), "ok");
+      assert_eq!(status_changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_reconnect_clears_the_dead_marker_and_old_backoff() {
+      for unavailable in [true, false] {
+          let (h, fake, id, token) = setup(
+              Config {
+                  token_status: unavailable.then_some(503),
+                  ..Config::default()
+              },
+              Some(unix_now() + 60),
+          )
+          .await;
+          if !unavailable {
+              let access = grant(&h, &id).tokens.access_token.clone();
+              seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), Some(unix_now() + 60));
+          }
+          assert_eq!(h.post("linear", &token, &list(1)).await.status(), 200);
+          assert_eq!(grant(&h, &id).tokens.refresh_dead, !unavailable);
+          fake.configure(|config| config.token_status = None);
+          let (access, refresh) = fake.issue();
+          seed_grant(&h, &id, &fake, &access, Some(&refresh), Some(unix_now() + 60));
+          assert_eq!(h.post("linear", &token, &list(2)).await.status(), 200);
+          assert_eq!(token_requests(&fake), 2, "a new sealed grant has no old attempt state");
+          assert!(!grant(&h, &id).tokens.refresh_dead);
+      }
+  }
+
+  #[tokio::test]
+  async fn a_refusal_with_an_unsaved_dead_marker_never_resends_the_token() {
+      use hennery_gateway::refresh::{self, Refreshed};
+      let (h, fake, id, _) = setup(Config::default(), None).await;
+      let access = grant(&h, &id).tokens.access_token.clone();
+      seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), None);
+      count_status_changes(&h);
+      h.raw()
+          .execute_batch(
+              "CREATE TRIGGER no_dead_write BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+          )
+          .unwrap();
+      for attempt in 0..3 {
+          if attempt > 0 {
+              advance_backoff(301).await;
+          }
+          assert_eq!(
+              refresh::refresh(h.runtime.clone(), id.clone(), Some(access.clone())).await,
+              Refreshed::Unsaved
+          );
+      }
+      assert_eq!(token_requests(&fake), 1);
+      assert_eq!(status_changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_refresh_rechecks_due_after_waiting_for_the_lock() {
+      use hennery_gateway::refresh::{self, Refreshed};
+      let (h, fake, id, _) = setup(Config::default(), Some(unix_now() + 60)).await;
+      let held = h.runtime.lock(&id).await;
+      let mut call = Box::pin(refresh::refresh(h.runtime.clone(), id.clone(), None));
+      assert!(futures::poll!(&mut call).is_pending());
+      let credential = grant(&h, &id);
+      let refreshed = RefreshedGrant {
+          tokens: &credential.tokens,
+          expires_at: Some(unix_now() + 3600),
+          resource_param_accepted: true,
+      };
+      assert!(
+          h.store
+              .store_refreshed(&id, &credential, &refreshed, &h.key, unix_now())
+              .unwrap()
+      );
+      drop(held);
+      assert!(matches!(call.await, Refreshed::Retry(_)));
+      assert_eq!(token_requests(&fake), 0);
+  }
+
+  #[tokio::test]
+  async fn a_lost_refresh_cas_returns_the_reconnected_token_and_destination() {
+      use hennery_gateway::refresh::{self, Refreshed};
+      let (h, fake, id, _) = setup(
+          Config {
+              gate_token: true,
+              ..Config::default()
+          },
+          Some(unix_now() + 60),
+      )
+      .await;
+      let mut call = Box::pin(refresh::refresh(h.runtime.clone(), id.clone(), None));
+      tokio::select! {
+          _ = &mut call => panic!("refresh answered at the gate"),
+          () = until(|| token_requests(&fake) == 1) => {}
+      }
+      let (access, refresh) = fake.issue();
+      seed_grant(&h, &id, &fake, &access, Some(&refresh), None);
+      fake.open_gate();
+      let Refreshed::Retry(fresh) = call.await else {
+          panic!("did not reread the concurrent grant")
+      };
+      assert_eq!(fresh.access_token.as_str(), access);
+      assert_eq!(fresh.url, fake.mcp_url());
+      assert!(fresh.internal_network);
+  }
+
+  async fn advance_backoff(seconds: u64) {
+      // Pause only the timer, after each real HTTP response; resume
+      // before network I/O so automatic clock advancement cannot race it.
+      tokio::time::pause();
+      tokio::time::advance(Duration::from_secs(seconds)).await;
+      tokio::time::resume();
+  }
+
+  #[tokio::test]
+  async fn unavailable_backoff_doubles_between_attempts_and_resets_on_success() {
+      let (h, fake, id, token) = setup(
+          Config {
+              token_status: Some(503),
+              ..Config::default()
+          },
+          Some(unix_now() + 120),
+      )
+      .await;
+      assert_eq!(h.post("linear", &token, &list(1)).await.status(), 200);
+      assert_eq!(token_requests(&fake), 1);
+      advance_backoff(31).await;
+      assert_eq!(h.post("linear", &token, &list(2)).await.status(), 200);
+      assert_eq!(token_requests(&fake), 2);
+      advance_backoff(31).await;
+      assert_eq!(h.post("linear", &token, &list(3)).await.status(), 200);
+      assert_eq!(token_requests(&fake), 2, "second backoff is 60 seconds");
+      advance_backoff(30).await;
+      assert_eq!(h.post("linear", &token, &list(4)).await.status(), 200);
+      assert_eq!(token_requests(&fake), 3);
+      fake.configure(|config| config.token_status = None);
+      advance_backoff(121).await;
+      assert_eq!(h.post("linear", &token, &list(5)).await.status(), 200);
+      assert_eq!(token_requests(&fake), 4);
+      fake.configure(|config| config.token_status = Some(503));
+      h.raw()
+          .execute(
+              "UPDATE gw_credentials SET expires_at = ?2, updated_at = ?3 WHERE connection_id = ?1",
+              rusqlite::params![id, unix_now() + 120, unix_now() - 3600],
+          )
+          .unwrap();
+      assert_eq!(h.post("linear", &token, &list(6)).await.status(), 200);
+      assert_eq!(token_requests(&fake), 5);
+      advance_backoff(31).await;
+      assert_eq!(h.post("linear", &token, &list(7)).await.status(), 200);
+      assert_eq!(
+          token_requests(&fake),
+          6,
+          "success reset failure count to the 30-second backoff"
+      );
+      assert_eq!(h.status(&id), "ok");
+      assert!(h.alerts.alerts().is_empty());
+  }
+
+  #[tokio::test]
+  async fn an_unsaved_refresh_backs_off_before_another_vendor_call() {
+      use hennery_gateway::refresh::{self, Refreshed};
+      let (h, fake, id, _) = setup(Config::default(), None).await;
+      h.raw()
+          .execute_batch(
+              "CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+          )
+          .unwrap();
+      let failed = grant(&h, &id).tokens.access_token;
+      for _ in 0..3 {
+          assert_eq!(
+              refresh::refresh(h.runtime.clone(), id.clone(), Some(failed.clone())).await,
+              Refreshed::Unsaved
+          );
+          assert_eq!(token_requests(&fake), 1, "unsaved issuance must back off");
+      }
+      advance_backoff(31).await;
+      let _ = refresh::refresh(h.runtime.clone(), id.clone(), Some(failed)).await;
+      assert_eq!(token_requests(&fake), 2, "retry after the backoff window");
+  }
+
+  #[tokio::test]
+  async fn a_shared_retry_of_the_token_that_just_failed_takes_its_own_refresh_path() {
+      use hennery_gateway::refresh::{self, Refreshed};
+      let (h, fake, id, _) = setup(
+          Config {
+              gate_token: true,
+              raw_token: Some(r#"{"access_token":"shared-access","refresh_token":"shared-refresh"}"#.into()),
+              ..Config::default()
+          },
+          Some(unix_now() + 120),
+      )
+      .await;
+      let first = tokio::spawn(refresh::refresh(h.runtime.clone(), id.clone(), None));
+      until(|| token_requests(&fake) == 1).await;
+      let mut second = Box::pin(refresh::refresh(
+          h.runtime.clone(),
+          id.clone(),
+          Some(zeroize::Zeroizing::new("shared-access".into())),
+      ));
+      assert!(futures::poll!(&mut second).is_pending());
+      fake.open_gate();
+      assert!(matches!(first.await.unwrap(), Refreshed::Retry(_)));
+      assert_eq!(second.await, Refreshed::Refused);
+      assert_eq!(
+          token_requests(&fake),
+          2,
+          "the shared Retry carries the caller's failed token"
+      );
+  }
+
+  #[tokio::test]
+  async fn token_endpoint_transient_answers_never_retire_the_refresh_token() {
+      for (status, error) in [
+          (302, None),
+          (302, Some("invalid_grant")),
+          (400, None),
+          (400, Some("invalid_request")),
+          (400, Some("temporarily_unavailable")),
+          (401, None),
+          (403, None),
+          (404, None),
+          (408, None),
+          (400, Some("invalid_client")),
+          (400, Some("unauthorized_client")),
+          (400, Some("invalid_target")),
+          (429, None),
+          (503, None),
+      ] {
+          let (h, fake, id, token) = setup(
+              Config {
+                  token_status: Some(status),
+                  refusal_body: error.map(|error| serde_json::json!({ "error": error })),
+                  ..Config::default()
+              },
+              Some(unix_now() + 120),
+          )
+          .await;
+          count_status_changes(&h);
+          for _ in 0..2 {
+              assert_eq!(h.post("linear", &token, &list(1)).await.status(), 200);
+          }
+          let saved = grant(&h, &id);
+          assert!(!saved.tokens.refresh_dead, "HTTP {status}: {error:?}");
+          assert!(saved.tokens.refresh_token.is_some());
+          assert_eq!(
+              token_requests(&fake),
+              if error == Some("invalid_target") { 2 } else { 1 }
+          );
+          assert_eq!(status_changes(&h), 0);
+          assert!(h.alerts.alerts().is_empty());
+      }
+  }
+
+  #[tokio::test]
+  async fn a_fresh_short_lived_token_waits_until_half_its_usable_lifetime_to_refresh() {
+      for lifetime in [120, 300] {
+          let (h, fake, id, token) = setup(
+              Config {
+                  expires_in: Some(lifetime),
+                  ..Config::default()
+              },
+              None,
+          )
+          .await;
+          // Simulate a real issuance instead of an aged seeded grant.
+          let now = unix_now();
+          h.raw()
+              .execute(
+                  "UPDATE gw_credentials SET expires_at = ?2, updated_at = ?3 WHERE connection_id = ?1",
+                  rusqlite::params![id, now + lifetime - 60, now],
+              )
+              .unwrap();
+          for _ in 0..3 {
+              assert_eq!(h.post("linear", &token, &list(1)).await.status(), 200);
+          }
+          assert_eq!(token_requests(&fake), 0, "fresh expires_in={lifetime}");
+          // Move its issuance and expiry equally, retaining its original lifetime.
+          h.raw()
+              .execute(
+                  "UPDATE gw_credentials SET expires_at = ?2, updated_at = ?3 WHERE connection_id = ?1",
+                  rusqlite::params![id, now + (lifetime - 60) / 2 - 1, now - (lifetime - 60) / 2 - 1],
+              )
+              .unwrap();
+          assert_eq!(h.post("linear", &token, &list(2)).await.status(), 200);
+          assert_eq!(token_requests(&fake), 1);
+          assert_eq!(h.post("linear", &token, &list(3)).await.status(), 200);
+          assert_eq!(token_requests(&fake), 1, "newly refreshed short token is not due again");
+      }
+  }
+
+  /// Counter sharing remains necessary when a waiter was queued before the
+  /// attempt, but gets the lock after its backoff window has elapsed.
+  #[tokio::test]
+  async fn queued_failures_share_outcome_even_after_the_backoff_window_elapsed() {
+      use hennery_gateway::refresh::{self, Refreshed};
+      let (h, fake, id, _) = setup(
+          Config {
+              gate_token: true,
+              ..Config::default()
+          },
+          None,
+      )
+      .await;
+      h.raw()
+          .execute_batch(
+              "CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+          )
+          .unwrap();
+      let failed = grant(&h, &id).tokens.access_token;
+      let first = tokio::spawn(refresh::refresh(h.runtime.clone(), id.clone(), Some(failed.clone())));
+      until(|| token_requests(&fake) == 1).await;
+      // Queue a holder ahead of the second refresh to control lock scheduling.
+      let mut held = Box::pin(h.runtime.lock(&id));
+      assert!(futures::poll!(&mut held).is_pending());
+      let mut waiter = Box::pin(refresh::refresh(h.runtime.clone(), id.clone(), Some(failed)));
+      assert!(futures::poll!(&mut waiter).is_pending());
+      // Ensure the spawned waiter has entered the real mutex queue.
+      tokio::task::yield_now().await;
+      fake.open_gate();
+      assert_eq!(first.await.unwrap(), Refreshed::Unsaved);
+      let held = held.await;
+      advance_backoff(31).await;
+      drop(held);
+      assert_eq!(waiter.await, Refreshed::Unsaved);
+      assert_eq!(token_requests(&fake), 1, "queued callers consume their noted attempt");
+  }
+
+  #[tokio::test]
+  async fn an_expired_unsaved_refresh_never_changes_status_or_asks_for_reconnect() {
+      let (h, fake, id, token) = setup(Config::default(), Some(unix_now() - 1)).await;
+      count_status_changes(&h);
+      h.raw()
+          .execute_batch(
+              "CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+          )
+          .unwrap();
+      for _ in 0..3 {
+          let response = h.post("linear", &token, &list(1)).await;
+          assert_eq!(response.status(), 502);
+          assert_eq!(
+              response.json::<serde_json::Value>().await.unwrap()["code"],
+              "credential_unsaved"
+          );
+          assert_eq!(h.status(&id), "ok");
+          assert_eq!(status_changes(&h), 0);
+          assert!(h.alerts.alerts().is_empty());
+          assert!(fake.with(|r| r.bearers.is_empty()));
+          assert_eq!(token_requests(&fake), 1);
+      }
+  }
+
+  #[tokio::test]
+  async fn a_static_401_after_credential_replacement_has_no_stale_needs_auth_write() {
+      let (h, fake, id, token) = setup(
+          Config {
+              gate_mcp: true,
+              mcp_status: Some(401),
+              ..Config::default()
+          },
+          None,
+      )
+      .await;
+      h.store
+          .update(
+              &id,
+              &hennery_gateway::model::ConnectionPatch {
+                  cred_kind: Some(CredKind::Static),
+                  ..Default::default()
+              },
+              unix_now(),
+          )
+          .unwrap();
+      let (access, _) = fake.issue();
+      h.set_token(&id, &access);
+      h.proxy_store
+          .record_status(&id, &fake.mcp_url(), Status::Ok, None, 1)
+          .unwrap();
+      count_status_changes(&h);
+      let message = list(1);
+      let mut request = Box::pin(h.post("linear", &token, &message));
+      tokio::select! {
+          _ = &mut request => panic!("request answered before the MCP gate"),
+          () = until(|| fake.paths().iter().any(|p| p == "/mcp")) => {}
+      }
+      let (next, _) = fake.issue();
+      h.set_token(&id, &next);
+      fake.open_gate();
+      let response = request.await;
+      assert_eq!(response.status(), 502);
+      assert_eq!(
+          response.json::<serde_json::Value>().await.unwrap()["code"],
+          "upstream_auth"
+      );
+      assert_eq!(h.status(&id), "ok");
+      assert_eq!(status_changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_needs_auth_write_for_an_old_token_cannot_mark_a_reconnected_grant() {
+      let (h, fake, id, _) = setup(Config::default(), Some(unix_now() - 1)).await;
+      let read = grant(&h, &id);
+      let (access, refresh) = fake.issue();
+      seed_grant(&h, &id, &fake, &access, Some(&refresh), None);
+      count_status_changes(&h);
+      h.runtime.announce(
+          h.proxy_store
+              .mark_needs_auth(&id, &read.url, "the old access expired", unix_now()),
+      );
+      assert_eq!(h.status(&id), "ok");
+      assert_eq!(status_changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+  }
+  ```
+
+In `crates/hennery-gateway/tests/probe.rs`, replace:
+
+  ```rust
+      (h, fake, id)
+  }
+  ```
+
+with:
+
+  ```rust
+      (h, fake, id)
+  }
+
+  fn watch_status(h: &Harness) {
+      h.raw()
+          .execute_batch(
+              "CREATE TABLE probe_status_changes (id TEXT);
+          CREATE TRIGGER count_probe_status AFTER UPDATE OF status ON gw_connections
+          WHEN OLD.status <> NEW.status BEGIN INSERT INTO probe_status_changes VALUES (NEW.id); END;",
+          )
+          .unwrap();
+  }
+
+  fn changes(h: &Harness) -> i64 {
+      h.raw()
+          .query_row("SELECT count(*) FROM probe_status_changes", [], |r| r.get(0))
+          .unwrap()
+  }
+
+  /// A restarted runtime proves the dead marker is durable, not just an
+  /// in-memory outcome or a cached completed probe.
+  fn restarted(h: &Harness) -> Arc<hennery_gateway::runtime::Runtime> {
+      Arc::new(hennery_gateway::runtime::Runtime::new(
+          h.store.clone(),
+          h.proxy_store.clone(),
+          h.key.clone(),
+          h.runtime.egress.clone(),
+          h.alerts.clone(),
+      ))
+  }
+
+  #[tokio::test]
+  async fn a_tick_keeps_valid_access_ok_when_proactive_refresh_is_unavailable() {
+      let (h, fake, id) = setup(Config {
+          token_status: Some(503),
+          ..Config::default()
+      })
+      .await;
+      h.raw()
+          .execute(
+              "UPDATE gw_credentials SET expires_at = ?2 WHERE connection_id = ?1",
+              rusqlite::params![id, unix_now() + 120],
+          )
+          .unwrap();
+      watch_status(&h);
+      probe::tick(&h.runtime).await;
+      assert_eq!(fake.paths().iter().filter(|p| *p == "/token").count(), 1);
+      assert_eq!(h.status(&id), "ok");
+      assert_eq!(changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_tick_keeps_valid_access_ok_then_marks_expired_dead_refresh_once() {
+      let (h, fake, id) = setup(Config::default()).await;
+      let access = h
+          .store
+          .oauth_credential(&id, &h.key)
+          .unwrap()
+          .unwrap()
+          .tokens
+          .access_token;
+      seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), Some(unix_now() + 120));
+      watch_status(&h);
+      probe::tick(&h.runtime).await;
+      assert_eq!(fake.paths().iter().filter(|p| *p == "/token").count(), 1);
+      assert_eq!(h.status(&id), "ok");
+      assert_eq!(changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+      h.raw()
+          .execute(
+              "UPDATE gw_credentials SET expires_at = ?2 WHERE connection_id = ?1",
+              rusqlite::params![id, unix_now() - 1],
+          )
+          .unwrap();
+      let before = fake.with(|r| r.bearers.len());
+      let rt = restarted(&h);
+      probe::tick(&rt).await;
+      probe::tick(&rt).await;
+      assert_eq!(fake.paths().iter().filter(|p| *p == "/token").count(), 1);
+      assert_eq!(fake.with(|r| r.bearers.len()), before);
+      assert_eq!(h.status(&id), "needs_auth");
+      assert_eq!(changes(&h), 1);
+      assert_eq!(h.alerts.alerts(), [(id, Alert::NeedsAuth)]);
+  }
+
+  #[tokio::test]
+  async fn a_probe_status_after_a_kind_change_has_no_transition_or_push() {
+      let (h, _fake, id) = setup(Config::default()).await;
+      let url = h.store.connection(&id).unwrap().unwrap().url;
+      h.store
+          .update(
+              &id,
+              &hennery_gateway::model::ConnectionPatch {
+                  cred_kind: Some(CredKind::Static),
+                  ..Default::default()
+              },
+              unix_now(),
+          )
+          .unwrap();
+      watch_status(&h);
+      h.runtime.announce(
+          h.proxy_store
+              .record_status(&id, &url, Status::Error, Some("late probe"), unix_now()),
+      );
+      assert_eq!(h.status(&id), "not_connected");
+      assert_eq!(changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+  }
+  ```
+
+In `crates/hennery-gateway/tests/probe.rs`, replace:
+
+  ```rust
+      assert!(b.with(|r| r.bearers.is_empty()));
+      assert!(h.alerts.alerts().is_empty());
+  }
+  ```
+
+with:
+
+  ```rust
+      assert!(b.with(|r| r.bearers.is_empty()));
+      assert!(h.alerts.alerts().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_probe_drops_its_verdict_after_a_same_url_credential_replacement() {
+      for (mcp_status, replacement) in [
+          (Some(503), "reconnect"),
+          (Some(403), "reconnect"),
+          (None, "reconnect"),
+          (Some(503), "static"),
+          (Some(403), "static"),
+          (None, "static"),
+      ] {
+          let (h, fake, id) = setup(Config {
+              gate_mcp: true,
+              mcp_status,
+              ..Config::default()
+          })
+          .await;
+          let connection = h.proxy_store.connection_by_id(&id).unwrap().unwrap();
+          let runtime = h.runtime.clone();
+          let task = tokio::spawn(async move { probe::probe_now(&runtime, &connection).await });
+          // The real request is waiting in the vendor, with the old credential.
+          for _ in 0..1000 {
+              if fake.paths().iter().any(|p| p == "/mcp") {
+                  break;
+              }
+              tokio::time::sleep(Duration::from_millis(10)).await;
+          }
+          assert!(fake.paths().iter().any(|p| p == "/mcp"));
+          if replacement == "static" {
+              h.store
+                  .update(
+                      &id,
+                      &hennery_gateway::model::ConnectionPatch {
+                          cred_kind: Some(CredKind::Static),
+                          ..Default::default()
+                      },
+                      unix_now(),
+                  )
+                  .unwrap();
+              h.store
+                  .set_static_credential(&id, "static-replacement", &h.key, unix_now())
+                  .unwrap();
+          } else {
+              h.raw()
+                  .execute("DELETE FROM gw_credentials WHERE connection_id = ?1", [&id])
+                  .unwrap();
+              let (access, refresh) = fake.issue();
+              seed_grant(&h, &id, &fake, &access, Some(&refresh), None);
+          }
+          set_status(&h, &id, Status::NeedsAuth);
+          let before = h.store.connection(&id).unwrap().unwrap();
+          watch_status(&h);
+          fake.open_gate();
+          let _ = task.await.unwrap();
+          let after = h.store.connection(&id).unwrap().unwrap();
+          assert_eq!(after.status, before.status, "{replacement}: {mcp_status:?}");
+          assert_eq!(after.status_note, before.status_note);
+          assert_eq!(after.checked_at, before.checked_at);
+          assert_eq!(changes(&h), 0);
+          assert!(h.alerts.alerts().is_empty());
+      }
+  }
+
+  #[tokio::test]
+  async fn a_probe_observation_is_invalid_when_only_the_credential_kind_changes() {
+      let (h, fake, id) = setup(Config::default()).await;
+      let observed = h.proxy_store.credential_stamp(&id, &fake.mcp_url()).unwrap().unwrap();
+      // Retain the ciphertext deliberately: type alone is part of identity.
+      h.raw()
+          .execute("UPDATE gw_connections SET cred_kind = 'static' WHERE id = ?1", [&id])
+          .unwrap();
+      watch_status(&h);
+      assert!(
+          h.proxy_store
+              .record_observed_status(
+                  &id,
+                  &fake.mcp_url(),
+                  &observed,
+                  Status::Error,
+                  Some("stale"),
+                  unix_now()
+              )
+              .unwrap()
+              .is_none()
+      );
+      assert_eq!(changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_probe_observation_is_invalid_after_its_url_changes() {
+      let (h, fake, id) = setup(Config::default()).await;
+      let url = fake.mcp_url();
+      let observed = h.proxy_store.credential_stamp(&id, &url).unwrap().unwrap();
+      h.raw()
+          .execute("UPDATE gw_connections SET url = url || '/new' WHERE id = ?1", [&id])
+          .unwrap();
+      watch_status(&h);
+      assert!(
+          h.proxy_store
+              .record_observed_status(&id, &url, &observed, Status::Error, Some("stale"), unix_now())
+              .unwrap()
+              .is_none()
+      );
+      assert_eq!(changes(&h), 0);
+      assert!(h.alerts.alerts().is_empty());
+  }
+  ```
+
+In `crates/hennery-gateway/tests/proxy.rs`, replace:
+
+  ```rust
+      router(ProxyState::full(
+          s.h.proxy_store.clone(),
+          &s.h.gateway(),
+          egress,
+  ```
+
+with:
+
+  ```rust
+      router(ProxyState::for_sessions(
+          s.h.runtime(egress, std::sync::Arc::new(support::Recorder::default())),
+  ```
+
+In `crates/hennery-gateway/tests/support/oauth.rs`, replace:
+
+  ```rust
+      pub gate_token: bool,
+      /// The token endpoint's refusal body (a canary for logs).
+  ```
+
+with:
+
+  ```rust
+      pub gate_token: bool,
+      /// MCP replies wait at the same test gate.
+      pub gate_mcp: bool,
+      /// The token endpoint's refusal body (a canary for logs).
+  ```
+
+In `crates/hennery-gateway/tests/support/oauth.rs`, replace:
+
+  ```rust
+              gate_token: false,
+              refusal_body: None,
+  ```
+
+with:
+
+  ```rust
+              gate_token: false,
+              gate_mcp: false,
+              refusal_body: None,
+  ```
+
+In `crates/hennery-gateway/tests/support/oauth.rs`, replace:
+
+  ```rust
+          (_, p) if p == "/mcp" || (p.ends_with("/mcp") && !p.starts_with("/.well-known")) => {
+              if config.mcp_hang && bearer(&parts.headers).is_some() {
+  ```
+
+with:
+
+  ```rust
+          (_, p) if p == "/mcp" || (p.ends_with("/mcp") && !p.starts_with("/.well-known")) => {
+              if config.gate_mcp {
+                  let mut gate = shared.gate.clone();
+                  while !*gate.borrow() {
+                      if gate.changed().await.is_err() {
+                          break;
+                      }
+                  }
+              }
+              if config.mcp_hang && bearer(&parts.headers).is_some() {
+  ```
+
+In `crates/hennery-gateway/tests/support/oauth.rs`, replace:
+
+  ```rust
+                  return StatusCode::from_u16(status).unwrap().into_response();
+  ```
+
+with:
+
+  ```rust
+                  return json_response(status, config.refusal_body.as_ref().unwrap_or(&json!({})));
+  ```
+
+In `crates/hennery-testkit/tests/owner_filter.rs`, replace:
+
+  ```rust
+          // Plan 8f: status writes, the probe's reads.
+          12,
+  ```
+
+with:
+
+  ```rust
+          // Plan 8f: status writes, the probe's reads and credential identity guards.
+          14,
+  ```
+
+- [ ] **Step 2: Run them and see them fail, then commit them**
+
+   ```sh
+   nix develop -c cargo test -p hennery-gateway --locked --lib refusal_classifier
+   nix develop -c cargo test -p hennery-gateway --locked --test oauth_proxy --test probe --no-fail-fast
+   ```
+
+   Original Task 10: five proxy and three probe regressions exit 101; dead unknown-expiry access also fails. Scoped fixes: classifier 0 passed/1 failed, proxy 37 passed/4 failed and probe 20 passed/1 failed (exit 101), proving I1 and M1/M2/M3/M5. The strengthened identity-kind and counter-window cases also have biting revert-probes. Confirmation follow-ups: classifier 0 passed/1 failed, cache cleanup 0 passed/1 failed, and proxy 41 passed/4 failed (all exit 101), pinning HTTP 400 only, expired Unsaved, and token-read status stamps. The cache test also asserts that a commit-time rollback retains the original slot and outcome.
+
+   ```sh
+   git add -A && git -c commit.gpgsign=false commit -m "test(gateway): pin shared refresh failures and quiet proactive status"
+   ```
+
+- [ ] **Step 3: Implement**
+
+In `crates/hennery-gateway/Cargo.toml`, replace:
+
+  ```toml
+  tempfile.workspace = true
+  tokio.workspace = true
+  toml.workspace = true
+  ```
+
+with:
+
+  ```toml
+  tempfile.workspace = true
+  tokio = { workspace = true, features = ["test-util"] }
+  toml.workspace = true
+  ```
+
+In `crates/hennery-gateway/src/callback.rs`, replace:
+
+  ```rust
+          refresh_token: issued.refresh_token,
+      };
+  ```
+
+with:
+
+  ```rust
+          refresh_token: issued.refresh_token,
+          refresh_dead: false,
+      };
+  ```
+
+In `crates/hennery-gateway/src/key.rs`, replace:
+
+  ```rust
+       `sqlite3 <data>/hennery.db 'DELETE FROM gw_credentials; DELETE FROM gw_oauth_clients'`, then set each \
+       connection's credential (and OAuth client) again.";
+  ```
+
+with:
+
+  ```rust
+       `sqlite3 <data>/hennery.db 'DELETE FROM gw_credentials; DELETE FROM gw_oauth_clients; DELETE FROM gw_stdio_servers'`, \
+       then set each connection's credential (and OAuth client) and stdio server again.";
+  ```
+
+In `crates/hennery-gateway/src/model.rs`, replace:
+
+  ```rust
+      pub static_prefix: String,
+      pub internal_network: bool,
+  }
+
+  ```
+
+with:
+
+  ```rust
+      pub static_prefix: String,
+      pub internal_network: bool,
+      pub(crate) sealed: Vec<u8>,
+  }
+
+  impl StaticCredential {
+      pub fn stamp(&self) -> crate::scope::CredentialStamp {
+          crate::scope::CredentialStamp::new(CredKind::Static, Some(self.sealed.clone()))
+      }
+  }
+
+  ```
+
+In `crates/hennery-gateway/src/model.rs`, replace:
+
+  ```rust
+      /// `None`: the vendor gave none, so the grant cannot be refreshed.
+      pub refresh_token: Option<zeroize::Zeroizing<String>>,
+  ```
+
+with:
+
+  ```rust
+      /// `None`: the vendor gave none, or it was permanently retired.
+      pub refresh_token: Option<zeroize::Zeroizing<String>>,
+      /// A vendor refusal permanently retired this refresh token. Kept
+      /// inside the sealed blob so restart cannot resurrect it.
+      pub refresh_dead: bool,
+  ```
+
+In `crates/hennery-gateway/src/model.rs`, replace:
+
+  ```rust
+              .field("refresh_token", &self.refresh_token.as_ref().map(|_| "<redacted>"))
+              .finish()
+  ```
+
+with:
+
+  ```rust
+              .field("refresh_token", &self.refresh_token.as_ref().map(|_| "<redacted>"))
+              .field("refresh_dead", &self.refresh_dead)
+              .finish()
+  ```
+
+In `crates/hennery-gateway/src/model.rs`, replace:
+
+  ```rust
+              refresh_token: Option<&'a str>,
+          }
+  ```
+
+with:
+
+  ```rust
+              refresh_token: Option<&'a str>,
+              refresh_dead: bool,
+          }
+  ```
+
+In `crates/hennery-gateway/src/model.rs`, replace:
+
+  ```rust
+                  refresh_token: self.refresh_token.as_ref().map(|t| t.as_str()),
+              },
+  ```
+
+with:
+
+  ```rust
+                  refresh_token: self.refresh_token.as_ref().map(|t| t.as_str()),
+                  refresh_dead: self.refresh_dead,
+              },
+  ```
+
+In `crates/hennery-gateway/src/model.rs`, replace:
+
+  ```rust
+              refresh_token: Option<String>,
+          }
+  ```
+
+with:
+
+  ```rust
+              refresh_token: Option<String>,
+              #[serde(default)]
+              refresh_dead: bool,
+          }
+  ```
+
+In `crates/hennery-gateway/src/model.rs`, replace:
+
+  ```rust
+              refresh_token: parsed.refresh_token.map(zeroize::Zeroizing::new),
+          })
+  ```
+
+with:
+
+  ```rust
+              refresh_token: parsed.refresh_token.map(zeroize::Zeroizing::new),
+              refresh_dead: parsed.refresh_dead,
+          })
+  ```
+
+In `crates/hennery-gateway/src/model.rs`, replace:
+
+  ```rust
+      pub expires_at: Option<i64>,
+      pub url: String,
+  ```
+
+with:
+
+  ```rust
+      pub expires_at: Option<i64>,
+      /// When this sealed grant was stored; its usable lifetime starts here.
+      pub issued_at: i64,
+      pub url: String,
+  ```
+
+In `crates/hennery-gateway/src/model.rs`, replace:
+
+  ```rust
+      /// row still holds it (a compare-and-swap; plan 8f decision 9).
+      pub(crate) sealed: Vec<u8>,
+  }
+
+  ```
+
+with:
+
+  ```rust
+      /// row still holds it (a compare-and-swap; plan 8f decision 9).
+      pub(crate) sealed: Vec<u8>,
+  }
+
+  impl OauthCredential {
+      pub fn stamp(&self) -> crate::scope::CredentialStamp {
+          crate::scope::CredentialStamp::new(self.cred_kind, Some(self.sealed.clone()))
+      }
+  }
+
+  ```
+
+In `crates/hennery-gateway/src/probe.rs`, replace:
+
+  ```rust
+  use crate::scope::ScopedConnection;
+  ```
+
+with:
+
+  ```rust
+  use crate::scope::{CredentialStamp, ScopedConnection};
+  ```
+
+In `crates/hennery-gateway/src/probe.rs`, replace:
+
+  ```rust
+      }
+      let verdict = match tokio::time::timeout(runtime.probe_timeout, handshake(runtime, connection)).await {
+  ```
+
+with:
+
+  ```rust
+      }
+      let observed = match runtime.statuses.credential_stamp(&connection.id, &connection.url) {
+          Ok(observed) => observed,
+          Err(err) => {
+              tracing::error!(connection_id = %connection.id, error = %err, "gateway probe: credential not read");
+              return Verdict::NoChange;
+          }
+      };
+      let verdict = match tokio::time::timeout(runtime.probe_timeout, handshake(runtime, connection)).await {
+  ```
+
+In `crates/hennery-gateway/src/probe.rs`, replace:
+
+  ```rust
+      record(runtime, connection, &verdict);
+  ```
+
+with:
+
+  ```rust
+      if let Some(observed) = observed {
+          record(runtime, connection, &observed, &verdict);
+      }
+  ```
+
+In `crates/hennery-gateway/src/probe.rs`, replace:
+
+  ```rust
+  fn record(runtime: &Runtime, connection: &ScopedConnection, verdict: &Verdict) {
+      let now = unix_now();
+      let url = &connection.url;
+      match verdict {
+          Verdict::Ok => runtime.announce(
+              runtime
+                  .statuses
+                  .record_status(&connection.id, url, Status::Ok, None, now),
+          ),
+          Verdict::Error(note) => {
+              runtime.announce(
+                  runtime
+                      .statuses
+                      .record_status(&connection.id, url, Status::Error, Some(note), now),
+              )
+          }
+          Verdict::NoChange => {
+              if let Err(err) = runtime.statuses.record_checked(&connection.id, url, now) {
+  ```
+
+with:
+
+  ```rust
+  fn record(runtime: &Runtime, connection: &ScopedConnection, observed: &CredentialStamp, verdict: &Verdict) {
+      let now = unix_now();
+      let url = &connection.url;
+      match verdict {
+          Verdict::Ok => runtime.announce(runtime.statuses.record_observed_status(
+              &connection.id,
+              url,
+              observed,
+              Status::Ok,
+              None,
+              now,
+          )),
+          Verdict::Error(note) => runtime.announce(runtime.statuses.record_observed_status(
+              &connection.id,
+              url,
+              observed,
+              Status::Error,
+              Some(note),
+              now,
+          )),
+          Verdict::NoChange => {
+              if let Err(err) = runtime
+                  .statuses
+                  .record_observed_checked(&connection.id, url, observed, now)
+              {
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+      auth: UpstreamAuth,
+  }
+  ```
+
+with:
+
+  ```rust
+      auth: UpstreamAuth,
+      observed: Box<crate::scope::CredentialStamp>,
+  }
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+  fn current_upstream(runtime: &Runtime, connection: &ScopedConnection) -> anyhow::Result<Option<Upstream>> {
+      match connection.cred_kind {
+          CredKind::None => Ok(Some(Upstream {
+              url: Url::parse(&connection.url)?,
+              internal_network: connection.internal_network,
+              auth: UpstreamAuth::None,
+          })),
+          CredKind::Static => {
+              let Some(credential) = runtime.store.static_credential(&connection.id, &runtime.key)? else {
+                  return Ok(None);
+  ```
+
+with:
+
+  ```rust
+  fn prepared_upstream(runtime: &Runtime, connection: &ScopedConnection, check_auth: bool) -> anyhow::Result<Prepared> {
+      match connection.cred_kind {
+          CredKind::None => Ok(Prepared::Ready(Upstream {
+              url: Url::parse(&connection.url)?,
+              internal_network: connection.internal_network,
+              auth: UpstreamAuth::None,
+              observed: Box::new(crate::scope::CredentialStamp::new(CredKind::None, None)),
+          })),
+          CredKind::Static => {
+              let Some(credential) = runtime.store.static_credential(&connection.id, &runtime.key)? else {
+                  return Ok(Prepared::NoCredential);
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+              Ok(Some(Upstream {
+                  url: Url::parse(&credential.url)?,
+                  internal_network: credential.internal_network,
+                  auth: UpstreamAuth::Static { header, value },
+  ```
+
+with:
+
+  ```rust
+              Ok(Prepared::Ready(Upstream {
+                  url: Url::parse(&credential.url)?,
+                  internal_network: credential.internal_network,
+                  auth: UpstreamAuth::Static { header, value },
+                  observed: Box::new(credential.stamp()),
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+                  return Ok(None);
+              };
+              Ok(Some(Upstream {
+                  url: Url::parse(&credential.url)?,
+                  internal_network: credential.internal_network,
+                  auth: UpstreamAuth::bearer(credential.tokens.access_token.clone())?,
+              }))
+          }
+      }
+  ```
+
+with:
+
+  ```rust
+                  return Ok(Prepared::NoCredential);
+              };
+              let expired = credential.expires_at.is_some_and(|at| at <= unix_now());
+              let dead_needs_auth = credential.tokens.refresh_dead
+                  && runtime
+                      .statuses
+                      .connection_by_id(&connection.id)?
+                      .is_some_and(|c| c.status == "needs_auth");
+              if check_auth && (expired || dead_needs_auth) {
+                  runtime.announce(runtime.statuses.mark_needs_auth(
+                      &connection.id,
+                      &credential.url,
+                      &credential.stamp(),
+                      "the access token has expired or its refresh token is dead",
+                      unix_now(),
+                  ));
+                  return Ok(Prepared::AuthRefused);
+              }
+              Ok(Prepared::Ready(Upstream {
+                  url: Url::parse(&credential.url)?,
+                  internal_network: credential.internal_network,
+                  auth: UpstreamAuth::bearer(credential.tokens.access_token.clone())?,
+                  observed: Box::new(credential.stamp()),
+              }))
+          }
+      }
+  }
+
+  // Answerer still sends the stored token without refresh; its lifecycle
+  // remains an explicit follow-up rather than joining this request path.
+  fn current_upstream(runtime: &Runtime, connection: &ScopedConnection) -> anyhow::Result<Option<Upstream>> {
+      Ok(match prepared_upstream(runtime, connection, false)? {
+          Prepared::Ready(upstream) => Some(upstream),
+          Prepared::NoCredential | Prepared::AuthRefused | Prepared::RefreshUnsaved => None,
+      })
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+  /// one read here (plan 8f decision 13). A refresh that fails leaves the
+  /// token there is: a 401 then has its own refresh and retry. A grant
+  /// without a refresh token never waits for the connection's lock.
+  async fn upstream_for_request(
+      runtime: &Arc<Runtime>,
+      connection: &ScopedConnection,
+  ) -> anyhow::Result<Option<Upstream>> {
+      if connection.cred_kind.is_oauth()
+          && let Some(credential) = runtime.store.oauth_credential(&connection.id, &runtime.key)?
+          && refresh::due(credential.expires_at, unix_now())
+          && credential.tokens.refresh_token.is_some()
+      {
+          refresh::refresh(runtime.clone(), connection.id.clone(), None).await;
+      }
+      current_upstream(runtime, connection)
+  ```
+
+with:
+
+  ```rust
+  /// one read here (plan 8f decision 13). A refresh that fails leaves a
+  /// still-valid token usable without a status change; expiry fails fast. A grant
+  /// without a refresh token never waits for the connection's lock.
+  async fn upstream_for_request(runtime: &Arc<Runtime>, connection: &ScopedConnection) -> anyhow::Result<Prepared> {
+      if connection.cred_kind.is_oauth()
+          && let Some(credential) = runtime.store.oauth_credential(&connection.id, &runtime.key)?
+          && refresh::due(credential.expires_at, credential.issued_at, unix_now())
+          && credential.tokens.refresh_token.is_some()
+      {
+          let outcome = refresh::refresh(runtime.clone(), connection.id.clone(), None).await;
+          if outcome == Refreshed::Unsaved && credential.expires_at.is_some_and(|at| at <= unix_now()) {
+              return Ok(Prepared::RefreshUnsaved);
+          }
+      }
+      prepared_upstream(runtime, connection, true)
+  }
+
+  enum Prepared {
+      Ready(Upstream),
+      NoCredential,
+      AuthRefused,
+      RefreshUnsaved,
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+          Ok(Some(upstream)) => upstream,
+          Ok(None) => return Sent::NoCredential,
+  ```
+
+with:
+
+  ```rust
+          Ok(Prepared::Ready(upstream)) => upstream,
+          Ok(Prepared::NoCredential) => return Sent::NoCredential,
+          Ok(Prepared::AuthRefused) => return Sent::AuthRefused,
+          Ok(Prepared::RefreshUnsaved) => return Sent::RefreshUnsaved,
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+      let refused = |note: &str| {
+          tracing::warn!(connection_id = %connection.id, slug = %connection.slug, "gateway proxy: the upstream refused the credential");
+          runtime.announce(
+              runtime
+                  .statuses
+                  .mark_needs_auth(&connection.id, upstream.url.as_str(), note, unix_now()),
+          );
+  ```
+
+with:
+
+  ```rust
+      let refused = |observed: &crate::scope::CredentialStamp, note: &str| {
+          tracing::warn!(connection_id = %connection.id, slug = %connection.slug, "gateway proxy: the upstream refused the credential");
+          runtime.announce(runtime.statuses.mark_needs_auth(
+              &connection.id,
+              upstream.url.as_str(),
+              observed,
+              note,
+              unix_now(),
+          ));
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+          return refused("the upstream refused the credential (401)");
+  ```
+
+with:
+
+  ```rust
+          return refused(&upstream.observed, "the upstream refused the credential (401)");
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+              }
+              let auth = match UpstreamAuth::bearer(fresh.access_token) {
+  ```
+
+with:
+
+  ```rust
+              }
+              let observed = Box::new(fresh.stamp);
+              let auth = match UpstreamAuth::bearer(fresh.access_token) {
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+                      refused("the upstream refused the refreshed credential (401)")
+  ```
+
+with:
+
+  ```rust
+                      refused(&observed, "the upstream refused the refreshed credential (401)")
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+                          auth,
+                      },
+  ```
+
+with:
+
+  ```rust
+                          auth,
+                          observed,
+                      },
+  ```
+
+In `crates/hennery-gateway/src/proxy.rs`, replace:
+
+  ```rust
+          Refreshed::NotRefreshable => refused("the upstream refused the credential (401), and it cannot be refreshed"),
+          // The refresh set `needs_auth` itself.
+          Refreshed::Refused => Sent::AuthRefused,
+  ```
+
+with:
+
+  ```rust
+          Refreshed::NotRefreshable => refused(
+              &upstream.observed,
+              "the upstream refused the credential (401), and it cannot be refreshed",
+          ),
+          Refreshed::Refused(observed) => refused(
+              &observed,
+              "the upstream refused the credential (401), and its refresh token is dead",
+          ),
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+  //!   So concurrent 401s share one refresh.
+  ```
+
+with:
+
+  ```rust
+  //!   A counter shares failed attempts too; transient failures back off,
+  //!   and invalid_grant permanently retires the token under the sealed-blob CAS.
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+  //! - **The caller's cancellation never sets `needs_auth`** (G-12): only the
+  //!   task does, and only on the vendor's refusal.
+  //! - **Outcomes are distinct** (`Refreshed`): a token to retry with; nothing
+  //!   to refresh; the vendor refused (`needs_auth`); the vendor could not be
+  ```
+
+with:
+
+  ```rust
+  //! - **Refresh never sets `needs_auth`** (G-12, Task 10): a valid access
+  //!   token remains usable on failure. The forwarding path records actual
+  //!   authentication failure, on expiry or a refusal after a 401.
+  //! - **Outcomes are distinct** (`Refreshed`): a token to retry with; nothing
+  //!   to refresh; the vendor refused (retire the refresh token); the vendor could not be
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+  use crate::store::RefreshedGrant;
+  use hennery_kernel::secret::unix_now;
+  use std::sync::Arc;
+  use zeroize::Zeroizing;
+
+  /// How close to its expiry an access token is refreshed before use
+  /// (gateway spec §4.4: 5 minutes).
+  pub const PROACTIVE: i64 = 5 * 60;
+  ```
+
+with:
+
+  ```rust
+  use crate::scope::CredentialStamp;
+  use crate::store::RefreshedGrant;
+  use hennery_kernel::secret::unix_now;
+  use std::collections::HashMap;
+  use std::sync::atomic::{AtomicU64, Ordering};
+  use std::sync::{Arc, Mutex};
+  use std::time::Duration;
+  use tokio::time::Instant;
+  use zeroize::Zeroizing;
+
+  /// How close to its expiry an access token is refreshed before use
+  /// (gateway spec §4.4: at most 5 minutes, and half its usable lifetime).
+  pub const PROACTIVE: i64 = 5 * 60;
+
+  pub const BACKOFF_INITIAL: Duration = Duration::from_secs(30);
+  /// Bound vendor pressure, while allowing recovery before the next
+  /// 15-minute background probe. Decision 20, confirmed 2026-10-13.
+  pub const BACKOFF_MAX: Duration = Duration::from_secs(5 * 60);
+
+  fn backoff_delay(failures: u32) -> Duration {
+      BACKOFF_INITIAL
+          .saturating_mul(1_u32.checked_shl(failures.saturating_sub(1)).unwrap_or(u32::MAX))
+          .min(BACKOFF_MAX)
+  }
+
+  #[derive(Clone)]
+  struct Attempt {
+      sealed: Vec<u8>,
+      outcome: Refreshed,
+      permanent: bool,
+      failures: u32,
+      retry_after: Option<Instant>,
+  }
+
+  #[derive(Default)]
+  struct AttemptState {
+      counter: AtomicU64,
+      last: Mutex<Option<Attempt>>,
+  }
+
+  #[derive(Default)]
+  pub(crate) struct Attempts {
+      slots: Mutex<HashMap<String, Arc<AttemptState>>>,
+  }
+
+  impl Attempts {
+      pub(crate) fn clear(&self, id: &str) {
+          if let Some(state) = self
+              .slots
+              .lock()
+              .unwrap_or_else(std::sync::PoisonError::into_inner)
+              .remove(id)
+          {
+              // Also wipe a cache still referenced by a queued caller.
+              state
+                  .last
+                  .lock()
+                  .unwrap_or_else(std::sync::PoisonError::into_inner)
+                  .take();
+          }
+      }
+
+      fn slot(&self, id: &str) -> Arc<AttemptState> {
+          self.slots
+              .lock()
+              .unwrap_or_else(std::sync::PoisonError::into_inner)
+              .entry(id.to_string())
+              .or_default()
+              .clone()
+      }
+  }
+
+  /// Every token error has one failure verdict; no vendor body becomes
+  /// stored state. Only invalid_grant retires the token; other errors back off.
+  #[derive(Debug, PartialEq, Eq)]
+  enum Failure {
+      Refused,
+      Unavailable,
+  }
+
+  fn classify(error: &TokenError) -> Failure {
+      match error {
+          TokenError::Refused {
+              error: Some("invalid_grant"),
+              status: 400,
+          } => Failure::Refused,
+          TokenError::Refused { .. } | TokenError::InvalidTarget => Failure::Unavailable,
+          TokenError::Unavailable | TokenError::EgressRefused(_) | TokenError::Invalid => Failure::Unavailable,
+      }
+  }
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+      pub internal_network: bool,
+  }
+  ```
+
+with:
+
+  ```rust
+      pub internal_network: bool,
+      pub(crate) stamp: CredentialStamp,
+  }
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+              internal_network: credential.internal_network,
+          }
+  ```
+
+with:
+
+  ```rust
+              internal_network: credential.internal_network,
+              stamp: credential.stamp(),
+          }
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+      /// The vendor refused the refresh: the connection is `needs_auth`.
+      Refused,
+  ```
+
+with:
+
+  ```rust
+      /// The vendor refused the refresh; its token is retired. A still
+      /// valid access token can be used without changing status.
+      Refused(CredentialStamp),
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+              Self::Refused => "Refused",
+  ```
+
+with:
+
+  ```rust
+              Self::Refused(_) => "Refused",
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+  pub fn due(expires_at: Option<i64>, now: i64) -> bool {
+      expires_at.is_some_and(|at| at <= now.saturating_add(PROACTIVE))
+  ```
+
+with:
+
+  ```rust
+  pub fn due(expires_at: Option<i64>, issued_at: i64, now: i64) -> bool {
+      expires_at.is_some_and(|at| {
+          let lifetime = at.saturating_sub(issued_at).max(0);
+          let lead = PROACTIVE.min(lifetime / 2);
+          at <= now.saturating_add(lead)
+      })
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+      let task =
+          tokio::spawn(async move { locked(&runtime, &connection_id, failed.as_deref().map(String::as_str)).await });
+  ```
+
+with:
+
+  ```rust
+      let state = runtime.attempts.slot(&id);
+      // Read before queuing on the lock, including before spawning the
+      // cancellation-independent task. Waiters consume the completed attempt.
+      let noted = state.counter.load(Ordering::Acquire);
+      let task = tokio::spawn(async move {
+          locked(
+              &runtime,
+              &connection_id,
+              failed.as_deref().map(String::as_str),
+              &state,
+              noted,
+          )
+          .await
+      });
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+  async fn locked(runtime: &Runtime, id: &str, failed: Option<&str>) -> Refreshed {
+  ```
+
+with:
+
+  ```rust
+  async fn locked(runtime: &Runtime, id: &str, failed: Option<&str>, state: &AttemptState, noted: u64) -> Refreshed {
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+          Ok(None) => return Refreshed::NotRefreshable,
+  ```
+
+with:
+
+  ```rust
+          Ok(None) => {
+              runtime.attempts.clear(id);
+              return Refreshed::NotRefreshable;
+          }
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+      };
+      match failed {
+  ```
+
+with:
+
+  ```rust
+      };
+      let previous = state
+          .last
+          .lock()
+          .unwrap_or_else(std::sync::PoisonError::into_inner)
+          .clone()
+          .filter(|attempt| attempt.sealed == current.sealed);
+      if let Some(attempt) = &previous {
+          if state.counter.load(Ordering::Acquire) != noted
+              && !matches!((&attempt.outcome, failed), (Refreshed::Retry(fresh), Some(failed))
+                  if fresh.access_token.as_str() == failed)
+          {
+              return attempt.outcome.clone();
+          }
+          if attempt.permanent || attempt.retry_after.is_some_and(|at| Instant::now() < at) {
+              return attempt.outcome.clone();
+          }
+      }
+      if current.tokens.refresh_dead {
+          return Refreshed::Refused(current.stamp());
+      }
+      match failed {
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+          None if !due(current.expires_at, now) => {
+  ```
+
+with:
+
+  ```rust
+          None if !due(current.expires_at, current.issued_at, now) => {
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+      };
+      let client = runtime.client(current.internal_network);
+  ```
+
+with:
+
+  ```rust
+      };
+      let (outcome, permanent) = perform(runtime, id, &current, refresh_token).await;
+      let failures = if matches!(outcome, Refreshed::Unavailable | Refreshed::Unsaved) {
+          previous
+              .as_ref()
+              .map_or(1, |attempt| attempt.failures.saturating_add(1))
+      } else {
+          0
+      };
+      // A successful CAS changes the blob. Cache only for the grant now
+      // stored, never carry an old grant's backoff across a reconnect.
+      let sealed = runtime
+          .store
+          .oauth_credential(id, &runtime.key)
+          .ok()
+          .flatten()
+          .filter(|credential| match &outcome {
+              Refreshed::Retry(fresh) => {
+                  credential.tokens.access_token == fresh.access_token
+                      && credential.url == fresh.url
+                      && credential.internal_network == fresh.internal_network
+              }
+              Refreshed::Refused(_) => credential.tokens.refresh_dead,
+              _ => false,
+          })
+          .map_or_else(|| current.sealed.clone(), |credential| credential.sealed);
+      *state.last.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Attempt {
+          sealed,
+          outcome: outcome.clone(),
+          permanent,
+          failures,
+          retry_after: (failures > 0).then(|| Instant::now() + backoff_delay(failures)),
+      });
+      state.counter.fetch_add(1, Ordering::Release);
+      outcome
+  }
+
+  fn reread(runtime: &Runtime, id: &str) -> Refreshed {
+      match runtime.store.oauth_credential(id, &runtime.key) {
+          Ok(Some(current)) => Refreshed::Retry(Fresh::of(&current, current.tokens.access_token.clone())),
+          Ok(None) => Refreshed::NotRefreshable,
+          Err(_) => Refreshed::Unsaved,
+      }
+  }
+
+  async fn perform(
+      runtime: &Runtime,
+      id: &str,
+      current: &OauthCredential,
+      refresh_token: Zeroizing<String>,
+  ) -> (Refreshed, bool) {
+      let client = runtime.client(current.internal_network);
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+              return Refreshed::Unavailable;
+  ```
+
+with:
+
+  ```rust
+              return (Refreshed::Unavailable, false);
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+                  refresh_token: issued.refresh_token.or(Some(refresh_token)),
+              };
+  ```
+
+with:
+
+  ```rust
+                  refresh_token: issued.refresh_token.or(Some(refresh_token)),
+                  refresh_dead: false,
+              };
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+              match runtime
+                  .store
+                  .store_refreshed(id, &current, &refreshed, &runtime.key, unix_now())
+              {
+                  Ok(true) => {
+                      tracing::info!(connection_id = %id, "gateway: a grant was refreshed");
+                      Refreshed::Retry(Fresh::of(&current, tokens.access_token.clone()))
+                  }
+                  // Changed meanwhile (an edit deleted it): use what is there.
+                  Ok(false) => match runtime.store.oauth_credential(id, &runtime.key) {
+                      Ok(Some(now)) => Refreshed::Retry(Fresh::of(&now, now.tokens.access_token.clone())),
+                      _ => Refreshed::NotRefreshable,
+                  },
+  ```
+
+with:
+
+  ```rust
+              let outcome = match runtime
+                  .store
+                  .store_refreshed(id, current, &refreshed, &runtime.key, unix_now())
+              {
+                  Ok(true) => {
+                      tracing::info!(connection_id = %id, "gateway: a grant was refreshed");
+                      reread(runtime, id)
+                  }
+                  // Changed meanwhile (an edit deleted it): use what is there.
+                  Ok(false) => reread(runtime, id),
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+              }
+          }
+          Err(err @ (TokenError::Refused { .. } | TokenError::InvalidTarget)) => {
+              tracing::warn!(connection_id = %id, why = %err.message(), "gateway: the vendor refused a refresh");
+              runtime.announce(runtime.statuses.mark_needs_auth(
+                  id,
+                  &current.url,
+                  "the authorization server refused to refresh the grant",
+                  unix_now(),
+              ));
+              Refreshed::Refused
+          }
+          Err(err @ (TokenError::Unavailable | TokenError::EgressRefused(_) | TokenError::Invalid)) => {
+              tracing::warn!(connection_id = %id, why = %err.message(), "gateway: a refresh did not reach the vendor");
+              Refreshed::Unavailable
+          }
+  ```
+
+with:
+
+  ```rust
+              };
+              (outcome, false)
+          }
+          Err(err) => match classify(&err) {
+              Failure::Refused => {
+                  tracing::warn!(connection_id = %id, why = %err.message(), "gateway: the vendor refused a refresh");
+                  let mut tokens = current.tokens.clone();
+                  tokens.refresh_token = None;
+                  tokens.refresh_dead = true;
+                  let retired = RefreshedGrant {
+                      tokens: &tokens,
+                      expires_at: current.expires_at,
+                      resource_param_accepted: current.resource_param_accepted,
+                  };
+                  match runtime
+                      .store
+                      .store_refreshed_observed(id, current, &retired, &runtime.key, unix_now())
+                  {
+                      Ok(Some(stamp)) => (Refreshed::Refused(stamp), true),
+                      Ok(None) => (reread(runtime, id), false),
+                      Err(err) => {
+                          tracing::error!(connection_id = %id, error = %err, "gateway: the dead refresh token could not be stored");
+                          // Still never resend this token in this runtime; a
+                          // disk failure cannot be repaired by reconnecting.
+                          (Refreshed::Unsaved, true)
+                      }
+                  }
+              }
+              Failure::Unavailable => {
+                  tracing::warn!(connection_id = %id, why = %err.message(), "gateway: a refresh did not reach the vendor");
+                  (Refreshed::Unavailable, false)
+              }
+          },
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+                      access_token: Zeroizing::new("cached-plaintext-canary".into()),
+                      url: url.into(),
+  ```
+
+with:
+
+  ```rust
+                      access_token: Zeroizing::new("cached-plaintext-canary".into()),
+                      stamp: CredentialStamp::new(kind, Some(vec![])),
+                      url: url.into(),
+  ```
+
+In `crates/hennery-gateway/src/refresh.rs`, replace:
+
+  ```rust
+                      store.purge_hat(&hat).unwrap();
+                  }
+                  "static" => {
+  ```
+
+with:
+
+  ```rust
+                      runtime.revocations.cut(store.purge_hat(&hat).unwrap());
+                  }
+                  "static" => {
+                      // The UPDATE succeeds but its deferred FK fails at commit:
+                      // a rollback must preserve the old cache and credential.
+                      let raw = hennery_kernel::db::open(&db).unwrap();
+                      raw.execute_batch("CREATE TABLE commit_guard (connection_id TEXT REFERENCES gw_connections(id) DEFERRABLE INITIALLY DEFERRED);
+                          CREATE TRIGGER fail_commit AFTER UPDATE ON gw_credentials BEGIN INSERT INTO commit_guard VALUES ('missing-connection'); END;").unwrap();
+                      assert!(store.set_static_credential(&id, "rejected", &key, 2).is_err());
+                      assert!(Arc::ptr_eq(&runtime.attempts.slot(&id), &state));
+                      assert!(state.last.lock().unwrap().is_some());
+                      raw.execute_batch("DROP TRIGGER fail_commit; DROP TABLE commit_guard;")
+                          .unwrap();
+  ```
+
+In `crates/hennery-gateway/src/runtime.rs`, replace:
+
+  ```rust
+      locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+      pub(crate) probes: crate::probe::Probes,
+  ```
+
+with:
+
+  ```rust
+      locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+      pub(crate) attempts: Arc<crate::refresh::Attempts>,
+      pub(crate) probes: crate::probe::Probes,
+  ```
+
+In `crates/hennery-gateway/src/runtime.rs`, replace:
+
+  ```rust
+      ) -> Self {
+          Self {
+  ```
+
+with:
+
+  ```rust
+      ) -> Self {
+          let attempts = Arc::new(crate::refresh::Attempts::default());
+          store.watch_refreshes(&attempts);
+          Self {
+  ```
+
+In `crates/hennery-gateway/src/runtime.rs`, replace:
+
+  ```rust
+              locks: Mutex::default(),
+              probes: crate::probe::Probes::default(),
+  ```
+
+with:
+
+  ```rust
+              locks: Mutex::default(),
+              attempts,
+              probes: crate::probe::Probes::default(),
+  ```
+
+In `crates/hennery-gateway/src/schema.rs`, replace:
+
+  ```rust
+  //! session tokens, plan 8f the OAuth clients; later plans add standalone
+  //! clients and stdio servers.
+  ```
+
+with:
+
+  ```rust
+  //! session tokens, plan 8e the stdio servers (migration 3), and plan 8f the
+  //! OAuth clients (migration 4); later plans add standalone clients.
+  ```
+
+In `crates/hennery-gateway/src/scope.rs`, replace:
+
+  ```rust
+  pub const LAST_USED_EVERY: i64 = 60;
+
+  ```
+
+with:
+
+  ```rust
+  pub const LAST_USED_EVERY: i64 = 60;
+
+  /// The credential whose result may be recorded. Ciphertext identifies a
+  /// particular sealed grant, including disconnect/reconnect at the same URL.
+  #[derive(Clone, PartialEq, Eq)]
+  pub struct CredentialStamp {
+      kind: String,
+      sealed: Option<Vec<u8>>,
+  }
+
+  impl CredentialStamp {
+      pub(crate) fn new(kind: CredKind, sealed: Option<Vec<u8>>) -> Self {
+          Self {
+              kind: kind.as_str().to_string(),
+              sealed,
+          }
+      }
+  }
+
+  ```
+
+In `crates/hennery-gateway/src/scope.rs`, replace:
+
+  ```rust
+
+      /// `id`'s status is `to` as of `now`, with `note`, unless the
+  ```
+
+with:
+
+  ```rust
+
+      /// Read the current credential identity, without opening its ciphertext.
+      /// No stored credential means no observation, except for kind `none`.
+      pub fn credential_stamp(&self, id: &str, url: &str) -> Result<Option<CredentialStamp>> {
+          let row: Option<(String, Option<Vec<u8>>)> = self
+              .conn()
+              .query_row(
+                  "SELECT c.cred_kind, k.ciphertext FROM gw_connections c
+               LEFT JOIN gw_credentials k ON k.connection_id = c.id AND k.owner_id = ?2
+               WHERE c.id = ?1 AND c.owner_id = ?2 AND c.url = ?3",
+                  params![id, self.owner, url],
+                  |r| Ok((r.get(0)?, r.get(1)?)),
+              )
+              .optional()?;
+          Ok(row.and_then(|(kind, sealed)| {
+              (kind == "none" || sealed.is_some()).then_some(CredentialStamp { kind, sealed })
+          }))
+      }
+
+      /// `id`'s status is `to` as of `now`, with `note`, unless the
+  ```
+
+In `crates/hennery-gateway/src/scope.rs`, replace:
+
+  ```rust
+      ) -> Result<Option<StatusChange>> {
+          let mut conn = self.conn();
+  ```
+
+with:
+
+  ```rust
+      ) -> Result<Option<StatusChange>> {
+          let Some(observed) = self.credential_stamp(id, url)? else {
+              return Ok(None);
+          };
+          self.record_observed_status(id, url, &observed, to, note, now)
+      }
+
+      /// Record a verdict only while its original credential is still stored.
+      /// A fresh Connect, even at the same URL and kind, invalidates it.
+      pub fn record_observed_status(
+          &self,
+          id: &str,
+          url: &str,
+          observed: &CredentialStamp,
+          to: Status,
+          note: Option<&str>,
+          now: i64,
+      ) -> Result<Option<StatusChange>> {
+          let mut conn = self.conn();
+  ```
+
+In `crates/hennery-gateway/src/scope.rs`, replace:
+
+  ```rust
+                  "SELECT status, label, hat_id FROM gw_connections WHERE id = ?1 AND owner_id = ?2 AND url = ?3",
+                  params![id, self.owner, url],
+  ```
+
+with:
+
+  ```rust
+                  "SELECT status, label, hat_id FROM gw_connections WHERE id = ?1 AND owner_id = ?2 AND url = ?3
+                       AND cred_kind = ?4
+                       AND (SELECT k.ciphertext FROM gw_credentials k
+                            WHERE k.connection_id = ?1 AND k.owner_id = ?2) IS ?5",
+                  params![id, self.owner, url, observed.kind, observed.sealed],
+  ```
+
+In `crates/hennery-gateway/src/scope.rs`, replace:
+
+  ```rust
+      pub fn mark_needs_auth(&self, id: &str, url: &str, note: &str, now: i64) -> Result<Option<StatusChange>> {
+          self.record_status(id, url, Status::NeedsAuth, Some(note), now)
+  ```
+
+with:
+
+  ```rust
+      pub fn mark_needs_auth(
+          &self,
+          id: &str,
+          url: &str,
+          observed: &CredentialStamp,
+          note: &str,
+          now: i64,
+      ) -> Result<Option<StatusChange>> {
+          self.record_observed_status(id, url, observed, Status::NeedsAuth, Some(note), now)
+  ```
+
+In `crates/hennery-gateway/src/scope.rs`, replace:
+
+  ```rust
+              params![id, self.owner, url, now],
+          )?;
+  ```
+
+with:
+
+  ```rust
+              params![id, self.owner, url, now],
+          )?;
+          Ok(())
+      }
+
+      /// A probe's unchanged verdict also belongs only to its observed grant.
+      pub fn record_observed_checked(&self, id: &str, url: &str, observed: &CredentialStamp, now: i64) -> Result<()> {
+          self.conn().execute(
+              "UPDATE gw_connections SET checked_at = ?4 WHERE id = ?1 AND owner_id = ?2 AND url = ?3
+                   AND cred_kind = ?5 AND (SELECT k.ciphertext FROM gw_credentials k
+                       WHERE k.connection_id = ?1 AND k.owner_id = ?2) IS ?6",
+              params![id, self.owner, url, now, observed.kind, observed.sealed],
+          )?;
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+  use std::sync::{Mutex, MutexGuard};
+  ```
+
+with:
+
+  ```rust
+  use std::sync::{Arc, Mutex, MutexGuard, Weak};
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+      owner: String,
+  }
+  ```
+
+with:
+
+  ```rust
+      owner: String,
+      refresh_caches: Mutex<Vec<Weak<crate::refresh::Attempts>>>,
+  }
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+          })
+  ```
+
+with:
+
+  ```rust
+              refresh_caches: Mutex::default(),
+          })
+      }
+
+      pub(crate) fn watch_refreshes(&self, cache: &Arc<crate::refresh::Attempts>) {
+          self.refresh_caches
+              .lock()
+              .unwrap_or_else(std::sync::PoisonError::into_inner)
+              .push(Arc::downgrade(cache));
+      }
+
+      /// After a committed credential change, erase every live runtime's
+      /// cache. Weak registrations do not keep runtimes or plaintext alive.
+      fn evict_refresh(&self, id: &str) {
+          self.refresh_caches
+              .lock()
+              .unwrap_or_else(std::sync::PoisonError::into_inner)
+              .retain(|cache| {
+                  if let Some(cache) = cache.upgrade() {
+                      cache.clear(id);
+                      true
+                  } else {
+                      false
+                  }
+              });
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+          if url.origin() != old_origin || kind != current.cred_kind {
+  ```
+
+with:
+
+  ```rust
+          let credential_changed = url.origin() != old_origin || kind != current.cred_kind;
+          if credential_changed {
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+          tx.commit()?;
+          Ok(updated.map_or(Change::NotFound, |record| Change::Done(Box::new(record))))
+  ```
+
+with:
+
+  ```rust
+          tx.commit()?;
+          if credential_changed {
+              self.evict_refresh(id);
+          }
+          Ok(updated.map_or(Change::NotFound, |record| Change::Done(Box::new(record))))
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+          tx.commit()?;
+          Ok(deleted == 1)
+  ```
+
+with:
+
+  ```rust
+          tx.commit()?;
+          self.evict_refresh(id);
+          Ok(deleted == 1)
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+          tx.commit()?;
+          Ok(CredentialChange::Done)
+  ```
+
+with:
+
+  ```rust
+          tx.commit()?;
+          self.evict_refresh(id);
+          Ok(CredentialChange::Done)
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+              internal_network,
+          }))
+  ```
+
+with:
+
+  ```rust
+              internal_network,
+              sealed: blob,
+          }))
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+              (u32, Vec<u8>, Option<i64>, String, String, bool),
+  ```
+
+with:
+
+  ```rust
+              (u32, Vec<u8>, Option<i64>, String, String, bool, i64),
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+                          o.token_endpoint, o.scopes, o.resource, o.resource_param_accepted
+  ```
+
+with:
+
+  ```rust
+                          o.token_endpoint, o.scopes, o.resource, o.resource_param_accepted, k.updated_at
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+                          (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?),
+  ```
+
+with:
+
+  ```rust
+                          (
+                              r.get(0)?,
+                              r.get(1)?,
+                              r.get(2)?,
+                              r.get(3)?,
+                              r.get(4)?,
+                              r.get(5)?,
+                              r.get(14)?,
+                          ),
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+              (version, sealed, expires_at, kind, url, internal_network),
+  ```
+
+with:
+
+  ```rust
+              (version, sealed, expires_at, kind, url, internal_network, issued_at),
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+              expires_at,
+              url,
+  ```
+
+with:
+
+  ```rust
+              expires_at,
+              issued_at,
+              url,
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+      ) -> Result<bool> {
+          let RefreshedGrant {
+  ```
+
+with:
+
+  ```rust
+      ) -> Result<bool> {
+          Ok(self.store_refreshed_observed(id, read, refreshed, key, now)?.is_some())
+      }
+
+      /// The exact committed sealed blob, so a refusal can record only for
+      /// the credential it just refreshed or retired, without a racy reread.
+      pub(crate) fn store_refreshed_observed(
+          &self,
+          id: &str,
+          read: &OauthCredential,
+          refreshed: &RefreshedGrant<'_>,
+          key: &MasterKey,
+          now: i64,
+      ) -> Result<Option<crate::scope::CredentialStamp>> {
+          let RefreshedGrant {
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+          Ok(changed == 1)
+  ```
+
+with:
+
+  ```rust
+          if changed == 1 {
+              self.evict_refresh(id);
+          }
+          Ok((changed == 1).then(|| crate::scope::CredentialStamp::new(read.cred_kind, Some(sealed))))
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+          tx.commit()?;
+          let from = Status::parse(&status).ok_or_else(|| anyhow!("a stored status"))?;
+  ```
+
+with:
+
+  ```rust
+          tx.commit()?;
+          self.evict_refresh(id);
+          let from = Status::parse(&status).ok_or_else(|| anyhow!("a stored status"))?;
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+              .map(drop)
+              .with_context(|| {
+                  format!(
+                      "the master key does not open the stored values of stdio server {id}: restore the key they were \
+                       sealed with. {}",
+                      crate::key::GIVE_UP
+                  )
+              })?;
+  ```
+
+with:
+
+  ```rust
+                  .map(drop)
+                  .with_context(|| {
+                      format!(
+                          "the master key does not open the stored values of stdio server {id}: restore the key they were \
+                       sealed with. {}",
+                          crate::key::GIVE_UP
+                      )
+                  })?;
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+          let tx = conn.transaction()?;
+          let cut = Cut(tokens::hat_hashes_in(&tx, &self.owner, hat_id)?);
+  ```
+
+with:
+
+  ```rust
+          let tx = conn.transaction()?;
+          let ids: Vec<_> = read(&tx, &self.owner, None)?
+              .into_iter()
+              .filter(|connection| connection.hat_id == hat_id)
+              .map(|connection| connection.id)
+              .collect();
+          let cut = Cut(tokens::hat_hashes_in(&tx, &self.owner, hat_id)?);
+  ```
+
+In `crates/hennery-gateway/src/store.rs`, replace:
+
+  ```rust
+          tx.commit()?;
+          Ok(cut)
+  ```
+
+with:
+
+  ```rust
+          tx.commit()?;
+          for id in ids {
+              self.evict_refresh(&id);
+          }
+          Ok(cut)
+  ```
+
+In `crates/hennery-gateway/tests/oauth.rs`, replace:
+
+  ```rust
+      .await;
+      let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthDcr);
+      refused(&h, &id, json!({}), StatusCode::BAD_GATEWAY, "pkce_unsupported").await;
+      fake.configure(|c| c.s256 = true);
+  ```
+
+with:
+
+  ```rust
+      .await;
+      let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthDcr);
+      // Recovery is from a real stored grant; a probe without a credential
+      // can no longer manufacture needs_auth (Task 10's status guard).
+      let (access, refresh) = fake.issue();
+      support::oauth::seed_grant(&h.world, &id, &fake, &access, Some(&refresh), None);
+      h.world
+          .proxy_store
+          .mark_needs_auth(
+              &id,
+              &fake.mcp_url(),
+              &h.world
+                  .proxy_store
+                  .credential_stamp(&id, &fake.mcp_url())
+                  .unwrap()
+                  .unwrap(),
+              "refused",
+              1,
+          )
+          .unwrap();
+      refused(&h, &id, json!({}), StatusCode::BAD_GATEWAY, "pkce_unsupported").await;
+      fake.configure(|c| c.s256 = true);
+  ```
+
+In `crates/hennery-gateway/tests/oauth.rs`, replace:
+
+  ```rust
+      assert_eq!(h.alerts.alerts(), [(id, Alert::Recovered)]);
+  }
+  ```
+
+with:
+
+  ```rust
+      assert_eq!(h.alerts.alerts(), [(id, Alert::Recovered)]);
+      assert!(
+          !h.world
+              .store
+              .oauth_credential(item["id"].as_str().unwrap(), &h.world.key)
+              .unwrap()
+              .unwrap()
+              .tokens
+              .refresh_dead
+      );
+  }
+  ```
+
+In `crates/hennery-gateway/tests/oauth_proxy.rs`, replace:
+
+  ```rust
+      assert_eq!(
+          hennery_gateway::refresh::refresh(restarted, h.store.list().unwrap()[0].id.clone(), Some(access)).await,
+          hennery_gateway::refresh::Refreshed::Refused,
+  ```
+
+with:
+
+  ```rust
+      let expected_stamp = grant(&h, &h.store.list().unwrap()[0].id).stamp();
+      assert_eq!(
+          hennery_gateway::refresh::refresh(restarted, h.store.list().unwrap()[0].id.clone(), Some(access)).await,
+          hennery_gateway::refresh::Refreshed::Refused(expected_stamp),
+  ```
+
+In `crates/hennery-gateway/tests/oauth_proxy.rs`, replace:
+
+  ```rust
+      assert_eq!(second.await, Refreshed::Refused);
+  ```
+
+with:
+
+  ```rust
+      let second = second.await;
+      assert_eq!(second, Refreshed::Refused(grant(&h, &id).stamp()));
+  ```
+
+In `crates/hennery-gateway/tests/oauth_proxy.rs`, replace:
+
+  ```rust
+      h.runtime.announce(
+          h.proxy_store
+              .mark_needs_auth(&id, &read.url, "the old access expired", unix_now()),
+      );
+  ```
+
+with:
+
+  ```rust
+      h.runtime.announce(h.proxy_store.mark_needs_auth(
+          &id,
+          &read.url,
+          &read.stamp(),
+          "the old access expired",
+          unix_now(),
+      ));
+  ```
+
+In `crates/hennery-gateway/tests/oauth_store.rs`, replace:
+
+  ```rust
+      })
+  }
+  ```
+
+with:
+
+  ```rust
+      })
+  }
+
+  #[test]
+  fn sealed_tokens_keep_legacy_grants_live_and_round_trip_the_dead_marker() {
+      use hennery_gateway::model::GrantTokens;
+      let legacy = GrantTokens::from_opened(br#"{"access_token":"a","refresh_token":"r"}"#).unwrap();
+      assert!(!legacy.refresh_dead);
+      let dead = GrantTokens::from_opened(br#"{"access_token":"a","refresh_dead":true}"#).unwrap();
+      assert!(dead.refresh_dead);
+      assert!(dead.refresh_token.is_none());
+      assert_eq!(GrantTokens::from_opened(&dead.to_sealable()), Some(dead));
+      assert!(GrantTokens::from_opened(br#"{"access_token":"a","refresh_dead":"true"}"#).is_none());
+  }
+  ```
+
+In `crates/hennery-gateway/tests/oauth_store.rs`, replace:
+
+  ```rust
+      let id = oauth(&w, "linear", CredKind::OauthDcr);
+      w.proxy_store
+  ```
+
+with:
+
+  ```rust
+      let id = oauth(&w, "linear", CredKind::OauthDcr);
+      w.raw()
+          .execute(
+              "INSERT INTO gw_credentials(connection_id, owner_id, key_version, ciphertext, updated_at)
+               SELECT id, owner_id, 1, x'00', 1 FROM gw_connections WHERE id = ?1",
+              [&id],
+          )
+          .unwrap();
+      w.proxy_store
+  ```
+
+In `crates/hennery-gateway/tests/oauth_store.rs`, replace:
+
+  ```rust
+          refresh_token: Some(Zeroizing::new(refresh)),
+      };
+  ```
+
+with:
+
+  ```rust
+          refresh_token: Some(Zeroizing::new(refresh)),
+          refresh_dead: false,
+      };
+  ```
+
+In `crates/hennery-gateway/tests/oauth_store.rs`, replace:
+
+  ```rust
+      // No credential: traffic's 2xx says nothing.
+      w.proxy_store
+          .record_status(&id, url, Status::Error, Some("down"), 100)
+          .unwrap();
+      assert!(w.proxy_store.record_traffic_ok(&id, url, 200).unwrap().is_none());
+      assert_eq!(w.status(&id), "error");
+  ```
+
+with:
+
+  ```rust
+      // No credential: traffic and a stale probe both say nothing.
+      assert!(
+          w.proxy_store
+              .record_status(&id, url, Status::Error, Some("down"), 100)
+              .unwrap()
+              .is_none()
+      );
+      assert!(w.proxy_store.record_traffic_ok(&id, url, 200).unwrap().is_none());
+      assert_eq!(w.status(&id), "not_connected");
+  ```
+
+In `crates/hennery-gateway/tests/oauth_store.rs`, replace:
+
+  ```rust
+              [&id],
+          )
+          .unwrap();
+      // Another URL: nothing.
+  ```
+
+with:
+
+  ```rust
+              [&id],
+          )
+          .unwrap();
+      w.proxy_store
+          .record_status(&id, url, Status::Error, Some("down"), 100)
+          .unwrap();
+      // Another URL: nothing.
+  ```
+
+In `crates/hennery-gateway/tests/probe.rs`, replace:
+
+  ```rust
+      probe::tick(&rt).await;
+      assert_eq!(fake.paths().iter().filter(|p| *p == "/token").count(), 1);
+  ```
+
+with:
+
+  ```rust
+      probe::tick(&rt).await;
+      let connection = h.proxy_store.connection_by_id(&id).unwrap().unwrap();
+      assert_eq!(probe::probe_now(&rt, &connection).await, Verdict::NeedsAuth);
+      assert_eq!(fake.paths().iter().filter(|p| *p == "/token").count(), 1);
+  ```
+
+In `crates/hennery-gateway/tests/support/oauth.rs`, replace:
+
+  ```rust
+  /// consent: `access` and `refresh` from `fake.issue()`, the fake's token
+  ```
+
+with:
+
+  ```rust
+  /// consent, aged one hour to exercise proactive refresh: `access` and `refresh` from `fake.issue()`, the fake's token
+  ```
+
+In `crates/hennery-gateway/tests/support/oauth.rs`, replace:
+
+  ```rust
+          refresh_token: refresh.map(|r| zeroize::Zeroizing::new(r.to_string())),
+      };
+  ```
+
+with:
+
+  ```rust
+          refresh_token: refresh.map(|r| zeroize::Zeroizing::new(r.to_string())),
+          refresh_dead: false,
+      };
+  ```
+
+In `crates/hennery-gateway/tests/support/oauth.rs`, replace:
+
+  ```rust
+              hennery_kernel::secret::unix_now(),
+  ```
+
+with:
+
+  ```rust
+              hennery_kernel::secret::unix_now() - 3600,
+  ```
+
+In `crates/hennery-gateway/tests/tokens.rs`, replace:
+
+  ```rust
+      let other = "http://127.0.0.1:9/other";
+      assert!(h.proxy_store.record_traffic_ok(&id, other, 1).unwrap().is_none());
+      assert!(h.proxy_store.mark_needs_auth(&id, other, note, 1).unwrap().is_none());
+      assert_eq!(h.status(&id), "not_connected");
+      let change = h.proxy_store.mark_needs_auth(&id, url, note, 2).unwrap().unwrap();
+      assert_eq!((change.from, change.to), (Status::NotConnected, Status::NeedsAuth));
+      assert!(
+          h.proxy_store.mark_needs_auth(&id, url, note, 3).unwrap().is_none(),
+  ```
+
+with:
+
+  ```rust
+      let observed = h.proxy_store.credential_stamp(&id, url).unwrap().unwrap();
+      let other = "http://127.0.0.1:9/other";
+      assert!(h.proxy_store.record_traffic_ok(&id, other, 1).unwrap().is_none());
+      assert!(
+          h.proxy_store
+              .mark_needs_auth(&id, other, &observed, note, 1)
+              .unwrap()
+              .is_none()
+      );
+      assert_eq!(h.status(&id), "not_connected");
+      let change = h
+          .proxy_store
+          .mark_needs_auth(&id, url, &observed, note, 2)
+          .unwrap()
+          .unwrap();
+      assert_eq!((change.from, change.to), (Status::NotConnected, Status::NeedsAuth));
+      assert!(
+          h.proxy_store
+              .mark_needs_auth(&id, url, &observed, note, 3)
+              .unwrap()
+              .is_none(),
+  ```
+
+In `docs/specs/2026-09-26-kernel-design.md`, replace:
+
+  ```markdown
+  *Built so far:* `on_host_revoked` and `on_hat_purged`, implemented by the sessions module. The gateway's part of a purge (its connections with their credentials and mounts, its stdio sets, its session tokens, their streams cut) runs through `SessionMcp::purge_hat`, first: the purge route and the hook owe the purge's checkpoint, then run the gateway's part, then the sessions' (plan 8e; A15), so a hat stuck frozen cannot reach MCP meanwhile, and a failed gateway part stops the purge before any session is deleted.
+  ```
+
+with:
+
+  ```markdown
+  *Built so far:* `on_host_revoked` and `on_hat_purged`, implemented by the sessions module. The gateway's part of a purge (its connections with their credentials, OAuth clients and mounts, its pending OAuth flows, its stdio sets, its session tokens, their streams cut) runs through `SessionMcp::purge_hat`, first: the purge route and the hook owe the purge's checkpoint, then run the gateway's part, then the sessions' (plan 8e; A15), so a hat stuck frozen cannot reach MCP meanwhile, and a failed gateway part stops the purge before any session is deleted.
+  ```
+
+In `docs/specs/2026-09-26-kernel-design.md`, replace:
+
+  ```markdown
+  chooses (plan 8d), both from the collector's one `Egress`; OAuth will.
+  ```
+
+with:
+
+  ```markdown
+  chooses (plan 8d), both from the collector's one `Egress`; OAuth discovery, registration, exchange and refresh use that same policy (plan 8f).
+  ```
+
+In `docs/specs/2026-09-26-mcp-gateway-design.md`, replace:
+
+  ```markdown
+    issuer or token endpoint is also 409 `issuer_changed`, before consent.
+    A client `PUT` while a grant
+  ```
+
+with:
+
+  ```markdown
+    issuer or token endpoint is also 409 `issuer_changed`, before consent.
+    A connection deleted during this lost-pin race answers 404 `not_found`.
+    A client `PUT` while a grant
+  ```
+
+In `docs/specs/2026-09-26-mcp-gateway-design.md`, replace:
+
+  ```markdown
+    minutes of `expires_at` refreshes first (single-flight). Expiry otherwise
+    costs a 401, a refresh and a retry. *(G-9: the predecessor stored expiry and
+  ```
+
+with:
+
+  ```markdown
+    minutes of `expires_at` refreshes first (single-flight), with a lead of
+    `min(300 s, half its usable lifetime)` measured from the grant row's
+    `updated_at` to its safety-adjusted expiry. A fresh short-lived token is
+    not immediately due again. A token known to
+    have expired is never sent after a failed refresh. *(G-9: the predecessor stored expiry and
+  ```
+
+In `docs/specs/2026-09-26-mcp-gateway-design.md`, replace:
+
+  ```markdown
+    there is: a 401 then has its own refresh and retry.
+  ```
+
+with:
+
+  ```markdown
+    there is while it is still valid, without changing status or sending a
+    notification. Expired access fails fast with 502 `upstream_auth`, except an `Unsaved` refresh: that local storage failure answers 502 `credential_unsaved` with status and notifications unchanged.
+  ```
+
+In `docs/specs/2026-09-26-mcp-gateway-design.md`, replace:
+
+  ```markdown
+    otherwise refresh.
+  ```
+
+with:
+
+  ```markdown
+    otherwise follow the refresh-attempt state machine below.
+  - Each caller notes the connection's attempt counter before queuing on
+    the mutex. If the counter moved while it waited, it consumes the recorded
+    outcome instead of calling the vendor, unless that outcome is `Retry`
+    carrying the exact token this caller just had refused; it then follows
+    its own refresh path. Failures are single-flight too:
+    no caller waits for more than one in-flight refresh.
+  - `Unavailable` and an `Unsaved` issuance start per-connection backoff: 30 seconds, doubling on
+    consecutive unavailable or unsaved attempts, capped at five minutes. Nobody calls
+    the token endpoint during backoff. This cap bounds vendor pressure while
+    allowing recovery sooner than the 15-minute background probe interval.
+    Committed delete, purge or credential replacement evicts every live runtime’s Attempts slot and wipes its cached outcome, including a queued caller’s retained state; a rolled-back write evicts nothing. Refresh rotation also evicts its old slot. Missing credentials clear a race-created empty slot.
+  - A proactive failure while access remains valid changes no status and
+    sends no push. Requests and probe handshakes keep using that access token.
+    Known expiry fails fast with 502 `upstream_auth`, marking `needs_auth`
+    once; an unknown lifetime still allows a request to discover a 401.
+  - Only HTTP 400 with `invalid_grant` retires the refresh token forever (`Refused`), as RFC 6749 §5.2 specifies; 401, 403 or 404 carrying `invalid_grant` remains `Unavailable`.
+    Every other failure follows `Unavailable`: redirects (never followed),
+    unnamed or other named 400 errors (including `temporarily_unavailable`),
+    401, 403, 404, 408, 429, 5xx, `invalid_client` and `unauthorized_client`.
+    `invalid_target` is retried once without `resource`; even if refused
+    again it remains transient, since §4.3 does not establish that the
+    refresh token itself is permanently invalid. Its sealed token blob stores `refresh_dead = true`
+    and removes `refresh_token`, under Decision 9's sealed-blob CAS, retaining
+    the access token and expiry. A concurrent reconnect cannot be overwritten.
+    A refused retirement write is `Unsaved`; this runtime still never resends
+    that token. In `needs_auth` with a dead refresh token, requests fail fast
+    without contacting either endpoint. A new Connect clears the marker.
+  - A `needs_auth` write compares the stamp read with the token inside its write transaction, including known-expiry fail-fast and a final 401. A retry or successful retirement carries the exact new stamp; a reconnect between read and write leaves the new grant alone.
+  - A probe records status and `checked_at` only while the original
+    credential kind and sealed blob still match. Disconnect/reconnect or a
+    switch to static credentials at the same URL drops a stale verdict.
+    A refresh during the handshake also replaces that blob, so the completed
+    probe's status write waits for a later probe against the stored grant.
+  - The proxy's proactive and 401 paths and `probe::tick` use this same state
+    machine. Status changes occur only when authentication actually fails,
+    not merely because a proactive refresh failed. This replaces the shared
+    spec gap in §4.5: the parent ruling was confirmed by the advisor on the
+    maintainer's behalf on 2026-10-13 (plan 8f Decisions 19–20).
+  ```
+
+In `docs/specs/2026-09-26-mcp-gateway-design.md`, replace:
+
+  ```markdown
+  - Outcomes are distinct: success; vendor refusal → `needs_auth`; local persist
+  ```
+
+with:
+
+  ```markdown
+  - Outcomes are distinct: success; only `invalid_grant` retires the refresh token;
+    a 401 after the attempt → `needs_auth`; local persist
+  ```
+
+In `docs/specs/2026-09-26-mcp-gateway-design.md`, replace:
+
+  ```markdown
+  | `Refused` | the vendor refused the refresh (`invalid_grant` and the like, `invalid_target` without `resource` too) | 502 `upstream_auth` | `needs_auth` |
+  | `Unavailable` | timeout, transport failure, an egress refusal or an unreadable answer | 502 `upstream_unreachable` | unchanged |
+  | `Unsaved` | the grant could not be read, or the result could not be stored | 502 `credential_unsaved` | unchanged |
+  ```
+
+with:
+
+  ```markdown
+  | `Refused` | the vendor refused the refresh (`invalid_grant` only), or its refresh token is dead | valid proactive access continues; otherwise 502 `upstream_auth` | unchanged while access is valid; `needs_auth` on authentication failure |
+  | `Unavailable` | timeout, transport failure, an egress refusal, an unreadable answer or any token-endpoint error other than invalid_grant; also reused during backoff | valid proactive access continues; a 401 answers 502 `upstream_unreachable`; known expiry answers 502 `upstream_auth` | unchanged while access is valid; `needs_auth` on known expiry |
+  | `Unsaved` | the grant could not be read, or the result could not be stored; known expiry does not change this local-failure verdict | 502 `credential_unsaved` | unchanged, no reconnect push |
+  ```
+
+In `docs/specs/2026-09-26-mcp-gateway-design.md`, replace:
+
+  ```markdown
+  | `PATCH /api/mcp/connections/{id}` | Update: `UpdateMcpConnectionRequest` → 200 `McpConnectionItem`. **Step-up** when the body names `url`, `cred_kind`, `internal_network`, `static_header` or `static_prefix`, even with the stored value (a `null` reads as absent); the label and the allowlist need none. Origin or kind change clears the credential (§4.6). The slug and hat cannot change (an unknown field, 422). 400 `invalid`; 400 `unsupported_cred_kind`. A refused change changes nothing. |
+  ```
+
+with:
+
+  ```markdown
+  | `PATCH /api/mcp/connections/{id}` | Update: `UpdateMcpConnectionRequest` → 200 `McpConnectionItem`. **Step-up** when the body names `url`, `cred_kind`, `internal_network`, `static_header` or `static_prefix`, even with the stored value (a `null` reads as absent); the label and the allowlist need none. Origin or kind change clears the credential (§4.6). The slug and hat cannot change (an unknown field, 422). 400 `invalid`. A refused change changes nothing. |
+  ```
+
+- [ ] **Step 4: Run the checks**
+
+   Run the five checks:
+
+   ```sh
+   nix develop -c cargo fmt --all --check
+   nix develop -c cargo clippy --workspace --all-targets --locked -- -D warnings
+   nix develop -c cargo clippy -p hennery --locked -- -D warnings
+   nix develop -c cargo test --workspace --locked
+   nix develop -c cargo run -p hennery-proto --bin gen --locked -- --check
+   ```
+
+   See Execution status for the final gateway/workspace counts, the 4-copy/3-round race matrix and new/moved probe outcomes. Every scoped behavior regression was seen red before the production fix; token error bodies are never recorded.
+
+- [ ] **Step 5: Commit**
+
+   ```sh
+   git add -A && git -c commit.gpgsign=false commit -m "fix(gateway): share refresh failures and retire refused tokens"
+   ```
+
+- [ ] **Step 6: Retain the merged refusal drain**
+
+In `crates/hennery-gateway/tests/oauth_proxy.rs`, replace:
+
+  ```rust
+  }
+
+  #[tokio::test]
+  async fn an_unsaved_refresh_backs_off_before_another_vendor_call() {
+  ```
+
+with:
+
+  ```rust
+  }
+
+  /// The merged refusal drain owns unread GET bodies through every OAuth
+  /// refusal. A gated body proves that the answer waits for EOF rather than
+  /// merely observing a status after an upload already finished.
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn every_oauth_refusal_drains_the_unread_request_before_answering() {
+      use axum::body::{Body, Bytes, to_bytes};
+      use axum::http::Request;
+      use hennery_gateway::proxy::{ProxyState, router};
+      use tower::ServiceExt;
+      for case in [
+          "refused",
+          "needs_auth",
+          "expired",
+          "second_401",
+          "unavailable",
+          "unsaved",
+          "expired_unsaved",
+          "changed",
+      ] {
+          let config = Config {
+              token_status: matches!(case, "expired" | "unavailable").then_some(503),
+              mcp_status: (case == "second_401").then_some(401),
+              gate_token: case == "changed",
+              ..Config::default()
+          };
+          let expiry = matches!(case, "expired" | "expired_unsaved").then(|| unix_now() - 1);
+          let (h, fake, id, token) = setup(config, expiry).await;
+          if matches!(case, "refused" | "needs_auth") {
+              let access = grant(&h, &id).tokens.access_token.clone();
+              seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), None);
+          }
+          if !matches!(case, "expired" | "expired_unsaved") {
+              fake.expire_access();
+          }
+          if case == "needs_auth" {
+              assert_eq!(h.post("linear", &token, &list(1)).await.status(), 502);
+              assert_eq!(h.status(&id), "needs_auth");
+          }
+          if matches!(case, "unsaved" | "expired_unsaved") {
+              h.raw().execute_batch("CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;").unwrap();
+          }
+          count_status_changes(&h);
+          let before = fake.with(|r| r.bearers.len());
+          let (polled, waiting) = tokio::sync::oneshot::channel();
+          let (release, eof) = tokio::sync::oneshot::channel();
+          let tail = futures::stream::once(async move {
+              polled.send(()).unwrap();
+              eof.await.unwrap();
+              Ok::<_, std::io::Error>(Bytes::new())
+          });
+          let body = Body::from_stream(futures::StreamExt::chain(
+              futures::stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"unread"))]),
+              tail,
+          ));
+          let request = Request::builder()
+              .method("GET")
+              .uri("/mcp/linear")
+              .header("authorization", format!("Bearer {token}"))
+              .body(body)
+              .unwrap();
+          let limits = Limits {
+              drain_deadline: Duration::from_secs(10),
+              ..Limits::default()
+          };
+          let answer = tokio::spawn(router(ProxyState::for_sessions(h.runtime.clone(), limits)).oneshot(request));
+          if case == "changed" {
+              until(|| token_requests(&fake) == 1).await;
+              let other = FakeAs::start(Config {
+                  prefix: "reconnected-".into(),
+                  ..Config::default()
+              })
+              .await;
+              moved_to(&h, &id, &other);
+              fake.open_gate();
+          }
+          tokio::time::timeout(Duration::from_secs(10), waiting)
+              .await
+              .expect("the OAuth refusal drain never polled the tail")
+              .expect("the OAuth refusal dropped the unread body");
+          assert!(!answer.is_finished(), "{case}: answered before EOF");
+          release.send(()).unwrap();
+          let answer = answer.await.unwrap().unwrap();
+          assert_eq!(answer.status(), 502, "{case}");
+          assert!(
+              !answer.headers().contains_key("connection"),
+              "{case}: complete drain keeps HTTP/1 usable"
+          );
+          let body: serde_json::Value =
+              serde_json::from_slice(&to_bytes(answer.into_body(), 4096).await.unwrap()).unwrap();
+          let code = match case {
+              "unavailable" => "upstream_unreachable",
+              "unsaved" | "expired_unsaved" => "credential_unsaved",
+              "changed" => "upstream_changed",
+              _ => "upstream_auth",
+          };
+          assert_eq!(body["code"], code, "{case}");
+          if case == "expired_unsaved" {
+              assert_eq!(h.status(&id), "ok");
+              assert_eq!(status_changes(&h), 0);
+              assert!(h.alerts.alerts().is_empty());
+              assert_eq!(fake.with(|r| r.bearers.len()), before, "expired access is not sent");
+              assert_eq!(token_requests(&fake), 1);
+          }
+          if case == "needs_auth" {
+              assert_eq!(fake.with(|r| r.bearers.len()), before, "fail-fast sent no access token");
+              assert_eq!(token_requests(&fake), 1, "fail-fast sent no refresh");
+          }
+      }
+  }
+
+  #[tokio::test]
+  async fn an_unsaved_refresh_backs_off_before_another_vendor_call() {
+  ```
+
+   Run the gated OAuth refusal-drain test with the drain disabled (exit 101), restore it and see it pass. This adds coverage; it does not change the merged drain.
+
+   ```sh
+   nix develop -c cargo test -p hennery-gateway --locked --test oauth_proxy every_oauth_refusal_drains
+   git add -A && git -c commit.gpgsign=false commit -m "test(gateway): retain refusal draining for OAuth authentication failures"
+   ```
+
 ## After this plan
+
+- **Answerer refresh:** `Answerer::send` still sends the stored token without refreshing; a 401 is only logged. Its answer/session lifecycle is a separate follow-up.
+- **M6 / Runtime cleanup:** refresh locks and `Probes.slots` still need coordinated pruning on delete/purge. Attempts slots and their retained cached outcomes are cleared after committed credential changes by Decision 25; that item is implemented.
 
 - **8e integration completed:** OAuth is delivered as another mounted connection. Migration 4 follows unchanged stdio migration 3; protocol generation, shared runtime/revocations, session-ID binding, answer deadlines and purge tests were retained and reverified.
 - **Kernel (O23):** the CSP layer covers only the sessions router; a router merged beside it (the gateway's callback, any later one) must layer `csp::on_html` itself. One layer over the whole merged router, with a test that every `text/html` answer carries it, is the follow-up (kernel §7.2's as-built note).
@@ -17745,6 +21456,8 @@ with:
 - **PQ1 (maintainer):** if the no-iss same-origin rule breaks a required vendor, would you accept the residual mix-up risk, and should the UI show the consent origin before navigation? The built rule stays strict.
 - **PQ2 (maintainer):** should the item show `resource_param_accepted = false`, since dropping `resource` removes its audience restriction?
 - **PQ3 (maintainer):** is requesting every advertised `scopes_supported` acceptable when that includes admin scopes? Should operators choose scopes?
+- **M4 / Product note:** a token-endpoint outage after known access expiry announces `needs_auth`, a reconnect push that reconnect cannot fix. It emits only one problem/recovery pair per outage; distinguish outage from lost authorization in a later product change.
+- **PQ5 (maintainer):** warn early when the refresh token is dead but the access token still works? Default: no; valid access keeps its status and emits no push.
 - **PQ4 (maintainer):** keep cleaned vendor `error_description` as text on our callback origin, despite its phishing potential, or show only the error code?
 - **Operator items** (lane L10, live calls):
   - one real vendor of each kind (`oauth_dcr`, `oauth_client` with and without a secret) through Connect, a refresh after expiry, a revoked grant (`needs_auth` and the push), an outage (`error`, "is failing", no reconnect);
