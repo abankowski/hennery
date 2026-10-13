@@ -45,6 +45,11 @@ export class Client {
     this.deps = deps
   }
 
+  /** A fresh confirmation without resending a request (OAuth needs a new click). */
+  async confirm(): Promise<void> {
+    throw new Error('not implemented')
+  }
+
   /** `method path` with a JSON body, answered as JSON (`undefined` for an
    *  empty answer). */
   async request<T>(method: string, path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
