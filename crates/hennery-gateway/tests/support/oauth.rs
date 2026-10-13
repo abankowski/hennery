@@ -89,6 +89,8 @@ pub struct Config {
     /// The MCP endpoint answers every authenticated request with this
     /// status instead.
     pub mcp_status: Option<u16>,
+    /// Body returned alongside an overridden MCP status, for log canaries.
+    pub mcp_status_body: Option<Value>,
     /// The MCP endpoint never answers an authenticated request.
     pub mcp_hang: bool,
     /// Whether any authorization-server metadata is served.
@@ -148,6 +150,7 @@ impl Default for Config {
             refusal_body: None,
             scopes: vec!["read".into(), "write".into()],
             mcp_status: None,
+            mcp_status_body: None,
             mcp_hang: false,
             serve_metadata: true,
             pr_redirect: false,
@@ -573,6 +576,9 @@ fn mcp(shared: &Shared, config: &Config, headers: &HeaderMap, method: &str, body
         return response;
     }
     if let Some(status) = config.mcp_status {
+        if let Some(body) = &config.mcp_status_body {
+            return json_response(status, body);
+        }
         return StatusCode::from_u16(status).unwrap().into_response();
     }
     if method == "DELETE" {

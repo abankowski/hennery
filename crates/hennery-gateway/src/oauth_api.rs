@@ -278,7 +278,7 @@ pub(crate) async fn authorize(
                                     Slot::Pending => slots.pending,
                                     _ => None,
                                 },
-                                Ok(None) => None,
+                                Ok(None) => return not_found(),
                                 Err(err) => return internal(err),
                             };
                             if !current.is_some_and(|current| {
