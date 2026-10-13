@@ -27,6 +27,23 @@ use std::sync::{Mutex, MutexGuard};
 /// not one per request.
 pub const LAST_USED_EVERY: i64 = 60;
 
+/// The credential whose result may be recorded. Ciphertext identifies a
+/// particular sealed grant, including disconnect/reconnect at the same URL.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CredentialStamp {
+    kind: String,
+    sealed: Option<Vec<u8>>,
+}
+
+impl CredentialStamp {
+    pub(crate) fn new(kind: CredKind, sealed: Option<Vec<u8>>) -> Self {
+        Self {
+            kind: kind.as_str().to_string(),
+            sealed,
+        }
+    }
+}
+
 /// Who presented a token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Principal {
@@ -170,6 +187,24 @@ impl ProxyStore {
         }))
     }
 
+    /// Read the current credential identity, without opening its ciphertext.
+    /// No stored credential means no observation, except for kind `none`.
+    pub fn credential_stamp(&self, id: &str, url: &str) -> Result<Option<CredentialStamp>> {
+        let row: Option<(String, Option<Vec<u8>>)> = self
+            .conn()
+            .query_row(
+                "SELECT c.cred_kind, k.ciphertext FROM gw_connections c
+             LEFT JOIN gw_credentials k ON k.connection_id = c.id AND k.owner_id = ?2
+             WHERE c.id = ?1 AND c.owner_id = ?2 AND c.url = ?3",
+                params![id, self.owner, url],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        Ok(row.and_then(|(kind, sealed)| {
+            (kind == "none" || sealed.is_some()).then_some(CredentialStamp { kind, sealed })
+        }))
+    }
+
     /// `id`'s status is `to` as of `now`, with `note`, unless the
     /// connection was changed to another URL than `url` meanwhile (gateway
     /// spec §5.4, §7): the upstream refused its credential (`needs_auth`),
@@ -183,12 +218,32 @@ impl ProxyStore {
         note: Option<&str>,
         now: i64,
     ) -> Result<Option<StatusChange>> {
+        let Some(observed) = self.credential_stamp(id, url)? else {
+            return Ok(None);
+        };
+        self.record_observed_status(id, url, &observed, to, note, now)
+    }
+
+    /// Record a verdict only while its original credential is still stored.
+    /// A fresh Connect, even at the same URL and kind, invalidates it.
+    pub fn record_observed_status(
+        &self,
+        id: &str,
+        url: &str,
+        observed: &CredentialStamp,
+        to: Status,
+        note: Option<&str>,
+        now: i64,
+    ) -> Result<Option<StatusChange>> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let row: Option<(String, String, String)> = tx
             .query_row(
-                "SELECT status, label, hat_id FROM gw_connections WHERE id = ?1 AND owner_id = ?2 AND url = ?3",
-                params![id, self.owner, url],
+                "SELECT status, label, hat_id FROM gw_connections WHERE id = ?1 AND owner_id = ?2 AND url = ?3
+                     AND cred_kind = ?4
+                     AND (SELECT k.ciphertext FROM gw_credentials k
+                          WHERE k.connection_id = ?1 AND k.owner_id = ?2) IS ?5",
+                params![id, self.owner, url, observed.kind, observed.sealed],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
@@ -214,8 +269,15 @@ impl ProxyStore {
 
     /// The upstream at `url` refused `id`'s credential, or its lack of one
     /// (401; gateway spec §5.4, §7): `needs_auth`, with `note`.
-    pub fn mark_needs_auth(&self, id: &str, url: &str, note: &str, now: i64) -> Result<Option<StatusChange>> {
-        self.record_status(id, url, Status::NeedsAuth, Some(note), now)
+    pub fn mark_needs_auth(
+        &self,
+        id: &str,
+        url: &str,
+        observed: &CredentialStamp,
+        note: &str,
+        now: i64,
+    ) -> Result<Option<StatusChange>> {
+        self.record_observed_status(id, url, observed, Status::NeedsAuth, Some(note), now)
     }
 
     /// Only `checked_at` moves: the probe learned nothing that changes the
@@ -224,6 +286,17 @@ impl ProxyStore {
         self.conn().execute(
             "UPDATE gw_connections SET checked_at = ?4 WHERE id = ?1 AND owner_id = ?2 AND url = ?3",
             params![id, self.owner, url, now],
+        )?;
+        Ok(())
+    }
+
+    /// A probe's unchanged verdict also belongs only to its observed grant.
+    pub fn record_observed_checked(&self, id: &str, url: &str, observed: &CredentialStamp, now: i64) -> Result<()> {
+        self.conn().execute(
+            "UPDATE gw_connections SET checked_at = ?4 WHERE id = ?1 AND owner_id = ?2 AND url = ?3
+                 AND cred_kind = ?5 AND (SELECT k.ciphertext FROM gw_credentials k
+                     WHERE k.connection_id = ?1 AND k.owner_id = ?2) IS ?6",
+            params![id, self.owner, url, now, observed.kind, observed.sealed],
         )?;
         Ok(())
     }

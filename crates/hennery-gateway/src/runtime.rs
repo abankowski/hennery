@@ -32,6 +32,7 @@ pub struct Runtime {
     /// One registry shared by session transitions and proxy requests.
     pub revocations: crate::revocation::Revocations,
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    pub(crate) attempts: Arc<crate::refresh::Attempts>,
     pub(crate) probes: crate::probe::Probes,
     pub(crate) refresh_timeout: Duration,
     pub(crate) probe_timeout: Duration,
@@ -45,6 +46,8 @@ impl Runtime {
         egress: Egress,
         notifier: Arc<dyn Notifier>,
     ) -> Self {
+        let attempts = Arc::new(crate::refresh::Attempts::default());
+        store.watch_refreshes(&attempts);
         Self {
             store,
             statuses,
@@ -54,6 +57,7 @@ impl Runtime {
             flows: Flows::default(),
             revocations: crate::revocation::Revocations::new(),
             locks: Mutex::default(),
+            attempts,
             probes: crate::probe::Probes::default(),
             refresh_timeout: REFRESH_TIMEOUT,
             probe_timeout: crate::probe::PROBE_TIMEOUT,

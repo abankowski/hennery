@@ -330,6 +330,13 @@ pub struct StaticCredential {
     pub static_header: String,
     pub static_prefix: String,
     pub internal_network: bool,
+    pub(crate) sealed: Vec<u8>,
+}
+
+impl StaticCredential {
+    pub fn stamp(&self) -> crate::scope::CredentialStamp {
+        crate::scope::CredentialStamp::new(CredKind::Static, Some(self.sealed.clone()))
+    }
 }
 
 impl std::fmt::Debug for StaticCredential {
@@ -494,8 +501,11 @@ impl AuthMethod {
 #[derive(Clone, PartialEq, Eq)]
 pub struct GrantTokens {
     pub access_token: zeroize::Zeroizing<String>,
-    /// `None`: the vendor gave none, so the grant cannot be refreshed.
+    /// `None`: the vendor gave none, or it was permanently retired.
     pub refresh_token: Option<zeroize::Zeroizing<String>>,
+    /// A vendor refusal permanently retired this refresh token. Kept
+    /// inside the sealed blob so restart cannot resurrect it.
+    pub refresh_dead: bool,
 }
 
 impl std::fmt::Debug for GrantTokens {
@@ -503,6 +513,7 @@ impl std::fmt::Debug for GrantTokens {
         f.debug_struct("GrantTokens")
             .field("access_token", &"<redacted>")
             .field("refresh_token", &self.refresh_token.as_ref().map(|_| "<redacted>"))
+            .field("refresh_dead", &self.refresh_dead)
             .finish()
     }
 }
@@ -515,6 +526,7 @@ impl GrantTokens {
             access_token: &'a str,
             #[serde(skip_serializing_if = "Option::is_none")]
             refresh_token: Option<&'a str>,
+            refresh_dead: bool,
         }
         let mut out = zeroize::Zeroizing::new(Vec::with_capacity(
             64 + self.access_token.len() + self.refresh_token.as_ref().map_or(0, |t| t.len()),
@@ -524,6 +536,7 @@ impl GrantTokens {
             &Out {
                 access_token: &self.access_token,
                 refresh_token: self.refresh_token.as_ref().map(|t| t.as_str()),
+                refresh_dead: self.refresh_dead,
             },
         )
         .expect("two strings serialise");
@@ -537,11 +550,14 @@ impl GrantTokens {
             access_token: String,
             #[serde(default)]
             refresh_token: Option<String>,
+            #[serde(default)]
+            refresh_dead: bool,
         }
         let parsed: In = serde_json::from_slice(bytes).ok()?;
         Some(Self {
             access_token: zeroize::Zeroizing::new(parsed.access_token),
             refresh_token: parsed.refresh_token.map(zeroize::Zeroizing::new),
+            refresh_dead: parsed.refresh_dead,
         })
     }
 }
@@ -575,6 +591,8 @@ pub struct OauthCredential {
     pub tokens: GrantTokens,
     /// `now + expires_in − 60 s` (gateway spec §4.4); `None`: unknown.
     pub expires_at: Option<i64>,
+    /// When this sealed grant was stored; its usable lifetime starts here.
+    pub issued_at: i64,
     pub url: String,
     pub internal_network: bool,
     pub cred_kind: CredKind,
@@ -588,6 +606,12 @@ pub struct OauthCredential {
     /// The sealed blob as read: a refresh stores its result only while the
     /// row still holds it (a compare-and-swap; plan 8f decision 9).
     pub(crate) sealed: Vec<u8>,
+}
+
+impl OauthCredential {
+    pub fn stamp(&self) -> crate::scope::CredentialStamp {
+        crate::scope::CredentialStamp::new(self.cred_kind, Some(self.sealed.clone()))
+    }
 }
 
 impl std::fmt::Debug for OauthCredential {

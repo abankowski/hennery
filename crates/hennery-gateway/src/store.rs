@@ -31,7 +31,7 @@ use anyhow::{Context, Result, anyhow};
 use hennery_kernel::db;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use zeroize::Zeroizing;
 
 /// A connection's columns, then whether it has a credential, then its OAuth
@@ -59,6 +59,7 @@ pub struct GatewayStore {
     conn: Mutex<Connection>,
     /// The database's owner (`db::kernel_owner`), whom every query names.
     owner: String,
+    refresh_caches: Mutex<Vec<Weak<crate::refresh::Attempts>>>,
 }
 
 impl GatewayStore {
@@ -78,7 +79,31 @@ impl GatewayStore {
         Ok(Self {
             conn: Mutex::new(conn),
             owner,
+            refresh_caches: Mutex::default(),
         })
+    }
+
+    pub(crate) fn watch_refreshes(&self, cache: &Arc<crate::refresh::Attempts>) {
+        self.refresh_caches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(Arc::downgrade(cache));
+    }
+
+    /// After a committed credential change, erase every live runtime's
+    /// cache. Weak registrations do not keep runtimes or plaintext alive.
+    fn evict_refresh(&self, id: &str) {
+        self.refresh_caches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|cache| {
+                if let Some(cache) = cache.upgrade() {
+                    cache.clear(id);
+                    true
+                } else {
+                    false
+                }
+            });
     }
 
     /// The store's connection: `stdio.rs` and `session.rs` hold their
@@ -215,7 +240,8 @@ impl GatewayStore {
             },
         };
         let old_origin = url::Url::parse(&current.url).context("a stored url")?.origin();
-        if url.origin() != old_origin || kind != current.cred_kind {
+        let credential_changed = url.origin() != old_origin || kind != current.cred_kind;
+        if credential_changed {
             tx.execute(
                 "DELETE FROM gw_credentials WHERE connection_id = ?1 AND owner_id = ?2",
                 [id, &self.owner],
@@ -258,6 +284,9 @@ impl GatewayStore {
         )?;
         let updated = read(&tx, &self.owner, Some(id))?.pop();
         tx.commit()?;
+        if credential_changed {
+            self.evict_refresh(id);
+        }
         Ok(updated.map_or(Change::NotFound, |record| Change::Done(Box::new(record))))
     }
 
@@ -283,6 +312,7 @@ impl GatewayStore {
             [id, &self.owner],
         )?;
         tx.commit()?;
+        self.evict_refresh(id);
         Ok(deleted == 1)
     }
 
@@ -366,6 +396,7 @@ impl GatewayStore {
             params![id, self.owner, key.version(), sealed, now],
         )?;
         tx.commit()?;
+        self.evict_refresh(id);
         Ok(CredentialChange::Done)
     }
 
@@ -419,6 +450,7 @@ impl GatewayStore {
             static_header,
             static_prefix,
             internal_network,
+            sealed: blob,
         }))
     }
 
@@ -706,7 +738,7 @@ impl GatewayStore {
     /// without one. An error if it does not open.
     pub fn oauth_credential(&self, id: &str, key: &MasterKey) -> Result<Option<OauthCredential>> {
         type Row = (
-            (u32, Vec<u8>, Option<i64>, String, String, bool),
+            (u32, Vec<u8>, Option<i64>, String, String, bool, i64),
             (String, Option<u32>, Option<Vec<u8>>, Option<String>, Option<String>),
             (Option<String>, Option<String>, bool),
         );
@@ -715,7 +747,7 @@ impl GatewayStore {
             .query_row(
                 "SELECT k.key_version, k.ciphertext, k.expires_at, c.cred_kind, c.url, c.internal_network,
                         o.client_id, o.key_version, o.client_secret_ciphertext, o.token_endpoint_auth_method,
-                        o.token_endpoint, o.scopes, o.resource, o.resource_param_accepted
+                        o.token_endpoint, o.scopes, o.resource, o.resource_param_accepted, k.updated_at
                  FROM gw_credentials k
                  JOIN gw_connections c ON c.id = k.connection_id AND c.owner_id = k.owner_id
                  JOIN gw_oauth_clients o ON o.connection_id = k.connection_id AND o.owner_id = k.owner_id
@@ -723,7 +755,15 @@ impl GatewayStore {
                 [id, &self.owner],
                 |r| {
                     Ok((
-                        (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?),
+                        (
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                            r.get(14)?,
+                        ),
                         (r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?),
                         (r.get(11)?, r.get(12)?, r.get(13)?),
                     ))
@@ -731,7 +771,7 @@ impl GatewayStore {
             )
             .optional()?;
         let Some((
-            (version, sealed, expires_at, kind, url, internal_network),
+            (version, sealed, expires_at, kind, url, internal_network, issued_at),
             (client_id, secret_version, secret_blob, method, token_endpoint),
             (scopes, resource, resource_param_accepted),
         )) = row
@@ -748,6 +788,7 @@ impl GatewayStore {
         Ok(Some(OauthCredential {
             tokens,
             expires_at,
+            issued_at,
             url,
             internal_network,
             cred_kind,
@@ -788,6 +829,19 @@ impl GatewayStore {
         key: &MasterKey,
         now: i64,
     ) -> Result<bool> {
+        Ok(self.store_refreshed_observed(id, read, refreshed, key, now)?.is_some())
+    }
+
+    /// The exact committed sealed blob, so a refusal can record only for
+    /// the credential it just refreshed or retired, without a racy reread.
+    pub(crate) fn store_refreshed_observed(
+        &self,
+        id: &str,
+        read: &OauthCredential,
+        refreshed: &RefreshedGrant<'_>,
+        key: &MasterKey,
+        now: i64,
+    ) -> Result<Option<crate::scope::CredentialStamp>> {
         let RefreshedGrant {
             tokens,
             expires_at,
@@ -808,7 +862,10 @@ impl GatewayStore {
             )?;
         }
         tx.commit()?;
-        Ok(changed == 1)
+        if changed == 1 {
+            self.evict_refresh(id);
+        }
+        Ok((changed == 1).then(|| crate::scope::CredentialStamp::new(read.cred_kind, Some(sealed))))
     }
 
     /// Store a completed Connect's grant with the client and authorization
@@ -898,6 +955,7 @@ impl GatewayStore {
             params![id, self.owner, now],
         )?;
         tx.commit()?;
+        self.evict_refresh(id);
         let from = Status::parse(&status).ok_or_else(|| anyhow!("a stored status"))?;
         Ok(GrantStored::Stored(StatusChange {
             connection_id: id.to_string(),
@@ -1032,14 +1090,14 @@ impl GatewayStore {
             .optional()?;
         if let Some((id, host_id, hat_id, version, blob)) = row {
             crypto::open_stdio(key, &id, &host_id, &hat_id, version, &blob)
-            .map(drop)
-            .with_context(|| {
-                format!(
-                    "the master key does not open the stored values of stdio server {id}: restore the key they were \
+                .map(drop)
+                .with_context(|| {
+                    format!(
+                        "the master key does not open the stored values of stdio server {id}: restore the key they were \
                      sealed with. {}",
-                    crate::key::GIVE_UP
-                )
-            })?;
+                        crate::key::GIVE_UP
+                    )
+                })?;
         }
         Ok(())
     }
@@ -1053,6 +1111,11 @@ impl GatewayStore {
     pub fn purge_hat(&self, hat_id: &str) -> Result<Cut> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let ids: Vec<_> = read(&tx, &self.owner, None)?
+            .into_iter()
+            .filter(|connection| connection.hat_id == hat_id)
+            .map(|connection| connection.id)
+            .collect();
         let cut = Cut(tokens::hat_hashes_in(&tx, &self.owner, hat_id)?);
         tokens::purge_hat_in(&tx, &self.owner, hat_id)?;
         tx.execute(
@@ -1079,6 +1142,9 @@ impl GatewayStore {
             [hat_id, &self.owner],
         )?;
         tx.commit()?;
+        for id in ids {
+            self.evict_refresh(&id);
+        }
         Ok(cut)
     }
 }

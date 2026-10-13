@@ -400,6 +400,7 @@ async fn finish(
     let tokens = crate::model::GrantTokens {
         access_token: issued.access_token,
         refresh_token: issued.refresh_token,
+        refresh_dead: false,
     };
     // 8. Under the refresh lock: the connection unchanged since the flow
     // started (the review's R1), then the grant.

@@ -1427,6 +1427,24 @@ async fn a_connect_clears_the_last_failure_and_recovers_the_status() {
     })
     .await;
     let id = h.connection("linear", &fake.mcp_url(), CredKind::OauthDcr);
+    // Recovery is from a real stored grant; a probe without a credential
+    // can no longer manufacture needs_auth (Task 10's status guard).
+    let (access, refresh) = fake.issue();
+    support::oauth::seed_grant(&h.world, &id, &fake, &access, Some(&refresh), None);
+    h.world
+        .proxy_store
+        .mark_needs_auth(
+            &id,
+            &fake.mcp_url(),
+            &h.world
+                .proxy_store
+                .credential_stamp(&id, &fake.mcp_url())
+                .unwrap()
+                .unwrap(),
+            "refused",
+            1,
+        )
+        .unwrap();
     refused(&h, &id, json!({}), StatusCode::BAD_GATEWAY, "pkce_unsupported").await;
     fake.configure(|c| c.s256 = true);
     let (_, headers, answer) = h.authorize(&id, json!({})).await;
@@ -1452,6 +1470,15 @@ async fn a_connect_clears_the_last_failure_and_recovers_the_status() {
     assert!(item.get("oauth_error").is_none());
     assert_eq!(item["status"], "ok");
     assert_eq!(h.alerts.alerts(), [(id, Alert::Recovered)]);
+    assert!(
+        !h.world
+            .store
+            .oauth_credential(item["id"].as_str().unwrap(), &h.world.key)
+            .unwrap()
+            .unwrap()
+            .tokens
+            .refresh_dead
+    );
 }
 
 /// The review's R1: a client `PUT`, a kind change and a delete drop the

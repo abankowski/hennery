@@ -45,7 +45,7 @@ ed25519-dalek.workspace = true
 # The store's unit tests read what its statements touch (`hooks`).
 rusqlite = { workspace = true, features = ["hooks"] }
 tempfile.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 toml.workspace = true
 tower = { version = "0.5", features = ["util"] }
 tracing-subscriber.workspace = true

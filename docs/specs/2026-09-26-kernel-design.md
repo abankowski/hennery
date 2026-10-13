@@ -592,7 +592,7 @@ The kernel defines a `LifecycleHooks` trait with `on_host_revoked(host_id)`
 and `on_hat_purged(hat_id)`; `hennery-sessions` and `hennery-gateway` each
 implement it, so the kernel never imports either. Hooks must be idempotent: a
 repeated revoke, and a revoked host's socket ending, call them again (§4.3).
-*Built so far:* `on_host_revoked` and `on_hat_purged`, implemented by the sessions module. The gateway's part of a purge (its connections with their credentials and mounts, its stdio sets, its session tokens, their streams cut) runs through `SessionMcp::purge_hat`, first: the purge route and the hook owe the purge's checkpoint, then run the gateway's part, then the sessions' (plan 8e; A15), so a hat stuck frozen cannot reach MCP meanwhile, and a failed gateway part stops the purge before any session is deleted.
+*Built so far:* `on_host_revoked` and `on_hat_purged`, implemented by the sessions module. The gateway's part of a purge (its connections with their credentials, OAuth clients and mounts, its pending OAuth flows, its stdio sets, its session tokens, their streams cut) runs through `SessionMcp::purge_hat`, first: the purge route and the hook owe the purge's checkpoint, then run the gateway's part, then the sessions' (plan 8e; A15), so a hat stuck frozen cannot reach MCP meanwhile, and a failed gateway part stops the purge before any session is deleted.
 
 **Purge a hat** (`POST /api/hats/{id}/purge`, step-up; the default hat of any
 host, revoked ones included, and the `default_hat_id` setting's hat cannot be
@@ -808,7 +808,7 @@ the gateway.
 `EgressClient::send` and `send_streaming`, `check_url`, `is_public` and
 `Limiter`. Web Push delivery sends through its `PublicOnly` client (plan
 10b-ii), and the gateway's proxy through the client its connection's marking
-chooses (plan 8d), both from the collector's one `Egress`; OAuth will.
+chooses (plan 8d), both from the collector's one `Egress`; OAuth discovery, registration, exchange and refresh use that same policy (plan 8f).
 
 ### 7.2 Content-Security-Policy
 

@@ -29,6 +29,18 @@ fn oauth(w: &World, slug: &str, kind: CredKind) -> String {
     })
 }
 
+#[test]
+fn sealed_tokens_keep_legacy_grants_live_and_round_trip_the_dead_marker() {
+    use hennery_gateway::model::GrantTokens;
+    let legacy = GrantTokens::from_opened(br#"{"access_token":"a","refresh_token":"r"}"#).unwrap();
+    assert!(!legacy.refresh_dead);
+    let dead = GrantTokens::from_opened(br#"{"access_token":"a","refresh_dead":true}"#).unwrap();
+    assert!(dead.refresh_dead);
+    assert!(dead.refresh_token.is_none());
+    assert_eq!(GrantTokens::from_opened(&dead.to_sealable()), Some(dead));
+    assert!(GrantTokens::from_opened(br#"{"access_token":"a","refresh_dead":"true"}"#).is_none());
+}
+
 fn blob(w: &World, sql: &str, id: &str) -> (u32, Vec<u8>) {
     w.raw().query_row(sql, [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
 }
@@ -311,6 +323,13 @@ fn the_same_status_again_keeps_status_at() {
     let w = World::new();
     let url = "https://mcp.vendor.example/mcp";
     let id = oauth(&w, "linear", CredKind::OauthDcr);
+    w.raw()
+        .execute(
+            "INSERT INTO gw_credentials(connection_id, owner_id, key_version, ciphertext, updated_at)
+             SELECT id, owner_id, 1, x'00', 1 FROM gw_connections WHERE id = ?1",
+            [&id],
+        )
+        .unwrap();
     w.proxy_store
         .record_status(&id, url, Status::Error, Some("down"), 100)
         .unwrap();
@@ -494,6 +513,7 @@ async fn a_completed_connect_leaves_no_stale_columns() {
     let tokens = hennery_gateway::model::GrantTokens {
         access_token: Zeroizing::new(access),
         refresh_token: Some(Zeroizing::new(refresh)),
+        refresh_dead: false,
     };
     let client = hennery_gateway::model::TokenClient {
         client_id: "pre-2".into(),
@@ -608,18 +628,24 @@ fn traffic_and_checks_record_only_for_the_url_reached() {
     let stale = "https://mcp.vendor.example/old";
     let id = oauth(&w, "linear", CredKind::OauthDcr);
     let checked = || w.store.connection(&id).unwrap().unwrap().checked_at;
-    // No credential: traffic's 2xx says nothing.
-    w.proxy_store
-        .record_status(&id, url, Status::Error, Some("down"), 100)
-        .unwrap();
+    // No credential: traffic and a stale probe both say nothing.
+    assert!(
+        w.proxy_store
+            .record_status(&id, url, Status::Error, Some("down"), 100)
+            .unwrap()
+            .is_none()
+    );
     assert!(w.proxy_store.record_traffic_ok(&id, url, 200).unwrap().is_none());
-    assert_eq!(w.status(&id), "error");
+    assert_eq!(w.status(&id), "not_connected");
     w.raw()
         .execute(
             "INSERT INTO gw_credentials(connection_id, owner_id, key_version, ciphertext, updated_at)
              SELECT id, owner_id, 1, x'00', 1 FROM gw_connections WHERE id = ?1",
             [&id],
         )
+        .unwrap();
+    w.proxy_store
+        .record_status(&id, url, Status::Error, Some("down"), 100)
         .unwrap();
     // Another URL: nothing.
     assert!(w.proxy_store.record_traffic_ok(&id, stale, 200).unwrap().is_none());

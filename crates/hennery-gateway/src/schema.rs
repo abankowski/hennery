@@ -1,8 +1,8 @@
 //! The gateway's tables in `hennery.db` (gateway spec §2), migrated as a
 //! component of their own (`db::migrate_component`), beside the kernel's
 //! and the sessions store's. Plan 8a makes the first three, plan 8d the
-//! session tokens, plan 8f the OAuth clients; later plans add standalone
-//! clients and stdio servers.
+//! session tokens, plan 8e the stdio servers (migration 3), and plan 8f the
+//! OAuth clients (migration 4); later plans add standalone clients.
 //!
 //! Every table carries `owner_id` (lane L6). A connection's hat and a
 //! mount's host are the owner's by composite foreign keys (plan 5a decision

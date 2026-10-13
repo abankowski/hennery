@@ -22,7 +22,7 @@
 use crate::model::Status;
 use crate::proxy::{Sent, send_through};
 use crate::runtime::Runtime;
-use crate::scope::ScopedConnection;
+use crate::scope::{CredentialStamp, ScopedConnection};
 use axum::body::Bytes;
 use axum::http::{HeaderMap, HeaderValue, Method};
 use hennery_kernel::secret::unix_now;
@@ -93,34 +93,50 @@ pub async fn probe_now(runtime: &Arc<Runtime>, connection: &ScopedConnection) ->
     {
         return verdict.clone();
     }
+    let observed = match runtime.statuses.credential_stamp(&connection.id, &connection.url) {
+        Ok(observed) => observed,
+        Err(err) => {
+            tracing::error!(connection_id = %connection.id, error = %err, "gateway probe: credential not read");
+            return Verdict::NoChange;
+        }
+    };
     let verdict = match tokio::time::timeout(runtime.probe_timeout, handshake(runtime, connection)).await {
         Ok(verdict) => verdict,
         Err(_) => Verdict::Error("the probe timed out".into()),
     };
-    record(runtime, connection, &verdict);
+    if let Some(observed) = observed {
+        record(runtime, connection, &observed, &verdict);
+    }
     *last = Some((unix_now(), verdict.clone()));
     verdict
 }
 
 /// Write what `verdict` says of `connection`'s status (gateway spec §7).
-fn record(runtime: &Runtime, connection: &ScopedConnection, verdict: &Verdict) {
+fn record(runtime: &Runtime, connection: &ScopedConnection, observed: &CredentialStamp, verdict: &Verdict) {
     let now = unix_now();
     let url = &connection.url;
     match verdict {
-        Verdict::Ok => runtime.announce(
-            runtime
-                .statuses
-                .record_status(&connection.id, url, Status::Ok, None, now),
-        ),
-        Verdict::Error(note) => {
-            runtime.announce(
-                runtime
-                    .statuses
-                    .record_status(&connection.id, url, Status::Error, Some(note), now),
-            )
-        }
+        Verdict::Ok => runtime.announce(runtime.statuses.record_observed_status(
+            &connection.id,
+            url,
+            observed,
+            Status::Ok,
+            None,
+            now,
+        )),
+        Verdict::Error(note) => runtime.announce(runtime.statuses.record_observed_status(
+            &connection.id,
+            url,
+            observed,
+            Status::Error,
+            Some(note),
+            now,
+        )),
         Verdict::NoChange => {
-            if let Err(err) = runtime.statuses.record_checked(&connection.id, url, now) {
+            if let Err(err) = runtime
+                .statuses
+                .record_observed_checked(&connection.id, url, observed, now)
+            {
                 tracing::error!(connection_id = %connection.id, error = %err, "gateway probe: not recorded");
             }
         }

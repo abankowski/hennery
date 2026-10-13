@@ -348,14 +348,27 @@ fn live_status_is_only_for_the_connection_as_it_was() {
     );
     assert_eq!(h.store.connection(&id).unwrap().unwrap().checked_at, None);
     h.set_token(&id, "tok");
+    let observed = h.proxy_store.credential_stamp(&id, url).unwrap().unwrap();
     let other = "http://127.0.0.1:9/other";
     assert!(h.proxy_store.record_traffic_ok(&id, other, 1).unwrap().is_none());
-    assert!(h.proxy_store.mark_needs_auth(&id, other, note, 1).unwrap().is_none());
+    assert!(
+        h.proxy_store
+            .mark_needs_auth(&id, other, &observed, note, 1)
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(h.status(&id), "not_connected");
-    let change = h.proxy_store.mark_needs_auth(&id, url, note, 2).unwrap().unwrap();
+    let change = h
+        .proxy_store
+        .mark_needs_auth(&id, url, &observed, note, 2)
+        .unwrap()
+        .unwrap();
     assert_eq!((change.from, change.to), (Status::NotConnected, Status::NeedsAuth));
     assert!(
-        h.proxy_store.mark_needs_auth(&id, url, note, 3).unwrap().is_none(),
+        h.proxy_store
+            .mark_needs_auth(&id, url, &observed, note, 3)
+            .unwrap()
+            .is_none(),
         "already"
     );
     assert_eq!(h.status(&id), "needs_auth");

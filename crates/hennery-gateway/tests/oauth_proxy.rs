@@ -987,9 +987,10 @@ async fn needs_auth_with_a_dead_refresh_fails_fast_even_without_an_expiry() {
         h.runtime.egress.clone(),
         h.alerts.clone(),
     ));
+    let expected_stamp = grant(&h, &h.store.list().unwrap()[0].id).stamp();
     assert_eq!(
         hennery_gateway::refresh::refresh(restarted, h.store.list().unwrap()[0].id.clone(), Some(access)).await,
-        hennery_gateway::refresh::Refreshed::Refused,
+        hennery_gateway::refresh::Refreshed::Refused(expected_stamp),
         "the sealed dead marker survives restart with unknown expiry"
     );
     assert_eq!(token_requests(&fake), 1);
@@ -1226,7 +1227,8 @@ async fn a_shared_retry_of_the_token_that_just_failed_takes_its_own_refresh_path
     assert!(futures::poll!(&mut second).is_pending());
     fake.open_gate();
     assert!(matches!(first.await.unwrap(), Refreshed::Retry(_)));
-    assert_eq!(second.await, Refreshed::Refused);
+    let second = second.await;
+    assert_eq!(second, Refreshed::Refused(grant(&h, &id).stamp()));
     assert_eq!(
         token_requests(&fake),
         2,
@@ -1429,10 +1431,13 @@ async fn a_needs_auth_write_for_an_old_token_cannot_mark_a_reconnected_grant() {
     let (access, refresh) = fake.issue();
     seed_grant(&h, &id, &fake, &access, Some(&refresh), None);
     count_status_changes(&h);
-    h.runtime.announce(
-        h.proxy_store
-            .mark_needs_auth(&id, &read.url, "the old access expired", unix_now()),
-    );
+    h.runtime.announce(h.proxy_store.mark_needs_auth(
+        &id,
+        &read.url,
+        &read.stamp(),
+        "the old access expired",
+        unix_now(),
+    ));
     assert_eq!(h.status(&id), "ok");
     assert_eq!(status_changes(&h), 0);
     assert!(h.alerts.alerts().is_empty());

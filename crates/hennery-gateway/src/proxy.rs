@@ -408,64 +408,100 @@ pub(crate) struct Upstream {
     /// The connection's stored flag, as read for this request.
     pub(crate) internal_network: bool,
     auth: UpstreamAuth,
+    observed: Box<crate::scope::CredentialStamp>,
 }
 
 /// The connection's upstream and credential as stored now, without a
 /// refresh. `None`: it has none it can use (a `static` or OAuth connection
 /// without one), so nothing is sent (plan 8d decision 3).
-fn current_upstream(runtime: &Runtime, connection: &ScopedConnection) -> anyhow::Result<Option<Upstream>> {
+fn prepared_upstream(runtime: &Runtime, connection: &ScopedConnection, check_auth: bool) -> anyhow::Result<Prepared> {
     match connection.cred_kind {
-        CredKind::None => Ok(Some(Upstream {
+        CredKind::None => Ok(Prepared::Ready(Upstream {
             url: Url::parse(&connection.url)?,
             internal_network: connection.internal_network,
             auth: UpstreamAuth::None,
+            observed: Box::new(crate::scope::CredentialStamp::new(CredKind::None, None)),
         })),
         CredKind::Static => {
             let Some(credential) = runtime.store.static_credential(&connection.id, &runtime.key)? else {
-                return Ok(None);
+                return Ok(Prepared::NoCredential);
             };
             let header = HeaderName::from_bytes(credential.static_header.as_bytes())?;
             let mut value =
                 HeaderValue::from_str(&format!("{}{}", credential.static_prefix, credential.token.as_str()))?;
             value.set_sensitive(true);
-            Ok(Some(Upstream {
+            Ok(Prepared::Ready(Upstream {
                 url: Url::parse(&credential.url)?,
                 internal_network: credential.internal_network,
                 auth: UpstreamAuth::Static { header, value },
+                observed: Box::new(credential.stamp()),
             }))
         }
         CredKind::OauthDcr | CredKind::OauthClient => {
             let Some(credential) = runtime.store.oauth_credential(&connection.id, &runtime.key)? else {
-                return Ok(None);
+                return Ok(Prepared::NoCredential);
             };
-            Ok(Some(Upstream {
+            let expired = credential.expires_at.is_some_and(|at| at <= unix_now());
+            let dead_needs_auth = credential.tokens.refresh_dead
+                && runtime
+                    .statuses
+                    .connection_by_id(&connection.id)?
+                    .is_some_and(|c| c.status == "needs_auth");
+            if check_auth && (expired || dead_needs_auth) {
+                runtime.announce(runtime.statuses.mark_needs_auth(
+                    &connection.id,
+                    &credential.url,
+                    &credential.stamp(),
+                    "the access token has expired or its refresh token is dead",
+                    unix_now(),
+                ));
+                return Ok(Prepared::AuthRefused);
+            }
+            Ok(Prepared::Ready(Upstream {
                 url: Url::parse(&credential.url)?,
                 internal_network: credential.internal_network,
                 auth: UpstreamAuth::bearer(credential.tokens.access_token.clone())?,
+                observed: Box::new(credential.stamp()),
             }))
         }
     }
+}
+
+// Answerer still sends the stored token without refresh; its lifecycle
+// remains an explicit follow-up rather than joining this request path.
+fn current_upstream(runtime: &Runtime, connection: &ScopedConnection) -> anyhow::Result<Option<Upstream>> {
+    Ok(match prepared_upstream(runtime, connection, false)? {
+        Prepared::Ready(upstream) => Some(upstream),
+        Prepared::NoCredential | Prepared::AuthRefused | Prepared::RefreshUnsaved => None,
+    })
 }
 
 /// The connection's upstream and credential for a request now: an OAuth
 /// access token within 5 minutes of its expiry is refreshed first,
 /// single-flight (gateway spec §4.4), and then the URL and the token are
 /// read again, together: the refresh may have found another grant than the
-/// one read here (plan 8f decision 13). A refresh that fails leaves the
-/// token there is: a 401 then has its own refresh and retry. A grant
+/// one read here (plan 8f decision 13). A refresh that fails leaves a
+/// still-valid token usable without a status change; expiry fails fast. A grant
 /// without a refresh token never waits for the connection's lock.
-async fn upstream_for_request(
-    runtime: &Arc<Runtime>,
-    connection: &ScopedConnection,
-) -> anyhow::Result<Option<Upstream>> {
+async fn upstream_for_request(runtime: &Arc<Runtime>, connection: &ScopedConnection) -> anyhow::Result<Prepared> {
     if connection.cred_kind.is_oauth()
         && let Some(credential) = runtime.store.oauth_credential(&connection.id, &runtime.key)?
-        && refresh::due(credential.expires_at, unix_now())
+        && refresh::due(credential.expires_at, credential.issued_at, unix_now())
         && credential.tokens.refresh_token.is_some()
     {
-        refresh::refresh(runtime.clone(), connection.id.clone(), None).await;
+        let outcome = refresh::refresh(runtime.clone(), connection.id.clone(), None).await;
+        if outcome == Refreshed::Unsaved && credential.expires_at.is_some_and(|at| at <= unix_now()) {
+            return Ok(Prepared::RefreshUnsaved);
+        }
     }
-    current_upstream(runtime, connection)
+    prepared_upstream(runtime, connection, true)
+}
+
+enum Prepared {
+    Ready(Upstream),
+    NoCredential,
+    AuthRefused,
+    RefreshUnsaved,
 }
 
 /// The upstream request's headers: the allowlist, `Accept` defaulted, no
@@ -543,8 +579,10 @@ pub(crate) async fn send_through(
     head_timeout: Duration,
 ) -> Sent {
     let upstream = match upstream_for_request(runtime, connection).await {
-        Ok(Some(upstream)) => upstream,
-        Ok(None) => return Sent::NoCredential,
+        Ok(Prepared::Ready(upstream)) => upstream,
+        Ok(Prepared::NoCredential) => return Sent::NoCredential,
+        Ok(Prepared::AuthRefused) => return Sent::AuthRefused,
+        Ok(Prepared::RefreshUnsaved) => return Sent::RefreshUnsaved,
         Err(err) => return Sent::Internal(err),
     };
     let client = runtime.client(upstream.internal_network);
@@ -555,13 +593,15 @@ pub(crate) async fn send_through(
         *request.timeout_mut() = Some(head_timeout);
         client.send_streaming(request)
     };
-    let refused = |note: &str| {
+    let refused = |observed: &crate::scope::CredentialStamp, note: &str| {
         tracing::warn!(connection_id = %connection.id, slug = %connection.slug, "gateway proxy: the upstream refused the credential");
-        runtime.announce(
-            runtime
-                .statuses
-                .mark_needs_auth(&connection.id, upstream.url.as_str(), note, unix_now()),
-        );
+        runtime.announce(runtime.statuses.mark_needs_auth(
+            &connection.id,
+            upstream.url.as_str(),
+            observed,
+            note,
+            unix_now(),
+        ));
         Sent::AuthRefused
     };
     let response = match send(&upstream.auth).await {
@@ -578,7 +618,7 @@ pub(crate) async fn send_through(
     }
     drop(response);
     let UpstreamAuth::Oauth { access, .. } = &upstream.auth else {
-        return refused("the upstream refused the credential (401)");
+        return refused(&upstream.observed, "the upstream refused the credential (401)");
     };
     match refresh::refresh(runtime.clone(), connection.id.clone(), Some(access.clone())).await {
         Refreshed::Retry(fresh) => {
@@ -589,6 +629,7 @@ pub(crate) async fn send_through(
                 tracing::warn!(connection_id = %connection.id, slug = %connection.slug, "gateway proxy: the connection changed during its refresh; not retried");
                 return Sent::Changed;
             }
+            let observed = Box::new(fresh.stamp);
             let auth = match UpstreamAuth::bearer(fresh.access_token) {
                 Ok(auth) => auth,
                 Err(err) => return Sent::Internal(err),
@@ -596,7 +637,7 @@ pub(crate) async fn send_through(
             match send(&auth).await {
                 Ok(response) if response.status() == StatusCode::UNAUTHORIZED => {
                     drop(response);
-                    refused("the upstream refused the refreshed credential (401)")
+                    refused(&observed, "the upstream refused the refreshed credential (401)")
                 }
                 Ok(response) => Sent::Answer {
                     response,
@@ -604,6 +645,7 @@ pub(crate) async fn send_through(
                         url: upstream.url.clone(),
                         internal_network: upstream.internal_network,
                         auth,
+                        observed,
                     },
                 },
                 Err(error) => Sent::Unreachable {
@@ -612,9 +654,14 @@ pub(crate) async fn send_through(
                 },
             }
         }
-        Refreshed::NotRefreshable => refused("the upstream refused the credential (401), and it cannot be refreshed"),
-        // The refresh set `needs_auth` itself.
-        Refreshed::Refused => Sent::AuthRefused,
+        Refreshed::NotRefreshable => refused(
+            &upstream.observed,
+            "the upstream refused the credential (401), and it cannot be refreshed",
+        ),
+        Refreshed::Refused(observed) => refused(
+            &observed,
+            "the upstream refused the credential (401), and its refresh token is dead",
+        ),
         Refreshed::Unavailable => Sent::RefreshUnavailable,
         Refreshed::Unsaved => Sent::RefreshUnsaved,
     }

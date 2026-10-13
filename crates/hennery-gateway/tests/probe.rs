@@ -102,6 +102,8 @@ async fn a_tick_keeps_valid_access_ok_then_marks_expired_dead_refresh_once() {
     let rt = restarted(&h);
     probe::tick(&rt).await;
     probe::tick(&rt).await;
+    let connection = h.proxy_store.connection_by_id(&id).unwrap().unwrap();
+    assert_eq!(probe::probe_now(&rt, &connection).await, Verdict::NeedsAuth);
     assert_eq!(fake.paths().iter().filter(|p| *p == "/token").count(), 1);
     assert_eq!(fake.with(|r| r.bearers.len()), before);
     assert_eq!(h.status(&id), "needs_auth");

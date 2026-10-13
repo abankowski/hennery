@@ -351,7 +351,7 @@ impl FakeAs {
 }
 
 /// Store a grant for `id` as a completed Connect would, without the
-/// consent: `access` and `refresh` from `fake.issue()`, the fake's token
+/// consent, aged one hour to exercise proactive refresh: `access` and `refresh` from `fake.issue()`, the fake's token
 /// endpoint, the MCP URL as its `resource`, `read write` as its scopes.
 pub fn seed_grant(
     world: &super::World,
@@ -373,6 +373,7 @@ pub fn seed_grant(
     let tokens = GrantTokens {
         access_token: zeroize::Zeroizing::new(access.to_string()),
         refresh_token: refresh.map(|r| zeroize::Zeroizing::new(r.to_string())),
+        refresh_dead: false,
     };
     let scopes = vec!["read".to_string(), "write".to_string()];
     let stored = world
@@ -396,7 +397,7 @@ pub fn seed_grant(
                 expires_at,
             },
             &world.key,
-            hennery_kernel::secret::unix_now(),
+            hennery_kernel::secret::unix_now() - 3600,
         )
         .unwrap();
     assert!(matches!(stored, GrantStored::Stored(_)), "{stored:?}");

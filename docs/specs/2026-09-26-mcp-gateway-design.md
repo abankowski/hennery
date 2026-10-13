@@ -400,6 +400,7 @@ rejected — a grant that "refreshes fine and never works".)*
   …/oauth-client` again (the API design's R2). When the initial pin loses
   its compare-and-swap, authorize re-reads that slot: another client, secret,
   issuer or token endpoint is also 409 `issuer_changed`, before consent.
+  A connection deleted during this lost-pin race answers 404 `not_found`.
   A client `PUT` while a grant
   is live is stored as pending, under a field of its own, and replaces the
   client only when a Connect with it completes (G-7).
@@ -491,8 +492,11 @@ rejected — a grant that "refreshes fine and never works".)*
   unusable `expires_in` means unknown, not expired; a huge positive lifetime
   remains known at the cap.
 - **Proactive refresh:** a request that finds the access token within 5
-  minutes of `expires_at` refreshes first (single-flight). Expiry otherwise
-  costs a 401, a refresh and a retry. *(G-9: the predecessor stored expiry and
+  minutes of `expires_at` refreshes first (single-flight), with a lead of
+  `min(300 s, half its usable lifetime)` measured from the grant row's
+  `updated_at` to its safety-adjusted expiry. A fresh short-lived token is
+  not immediately due again. A token known to
+  have expired is never sent after a failed refresh. *(G-9: the predecessor stored expiry and
   never read it.)*
 - A refresh response without `refresh_token` keeps the old one.
 - Refresh sends `resource` and the original scopes. *(G-10: the predecessor
@@ -501,19 +505,59 @@ rejected — a grant that "refreshes fine and never works".)*
   refresh token, so a request never waits for the lock of a grant that
   cannot be refreshed; after it, the URL and the token are read again, in one
   statement (plan 8f decision 13). A refresh that fails leaves the token
-  there is: a 401 then has its own refresh and retry.
+  there is while it is still valid, without changing status or sending a
+  notification. Expired access fails fast with 502 `upstream_auth`, except an `Unsaved` refresh: that local storage failure answers 502 `credential_unsaved` with status and notifications unchanged.
 
 ### 4.5 Single-flight refresh
 
 - One mutex per connection. Under it: re-read the stored credential; if the
   access token already differs from the one that failed, use the new one;
-  otherwise refresh.
+  otherwise follow the refresh-attempt state machine below.
+- Each caller notes the connection's attempt counter before queuing on
+  the mutex. If the counter moved while it waited, it consumes the recorded
+  outcome instead of calling the vendor, unless that outcome is `Retry`
+  carrying the exact token this caller just had refused; it then follows
+  its own refresh path. Failures are single-flight too:
+  no caller waits for more than one in-flight refresh.
+- `Unavailable` and an `Unsaved` issuance start per-connection backoff: 30 seconds, doubling on
+  consecutive unavailable or unsaved attempts, capped at five minutes. Nobody calls
+  the token endpoint during backoff. This cap bounds vendor pressure while
+  allowing recovery sooner than the 15-minute background probe interval.
+  Committed delete, purge or credential replacement evicts every live runtime’s Attempts slot and wipes its cached outcome, including a queued caller’s retained state; a rolled-back write evicts nothing. Refresh rotation also evicts its old slot. Missing credentials clear a race-created empty slot.
+- A proactive failure while access remains valid changes no status and
+  sends no push. Requests and probe handshakes keep using that access token.
+  Known expiry fails fast with 502 `upstream_auth`, marking `needs_auth`
+  once; an unknown lifetime still allows a request to discover a 401.
+- Only HTTP 400 with `invalid_grant` retires the refresh token forever (`Refused`), as RFC 6749 §5.2 specifies; 401, 403 or 404 carrying `invalid_grant` remains `Unavailable`.
+  Every other failure follows `Unavailable`: redirects (never followed),
+  unnamed or other named 400 errors (including `temporarily_unavailable`),
+  401, 403, 404, 408, 429, 5xx, `invalid_client` and `unauthorized_client`.
+  `invalid_target` is retried once without `resource`; even if refused
+  again it remains transient, since §4.3 does not establish that the
+  refresh token itself is permanently invalid. Its sealed token blob stores `refresh_dead = true`
+  and removes `refresh_token`, under Decision 9's sealed-blob CAS, retaining
+  the access token and expiry. A concurrent reconnect cannot be overwritten.
+  A refused retirement write is `Unsaved`; this runtime still never resends
+  that token. In `needs_auth` with a dead refresh token, requests fail fast
+  without contacting either endpoint. A new Connect clears the marker.
+- A `needs_auth` write compares the stamp read with the token inside its write transaction, including known-expiry fail-fast and a final 401. A retry or successful retirement carries the exact new stamp; a reconnect between read and write leaves the new grant alone.
+- A probe records status and `checked_at` only while the original
+  credential kind and sealed blob still match. Disconnect/reconnect or a
+  switch to static credentials at the same URL drops a stale verdict.
+  A refresh during the handshake also replaces that blob, so the completed
+  probe's status write waits for a later probe against the stored grant.
+- The proxy's proactive and 401 paths and `probe::tick` use this same state
+  machine. Status changes occur only when authentication actually fails,
+  not merely because a proactive refresh failed. This replaces the shared
+  spec gap in §4.5: the parent ruling was confirmed by the advisor on the
+  maintainer's behalf on 2026-10-13 (plan 8f Decisions 19–20).
 - A started refresh always runs to completion and persists, independent of the
   caller's cancellation, bounded by a 20 s timeout. *(G-11: abandoning a refresh
   after the vendor rotated the refresh token lost the grant.)*
 - The caller's own cancellation never sets `needs_auth`. *(G-12: false
   "re-authorize" alerts.)*
-- Outcomes are distinct: success; vendor refusal → `needs_auth`; local persist
+- Outcomes are distinct: success; only `invalid_grant` retires the refresh token;
+  a 401 after the attempt → `needs_auth`; local persist
   failure → 502 without `needs_auth` (a click cannot fix a disk error).
 - Every credential write (grant storage, credential clear) takes the same lock.
   *(G-13: a late refresh of an old grant overwrote a freshly stored new one.)*
@@ -526,9 +570,9 @@ task of its own that the caller awaits. Its outcomes (`Refreshed`):
 |---|---|---|---|
 | `Retry` | a token to send: refreshed, or one another refresh or a Connect stored meanwhile (then nothing is sent to the vendor) | the retry's answer; a second 401 is 502 `upstream_auth` | `needs_auth` on the second 401 |
 | `NotRefreshable` | no grant, or one without a refresh token | 502 `upstream_auth` | `needs_auth` |
-| `Refused` | the vendor refused the refresh (`invalid_grant` and the like, `invalid_target` without `resource` too) | 502 `upstream_auth` | `needs_auth` |
-| `Unavailable` | timeout, transport failure, an egress refusal or an unreadable answer | 502 `upstream_unreachable` | unchanged |
-| `Unsaved` | the grant could not be read, or the result could not be stored | 502 `credential_unsaved` | unchanged |
+| `Refused` | the vendor refused the refresh (`invalid_grant` only), or its refresh token is dead | valid proactive access continues; otherwise 502 `upstream_auth` | unchanged while access is valid; `needs_auth` on authentication failure |
+| `Unavailable` | timeout, transport failure, an egress refusal, an unreadable answer or any token-endpoint error other than invalid_grant; also reused during backoff | valid proactive access continues; a 401 answers 502 `upstream_unreachable`; known expiry answers 502 `upstream_auth` | unchanged while access is valid; `needs_auth` on known expiry |
+| `Unsaved` | the grant could not be read, or the result could not be stored; known expiry does not change this local-failure verdict | 502 `credential_unsaved` | unchanged, no reconnect push |
 
 - **The write is a compare-and-swap** on the sealed blob (fresh nonce per write)
   it read (plan 8f decision 9). API PATCH, DELETE and credential/client PUTs
@@ -1105,7 +1149,7 @@ read.
 |---|---|
 | `GET /api/mcp/connections` | List: 200, an array of `McpConnectionItem`, oldest first (no secrets; `has_credential`, status, `account_label`, mounts on unrevoked hosts, sorted). |
 | `POST /api/mcp/connections` | Create (**step-up**): `CreateMcpConnectionRequest` → 201 `McpConnectionItem`, `not_connected`, no credential, no mounts. 400 `invalid` (a field refused, or a hat that is not the owner's); 409 `slug_taken`; 409 `too_many_connections`. |
-| `PATCH /api/mcp/connections/{id}` | Update: `UpdateMcpConnectionRequest` → 200 `McpConnectionItem`. **Step-up** when the body names `url`, `cred_kind`, `internal_network`, `static_header` or `static_prefix`, even with the stored value (a `null` reads as absent); the label and the allowlist need none. Origin or kind change clears the credential (§4.6). The slug and hat cannot change (an unknown field, 422). 400 `invalid`; 400 `unsupported_cred_kind`. A refused change changes nothing. |
+| `PATCH /api/mcp/connections/{id}` | Update: `UpdateMcpConnectionRequest` → 200 `McpConnectionItem`. **Step-up** when the body names `url`, `cred_kind`, `internal_network`, `static_header` or `static_prefix`, even with the stored value (a `null` reads as absent); the label and the allowlist need none. Origin or kind change clears the credential (§4.6). The slug and hat cannot change (an unknown field, 422). 400 `invalid`. A refused change changes nothing. |
 | `DELETE /api/mcp/connections/{id}` | Delete (**step-up**: it destroys a grant that may need a consent to get back, as revoking a host does) with mounts, credential and OAuth client, and its OAuth flows dropped: 204. |
 | `PUT /api/mcp/connections/{id}/mounts` | Replace the host set (full set, never a delta): `McpMountsRequest {host_ids}` → 200 `McpConnectionItem`. No step-up: a mount reaches only a host the owner paired, and pairing needs it. 400 `invalid` (a host not the owner's or revoked, more than 1024 hosts, an id over 64 bytes). |
 | `PUT /api/mcp/connections/{id}/credential` | Set a static token (write-only, **step-up**): `McpCredentialRequest {token}` → 204, sealed, replacing any before it. 409 `wrong_cred_kind` (not `static`); 400 `invalid` (the token is never quoted). No route reads a credential back or clears one: changing the origin or kind, or deleting the connection, does. |
