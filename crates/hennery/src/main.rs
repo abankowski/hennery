@@ -436,7 +436,7 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
     // credentials are stored, or that does not open them, stops the start
     // (plan 8a decision 8; `KeyUnavailable` tells that case apart).
     let keys = hennery_gateway::key::KeySource::from_env(&data_dir)?;
-    let gateway_routes = gateway(&state, &db, &keys, &egress)?;
+    let (gateway, proxy) = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY)?;
     state.offline_threshold = std::time::Duration::from_secs(args.host_offline_secs);
     hennery_sessions::offline::after_startup(&state);
     hennery_sessions::sweep::after_startup(&state);
@@ -502,7 +502,9 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
     });
     let served = hennery_sessions::serve_all(
         listeners,
-        hennery_sessions::router(state.clone()).merge(gateway_routes),
+        hennery_sessions::router(state.clone())
+            .merge(hennery_gateway::api::router(gateway))
+            .merge(hennery_gateway::proxy::router(proxy)),
         state.shutdown.clone(),
     )
     .await;
@@ -1188,30 +1190,44 @@ async fn run_up(args: UpArgs) -> Result<std::process::ExitCode> {
     }
 }
 
-/// The gateway on the collector's `hennery.db` (plan 8a), wired into the
-/// sessions `state` serves, and its routes. Sessions mint and revoke their
-/// tokens through it, inside their own transactions (plan 8e, lane L1);
-/// its proxy (plan 8d), `/mcp/<slug>`, watches the same revocations, so a
-/// revoke cuts what is open on the token. The proxy takes bearer tokens,
-/// beside the operator's routes and outside them (lane L8), and sends only
-/// through `egress`, the collector's one, shared with Web Push.
-fn gateway(
-    state: &AppState,
+/// The gateway on `db` (plans 8a, 8d, 8f), with the proxy on the same
+/// runtime, so a connection's refresh lock is one:
+/// - its `Notifier` is Web Push (lane L9): a connection moving into or out
+///   of `needs_auth` or `error` is a notice under its hat's push policy;
+/// - its OAuth calls go through the collector's one `egress`, shared with
+///   Web Push;
+/// - a problem already there is announced once (gateway spec §7); from
+///   here on, only transitions;
+/// - the probe of OAuth connections runs every `every` until shutdown.
+fn start_gateway(
     db: &std::path::Path,
     keys: &hennery_gateway::key::KeySource,
+    state: &AppState,
     egress: &hennery_kernel::egress::Egress,
-) -> Result<axum::Router> {
-    let gateway = hennery_gateway::open(db, keys, state.operator.clone())?;
+    every: std::time::Duration,
+) -> Result<(hennery_gateway::api::GatewayState, hennery_gateway::proxy::ProxyState)> {
+    let gateway = hennery_gateway::open(
+        db,
+        keys,
+        state.operator.clone(),
+        egress.clone(),
+        std::sync::Arc::new(state.push.clone()),
+    )?;
     state
         .store
         .set_session_mcp(std::sync::Arc::new(hennery_gateway::session::GatewayMcp::new(&gateway)));
-    let proxy = hennery_gateway::proxy::ProxyState::full(
-        std::sync::Arc::new(hennery_gateway::scope::ProxyStore::open(db)?),
-        &gateway,
-        egress.clone(),
+    gateway.runtime.announce_startup()?;
+    let proxy = hennery_gateway::proxy::ProxyState::for_sessions(
+        gateway.runtime.clone(),
         hennery_gateway::proxy::Limits::default(),
     );
-    Ok(hennery_gateway::api::router(gateway).merge(hennery_gateway::proxy::router(proxy)))
+    tokio::spawn(hennery_gateway::probe::run(
+        gateway.runtime.clone(),
+        every,
+        hennery_gateway::probe::TICK_TIMEOUT,
+        state.shutdown.clone().cancelled_owned(),
+    ));
+    Ok((gateway, proxy))
 }
 
 /// Web Push delivery (plan 10b-ii): the state's notices go to a task that
@@ -1228,8 +1244,8 @@ mod tests {
     /// Plan 8e: the collector gives its sessions the gateway (lane L1), or
     /// no session would ever get a server (plan 8c's release blocker, lane
     /// L15). The same function `run_collector` calls.
-    #[test]
-    fn the_collector_gives_its_sessions_the_gateway() {
+    #[tokio::test]
+    async fn the_collector_gives_its_sessions_the_gateway() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("hennery.db");
         let state = AppState::new(
@@ -1240,8 +1256,105 @@ mod tests {
         assert!(!state.store.has_session_mcp());
         let keys = hennery_gateway::key::KeySource::from_vars(dir.path(), Some("07".repeat(32).into()), None).unwrap();
         let egress = hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap();
-        let _routes = gateway(&state, &db, &keys, &egress).unwrap();
+        let _routes = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY).unwrap();
         assert!(state.store.has_session_mcp());
+    }
+
+    /// Plan 8f (lane L9, gateway spec §7): the gateway's `Notifier` is the
+    /// collector's Web Push, a problem present at startup is announced once
+    /// through it, and the background probe runs.
+    #[tokio::test]
+    async fn the_gateway_announces_through_push_and_probes() {
+        use hennery_gateway::model::{AuthMethod, CredKind, GrantTokens, NewConnection, Status, TokenClient};
+        use hennery_gateway::store::{ClientSource, GrantToStore};
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let mut state = AppState::new(
+            Store::open(&db).unwrap(),
+            Hosts::open(&db).unwrap(),
+            Operator::open(&db).unwrap(),
+        );
+        let (push, mut notices) = hennery_kernel::push::Push::new();
+        state.push = push;
+        let egress = hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap();
+        let keys = hennery_gateway::key::KeySource::from_vars(dir.path(), None, None).unwrap();
+        // A first start makes the key; an OAuth connection in `error`, with
+        // a grant whose upstream is a listener here.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let (first, _) = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_secs(3600)).unwrap();
+        let runtime = first.runtime.clone();
+        let hennery_gateway::model::Change::Done(record) = runtime
+            .store
+            .create(
+                &NewConnection {
+                    slug: "linear".into(),
+                    label: "Linear".into(),
+                    url: url.clone(),
+                    hat_id: state.hosts.default_hat_for_new_hosts().unwrap(),
+                    cred_kind: CredKind::OauthDcr,
+                    static_header: None,
+                    static_prefix: None,
+                    tool_allowlist: None,
+                    internal_network: true,
+                },
+                1,
+            )
+            .unwrap()
+        else {
+            panic!("not created");
+        };
+        let client = TokenClient {
+            client_id: "c".into(),
+            secret: None,
+            auth_method: AuthMethod::None,
+            token_endpoint: format!("{url}/token"),
+        };
+        let tokens = GrantTokens::from_opened(br#"{"access_token":"a"}"#).unwrap();
+        runtime
+            .store
+            .store_grant(
+                &GrantToStore {
+                    connection_id: &record.id,
+                    url: &url,
+                    cred_kind: CredKind::OauthDcr,
+                    internal_network: true,
+                    source: ClientSource::Registered,
+                    client: &client,
+                    issuer: &url,
+                    authorization_endpoint: &url,
+                    redirect_uri: "https://hennery.example/api/mcp/oauth/callback",
+                    scopes: &[],
+                    resource: &url,
+                    resource_param_accepted: true,
+                    registered_at: 1,
+                    tokens: &tokens,
+                    expires_at: None,
+                },
+                &runtime.key,
+                1,
+            )
+            .unwrap();
+        runtime
+            .statuses
+            .record_status(&record.id, &url, Status::Error, Some("down"), 1)
+            .unwrap();
+        while notices.try_recv().is_some() {}
+        drop((first, runtime));
+        // The start this test is about.
+        let started = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_millis(20)).unwrap();
+        // One runtime for the API and the proxy: one refresh lock per
+        // connection (plan 8f decision 3).
+        assert!(std::sync::Arc::ptr_eq(&started.0.runtime, &started.1.runtime));
+        let notice = notices.try_recv().expect("the problem is announced at startup");
+        assert_eq!(notice.tag, format!("mcp-{}", record.id));
+        assert_eq!(notice.body, "is failing");
+        assert_eq!(notice.url, "/mcp");
+        assert!(notices.try_recv().is_none(), "once");
+        // The probe reaches the upstream.
+        let accepted = tokio::time::timeout(std::time::Duration::from_secs(10), listener.accept()).await;
+        assert!(accepted.is_ok(), "the probe never ran");
+        state.shutdown.cancel();
     }
 
     /// Plan 10b-ii: the collector's notices reach delivery, and delivery is

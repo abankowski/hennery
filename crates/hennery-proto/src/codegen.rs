@@ -114,6 +114,13 @@ pub fn render_schema() -> String {
         rest::McpStdioEnvInput,
         rest::McpStdioServerInput,
         rest::McpStdioServersRequest,
+        rest::McpOauthState,
+        rest::McpOauthPendingClient,
+        rest::McpOauthError,
+        rest::McpOauthRedirect,
+        rest::McpOauthClientRequest,
+        rest::McpAuthorizeRequest,
+        rest::McpAuthorizeResponse,
     );
     // `serde_json::Map` is a `BTreeMap` (always iterates sorted) by default,
     // or an `IndexMap` (iterates in insertion order) when serde_json's
@@ -293,6 +300,13 @@ pub fn render_ts() -> String {
         rest::McpStdioEnvInput,
         rest::McpStdioServerInput,
         rest::McpStdioServersRequest,
+        rest::McpOauthState,
+        rest::McpOauthPendingClient,
+        rest::McpOauthError,
+        rest::McpOauthRedirect,
+        rest::McpOauthClientRequest,
+        rest::McpAuthorizeRequest,
+        rest::McpAuthorizeResponse,
     );
     out
 }

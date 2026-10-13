@@ -112,11 +112,17 @@ impl World {
         connection(&gateway_store, "acme", &work.id);
         let revocations = Revocations::new();
         let key = MasterKey::from_bytes([7; 32]);
+        let mut runtime = hennery_gateway::runtime::Runtime::new(
+            gateway_store,
+            Arc::new(ProxyStore::open(&db).unwrap()),
+            Arc::new(MasterKey::from_bytes([7; 32])),
+            hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap(),
+            Arc::new(hennery_gateway::notify::Silent),
+        );
+        runtime.revocations = revocations.clone();
         let gateway = GatewayState {
-            store: gateway_store,
-            key: Arc::new(MasterKey::from_bytes([7; 32])),
+            runtime: Arc::new(runtime),
             operator: Arc::new(operator),
-            revocations: revocations.clone(),
         };
         let store = Store::open(&db).unwrap();
         store.set_session_mcp(Arc::new(GatewayMcp::new(&gateway)));

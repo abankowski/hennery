@@ -22,7 +22,6 @@ use hennery_gateway::api::GatewayState;
 use hennery_gateway::key::KeySource;
 use hennery_gateway::model::{Change, CredKind, NewConnection};
 use hennery_gateway::proxy::{Limits, ProxyState};
-use hennery_gateway::scope::ProxyStore;
 use hennery_gateway::session::GatewayMcp;
 use hennery_host::identity::HostKey;
 use hennery_host::profile::Profile;
@@ -146,19 +145,16 @@ impl Collector {
         let client = hennery_testkit::operator_client(&state.operator);
         // As the binary wires it (`hennery`'s `gateway`).
         let keys = KeySource::from_vars(dir, Some("07".repeat(32).into()), None).unwrap();
-        let gateway = hennery_gateway::open(&db, &keys, state.operator.clone()).unwrap();
-        state.store.set_session_mcp(Arc::new(GatewayMcp::new(&gateway)));
-        let egress = Egress::new(Timeouts {
-            connect: Duration::from_secs(5),
-            request: Duration::from_secs(60),
-        })
+        let gateway = hennery_gateway::open(
+            &db,
+            &keys,
+            state.operator.clone(),
+            Egress::new(Timeouts::DEFAULT).unwrap(),
+            Arc::new(hennery_gateway::notify::Silent),
+        )
         .unwrap();
-        let proxy = ProxyState::full(
-            Arc::new(ProxyStore::open(&db).unwrap()),
-            &gateway,
-            egress,
-            Limits::default(),
-        );
+        state.store.set_session_mcp(Arc::new(GatewayMcp::new(&gateway)));
+        let proxy = ProxyState::for_sessions(gateway.runtime.clone(), Limits::default());
         let router = hennery_sessions::router(state.clone())
             .merge(hennery_gateway::api::router(gateway.clone()))
             .merge(hennery_gateway::proxy::router(proxy));
@@ -196,11 +192,12 @@ impl Collector {
             // Loopback (lane L7): no test-only bypass.
             internal_network: true,
         };
-        let Change::Done(record) = self.gateway.store.create(&new, 0).unwrap() else {
+        let Change::Done(record) = self.gateway.runtime.store.create(&new, 0).unwrap() else {
             panic!("no connection");
         };
         assert!(matches!(
             self.gateway
+                .runtime
                 .store
                 .replace_mounts(&record.id, &[HOST.to_string()])
                 .unwrap(),
@@ -580,7 +577,7 @@ async fn a_host_revoke_cuts_its_streams_without_waiting_for_its_connection() {
         let tx = conn.transaction().unwrap();
         let token = hennery_gateway::tokens::mint_in(
             &tx,
-            c.gateway.store.owner_id(),
+            c.gateway.runtime.store.owner_id(),
             "s1",
             HOST,
             &c.hat,

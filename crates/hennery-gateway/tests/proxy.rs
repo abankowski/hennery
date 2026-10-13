@@ -720,10 +720,8 @@ fn drain_app(s: &Setup, limits: Limits) -> axum::Router {
         request: Duration::from_secs(10),
     })
     .unwrap();
-    router(ProxyState::full(
-        s.h.proxy_store.clone(),
-        &s.h.gateway(),
-        egress,
+    router(ProxyState::for_sessions(
+        s.h.runtime(egress, std::sync::Arc::new(support::Recorder::default())),
         limits,
     ))
 }

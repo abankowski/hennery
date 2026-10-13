@@ -131,7 +131,7 @@ fn stored_images_and_their_usage_are_exported() {
 }
 
 /// The gateway's wire types (plan 8a), which the frontend builds on.
-const GATEWAY_TYPES: [&str; 16] = [
+const GATEWAY_TYPES: [&str; 23] = [
     "McpCredKind",
     "McpConnectionStatus",
     "McpConnectionItem",
@@ -149,6 +149,14 @@ const GATEWAY_TYPES: [&str; 16] = [
     "McpStdioEnvInput",
     "McpStdioServerInput",
     "McpStdioServersRequest",
+    // Plan 8f.
+    "McpOauthState",
+    "McpOauthPendingClient",
+    "McpOauthError",
+    "McpOauthRedirect",
+    "McpOauthClientRequest",
+    "McpAuthorizeRequest",
+    "McpAuthorizeResponse",
 ];
 
 /// Plan 8a, Task 5: the gateway's API is a contract with the frontend, so
@@ -194,7 +202,6 @@ fn a_types_doc_reaches_the_typescript() {
         "body_too_large",
         "not_found",
         "invalid",
-        "unsupported_cred_kind",
         "slug_taken",
         "too_many_connections",
         "wrong_cred_kind",
@@ -202,6 +209,27 @@ fn a_types_doc_reaches_the_typescript() {
         "env_value_missing",
         "too_many_stdio_servers",
         "internal",
+        // Plan 8f: authorize, the callback and the probe.
+        "no_oauth_client",
+        "no_registration_endpoint",
+        "resource_mismatch",
+        "issuer_changed",
+        "resource_foreign",
+        "too_many_flows",
+        "discovery_failed",
+        "insecure_metadata",
+        "pkce_unsupported",
+        "registration_refused",
+        "egress_refused",
+        "upstream_unreachable",
+        "flow_unknown",
+        "flow_mismatch",
+        "session_ended",
+        "issuer_mismatch",
+        "consent_denied",
+        "connection_changed",
+        "exchange_failed",
+        "no_credential",
     ] {
         assert!(ts.contains(&format!("`{code}`")), "no doc names `{code}`");
     }

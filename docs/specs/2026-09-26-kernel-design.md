@@ -271,7 +271,7 @@ per route class:
 | `POST /api/setup` | Setup token (§3.1) | Must equal the submitted `public_url`'s origin; a missing `Origin` is rejected |
 | `POST /api/hosts/enroll` | Pairing code | Exempt |
 | `/mcp/*` (gateway proxy) | Bearer token | Exempt |
-| `GET /api/mcp/oauth/callback` | `state` plus the flow cookie (gateway §4.3) | Exempt |
+| `GET /api/mcp/oauth/callback`, `GET /api/mcp/oauth/callback.js` | `state` plus the flow cookie (gateway §4.3); the script is static, no data | Exempt |
 | `/healthz`, `/readyz` | None (no data) | Exempt |
 | `GET /setup`, `GET /setup.js` (static, no data) | None | Exempt |
 
@@ -285,6 +285,13 @@ per route class:
 - On `GET`/`HEAD` a missing `Sec-Fetch-Site` is accepted (curl, older
   browsers), which relies on **no `GET` or `HEAD` route changing state**; any
   value but `same-origin`/`none` answers 403 `cross_site`.
+  - **The one exception** (plan 8f): `GET /api/mcp/oauth/callback` changes
+    state (it stores an OAuth grant), authenticated by `state` plus the flow
+    cookie (gateway §4.3), never by the session cookie. Its router sits
+    outside the browser-`GET` `Sec-Fetch-Site` layer, since the vendor's
+    redirect arrives `cross-site` and would otherwise get 403; it is
+    Origin-exempt, as is its static script `GET /api/mcp/oauth/callback.js`.
+    No other `GET` may change state.
 - These rules run before the cookie check, so a cross-origin request gets 403
   before 401 `unauthenticated`.
 - `/api/setup` and `/api/auth/*` read at most 16 KiB of body; more is 413
@@ -585,7 +592,7 @@ The kernel defines a `LifecycleHooks` trait with `on_host_revoked(host_id)`
 and `on_hat_purged(hat_id)`; `hennery-sessions` and `hennery-gateway` each
 implement it, so the kernel never imports either. Hooks must be idempotent: a
 repeated revoke, and a revoked host's socket ending, call them again (§4.3).
-*Built so far:* `on_host_revoked` and `on_hat_purged`, implemented by the sessions module. The gateway's part of a purge (its connections with their credentials and mounts, its stdio sets, its session tokens, their streams cut) runs through `SessionMcp::purge_hat`, first: the purge route and the hook owe the purge's checkpoint, then run the gateway's part, then the sessions' (plan 8e; A15), so a hat stuck frozen cannot reach MCP meanwhile, and a failed gateway part stops the purge before any session is deleted.
+*Built so far:* `on_host_revoked` and `on_hat_purged`, implemented by the sessions module. The gateway's part of a purge (its connections with their credentials, OAuth clients and mounts, its pending OAuth flows, its stdio sets, its session tokens, their streams cut) runs through `SessionMcp::purge_hat`, first: the purge route and the hook owe the purge's checkpoint, then run the gateway's part, then the sessions' (plan 8e; A15), so a hat stuck frozen cannot reach MCP meanwhile, and a failed gateway part stops the purge before any session is deleted.
 
 **Purge a hat** (`POST /api/hats/{id}/purge`, step-up; the default hat of any
 host, revoked ones included, and the `default_hat_id` setting's hat cannot be
@@ -801,7 +808,7 @@ the gateway.
 `EgressClient::send` and `send_streaming`, `check_url`, `is_public` and
 `Limiter`. Web Push delivery sends through its `PublicOnly` client (plan
 10b-ii), and the gateway's proxy through the client its connection's marking
-chooses (plan 8d), both from the collector's one `Egress`; OAuth will.
+chooses (plan 8d), both from the collector's one `Egress`; OAuth discovery, registration, exchange and refresh use that same policy (plan 8f).
 
 ### 7.2 Content-Security-Policy
 
@@ -818,6 +825,16 @@ computed at build time; a page with no inline script (the static setup page,
 §3.1) leaves the hash out. One layer over the whole router sets the header on
 every `text/html` response, so no page can be added without it. Together with the markdown pipeline (no raw HTML,
 frontend spec §6.4) this makes agent output unable to run script in the UI.
+
+*As built (plan 8f):* the layer (`csp::on_html`) is put on the sessions
+module's router, and a router merged beside it is not covered. The gateway's
+OAuth callback, the one HTML page outside it, layers it itself. One layer over
+the whole merged router is a follow-up.
+
+**Referrer-Policy.** Every file and page of the web app answers
+`Referrer-Policy: no-referrer` (`web.rs`), and so do the setup routes (§3.1)
+and the OAuth callback page: a vendor's consent page, opened from the app,
+learns no hennery path (the API design of plans 8e and 8f, S6).
 
 ## 8. API
 
