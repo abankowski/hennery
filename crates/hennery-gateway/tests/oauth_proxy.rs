@@ -1183,6 +1183,116 @@ async fn unavailable_backoff_doubles_between_attempts_and_resets_on_success() {
     assert!(h.alerts.alerts().is_empty());
 }
 
+/// The merged refusal drain owns unread GET bodies through every OAuth
+/// refusal. A gated body proves that the answer waits for EOF rather than
+/// merely observing a status after an upload already finished.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn every_oauth_refusal_drains_the_unread_request_before_answering() {
+    use axum::body::{Body, Bytes, to_bytes};
+    use axum::http::Request;
+    use hennery_gateway::proxy::{ProxyState, router};
+    use tower::ServiceExt;
+    for case in [
+        "refused",
+        "needs_auth",
+        "expired",
+        "second_401",
+        "unavailable",
+        "unsaved",
+        "expired_unsaved",
+        "changed",
+    ] {
+        let config = Config {
+            token_status: matches!(case, "expired" | "unavailable").then_some(503),
+            mcp_status: (case == "second_401").then_some(401),
+            gate_token: case == "changed",
+            ..Config::default()
+        };
+        let expiry = matches!(case, "expired" | "expired_unsaved").then(|| unix_now() - 1);
+        let (h, fake, id, token) = setup(config, expiry).await;
+        if matches!(case, "refused" | "needs_auth") {
+            let access = grant(&h, &id).tokens.access_token.clone();
+            seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), None);
+        }
+        if !matches!(case, "expired" | "expired_unsaved") {
+            fake.expire_access();
+        }
+        if case == "needs_auth" {
+            assert_eq!(h.post("linear", &token, &list(1)).await.status(), 502);
+            assert_eq!(h.status(&id), "needs_auth");
+        }
+        if matches!(case, "unsaved" | "expired_unsaved") {
+            h.raw().execute_batch("CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;").unwrap();
+        }
+        count_status_changes(&h);
+        let before = fake.with(|r| r.bearers.len());
+        let (polled, waiting) = tokio::sync::oneshot::channel();
+        let (release, eof) = tokio::sync::oneshot::channel();
+        let tail = futures::stream::once(async move {
+            polled.send(()).unwrap();
+            eof.await.unwrap();
+            Ok::<_, std::io::Error>(Bytes::new())
+        });
+        let body = Body::from_stream(futures::StreamExt::chain(
+            futures::stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"unread"))]),
+            tail,
+        ));
+        let request = Request::builder()
+            .method("GET")
+            .uri("/mcp/linear")
+            .header("authorization", format!("Bearer {token}"))
+            .body(body)
+            .unwrap();
+        let limits = Limits {
+            drain_deadline: Duration::from_secs(10),
+            ..Limits::default()
+        };
+        let answer = tokio::spawn(router(ProxyState::for_sessions(h.runtime.clone(), limits)).oneshot(request));
+        if case == "changed" {
+            until(|| token_requests(&fake) == 1).await;
+            let other = FakeAs::start(Config {
+                prefix: "reconnected-".into(),
+                ..Config::default()
+            })
+            .await;
+            moved_to(&h, &id, &other);
+            fake.open_gate();
+        }
+        tokio::time::timeout(Duration::from_secs(10), waiting)
+            .await
+            .expect("the OAuth refusal drain never polled the tail")
+            .expect("the OAuth refusal dropped the unread body");
+        assert!(!answer.is_finished(), "{case}: answered before EOF");
+        release.send(()).unwrap();
+        let answer = answer.await.unwrap().unwrap();
+        assert_eq!(answer.status(), 502, "{case}");
+        assert!(
+            !answer.headers().contains_key("connection"),
+            "{case}: complete drain keeps HTTP/1 usable"
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(answer.into_body(), 4096).await.unwrap()).unwrap();
+        let code = match case {
+            "unavailable" => "upstream_unreachable",
+            "unsaved" | "expired_unsaved" => "credential_unsaved",
+            "changed" => "upstream_changed",
+            _ => "upstream_auth",
+        };
+        assert_eq!(body["code"], code, "{case}");
+        if case == "expired_unsaved" {
+            assert_eq!(h.status(&id), "ok");
+            assert_eq!(status_changes(&h), 0);
+            assert!(h.alerts.alerts().is_empty());
+            assert_eq!(fake.with(|r| r.bearers.len()), before, "expired access is not sent");
+            assert_eq!(token_requests(&fake), 1);
+        }
+        if case == "needs_auth" {
+            assert_eq!(fake.with(|r| r.bearers.len()), before, "fail-fast sent no access token");
+            assert_eq!(token_requests(&fake), 1, "fail-fast sent no refresh");
+        }
+    }
+}
+
 #[tokio::test]
 async fn an_unsaved_refresh_backs_off_before_another_vendor_call() {
     use hennery_gateway::refresh::{self, Refreshed};
