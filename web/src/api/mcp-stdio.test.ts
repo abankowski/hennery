@@ -21,7 +21,7 @@ describe('stdio routes', () => {
 
 describe('start and resume isolation refusal', () => {
   const code = 'mcp_isolation_unavailable'
-  const message = 'The host could not isolate this agent’s MCP servers. Try again.'
+  const message = 'The host could not isolate this agent’s MCP servers.'
   it('explains a refused start', () => expect(startRefusal(new ApiFailure(409, { code, message: 'raw' }))).toBe(message))
   it('explains a refused resume', () => expect(resumeRefusal(new ApiFailure(409, { code, message: 'raw' }))).toBe(message))
   it('explains the failed session', () => expect(failureWords(code)).toBe('the host could not isolate this agent’s MCP servers'))

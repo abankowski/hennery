@@ -114,7 +114,7 @@ it('predicts delivery for the resolved hat and chosen agent', async () => {
   })]) })
   const field = await screen.findByRole('combobox', { name: /^Project/ })
   await userEvent.type(field, '/srv/work/cat')
-  await waitFor(() => expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('Hennery keeps this agent'))
+  await waitFor(() => expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent("This agent was given only this hat's MCP servers."))
   await userEvent.click(screen.getByRole('button', { name: 'Codex' }))
   expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('not isolated per hat')
   expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('~/.codex')

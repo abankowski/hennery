@@ -104,7 +104,7 @@ describe('the connection list', () => {
     expect(await within(docs).findByRole('checkbox', { name: 'laptop' })).toBeInTheDocument()
     const predictions = within(docs).getAllByRole('region', { name: 'MCP prediction' })
     expect(predictions).toHaveLength(2)
-    expect(predictions[0]).toHaveTextContent('Hennery keeps this agent')
+    expect(predictions[0]).toHaveTextContent("This agent was given only this hat's MCP servers.")
     expect(predictions[1]).toHaveTextContent('not isolated per hat')
   })
 
@@ -693,4 +693,14 @@ describe('the mounts', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('the hosts are away')
     expect(within(docs).getByRole('group', { name: 'Hosts whose sessions get it' })).toBeDisabled()
   })
+})
+
+it('warns about possible Codex own config when a host has no delivery report, including without connections', async () => {
+  open({ 'GET /api/mcp/connections': json(200, []), 'GET /api/hosts': json(200, [host({ mcp_delivery: undefined })]) })
+  expect(await screen.findByText('Codex may also load your own ~/.codex MCP servers.', { exact: true })).toBeInTheDocument()
+})
+it('does not add the missing-report warning for hosts with reported delivery', async () => {
+  open({ 'GET /api/mcp/connections': json(200, []), 'GET /api/hosts': json(200, [host({ mcp_delivery: { codex: 'default_hat_only' } })]) })
+  await screen.findByText('No connection yet.', { exact: true })
+  expect(screen.queryByText('Codex may also load your own ~/.codex MCP servers.', { exact: true })).toBeNull()
 })

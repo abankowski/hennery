@@ -15,14 +15,16 @@ describe('delivery prediction', () => {
   it('shows fallback in another hat', () => {
     render(<McpPrediction host={h} agent="codex" hatId="hat-b" />)
     expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('this hat is not the host’s default')
+    expect(screen.getByRole('region', { name: 'MCP prediction' })).not.toHaveTextContent('~/.codex')
   })
   it('keeps a missing report unknown', () => {
     render(<McpPrediction host={{ ...h, mcp_delivery: undefined }} agent="codex" hatId="hat-a" />)
     expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('MCP delivery is unknown.')
+    expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('Codex may also load your own ~/.codex MCP servers.')
   })
   it('does not show a Codex note for Claude', () => {
     render(<McpPrediction host={h} agent="claude" hatId="hat-a" />)
-    expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('Hennery keeps this agent')
+    expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent("This agent was given only this hat's MCP servers.")
     expect(screen.getByRole('region', { name: 'MCP prediction' })).not.toHaveTextContent('Codex also loads your own ~/.codex MCP servers.')
   })
   it('uses only a resolution for the current host and path', () => {
@@ -32,4 +34,12 @@ describe('delivery prediction', () => {
     expect(predictionHat(resolved, 'h1', '/different')).toBeUndefined()
     expect(predictionHat(undefined, 'h1', '/project')).toBeUndefined()
   })
+})
+
+it.each([
+  ['isolated', host({ capabilities: ['mcp_servers'], mcp_delivery: { codex: 'isolated' } })],
+  ['unsupported', host()],
+])('omits the own-config warning for %s Codex', (_mode, h) => {
+  render(<McpPrediction host={h} agent="codex" hatId="hat-a" />)
+  expect(screen.getByRole('region', { name: 'MCP prediction' })).not.toHaveTextContent('~/.codex')
 })

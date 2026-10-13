@@ -111,7 +111,7 @@ describe('local MCP full-set editor', () => {
   it('shows refusal in words, clears supplied values and keeps the unsaved draft', async () => {
     const s = open({ [`PUT ${PATH}`]: json(409, { code: 'slug_taken' }) })
     await ready(); await replaceValue('secret'); await confirm()
-    expect(screen.getByRole('alert')).toHaveTextContent('This slug is taken')
+    expect(screen.getByRole('alert')).toHaveTextContent('A connection already uses this name.')
     expect(field('Value for TOKEN')).toHaveValue('')
     expect(field('Server name')).toHaveValue('local')
     await userEvent.click(screen.getByRole('button', { name: 'Review local servers' }))
@@ -262,4 +262,26 @@ describe('local MCP full-set editor', () => {
       }
     } finally { spy.mockRestore() }
   })
+})
+
+it('erasing a supplied value refuses Review without selecting explicit empty', async () => {
+  const s = open(); await ready(); await replaceValue('typed secret')
+  await userEvent.clear(field('Value for TOKEN'))
+  expect(screen.getByRole('checkbox', { name: 'Use empty value for TOKEN' })).not.toBeChecked()
+  await userEvent.click(screen.getByRole('button', { name: 'Review local servers' }))
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.getByRole('alert')).toHaveTextContent('Enter a value or explicitly choose empty')
+  expect(saves(s)).toHaveLength(0)
+})
+it('shows each command and argument visibly escaped before any write or step-up', async () => {
+  const s = open({ [`GET ${PATH}`]: json(200, set([{ ...stored, command: 'run\u202eexe', args: ['a\u200bb', '', 'line\ntwo'] }])) }); await ready()
+  await userEvent.click(screen.getByRole('button', { name: 'Review local servers' }))
+  const dialog = screen.getByRole('dialog')
+  expect(within(dialog).getByText('run<U+202E>exe', { exact: true })).toBeInTheDocument()
+  expect(within(dialog).getByText('a<U+200B>b', { exact: true })).toBeInTheDocument()
+  expect(within(dialog).getByText('""', { exact: true })).toBeInTheDocument()
+  expect(within(dialog).getByText('line<U+000A>two', { exact: true })).toBeInTheDocument()
+  expect(dialog.textContent).not.toContain('\u202e')
+  expect(dialog.textContent).not.toContain('\u200b')
+  expect(saves(s)).toHaveLength(0); expect(s.stepUp).not.toHaveBeenCalled()
 })

@@ -44,7 +44,7 @@ describe('stdio refusals', () => {
     ['env_value_missing', 'Re-enter the environment values: the server was renamed, its command changed, or no value is stored.'],
     ['too_many_stdio_servers', 'Too many local MCP servers: at most 32 per host and hat, and 1024 in total.'],
     ['host_revoked', 'This host is revoked: its local MCP servers can be read, not changed.'],
-    ['slug_taken', 'This slug is taken: pick another.'],
-    ['mcp_isolation_unavailable', 'The host could not isolate this agent’s MCP servers. Try again.'],
+    ['slug_taken', 'A connection already uses this name.'],
+    ['mcp_isolation_unavailable', 'The host could not isolate this agent’s MCP servers.'],
   ])('words %s', (code, message) => expect(stdioRefusal(new ApiFailure(409, { code, message: 'raw' }))).toBe(message))
 })

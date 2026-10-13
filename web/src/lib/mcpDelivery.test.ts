@@ -4,7 +4,7 @@ import { deliveryWords, predictDelivery, predictionWords, runningLifecycle } fro
 
 describe('deliveryWords', () => {
   it.each([
-    ['isolated', 'Hennery keeps this agent to the MCP servers of this hat.'],
+    ['isolated', "This agent was given only this hat's MCP servers."],
     ['unisolated', 'The MCP servers are not isolated per hat; the agent also loads your own MCP configuration.'],
     ['fallback', 'No hennery MCP servers: this hat is not the host’s default for this agent.'],
     ['unsupported', 'No hennery MCP servers: the host does not support their delivery.'],
