@@ -23,8 +23,8 @@ What works:
   and resume them.
 - **Hats.** Path rules put each session in a hat by its project directory,
   for organising sessions and choosing their MCP servers.
-- **MCP servers.** Connect a server with a static token through the gateway,
-  or configure local stdio servers for a host and hat, on the **MCP** screen.
+- **MCP servers.** Connect a server with a static token or OAuth through the
+  gateway, or configure local stdio servers for a host and hat, on the **MCP** screen.
 
 Known limitations:
 
@@ -35,7 +35,6 @@ Known limitations:
 - Codex sessions get hennery MCP servers only in the host's default hat, without per-hat isolation, and also load the user's own `~/.codex` MCP servers; other hats get none, until per-hat isolation lands.
 - Hosts cannot connect over `wss://` yet; remote hosts reach the collector
   through an SSH tunnel.
-- **TODO (4e-ii-b):** OAuth is built on the collector; the browser's OAuth Connect flow is pending.
 - The designs are in [`docs/specs/`](docs/specs/) and the plans in
   [`docs/plans/`](docs/plans/); [`docs/README.md`](docs/README.md) lists
   them.
@@ -197,7 +196,36 @@ This default-hat restriction also applies to Claude with `--use-cli`.
 
 These actions may ask you to confirm your password again.
 
-**TODO (4e-ii-b):** Add the OAuth Connect quickstart after the browser flow merges.
+#### OAuth
+
+In **MCP → Add connection**, fill in the connection fields and choose
+**OAuth: automatic registration** under **Authentication** if the vendor
+supports dynamic registration, or **OAuth: pre-registered client** if you
+register the client yourself. Press **Create**. OAuth addresses must use
+HTTPS, or HTTP to this machine.
+
+The vendor must allow hennery's redirect URI:
+`<public_url>/api/mcp/oauth/callback`, using the collector's configured
+browser origin as `public_url`. The exact URI is shown in the pre-registered
+add/edit form and client settings beside **Register this redirect URI at the vendor:**
+For a pre-registered client, enter **Client ID**, then choose
+**Public client (no secret)** or **Set a new secret** under **Client secret action**.
+Enter **Client secret** if you chose **Set a new secret**. Press **Save client**.
+Saved secrets are write-only and cannot be read back from hennery.
+
+Click **Connect** or **Reconnect** when offered to open the vendor consent
+popup. If popups are blocked, use **Open vendor sign-in**. Return to hennery
+after consent. If a fresh confirmation is required before authorization,
+the popup closes and you confirm your password in the main window (or use
+**Confirm with passkey** if offered). Then follow the card and click
+**Connect** or **Reconnect** again if offered; authorization is not retried
+automatically.
+
+The card shows the gateway's last report, with **Status recorded** and
+**Last checked**. **Probe now** requests a report;
+it does not establish live health, and **Working** is a recorded status.
+**May need sign-in** (`needs_auth`) calls for **Reconnect**; read the
+gateway note, since an authorization-server outage can also cause this state.
 
 ## Recovery
 
