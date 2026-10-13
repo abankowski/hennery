@@ -107,6 +107,19 @@ function mount(routes: Record<string, Answer | Answer[]> = {}, path = '/new') {
   return server
 }
 
+it('predicts delivery for the resolved hat and chosen agent', async () => {
+  mount({ 'GET /api/hosts': json(200, [host('h1', 'laptop', {
+    capabilities: ['projects', 'resolve_path', 'mcp_servers'],
+    mcp_delivery: { claude: 'isolated', codex: 'default_hat_only' },
+  })]) })
+  const field = await screen.findByRole('combobox', { name: /^Project/ })
+  await userEvent.type(field, '/srv/work/cat')
+  await waitFor(() => expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent("This agent was given only this hat's MCP servers."))
+  await userEvent.click(screen.getByRole('button', { name: 'Codex' }))
+  expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('not isolated per hat')
+  expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('~/.codex')
+})
+
 const hostButton = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`) })
 const projectField = () => screen.findByRole('combobox', { name: /^Project/ })
 const startButton = () => screen.getByRole('button', { name: /Start session/ })

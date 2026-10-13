@@ -90,7 +90,7 @@ describe('SessionView: the host’s reach on a question card', () => {
     expect(await screen.findByText(NOTE, { exact: true }, WAIT)).toBeInTheDocument()
   })
 
-  it('the summary’s presumed_parked, as a session_upsert changes it, turns the note on and off, with no request', async () => {
+  it('the summary’s presumed_parked, as a session_upsert changes it, turns the note on and off, refreshing metadata only on the running transition', async () => {
     const s = server(true)
     const summary = (presumed_parked: boolean): SessionSummary =>
       ({
@@ -116,6 +116,6 @@ describe('SessionView: the host’s reach on a question card', () => {
 
     r.rerender(<SessionView id="s1" summary={summary(false)} timing={FAST} />)
     await waitFor(() => expect(screen.queryByText(NOTE, { exact: true })).toBeNull(), WAIT)
-    expect(s.calls.length).toBe(calls)
+    expect(s.calls.length).toBe(calls + 1)
   })
 })

@@ -658,3 +658,7 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
   .q-opts { flex-direction:column; }
   .q-opts .btn, .ask-actions .btn, .elic-opt { min-height:44px; }
 }
+
+/* Last-start/resume MCP metadata, separate from the streamed transcript. */
+.mcp-delivery { margin:8px 20px; padding:12px; border:1px solid var(--border); border-radius:var(--r-sm); font-size:13px; }
+.mcp-delivery p { margin:0 0 4px; overflow-wrap:anywhere; }

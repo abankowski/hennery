@@ -46,6 +46,13 @@ const sent = (server: ReturnType<typeof stubServer>, method: string, path: strin
 const card = (name: string) => screen.findByRole('listitem', { name })
 
 describe('the MCP screen behind its feature', () => {
+  it('serves local sets only with their separate stdio feature', async () => {
+    const path = '/api/mcp/stdio-servers?host_id=host-1&hat_id=hat-a'
+    const server = open({ [`GET ${path}`]: json(200, { host_id: 'host-1', hat_id: 'hat-a', servers: [] }) }, { mode: 'full', features: ['mcp_connections', 'mcp_stdio'] })
+    expect(await screen.findByRole('button', { name: 'Add local server' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Local MCP servers' })).toBeInTheDocument()
+    expect(sent(server, 'GET', path)).toHaveLength(1)
+  })
   it('is not shown, and nothing is read, when the collector does not serve connections', async () => {
     const server = open({}, FULL)
     expect(await screen.findByText('The MCP gateway is not part of this deployment.')).toBeInTheDocument()
@@ -56,6 +63,7 @@ describe('the MCP screen behind its feature', () => {
     open({}, { mode: 'full', features: ['from_the_future', 'mcp_connections'] })
     expect(await screen.findByRole('heading', { name: 'MCP', level: 1 })).toBeInTheDocument()
     expect(await card('Docs')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Local MCP servers' })).toBeNull()
   })
 })
 
@@ -80,13 +88,24 @@ describe('the connection list', () => {
     expect(within(docs).queryByRole('checkbox', { name: 'old box' })).toBeNull()
   })
 
-  it('says sessions get changes when they start or resume, and how Codex gets them', async () => {
+  it('keeps the start/resume notice and replaces the blanket note with host predictions', async () => {
     open({})
     const note = await screen.findByRole('region', { name: 'How sessions get these' })
     expect(note).toHaveTextContent('Changes apply to new and resumed sessions.')
-    expect(note).toHaveTextContent(
-      'Codex, Claude run with your own CLI, and any other agent command (this may change): a session gets a connection only when both are in its host’s default hat, and it also loads your own MCP servers (such as ~/.codex), so it is not isolated. Sessions in other hats on that host get none.',
-    )
+    expect(note).not.toHaveTextContent('Codex, Claude run with your own CLI')
+    expect(await screen.findByText('MCP delivery is unknown for this host’s agents.')).toBeInTheDocument()
+  })
+
+  it('annotates the mount grid per reported agent, without changing checkbox names', async () => {
+    open({ 'GET /api/hosts': json(200, [host({ capabilities: ['mcp_servers'], mcp_delivery: {
+      claude: 'isolated', codex: 'default_hat_only',
+    } })]) })
+    const docs = await card('Docs')
+    expect(await within(docs).findByRole('checkbox', { name: 'laptop' })).toBeInTheDocument()
+    const predictions = within(docs).getAllByRole('region', { name: 'MCP prediction' })
+    expect(predictions).toHaveLength(2)
+    expect(predictions[0]).toHaveTextContent("This agent was given only this hat's MCP servers.")
+    expect(predictions[1]).toHaveTextContent('not isolated per hat')
   })
 
   it('words each state, and never asks to reconnect a failing one', async () => {
@@ -674,4 +693,14 @@ describe('the mounts', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('the hosts are away')
     expect(within(docs).getByRole('group', { name: 'Hosts whose sessions get it' })).toBeDisabled()
   })
+})
+
+it('warns about possible Codex own config when a host has no delivery report, including without connections', async () => {
+  open({ 'GET /api/mcp/connections': json(200, []), 'GET /api/hosts': json(200, [host({ mcp_delivery: undefined })]) })
+  expect(await screen.findByText('Codex may also load your own ~/.codex MCP servers.', { exact: true })).toBeInTheDocument()
+})
+it('does not add the missing-report warning for hosts with reported delivery', async () => {
+  open({ 'GET /api/mcp/connections': json(200, []), 'GET /api/hosts': json(200, [host({ mcp_delivery: { codex: 'default_hat_only' } })]) })
+  await screen.findByText('No connection yet.', { exact: true })
+  expect(screen.queryByText('Codex may also load your own ~/.codex MCP servers.', { exact: true })).toBeNull()
 })

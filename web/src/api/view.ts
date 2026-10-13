@@ -70,8 +70,16 @@ export function catalog(client: Client, id: string): Promise<SessionCatalog> {
 }
 
 /** `GET /api/sessions/{id}`: the session, its open turn and pending requests. */
+const detailReads = new WeakMap<Client, Map<string, Promise<SessionDetail>>>()
+
 export function sessionDetail(client: Client, id: string): Promise<SessionDetail> {
-  return client.request<SessionDetail>('GET', `/api/sessions/${enc(id)}`)
+  let reads = detailReads.get(client)
+  if (!reads) { reads = new Map(); detailReads.set(client, reads) }
+  const held = reads.get(id)
+  if (held) return held
+  const pending = client.request<SessionDetail>('GET', `/api/sessions/${enc(id)}`).finally(() => reads.delete(id))
+  reads.set(id, pending)
+  return pending
 }
 
 /** The item stream of one session. It resumes from `Last-Event-ID`. */

@@ -5,6 +5,8 @@ import type {
   CreateMcpConnectionRequest,
   McpConnectionItem,
   UpdateMcpConnectionRequest,
+  McpStdioServerSet,
+  McpStdioServersRequest,
 } from '../generated/protocol'
 import type { Client } from './client'
 
@@ -43,4 +45,15 @@ export function replaceMounts(client: Client, connectionId: string, hostIds: str
 /** A static token, write-only: 204, nothing comes back. Step-up. */
 export function setToken(client: Client, connectionId: string, token: string): Promise<void> {
   return client.request('PUT', `/api/mcp/connections/${id(connectionId)}/credential`, { token })
+}
+
+const stdioPath = (host: string, hat: string) => '/api/mcp/stdio-servers?' + new URLSearchParams({ host_id: host, hat_id: hat })
+
+export function stdioServers(client: Client, host: string, hat: string): Promise<McpStdioServerSet> {
+  return client.request('GET', stdioPath(host, hat))
+}
+
+/** Step-up; the entire set replaces the stored one. */
+export function replaceStdioServers(client: Client, host: string, hat: string, body: McpStdioServersRequest): Promise<McpStdioServerSet> {
+  return client.request('PUT', stdioPath(host, hat), body)
 }

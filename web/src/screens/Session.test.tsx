@@ -44,6 +44,7 @@ function server(opts: {
   pages: (() => Answer)[]
   older?: Record<string, () => Answer>
   detail?: () => Answer
+  resume?: () => Answer
   hats?: () => Answer
 }) {
   const streams: LiveStream[] = []
@@ -61,6 +62,7 @@ function server(opts: {
       return live.response
     }
     if (url.pathname === DETAIL) return opts.detail?.() ?? json(detail('claude'))
+    if (url.pathname === DETAIL + '/resume') return opts.resume?.() ?? json({ session_id: ID, lifecycle: 'active' }, 202)
     if (url.pathname === `${DETAIL}/catalog`) return json({ session_id: ID, config_options: [], commands: [] })
     if (url.pathname === '/api/hosts') return json([{ host_id: 'h1', name: 'build-box' }])
     if (url.pathname === '/api/hats') return opts.hats?.() ?? json({ code: 'not_found', message: 'no' }, 404)
@@ -210,6 +212,7 @@ describe('SessionView', () => {
     expect(await screen.findByText('Resynced')).toBeInTheDocument()
     expect(screen.queryByText('Reconnecting…')).toBeNull()
     expect(screen.getByText('t6-2')).toBeInTheDocument()
+    await waitFor(() => expect(s.of(DETAIL)).toHaveLength(2))
     await waitFor(() => expect(screen.queryByText('Resynced')).toBeNull(), { timeout: 5000 })
   })
 
@@ -241,6 +244,28 @@ describe('SessionView', () => {
     await waitFor(() => expect(Array.from(container.querySelectorAll('.msg-who')).map((e) => e.textContent)).toEqual(['You', label]))
     // The avatars carry a letter of the label, never anyone's initials.
     expect(Array.from(container.querySelectorAll('.avatar')).map((e) => e.textContent)).toEqual(['Y', label[0].toUpperCase()])
+  })
+
+  it('refreshes delivery after this tab successfully resumes', async () => {
+    let count = 1
+    const s = server({
+      pages: [() => json(page(rows(1, 't5')))],
+      detail: () => json(detail('codex', { lifecycle: 'parked', mcp_delivery: {
+        mode: 'unisolated', servers: count, at: '2026-10-13T00:00:00Z',
+      } })),
+      resume: () => { count = 2; return json({ session_id: ID, lifecycle: 'active' }, 202) },
+    })
+    render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
+    await waitFor(() => expect(screen.getByRole('region', { name: 'MCP delivery' })).toHaveTextContent('1 MCP servers.'))
+    fireEvent.click(screen.getByRole('button', { name: 'Resume' }))
+    await waitFor(() => expect(screen.getByRole('region', { name: 'MCP delivery' })).toHaveTextContent('2 MCP servers.'))
+    expect(s.of(DETAIL)).toHaveLength(2)
+  })
+  it('shows a delivery-read error as escaped and visibly isolated text', async () => {
+    const s = server({ pages: [() => json(page([]))], detail: () => json({ code: 'failed', message: '<i>cannot\u202Eread' }, 500) })
+    render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
+    const error = await screen.findByText('<i>cannot<U+202E>read')
+    expect(error.tagName).toBe('BDI'); expect(error.querySelector('i')).toBeNull()
   })
 
   it('reads the header from the session’s detail when no summary is given', async () => {
@@ -285,7 +310,7 @@ describe('SessionView', () => {
     await waitFor(() => expect(container.querySelector('header .badge')?.textContent).toBe('Idle'))
   })
 
-  it('reads the header from the summary it is given, without fetching the detail', async () => {
+  it('keeps the summary-fed header while reading detail for MCP delivery', async () => {
     const summary = { ...detail('claude'), pending: undefined, title: undefined, question_waits: true } as unknown as SessionSummary
     const s = server({ pages: [() => json(page(rows(1, 't5')))] })
     render(<SessionView id={ID} summary={summary} timing={FAST} />, { wrapper: s.wrapper })
@@ -293,7 +318,8 @@ describe('SessionView', () => {
     expect(await screen.findByRole('heading', { name: 'project' })).toBeInTheDocument()
     expect(screen.getByText('Waiting on a question')).toBeInTheDocument()
     await screen.findByText('t5-0')
-    expect(s.of(DETAIL)).toHaveLength(0)
+    expect(s.of(DETAIL)).toHaveLength(1)
+    expect(screen.getByRole('region', { name: 'MCP delivery' })).toHaveTextContent('MCP delivery is unknown.')
   })
 
   it('follows the summary it is given as it changes', async () => {
@@ -305,7 +331,7 @@ describe('SessionView', () => {
     rerender(<SessionView id={ID} summary={{ ...base, activity: 'running', title: 'A renamed task' }} timing={FAST} />)
     expect(within(head).getByText('Running')).toBeInTheDocument()
     expect(within(head).getByRole('heading', { name: 'A renamed task' })).toBeInTheDocument()
-    expect(s.of(DETAIL)).toHaveLength(0)
+    expect(s.of(DETAIL)).toHaveLength(1)
   })
 
   it('takes the summary over a detail fetched before it came', async () => {
@@ -317,31 +343,16 @@ describe('SessionView', () => {
     expect(await screen.findByRole('heading', { name: 'From the list' })).toBeInTheDocument()
   })
 
-  it('keeps a summary that went over the detail fetched before it, until the detail comes again', async () => {
-    let release: (() => void) | undefined
-    let calls = 0
-    const s = server({
-      pages: [() => json(page(rows(1, 't5')))],
-      detail: () => {
-        calls++
-        if (calls === 1) return json(detail('codex', { title: 'From the detail' }))
-        // The refetch, once the summary went: held until released.
-        return new Promise<Response>((resolve) => {
-          release = () => resolve(json(detail('codex', { title: 'From the detail, again' })))
-        })
-      },
-    })
+  it('keeps the newest cached summary when a search drops it, without another detail read', async () => {
+    const s = server({ pages: [() => json(page(rows(1, 't5')))], detail: () => json(detail('codex', { title: 'From the detail' })) })
     const { rerender } = render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
     await screen.findByRole('heading', { name: 'From the detail' })
     const summary = { ...detail('codex'), pending: undefined, title: 'From the list' } as unknown as SessionSummary
     rerender(<SessionView id={ID} summary={summary} timing={FAST} />)
     await screen.findByRole('heading', { name: 'From the list' })
-    // The summary goes (a new search's results) while the refetch is held.
     rerender(<SessionView id={ID} timing={FAST} />)
-    await waitFor(() => expect(s.of(DETAIL)).toHaveLength(2))
     expect(screen.getByRole('heading', { name: 'From the list' })).toBeInTheDocument()
-    act(() => release!())
-    expect(await screen.findByRole('heading', { name: 'From the detail, again' })).toBeInTheDocument()
+    expect(s.of(DETAIL)).toHaveLength(1)
   })
 
   it.each([

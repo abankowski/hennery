@@ -146,7 +146,7 @@ afterEach(() => {
 })
 
 describe('the session’s header, from the list (F-4)', () => {
-  it('follows the list stream’s upserts, and fetches no detail when the list holds the session', async () => {
+  it('follows summary upserts without refetching the delivery detail', async () => {
     at('/sessions/a')
     const s = server()
     render(<App fetchImpl={s.fetch} />)
@@ -158,8 +158,8 @@ describe('the session’s header, from the list (F-4)', () => {
     )
     await titled('Task a, renamed')
     expect(within(main()).getByText('Running')).toBeInTheDocument()
-    // The view opened before the list's first page came: it waited for it.
-    expect(s.of('/api/sessions/a')).toHaveLength(0)
+    // One detail read supplies MCP metadata; header-only upserts add no reads.
+    expect(s.of('/api/sessions/a')).toHaveLength(1)
   })
 
   it('a session the view finds removed leaves the list at once', async () => {
@@ -177,7 +177,7 @@ describe('the session’s header, from the list (F-4)', () => {
     expect(within(list).getByText('Task a-old', { exact: true })).toBeInTheDocument()
   })
 
-  it('fetches the detail only for a session the list does not hold', async () => {
+  it('uses the same detail for the header when the list does not hold the session', async () => {
     at('/sessions/elsewhere')
     const s = server()
     render(<App fetchImpl={s.fetch} />)
@@ -197,7 +197,7 @@ describe('the session’s header, from the list (F-4)', () => {
     await userEvent.type(within(views).getByRole('searchbox', { name: 'Search sessions' }), 'zzz')
     await waitFor(() => expect(s.of(LIST).some((u) => u.searchParams.get('q') === 'zzz')).toBe(true), { timeout: 3000 })
     expect(title()).toHaveTextContent('Task a')
-    expect(s.of('/api/sessions/a')).toHaveLength(0)
+    expect(s.of('/api/sessions/a')).toHaveLength(1)
   })
 
   it('fetches the detail when the list cannot be read', async () => {
