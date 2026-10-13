@@ -15,6 +15,8 @@ import TokenForm from '../components/TokenForm'
 import StdioServers from '../components/StdioServers'
 import OauthClientForm from '../components/OauthClientForm'
 import OauthConnect from '../components/OauthConnect'
+import McpStatus from '../components/McpStatus'
+import { useMcpScope } from '../components/McpScope'
 import type { HatItem, HostItem, McpConnectionItem, UpdateMcpConnectionRequest } from '../generated/protocol'
 import { useResource } from '../hooks/useResource'
 import {
@@ -47,7 +49,9 @@ function firstHat(hats: HatItem[]): string {
 
 export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean; oauth?: boolean }) {
   const client = useClient()
-  const list = useResource(() => listConnections(client))
+  const scope = useMcpScope()
+  const local = useResource(() => scope ? Promise.resolve([]) : listConnections(client), [!!scope])
+  const list = scope ?? local
   const hats = useResource(() => listHats(client))
   const hosts = useResource(() => listHosts(client))
   const redirect = useResource(() => oauth ? oauthRedirect(client) : Promise.resolve(null), [oauth])
@@ -78,7 +82,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
   // stay.
   const replace = (item: McpConnectionItem) =>
     list.set((prev) => (prev ?? []).map((c) => (c.id === item.id ? item : c)))
-  const refresh = async () => { const rows = await listConnections(client); list.set(rows); return rows }
+  const refresh = scope?.refresh ?? (async () => { const rows = await listConnections(client); local.set(rows); return rows })
 
   const create = async (form: Form, slug: string, hatId: string) => {
     if (creating.current) return
@@ -195,6 +199,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
           <ConnectionCard
             oauth={oauth}
             refresh={refresh}
+            waiting={scope?.waiting}
             key={connection.id}
             connection={connection}
             hatName={hatName(connection.hat_id)}
@@ -267,6 +272,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
 interface CardProps {
   oauth: boolean
   refresh: () => Promise<McpConnectionItem[]>
+  waiting?: (id: string, active: boolean) => void
   connection: McpConnectionItem
   hatName?: string
   hosts: HostItem[] | null
@@ -295,7 +301,7 @@ function ConnectionCard(props: CardProps) {
         <h2 className="card-title" id={id} tabIndex={-1}>
           <Text>{c.label}</Text>
         </h2>
-        <span className={`state mcp-${c.status}`}>{statusLabel(c.status)}</span>
+        <span className={`state mcp-${c.status}`}>{props.oauth && c.oauth && c.status === 'needs_auth' ? 'May need sign-in' : props.oauth && c.status === 'not_connected' && c.oauth ? 'Not connected' : statusLabel(c.status)}</span>
       </div>
       {c.status_note && (
         <p className="hint">
@@ -389,7 +395,8 @@ function ConnectionCard(props: CardProps) {
       )}
       {c.cred_kind === 'static' && <TokenForm connection={c} hatName={hatName} onSaved={props.onTokenSaved} />}
       {props.oauth && c.cred_kind === 'oauth_client' && <OauthClientForm connection={c} onChanged={item => { setClientRevision(n => n + 1); props.onChanged(item) }} />}
-      {props.oauth && (c.cred_kind === 'oauth_client' || c.cred_kind === 'oauth_dcr') && <OauthConnect key={clientRevision} connection={c} refresh={props.refresh} />}
+      {props.oauth && (c.cred_kind === 'oauth_client' || c.cred_kind === 'oauth_dcr') && <OauthConnect key={clientRevision} connection={c} refresh={props.refresh} waiting={props.waiting} />}
+      {props.oauth && <McpStatus connection={c} onChanged={props.onChanged} />}
       <Mounts connection={c} hosts={hosts} onChanged={props.onChanged} />
     </li>
   )

@@ -20,6 +20,7 @@ import SessionView from '../screens/Session'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import SessionList from './SessionList'
 import SessionScope, { WaitingBadge, useSessionScope } from './SessionScope'
+import McpScope, { McpBadge } from './McpScope'
 
 /** The rail's width and up (frontend spec §2). */
 export const DESKTOP = '(min-width: 768px)'
@@ -123,7 +124,7 @@ export default function Shell({ route }: { route: Route }) {
                   className={'nav-item' + (v === current ? ' on' : '')}
                   aria-current={v === current ? 'page' : undefined}
                 >
-                  <Glyph size={17} /> {LABEL[v]}
+                  <Glyph size={17} /> {LABEL[v]}{v === 'mcp' && <McpBadge />}
                 </Link>
               )
             })}
@@ -183,7 +184,7 @@ export default function Shell({ route }: { route: Route }) {
                 aria-current={v === current ? 'page' : undefined}
               >
                 <Glyph size={20} />
-                <span>{v === 'new' ? 'New' : LABEL[v]}</span>
+                <span>{v === 'new' ? 'New' : LABEL[v]}</span>{v === 'mcp' && <McpBadge />}
               </Link>
             )
           })}
@@ -191,11 +192,12 @@ export default function Shell({ route }: { route: Route }) {
       </div>
     </div>
   )
-  return views.includes('sessions') ? (
+  const scoped = views.includes('sessions') ? (
     <SessionScope route={route} desktop={desktop}>
       {frame}
     </SessionScope>
   ) : (
     frame
   )
+  return caps.features.includes('mcp_connections') && caps.features.includes('mcp_oauth') ? <McpScope active={route.name === 'mcp'}>{scoped}</McpScope> : scoped
 }

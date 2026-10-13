@@ -16,8 +16,8 @@ import type { Client } from './client'
 
 const id = (value: string) => encodeURIComponent(value)
 
-export function connections(client: Client): Promise<McpConnectionItem[]> {
-  return client.request('GET', '/api/mcp/connections')
+export function connections(client: Client, signal?: AbortSignal): Promise<McpConnectionItem[]> {
+  return client.request('GET', '/api/mcp/connections', undefined, { signal })
 }
 
 /** Step-up. */

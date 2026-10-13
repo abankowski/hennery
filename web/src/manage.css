@@ -93,3 +93,9 @@
 .oauth-client p { overflow-wrap:anywhere; }
 .oauth-client form { display:grid; gap:12px; }
 .oauth-client select { min-height:44px; max-width:100%; }
+.oauth-connect, .mcp-report { margin-top:16px; padding-top:12px; border-top:1px solid var(--border); overflow-wrap:anywhere; }
+.oauth-connect .notice { margin-top:12px; }
+.oauth-connect a { display:inline-block; min-height:44px; padding:12px 0; }
+.mcp-attention { display:inline-block; font-size:10px; line-height:1.2; white-space:normal; }
+.mcp-auth-count { color:var(--warn); }
+.mcp-error-count { color:var(--fg-2); }
