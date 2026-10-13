@@ -6,7 +6,7 @@ export type DeliveryMode = 'unknown' | 'isolated' | 'unisolated' | 'fallback' | 
 export function deliveryWords(mode: unknown): string {
   switch (mode) {
     case 'isolated':
-      return 'Hennery keeps this agent to the MCP servers of this hat.'
+      return "This agent was given only this hat's MCP servers."
     case 'unisolated':
       return 'The MCP servers are not isolated per hat; the agent also loads your own MCP configuration.'
     case 'fallback':
@@ -40,6 +40,13 @@ export function predictionWords(mode: DeliveryMode): string {
 
 export const CODEX_MCP_NOTE =
   'This session’s MCP servers are not isolated per hat. Codex also loads your own ~/.codex MCP servers.'
+
+/** The caveat follows the recorded/predicted mode; unknown is conditional. */
+export function ownConfigNote(mode: DeliveryMode, agent?: string): string | undefined {
+  if (mode === 'unisolated') return agent === 'codex' ? CODEX_MCP_NOTE : 'The agent also loads your own MCP configuration.'
+  if (mode === 'unknown' && agent === 'codex') return 'Codex may also load your own ~/.codex MCP servers.'
+  return undefined
+}
 
 /** Only a non-running → running transition invalidates delivery metadata. */
 export function runningLifecycle(lifecycle: string | undefined): boolean {

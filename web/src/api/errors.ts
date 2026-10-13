@@ -43,7 +43,7 @@ const MESSAGES: Record<string, string> = {
   env_value_missing: 'Re-enter the environment values: the server was renamed, its command changed, or no value is stored.',
   too_many_stdio_servers: 'Too many local MCP servers: at most 32 per host and hat, and 1024 in total.',
   host_revoked: 'This host is revoked.',
-  mcp_isolation_unavailable: 'The host could not isolate this agent’s MCP servers. Try again.',
+  mcp_isolation_unavailable: 'The host could not isolate this agent’s MCP servers.',
 }
 
 export class ApiFailure extends Error {

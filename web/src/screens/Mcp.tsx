@@ -156,6 +156,7 @@ export default function Mcp({ stdio = false }: { stdio?: boolean }) {
           A connection reaches the agent sessions in its hat on the hosts ticked below, as an MCP server named{' '}
           <code>hennery-&lt;slug&gt;</code>. Changes apply to new and resumed sessions.
         </p>
+        {hosts.data?.some(h => !h.mcp_delivery) && <p>Codex may also load your own ~/.codex MCP servers.</p>}
       </section>
       <StdioServers enabled={stdio} hosts={hosts.data} hats={hats.data} />
       {[list.error, hats.error, hosts.error].map(

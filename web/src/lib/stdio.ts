@@ -25,5 +25,6 @@ export function stdioRequest(drafts: StdioDraft[], read: (server: number, env: n
 export function stdioRefusal(err: unknown): string {
   if (err instanceof ApiFailure && err.code === 'not_found') return 'This host or hat no longer exists.'
   if (err instanceof ApiFailure && err.code === 'host_revoked') return 'This host is revoked: its local MCP servers can be read, not changed.'
+  if (err instanceof ApiFailure && err.code === 'slug_taken') return 'A connection already uses this name.'
   return messageOf(err)
 }

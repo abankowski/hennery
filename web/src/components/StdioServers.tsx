@@ -85,9 +85,16 @@ function SetEditor({ host, hat, lock }: { host: HostItem; hat: HatItem; lock: (b
     setError(null)
     setConfirming(true)
   }
-  const save = (): Promise<void> => {
+  const save = async (): Promise<void> => {
     if (operation.current) return operation.current
-    const body = stdioRequest(drafts ?? [], (server, env) => fields.current.get(`${server}:${env}`)?.value ?? '')
+    const body = stdioRequest(drafts ?? [], (server, env) => {
+      const field = fields.current.get(`${server}:${env}`)
+      if (!field) {
+        discardValues()
+        throw new Error('The environment value field is unavailable. Cancel and re-enter the values.')
+      }
+      return field.value
+    })
     discardValues()
     const work = replaceStdioServers(client, host.host_id, hat.id, body).then(answer => { if (live.current) apply(answer) }, err => { if (live.current) setError(stdioRefusal(err)) }).finally(() => { operation.current = null })
     operation.current = work
@@ -116,6 +123,15 @@ function SetEditor({ host, hat, lock }: { host: HostItem; hat: HatItem; lock: (b
     </form>}
     {confirming && <ConfirmDialog title="Save these local MCP servers?" confirm="Save local servers" action={save} onClose={close} returnFocus={() => opener.current}>
       <p>Replace every local server for <Text>{host.name}</Text> and <Text>{hat.name}</Text>, including removals. Newly entered environment values will be sent once confirmed, and then cleared from the form. Cancelling also clears them.</p>
+      <ul aria-label="Commands to run">
+        {drafts?.map(d => <li key={d.id}>
+          <Text>{d.name}</Text>
+          <dl>
+            <dt>Command</dt><dd><code><bdi>{visible(d.command)}</bdi></code></dd>
+            {d.args.map((arg, i) => <div key={i}><dt>Argument {i + 1}</dt><dd><code><bdi>{visible(arg) || '""'}</bdi></code></dd></div>)}
+          </dl>
+        </li>)}
+      </ul>
       <p>This applies at the next start or resume.</p>
     </ConfirmDialog>}
   </>
