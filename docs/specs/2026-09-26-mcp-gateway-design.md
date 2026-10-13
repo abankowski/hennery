@@ -428,7 +428,21 @@ Endpoint: `POST|GET|DELETE <public_url>/mcp/<slug>`, authenticated by
 
 Resolve token → principal → the connection with that slug, which must be in
 the principal's scope (§3.1). Otherwise 404. The request body is capped at
-4 MiB (413 only for the size limit).
+4 MiB (413 only for the size limit). Before every non-2xx answer, discard
+the remaining request body under `Limits.drain_cap` and
+one `Limits.drain_deadline` (defaults 8 MiB and 500 ms), without buffering
+it or forwarding any of it upstream. This includes 404 scope, token and
+session-id refusals, 413 declared and streamed size limits, route fallbacks,
+503, 408, 400, and 502 (an upstream 401 becomes 502 `upstream_auth`). The
+answer can be delayed by up to the drain deadline. The byte cap gives
+uploads around the 4 MiB limit room to finish; the deadline bounds stalled
+or trickling clients and leaves margin under the 1 s bound for a declared-size
+refusal when no body arrives. EOF exactly at the cap completes the drain.
+Past the cap, deadline or a body read error, answer with `Connection: close`
+on HTTP/1. A slow link past the deadline can still see a reset, by design:
+response delivery is best effort beyond the bounds. An `Expect: 100-continue`
+body that has never been polled is closed without draining or sending 100
+Continue, so a refusal at the head does not invite the client to upload.
 
 Every answer the proxy makes itself is an `ApiError`, `{code, message}`, as
 every other route's: 404 `not_found`, 400 `invalid_request`, 408
