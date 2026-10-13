@@ -42,17 +42,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { hatList, hostList, namesOf } from '../api/names'
 import { resume } from '../api/turns'
-import { sessionDetail } from '../api/view'
 import { useClient } from '../app-client'
 import { Composer, type ComposerHandle } from '../components/Composer'
 import { ANSWER_LABEL, answerAsMessage } from '../components/composerWords'
 import SessionFooter from '../components/SessionFooter'
 import SessionHeader, { type HeaderInfo } from '../components/SessionHeader'
+import McpDelivery from '../components/McpDelivery'
+import { useMcpDelivery } from '../hooks/useMcpDelivery'
 import SessionMenu from '../components/SessionMenu'
 import { deleteNotes } from '../components/sessionWords'
 import Transcript from '../components/Transcript'
 import type { ItemEnv } from '../components/items/types'
-import type { Capabilities, DeleteResult } from '../generated/protocol'
+import type { Capabilities, DeleteResult, SessionDetail } from '../generated/protocol'
 import type { SessionSummary } from '../generated/view'
 import type { Item } from '../generated/view'
 import { useAnnouncement } from '../hooks/useAnnouncement'
@@ -101,42 +102,22 @@ function latestPlan(items: Item[]): Extract<Item, { kind: 'plan' }> | undefined 
   return undefined
 }
 
-/** The session's detail, once, unless the caller has its summary (or is
- *  about to). A summary seen once stays shown when the list starts over
- *  (a new search, a filter) until the detail or the summary comes back.
- *  With no summary given, the newer of the detail and the last summary
- *  seen is shown: a detail fetched before a summary came never wins over
- *  it once that summary goes. */
-function useHeaderInfo(id: string, summary: SessionSummary | undefined, awaitSummary: boolean): HeaderInfo | undefined {
-  const client = useClient()
-  // When each source came, in one order.
-  const clock = useRef(0)
-  const [detail, setDetail] = useState<{ info: HeaderInfo; at: number } | undefined>(undefined)
-  const last = useRef<{ info: SessionSummary; at: number } | undefined>(undefined)
-  if (summary && last.current?.info !== summary) last.current = { info: summary, at: ++clock.current }
-  const needed = summary === undefined && !awaitSummary
-  useEffect(() => {
-    if (!needed) return
-    let live = true
-    sessionDetail(client, id).then(
-      // The detail has no `question_waits`: its open pending requests say
-      // it, as the summary's does ("whether or not an answer is queued"),
-      // so a question outside a turn reads "Waiting on a question" here
-      // too (decision 8: one status rule for the row and the header).
-      (d) =>
-        live &&
-        setDetail({ info: { ...d, question_waits: Array.isArray(d.pending) && d.pending.length > 0 }, at: ++clock.current }),
-      // The item store says when the session is gone; the header stays bare.
-      () => {},
-    )
-    return () => {
-      live = false
-    }
-  }, [client, id, needed])
+/** The summary owns the header while present. Delivery's detail read is
+ *  shared with the header; a search dropping a summary is not a new read.
+ *  Once both sources have been seen, their arrival order decides which
+ *  cached one remains when the summary is absent. */
+function useHeaderInfo(id: string, summary: SessionSummary | undefined, awaitSummary: boolean, detail: SessionDetail | null): HeaderInfo | undefined {
+  const held = useRef<{ id: string; clock: number; summary?: { info: SessionSummary; at: number }; detail?: { source: SessionDetail; info: HeaderInfo; at: number } }>({ id, clock: 0 })
+  if (held.current.id !== id) held.current = { id, clock: 0 }
+  const current = held.current
+  if (detail && current.detail?.source !== detail) {
+    current.detail = { source: detail, info: { ...detail, question_waits: Array.isArray(detail.pending) && detail.pending.length > 0 }, at: ++current.clock }
+  }
+  if (summary && current.summary?.info !== summary) current.summary = { info: summary, at: ++current.clock }
   if (summary) return summary
-  const held = last.current
-  if (detail && (!held || detail.at > held.at)) return detail.info
-  return held?.info ?? detail?.info
+  if (awaitSummary) return current.summary?.info
+  if (current.detail && (!current.summary || current.detail.at > current.summary.at)) return current.detail.info
+  return current.summary?.info ?? current.detail?.info
 }
 
 /** A list fetched once, when `wanted`; on failure, none (`undefined`). */
@@ -246,7 +227,8 @@ function useTailWindow(items: Item[], loads: number, size: number) {
 export default function SessionView({ id, summary, awaitSummary = false, tail = TAIL, timing, onRemoved }: Props) {
   const client = useClient()
   const s = useSessionItems(id, timing)
-  const info = useHeaderInfo(id, summary, awaitSummary)
+  const mcp = useMcpDelivery(id, summary?.lifecycle, Math.max(0, s.loads - 1))
+  const info = useHeaderInfo(id, summary, awaitSummary, mcp.detail)
   const win = useTailWindow(s.items, s.loads, tail)
   const narrow = useMediaQuery('(max-width: 767px)')
   const hostItems = useList('hosts', true)
@@ -273,7 +255,11 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   const composerEmpty = useCallback(() => composer.current?.isEmpty() ?? true, [])
   // The view's one resume: the footer's Resume and the composer's "Resume
   // and send" both go through it.
-  const onResume = useCallback(() => resume(client, id), [client, id])
+  const onResume = useCallback(async () => {
+    const answer = await resume(client, id)
+    mcp.refresh()
+    return answer
+  }, [client, id, mcp.refresh])
 
   // A delete made here: what it left on the host, shown with the deleted
   // state. The answer may come after the stream's `session_removed`.
@@ -361,6 +347,8 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
           />
         }
       />
+      <McpDelivery agent={info?.agent ?? mcp.detail?.agent} delivery={mcp.detail?.mcp_delivery} />
+      {mcp.error && <p className="form-error"><bdi>{mcp.error}</bdi></p>}
       <div className="stream-state" role="status">
         {s.stream === 'reconnecting' ? 'Reconnecting…' : s.resynced ? 'Resynced' : ''}
       </div>
