@@ -2245,7 +2245,7 @@ async fn a_changed_connection_never_exchanges_its_code() {
 async fn a_lost_client_pin_is_reread_before_consent() {
     use hennery_gateway::store::{SecretInput, Slot};
     for slot in [Slot::Active, Slot::Pending] {
-        for winner in ["same", "issuer", "endpoint", "client", "secret", "missing"] {
+        for winner in ["same", "issuer", "endpoint", "client", "secret", "missing", "deleted"] {
             let h = Harness::new();
             let server = support::upstream::FakeUpstream::start().await;
             let o = server.url("");
@@ -2310,6 +2310,9 @@ async fn a_lost_client_pin_is_reread_before_consent() {
                             )
                             .unwrap();
                         }
+                        "deleted" => {
+                            assert!(store.delete(&pin_id).unwrap());
+                        }
                         "missing" => {
                             conn.execute("DELETE FROM gw_oauth_clients WHERE connection_id = ?1", [&pin_id])
                                 .unwrap();
@@ -2326,18 +2329,30 @@ async fn a_lost_client_pin_is_reread_before_consent() {
                     StatusCode::NOT_FOUND.into_response()
                 }
             });
-            let (status, _, answer) = h.authorize(&id, json!({})).await;
+            let (status, headers, answer) = h.authorize(&id, json!({})).await;
             assert_eq!(
                 status,
                 if winner == "same" {
                     StatusCode::OK
+                } else if winner == "deleted" {
+                    StatusCode::NOT_FOUND
                 } else {
                     StatusCode::CONFLICT
                 },
                 "{answer}"
             );
             if winner != "same" {
-                assert_eq!(answer["code"], "issuer_changed");
+                assert_eq!(
+                    answer["code"],
+                    if winner == "deleted" {
+                        "not_found"
+                    } else {
+                        "issuer_changed"
+                    }
+                );
+                assert!(answer.get("consent_url").is_none());
+                assert!(!headers.contains_key(header::SET_COOKIE));
+                assert_eq!(h.runtime.flows.live("", unix_now()), 0);
             }
         }
     }

@@ -25,6 +25,7 @@ const ORIGIN: &str = "https://hennery.example";
 const PATH_CANARY: &str = "pathcanary0a1b2c3d";
 const QUERY_CANARY: &str = "querycanary4e5f6a7b";
 const SECRET_CANARY: &str = "secretcanary8c9d0e1f";
+const PROBE_BODY_CANARY: &str = "probe503bodycanary9f2d6b";
 const BODY_CANARY: &str = "bodycanary2a3b4c5d";
 const VENDOR_CANARY: &str = "vendorcanary-failure";
 const TOKEN_PREFIX: &str = "tokcanary6e7f8a9b-";
@@ -285,6 +286,7 @@ async fn no_url_secret_code_verifier_token_or_client_secret_is_logged_or_answere
         c.registration = false;
         c.dcr_refusal = None;
         c.mcp_status = Some(503);
+        c.mcp_status_body = Some(json!({"error": PROBE_BODY_CANARY}));
     });
     let (fresh_access, fresh_refresh) = fake.issue();
     support::oauth::seed_grant(&world, &id, &fake, &fresh_access, Some(&fresh_refresh), None);
@@ -295,7 +297,9 @@ async fn no_url_secret_code_verifier_token_or_client_secret_is_logged_or_answere
         None,
     )
     .await;
-    assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["status"], "error");
+    let probed: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(probed["status"], "error");
+    assert_eq!(probed["status_note"], "the upstream answered HTTP 503");
 
     // Refused authorizes, each naming the URL in its own way.
     fake.configure(|c| c.resource = Some(format!("{}/other/{PATH_CANARY}?q={QUERY_CANARY}", fake.origin())));
@@ -333,6 +337,7 @@ async fn no_url_secret_code_verifier_token_or_client_secret_is_logged_or_answere
         QUERY_CANARY.to_string(),
         SECRET_CANARY.to_string(),
         BODY_CANARY.to_string(),
+        PROBE_BODY_CANARY.to_string(),
         TOKEN_PREFIX.to_string(),
         state.clone(),
     ];
@@ -346,6 +351,7 @@ async fn no_url_secret_code_verifier_token_or_client_secret_is_logged_or_answere
     for canary in [
         SECRET_CANARY,
         BODY_CANARY,
+        PROBE_BODY_CANARY,
         TOKEN_PREFIX,
         &fake.with(|r| r.verifiers[0].clone()),
     ] {
