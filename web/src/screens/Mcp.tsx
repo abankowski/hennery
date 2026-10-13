@@ -14,6 +14,7 @@ import Mounts from '../components/Mounts'
 import TokenForm from '../components/TokenForm'
 import StdioServers from '../components/StdioServers'
 import OauthClientForm from '../components/OauthClientForm'
+import OauthConnect from '../components/OauthConnect'
 import type { HatItem, HostItem, McpConnectionItem, UpdateMcpConnectionRequest } from '../generated/protocol'
 import { useResource } from '../hooks/useResource'
 import {
@@ -77,6 +78,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
   // stay.
   const replace = (item: McpConnectionItem) =>
     list.set((prev) => (prev ?? []).map((c) => (c.id === item.id ? item : c)))
+  const refresh = async () => { const rows = await listConnections(client); list.set(rows); return rows }
 
   const create = async (form: Form, slug: string, hatId: string) => {
     if (creating.current) return
@@ -192,6 +194,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
         {(list.data ?? []).map((connection) => (
           <ConnectionCard
             oauth={oauth}
+            refresh={refresh}
             key={connection.id}
             connection={connection}
             hatName={hatName(connection.hat_id)}
@@ -263,6 +266,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
 
 interface CardProps {
   oauth: boolean
+  refresh: () => Promise<McpConnectionItem[]>
   connection: McpConnectionItem
   hatName?: string
   hosts: HostItem[] | null
@@ -280,6 +284,7 @@ interface CardProps {
 }
 
 function ConnectionCard(props: CardProps) {
+  const [clientRevision, setClientRevision] = useState(0)
   const { connection: c, hatName, hosts, editing } = props
   const id = titleId(c.id)
   const tools =
@@ -383,7 +388,8 @@ function ConnectionCard(props: CardProps) {
         </div>
       )}
       {c.cred_kind === 'static' && <TokenForm connection={c} hatName={hatName} onSaved={props.onTokenSaved} />}
-      {props.oauth && c.cred_kind === 'oauth_client' && <OauthClientForm connection={c} onChanged={props.onChanged} />}
+      {props.oauth && c.cred_kind === 'oauth_client' && <OauthClientForm connection={c} onChanged={item => { setClientRevision(n => n + 1); props.onChanged(item) }} />}
+      {props.oauth && (c.cred_kind === 'oauth_client' || c.cred_kind === 'oauth_dcr') && <OauthConnect key={clientRevision} connection={c} refresh={props.refresh} />}
       <Mounts connection={c} hosts={hosts} onChanged={props.onChanged} />
     </li>
   )
