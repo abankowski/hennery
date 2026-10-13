@@ -80,13 +80,24 @@ describe('the connection list', () => {
     expect(within(docs).queryByRole('checkbox', { name: 'old box' })).toBeNull()
   })
 
-  it('says sessions get changes when they start or resume, and how Codex gets them', async () => {
+  it('keeps the start/resume notice and replaces the blanket note with host predictions', async () => {
     open({})
     const note = await screen.findByRole('region', { name: 'How sessions get these' })
     expect(note).toHaveTextContent('Changes apply to new and resumed sessions.')
-    expect(note).toHaveTextContent(
-      'Codex, Claude run with your own CLI, and any other agent command (this may change): a session gets a connection only when both are in its host’s default hat, and it also loads your own MCP servers (such as ~/.codex), so it is not isolated. Sessions in other hats on that host get none.',
-    )
+    expect(note).not.toHaveTextContent('Codex, Claude run with your own CLI')
+    expect(await screen.findByText('MCP delivery is unknown for this host’s agents.')).toBeInTheDocument()
+  })
+
+  it('annotates the mount grid per reported agent, without changing checkbox names', async () => {
+    open({ 'GET /api/hosts': json(200, [host({ capabilities: ['mcp_servers'], mcp_delivery: {
+      claude: 'isolated', codex: 'default_hat_only',
+    } })]) })
+    const docs = await card('Docs')
+    expect(await within(docs).findByRole('checkbox', { name: 'laptop' })).toBeInTheDocument()
+    const predictions = within(docs).getAllByRole('region', { name: 'MCP prediction' })
+    expect(predictions).toHaveLength(2)
+    expect(predictions[0]).toHaveTextContent('Hennery keeps this agent')
+    expect(predictions[1]).toHaveTextContent('not isolated per hat')
   })
 
   it('words each state, and never asks to reconnect a failing one', async () => {
