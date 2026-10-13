@@ -164,7 +164,7 @@ for (const width of [1280, 390]) {
       expect(await page.evaluate(() => !!document.activeElement?.closest('.page'))).toBe(false)
       await stepUp.getByLabel('Your password', { exact: true }).focus()
       await stepUp.getByLabel('Your password', { exact: true }).fill(PASSWORD)
-      await stepUp.getByRole('button', { name: 'Confirm' }).click()
+      await stepUp.getByRole('button', { name: 'Confirm', exact: true }).click()
       await expect(card.getByText('Revoked', { exact: true })).toBeVisible()
       expect(refused).toBe(1)
       expect(await page.locator('.page').getAttribute('inert')).toBeNull()
