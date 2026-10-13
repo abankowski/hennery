@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { connection } from '../test-fixtures'
-import { clientRequest, completion, consentUrl, oauthAction, oauthGuidance, oauthHint } from './mcpOauth'
+import { clientRequest, completion, consentTimeout, consentUrl, oauthAction, oauthGuidance, oauthHint } from './mcpOauth'
 
 const item = connection({ cred_kind: 'oauth_dcr', status: 'ok', has_credential: true })
 describe('consent destinations', () => {
@@ -16,11 +16,19 @@ describe('callback hints', () => {
   it('refuses non-object data', () => expect(oauthHint(new MessageEvent('message', { origin: 'https://hennery.example', data: null }), 'https://hennery.example', item.id)).toBe(false))
 })
 describe('server-observed completion', () => {
-  it('is connected only on a newer ok stamp', () => expect(completion(item, { ...item, status_at: '2026-10-03T10:00:01Z' })).toBe('connected'))
+  it('reports working on a newer ok stamp, without claiming consent', () => expect(completion(item, { ...item, status_at: '2026-10-03T10:00:01Z' })).toBe('working'))
+  it('can observe recovered upstream use while consent is still pending', () => expect(completion({ ...item, status: 'needs_auth' }, { ...item, status_at: '2026-10-03T10:00:01Z' })).toBe('working'))
   it('is failed on a new server error', () => expect(completion(item, { ...item, oauth_error: { code: 'consent_denied', message: 'denied', at: item.status_at } })).toBe('failed'))
   it('is removed when the item went', () => expect(completion(item, undefined)).toBe('removed'))
   it.each([item, { ...item, status: 'error' as const, status_at: '2026-10-03T10:00:01Z' }, { ...item, status_at: 'invalid' }])('leaves identical, failing or unparseable reports pending', after => expect(completion(item, after)).toBe('pending'))
   it('does not mistake an identical old error for a new one', () => { const before = { ...item, oauth_error: { code: 'x', message: 'x', at: item.status_at } }; expect(completion(before, before)).toBe('pending') })
+})
+describe('local consent timeout', () => {
+  it('uses server duration without the client clock', () => expect(consentTimeout('2026-10-13T10:02:00Z', Date.parse('2026-10-13T10:00:00Z'))).toBe(120000))
+  it('uses the bounded flow lifetime when server time is absent', () => expect(consentTimeout('2000-01-01T00:00:00Z')).toBe(900000))
+  it('caps excessive server durations', () => expect(consentTimeout('2027-10-13T10:00:00Z', Date.parse('2026-10-13T10:00:00Z'))).toBe(900000))
+  it('never refuses an already elapsed server duration', () => expect(consentTimeout('2026-10-13T09:00:00Z', Date.parse('2026-10-13T10:00:00Z'))).toBe(1000))
+  it('uses the bounded lifetime for unreadable stamps', () => expect(consentTimeout('bad', Number.NaN)).toBe(900000))
 })
 describe('client secret intent', () => {
   it('keeps only the same stored id', () => expect(clientRequest('id', 'id', 'keep', '')).toEqual({ client_id: 'id' }))
@@ -38,4 +46,14 @@ describe('OAuth action', () => {
 describe('refusal guidance', () => {
   it.each(['issuer_changed', 'resource_mismatch', 'resource_foreign', 'no_oauth_client', 'no_registration_endpoint', 'too_many_flows', 'pkce_unsupported', 'insecure_metadata', 'egress_refused', 'upstream_unreachable', 'wrong_cred_kind', 'no_credential'])('explains %s', code => expect(oauthGuidance(code)).not.toBe(''))
   it('does not classify vendor wording or unknown codes', () => expect(oauthGuidance('vendor says invalid_target')).toBe(''))
+})
+
+it.each(['constructor', '__proto__', 'toString'])('does not inherit guidance for %s', code => expect(oauthGuidance(code)).toBe(''))
+it.each(['http://127.1/a', 'http://2130706433/a', 'http://%6cocalhost/a', 'HTTP://LOCALHOST:80/a'])('uses URL-decoded destination %s', url => expect(consentUrl(url)).toBe(new URL(url).href))
+it('takes failed hints and the bounded result, rejecting oversized and primitive envelopes', () => {
+  const origin = 'https://hennery.example'
+  const data = { type: 'done', connection_id: item.id, outcome: 'failed', result: 'x'.repeat(128) }
+  const hint = (value: unknown) => oauthHint(new MessageEvent('message', { origin, data: value }), origin, item.id)
+  expect(hint(data)).toBe(true); expect(hint({ ...data, result: 'x'.repeat(129) })).toBe(false)
+  expect(hint('done')).toBe(false); expect(hint(1)).toBe(false)
 })
