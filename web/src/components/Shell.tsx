@@ -141,6 +141,7 @@ export default function Shell({ route }: { route: Route }) {
             <div className="mtb-title">{title}</div>
           </div>
           <WaitingBadge />
+          <McpBadge link />
         </header>
         <main className="main">
           {route.name === 'not_found' ? (

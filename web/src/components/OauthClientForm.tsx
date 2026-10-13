@@ -19,9 +19,10 @@ export default function OauthClientForm({ connection: c, onChanged }: OauthClien
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   useEffect(() => {
-    setId(stored ?? ''); setMode(stored ? 'keep' : 'public'); setSaved(false)
+    setId(stored ?? ''); setMode(stored ? 'keep' : 'public')
     if (field.current) field.current.value = ''
   }, [stored, c.url, c.cred_kind])
+  useEffect(() => { setSaved(false) }, [c.url, c.cred_kind])
   const send = async (e: FormEvent) => {
     e.preventDefault()
     if (running.current) return

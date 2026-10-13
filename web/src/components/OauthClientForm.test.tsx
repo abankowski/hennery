@@ -5,6 +5,7 @@ import { ClientContext } from '../app-client'
 import { connection } from '../test-fixtures'
 import { json, stubServer } from '../test-server'
 import OauthClientForm from './OauthClientForm'
+import { useState } from 'react'
 
 const item = connection({ cred_kind: 'oauth_client', oauth: { redirect_uri: 'https://hennery.example/api/mcp/oauth/callback', client_id: 'active', has_client_secret: true, pending_client: { client_id: 'pending', has_client_secret: true } } })
 function setup() {
@@ -86,6 +87,20 @@ it('clears a retained field and resets draft intent on URL, kind or stored-clien
   expect(screen.getByLabelText('Client secret action')).toHaveValue('keep')
   s.rerender(view({ ...item, oauth: { ...item.oauth!, pending_client: { client_id: 'new', has_client_secret: false } } }))
   expect(screen.getByLabelText('Client ID')).toHaveValue('new')
+})
+it('keeps successful feedback when the server supplies the newly saved client id', async () => {
+  const fresh = { ...item, oauth: { redirect_uri: item.oauth!.redirect_uri, has_client_secret: false } }
+  const saved = { ...fresh, oauth: { ...fresh.oauth, client_id: 'new', has_client_secret: true } }
+  const server = stubServer({ [`PUT /api/mcp/connections/${item.id}/oauth-client`]: json(200, saved) })
+  const client = new Client({ fetch: server.fetch, navigate: vi.fn(), stepUp: vi.fn(), here: () => ({ pathname: '/mcp', search: '' }) })
+  function Editor() { const [c, change] = useState<typeof item>(fresh); return <OauthClientForm connection={c} onChanged={change} /> }
+  render(<ClientContext.Provider value={client}><Editor /></ClientContext.Provider>)
+  fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'new' } })
+  fireEvent.change(screen.getByLabelText('Client secret action'), { target: { value: 'replace' } })
+  fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: 'secret' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save client' }))
+  await waitFor(() => expect(screen.getByText('new')).toBeVisible())
+  expect(screen.getByRole('status')).toHaveTextContent('Client saved. Connect to authorize it.')
 })
 it('shares a pending public-client write even though its request needs no entered secret', async () => {
   let resolve!: (r: Response) => void

@@ -97,5 +97,7 @@
 .oauth-connect .notice { margin-top:12px; }
 .oauth-connect a { display:inline-block; min-height:44px; padding:12px 0; }
 .mcp-attention { display:inline-block; font-size:10px; line-height:1.2; white-space:normal; }
-.mcp-auth-count { color:var(--warn); }
+.mcp-auth-count { color:#B26A00; }
 .mcp-error-count { color:var(--fg-2); }
+.oauth-connect .btn, .oauth-client .btn, .mcp-report .btn { min-height:44px; }
+.mcp-attention-link { display:inline-flex; align-items:center; max-width:80px; min-height:44px; }
