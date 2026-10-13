@@ -51,7 +51,7 @@ use crate::session_id::SessionIds;
 use crate::store::GatewayStore;
 use crate::tokens::{is_session_token, token_hash};
 use axum::Router;
-use axum::body::{Body, Bytes, HttpBody};
+use axum::body::{Body, BodyDataStream, Bytes, HttpBody};
 use axum::extract::rejection::PathRejection;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
@@ -63,7 +63,9 @@ use hennery_kernel::egress::{Allowance, Egress, EgressClient, Limiter, Permit};
 use hennery_kernel::secret::unix_now;
 use hennery_proto::rest::ApiError;
 use serde_json::Value;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 use url::Url;
 
@@ -114,6 +116,10 @@ pub struct Limits {
     /// trickling upstream would otherwise hold the request's permit, and
     /// the client wait with no head, for as long as it trickles.
     pub answer_timeout: Duration,
+    /// One deadline for discarding an unread body before a non-2xx answer.
+    pub drain_deadline: Duration,
+    /// Additional body bytes discarded before closing a refused request.
+    pub drain_cap: usize,
 }
 
 impl Limits {
@@ -122,6 +128,8 @@ impl Limits {
     pub const HEAD_TIMEOUT: Duration = Duration::from_secs(300);
     pub const BODY_TIMEOUT: Duration = Duration::from_secs(30);
     pub const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
+    pub const DRAIN_DEADLINE: Duration = Duration::from_millis(500);
+    pub const DRAIN_CAP: usize = 8 * 1024 * 1024;
 
     /// `answer_timeout` is `ANSWER_TIMEOUT`; `with_answer_timeout` sets
     /// another.
@@ -132,6 +140,8 @@ impl Limits {
             head_timeout,
             body_timeout,
             answer_timeout: Self::ANSWER_TIMEOUT,
+            drain_deadline: Self::DRAIN_DEADLINE,
+            drain_cap: Self::DRAIN_CAP,
         }
     }
 
@@ -207,11 +217,11 @@ pub fn router(state: ProxyState) -> Router {
             post(proxy)
                 .get(proxy)
                 .delete(proxy)
-                .head(async || not_found())
-                .fallback(async || not_found()),
+                .head(reject_route)
+                .fallback(reject_route),
         )
-        .route("/mcp/{slug}/", any(async || not_found()))
-        .route("/mcp/{slug}/{*rest}", any(async || not_found()))
+        .route("/mcp/{slug}/", any(reject_route))
+        .route("/mcp/{slug}/{*rest}", any(reject_route))
         .layer(middleware::map_response(nosniff))
         .layer(middleware::map_response(no_store))
         .with_state(state)
@@ -249,6 +259,76 @@ fn refuse(status: StatusCode, code: &str, message: impl Into<String>) -> Respons
 /// The one answer for everything out of scope.
 fn not_found() -> Response {
     refuse(StatusCode::NOT_FOUND, "not_found", "no such MCP server")
+}
+
+async fn reject_route(State(state): State<ProxyState>, headers: HeaderMap, body: Body) -> Response {
+    drain_rejected(RequestBody::new(body, &headers), not_found(), &state.limits).await
+}
+
+/// Track whether hyper was asked for body data. An unpolled Expect upload
+/// can be refused without polling and thus without sending 100 Continue.
+struct RequestBody {
+    stream: BodyDataStream,
+    polled: bool,
+    expect_continue: bool,
+}
+
+impl RequestBody {
+    fn new(body: Body, headers: &HeaderMap) -> Self {
+        Self {
+            stream: body.into_data_stream(),
+            polled: false,
+            expect_continue: headers.get_all(header::EXPECT).iter().any(|value| {
+                value.to_str().is_ok_and(|value| {
+                    value
+                        .split(',')
+                        .any(|part| part.trim().eq_ignore_ascii_case("100-continue"))
+                })
+            }),
+        }
+    }
+}
+
+impl Stream for RequestBody {
+    type Item = Result<Bytes, axum::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.polled = true;
+        Pin::new(&mut self.stream).poll_next(cx)
+    }
+}
+
+/// Before every non-2xx answer, discard the remaining body under `Limits`'
+/// cap and single deadline (gateway spec §5.1). Retaining the reader lets a
+/// client finish uploading and receive its 404/413 instead of BrokenPipe.
+/// The default 8 MiB cap gives uploads around the 4 MiB request limit room
+/// to finish; the default 500 ms deadline bounds a stalled or trickling
+/// client and is not restarted per chunk. It also leaves margin under the
+/// 1 s bound for a declared-size refusal with no body. No bytes are
+/// buffered or sent upstream. The answer is delayed up to the deadline;
+/// a slow link past it can still see a reset, by design.
+/// An unpolled Expect: 100-continue body is closed without draining, so
+/// a head-time refusal never invites the client to begin its upload.
+/// Past the cap, deadline or a read error, close HTTP/1 after the answer.
+async fn drain_rejected(mut body: RequestBody, mut answer: Response, limits: &Limits) -> Response {
+    let unstarted_expect = body.expect_continue && !body.polled;
+    let drain = async {
+        let mut remaining = limits.drain_cap;
+        while let Some(chunk) = body.next().await {
+            let Ok(chunk) = chunk else { return false };
+            if chunk.len() > remaining {
+                return false;
+            }
+            remaining -= chunk.len();
+        }
+        true
+    };
+    if unstarted_expect || !matches!(tokio::time::timeout(limits.drain_deadline, drain).await, Ok(true)) {
+        answer
+            .headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    }
+    answer
 }
 
 fn internal(err: anyhow::Error) -> Response {
@@ -419,21 +499,31 @@ async fn proxy(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
+    // Borrow the stream in `forward`, so an oversize read or cancellation
+    // leaves the remainder available for the bounded refusal drain.
+    let mut body = RequestBody::new(body, &headers);
+    let limits = state.limits.clone();
     let watch = bearer(&headers)
         .filter(|token| is_session_token(token))
         .map(|token| state.revocations.watch(&token_hash(token)));
     let Some(watch) = watch else {
         // Never resolves: answered as for any unknown token.
-        return forward(state, slug, method, headers, body).await;
+        let answer = forward(state, slug, method, headers, &mut body).await;
+        return drain_rejected(body, answer, &limits).await;
     };
     let revoked = watch.token();
     let answer = tokio::select! {
         biased;
         () = revoked.cancelled() => {
             tracing::info!("gateway proxy: the session token was revoked before the answer");
-            return not_found();
+            not_found()
         }
-        answer = forward(state, slug, method, headers, body) => answer,
+        answer = forward(state, slug, method, headers, &mut body) => answer,
+    };
+    let answer = if answer.status().is_success() {
+        answer
+    } else {
+        drain_rejected(body, answer, &limits).await
     };
     if answer.body().size_hint().exact().is_some() {
         return answer;
@@ -476,7 +566,7 @@ async fn forward(
     slug: Result<Path<String>, PathRejection>,
     method: Method,
     headers: HeaderMap,
-    body: Body,
+    body: &mut RequestBody,
 ) -> Response {
     let now = unix_now();
     // A slug that is not UTF-8 is no slug: the same 404 (the whole-branch
@@ -536,7 +626,7 @@ async fn forward(
         if declared.is_some_and(|len| len > MAX_REQUEST_BODY as u64) {
             return body_too_large();
         }
-        let read = read_capped(body.into_data_stream(), MAX_REQUEST_BODY);
+        let read = read_capped(body, MAX_REQUEST_BODY);
         let bytes = match tokio::time::timeout(state.limits.body_timeout, read).await {
             Ok(Ok(bytes)) => bytes,
             Ok(Err(ReadError::TooLarge)) => return body_too_large(),
