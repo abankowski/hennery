@@ -82,6 +82,8 @@ pub struct Config {
     pub expires_in: Option<i64>,
     /// Token responses wait until the gate opens.
     pub gate_token: bool,
+    /// MCP replies wait at the same test gate.
+    pub gate_mcp: bool,
     /// The token endpoint's refusal body (a canary for logs).
     pub refusal_body: Option<Value>,
     /// The scopes the PR document lists.
@@ -147,6 +149,7 @@ impl Default for Config {
             refresh_keeps_token: false,
             expires_in: Some(3600),
             gate_token: false,
+            gate_mcp: false,
             refusal_body: None,
             scopes: vec!["read".into(), "write".into()],
             mcp_status: None,
@@ -473,6 +476,14 @@ async fn handle(State(shared): State<Shared>, request: Request) -> Response {
     };
     match (method.as_str(), path.as_str()) {
         (_, p) if p == "/mcp" || (p.ends_with("/mcp") && !p.starts_with("/.well-known")) => {
+            if config.gate_mcp {
+                let mut gate = shared.gate.clone();
+                while !*gate.borrow() {
+                    if gate.changed().await.is_err() {
+                        break;
+                    }
+                }
+            }
             if config.mcp_hang && bearer(&parts.headers).is_some() {
                 std::future::pending::<()>().await;
             }
@@ -537,7 +548,7 @@ async fn handle(State(shared): State<Shared>, request: Request) -> Response {
                 }
             }
             if let Some(status) = config.token_status {
-                return StatusCode::from_u16(status).unwrap().into_response();
+                return json_response(status, config.refusal_body.as_ref().unwrap_or(&json!({})));
             }
             token(&shared, &config, &parts.headers, &body)
         }

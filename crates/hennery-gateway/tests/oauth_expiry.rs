@@ -11,9 +11,9 @@ fn expiry_is_capped_and_saturates() {
 }
 #[test]
 fn refresh_due_handles_extreme_stamps() {
-    assert!(!refresh::due(Some(i64::MAX), i64::MIN));
-    assert!(refresh::due(Some(i64::MIN), i64::MAX));
-    assert!(refresh::due(Some(i64::MAX), i64::MAX - 300));
-    assert!(!refresh::due(Some(i64::MAX), i64::MAX - 301));
-    assert!(!refresh::due(None, i64::MAX));
+    assert!(!refresh::due(Some(i64::MAX), 0, i64::MIN));
+    assert!(refresh::due(Some(i64::MIN), i64::MIN, i64::MAX));
+    assert!(refresh::due(Some(i64::MAX), 0, i64::MAX - 300));
+    assert!(!refresh::due(Some(i64::MAX), 0, i64::MAX - 301));
+    assert!(!refresh::due(None, 0, i64::MAX));
 }

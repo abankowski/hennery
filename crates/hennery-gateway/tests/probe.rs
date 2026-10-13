@@ -26,6 +26,113 @@ async fn setup(config: Config) -> (Harness, FakeAs, String) {
     (h, fake, id)
 }
 
+fn watch_status(h: &Harness) {
+    h.raw()
+        .execute_batch(
+            "CREATE TABLE probe_status_changes (id TEXT);
+        CREATE TRIGGER count_probe_status AFTER UPDATE OF status ON gw_connections
+        WHEN OLD.status <> NEW.status BEGIN INSERT INTO probe_status_changes VALUES (NEW.id); END;",
+        )
+        .unwrap();
+}
+
+fn changes(h: &Harness) -> i64 {
+    h.raw()
+        .query_row("SELECT count(*) FROM probe_status_changes", [], |r| r.get(0))
+        .unwrap()
+}
+
+/// A restarted runtime proves the dead marker is durable, not just an
+/// in-memory outcome or a cached completed probe.
+fn restarted(h: &Harness) -> Arc<hennery_gateway::runtime::Runtime> {
+    Arc::new(hennery_gateway::runtime::Runtime::new(
+        h.store.clone(),
+        h.proxy_store.clone(),
+        h.key.clone(),
+        h.runtime.egress.clone(),
+        h.alerts.clone(),
+    ))
+}
+
+#[tokio::test]
+async fn a_tick_keeps_valid_access_ok_when_proactive_refresh_is_unavailable() {
+    let (h, fake, id) = setup(Config {
+        token_status: Some(503),
+        ..Config::default()
+    })
+    .await;
+    h.raw()
+        .execute(
+            "UPDATE gw_credentials SET expires_at = ?2 WHERE connection_id = ?1",
+            rusqlite::params![id, unix_now() + 120],
+        )
+        .unwrap();
+    watch_status(&h);
+    probe::tick(&h.runtime).await;
+    assert_eq!(fake.paths().iter().filter(|p| *p == "/token").count(), 1);
+    assert_eq!(h.status(&id), "ok");
+    assert_eq!(changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
+}
+
+#[tokio::test]
+async fn a_tick_keeps_valid_access_ok_then_marks_expired_dead_refresh_once() {
+    let (h, fake, id) = setup(Config::default()).await;
+    let access = h
+        .store
+        .oauth_credential(&id, &h.key)
+        .unwrap()
+        .unwrap()
+        .tokens
+        .access_token;
+    seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), Some(unix_now() + 120));
+    watch_status(&h);
+    probe::tick(&h.runtime).await;
+    assert_eq!(fake.paths().iter().filter(|p| *p == "/token").count(), 1);
+    assert_eq!(h.status(&id), "ok");
+    assert_eq!(changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
+    h.raw()
+        .execute(
+            "UPDATE gw_credentials SET expires_at = ?2 WHERE connection_id = ?1",
+            rusqlite::params![id, unix_now() - 1],
+        )
+        .unwrap();
+    let before = fake.with(|r| r.bearers.len());
+    let rt = restarted(&h);
+    probe::tick(&rt).await;
+    probe::tick(&rt).await;
+    assert_eq!(fake.paths().iter().filter(|p| *p == "/token").count(), 1);
+    assert_eq!(fake.with(|r| r.bearers.len()), before);
+    assert_eq!(h.status(&id), "needs_auth");
+    assert_eq!(changes(&h), 1);
+    assert_eq!(h.alerts.alerts(), [(id, Alert::NeedsAuth)]);
+}
+
+#[tokio::test]
+async fn a_probe_status_after_a_kind_change_has_no_transition_or_push() {
+    let (h, _fake, id) = setup(Config::default()).await;
+    let url = h.store.connection(&id).unwrap().unwrap().url;
+    h.store
+        .update(
+            &id,
+            &hennery_gateway::model::ConnectionPatch {
+                cred_kind: Some(CredKind::Static),
+                ..Default::default()
+            },
+            unix_now(),
+        )
+        .unwrap();
+    watch_status(&h);
+    h.runtime.announce(
+        h.proxy_store
+            .record_status(&id, &url, Status::Error, Some("late probe"), unix_now()),
+    );
+    assert_eq!(h.status(&id), "not_connected");
+    assert_eq!(changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
+}
+
 async fn probe(h: &Harness, id: &str) -> Verdict {
     let connection = h.proxy_store.connection_by_id(id).unwrap().unwrap();
     probe::probe_now(&h.runtime, &connection).await
@@ -480,5 +587,112 @@ async fn a_probe_whose_connection_moved_during_its_refresh_changes_nothing() {
     assert_eq!(probing.await.unwrap(), Verdict::NoChange);
     assert!(!a.with(|r| r.bearers.contains(&b_access)), "b's token went to a");
     assert!(b.with(|r| r.bearers.is_empty()));
+    assert!(h.alerts.alerts().is_empty());
+}
+
+#[tokio::test]
+async fn a_probe_drops_its_verdict_after_a_same_url_credential_replacement() {
+    for (mcp_status, replacement) in [
+        (Some(503), "reconnect"),
+        (Some(403), "reconnect"),
+        (None, "reconnect"),
+        (Some(503), "static"),
+        (Some(403), "static"),
+        (None, "static"),
+    ] {
+        let (h, fake, id) = setup(Config {
+            gate_mcp: true,
+            mcp_status,
+            ..Config::default()
+        })
+        .await;
+        let connection = h.proxy_store.connection_by_id(&id).unwrap().unwrap();
+        let runtime = h.runtime.clone();
+        let task = tokio::spawn(async move { probe::probe_now(&runtime, &connection).await });
+        // The real request is waiting in the vendor, with the old credential.
+        for _ in 0..1000 {
+            if fake.paths().iter().any(|p| p == "/mcp") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(fake.paths().iter().any(|p| p == "/mcp"));
+        if replacement == "static" {
+            h.store
+                .update(
+                    &id,
+                    &hennery_gateway::model::ConnectionPatch {
+                        cred_kind: Some(CredKind::Static),
+                        ..Default::default()
+                    },
+                    unix_now(),
+                )
+                .unwrap();
+            h.store
+                .set_static_credential(&id, "static-replacement", &h.key, unix_now())
+                .unwrap();
+        } else {
+            h.raw()
+                .execute("DELETE FROM gw_credentials WHERE connection_id = ?1", [&id])
+                .unwrap();
+            let (access, refresh) = fake.issue();
+            seed_grant(&h, &id, &fake, &access, Some(&refresh), None);
+        }
+        set_status(&h, &id, Status::NeedsAuth);
+        let before = h.store.connection(&id).unwrap().unwrap();
+        watch_status(&h);
+        fake.open_gate();
+        let _ = task.await.unwrap();
+        let after = h.store.connection(&id).unwrap().unwrap();
+        assert_eq!(after.status, before.status, "{replacement}: {mcp_status:?}");
+        assert_eq!(after.status_note, before.status_note);
+        assert_eq!(after.checked_at, before.checked_at);
+        assert_eq!(changes(&h), 0);
+        assert!(h.alerts.alerts().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_probe_observation_is_invalid_when_only_the_credential_kind_changes() {
+    let (h, fake, id) = setup(Config::default()).await;
+    let observed = h.proxy_store.credential_stamp(&id, &fake.mcp_url()).unwrap().unwrap();
+    // Retain the ciphertext deliberately: type alone is part of identity.
+    h.raw()
+        .execute("UPDATE gw_connections SET cred_kind = 'static' WHERE id = ?1", [&id])
+        .unwrap();
+    watch_status(&h);
+    assert!(
+        h.proxy_store
+            .record_observed_status(
+                &id,
+                &fake.mcp_url(),
+                &observed,
+                Status::Error,
+                Some("stale"),
+                unix_now()
+            )
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
+}
+
+#[tokio::test]
+async fn a_probe_observation_is_invalid_after_its_url_changes() {
+    let (h, fake, id) = setup(Config::default()).await;
+    let url = fake.mcp_url();
+    let observed = h.proxy_store.credential_stamp(&id, &url).unwrap().unwrap();
+    h.raw()
+        .execute("UPDATE gw_connections SET url = url || '/new' WHERE id = ?1", [&id])
+        .unwrap();
+    watch_status(&h);
+    assert!(
+        h.proxy_store
+            .record_observed_status(&id, &url, &observed, Status::Error, Some("stale"), unix_now())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(changes(&h), 0);
     assert!(h.alerts.alerts().is_empty());
 }

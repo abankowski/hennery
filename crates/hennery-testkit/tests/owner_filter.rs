@@ -90,8 +90,8 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-gateway/src/scope.rs",
         include_str!("../../hennery-gateway/src/scope.rs"),
-        // Plan 8f: status writes, the probe's reads.
-        12,
+        // Plan 8f: status writes, the probe's reads and credential identity guards.
+        14,
     ),
     // Plan 8e: what a session gets, and the stdio servers.
     (

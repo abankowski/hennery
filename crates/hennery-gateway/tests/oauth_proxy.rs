@@ -652,9 +652,10 @@ async fn while_a_401_waits(h: &Harness, a: &FakeAs, token: &str, change: impl Fn
 }
 
 /// A grant gone by the time the refresh holds the lock: nothing to
-/// refresh, so the 401 stands: `needs_auth`, 502 `upstream_auth`.
+/// refresh, so the 401 stands as 502 `upstream_auth`; the status guard
+/// does not announce a stale result for the deleted credential.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_grant_gone_before_its_refresh_is_needs_auth() {
+async fn a_grant_gone_before_its_refresh_has_no_stale_status_transition() {
     let (h, a, id, token) = setup(Config::default(), None).await;
     let response = while_a_401_waits(&h, &a, &token, || {
         h.raw()
@@ -666,7 +667,8 @@ async fn a_grant_gone_before_its_refresh_is_needs_auth() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["code"], "upstream_auth");
     assert_eq!(a.with(|r| r.refreshes), 0);
-    assert_eq!(h.status(&id), "needs_auth");
+    assert_eq!(h.status(&id), "ok");
+    assert!(h.alerts.alerts().is_empty());
 }
 
 /// A grant that no longer opens when the refresh reads it: the gateway's
@@ -781,4 +783,657 @@ async fn a_token_connected_elsewhere_before_the_refresh_is_not_retried() {
     assert!(!a.with(|r| r.bearers.contains(&b_access)), "b's token went to a");
     assert!(b.with(|r| r.bearers.is_empty()), "nothing was retried at b either");
     assert_ne!(h.status(&id), "needs_auth");
+}
+
+fn count_status_changes(h: &Harness) {
+    h.raw()
+        .execute_batch(
+            "CREATE TABLE refresh_status_changes (id TEXT);
+        CREATE TRIGGER count_refresh_status AFTER UPDATE OF status ON gw_connections
+        WHEN OLD.status <> NEW.status BEGIN INSERT INTO refresh_status_changes VALUES (NEW.id); END;",
+        )
+        .unwrap();
+}
+
+fn status_changes(h: &Harness) -> i64 {
+    h.raw()
+        .query_row("SELECT count(*) FROM refresh_status_changes", [], |r| r.get(0))
+        .unwrap()
+}
+
+async fn concurrent_posts(h: &Harness, token: &str) -> Vec<reqwest::Response> {
+    futures::future::join_all((0..8).map(|i| async move { h.post("linear", token, &list(i)).await })).await
+}
+
+/// Task 10: failures share the attempt too; while the access token is
+/// valid, a proactive failure has no status transition or notification.
+#[tokio::test]
+async fn concurrent_proactive_unavailable_refreshes_use_the_valid_token_without_pushes() {
+    let (h, fake, id, token) = setup(
+        Config {
+            token_status: Some(503),
+            ..Config::default()
+        },
+        Some(unix_now() + 120),
+    )
+    .await;
+    count_status_changes(&h);
+    for _ in 0..2 {
+        let answers = concurrent_posts(&h, &token).await;
+        assert!(answers.iter().all(|r| r.status() == 200));
+        assert_eq!(token_requests(&fake), 1, "one vendor call in the backoff window");
+        assert_eq!(h.status(&id), "ok");
+        assert_eq!(status_changes(&h), 0);
+        assert!(h.alerts.alerts().is_empty());
+    }
+    // Advance timers between real HTTP exchanges.
+    advance_backoff(31).await;
+    let answers = concurrent_posts(&h, &token).await;
+    assert!(answers.iter().all(|r| r.status() == 200));
+    assert_eq!(token_requests(&fake), 2);
+    assert_eq!(status_changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
+    h.raw()
+        .execute(
+            "UPDATE gw_credentials SET expires_at = ?2 WHERE connection_id = ?1",
+            rusqlite::params![id, unix_now() - 1],
+        )
+        .unwrap();
+    let before = fake.with(|r| r.bearers.len());
+    for answer in concurrent_posts(&h, &token).await {
+        assert_eq!(answer.status(), 502);
+        assert_eq!(
+            answer.json::<serde_json::Value>().await.unwrap()["code"],
+            "upstream_auth"
+        );
+    }
+    assert_eq!(token_requests(&fake), 2, "no refresh during backoff");
+    assert_eq!(fake.with(|r| r.bearers.len()), before, "expired token is not sent");
+    assert_eq!(status_changes(&h), 1);
+    assert_eq!(h.alerts.alerts(), [(id, Alert::NeedsAuth)]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_proactive_invalid_grant_is_dead_but_keeps_valid_access_ok() {
+    let (h, fake, id, token) = setup(Config::default(), Some(unix_now() + 120)).await;
+    let access = grant(&h, &id).tokens.access_token.clone();
+    seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), Some(unix_now() + 120));
+    count_status_changes(&h);
+    for _ in 0..2 {
+        assert!(concurrent_posts(&h, &token).await.iter().all(|r| r.status() == 200));
+        assert_eq!(token_requests(&fake), 1, "never resend invalid_grant");
+        assert_eq!(h.status(&id), "ok");
+        assert_eq!(status_changes(&h), 0);
+        assert!(h.alerts.alerts().is_empty());
+    }
+    assert!(
+        grant(&h, &id).tokens.refresh_token.is_none(),
+        "dead token is removed from the sealed blob"
+    );
+    h.raw()
+        .execute(
+            "UPDATE gw_credentials SET expires_at = ?2 WHERE connection_id = ?1",
+            rusqlite::params![id, unix_now() - 1],
+        )
+        .unwrap();
+    let before = fake.with(|r| r.bearers.len());
+    for _ in 0..2 {
+        for answer in concurrent_posts(&h, &token).await {
+            assert_eq!(answer.status(), 502);
+            assert_eq!(
+                answer.json::<serde_json::Value>().await.unwrap()["code"],
+                "upstream_auth"
+            );
+        }
+    }
+    assert_eq!(fake.with(|r| r.bearers.len()), before);
+    assert_eq!(token_requests(&fake), 1);
+    assert_eq!(status_changes(&h), 1);
+    assert_eq!(h.alerts.alerts(), [(id, Alert::NeedsAuth)]);
+}
+
+/// All futures enter refresh before the gated attempt can finish. An
+/// unsaved success is shared, and subsequent callers back off too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_failed_refreshes_share_the_recorded_unsaved_outcome() {
+    use hennery_gateway::refresh::{self, Refreshed};
+    let (h, fake, id, _) = setup(
+        Config {
+            gate_token: true,
+            ..Config::default()
+        },
+        None,
+    )
+    .await;
+    count_status_changes(&h);
+    h.raw()
+        .execute_batch(
+            "CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+        )
+        .unwrap();
+    let failed = grant(&h, &id).tokens.access_token.clone();
+    let held = h.runtime.lock(&id).await;
+    let calls = (0..8).map(|_| refresh::refresh(h.runtime.clone(), id.clone(), Some(failed.clone())));
+    let mut joined = Box::pin(futures::future::join_all(calls));
+    assert!(futures::poll!(&mut joined).is_pending());
+    drop(held);
+    tokio::select! {
+        _ = &mut joined => panic!("refresh answered at the gate"),
+        () = until(|| token_requests(&fake) == 1) => {}
+    }
+    fake.open_gate();
+    assert_eq!(joined.await, vec![Refreshed::Unsaved; 8]);
+    assert_eq!(
+        token_requests(&fake),
+        1,
+        "queued callers share the recorded unsaved outcome"
+    );
+    assert_eq!(status_changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_401s_share_an_unavailable_attempt() {
+    let (h, fake, id, token) = setup(
+        Config {
+            token_status: Some(503),
+            ..Config::default()
+        },
+        None,
+    )
+    .await;
+    fake.expire_access();
+    count_status_changes(&h);
+    for answer in concurrent_posts(&h, &token).await {
+        assert_eq!(answer.status(), 502);
+        assert_eq!(
+            answer.json::<serde_json::Value>().await.unwrap()["code"],
+            "upstream_unreachable"
+        );
+    }
+    assert_eq!(token_requests(&fake), 1);
+    assert_eq!(status_changes(&h), 0, "transient outage does not ask for reconnect");
+    assert!(h.alerts.alerts().is_empty());
+    assert_eq!(h.status(&id), "ok");
+}
+
+#[tokio::test]
+async fn needs_auth_with_a_dead_refresh_fails_fast_even_without_an_expiry() {
+    let (h, fake, id, token) = setup(Config::default(), None).await;
+    let access = grant(&h, &id).tokens.access_token.clone();
+    seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), None);
+    fake.expire_access();
+    count_status_changes(&h);
+    for _ in 0..3 {
+        let answer = h.post("linear", &token, &list(1)).await;
+        assert_eq!(answer.status(), 502);
+        assert_eq!(
+            answer.json::<serde_json::Value>().await.unwrap()["code"],
+            "upstream_auth"
+        );
+    }
+    assert_eq!(token_requests(&fake), 1);
+    assert_eq!(
+        fake.with(|r| r.bearers.len()),
+        1,
+        "needs_auth and dead refresh fail before sending access again"
+    );
+    assert_eq!(status_changes(&h), 1);
+    assert_eq!(h.alerts.alerts(), [(id, Alert::NeedsAuth)]);
+    let restarted = std::sync::Arc::new(hennery_gateway::runtime::Runtime::new(
+        h.store.clone(),
+        h.proxy_store.clone(),
+        h.key.clone(),
+        h.runtime.egress.clone(),
+        h.alerts.clone(),
+    ));
+    assert_eq!(
+        hennery_gateway::refresh::refresh(restarted, h.store.list().unwrap()[0].id.clone(), Some(access)).await,
+        hennery_gateway::refresh::Refreshed::Refused,
+        "the sealed dead marker survives restart with unknown expiry"
+    );
+    assert_eq!(token_requests(&fake), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_refusal_never_marks_a_concurrent_reconnect_dead() {
+    use hennery_gateway::refresh;
+    let (h, fake, id, _) = setup(
+        Config {
+            gate_token: true,
+            ..Config::default()
+        },
+        Some(unix_now() + 60),
+    )
+    .await;
+    let access = grant(&h, &id).tokens.access_token.clone();
+    seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), Some(unix_now() + 60));
+    count_status_changes(&h);
+    let mut attempt = Box::pin(refresh::refresh(h.runtime.clone(), id.clone(), None));
+    tokio::select! {
+        _ = &mut attempt => panic!("refresh answered at the gate"),
+        () = until(|| token_requests(&fake) == 1) => {}
+    }
+    let (new_access, new_refresh) = fake.issue();
+    seed_grant(&h, &id, &fake, &new_access, Some(&new_refresh), None);
+    fake.open_gate();
+    let _ = attempt.await;
+    assert_eq!(
+        grant(&h, &id).tokens.refresh_token.as_deref().map(String::as_str),
+        Some(new_refresh.as_str())
+    );
+    assert_eq!(h.status(&id), "ok");
+    assert_eq!(status_changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
+}
+
+#[tokio::test]
+async fn a_reconnect_clears_the_dead_marker_and_old_backoff() {
+    for unavailable in [true, false] {
+        let (h, fake, id, token) = setup(
+            Config {
+                token_status: unavailable.then_some(503),
+                ..Config::default()
+            },
+            Some(unix_now() + 60),
+        )
+        .await;
+        if !unavailable {
+            let access = grant(&h, &id).tokens.access_token.clone();
+            seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), Some(unix_now() + 60));
+        }
+        assert_eq!(h.post("linear", &token, &list(1)).await.status(), 200);
+        assert_eq!(grant(&h, &id).tokens.refresh_dead, !unavailable);
+        fake.configure(|config| config.token_status = None);
+        let (access, refresh) = fake.issue();
+        seed_grant(&h, &id, &fake, &access, Some(&refresh), Some(unix_now() + 60));
+        assert_eq!(h.post("linear", &token, &list(2)).await.status(), 200);
+        assert_eq!(token_requests(&fake), 2, "a new sealed grant has no old attempt state");
+        assert!(!grant(&h, &id).tokens.refresh_dead);
+    }
+}
+
+#[tokio::test]
+async fn a_refusal_with_an_unsaved_dead_marker_never_resends_the_token() {
+    use hennery_gateway::refresh::{self, Refreshed};
+    let (h, fake, id, _) = setup(Config::default(), None).await;
+    let access = grant(&h, &id).tokens.access_token.clone();
+    seed_grant(&h, &id, &fake, &access, Some("revoked-refresh"), None);
+    count_status_changes(&h);
+    h.raw()
+        .execute_batch(
+            "CREATE TRIGGER no_dead_write BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+        )
+        .unwrap();
+    for attempt in 0..3 {
+        if attempt > 0 {
+            advance_backoff(301).await;
+        }
+        assert_eq!(
+            refresh::refresh(h.runtime.clone(), id.clone(), Some(access.clone())).await,
+            Refreshed::Unsaved
+        );
+    }
+    assert_eq!(token_requests(&fake), 1);
+    assert_eq!(status_changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
+}
+
+#[tokio::test]
+async fn a_refresh_rechecks_due_after_waiting_for_the_lock() {
+    use hennery_gateway::refresh::{self, Refreshed};
+    let (h, fake, id, _) = setup(Config::default(), Some(unix_now() + 60)).await;
+    let held = h.runtime.lock(&id).await;
+    let mut call = Box::pin(refresh::refresh(h.runtime.clone(), id.clone(), None));
+    assert!(futures::poll!(&mut call).is_pending());
+    let credential = grant(&h, &id);
+    let refreshed = RefreshedGrant {
+        tokens: &credential.tokens,
+        expires_at: Some(unix_now() + 3600),
+        resource_param_accepted: true,
+    };
+    assert!(
+        h.store
+            .store_refreshed(&id, &credential, &refreshed, &h.key, unix_now())
+            .unwrap()
+    );
+    drop(held);
+    assert!(matches!(call.await, Refreshed::Retry(_)));
+    assert_eq!(token_requests(&fake), 0);
+}
+
+#[tokio::test]
+async fn a_lost_refresh_cas_returns_the_reconnected_token_and_destination() {
+    use hennery_gateway::refresh::{self, Refreshed};
+    let (h, fake, id, _) = setup(
+        Config {
+            gate_token: true,
+            ..Config::default()
+        },
+        Some(unix_now() + 60),
+    )
+    .await;
+    let mut call = Box::pin(refresh::refresh(h.runtime.clone(), id.clone(), None));
+    tokio::select! {
+        _ = &mut call => panic!("refresh answered at the gate"),
+        () = until(|| token_requests(&fake) == 1) => {}
+    }
+    let (access, refresh) = fake.issue();
+    seed_grant(&h, &id, &fake, &access, Some(&refresh), None);
+    fake.open_gate();
+    let Refreshed::Retry(fresh) = call.await else {
+        panic!("did not reread the concurrent grant")
+    };
+    assert_eq!(fresh.access_token.as_str(), access);
+    assert_eq!(fresh.url, fake.mcp_url());
+    assert!(fresh.internal_network);
+}
+
+async fn advance_backoff(seconds: u64) {
+    // Pause only the timer, after each real HTTP response; resume
+    // before network I/O so automatic clock advancement cannot race it.
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(seconds)).await;
+    tokio::time::resume();
+}
+
+#[tokio::test]
+async fn unavailable_backoff_doubles_between_attempts_and_resets_on_success() {
+    let (h, fake, id, token) = setup(
+        Config {
+            token_status: Some(503),
+            ..Config::default()
+        },
+        Some(unix_now() + 120),
+    )
+    .await;
+    assert_eq!(h.post("linear", &token, &list(1)).await.status(), 200);
+    assert_eq!(token_requests(&fake), 1);
+    advance_backoff(31).await;
+    assert_eq!(h.post("linear", &token, &list(2)).await.status(), 200);
+    assert_eq!(token_requests(&fake), 2);
+    advance_backoff(31).await;
+    assert_eq!(h.post("linear", &token, &list(3)).await.status(), 200);
+    assert_eq!(token_requests(&fake), 2, "second backoff is 60 seconds");
+    advance_backoff(30).await;
+    assert_eq!(h.post("linear", &token, &list(4)).await.status(), 200);
+    assert_eq!(token_requests(&fake), 3);
+    fake.configure(|config| config.token_status = None);
+    advance_backoff(121).await;
+    assert_eq!(h.post("linear", &token, &list(5)).await.status(), 200);
+    assert_eq!(token_requests(&fake), 4);
+    fake.configure(|config| config.token_status = Some(503));
+    h.raw()
+        .execute(
+            "UPDATE gw_credentials SET expires_at = ?2, updated_at = ?3 WHERE connection_id = ?1",
+            rusqlite::params![id, unix_now() + 120, unix_now() - 3600],
+        )
+        .unwrap();
+    assert_eq!(h.post("linear", &token, &list(6)).await.status(), 200);
+    assert_eq!(token_requests(&fake), 5);
+    advance_backoff(31).await;
+    assert_eq!(h.post("linear", &token, &list(7)).await.status(), 200);
+    assert_eq!(
+        token_requests(&fake),
+        6,
+        "success reset failure count to the 30-second backoff"
+    );
+    assert_eq!(h.status(&id), "ok");
+    assert!(h.alerts.alerts().is_empty());
+}
+
+#[tokio::test]
+async fn an_unsaved_refresh_backs_off_before_another_vendor_call() {
+    use hennery_gateway::refresh::{self, Refreshed};
+    let (h, fake, id, _) = setup(Config::default(), None).await;
+    h.raw()
+        .execute_batch(
+            "CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+        )
+        .unwrap();
+    let failed = grant(&h, &id).tokens.access_token;
+    for _ in 0..3 {
+        assert_eq!(
+            refresh::refresh(h.runtime.clone(), id.clone(), Some(failed.clone())).await,
+            Refreshed::Unsaved
+        );
+        assert_eq!(token_requests(&fake), 1, "unsaved issuance must back off");
+    }
+    advance_backoff(31).await;
+    let _ = refresh::refresh(h.runtime.clone(), id.clone(), Some(failed)).await;
+    assert_eq!(token_requests(&fake), 2, "retry after the backoff window");
+}
+
+#[tokio::test]
+async fn a_shared_retry_of_the_token_that_just_failed_takes_its_own_refresh_path() {
+    use hennery_gateway::refresh::{self, Refreshed};
+    let (h, fake, id, _) = setup(
+        Config {
+            gate_token: true,
+            raw_token: Some(r#"{"access_token":"shared-access","refresh_token":"shared-refresh"}"#.into()),
+            ..Config::default()
+        },
+        Some(unix_now() + 120),
+    )
+    .await;
+    let first = tokio::spawn(refresh::refresh(h.runtime.clone(), id.clone(), None));
+    until(|| token_requests(&fake) == 1).await;
+    let mut second = Box::pin(refresh::refresh(
+        h.runtime.clone(),
+        id.clone(),
+        Some(zeroize::Zeroizing::new("shared-access".into())),
+    ));
+    assert!(futures::poll!(&mut second).is_pending());
+    fake.open_gate();
+    assert!(matches!(first.await.unwrap(), Refreshed::Retry(_)));
+    assert_eq!(second.await, Refreshed::Refused);
+    assert_eq!(
+        token_requests(&fake),
+        2,
+        "the shared Retry carries the caller's failed token"
+    );
+}
+
+#[tokio::test]
+async fn token_endpoint_transient_answers_never_retire_the_refresh_token() {
+    for (status, error) in [
+        (302, None),
+        (302, Some("invalid_grant")),
+        (400, None),
+        (400, Some("invalid_request")),
+        (400, Some("temporarily_unavailable")),
+        (401, None),
+        (403, None),
+        (404, None),
+        (408, None),
+        (400, Some("invalid_client")),
+        (400, Some("unauthorized_client")),
+        (400, Some("invalid_target")),
+        (429, None),
+        (503, None),
+    ] {
+        let (h, fake, id, token) = setup(
+            Config {
+                token_status: Some(status),
+                refusal_body: error.map(|error| serde_json::json!({ "error": error })),
+                ..Config::default()
+            },
+            Some(unix_now() + 120),
+        )
+        .await;
+        count_status_changes(&h);
+        for _ in 0..2 {
+            assert_eq!(h.post("linear", &token, &list(1)).await.status(), 200);
+        }
+        let saved = grant(&h, &id);
+        assert!(!saved.tokens.refresh_dead, "HTTP {status}: {error:?}");
+        assert!(saved.tokens.refresh_token.is_some());
+        assert_eq!(
+            token_requests(&fake),
+            if error == Some("invalid_target") { 2 } else { 1 }
+        );
+        assert_eq!(status_changes(&h), 0);
+        assert!(h.alerts.alerts().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_fresh_short_lived_token_waits_until_half_its_usable_lifetime_to_refresh() {
+    for lifetime in [120, 300] {
+        let (h, fake, id, token) = setup(
+            Config {
+                expires_in: Some(lifetime),
+                ..Config::default()
+            },
+            None,
+        )
+        .await;
+        // Simulate a real issuance instead of an aged seeded grant.
+        let now = unix_now();
+        h.raw()
+            .execute(
+                "UPDATE gw_credentials SET expires_at = ?2, updated_at = ?3 WHERE connection_id = ?1",
+                rusqlite::params![id, now + lifetime - 60, now],
+            )
+            .unwrap();
+        for _ in 0..3 {
+            assert_eq!(h.post("linear", &token, &list(1)).await.status(), 200);
+        }
+        assert_eq!(token_requests(&fake), 0, "fresh expires_in={lifetime}");
+        // Move its issuance and expiry equally, retaining its original lifetime.
+        h.raw()
+            .execute(
+                "UPDATE gw_credentials SET expires_at = ?2, updated_at = ?3 WHERE connection_id = ?1",
+                rusqlite::params![id, now + (lifetime - 60) / 2 - 1, now - (lifetime - 60) / 2 - 1],
+            )
+            .unwrap();
+        assert_eq!(h.post("linear", &token, &list(2)).await.status(), 200);
+        assert_eq!(token_requests(&fake), 1);
+        assert_eq!(h.post("linear", &token, &list(3)).await.status(), 200);
+        assert_eq!(token_requests(&fake), 1, "newly refreshed short token is not due again");
+    }
+}
+
+/// Counter sharing remains necessary when a waiter was queued before the
+/// attempt, but gets the lock after its backoff window has elapsed.
+#[tokio::test]
+async fn queued_failures_share_outcome_even_after_the_backoff_window_elapsed() {
+    use hennery_gateway::refresh::{self, Refreshed};
+    let (h, fake, id, _) = setup(
+        Config {
+            gate_token: true,
+            ..Config::default()
+        },
+        None,
+    )
+    .await;
+    h.raw()
+        .execute_batch(
+            "CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+        )
+        .unwrap();
+    let failed = grant(&h, &id).tokens.access_token;
+    let first = tokio::spawn(refresh::refresh(h.runtime.clone(), id.clone(), Some(failed.clone())));
+    until(|| token_requests(&fake) == 1).await;
+    // Queue a holder ahead of the second refresh to control lock scheduling.
+    let mut held = Box::pin(h.runtime.lock(&id));
+    assert!(futures::poll!(&mut held).is_pending());
+    let mut waiter = Box::pin(refresh::refresh(h.runtime.clone(), id.clone(), Some(failed)));
+    assert!(futures::poll!(&mut waiter).is_pending());
+    // Ensure the spawned waiter has entered the real mutex queue.
+    tokio::task::yield_now().await;
+    fake.open_gate();
+    assert_eq!(first.await.unwrap(), Refreshed::Unsaved);
+    let held = held.await;
+    advance_backoff(31).await;
+    drop(held);
+    assert_eq!(waiter.await, Refreshed::Unsaved);
+    assert_eq!(token_requests(&fake), 1, "queued callers consume their noted attempt");
+}
+
+#[tokio::test]
+async fn an_expired_unsaved_refresh_never_changes_status_or_asks_for_reconnect() {
+    let (h, fake, id, token) = setup(Config::default(), Some(unix_now() - 1)).await;
+    count_status_changes(&h);
+    h.raw()
+        .execute_batch(
+            "CREATE TRIGGER no_refresh BEFORE UPDATE ON gw_credentials BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+        )
+        .unwrap();
+    for _ in 0..3 {
+        let response = h.post("linear", &token, &list(1)).await;
+        assert_eq!(response.status(), 502);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["code"],
+            "credential_unsaved"
+        );
+        assert_eq!(h.status(&id), "ok");
+        assert_eq!(status_changes(&h), 0);
+        assert!(h.alerts.alerts().is_empty());
+        assert!(fake.with(|r| r.bearers.is_empty()));
+        assert_eq!(token_requests(&fake), 1);
+    }
+}
+
+#[tokio::test]
+async fn a_static_401_after_credential_replacement_has_no_stale_needs_auth_write() {
+    let (h, fake, id, token) = setup(
+        Config {
+            gate_mcp: true,
+            mcp_status: Some(401),
+            ..Config::default()
+        },
+        None,
+    )
+    .await;
+    h.store
+        .update(
+            &id,
+            &hennery_gateway::model::ConnectionPatch {
+                cred_kind: Some(CredKind::Static),
+                ..Default::default()
+            },
+            unix_now(),
+        )
+        .unwrap();
+    let (access, _) = fake.issue();
+    h.set_token(&id, &access);
+    h.proxy_store
+        .record_status(&id, &fake.mcp_url(), Status::Ok, None, 1)
+        .unwrap();
+    count_status_changes(&h);
+    let message = list(1);
+    let mut request = Box::pin(h.post("linear", &token, &message));
+    tokio::select! {
+        _ = &mut request => panic!("request answered before the MCP gate"),
+        () = until(|| fake.paths().iter().any(|p| p == "/mcp")) => {}
+    }
+    let (next, _) = fake.issue();
+    h.set_token(&id, &next);
+    fake.open_gate();
+    let response = request.await;
+    assert_eq!(response.status(), 502);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["code"],
+        "upstream_auth"
+    );
+    assert_eq!(h.status(&id), "ok");
+    assert_eq!(status_changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
+}
+
+#[tokio::test]
+async fn a_needs_auth_write_for_an_old_token_cannot_mark_a_reconnected_grant() {
+    let (h, fake, id, _) = setup(Config::default(), Some(unix_now() - 1)).await;
+    let read = grant(&h, &id);
+    let (access, refresh) = fake.issue();
+    seed_grant(&h, &id, &fake, &access, Some(&refresh), None);
+    count_status_changes(&h);
+    h.runtime.announce(
+        h.proxy_store
+            .mark_needs_auth(&id, &read.url, "the old access expired", unix_now()),
+    );
+    assert_eq!(h.status(&id), "ok");
+    assert_eq!(status_changes(&h), 0);
+    assert!(h.alerts.alerts().is_empty());
 }

@@ -204,3 +204,228 @@ async fn locked(runtime: &Runtime, id: &str, failed: Option<&str>) -> Refreshed 
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refusal_classifier_retires_only_invalid_grant() {
+        for (status, error, expected) in [
+            (302, None, Failure::Unavailable),
+            (302, Some("invalid_grant"), Failure::Unavailable),
+            (400, None, Failure::Unavailable),
+            (400, Some("invalid_request"), Failure::Unavailable),
+            (400, Some("temporarily_unavailable"), Failure::Unavailable),
+            (401, None, Failure::Unavailable),
+            (401, Some("invalid_grant"), Failure::Unavailable),
+            (403, None, Failure::Unavailable),
+            (403, Some("invalid_grant"), Failure::Unavailable),
+            (404, None, Failure::Unavailable),
+            (404, Some("invalid_grant"), Failure::Unavailable),
+            (408, None, Failure::Unavailable),
+            (400, Some("invalid_client"), Failure::Unavailable),
+            (400, Some("unauthorized_client"), Failure::Unavailable),
+            (400, Some("invalid_grant"), Failure::Refused),
+        ] {
+            assert_eq!(
+                classify(&TokenError::Refused { error, status }),
+                expected,
+                "HTTP {status}: {error:?}"
+            );
+        }
+        assert_eq!(classify(&TokenError::InvalidTarget), Failure::Unavailable);
+    }
+
+    #[test]
+    fn unavailable_classifier_backs_off_every_transient_error() {
+        for error in [
+            TokenError::Unavailable,
+            TokenError::Invalid,
+            TokenError::EgressRefused("refused".into()),
+        ] {
+            assert_eq!(classify(&error), Failure::Unavailable);
+        }
+    }
+
+    #[test]
+    fn backoff_starts_at_thirty_seconds_and_saturates_at_five_minutes() {
+        for (failure, seconds) in [
+            (1, 30),
+            (2, 60),
+            (3, 120),
+            (4, 240),
+            (5, 300),
+            (32, 300),
+            (u32::MAX, 300),
+        ] {
+            assert_eq!(backoff_delay(failure), Duration::from_secs(seconds));
+        }
+    }
+    #[test]
+    fn committed_credential_changes_erase_cached_refresh_outcomes() {
+        use crate::model::{AuthMethod, Change, CredKind, GrantTokens, NewConnection, TokenClient};
+        use crate::notify::Silent;
+        use crate::scope::ProxyStore;
+        use crate::store::{ClientSource, GatewayStore, GrantToStore, RefreshedGrant};
+        use hennery_kernel::egress::{Egress, Timeouts};
+        use hennery_kernel::hosts::Hosts;
+        for action in ["delete", "purge", "static", "connect", "refresh", "kind"] {
+            let dir = tempfile::tempdir().unwrap();
+            let db = dir.path().join("hennery.db");
+            let hosts = Hosts::open(&db).unwrap();
+            let store = Arc::new(GatewayStore::open(&db).unwrap());
+            let key = Arc::new(crate::key::MasterKey::from_bytes([7; 32]));
+            let runtime = Runtime::new(
+                store.clone(),
+                Arc::new(ProxyStore::open(&db).unwrap()),
+                key.clone(),
+                Egress::new(Timeouts {
+                    connect: Duration::from_secs(2),
+                    request: Duration::from_secs(10),
+                })
+                .unwrap(),
+                Arc::new(Silent),
+            );
+            let hat = hosts.default_hat_for_new_hosts().unwrap();
+            let kind = if action == "static" {
+                CredKind::Static
+            } else {
+                CredKind::OauthDcr
+            };
+            let url = "https://mcp.vendor.example/mcp";
+            let Change::Done(record) = store
+                .create(
+                    &NewConnection {
+                        slug: "cached".into(),
+                        label: "Cached".into(),
+                        url: url.into(),
+                        hat_id: hat.clone(),
+                        cred_kind: kind,
+                        static_header: None,
+                        static_prefix: None,
+                        tool_allowlist: None,
+                        internal_network: false,
+                    },
+                    1,
+                )
+                .unwrap()
+            else {
+                panic!("connection not created")
+            };
+            let id = record.id;
+            let client = TokenClient {
+                client_id: "seeded".into(),
+                secret: None,
+                auth_method: AuthMethod::None,
+                token_endpoint: "https://auth.vendor.example/token".into(),
+            };
+            let tokens = GrantTokens {
+                access_token: Zeroizing::new("access".into()),
+                refresh_token: Some(Zeroizing::new("refresh".into())),
+                refresh_dead: false,
+            };
+            let grant = GrantToStore {
+                connection_id: &id,
+                url,
+                cred_kind: kind,
+                internal_network: false,
+                source: ClientSource::Registered,
+                client: &client,
+                issuer: "https://auth.vendor.example",
+                authorization_endpoint: "https://auth.vendor.example/authorize",
+                redirect_uri: "https://hennery.example/api/mcp/oauth/callback",
+                scopes: &[],
+                resource: url,
+                resource_param_accepted: true,
+                registered_at: 1,
+                tokens: &tokens,
+                expires_at: None,
+            };
+            if action == "static" {
+                store.set_static_credential(&id, "initial", &key, 1).unwrap();
+            } else {
+                assert!(matches!(
+                    store.store_grant(&grant, &key, 1).unwrap(),
+                    crate::store::GrantStored::Stored(_)
+                ));
+            }
+            let state = runtime.attempts.slot(&id);
+            *state.last.lock().unwrap() = Some(Attempt {
+                sealed: vec![],
+                outcome: Refreshed::Retry(Fresh {
+                    access_token: Zeroizing::new("cached-plaintext-canary".into()),
+                    url: url.into(),
+                    internal_network: false,
+                }),
+                permanent: false,
+                failures: 0,
+                retry_after: None,
+            });
+            let other = runtime.attempts.slot("other-connection");
+            match action {
+                "delete" => {
+                    assert!(store.delete(&id).unwrap());
+                }
+                "purge" => {
+                    store.purge_hat(&hat).unwrap();
+                }
+                "static" => {
+                    store.set_static_credential(&id, "replacement", &key, 2).unwrap();
+                }
+                "connect" => {
+                    assert!(matches!(
+                        store.store_grant(&grant, &key, 2).unwrap(),
+                        crate::store::GrantStored::Stored(_)
+                    ));
+                }
+                "refresh" => {
+                    let read = store.oauth_credential(&id, &key).unwrap().unwrap();
+                    assert!(
+                        store
+                            .store_refreshed(
+                                &id,
+                                &read,
+                                &RefreshedGrant {
+                                    tokens: &tokens,
+                                    expires_at: None,
+                                    resource_param_accepted: true
+                                },
+                                &key,
+                                2
+                            )
+                            .unwrap()
+                    );
+                }
+                "kind" => {
+                    assert!(matches!(
+                        store
+                            .update(
+                                &id,
+                                &crate::model::ConnectionPatch {
+                                    cred_kind: Some(CredKind::None),
+                                    ..Default::default()
+                                },
+                                2
+                            )
+                            .unwrap(),
+                        Change::Done(_)
+                    ));
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                !runtime.attempts.slots.lock().unwrap().contains_key(&id),
+                "{action}: slot stays cached"
+            );
+            assert!(
+                state.last.lock().unwrap().is_none(),
+                "{action}: retained state still holds plaintext"
+            );
+            assert!(
+                Arc::ptr_eq(&runtime.attempts.slot("other-connection"), &other),
+                "unrelated slot remains"
+            );
+        }
+    }
+}
