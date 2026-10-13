@@ -1,7 +1,8 @@
 import { ApiFailure, messageOf } from '../api/errors'
 import type { McpStdioServerItem, McpStdioServersRequest } from '../generated/protocol'
 
-export interface StdioEnvDraft { id: number; name: string; keep: boolean }
+// Only whether a value was supplied is state; the value lives in the DOM.
+export interface StdioEnvDraft { id: number; name: string; keep: boolean; entered?: boolean; empty?: boolean }
 export interface StdioDraft { id: number; name: string; command: string; args: string[]; env: StdioEnvDraft[] }
 
 /** Keep is scoped to the server's original identity and command. */
