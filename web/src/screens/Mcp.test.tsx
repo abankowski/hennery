@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { connection, hat, host } from '../test-fixtures'
 import { FULL, json, stubServer, type Answer } from '../test-server'
@@ -18,7 +18,7 @@ const HATS = [
 const PATH = '/api/mcp/connections'
 const ITEM = `${PATH}/conn-0000000000000001`
 
-afterEach(() => history.replaceState(null, '', '/'))
+afterEach(() => { history.replaceState(null, '', '/'); vi.restoreAllMocks(); vi.useRealTimers() })
 
 function open(routes: Record<string, Answer | Answer[]>, capabilities: unknown = WITH_MCP) {
   history.replaceState(null, '', '/mcp')
@@ -44,6 +44,78 @@ const sent = (server: ReturnType<typeof stubServer>, method: string, path: strin
   server.sent.filter((s) => s.method === method && s.path === path)
 
 const card = (name: string) => screen.findByRole('listitem', { name })
+
+const OAUTH_CAPS = { mode: 'full', features: ['mcp_connections', 'mcp_oauth'] }
+const OAUTH_REDIRECT = json(200, { redirect_uri: 'https://hennery.example/api/mcp/oauth/callback' })
+it('confirms losing client settings even without a grant', async () => {
+  const c = connection({ cred_kind: 'oauth_client', has_credential: false, oauth: { redirect_uri: '', has_client_secret: true, client_id: 'active' } })
+  const s = open({ 'GET /api/mcp/connections': json(200, [c]), 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT }, OAUTH_CAPS)
+  const docs = await card('Docs')
+  await userEvent.click(within(docs).getByRole('button', { name: 'Edit' }))
+  const url = within(docs).getByRole('textbox', { name: 'Server URL' })
+  await userEvent.clear(url); await userEvent.type(url, 'https://other.example/mcp')
+  await userEvent.click(within(docs).getByRole('button', { name: 'Save' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Delete the stored token?' })
+  expect(dialog).toHaveTextContent('This also deletes the OAuth grant and vendor client settings. Connect and enter client settings again afterwards.')
+  expect(sent(s, 'PATCH', ITEM)).toHaveLength(0)
+})
+it('saving the same client resets waiting and folds the returned report without duplicating list reads', async () => {
+  const c = connection({ cred_kind: 'oauth_client', has_credential: true, status: 'ok', oauth: { redirect_uri: '', has_client_secret: false, client_id: 'public' } })
+  const popup = { opener: null, closed: false, location: { href: '' }, close: vi.fn() }; vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+  const fresh = { ...c, label: 'Changed' }
+  let reported = c
+  const s = open({ 'GET /api/mcp/connections': () => json(200, [reported]), 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT,
+    ['POST ' + ITEM + '/authorize']: json(200, { consent_url: 'https://vendor.example/authorize', expires_at: '2099-01-01T00:00:00Z' }),
+    ['PUT ' + ITEM + '/oauth-client']: () => { reported = fresh; return json(200, fresh) },
+  }, OAUTH_CAPS)
+  const docs = await card('Docs'); expect(sent(s, 'GET', PATH)).toHaveLength(1)
+  fireEvent.click(within(docs).getByRole('button', { name: 'Reconnect' }))
+  expect(await within(docs).findByText('Waiting for sign-in. Return here after consent.', { exact: true })).toBeVisible()
+  fireEvent.click(within(docs).getByRole('button', { name: 'Save client' }))
+  expect(await card('Changed')).toBeVisible()
+  expect(screen.queryByText('Waiting for sign-in. Return here after consent.', { exact: true })).toBeNull()
+  expect(popup.close).toHaveBeenCalled()
+})
+it('only both capabilities enable the shared reader away from MCP', async () => {
+  const s = open({ 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT }, OAUTH_CAPS)
+  await card('Docs'); expect(sent(s, 'GET', '/api/mcp/oauth/redirect-uri')).toHaveLength(1)
+  expect(sent(s, 'GET', PATH)).toHaveLength(1)
+})
+it('legacy deployments omit OAuth choices, report and redirect reads', async () => {
+  const s = open({}); const docs = await card('Docs')
+  expect(within(docs).queryByRole('region', { name: 'Gateway report' })).toBeNull()
+  await userEvent.click(screen.getByRole('button', { name: 'Add connection' }))
+  expect(screen.queryByRole('option', { name: 'OAuth: automatic registration' })).toBeNull()
+  expect(screen.queryByRole('option', { name: 'OAuth: pre-registered client' })).toBeNull()
+  expect(sent(s, 'GET', '/api/mcp/oauth/redirect-uri')).toHaveLength(0)
+})
+it('Connect pauses the shared screen reader until Stop waiting, then resumes its minute cadence', async () => {
+  vi.useFakeTimers(); vi.spyOn(window, 'open').mockReturnValue(null)
+  const c = connection({ cred_kind: 'oauth_dcr', oauth: { redirect_uri: '', has_client_secret: false } })
+  const s = open({ 'GET /api/mcp/connections': json(200, [c]), 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT,
+    ['POST ' + ITEM + '/authorize']: json(200, { consent_url: 'https://vendor.example/authorize', expires_at: '2099-01-01T00:00:00Z' }),
+  }, OAUTH_CAPS)
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  const docs = screen.getByRole('listitem', { name: 'Docs' })
+  await act(async () => fireEvent.click(within(docs).getByRole('button', { name: 'Connect' })))
+  await act(async () => { await vi.advanceTimersByTimeAsync(61000) })
+  expect(sent(s, 'GET', PATH)).toHaveLength(1)
+  fireEvent.click(within(docs).getByRole('button', { name: 'Stop waiting' }))
+  await act(async () => { await vi.advanceTimersByTimeAsync(60000) })
+  expect(sent(s, 'GET', PATH)).toHaveLength(2)
+})
+
+it('hedges an OAuth needs_auth chip', async () => {
+  open({ 'GET /api/mcp/connections': json(200, [connection({ cred_kind: 'oauth_dcr', status: 'needs_auth', oauth: { redirect_uri: 'https://hennery.example/callback', has_client_secret: false } })]), 'GET /api/mcp/oauth/redirect-uri': json(200, { redirect_uri: 'https://hennery.example/callback' }) }, { mode: 'full', features: ['mcp_connections', 'mcp_oauth'] })
+  const c = await card('Docs'); expect(within(c).getByText('May need sign-in', { exact: true })).toBeVisible()
+})
+it('names the OAuth grant and client settings in deletion', async () => {
+  open({ 'GET /api/mcp/connections': json(200, [connection({ cred_kind: 'oauth_dcr', oauth: { redirect_uri: 'https://hennery.example/callback', has_client_secret: false } })]), 'GET /api/mcp/oauth/redirect-uri': json(200, { redirect_uri: 'https://hennery.example/callback' }) }, { mode: 'full', features: ['mcp_connections', 'mcp_oauth'] })
+  const c = await card('Docs')
+  await userEvent.click(within(c).getByRole('button', { name: 'Delete' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Delete this connection?' })
+  expect(dialog.textContent).toContain('OAuth grant'); expect(dialog.textContent).toContain('client settings')
+})
 
 describe('the MCP screen behind its feature', () => {
   it('serves local sets only with their separate stdio feature', async () => {

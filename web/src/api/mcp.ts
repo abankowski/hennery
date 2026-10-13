@@ -7,13 +7,17 @@ import type {
   UpdateMcpConnectionRequest,
   McpStdioServerSet,
   McpStdioServersRequest,
+  McpOauthRedirect,
+  McpOauthClientRequest,
+  McpAuthorizeRequest,
+  McpAuthorizeResponse,
 } from '../generated/protocol'
 import type { Client } from './client'
 
 const id = (value: string) => encodeURIComponent(value)
 
-export function connections(client: Client): Promise<McpConnectionItem[]> {
-  return client.request('GET', '/api/mcp/connections')
+export function connections(client: Client, signal?: AbortSignal): Promise<McpConnectionItem[]> {
+  return client.request('GET', '/api/mcp/connections', undefined, { signal })
 }
 
 /** Step-up. */
@@ -56,4 +60,28 @@ export function stdioServers(client: Client, host: string, hat: string): Promise
 /** Step-up; the entire set replaces the stored one. */
 export function replaceStdioServers(client: Client, host: string, hat: string, body: McpStdioServersRequest): Promise<McpStdioServerSet> {
   return client.request('PUT', stdioPath(host, hat), body)
+}
+
+export function oauthRedirect(client: Client): Promise<McpOauthRedirect> {
+  return client.request('GET', '/api/mcp/oauth/redirect-uri')
+}
+
+export function setOauthClient(client: Client, connectionId: string, body: McpOauthClientRequest): Promise<McpConnectionItem> {
+  return client.request('PUT', `/api/mcp/connections/${id(connectionId)}/oauth-client`, body)
+}
+
+/** Authorize needs another click after confirmation, never an automatic retry. */
+export async function authorize(client: Client, connectionId: string, body: McpAuthorizeRequest = {}, signal?: AbortSignal): Promise<McpAuthorizeResponse & { serverTime?: number }> {
+  let serverTime: number | undefined
+  const result = await client.request<McpAuthorizeResponse>('POST', `/api/mcp/connections/${id(connectionId)}/authorize`, body, {
+    stepUp: false, signal, onResponse: response => {
+      const date = Date.parse(response.headers.get('date') ?? '')
+      if (Number.isFinite(date)) serverTime = date
+    },
+  })
+  return { ...result, serverTime }
+}
+
+export function probe(client: Client, connectionId: string): Promise<McpConnectionItem> {
+  return client.request('POST', `/api/mcp/connections/${id(connectionId)}/probe`, {})
 }

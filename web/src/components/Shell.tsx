@@ -20,6 +20,7 @@ import SessionView from '../screens/Session'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import SessionList from './SessionList'
 import SessionScope, { WaitingBadge, useSessionScope } from './SessionScope'
+import McpScope, { McpBadge } from './McpScope'
 
 /** The rail's width and up (frontend spec §2). */
 export const DESKTOP = '(min-width: 768px)'
@@ -123,7 +124,7 @@ export default function Shell({ route }: { route: Route }) {
                   className={'nav-item' + (v === current ? ' on' : '')}
                   aria-current={v === current ? 'page' : undefined}
                 >
-                  <Glyph size={17} /> {LABEL[v]}
+                  <Glyph size={17} /> {LABEL[v]}{v === 'mcp' && <McpBadge />}
                 </Link>
               )
             })}
@@ -140,6 +141,7 @@ export default function Shell({ route }: { route: Route }) {
             <div className="mtb-title">{title}</div>
           </div>
           <WaitingBadge />
+          <McpBadge link />
         </header>
         <main className="main">
           {route.name === 'not_found' ? (
@@ -158,7 +160,7 @@ export default function Shell({ route }: { route: Route }) {
             // The gateway's screen exists only where its API is served
             // (4b: a screen behind a feature checks `features`).
             caps.features.includes('mcp_connections') ? (
-              <Mcp stdio={caps.features.includes('mcp_stdio')} />
+              <Mcp stdio={caps.features.includes('mcp_stdio')} oauth={caps.features.includes('mcp_oauth')} />
             ) : (
               <Placeholder title={title} text="The MCP gateway is not part of this deployment." />
             )
@@ -183,7 +185,7 @@ export default function Shell({ route }: { route: Route }) {
                 aria-current={v === current ? 'page' : undefined}
               >
                 <Glyph size={20} />
-                <span>{v === 'new' ? 'New' : LABEL[v]}</span>
+                <span>{v === 'new' ? 'New' : LABEL[v]}</span>{v === 'mcp' && <McpBadge />}
               </Link>
             )
           })}
@@ -191,11 +193,12 @@ export default function Shell({ route }: { route: Route }) {
       </div>
     </div>
   )
-  return views.includes('sessions') ? (
+  const scoped = views.includes('sessions') ? (
     <SessionScope route={route} desktop={desktop}>
       {frame}
     </SessionScope>
   ) : (
     frame
   )
+  return caps.features.includes('mcp_connections') && caps.features.includes('mcp_oauth') ? <McpScope active={route.name === 'mcp'}>{scoped}</McpScope> : scoped
 }

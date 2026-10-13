@@ -32,6 +32,8 @@ export interface RequestOptions {
   /** `false` on the step-up routes themselves: a 403 there is an error. */
   stepUp?: boolean
   signal?: AbortSignal
+  /** Same-origin response metadata, separate from the JSON wire body. */
+  onResponse?: (response: Response) => void
 }
 
 /** Screens whose own 401s are answers, not a reason to go and sign in. */
@@ -45,6 +47,11 @@ export class Client {
     this.deps = deps
   }
 
+  /** A fresh confirmation without resending a request (OAuth needs a new click). */
+  async confirm(): Promise<void> {
+    await this.stepUpOnce()
+  }
+
   /** `method path` with a JSON body, answered as JSON (`undefined` for an
    *  empty answer). */
   async request<T>(method: string, path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
@@ -53,6 +60,7 @@ export class Client {
       await this.stepUpOnce()
       response = await this.send(method, path, body, options.signal)
     }
+    options.onResponse?.(response)
     return this.answer<T>(response)
   }
 

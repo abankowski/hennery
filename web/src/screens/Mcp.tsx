@@ -6,13 +6,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { messageOf } from '../api/errors'
 import { hats as listHats, hosts as listHosts } from '../api/manage'
-import { connections as listConnections, createConnection, deleteConnection, updateConnection } from '../api/mcp'
+import { connections as listConnections, createConnection, deleteConnection, updateConnection, oauthRedirect } from '../api/mcp'
 import { useClient } from '../app-client'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ConnectionForm from '../components/ConnectionForm'
 import Mounts from '../components/Mounts'
 import TokenForm from '../components/TokenForm'
 import StdioServers from '../components/StdioServers'
+import OauthClientForm from '../components/OauthClientForm'
+import OauthConnect from '../components/OauthConnect'
+import McpStatus from '../components/McpStatus'
+import { useMcpScope } from '../components/McpScope'
 import type { HatItem, HostItem, McpConnectionItem, UpdateMcpConnectionRequest } from '../generated/protocol'
 import { useResource } from '../hooks/useResource'
 import {
@@ -43,11 +47,14 @@ function firstHat(hats: HatItem[]): string {
   return (open.find((h) => h.default_for_new_hosts) ?? open[0])?.id ?? ''
 }
 
-export default function Mcp({ stdio = false }: { stdio?: boolean }) {
+export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean; oauth?: boolean }) {
   const client = useClient()
-  const list = useResource(() => listConnections(client))
+  const scope = useMcpScope()
+  const local = useResource(() => scope ? Promise.resolve([]) : listConnections(client), [!!scope])
+  const list = scope ?? local
   const hats = useResource(() => listHats(client))
   const hosts = useResource(() => listHosts(client))
+  const redirect = useResource(() => oauth ? oauthRedirect(client) : Promise.resolve(null), [oauth])
   const [adding, setAdding] = useState(false)
   const [addBusy, setAddBusy] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
@@ -75,6 +82,7 @@ export default function Mcp({ stdio = false }: { stdio?: boolean }) {
   // stay.
   const replace = (item: McpConnectionItem) =>
     list.set((prev) => (prev ?? []).map((c) => (c.id === item.id ? item : c)))
+  const refresh = scope?.refresh ?? (async () => { const rows = await listConnections(client); local.set(rows); return rows })
 
   const create = async (form: Form, slug: string, hatId: string) => {
     if (creating.current) return
@@ -120,7 +128,7 @@ export default function Mcp({ stdio = false }: { stdio?: boolean }) {
     }
     // The server deletes the token with another kind or origin: say so
     // first, when there is one to lose.
-    if (connection.has_credential && dropsToken(connection, change)) setPending({ kind: 'drop_token', connection, change })
+    if ((connection.has_credential || connection.oauth?.client_id) && dropsToken(connection, change)) setPending({ kind: 'drop_token', connection, change })
     else void update(connection, change)
   }
 
@@ -159,7 +167,7 @@ export default function Mcp({ stdio = false }: { stdio?: boolean }) {
         {hosts.data?.some(h => !h.mcp_delivery) && <p>Codex may also load your own ~/.codex MCP servers.</p>}
       </section>
       <StdioServers enabled={stdio} hosts={hosts.data} hats={hats.data} />
-      {[list.error, hats.error, hosts.error].map(
+      {[list.error, hats.error, hosts.error, redirect.error].map(
         (shown, i) =>
           shown && (
             <p key={i} className="form-error" role="alert">
@@ -171,6 +179,7 @@ export default function Mcp({ stdio = false }: { stdio?: boolean }) {
         <section className="card" aria-label="Add a connection">
           <h2 className="card-title">Add a connection</h2>
           <ConnectionForm
+            oauth={oauth} redirectUri={redirect.data?.redirect_uri}
             initial={NEW_FORM}
             create={{ hats: hats.data.filter((h) => !h.purging), hatId: firstHat(hats.data) }}
             submit="Create"
@@ -188,6 +197,9 @@ export default function Mcp({ stdio = false }: { stdio?: boolean }) {
       <ul className="cards" aria-label="Connections">
         {(list.data ?? []).map((connection) => (
           <ConnectionCard
+            oauth={oauth}
+            refresh={refresh}
+            waiting={scope?.waiting}
             key={connection.id}
             connection={connection}
             hatName={hatName(connection.hat_id)}
@@ -226,7 +238,7 @@ export default function Mcp({ stdio = false }: { stdio?: boolean }) {
           returnFocus={() => document.getElementById('mcp-heading')}
         >
           <p>
-            <Text>{pending.connection.label}</Text> goes, with its token and its mounts. Sessions using{' '}
+            <Text>{pending.connection.label}</Text> goes, with {pending.connection.oauth ? 'its OAuth grant, client settings and mounts' : 'its token and its mounts'}. Sessions using{' '}
             <code>
               <Text>{serverName(pending.connection.slug)}</Text>
             </code>{' '}
@@ -246,6 +258,7 @@ export default function Mcp({ stdio = false }: { stdio?: boolean }) {
           onClose={() => setPending(null)}
           returnFocus={() => document.getElementById(`${titleId(pending.connection.id)}-edit`)}
         >
+          {pending.connection.oauth && <p>This also deletes the OAuth grant and vendor client settings. Connect and enter client settings again afterwards.</p>}
           <p>
             Another server address or another kind of sign-in deletes the token stored for{' '}
             <Text>{pending.connection.label}</Text>. Set one again afterwards.
@@ -257,6 +270,9 @@ export default function Mcp({ stdio = false }: { stdio?: boolean }) {
 }
 
 interface CardProps {
+  oauth: boolean
+  refresh: () => Promise<McpConnectionItem[]>
+  waiting?: (id: string, active: boolean) => void
   connection: McpConnectionItem
   hatName?: string
   hosts: HostItem[] | null
@@ -274,6 +290,7 @@ interface CardProps {
 }
 
 function ConnectionCard(props: CardProps) {
+  const [clientRevision, setClientRevision] = useState(0)
   const { connection: c, hatName, hosts, editing } = props
   const id = titleId(c.id)
   const tools =
@@ -284,7 +301,7 @@ function ConnectionCard(props: CardProps) {
         <h2 className="card-title" id={id} tabIndex={-1}>
           <Text>{c.label}</Text>
         </h2>
-        <span className={`state mcp-${c.status}`}>{statusLabel(c.status)}</span>
+        <span className={`state mcp-${c.status}`}>{props.oauth && c.oauth && c.status === 'needs_auth' ? 'May need sign-in' : props.oauth && c.status === 'not_connected' && c.oauth ? 'Not connected' : statusLabel(c.status)}</span>
       </div>
       {c.status_note && (
         <p className="hint">
@@ -351,6 +368,7 @@ function ConnectionCard(props: CardProps) {
       </dl>
       {editing ? (
         <ConnectionForm
+          oauth={props.oauth} redirectUri={c.oauth?.redirect_uri}
           initial={formOf(editing)}
           submit="Save"
           busy={props.editBusy}
@@ -376,6 +394,9 @@ function ConnectionCard(props: CardProps) {
         </div>
       )}
       {c.cred_kind === 'static' && <TokenForm connection={c} hatName={hatName} onSaved={props.onTokenSaved} />}
+      {props.oauth && c.cred_kind === 'oauth_client' && <OauthClientForm connection={c} onChanged={item => { setClientRevision(n => n + 1); props.onChanged(item) }} />}
+      {props.oauth && (c.cred_kind === 'oauth_client' || c.cred_kind === 'oauth_dcr') && <OauthConnect key={clientRevision} connection={c} refresh={props.refresh} waiting={props.waiting} />}
+      {props.oauth && <McpStatus connection={c} onChanged={props.onChanged} />}
       <Mounts connection={c} hosts={hosts} onChanged={props.onChanged} />
     </li>
   )
