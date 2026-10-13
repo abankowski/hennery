@@ -46,6 +46,13 @@ const sent = (server: ReturnType<typeof stubServer>, method: string, path: strin
 const card = (name: string) => screen.findByRole('listitem', { name })
 
 describe('the MCP screen behind its feature', () => {
+  it('serves local sets only with their separate stdio feature', async () => {
+    const path = '/api/mcp/stdio-servers?host_id=host-1&hat_id=hat-a'
+    const server = open({ [`GET ${path}`]: json(200, { host_id: 'host-1', hat_id: 'hat-a', servers: [] }) }, { mode: 'full', features: ['mcp_connections', 'mcp_stdio'] })
+    expect(await screen.findByRole('button', { name: 'Add local server' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Local MCP servers' })).toBeInTheDocument()
+    expect(sent(server, 'GET', path)).toHaveLength(1)
+  })
   it('is not shown, and nothing is read, when the collector does not serve connections', async () => {
     const server = open({}, FULL)
     expect(await screen.findByText('The MCP gateway is not part of this deployment.')).toBeInTheDocument()
@@ -56,6 +63,7 @@ describe('the MCP screen behind its feature', () => {
     open({}, { mode: 'full', features: ['from_the_future', 'mcp_connections'] })
     expect(await screen.findByRole('heading', { name: 'MCP', level: 1 })).toBeInTheDocument()
     expect(await card('Docs')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Local MCP servers' })).toBeNull()
   })
 })
 

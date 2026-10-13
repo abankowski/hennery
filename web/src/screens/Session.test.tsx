@@ -261,6 +261,12 @@ describe('SessionView', () => {
     await waitFor(() => expect(screen.getByRole('region', { name: 'MCP delivery' })).toHaveTextContent('2 MCP servers.'))
     expect(s.of(DETAIL)).toHaveLength(2)
   })
+  it('shows a delivery-read error as escaped and visibly isolated text', async () => {
+    const s = server({ pages: [() => json(page([]))], detail: () => json({ code: 'failed', message: '<i>cannot\u202Eread' }, 500) })
+    render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
+    const error = await screen.findByText('<i>cannot<U+202E>read')
+    expect(error.tagName).toBe('BDI'); expect(error.querySelector('i')).toBeNull()
+  })
 
   it('reads the header from the session’s detail when no summary is given', async () => {
     const s = server({

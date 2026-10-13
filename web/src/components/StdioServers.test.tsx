@@ -42,6 +42,7 @@ describe('local MCP full-set editor', () => {
     expect(screen.queryByRole('option', { name: 'Purged' })).toBeNull()
     await confirm()
     expect(saves(s)).toHaveLength(1)
+    expect(saves(s)[0].path).toBe(PATH)
     expect(saves(s)[0].body).toEqual({ servers: [{ name: 'local', command: 'tool', args: stored.args, env: [{ name: 'TOKEN' }] }] })
   })
   it('keeps a stored value across an args-only change', async () => {
@@ -125,7 +126,7 @@ describe('local MCP full-set editor', () => {
     fireEvent.change(selector, { target: { value: 'host-2' } })
     expect(selector).toHaveValue('host-1')
     const button = within(screen.getByRole('dialog')).getByRole('button', { name: 'Save local servers' })
-    act(() => { button.click(); button.click() })
+    act(() => { button.click(); button.click(); fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' }) })
     await waitFor(() => expect(saves(s)).toHaveLength(1))
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(screen.getByRole('dialog')).toBeInTheDocument()
@@ -184,7 +185,7 @@ describe('local MCP full-set editor', () => {
     await confirm(); expect(saves(s)[1].body).toEqual({ servers: [] })
   })
   it('does not retain another original server’s values after renaming', async () => {
-    open({ [`GET ${PATH}`]: json(200, set([stored, { ...stored, name: 'other' }])) }); await ready().catch(() => {})
+    open({ [`GET ${PATH}`]: json(200, set([stored, { ...stored, name: 'other' }])) })
     await waitFor(() => expect(screen.getAllByRole('textbox', { name: 'Server name' })).toHaveLength(2))
     fireEvent.change(screen.getAllByRole('textbox', { name: 'Server name' })[0], { target: { value: 'other' } })
     expect(screen.getAllByRole('checkbox', { name: 'Keep stored value for TOKEN' })).toHaveLength(1)
@@ -208,5 +209,57 @@ describe('local MCP full-set editor', () => {
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save local servers' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(saves(s)[0].body).toEqual({ servers: [{ name: 'local', command: 'tool', args: stored.args, env: [{ name: 'TOKEN', value: 'secret' }] }] })
+  })
+  it('clears a supplied value when empty is selected, and resets all supplied values on identity change', async () => {
+    const s = open(); await ready(); await replaceValue('secret')
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Use empty value for TOKEN' }))
+    expect(field('Value for TOKEN')).toHaveValue('')
+    await confirm(); expect(saves(s)[0].body).toMatchObject({ servers: [{ env: [{ name: 'TOKEN', value: '' }] }] })
+    await replaceValue('another')
+    fireEvent.change(field('Command'), { target: { value: 'other' } })
+    expect(field('Value for TOKEN')).toHaveValue('')
+    await userEvent.click(screen.getByRole('button', { name: 'Review local servers' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter a value')
+  })
+  it('does not copy records into a disposed editor after a slow write or read', async () => {
+    let finish!: (r: Response) => void
+    const s = open({ [`PUT ${PATH}`]: () => new Promise(resolve => { finish = resolve }) }); await ready()
+    await userEvent.click(screen.getByRole('button', { name: 'Review local servers' }))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save local servers' }))
+    s.unmount()
+    const spy = vi.spyOn(Map.prototype, 'set')
+    try {
+      await act(async () => finish(json(200, set([{ ...stored, name: 'disposed-write' }]))))
+      expect(spy.mock.calls.some(([, value]) => value?.name === 'disposed-write')).toBe(false)
+      const read = open({ [`GET ${PATH}`]: () => new Promise(resolve => { finish = resolve }) })
+      await waitFor(() => expect(read.sent).toHaveLength(1)); read.unmount()
+      await act(async () => finish(json(200, set([{ ...stored, name: 'disposed-read' }]))))
+      expect(spy.mock.calls.some(([, value]) => value?.name === 'disposed-read')).toBe(false)
+    } finally { spy.mockRestore() }
+  })
+  it('drops the old form immediately while another place’s read is pending', async () => {
+    let finish!: (r: Response) => void
+    const other = '/api/mcp/stdio-servers?host_id=host-1&hat_id=hat-b'
+    open({ [`GET ${other}`]: () => new Promise(resolve => { finish = resolve }) })
+    await ready(); await replaceValue('only-this-place')
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Hat' }), 'hat-b')
+    expect(screen.queryByRole('textbox', { name: 'Server name' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: 'Value for TOKEN' })).toBeNull()
+    await act(async () => finish(json(200, { ...set([]), hat_id: 'hat-b' })))
+    expect(await screen.findByRole('button', { name: 'Add local server' })).toBeInTheDocument()
+  })
+  it('releases old server records and detached value fields across repeated full-set saves', async () => {
+    open(); await ready()
+    const spy = vi.spyOn(Map.prototype, 'set')
+    try {
+      for (let i = 0; i < 3; i++) { await replaceValue(`value-${i}`); await confirm() }
+      for (let i = 0; i < spy.mock.calls.length; i++) {
+        const [key, value] = spy.mock.calls[i]
+        if ((typeof key === 'string' && value instanceof HTMLTextAreaElement) || (typeof key === 'number' && value?.command === 'tool' && value?.name === 'local')) {
+          expect((spy.mock.contexts[i] as Map<unknown, unknown>).size).toBeLessThanOrEqual(1)
+        }
+      }
+    } finally { spy.mockRestore() }
   })
 })

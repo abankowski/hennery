@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { useMcpDelivery } from './useMcpDelivery'
 import { json, routed } from '../test-stream'
 import { sessionDetail } from '../api/view'
+import { ClientContext } from '../app-client'
+import type { ReactNode } from 'react'
 
 const report = (count = 1) => json({ session_id: 's1', agent: 'codex',
   mcp_delivery: { mode: 'unisolated', servers: count, at: '2026-10-13T00:00:00Z' } })
@@ -91,5 +93,18 @@ describe('bounded session delivery reads', () => {
     expect(t.calls).toHaveLength(2)
     await act(async () => release(report(3)))
     await next
+  })
+  it('clears the previous detail while a new client for the same session is loading', async () => {
+    const first = routed(() => report(1))
+    let finish!: (r: Response) => void
+    const second = routed(() => new Promise<Response>(resolve => { finish = resolve }))
+    let client = first.client
+    const wrapper = ({ children }: { children: ReactNode }) => <ClientContext.Provider value={client}>{children}</ClientContext.Provider>
+    const { result, rerender } = renderHook(() => useMcpDelivery('s1', 'active', 0), { wrapper })
+    await waitFor(() => expect(result.current.detail?.mcp_delivery?.servers).toBe(1))
+    client = second.client; rerender()
+    expect(result.current.detail).toBeNull()
+    await act(async () => finish(report(2)))
+    await waitFor(() => expect(result.current.detail?.mcp_delivery?.servers).toBe(2))
   })
 })

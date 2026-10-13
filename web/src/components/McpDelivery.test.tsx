@@ -12,6 +12,8 @@ describe('last-start/resume delivery', () => {
     expect(region).toHaveTextContent('At the last start/resume: ' + deliveryWords(mode))
     expect(region).toHaveTextContent(String(delivery.servers) + ' MCP servers.')
     expect(region).toHaveTextContent(CODEX_MCP_NOTE)
+    expect(region).toHaveTextContent('This session’s MCP servers are not isolated per hat.')
+    expect(region).toHaveTextContent('Codex also loads your own ~/.codex MCP servers.')
   })
   it('keeps missing delivery unknown, without inventing a count', () => {
     render(<McpDelivery agent="codex" />)
