@@ -5,14 +5,18 @@
 
 mod support;
 
-use axum::body::Body;
-use axum::http::{StatusCode, header};
+use axum::body::{Body, Bytes};
+use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use hennery_gateway::model::{CredKind, NewConnection};
-use hennery_gateway::proxy::Limits;
+use hennery_gateway::proxy::{Limits, ProxyState, router};
+use hennery_kernel::egress::{Egress, Timeouts};
 use serde_json::{Value, json};
 use std::time::Duration;
 use support::upstream::{FakeUpstream, Harness, call, event, first_then_block, json, list, listed, sse};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tower::ServiceExt;
 
 /// One hat, one host, one connection to `upstream` mounted there, and a
 /// session token for it.
@@ -662,6 +666,343 @@ async fn a_body_over_4_mib_is_413() {
             .await
             .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+// `rejected_upload` already sends one valid Authorization header.
+const DUPLICATE_AUTHORIZATION: &str = "Authorization: Bearer unknown\r\n";
+
+/// Send only the head: the client still owns the rest of the upload.
+async fn rejected_upload(s: &Setup, path: &str, extra: &str, framing: &str) -> TcpStream {
+    let mut socket = TcpStream::connect(s.h.addr).await.unwrap();
+    socket
+        .write_all(
+            format!(
+                "POST {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n{extra}{framing}\r\n",
+                s.h.addr, s.token
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    socket
+}
+
+async fn upload_still_open(socket: &mut TcpStream) {
+    let mut byte = [0];
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), socket.read(&mut byte))
+            .await
+            .is_err(),
+        "the proxy answered or closed while the client still had body bytes to write"
+    );
+}
+
+fn drain_limits(deadline: Duration, cap: usize) -> Limits {
+    Limits {
+        drain_deadline: deadline,
+        drain_cap: cap,
+        ..Limits::new(8, 8, Duration::from_secs(10), Duration::from_secs(2))
+    }
+}
+
+async fn setup_draining() -> Setup {
+    setup_with(
+        Harness::with_limits(drain_limits(Duration::from_secs(5), Limits::DRAIN_CAP)).await,
+        CredKind::None,
+        None,
+    )
+    .await
+}
+
+fn drain_app(s: &Setup, limits: Limits) -> axum::Router {
+    let egress = Egress::new(Timeouts {
+        connect: Duration::from_secs(2),
+        request: Duration::from_secs(10),
+    })
+    .unwrap();
+    router(ProxyState::full(
+        s.h.proxy_store.clone(),
+        &s.h.gateway(),
+        egress,
+        limits,
+    ))
+}
+
+fn drain_request(s: &Setup, path: &str, body: Body) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(header::AUTHORIZATION, format!("Bearer {}", s.token))
+        .body(body)
+        .unwrap()
+}
+
+async fn rejected_answer(socket: &mut TcpStream, status: u16, code: &str, bound: Duration) {
+    let mut answer = String::new();
+    tokio::time::timeout(bound, socket.read_to_string(&mut answer))
+        .await
+        .expect("the refused upload was not closed within the bound")
+        .expect("the refused upload reset instead of answering");
+    assert!(answer.starts_with(&format!("HTTP/1.1 {status}")), "{answer}");
+    assert!(answer.contains(&format!("\"code\":\"{code}\"")), "{answer}");
+    assert!(
+        answer.to_ascii_lowercase().contains("connection: close\r\n"),
+        "{answer}"
+    );
+}
+
+/// A head-time refusal must not invite a waiting client to send its upload.
+#[tokio::test]
+async fn early_reject_expect_continue_does_not_start_the_upload() {
+    let s = setup(CredKind::None, None).await;
+    for (path, extra, status, code) in [
+        ("/mcp/unknown", "", 404, "not_found"),
+        ("/mcp/linear", "", 413, "body_too_large"),
+        ("/mcp/linear/deeper", "", 404, "not_found"),
+        ("/mcp/linear", DUPLICATE_AUTHORIZATION, 404, "not_found"),
+    ] {
+        let mut socket = rejected_upload(&s, path, extra, "Expect: 100-continue\r\nContent-Length: 4259840\r\n").await;
+        rejected_answer(&mut socket, status, code, Duration::from_secs(5)).await;
+    }
+    assert!(s.upstream.seen().is_empty());
+}
+
+/// Recognize the expectation case-insensitively and among field values,
+/// without ever polling a head-time refused body.
+#[tokio::test]
+async fn early_reject_expect_continue_unpolled_body_is_not_read() {
+    let s = setup(CredKind::None, None).await;
+    for expectation in ["100-continue", "100-ConTinue", "other, 100-continue"] {
+        let body = Body::from_stream(futures::stream::poll_fn(
+            |_| -> std::task::Poll<Option<Result<Bytes, std::io::Error>>> {
+                panic!("the head-time Expect refusal polled the body");
+            },
+        ));
+        let mut request = drain_request(&s, "/mcp/unknown", body);
+        request
+            .headers_mut()
+            .insert(header::EXPECT, expectation.parse().unwrap());
+        let answer = drain_app(&s, drain_limits(Duration::from_secs(5), 3))
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+        assert_eq!(answer.headers()[header::CONNECTION], "close");
+    }
+    assert!(s.upstream.seen().is_empty());
+}
+
+/// Early 404s must allow a delayed upload to finish, without forwarding it.
+#[tokio::test]
+async fn early_reject_404_drains_a_delayed_upload() {
+    let s = setup_draining().await;
+    for (path, extra) in [
+        ("/mcp/unknown", ""),
+        ("/mcp/linear", "Mcp-Session-Id: unbound\r\n"),
+        ("/mcp/linear", DUPLICATE_AUTHORIZATION),
+        ("/mcp/linear/deeper", ""),
+    ] {
+        let mut socket = rejected_upload(&s, path, extra, "Content-Length: 4259840\r\nConnection: close\r\n").await;
+        upload_still_open(&mut socket).await;
+        socket
+            .write_all(&vec![b'x'; 4 * 1024 * 1024 + 64 * 1024])
+            .await
+            .unwrap();
+        rejected_answer(&mut socket, 404, "not_found", Duration::from_secs(4)).await;
+    }
+    assert!(s.upstream.seen().is_empty());
+}
+
+/// A declared oversize body retains the reader until the delayed bytes arrive.
+#[tokio::test]
+async fn early_reject_413_drains_a_delayed_upload() {
+    let s = setup_draining().await;
+    let mut socket = rejected_upload(
+        &s,
+        "/mcp/linear",
+        "",
+        "Content-Length: 4259840\r\nConnection: close\r\n",
+    )
+    .await;
+    upload_still_open(&mut socket).await;
+    socket
+        .write_all(&vec![b'x'; 4 * 1024 * 1024 + 64 * 1024])
+        .await
+        .unwrap();
+    rejected_answer(&mut socket, 413, "body_too_large", Duration::from_secs(4)).await;
+    assert!(s.upstream.seen().is_empty());
+}
+
+/// Crossing the size limit must retain the stream for its delayed final chunk.
+#[tokio::test]
+async fn early_reject_streamed_413_drains_a_delayed_upload() {
+    let s = setup_draining().await;
+    let mut socket = rejected_upload(
+        &s,
+        "/mcp/linear",
+        "",
+        "Transfer-Encoding: chunked\r\nConnection: close\r\n",
+    )
+    .await;
+    let chunk = vec![b'x'; 64 * 1024];
+    for _ in 0..65 {
+        socket.write_all(b"10000\r\n").await.unwrap();
+        socket.write_all(&chunk).await.unwrap();
+        socket.write_all(b"\r\n").await.unwrap();
+    }
+    upload_still_open(&mut socket).await;
+    socket.write_all(b"1\r\nx\r\n0\r\n\r\n").await.unwrap();
+    rejected_answer(&mut socket, 413, "body_too_large", Duration::from_secs(4)).await;
+    assert!(s.upstream.seen().is_empty());
+}
+
+/// A small configured cap stops before the body is polled again. This is
+/// independent of TCP buffers and wall-clock transfer time.
+#[tokio::test]
+async fn early_reject_drain_has_a_byte_cap() {
+    let s = setup(CredKind::None, None).await;
+    for path in ["/mcp/unknown", "/mcp/linear/deeper"] {
+        let mut first = true;
+        let body = Body::from_stream(futures::stream::poll_fn(move |_| {
+            assert!(first, "the drain polled again after crossing its byte cap");
+            first = false;
+            std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(Bytes::from_static(b"abcd"))))
+        }));
+        let answer = drain_app(&s, drain_limits(Duration::from_secs(5), 3))
+            .oneshot(drain_request(&s, path, body))
+            .await
+            .unwrap();
+        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+        assert_eq!(answer.headers()[header::CONNECTION], "close");
+    }
+    assert!(s.upstream.seen().is_empty());
+}
+
+#[tokio::test]
+async fn early_reject_drain_default_cap_is_8_mib() {
+    let s = setup(CredKind::None, None).await;
+    let limits = Limits {
+        drain_deadline: Duration::from_secs(5),
+        ..Limits::default()
+    };
+    let answer = drain_app(&s, limits)
+        .oneshot(drain_request(
+            &s,
+            "/mcp/unknown",
+            Body::from(vec![b'x'; 8 * 1024 * 1024 + 1]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(answer.headers()[header::CONNECTION], "close");
+    assert!(s.upstream.seen().is_empty());
+}
+
+/// EOF exactly at the configured cap is a complete drain, so keep-alive
+/// remains available. An incomplete body past the cap is tested above.
+#[tokio::test]
+async fn early_reject_drain_accepts_exactly_the_cap() {
+    let s = setup(CredKind::None, None).await;
+    let answer = drain_app(&s, drain_limits(Duration::from_secs(5), 3))
+        .oneshot(drain_request(&s, "/mcp/unknown", Body::from("abc")))
+        .await
+        .unwrap();
+    assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+    assert!(!answer.headers().contains_key(header::CONNECTION));
+    assert!(s.upstream.seen().is_empty());
+}
+
+/// The server cannot finish its response until the real drain observes
+/// EOF. A handshake with the body reader proves the ordering without a
+/// silence window. An Expect body already polled for the streamed-size
+/// check must still drain; a head-time refusal is tested separately.
+#[tokio::test]
+async fn early_reject_answer_waits_for_the_server_to_finish_draining() {
+    let s = setup(CredKind::None, None).await;
+    for (path, expect, first, status) in [
+        ("/mcp/unknown", false, Bytes::from_static(b"x"), StatusCode::NOT_FOUND),
+        (
+            "/mcp/linear/deeper",
+            false,
+            Bytes::from_static(b"x"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/mcp/linear",
+            true,
+            Bytes::from(vec![b'x'; 4 * 1024 * 1024 + 1]),
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+    ] {
+        let (polled, waiting) = tokio::sync::oneshot::channel();
+        let (release, eof) = tokio::sync::oneshot::channel();
+        let tail = futures::stream::once(async move {
+            polled.send(()).unwrap();
+            eof.await.unwrap();
+            Ok::<_, std::io::Error>(Bytes::new())
+        });
+        let stream = futures::stream::iter([Ok::<_, std::io::Error>(first)]);
+        let body = Body::from_stream(futures::StreamExt::chain(stream, tail));
+        let mut request = drain_request(&s, path, body);
+        if expect {
+            request
+                .headers_mut()
+                .insert(header::EXPECT, "100-continue".parse().unwrap());
+        }
+        let answer =
+            tokio::spawn(drain_app(&s, drain_limits(Duration::from_secs(5), Limits::DRAIN_CAP)).oneshot(request));
+        tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("the drain never reached the gated tail")
+            .expect("the body was dropped before being drained");
+        assert!(!answer.is_finished(), "the answer finished before the drain");
+        release.send(()).unwrap();
+        let answer = answer.await.unwrap().unwrap();
+        assert_eq!(answer.status(), status);
+        assert!(!answer.headers().contains_key(header::CONNECTION));
+    }
+    assert!(s.upstream.seen().is_empty());
+}
+
+/// A trickling client cannot extend the configured 100 ms drain deadline.
+/// Past that deadline, unread bytes can cause a TCP reset: delivery is
+/// best effort, but the connection must end within the bound.
+#[tokio::test]
+async fn early_reject_drain_has_a_deadline() {
+    let s = setup_with(
+        Harness::with_limits(drain_limits(Duration::from_millis(100), Limits::DRAIN_CAP)).await,
+        CredKind::None,
+        None,
+    )
+    .await;
+    let socket = rejected_upload(&s, "/mcp/unknown", "", "Content-Length: 16777216\r\n").await;
+    let (mut reader, mut writer) = socket.into_split();
+    let trickle = async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if writer.write_all(b"x").await.is_err() {
+                break;
+            }
+        }
+    };
+    let read = async {
+        let mut answer = String::new();
+        let closed = tokio::time::timeout(Duration::from_secs(1), reader.read_to_string(&mut answer))
+            .await
+            .expect("trickling client held the refused connection open");
+        match closed {
+            Ok(_) => {
+                assert!(answer.starts_with("HTTP/1.1 404"), "{answer}");
+                assert!(answer.contains("\"code\":\"not_found\""), "{answer}");
+                assert!(
+                    answer.to_ascii_lowercase().contains("connection: close\r\n"),
+                    "{answer}"
+                );
+            }
+            Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::ConnectionReset),
+        }
+    };
+    tokio::select! { () = read => {}, () = trickle => panic!("closed before answering") }
+    assert!(s.upstream.seen().is_empty());
 }
 
 /// Plan 8d decision 6: a body that is not JSON, or has a key twice, is
@@ -1365,12 +1706,16 @@ async fn a_refused_server_request_after_its_connection_changed_is_left_unanswere
     }
 }
 
-/// Gateway spec §5.1: a body declared over 4 MiB is 413 at once, before
-/// any of it is read; a client that never sends it is not kept waiting for
-/// the body timeout (408).
+/// Gateway spec §5.1: a declared oversize body is 413 after at most the
+/// drain deadline, rather than waiting for the full body timeout (408).
 #[tokio::test]
 async fn a_body_declared_over_4_mib_is_413_before_it_is_read() {
-    let s = setup(CredKind::None, None).await;
+    let s = setup_with(
+        Harness::with_limits(drain_limits(Duration::from_millis(100), Limits::DRAIN_CAP)).await,
+        CredKind::None,
+        None,
+    )
+    .await;
     let mut stream = tokio::net::TcpStream::connect(s.h.addr).await.unwrap();
     let request = format!(
         "POST /mcp/linear HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
