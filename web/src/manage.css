@@ -80,6 +80,8 @@
 .mcp-prediction { font-size:13px; color:var(--fg-muted); margin:4px 0 10px; }
 .stdio-servers { margin-top: 2rem; }
 .stdio-servers label { display: grid; gap: .35rem; margin: .75rem 0; }
+.stdio-servers .checkbox { display: flex; align-items: center; min-height: 44px; }
+.stdio-servers .checkbox input { width: 18px; min-height: 18px; flex: none; }
 .stdio-servers select, .stdio-servers input, .stdio-servers textarea { max-width: 100%; min-height: 44px; }
 .stdio-servers button { min-height: 44px; }
 .stdio-server { margin: 1rem 0; min-width: 0; }

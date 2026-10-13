@@ -158,7 +158,7 @@ export default function Shell({ route }: { route: Route }) {
             // The gateway's screen exists only where its API is served
             // (4b: a screen behind a feature checks `features`).
             caps.features.includes('mcp_connections') ? (
-              <Mcp />
+              <Mcp stdio={caps.features.includes('mcp_stdio')} />
             ) : (
               <Placeholder title={title} text="The MCP gateway is not part of this deployment." />
             )

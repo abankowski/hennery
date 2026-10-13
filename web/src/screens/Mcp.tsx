@@ -12,6 +12,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import ConnectionForm from '../components/ConnectionForm'
 import Mounts from '../components/Mounts'
 import TokenForm from '../components/TokenForm'
+import StdioServers from '../components/StdioServers'
 import type { HatItem, HostItem, McpConnectionItem, UpdateMcpConnectionRequest } from '../generated/protocol'
 import { useResource } from '../hooks/useResource'
 import {
@@ -42,7 +43,7 @@ function firstHat(hats: HatItem[]): string {
   return (open.find((h) => h.default_for_new_hosts) ?? open[0])?.id ?? ''
 }
 
-export default function Mcp() {
+export default function Mcp({ stdio = false }: { stdio?: boolean }) {
   const client = useClient()
   const list = useResource(() => listConnections(client))
   const hats = useResource(() => listHats(client))
@@ -156,6 +157,7 @@ export default function Mcp() {
           <code>hennery-&lt;slug&gt;</code>. Changes apply to new and resumed sessions.
         </p>
       </section>
+      <StdioServers enabled={stdio} hosts={hosts.data} hats={hats.data} />
       {[list.error, hats.error, hosts.error].map(
         (shown, i) =>
           shown && (

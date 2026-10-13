@@ -48,6 +48,7 @@ import { ANSWER_LABEL, answerAsMessage } from '../components/composerWords'
 import SessionFooter from '../components/SessionFooter'
 import SessionHeader, { type HeaderInfo } from '../components/SessionHeader'
 import McpDelivery from '../components/McpDelivery'
+import { Text } from '../lib/text'
 import { useMcpDelivery } from '../hooks/useMcpDelivery'
 import SessionMenu from '../components/SessionMenu'
 import { deleteNotes } from '../components/sessionWords'
@@ -348,7 +349,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
         }
       />
       <McpDelivery agent={info?.agent ?? mcp.detail?.agent} delivery={mcp.detail?.mcp_delivery} />
-      {mcp.error && <p className="form-error"><bdi>{mcp.error}</bdi></p>}
+      {mcp.error && <p className="form-error"><Text>{mcp.error}</Text></p>}
       <div className="stream-state" role="status">
         {s.stream === 'reconnecting' ? 'Reconnecting…' : s.resynced ? 'Resynced' : ''}
       </div>
