@@ -239,9 +239,10 @@ No SSE or webhook is required. A page contains typed Rust-owned envelopes:
 
 Every feed item has a required typed `provenance` field. C1 consumes the
 server-written input-origin contract `Operator | Parent {session_id,
-operation_id} | ChildReport {child_id, source_event_id, delivery_id}` owned by
-delegation, preserving source refs and roles. A system-generated reset has
-explicit empty causal provenance, not an invented `Operator` author. Assistant
+operation_id} | ChildReport {child_id, source_event_id, delivery_id}` produced
+by delegation using C1-owned types, preserving source refs and roles. A
+system-generated reset has explicit empty causal provenance, not an invented
+`Operator` author. Assistant
 output remains assistant output even when its initiating prompt was Operator;
 that provenance never certifies its assertions as operator decisions.
 Never infer origin from prose, delimiters or the view's current `UserTurn`
