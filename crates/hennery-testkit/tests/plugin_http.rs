@@ -44,9 +44,16 @@ struct Remote {
     seen: Mutex<Vec<(HeaderMap, Value)>>,
     caps: Mutex<Option<Value>>,
     forget: Mutex<Option<Value>>,
+    forget_hold: std::sync::atomic::AtomicBool,
+    forget_arrived: tokio::sync::Notify,
+    forget_release: tokio::sync::Notify,
 }
 async fn remote_rpc(State(state): State<Arc<Remote>>, headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
     state.seen.lock().unwrap().push((headers, body.clone()));
+    if body["method"] == "hennery_plugin_forget" && state.forget_hold.load(std::sync::atomic::Ordering::Acquire) {
+        state.forget_arrived.notify_one();
+        state.forget_release.notified().await;
+    }
     let result =
         match body["method"].as_str().unwrap_or("") {
             "hennery_plugin_capabilities" => state
@@ -211,6 +218,7 @@ async fn registration_discovers_capabilities_then_owner_list_hides_all_credentia
     assert_eq!(value[0]["state"], "active");
     let lease = world.lease(token).await;
     assert_eq!(lease.status(), StatusCode::OK);
+    assert_eq!(lease.headers()["content-type"], "application/json");
     assert_eq!(lease.headers()["cache-control"], "no-store");
     let lease: Value = lease.json().await.unwrap();
     assert_eq!(lease["namespace_epoch"], grant["namespace_epoch"]);
@@ -723,4 +731,57 @@ async fn permissions_are_discovered_independently_and_startup_requires_its_capab
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn both_handover_tokens_are_revoked_before_a_stalled_remote_forget() {
+    let world = World::new().await;
+    let issued = world.register().await;
+    let old = issued["token"].as_str().unwrap();
+    let prepared: Value = world
+        .owner(
+            reqwest::Method::POST,
+            &format!("/api/plugins/registrations/{}/rotate", world.id),
+            true,
+        )
+        .json(&json!({"action":"prepare"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let pending = prepared["token"].as_str().unwrap();
+    assert_eq!(world.lease(pending).await.status(), StatusCode::OK);
+    world
+        .remote
+        .forget_hold
+        .store(true, std::sync::atomic::Ordering::Release);
+    let notified = world.remote.forget_arrived.notified();
+    let request = world.owner(
+        reqwest::Method::DELETE,
+        &format!("/api/plugins/registrations/{}", world.id),
+        true,
+    );
+    let revoke = tokio::spawn(async move { request.send().await.unwrap() });
+    tokio::time::timeout(std::time::Duration::from_secs(2), notified)
+        .await
+        .expect("forget was not reached");
+    assert_eq!(world.lease(old).await.status(), StatusCode::NOT_FOUND);
+    assert_eq!(world.lease(pending).await.status(), StatusCode::NOT_FOUND);
+    world
+        .remote
+        .forget_hold
+        .store(false, std::sync::atomic::Ordering::Release);
+    world.remote.forget_release.notify_waiters();
+    assert_eq!(revoke.await.unwrap().status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn machine_lease_rejects_an_indefinitely_streaming_body_before_reading_it(){
+    let world=World::new().await;let issued=world.register().await;
+    let stream=futures::stream::pending::<Result<Vec<u8>,std::io::Error>>();
+    let request=reqwest::Client::new().post(format!("{}/api/plugins/lease",world.server.base)).bearer_auth(issued["token"].as_str().unwrap()).body(reqwest::Body::wrap_stream(stream)).send();
+    let response=tokio::time::timeout(std::time::Duration::from_secs(2),request).await.expect("machine route waited for a forbidden body").unwrap();
+    assert_eq!(response.status(),StatusCode::BAD_REQUEST);
 }
