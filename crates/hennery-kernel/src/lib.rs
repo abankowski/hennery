@@ -22,6 +22,7 @@ pub mod passkeys;
 pub mod push;
 pub mod ratelimit;
 pub mod recents;
+pub mod redact;
 mod schema;
 pub mod secret;
 pub mod web;

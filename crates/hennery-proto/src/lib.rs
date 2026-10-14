@@ -6,6 +6,7 @@
 
 pub mod frames;
 pub mod paths;
+pub mod plugin;
 pub mod rest;
 
 /// Version of the host<->collector protocol, `MAJOR.MINOR`. Sent only in

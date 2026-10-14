@@ -791,6 +791,32 @@
       ],
       "description": "The value of one config option (ACP `session/set_config_option`): a\nselect's value id, or a boolean toggle's state."
     },
+    "ContextEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          },
+          "type": "array"
+        },
+        "source_refs": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "source_refs",
+        "provenance"
+      ],
+      "type": "object"
+    },
     "CreateHatRequest": {
       "description": "`POST /api/hats`: a name, 1 to 64 printable characters, unique in any\ncase, and a `#rrggbb` colour (slate when absent).",
       "properties": {
@@ -1027,6 +1053,22 @@
       ],
       "type": "object"
     },
+    "Excerpt": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/TextRole"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "text"
+      ],
+      "type": "object"
+    },
     "ForgetKind": {
       "description": "What a forget names on the host (plan 9d decision 4, B2): a kind of\nentry, never a path. The masked path each stands for is `masked`.",
       "oneOf": [
@@ -1184,6 +1226,29 @@
         }
       ]
     },
+    "ForgetReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "remaining_kinds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ForgetStatus"
+        }
+      },
+      "required": [
+        "request_id",
+        "status",
+        "remaining_kinds"
+      ],
+      "type": "object"
+    },
     "ForgetRemaining": {
       "description": "Something a forget left (plan 9d decision 4). `retry: false` marks what\na retry cannot change.",
       "properties": {
@@ -1203,6 +1268,13 @@
         "retry"
       ],
       "type": "object"
+    },
+    "ForgetStatus": {
+      "enum": [
+        "confirmed",
+        "unconfirmed"
+      ],
+      "type": "string"
     },
     "ForgetWhat": {
       "description": "One kind of entry and how many of them (plan 9d B2).",
@@ -1860,6 +1932,69 @@
         }
       },
       "type": "object"
+    },
+    "InputOrigin": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "operator",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "parent",
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "session_id",
+            "operation_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "child_id": {
+              "type": "string"
+            },
+            "delivery_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "child_report",
+              "type": "string"
+            },
+            "source_event_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "child_id",
+            "source_event_id",
+            "delivery_id"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "LifecycleResponse": {
       "description": "Result of a park or close: the session's lifecycle once the request took\neffect (`parked` or `closed`).",
@@ -2925,6 +3060,189 @@
       ],
       "type": "string"
     },
+    "PluginActivityItem": {
+      "oneOf": [
+        {
+          "properties": {
+            "completed_at": {
+              "type": "string"
+            },
+            "excerpts": {
+              "items": {
+                "$ref": "#/$defs/Excerpt"
+              },
+              "type": "array"
+            },
+            "gaps": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "completed_turn",
+              "type": "string"
+            },
+            "project_key": {
+              "type": "string"
+            },
+            "source_refs": {
+              "items": {
+                "$ref": "#/$defs/SourceRef"
+              },
+              "type": "array"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "turn_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "project_key",
+            "completed_at",
+            "excerpts",
+            "source_refs",
+            "truncated",
+            "gaps"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "session_removed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "source_reset",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "event_key": {
+          "type": "string"
+        },
+        "namespace_epoch": {
+          "type": "string"
+        },
+        "provenance": {
+          "description": "Empty for a system-generated reset/deletion, never invented Operator.",
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          },
+          "type": "array"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_key",
+        "session_id",
+        "namespace_epoch",
+        "provenance"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "PluginActivityPage": {
+      "additionalProperties": false,
+      "properties": {
+        "has_more": {
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/PluginActivityItem"
+          },
+          "type": "array"
+        },
+        "lease_until": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "next_cursor": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "items",
+        "next_cursor",
+        "has_more",
+        "lease_until"
+      ],
+      "type": "object"
+    },
+    "PluginCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "activity_v1": {
+          "type": "boolean"
+        },
+        "forget_v1": {
+          "type": "boolean"
+        },
+        "startup_context_v1": {
+          "type": "boolean"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "activity_v1",
+        "forget_v1",
+        "startup_context_v1"
+      ],
+      "type": "object"
+    },
+    "PluginContext": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/ContextEntry"
+          },
+          "type": "array"
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entries",
+        "generated_at",
+        "truncated"
+      ],
+      "type": "object"
+    },
     "Project": {
       "description": "One git repository `list_projects` found under a workspace root (ACP\ncore §7).",
       "properties": {
@@ -2960,6 +3278,44 @@
         "turn_id"
       ],
       "type": "object"
+    },
+    "Provenance": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "source",
+              "type": "string"
+            },
+            "origin": {
+              "$ref": "#/$defs/InputOrigin"
+            },
+            "source": {
+              "$ref": "#/$defs/SourceRef"
+            }
+          },
+          "required": [
+            "kind",
+            "origin",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "unverified",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "PublicUrlChanged": {
       "description": "What a `public_url` change ended, as `hennery admin reset-public-url`\nreports it: every signed-in session (the caller's own among them), and\nthe passkeys of a host name `public_url` no longer has.",
@@ -4131,6 +4487,29 @@
       ],
       "type": "object"
     },
+    "SourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "event_id"
+      ],
+      "type": "object"
+    },
     "StartSessionRequest": {
       "description": "`POST /api/sessions` (ACP core §9): `{host_id, agent, cwd, model?, mode?, axes?}`.",
       "properties": {
@@ -4240,6 +4619,13 @@
           "type": "object"
         }
       ]
+    },
+    "TextRole": {
+      "enum": [
+        "user",
+        "assistant"
+      ],
+      "type": "string"
     },
     "TranscriptRemoval": {
       "description": "The agent's own transcript of a deleted session on its host (plan 9d\ndecision 7): best effort. `notes` name what is never removed, whatever\nthe state.",
