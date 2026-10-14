@@ -3,6 +3,7 @@
 pub mod api;
 pub mod attachments;
 pub mod content;
+pub mod delegation;
 pub mod forget;
 pub mod hats;
 pub mod hosts;
