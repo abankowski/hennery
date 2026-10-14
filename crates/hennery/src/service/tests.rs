@@ -91,7 +91,7 @@ fn mode(path: &Path) -> u32 {
 fn paired(dir: &Path) -> PathBuf {
     let data = dir.join("host-data");
     hennery_host::identity::Paired {
-        collector_url: "http://127.0.0.1:7117".into(),
+        collector_url: "ws://127.0.0.1:7117/api/hosts/ws".into(),
         trust: Default::default(),
         host_id: "host-test".into(),
         key: hennery_host::identity::HostKey::generate(),

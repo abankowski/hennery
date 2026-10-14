@@ -873,6 +873,7 @@ async fn run_host(args: HostArgs) -> Result<std::process::ExitCode> {
             paired
         }
         None => {
+            hennery_host::enrollment::require_automatic_join_allowed(&data_dir)?;
             let (Some(url), Some(fd)) = (&args.join_url, args.join_code_fd) else {
                 bail!(
                     "{} holds no pairing; run `hennery host join <url> <code>` first",
@@ -1072,11 +1073,7 @@ enum Pairing {
 /// (decision 8 of plan 7c).
 fn pairing_in(dir: &std::path::Path) -> Pairing {
     use hennery_host::identity::{CONFIG_FILE, KEY_FILE};
-    if dir.join(format!("{CONFIG_FILE}.pending")).exists()
-        || dir.join(format!("{KEY_FILE}.pending")).exists()
-        || dir.join(hennery_host::enrollment::JOURNAL).exists()
-        || dir.join(hennery_host::enrollment::RECOVERY).exists()
-    {
+    if dir.join(format!("{CONFIG_FILE}.pending")).exists() || hennery_host::enrollment::has_artifacts(dir) {
         Pairing::Interrupted
     } else if dir.join(KEY_FILE).is_file() && dir.join(CONFIG_FILE).is_file() {
         Pairing::Whole
@@ -1258,7 +1255,10 @@ async fn run_up(args: UpArgs) -> Result<std::process::ExitCode> {
     // the host child finishes it, under its lock.
     let pairing = match pairing_in(&host_dir) {
         Pairing::Whole | Pairing::Interrupted => None,
-        Pairing::None => Some(std::io::pipe()?),
+        Pairing::None => {
+            hennery_host::enrollment::require_automatic_join_allowed(&host_dir)?;
+            Some(std::io::pipe()?)
+        }
     };
     let mut children = UpChildren {
         exe,

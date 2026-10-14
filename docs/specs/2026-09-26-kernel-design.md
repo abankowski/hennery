@@ -371,23 +371,28 @@ endpoints.
   collector-minted: `host-` and 16 hex digits.
 - **The URL** is `https://`, or `http://` to loopback only, with no path; the
   WebSocket URL is derived from it (`wss`/`ws`, `/api/hosts/ws`). Enrollment
-  uses no proxy. *Built so far:* `join` refuses `https://` before it spends a
-  code, since the host WebSocket has no TLS yet.
+  uses no proxy or redirect. *Built so far (W1):* enrollment, WSS and doctor
+  share one native-root or collector-only private-CA TLS policy. An upgrade
+  and nonce preflight precedes enrollment; a durable journal written before
+  its one POST prevents automatic replay after an ambiguous outcome. See
+  [the WSS design](2026-10-14-wss-design.md) §§3–4 for recovery and migration.
 
 **Idempotent:** if a pairing exists, `host join` first sends a probe `hello`
 (nothing attached and no `resend_complete`, so the host never becomes ready):
 - `hello_ack` or `already_connected`: nothing changes and no code is spent;
 - `revoked`: a new key and host id replace the pairing;
-- `bad_proof` is ambiguous (a reset or restored collector): `join` refuses and
-  names `host.key` and `host.toml` to remove. A pairing with another collector
-  is refused the same way; any two loopback URLs (any port, `localhost`) are
-  the same collector.
+- `bad_proof` is ambiguous (a reset or restored collector): `join` refuses
+  pending an explicit operator recovery decision. Endpoint or trust changes
+  use `host transport set`, retaining the key, id and outbox. Only two
+  validated plaintext loopback URLs may alias different names or ports;
+  WSS requires exact equality or an explicit secure migration before hello.
 
 Whenever a new identity is written beside an outbox, that outbox is moved
 aside as `outbox.db.orphaned-<old host id>` (or `-unpaired`), never deleted.
 The new key is written to `host.key.pending` before enrolling, so a directory
-that cannot hold it costs no code; half a pairing is an error naming the file
-to remove. Once enrollment answers, `host.toml.pending` is written before
+that cannot hold it costs no code. An unresolved journal or lone pending
+artifact blocks every host entry point and needs id-bound archive recovery
+after checking/revoking any possible remote enrollment. Once enrollment answers, `host.toml.pending` is written before
 anything is renamed, then the key and `host.toml` are renamed into place, and
 nothing after the enrollment deletes the key it enrolled. `host.toml` names the
 enrolled public key: loading a pairing rolls a staged `host.toml.pending`
@@ -414,8 +419,10 @@ first. The code is never on a command line or in the environment. Each child
 checks its descriptor at start, before anything else: it must be 3 or above,
 open, and a pipe; the host reads at most 256 bytes from it. An existing
 pairing gets no pipe: `up` never re-pairs a key the collector does not know.
-The host child is handed the collector's current loopback URL, which wins over
-the stored one, so a new port keeps working. The code and the host carry the
+The host child is handed the collector's current loopback URL, which aliases
+the stored one only when both are validated plaintext loopback endpoints.
+A stored WSS endpoint refuses this override before hello, without starting
+children or minting a pairing code. The code and the host carry the
 owner the first start made (§3.1), so a host paired before setup is the
 owner's once setup completes.
 

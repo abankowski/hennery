@@ -227,6 +227,7 @@ pub async fn complete_join(prepared: PreparedJoin, code: &str, data_dir: &Path, 
     key.save(&pending)?;
     let attempt = EnrollmentAttempt::new(&transport.endpoint, transport.trust.clone(), &key, prior_host_id);
     attempt.save(data_dir)?;
+    crate::identity::storage_boundary(&data_dir.join(crate::enrollment::JOURNAL), "before_post")?;
     let result = enroll(&transport, code, &key, name).await;
     let host_id = match result {
         Ok(host_id) => host_id,
@@ -250,8 +251,10 @@ pub async fn complete_join(prepared: PreparedJoin, code: &str, data_dir: &Path, 
     })
     .context("confirmed enrollment; receipt staging failed; retain journal and pending key")?;
     Paired::load(data_dir).context("confirmed enrollment needs roll-forward; retain its receipt")?;
-    if let Err(err) = crate::connection::probe_transport(&transport, &host_id, &key).await {
-        bail!("paired as {host_id}; connection failed: {err}; identity retained for retry");
+    match crate::connection::probe_transport(&transport, &host_id, &key).await {
+        Ok(Standing::Accepted | Standing::Connected) => {}
+        Ok(other) => bail!("paired as {host_id}; connection failed: {other:?}; identity retained for retry"),
+        Err(err) => bail!("paired as {host_id}; connection failed: {err}; identity retained for retry"),
     }
     Ok(Joined::Paired { host_id })
 }
@@ -264,10 +267,8 @@ impl std::fmt::Display for DefinitiveRejection {
 }
 impl std::error::Error for DefinitiveRejection {}
 fn clear_rejected(dir: &Path) -> Result<()> {
-    std::fs::remove_file(dir.join("host.key.pending"))?;
-    fsync_parent(&dir.join(crate::enrollment::JOURNAL))?;
-    std::fs::remove_file(dir.join(crate::enrollment::JOURNAL))?;
-    fsync_parent(&dir.join(crate::enrollment::JOURNAL))
+    crate::identity::durable_remove(&dir.join("host.key.pending"))?;
+    crate::identity::durable_remove(&dir.join(crate::enrollment::JOURNAL))
 }
 async fn enroll(
     transport: &crate::transport::CollectorTransport,
@@ -496,6 +497,31 @@ mod tests {
         ] {
             let err = collector_ws_url(url).unwrap_err().to_string();
             assert!(err.contains(why), "{url}: {err}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod alias_matrix {
+    use super::*;
+    #[test]
+    fn every_scheme_name_and_port_pair_obeys_plaintext_only_aliasing() {
+        let mut endpoints = Vec::new();
+        for scheme in ["ws", "wss"] {
+            for name in ["localhost", "127.0.0.1", "[::1]"] {
+                for port in [7117, 7118] {
+                    endpoints.push(format!("{scheme}://{name}:{port}/api/hosts/ws"));
+                }
+            }
+        }
+        for left in &endpoints {
+            for right in &endpoints {
+                assert_eq!(
+                    same_collector(left, right),
+                    left == right || (left.starts_with("ws://") && right.starts_with("ws://")),
+                    "{left} -> {right}"
+                );
+            }
         }
     }
 }

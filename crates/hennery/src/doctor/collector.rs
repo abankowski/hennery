@@ -115,11 +115,10 @@ fn healthz_transport(transport: &CollectorTransport) -> Health {
         };
         match tokio::time::timeout(STEP_TIMEOUT, operation).await {
             Ok(Ok(health)) => health,
-            Ok(Err(error))
-                if hennery_host::transport::classify(error.as_ref()) == hennery_host::transport::Stage::Tls =>
-            {
-                Health::Tls("certificate chain/name/validity or TLS protocol failed".into())
-            }
+            Ok(Err(error)) if hennery_host::transport::classify(error.as_ref()).is_tls() => Health::Tls(format!(
+                "{}",
+                hennery_host::transport::failure(hennery_host::transport::classify(error.as_ref()))
+            )),
             Ok(Err(_)) => Health::Failed("DNS/TCP/HTTP connection failed".into()),
             Err(_) => Health::Failed("collector health deadline exceeded".into()),
         }
@@ -322,7 +321,11 @@ fn reach(doctor: &Doctor, host: &std::path::Path, paired: &Paired, verdict: &mut
     }
     let name = url.host_str().unwrap_or_default().to_string();
     let endpoint = transport.endpoint.clone();
-    let addresses = match block_on(async move { endpoint.addresses().await }) {
+    let addresses = match block_on(async move {
+        tokio::time::timeout(STEP_TIMEOUT, endpoint.addresses())
+            .await
+            .unwrap_or_else(|_| Err(hennery_host::transport::failure(hennery_host::transport::Stage::Dns)))
+    }) {
         Ok(addresses) if !addresses.is_empty() => addresses,
         Ok(_) => {
             verdict.fail(
@@ -376,16 +379,23 @@ fn reach(doctor: &Doctor, host: &std::path::Path, paired: &Paired, verdict: &mut
 /// A TCP connection to the first of `addresses` that takes one, each
 /// within `STEP_TIMEOUT`, closed at once; the first address's error else.
 fn connect(addresses: &[std::net::SocketAddr]) -> std::io::Result<()> {
-    let mut first = None;
-    for address in addresses {
-        match std::net::TcpStream::connect_timeout(address, STEP_TIMEOUT) {
-            Ok(_) => return Ok(()),
-            Err(err) => {
-                first.get_or_insert(err);
+    let addresses = addresses.to_vec();
+    block_on(async move {
+        tokio::time::timeout(STEP_TIMEOUT, async move {
+            let mut first = None;
+            for address in addresses {
+                match tokio::net::TcpStream::connect(address).await {
+                    Ok(_) => return Ok(()),
+                    Err(err) => {
+                        first.get_or_insert(err);
+                    }
+                }
             }
-        }
-    }
-    Err(first.unwrap_or_else(|| std::io::ErrorKind::NotFound.into()))
+            Err(first.unwrap_or_else(|| std::io::ErrorKind::NotFound.into()))
+        })
+        .await
+        .unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()))
+    })
 }
 
 /// The `hello`, only when no host runs on this directory (decision 17).
@@ -556,6 +566,12 @@ pub fn listeners(doctor: &Doctor) -> Finding {
             },
         },
     }
-    verdict.ok("proxy-address attribution is unconfigured in W1; health success cannot prove header stripping or separate limiter budgets");
+    if file
+        .public_url(None)
+        .is_some_and(|url| Url::parse(&url).is_ok_and(|url| url.scheme() == "https"))
+    {
+        verdict.warn("proxy-address attribution is unconfigured in W1; health success cannot prove header stripping or separate limiter budgets", "restrict public ingress until the W2 deployment and attribution checks pass");
+        verdict.ok(format!("external collector trust: {}", doctor.collector_trust.source()));
+    }
     Finding::Checked(verdict.check(16, "listeners"))
 }

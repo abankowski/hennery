@@ -423,7 +423,13 @@ mod tests {
         let use_cli = UseCli::parse("claude=/bin/sh").unwrap();
         assert!(set_cli_override(dir.path(), &use_cli).is_err(), "unpaired");
         let key = crate::identity::HostKey::from_seed([1; 32]);
-        crate::identity::write_config_to(&dir.path().join(CONFIG_FILE), "ws://c/api/hosts/ws", "host-1", &key).unwrap();
+        crate::identity::write_config_to(
+            &dir.path().join(CONFIG_FILE),
+            "ws://localhost/api/hosts/ws",
+            "host-1",
+            &key,
+        )
+        .unwrap();
         set_cli_override(dir.path(), &use_cli).unwrap();
         assert_eq!(cli_overrides(dir.path()).unwrap()["claude"], Path::new("/bin/sh"));
         let paired = read_table(&dir.path().join(CONFIG_FILE)).unwrap();

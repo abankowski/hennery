@@ -106,7 +106,14 @@ fn ca_roots(pem: &str) -> Result<rustls::RootCertStore> {
             .ok_or_else(|| anyhow::anyhow!("empty CA certificate"))?;
         let (tail, parsed) = x509_parser::parse_x509_certificate(cert.as_ref())
             .map_err(|_| anyhow::anyhow!("malformed CA certificate"))?;
-        if !tail.is_empty() || !parsed.basic_constraints().ok().flatten().is_some_and(|v| v.value.ca) {
+        if !tail.is_empty()
+            || !parsed.basic_constraints().ok().flatten().is_some_and(|v| v.value.ca)
+            || !parsed.validity().is_valid()
+            || parsed
+                .key_usage()
+                .map_err(|_| anyhow::anyhow!("invalid CA key usage"))?
+                .is_some_and(|usage| !usage.value.key_cert_sign())
+        {
             bail!("bundle certificates must be valid CA certificates");
         }
         roots
@@ -137,6 +144,9 @@ impl CollectorEndpoint {
         Self::parse(input, true)
     }
     fn parse(input: &str, stored: bool) -> Result<Self> {
+        if input.contains('@') {
+            bail!("collector URL must not contain credentials");
+        }
         let mut url = Url::parse(input.trim()).map_err(|_| anyhow::anyhow!("collector is not a URL"))?;
         if !url.username().is_empty() || url.password().is_some() {
             bail!("collector URL must not contain credentials");
@@ -221,6 +231,10 @@ pub enum Stage {
     Dns,
     Connect,
     Tls,
+    TlsUnknownIssuer,
+    TlsNameMismatch,
+    TlsExpired,
+    TlsNotYetValid,
     Upgrade {
         status: Option<u16>,
         retry_after: Option<u64>,
@@ -230,13 +244,31 @@ pub enum Stage {
 }
 #[derive(Debug)]
 pub struct TransportFailure(pub Stage);
+impl Stage {
+    pub fn is_tls(&self) -> bool {
+        matches!(
+            self,
+            Self::Tls | Self::TlsUnknownIssuer | Self::TlsNameMismatch | Self::TlsExpired | Self::TlsNotYetValid
+        )
+    }
+    pub fn remedy(&self) -> &'static str {
+        match self {
+            Self::TlsUnknownIssuer => "install the intended collector CA",
+            Self::TlsNameMismatch => "use the certificate's correct DNS name or IP SAN",
+            Self::TlsExpired => "renew the certificate and check the local clock",
+            Self::TlsNotYetValid => "check the local clock and certificate validity dates",
+            Self::Tls => "repair the TLS protocol or certificate chain",
+            Self::Dns => "repair collector DNS",
+            Self::Connect => "restore reachability",
+            Self::Upgrade { .. } => "forward WebSocket upgrades and remove ingress login redirects",
+            Self::MissingNonce => "preserve exactly one hennery-hello-nonce in the 101 response",
+            Self::HelloTimeout => "restore collector hello responses",
+        }
+    }
+}
 impl std::fmt::Display for TransportFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "collector transport failed at {:?}; repair this stage without changing the host identity or disabling TLS validation",
-            self.0
-        )
+        write!(f, "collector transport failed at {:?}; {}", self.0, self.0.remedy())
     }
 }
 impl std::error::Error for TransportFailure {}
@@ -249,14 +281,32 @@ pub fn classify(error: &(dyn std::error::Error + 'static)) -> Stage {
         if let Some(e) = err.downcast_ref::<TransportFailure>() {
             return e.0.clone();
         }
-        if err.is::<rustls::Error>() {
-            return Stage::Tls;
+        if let Some(tls) = err.downcast_ref::<tungstenite::error::TlsError>() {
+            return match tls {
+                tungstenite::error::TlsError::Rustls(inner) => classify(inner.as_ref()),
+                _ => Stage::Tls,
+            };
+        }
+        if let Some(tls) = err.downcast_ref::<rustls::Error>() {
+            return match tls {
+                rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer) => Stage::TlsUnknownIssuer,
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::NotValidForName | rustls::CertificateError::NotValidForNameContext { .. },
+                ) => Stage::TlsNameMismatch,
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::Expired | rustls::CertificateError::ExpiredContext { .. },
+                ) => Stage::TlsExpired,
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::NotValidYet | rustls::CertificateError::NotValidYetContext { .. },
+                ) => Stage::TlsNotYetValid,
+                _ => Stage::Tls,
+            };
         }
         if let Some(io) = err.downcast_ref::<std::io::Error>()
             && let Some(inner) = io.get_ref()
-            && classify(inner) == Stage::Tls
+            && classify(inner).is_tls()
         {
-            return Stage::Tls;
+            return classify(inner);
         }
         source = err.source();
     }
@@ -278,6 +328,21 @@ pub struct CollectorTransport {
 }
 impl CollectorTransport {
     pub fn new(endpoint: CollectorEndpoint, trust: CollectorTrust) -> Result<Self> {
+        Self::with_loader(endpoint, trust, rustls_native_certs::load_native_certs)
+    }
+    #[cfg(feature = "test-hooks")]
+    pub fn with_native_roots(
+        endpoint: CollectorEndpoint,
+        trust: CollectorTrust,
+        loader: impl FnOnce() -> rustls_native_certs::CertificateResult,
+    ) -> Result<Self> {
+        Self::with_loader(endpoint, trust, loader)
+    }
+    fn with_loader(
+        endpoint: CollectorEndpoint,
+        trust: CollectorTrust,
+        loader: impl FnOnce() -> rustls_native_certs::CertificateResult,
+    ) -> Result<Self> {
         let (roots, warnings) = if !endpoint.secure() {
             if trust != CollectorTrust::System {
                 bail!("a private CA requires HTTPS/WSS");
@@ -292,7 +357,7 @@ impl CollectorTransport {
             match &trust {
                 CollectorTrust::CaBundle { pem } => (ca_roots(pem)?, 0),
                 CollectorTrust::System => {
-                    let native = rustls_native_certs::load_native_certs();
+                    let native = loader();
                     let mut roots = rustls::RootCertStore::empty();
                     let mut warnings = native.errors.len();
                     for cert in native.certs {
@@ -362,8 +427,11 @@ impl CollectorTransport {
                             .and_then(|v| v.to_str().ok())
                             .and_then(retry_after),
                     }),
-                    tungstenite::Error::Tls(_) => failure(Stage::Tls),
-                    tungstenite::Error::Io(e) if classify(e) == Stage::Tls => failure(Stage::Tls),
+                    tungstenite::Error::Tls(e) => {
+                        let stage = classify(e);
+                        failure(if stage.is_tls() { stage } else { Stage::Tls })
+                    }
+                    tungstenite::Error::Io(e) if classify(e).is_tls() => failure(classify(e)),
                     _ => failure(Stage::Upgrade {
                         status: None,
                         retry_after: None,
@@ -484,6 +552,44 @@ mod diagnostic_tests {
         ] {
             assert_eq!(classify(&rustls::Error::InvalidCertificate(certificate)), stage);
         }
-        assert_eq!(classify(&std::io::Error::other("tls certificate words")), Stage::Connect);
+        assert_eq!(
+            classify(&std::io::Error::other("tls certificate words")),
+            Stage::Connect
+        );
+    }
+}
+
+#[cfg(test)]
+mod ca_input_tests {
+    use super::*;
+    #[test]
+    fn ca_inputs_are_bounded_strict_regular_and_reject_leaf_and_private_key_material() {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let leaf = rcgen::CertificateParams::new(vec!["localhost".into()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        assert!(ca_roots(&leaf.pem()).is_err());
+        assert!(ca_roots(&key.serialize_pem()).is_err());
+        let mut params = rcgen::CertificateParams::new(vec!["fixture".into()]).unwrap();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let pem = params.self_signed(&key).unwrap().pem();
+        assert!(ca_roots(&pem.repeat(32)).is_ok());
+        assert!(ca_roots(&pem.repeat(33)).is_err());
+        assert!(ca_roots(&" ".repeat(MAX_CA_BYTES + 1)).is_err());
+        assert!(ca_roots(&format!("{pem}junk")).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("ca.pem");
+        std::fs::write(&input, &pem).unwrap();
+        assert!(CollectorTrust::import(&input).is_ok());
+        let link = dir.path().join("link.pem");
+        std::os::unix::fs::symlink(&input, &link).unwrap();
+        assert!(CollectorTrust::import(&link).is_err());
+        assert!(CollectorTrust::import(dir.path()).is_err());
+        let fifo = dir.path().join("fifo");
+        let cpath = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: creates a FIFO at a fresh scratch path.
+        assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+        assert!(CollectorTrust::import(&fifo).is_err());
     }
 }

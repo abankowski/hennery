@@ -100,7 +100,7 @@ async fn private_ca_wss_and_https_share_the_same_verifier() {
         .send()
         .await
         .unwrap_err();
-    assert_ne!(hennery_host::transport::classify(&error), Stage::Tls);
+    assert_ne!(hennery_host::transport::classify(&error), Stage::TlsNameMismatch);
     assert_eq!(f.seen.load(Ordering::SeqCst), 1);
 }
 #[tokio::test]
@@ -116,7 +116,10 @@ async fn failed_name_verification_sends_no_websocket_or_http_request() {
     )
     .unwrap();
     let err = transport.websocket(WebSocketConfig::default()).await.err().unwrap();
-    assert_eq!(err.downcast_ref::<TransportFailure>().unwrap().0, Stage::Tls);
+    assert_eq!(
+        err.downcast_ref::<TransportFailure>().unwrap().0,
+        Stage::TlsNameMismatch
+    );
     let err = transport
         .http()
         .await
@@ -126,7 +129,7 @@ async fn failed_name_verification_sends_no_websocket_or_http_request() {
         .send()
         .await
         .unwrap_err();
-    assert_eq!(hennery_host::transport::classify(&err), Stage::Tls);
+    assert_eq!(hennery_host::transport::classify(&err), Stage::TlsNameMismatch);
     assert_eq!(f.seen.load(Ordering::SeqCst), 0);
 }
 #[tokio::test]
@@ -224,4 +227,66 @@ async fn transport_move_preserves_identity_outbox_and_configuration_and_reports_
     assert_eq!(std::fs::read(dir.path().join("outbox.db")).unwrap(), b"preserved");
     let table: toml::Table = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(table["cli"]["claude"].as_str(), Some("/opt/fixture"));
+}
+
+#[tokio::test]
+#[cfg(feature = "test-hooks")]
+async fn injected_system_roots_share_the_wss_and_http_policy_without_fallback() {
+    let fixture = fixture(
+        vec!["localhost".into()],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    .await;
+    let endpoint = CollectorEndpoint::public(&fixture.url).unwrap();
+    assert!(CollectorTransport::with_native_roots(endpoint.clone(), CollectorTrust::System, Default::default).is_err());
+    let cert = rustls_pemfile::certs(&mut fixture.pem.as_bytes())
+        .next()
+        .unwrap()
+        .unwrap();
+    let transport = CollectorTransport::with_native_roots(endpoint.clone(), CollectorTrust::System, || {
+        let mut result = rustls_native_certs::CertificateResult::default();
+        result.certs = vec![cert, vec![1, 2, 3].into()];
+        result
+    })
+    .unwrap();
+    assert_eq!(transport.root_warnings, 1);
+    transport.preflight().await.unwrap();
+    let error = transport
+        .http()
+        .await
+        .unwrap()
+        .get(format!("{}/healthz", fixture.url))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(!hennery_host::transport::classify(&error).is_tls());
+    let explicit = CollectorTransport::with_native_roots(
+        endpoint,
+        CollectorTrust::CaBundle {
+            pem: fixture.pem.clone(),
+        },
+        || panic!("explicit CA must ignore native roots and SSL overrides"),
+    )
+    .unwrap();
+    explicit.preflight().await.unwrap();
+    let plain = CollectorTransport::with_native_roots(
+        CollectorEndpoint::public("http://localhost:7117").unwrap(),
+        CollectorTrust::System,
+        || panic!("plaintext must not load roots"),
+    );
+    assert!(plain.is_ok());
+}
+
+#[test]
+fn actual_native_roots_load_without_bundled_fallback() {
+    let native = rustls_native_certs::load_native_certs();
+    let any_usable = native.certs.iter().any(|cert| {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert.clone()).is_ok()
+    });
+    let loaded = CollectorTransport::new(
+        CollectorEndpoint::public("https://localhost").unwrap(),
+        CollectorTrust::System,
+    );
+    assert_eq!(loaded.is_ok(), any_usable);
 }

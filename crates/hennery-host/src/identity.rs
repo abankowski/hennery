@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub const KEY_FILE: &str = "host.key";
@@ -59,6 +59,16 @@ pub(crate) fn durable_rename(from: &Path, to: &Path) -> Result<()> {
     storage_boundary(to, "before_rename")?;
     std::fs::rename(from, to)?;
     fsync_parent(to).map_err(|_| DurabilityUncertain { path: to.to_path_buf() }.into())
+}
+pub(crate) fn durable_remove(path: &Path) -> Result<()> {
+    storage_boundary(path, "before_remove")?;
+    std::fs::remove_file(path)?;
+    fsync_parent(path).map_err(|_| {
+        DurabilityUncertain {
+            path: path.to_path_buf(),
+        }
+        .into()
+    })
 }
 
 /// The host's private key.
@@ -255,7 +265,14 @@ pub(crate) fn read_regular(path: &Path, bound: usize) -> Result<String> {
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
     let meta = file.metadata()?;
-    if !meta.is_file() || meta.permissions().mode() & 0o022 != 0 {
+    // SAFETY: geteuid has no arguments or memory preconditions.
+    let uid = unsafe { libc::geteuid() };
+    let parent = path.parent().context("transport configuration parent")?;
+    if !meta.is_file()
+        || meta.permissions().mode() & 0o022 != 0
+        || meta.uid() != uid
+        || std::fs::metadata(parent)?.permissions().mode() & 0o022 != 0
+    {
         bail!("transport configuration must be a regular file, not writable by group or others");
     }
     let mut text = String::new();
@@ -699,5 +716,47 @@ cdf6b48fb39bfaa9b5a3cd01538280ec9e6d50c8831e9aae4d791f68112a6c04";
             "not = [toml",
             "a host.toml that does not parse was replaced"
         );
+    }
+}
+
+#[cfg(test)]
+mod transport_config_tests {
+    use super::*;
+    #[test]
+    fn saved_transport_refuses_writable_unknown_and_credential_bearing_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let paired = Paired {
+            collector_url: "wss://localhost/api/hosts/ws".into(),
+            trust: CollectorTrust::System,
+            host_id: "host-0123456789abcdef".into(),
+            key: HostKey::from_seed([110; 32]),
+            workspace_roots: vec![],
+        };
+        paired.save(dir.path()).unwrap();
+        let path = dir.path().join(CONFIG_FILE);
+        let original = std::fs::read_to_string(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o622)).unwrap();
+        assert!(Paired::read(dir.path()).is_err());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        for extra in [
+            "mode='unknown'",
+            "mode='system'\nca_pem='private-canary'",
+            "mode='ca_bundle'",
+            "mode='system'\nextra='private-canary'",
+        ] {
+            let text = format!(
+                "collector='wss://localhost/api/hosts/ws'\nhost_id='host-0123456789abcdef'\n[collector_tls]\n{extra}"
+            );
+            std::fs::write(&path, text).unwrap();
+            let error = Paired::read(dir.path()).unwrap_err().to_string();
+            assert!(!error.contains("private-canary"));
+        }
+        std::fs::write(
+            &path,
+            original.replace("wss://localhost", "wss://user:private-canary@localhost"),
+        )
+        .unwrap();
+        let error = Paired::read(dir.path()).unwrap_err().to_string();
+        assert!(!error.contains("private-canary"));
     }
 }

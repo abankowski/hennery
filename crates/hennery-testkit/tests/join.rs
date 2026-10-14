@@ -432,3 +432,69 @@ async fn uncertain_enrollment_results_never_authorize_a_second_post_or_key() {
         server.abort();
     }
 }
+
+#[tokio::test]
+async fn enrollment_storage_boundaries_never_replay_and_confirmed_receipts_roll_forward() {
+    use hennery_host::{
+        enrollment::{self, EnrollmentState},
+        identity::storage_hooks,
+    };
+    for (file, stage, post) in [
+        ("host.key.pending", "before_write", false),
+        ("host.key.pending", "before_file_sync", false),
+        ("host.key.pending", "before_rename", false),
+        ("host.key.pending", "directory_sync", false),
+        (enrollment::JOURNAL, "before_post", false),
+        (enrollment::JOURNAL, "before_write", false),
+        (enrollment::JOURNAL, "before_file_sync", false),
+        (enrollment::JOURNAL, "before_rename", false),
+        (enrollment::JOURNAL, "directory_sync", false),
+        ("host.toml.pending", "before_write", true),
+        ("host.toml.pending", "before_file_sync", true),
+        ("host.toml.pending", "before_rename", true),
+        ("host.toml.pending", "directory_sync", true),
+        ("host.key", "before_rename", true),
+        ("host.key", "directory_sync", true),
+        ("host.toml", "before_rename", true),
+        ("host.toml", "directory_sync", true),
+        (enrollment::JOURNAL, "before_remove", true),
+    ] {
+        let collector = Collector::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let code = collector.mint().await;
+        storage_hooks::fail_once(dir.path().join(file), stage);
+        assert!(
+            join(&collector.public_url(), &code, dir.path(), "fixture")
+                .await
+                .is_err(),
+            "{file} {stage}"
+        );
+        assert_eq!(
+            collector.state.hosts.list().unwrap().len(),
+            usize::from(post),
+            "{file} {stage}"
+        );
+        let count = collector.state.hosts.list().unwrap().len();
+        match enrollment::inspect(dir.path()) {
+            Ok(EnrollmentState::Confirmed(_)) => {
+                Paired::load(dir.path()).unwrap();
+                assert!(Paired::read(dir.path()).unwrap().is_some());
+            }
+            Ok(EnrollmentState::Clear) => {
+                assert!(
+                    Paired::read(dir.path()).unwrap().is_some(),
+                    "a clear post-failure state must be an installed identity: {file} {stage}"
+                );
+            }
+            _ => {
+                assert!(Paired::load(dir.path()).is_err());
+                assert!(
+                    join(&collector.public_url(), "FRESH-CODE", dir.path(), "fixture")
+                        .await
+                        .is_err()
+                );
+            }
+        }
+        assert_eq!(collector.state.hosts.list().unwrap().len(), count);
+    }
+}
