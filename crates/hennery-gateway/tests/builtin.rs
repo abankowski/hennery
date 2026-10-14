@@ -170,3 +170,76 @@ fn foreign_owner_session_and_grant_are_not_visible() {
     assert!(w.store.set_session_tools("foreign-hat", false).unwrap().is_none());
     assert!(w.store.set_session_tools("absent", true).unwrap().is_none());
 }
+
+#[test]
+fn a_disabled_flag_denies_even_if_a_corrupt_policy_keeps_the_delivered_revision() {
+    let w = world();
+    w.store.set_session_tools(&w.hat(), true).unwrap();
+    let token = bearer(&deliver(&w, true, McpSessionDeliveryMode::Isolated));
+    let identity = w.store.authenticate_session(&token).unwrap().unwrap();
+    w.raw()
+        .execute(
+            "UPDATE hat_session_tools SET delegation_enabled = 0 WHERE owner_id = ?1",
+            [w.store.owner_id()],
+        )
+        .unwrap();
+    assert!(w.store.delegation_granted(&identity).unwrap().is_none());
+}
+
+#[test]
+fn an_accepted_revision_cannot_borrow_a_freshly_delivered_generation() {
+    let w = world();
+    w.store.set_session_tools(&w.hat(), true).unwrap();
+    let _old = bearer(&deliver(&w, true, McpSessionDeliveryMode::Isolated));
+    w.store.set_session_tools(&w.hat(), false).unwrap();
+    w.store.set_session_tools(&w.hat(), true).unwrap();
+    let fresh = bearer(&deliver(&w, true, McpSessionDeliveryMode::Isolated));
+    let identity = w.store.authenticate_session(&fresh).unwrap().unwrap();
+    assert_eq!(w.store.delegation_granted(&identity).unwrap(), Some(3));
+    assert!(!w.store.recheck_delegation(&identity, 1).unwrap());
+}
+
+#[test]
+fn a_grant_watch_survives_the_authentication_facade_that_created_it() {
+    let w = world();
+    w.store.set_session_tools(&w.hat(), true).unwrap();
+    let token = bearer(&deliver(&w, true, McpSessionDeliveryMode::Isolated));
+    let identity = w.store.authenticate_session(&token).unwrap().unwrap();
+    let watch = w.store.watch_delegation(&identity).unwrap().unwrap();
+    let World {
+        store,
+        db,
+        proxy_store,
+        hosts,
+        dir,
+        key,
+        revocations,
+    } = w;
+    drop(store);
+    let replacement = hennery_gateway::store::GatewayStore::open(&db).unwrap();
+    replacement
+        .set_session_tools(&identity.principal.hat_id, false)
+        .unwrap();
+    assert!(watch.token().is_cancelled());
+    drop((proxy_store, hosts, dir, key, revocations));
+}
+
+#[test]
+fn failed_policy_commit_rolls_back_revision_and_does_not_cut_a_grant() {
+    let w = world();
+    w.store.set_session_tools(&w.hat(), true).unwrap();
+    let token = bearer(&deliver(&w, true, McpSessionDeliveryMode::Isolated));
+    let identity = w.store.authenticate_session(&token).unwrap().unwrap();
+    let watch = w.store.watch_delegation(&identity).unwrap().unwrap();
+    w.raw()
+        .execute_batch(
+            "CREATE TABLE commit_fault(owner_id TEXT REFERENCES owners(id) DEFERRABLE INITIALLY DEFERRED);
+        CREATE TRIGGER fail_policy_commit AFTER UPDATE ON hat_session_tools WHEN NEW.delegation_enabled = 0
+        BEGIN INSERT INTO commit_fault(owner_id) VALUES ('missing-owner'); END;",
+        )
+        .unwrap();
+    assert!(w.store.set_session_tools(&w.hat(), false).is_err());
+    assert!(!watch.token().is_cancelled());
+    assert_eq!(w.store.delegation_granted(&identity).unwrap(), Some(1));
+    assert_eq!(w.store.session_tools(&w.hat()).unwrap().unwrap().revision, 1);
+}

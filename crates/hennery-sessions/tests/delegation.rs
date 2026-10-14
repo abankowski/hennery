@@ -36,6 +36,22 @@ impl World {
                 1,
             )
             .unwrap();
+        hosts
+            .record_hello(
+                "host",
+                "0",
+                &hennery_proto::frames::Capabilities(vec![hennery_proto::frames::Capability::McpServers]),
+                unix_now(),
+            )
+            .unwrap();
+        hosts
+            .record_mcp_isolation(
+                "host",
+                &hennery_proto::frames::AgentIsolation(
+                    [("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect(),
+                ),
+            )
+            .unwrap();
         let hat = hosts.host("host").unwrap().unwrap().default_hat_id;
         let HatChange::Done(other) = hosts.create_hat("Other", None, 1).unwrap() else {
             panic!()
@@ -148,6 +164,10 @@ fn family_storage_is_immutable_direct_scoped_and_terminally_detached() {
     assert!(!w.store.bind_family_in(&tx, &identity, 1, "foreign-hat", 0).unwrap());
     tx.commit().unwrap();
     assert!(w.store.direct_child(&identity, 1, "child").unwrap().is_some());
+    assert!(
+        conn.execute("UPDATE session_families SET parent_id = 'sibling'", [])
+            .is_err()
+    );
     for id in ["sibling", "parent", "foreign-hat", "absent"] {
         assert!(w.store.direct_child(&identity, 1, id).unwrap().is_none());
     }
@@ -279,4 +299,146 @@ fn family_rollback_immutability_reassignment_delete_and_purge_cannot_restore_aut
             "{transition}"
         );
     }
+}
+
+#[test]
+fn each_live_caller_row_fence_is_rechecked_inside_the_transaction() {
+    let w = World::new();
+    let identity = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    let _ = w.start("sibling", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    let mut forged = identity.clone();
+    forged.principal.kind = hennery_gateway::scope::PrincipalKind::Session {
+        session_id: "sibling".into(),
+        host_id: "host".into(),
+    };
+    assert!(w.store.session_tool_context(&forged, 1, false).unwrap().is_none());
+    let conn = hennery_kernel::db::open(&w.db).unwrap();
+    for (change, restore) in [
+        ("lifecycle = 'failed'", "lifecycle = 'starting'"),
+        ("close_requested = 1", "close_requested = 0"),
+        ("presumed_parked = 1", "presumed_parked = 0"),
+        ("mcp_delivery_mode = 'fallback'", "mcp_delivery_mode = 'isolated'"),
+        ("cwd = '/p/../escape'", "cwd = '/project'"),
+    ] {
+        conn.execute(&format!("UPDATE sessions SET {change} WHERE id = 'parent'"), [])
+            .unwrap();
+        assert!(
+            w.store.session_tool_context(&identity, 1, false).unwrap().is_none(),
+            "{change}"
+        );
+        conn.execute(&format!("UPDATE sessions SET {restore} WHERE id = 'parent'"), [])
+            .unwrap();
+        assert!(w.store.session_tool_context(&identity, 1, false).unwrap().is_some());
+    }
+    conn.execute("UPDATE sessions SET hat_id = ?1 WHERE id = 'parent'", [&w.other])
+        .unwrap();
+    assert!(w.store.session_tool_context(&identity, 1, false).unwrap().is_none());
+    conn.execute("UPDATE sessions SET hat_id = ?1 WHERE id = 'parent'", [&w.hat])
+        .unwrap();
+    conn.execute(
+        "UPDATE gw_session_tokens SET delivered_delegation_revision = NULL WHERE session_id = 'parent'",
+        [],
+    )
+    .unwrap();
+    assert!(w.store.session_tool_context(&identity, 1, false).unwrap().is_none());
+}
+
+#[test]
+fn current_persisted_hello_capability_and_isolation_are_transactional_fences() {
+    let w = World::new();
+    let identity = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    assert!(w.store.session_tool_context(&identity, 1, false).unwrap().is_some());
+    let conn = hennery_kernel::db::open(&w.db).unwrap();
+    for capabilities in ["[]", "invalid-json"] {
+        conn.execute("UPDATE hosts SET capabilities = ?1 WHERE id = 'host'", [capabilities])
+            .unwrap();
+        assert!(
+            w.store.session_tool_context(&identity, 1, false).unwrap().is_none(),
+            "{capabilities}"
+        );
+    }
+    conn.execute(
+        "UPDATE hosts SET capabilities = '[\"mcp_servers\"]' WHERE id = 'host'",
+        [],
+    )
+    .unwrap();
+    for isolation in ["{\"claude\":\"none\"}", "invalid-json", "{}"] {
+        conn.execute("UPDATE hosts SET mcp_isolation = ?1 WHERE id = 'host'", [isolation])
+            .unwrap();
+        assert!(
+            w.store.session_tool_context(&identity, 1, false).unwrap().is_none(),
+            "{isolation}"
+        );
+    }
+    conn.execute(
+        "UPDATE hosts SET mcp_isolation = '{\"claude\":\"claude_strict\"}' WHERE id = 'host'",
+        [],
+    )
+    .unwrap();
+    assert!(w.store.session_tool_context(&identity, 1, false).unwrap().is_some());
+}
+
+#[test]
+fn allocation_rejects_noncanonical_child_input_without_storing_a_row() {
+    let w = World::new();
+    let parent = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    w.active("parent");
+    let mode = McpContext {
+        capable: true,
+        isolation: McpIsolation::ClaudeStrict,
+        rules_name_other_hats: false,
+    };
+    assert!(
+        w.store
+            .create_delegated_session(&parent, 1, "child", "claude", "/p/../escape", mode, 0)
+            .unwrap()
+            .is_none()
+    );
+    let conn = hennery_kernel::db::open(&w.db).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT count(*) FROM sessions WHERE id = 'child'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn purging_an_old_hat_scrubs_detached_edges_when_both_endpoints_moved() {
+    let w = World::new();
+    let parent = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    w.active("parent");
+    w.start("child", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    let mut conn = hennery_kernel::db::open(&w.db).unwrap();
+    let tx = conn.transaction().unwrap();
+    assert!(w.store.bind_family_in(&tx, &parent, 1, "child", 0).unwrap());
+    tx.commit().unwrap();
+    conn.execute(
+        "UPDATE sessions SET hat_id = ?1 WHERE id IN ('parent','child')",
+        [&w.other],
+    )
+    .unwrap();
+    conn.execute("UPDATE hosts SET default_hat_id = ?1 WHERE id = 'host'", [&w.other])
+        .unwrap();
+    conn.execute(
+        "DELETE FROM gw_session_tokens WHERE owner_id = ?1 AND hat_id = ?2",
+        rusqlite::params![w.store.owner_id(), w.hat],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE settings SET value = ?1 WHERE key = 'default_hat_id' AND owner_id = ?2",
+        rusqlite::params![w.other, w.store.owner_id()],
+    )
+    .unwrap();
+    let hosts = Hosts::open(&w.db).unwrap();
+    hosts.begin_purge(&w.hat, unix_now()).unwrap();
+    assert!(hosts.finish_purge(&w.hat).unwrap());
+    let count: i64 = conn
+        .query_row("SELECT count(*) FROM session_families", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+    let count: i64 = conn
+        .query_row("SELECT count(*) FROM sessions WHERE hat_id = ?1", [&w.other], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(count, 2);
 }

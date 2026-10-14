@@ -59,6 +59,15 @@ impl Harness {
                 .unwrap(),
             SetupOutcome::Done { .. }
         ));
+        hosts
+            .record_hello("host", "0", &Capabilities(vec![Capability::McpServers]), unix_now())
+            .unwrap();
+        hosts
+            .record_mcp_isolation(
+                "host",
+                &AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect()),
+            )
+            .unwrap();
         let state = AppState::new(Store::open(&db).unwrap(), hosts, operator);
         let gateway_store = Arc::new(GatewayStore::open(&db).unwrap());
         let runtime = Arc::new(hennery_gateway::runtime::Runtime::new(
@@ -742,4 +751,165 @@ async fn current_host_capability_and_isolation_are_rechecked_after_reconnect() {
             status
         );
     }
+}
+
+#[tokio::test]
+async fn every_protocol_error_verdict_is_positive_and_never_echoes_the_token() {
+    let h = Harness::new().await;
+    for (raw, code, status) in [
+        ("not-json", -32700, StatusCode::BAD_REQUEST),
+        (r#"[]"#, -32600, StatusCode::BAD_REQUEST),
+        (
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":[]}}"#,
+            -32602,
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#,
+            -32601,
+            StatusCode::OK,
+        ),
+    ] {
+        let response = h.post(raw.as_bytes().to_vec()).await;
+        assert_eq!(response.status(), status);
+        assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"], code);
+    }
+    let answer = h
+        .rpc(json!({"jsonrpc":"2.0","id":h.token,"method":"resources/list"}))
+        .await;
+    assert!(!answer.to_string().contains(&h.token));
+}
+
+#[tokio::test]
+async fn capability_guard_is_independent_of_isolation_when_old_delivery_was_unisolated() {
+    let h = Harness::new().await;
+    let conn = hennery_kernel::db::open(&h._dir.path().join("hennery.db")).unwrap();
+    conn.execute(
+        "UPDATE sessions SET mcp_delivery_mode = 'unisolated' WHERE id = 'session'",
+        [],
+    )
+    .unwrap();
+    if let Some(id) = h.state.hub.routable_conn("host") {
+        h.state.hub.unregister("host", id);
+    }
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let reg = h
+        .state
+        .hub
+        .register("host", tx, Capabilities(vec![]), AgentIsolation::default())
+        .unwrap();
+    h.state.hub.mark_ready("host", reg.conn_id);
+    assert_eq!(
+        h.post(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_vec())
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn pinned_claude_implementation_metadata_uses_standard_optional_fields() {
+    let h = Harness::new().await;
+    let result=h.rpc(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"claude-code","title":"Claude Code","version":"fixture","description":"Pinned SDK metadata","websiteUrl":"https://example.com"}}})).await;
+    assert_eq!(result["result"]["protocolVersion"], "2025-11-25");
+}
+
+#[tokio::test]
+async fn origin_scope_and_stateless_method_refusals_precede_the_busy_limit() {
+    use std::time::Duration;
+    let h = Harness::with_limits(hennery_gateway::proxy::Limits::new(
+        0,
+        32,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    ))
+    .await;
+    assert_eq!(
+        Client::new()
+            .post(&h.url)
+            .header("origin", "https://foreign.example")
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        Client::new().post(&h.url).body("{}").send().await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        Client::new()
+            .get(&h.url)
+            .bearer_auth(&h.token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    assert_eq!(h.post(b"{}".to_vec()).await.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn positional_json_arrays_cannot_become_messages_or_typed_parameter_objects() {
+    let h = Harness::new().await;
+    for raw in [
+        r#"["2.0",1,"ping",null]"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":["x",{}]}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":["2025-03-26",{},{"name":"x","version":"1"}]}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":["x","1"]}}"#,
+    ] {
+        assert_eq!(
+            h.post(raw.as_bytes().to_vec()).await.status(),
+            StatusCode::BAD_REQUEST,
+            "{raw}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn policy_parse_refusals_do_not_echo_first_party_tokens() {
+    let h = Harness::new().await;
+    let phc = h
+        .state
+        .operator
+        .verify_password("correct horse battery")
+        .unwrap()
+        .unwrap();
+    let session = h
+        .state
+        .operator
+        .open_session("test", &phc, unix_now())
+        .unwrap()
+        .unwrap();
+    let endpoint = h
+        .url
+        .replace("/mcp/builtin/hennery", &format!("/api/hats/{}/session-tools", h.hat));
+    let raw = format!("{{\"{}\":true}}", h.token);
+    let response = Client::new()
+        .patch(endpoint)
+        .header("cookie", format!("hennery_session={session}"))
+        .header("origin", ORIGIN)
+        .header("content-type", "application/json")
+        .body(raw)
+        .send()
+        .await
+        .unwrap();
+    assert!(!response.status().is_success());
+    assert!(!response.text().await.unwrap().contains(&h.token));
+}
+#[tokio::test]
+async fn standard_client_icons_are_typed_data_and_positional_icons_are_refused() {
+    let h = Harness::new().await;
+    for theme in ["light", "dark"] {
+        let response=h.rpc(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1","icons":[{"src":"https://example.com/icon.png","mimeType":"image/png","sizes":["16x16"],"theme":theme}]}}})).await;
+        assert!(response.get("result").is_some());
+    }
+    let bad = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1","icons":[["https://example.com/icon.png"]]}}});
+    assert_eq!(
+        h.post(serde_json::to_vec(&bad).unwrap()).await.status(),
+        StatusCode::BAD_REQUEST
+    );
 }
