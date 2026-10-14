@@ -25,8 +25,13 @@ result=check('marked UI before checkout',ctx=>{neighboring(ctx);marked(ctx);},0)
 requireThat(fs.readFileSync(join(result.out,'web_assets.rs'),'utf8').includes('/web-dist/index.html'),'checkout took precedence over package');
 check('damaged marked UI refuses neighboring fallback',ctx=>{neighboring(ctx);marked(ctx);fs.unlinkSync(join(ctx.manifest,'web-dist/index.html'));},101);
 check('normalized package cannot lose marker',ctx=>{neighboring(ctx);fs.writeFileSync(join(ctx.manifest,'Cargo.toml.orig'),'[package]');},101);
-check('explicit relative override',()=>{},101,{HENNERY_WEB_DIST:'relative'});
+const relative=fs.mkdtempSync('.superpowers/r3-relative-ui-');
+fs.writeFileSync(join(relative,'index.html'),'relative UI');
+check('explicit relative override',()=>{},101,{HENNERY_WEB_DIST:relative});
 check('explicit missing override',()=>{},101,{HENNERY_WEB_DIST:'/no-such-hennery-ui-directory'});
+const incomplete=fs.mkdtempSync(join(tmpdir(),'hennery-r3-incomplete-'));
+fs.writeFileSync(join(incomplete,'app.js'),'no index');
+check('explicit existing override without index',()=>{},101,{HENNERY_WEB_DIST:incomplete});
 check('require real UI',()=>{},101,{HENNERY_WEB_REQUIRE:'1'});
 check('invalid require value',()=>{},101,{HENNERY_WEB_REQUIRE:'yes'});
 const override=fs.mkdtempSync(join(tmpdir(),'hennery-r3-override-'));fs.writeFileSync(join(override,'index.html'),'override UI');

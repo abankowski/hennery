@@ -81,3 +81,35 @@ for(const [name,value]of [['schema',2],['source_sha','b'.repeat(40)]])test(`refu
 test('requires the generated frontend notice inventory and exact licence bytes',()=>{
  const root=fixture();writeFileSync(join(root,'FRONTEND-NOTICES.txt'),'MIT License\nCopyright Wrong\nPermission is hereby granted to copy different bytes from another package.');assert.throws(()=>inspectPackage(root,'hennery-kernel',source));
 });
+import { execFileSync } from 'node:child_process';
+import { gitSourceFiles, extract } from './crate-release.mjs';
+test('export-ignore cannot hide corresponding-source fixtures from the acceptance inventory',()=>{
+ const {root}=sourceTree();mkdirSync(join(root,'fixtures'));
+ writeFileSync(join(root,'fixtures/needed.json'),'source fixture');
+ writeFileSync(join(root,'.gitattributes'),'fixtures/needed.json export-ignore\n');
+ execFileSync('git',['init','--quiet',root]);execFileSync('git',['add','-A'],{cwd:root});
+ const tree=execFileSync('git',['write-tree'],{cwd:root,encoding:'utf8'}).trim(),expected=gitSourceFiles(tree,root);
+ const dir=mkdtempSync(join(tmpdir(),'r3-export-ignore-')),archive=join(dir,'source.tar.gz');
+ writeFileSync(archive,execFileSync('git',['archive','--format=tar.gz',tree],{cwd:root}));
+ const extracted=join(dir,'source');extract(archive,extracted);
+ assert.ok(expected['fixtures/needed.json']);assert.throws(()=>checkSourceTree(extracted,expected),/does not match source inventory/);
+});
+import { prepare } from './prepare-crates.mjs';
+test('release preparation itself refuses export-ignored source before any build or resolver',async()=>{
+ const {root}=sourceTree();mkdirSync(join(root,'fixtures'));writeFileSync(join(root,'fixtures/needed.json'),'needed fixture');writeFileSync(join(root,'.gitattributes'),'fixtures/needed.json export-ignore\n');
+ execFileSync('git',['init','--quiet',root]);execFileSync('git',['add','-A'],{cwd:root});const tree=execFileSync('git',['write-tree'],{cwd:root,encoding:'utf8'}).trim();
+ const destination=join(mkdtempSync(join(tmpdir(),'r3-prep-export-ignore-')),'candidate'),prior=process.cwd();
+ try{process.chdir(root);await assert.rejects(prepare(destination,tree),/corresponding source does not match source inventory/);}finally{process.chdir(prior);}
+});
+import { files } from './crate-release.mjs';
+test('source inventories preserve reserved JavaScript property names as real files',()=>{
+ const root=mkdtempSync(join(tmpdir(),'r3-file-names-'));writeFileSync(join(root,'__proto__'),'required source');
+ const inventory=files(root);assert.ok(Object.hasOwn(inventory,'__proto__'));assert.equal(inventory.__proto__,sha256(Buffer.from('required source')));
+ execFileSync('git',['init','--quiet',root]);execFileSync('git',['add','-A'],{cwd:root});const tree=execFileSync('git',['write-tree'],{cwd:root,encoding:'utf8'}).trim();
+ const expected=gitSourceFiles(tree,root);assert.ok(Object.hasOwn(expected,'__proto__'));assert.equal(expected.__proto__,inventory.__proto__);
+});
+test('a matching notice digest cannot authorize an empty frontend notice payload',()=>{
+ const root=fixture(),empty={...source,notices_sha256:sha256(Buffer.alloc(0))};
+ writeFileSync(join(root,'FRONTEND-NOTICES.txt'),'');writeFileSync(join(root,'SOURCE.json'),JSON.stringify(empty));
+ assert.throws(()=>inspectPackage(root,'hennery-kernel',empty));
+});

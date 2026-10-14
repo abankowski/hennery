@@ -7,15 +7,27 @@ export const ORDER = ['hennery-proto','hennery-kernel','hennery-view','hennery-h
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export const readJSON = path => JSON.parse(fs.readFileSync(path,'utf8'));
 export function requireThat(ok, message) { if (!ok) throw new Error(message); }
-const sameFiles = (a,b) => a && b && Object.keys(a).length===Object.keys(b).length && Object.entries(a).every(([k,v])=>b[k]===v);
+const sameFiles = (a,b) => a && b && Object.keys(a).length===Object.keys(b).length && Object.entries(a).every(([k,v])=>Object.hasOwn(b,k) && b[k]===v);
 const hex = (s,n) => typeof s === 'string' && new RegExp(`^[a-f0-9]{${n}}$`).test(s);
 export function files(root, prefix='') {
-  const result={};
+  const result=Object.create(null);
   for (const entry of fs.readdirSync(join(root,prefix),{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))) {
     const name=prefix ? `${prefix}/${entry.name}` : entry.name;
     requireThat(!entry.isSymbolicLink(),'symlink in distributable: '+name);
     if(entry.isDirectory()) Object.assign(result,files(root,name));
     else { requireThat(entry.isFile(),'non-regular distributable: '+name); result[name]=sha256(fs.readFileSync(join(root,name))); }
+  }
+  return result;
+}
+// Compare against Git's complete tree, independently of `git archive`: an
+// export-ignore attribute must not silently omit corresponding source/fixtures.
+export function gitSourceFiles(revision,cwd=process.cwd()) {
+  const entries=execFileSync('git',['ls-tree','-rz','--full-tree',revision],{cwd,encoding:'utf8'}).split('\0').filter(Boolean);
+  const result=Object.create(null);
+  for(const entry of entries) {
+    const tab=entry.indexOf('\t'), [mode,type,oid]=entry.slice(0,tab).split(' '), path=entry.slice(tab+1);
+    requireThat(type==='blob' && ['100644','100755'].includes(mode),'source contains unsupported linked/submodule input: '+path);
+    result[path]=sha256(execFileSync('git',['cat-file','blob',oid],{cwd,maxBuffer:100*1024*1024}));
   }
   return result;
 }

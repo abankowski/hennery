@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
-import { ORDER, sha256, files, readJSON, requireThat, extract, inspectPackage, indexEntry, uploadMetadata, verifyCandidate, checkSourceTree } from './crate-release.mjs';
+import { ORDER, sha256, files, gitSourceFiles, readJSON, requireThat, extract, inspectPackage, indexEntry, uploadMetadata, verifyCandidate, checkSourceTree } from './crate-release.mjs';
 import { registry } from './crate-registry.mjs';
 export function run(command,args,options={}) {
   console.log('+',command,...args);
@@ -39,7 +39,8 @@ export async function prepare(destination,revision) {
   const archive=join(out,`hennery-source-${revision}.tar.gz`);
   fs.writeFileSync(archive,execFileSync('git',['archive','--format=tar.gz',revision],{maxBuffer:100*1024*1024}));
   extract(archive,src);
-  const sourceFiles=files(src);
+  const sourceFiles=gitSourceFiles(revision);
+  checkSourceTree(src,sourceFiles);
   const meta=JSON.parse(execFileSync('cargo',['metadata','--no-deps','--format-version','1'],{cwd:src,encoding:'utf8'}));
   const version=meta.packages.find(p=>p.name==='hennery').version;
   const source={sha:revision,url:`https://github.com/marcinwadon/hennery/releases/download/v${version}/hennery-source-${revision}.tar.gz`,sha256:sha256(fs.readFileSync(archive))};

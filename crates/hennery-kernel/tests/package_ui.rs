@@ -29,6 +29,7 @@ fn accepts_inventory_and_rejects_each_damaged_package() {
         "changed",
         "extra",
         "map",
+        "hidden",
         "escape",
         "revision",
         "schema",
@@ -43,14 +44,24 @@ fn accepts_inventory_and_rejects_each_damaged_package() {
             "changed" => fs::write(root.path().join("web-dist/index.html"), "bad").unwrap(),
             "extra" => fs::write(root.path().join("web-dist/extra.js"), "bad").unwrap(),
             "map" => {
-                json["files"]["app.js.map"] = "a".repeat(64).into();
+                let bytes = b"source map";
+                fs::write(root.path().join("web-dist/app.js.map"), bytes).unwrap();
+                json["files"]["app.js.map"] = format!("{:x}", Sha256::digest(bytes)).into();
+            }
+            "hidden" => {
+                let bytes = b"hidden file";
+                fs::write(root.path().join("web-dist/.hidden"), bytes).unwrap();
+                json["files"][".hidden"] = format!("{:x}", Sha256::digest(bytes)).into();
             }
             "escape" => {
                 json["files"]["../secret"] = "a".repeat(64).into();
             }
             "revision" => json["source_sha"] = "main".into(),
             "schema" => json["schema"] = 2.into(),
-            "empty" => json["files"] = serde_json::json!({}),
+            "empty" => {
+                fs::remove_file(root.path().join("web-dist/index.html")).unwrap();
+                json["files"] = serde_json::json!({});
+            }
             "malformed" => {
                 fs::write(&marker, "{}").unwrap();
                 assert!(package_ui::validate(root.path()).is_err());
