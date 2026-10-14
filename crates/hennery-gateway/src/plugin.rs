@@ -901,8 +901,15 @@ pub(crate) async fn rpc<T: serde::de::DeserializeOwned>(
 }
 
 fn forget_budget(deadline: i64, now: std::time::SystemTime) -> std::time::Duration {
-    let seconds = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    std::time::Duration::from_secs(deadline.saturating_sub(seconds as i64).clamp(0, 5) as u64)
+    let Ok(seconds) = u64::try_from(deadline) else {
+        return std::time::Duration::ZERO;
+    };
+    let Some(at) = std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds)) else {
+        return std::time::Duration::ZERO;
+    };
+    at.duration_since(now)
+        .unwrap_or_default()
+        .min(std::time::Duration::from_secs(5))
 }
 
 impl crate::runtime::Runtime {
@@ -1078,10 +1085,22 @@ mod deadline_tests {
 
     #[test]
     fn recovery_budget_never_rounds_past_the_persisted_absolute_deadline() {
-        assert_eq!(forget_budget(105, UNIX_EPOCH + Duration::from_millis(100_900)), Duration::from_millis(4100));
-        assert_eq!(forget_budget(105, UNIX_EPOCH + Duration::from_millis(104_800)), Duration::from_millis(200));
-        assert_eq!(forget_budget(105, UNIX_EPOCH + Duration::from_millis(105_001)), Duration::ZERO);
+        assert_eq!(
+            forget_budget(105, UNIX_EPOCH + Duration::from_millis(100_900)),
+            Duration::from_millis(4100)
+        );
+        assert_eq!(
+            forget_budget(105, UNIX_EPOCH + Duration::from_millis(104_800)),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            forget_budget(105, UNIX_EPOCH + Duration::from_millis(105_001)),
+            Duration::ZERO
+        );
         assert_eq!(forget_budget(-1, UNIX_EPOCH), Duration::ZERO);
-        assert_eq!(forget_budget(1100, UNIX_EPOCH + Duration::from_millis(100_100)), Duration::from_secs(5));
+        assert_eq!(
+            forget_budget(1100, UNIX_EPOCH + Duration::from_millis(100_100)),
+            Duration::from_secs(5)
+        );
     }
 }
