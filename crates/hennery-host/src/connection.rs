@@ -1062,3 +1062,17 @@ mod tests {
         assert_eq!(kinds, ["session#1", "not_attached", "not_attached"]);
     }
 }
+
+#[cfg(test)]
+mod reconnect_tests {
+    use super::*;
+    #[test]
+    fn jitter_has_floor_half_ceiling_and_retry_after_bounds() {
+        let floor = Duration::from_millis(500);
+        assert_eq!(reconnect_delay(floor, floor, 0, None), floor);
+        assert_eq!(reconnect_delay(Duration::from_secs(30), floor, 0, None), Duration::from_secs(15));
+        assert_eq!(reconnect_delay(Duration::from_secs(30), floor, 15_000, None), Duration::from_secs(30));
+        assert_eq!(reconnect_delay(Duration::from_secs(30), floor, 0, Some(1)), Duration::from_secs(15));
+        assert_eq!(reconnect_delay(Duration::from_secs(30), floor, 0, Some(999)), Duration::from_secs(300));
+    }
+}
