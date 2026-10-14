@@ -6,6 +6,7 @@ pub mod admin;
 pub mod auth;
 pub mod auth_api;
 pub mod capabilities;
+pub mod client_address;
 pub mod coordination;
 pub mod csp;
 pub mod db;
