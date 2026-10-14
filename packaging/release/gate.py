@@ -230,6 +230,10 @@ class GitHub:
                 'reviews': self.get(f"/actions/runs/{context['publishing']['run_id']}/approvals"), 'checks': checks}
 
 
+def receipt_outside_candidate(candidate, receipt):
+    require(not Path(receipt).resolve().is_relative_to(Path(candidate).resolve()), 'gate receipt must be outside the immutable candidate')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate', required=True, type=Path)
@@ -238,6 +242,7 @@ def main():
     parser.add_argument('--phase', required=True, choices=['preflight', 'boundary'])
     parser.add_argument('--receipt', required=True, type=Path)
     args = parser.parse_args()
+    receipt_outside_candidate(args.candidate, args.receipt)
     raw = (args.candidate / 'release-inventory.json').read_bytes()
     inventory = strict_json(raw)
     require(raw == canonical(inventory), 'noncanonical inventory')

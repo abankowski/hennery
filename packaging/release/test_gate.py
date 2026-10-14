@@ -151,6 +151,12 @@ class Gates(unittest.TestCase):
                 with self.assertRaises(gate.Refused):
                     gate.validate(inventory, self.digest, self.root, self.context, self.snapshot)
 
+    def test_receipt_cannot_mutate_the_candidate_after_preflight(self):
+        for path in [self.root / 'receipt.json', self.root, self.root / 'nested/receipt.json']:
+            with self.subTest(path=path), self.assertRaises(gate.Refused):
+                gate.receipt_outside_candidate(self.root, path)
+        gate.receipt_outside_candidate(self.root, self.root.parent / 'outside-receipt.json')
+
     def test_missing_candidate(self):
         (self.root / 'archive').unlink()
         with self.assertRaises(gate.Refused):

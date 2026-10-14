@@ -3,6 +3,8 @@ import copy
 from pathlib import Path
 import re
 import unittest
+import tempfile
+import shutil
 
 import yaml
 
@@ -14,6 +16,18 @@ ROOT = Path(__file__).resolve().parents[2]
 class Workflows(unittest.TestCase):
     def test_all_release_workflows(self):
         workflow_policy.check_repository(ROOT)
+
+    def test_arbitrary_workflow_filename_cannot_hide_write_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(ROOT / '.github', root / '.github')
+            data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+            data['on'] = data.pop(True) if True in data else data['on']
+            data['jobs']['sign'].pop('environment')
+            data['jobs']['sign']['steps'] = [s for s in data['jobs']['sign']['steps'] if s.get('uses') != './.github/actions/release-gate']
+            (root / '.github/workflows/release.yml').write_text(yaml.safe_dump(data))
+            with self.assertRaises(ValueError):
+                workflow_policy.check_repository(root)
 
     def test_each_privileged_job_requires_environment(self):
         for workflow in (ROOT / '.github/workflows').glob('release-*.yml'):

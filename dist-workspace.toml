@@ -1,9 +1,9 @@
-# cargo-dist (distribution spec §2). Only its build half is wired up: the
-# `build` workflow runs `dist build` and keeps what it makes as workflow
-# artifacts (plan 7a). Publishing (GitHub Releases, the Homebrew tap, the
-# attestations) is the operator's to switch on: `dist generate` would write
-# a workflow that publishes on every version tag, so that workflow is not
-# committed, and `allow-dirty` stops `dist` from asking for it.
+# cargo-dist (distribution spec §2). `build` is qualification only; R1's
+# `release-candidate` rebuilds fresh, and `release-publish` is manual,
+# protected and disabled by default. Nothing is authorized by a tag alone.
+# Do not replace the explicit gates with `dist generate`'s automatic tag
+# publisher. `allow-dirty = ["ci"]` permits these custom workflows instead
+# of requiring the stock generated release.yml.
 [workspace]
 members = ["cargo:."]
 

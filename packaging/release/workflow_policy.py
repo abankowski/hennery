@@ -53,11 +53,19 @@ def check(data, name):
 
 
 def check_repository(root):
-    paths = sorted((Path(root) / '.github/workflows').glob('release-*.yml'))
-    if len(paths) < 3:
+    directory = Path(root) / '.github/workflows'
+    paths = sorted(set(directory.glob('*.yml')) | set(directory.glob('*.yaml')))
+    if not {'release-candidate.yml', 'release-publish.yml', 'release-tests.yml'} <= {p.name for p in paths}:
         raise ValueError('candidate, publish and negative-test workflows required')
     for path in paths:
-        check(yaml.safe_load(path.read_text()), path.name)
+        data = yaml.safe_load(path.read_text())
+        authority = any(privileged(dict(job, permissions=job.get('permissions', data.get('permissions', {}))))
+                        or 'uses' in job for job in data.get('jobs', {}).values())
+        # Read-only legacy qualification jobs retain their existing style.
+        # Every writer/signer or reusable indirection is checked, whatever
+        # the filename: a generated release.yml cannot bypass this policy.
+        if path.name.startswith('release-') or authority:
+            check(data, path.name)
 
 
 if __name__ == '__main__':
