@@ -11,7 +11,7 @@ export function run(command,args,options={}) {
     child.on('error',no);child.on('exit',code=>code===0?yes():no(new Error(`${command} exited ${code}`)));
   });
 }
-function notices(web) {
+export function frontendNotices(web) {
   const seen=new Map();
   function visit(dir) {
     dir=fs.realpathSync(dir); const pkg=readJSON(join(dir,'package.json')), key=`${pkg.name}@${pkg.version}`;
@@ -26,10 +26,13 @@ function notices(web) {
       visit(join(cursor,'node_modules',name));
     }
   }
-  for(const name of Object.keys(readJSON(join(web,'package.json')).dependencies)) visit(join(web,'node_modules',name));
-  // Tailwind's preflight CSS is emitted into the bundle, although its package is a build dependency.
-  visit(join(web,'node_modules/tailwindcss'));
-  return 'Frontend third-party licence texts (complete production dependency closure).\nNo external fonts; application icons/assets are covered by LICENSE.\n\n'+[...seen].sort(([a],[b])=>a.localeCompare(b)).map(([,text])=>text).join('\n\n'+'='.repeat(72)+'\n\n')+'\n';
+  const manifest=readJSON(join(web,'package.json'));
+  // Configured build tools can emit runtime helpers/CSS even though they are
+  // dev dependencies. Follow their package closures as well as production.
+  const config=fs.readFileSync(join(web,'vite.config.ts'),'utf8');
+  const tools=[...config.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map(m=>m[1]).filter(name=>!name.startsWith('.')&&!name.startsWith('node:'));
+  for(const name of new Set([...Object.keys(manifest.dependencies||{}),...tools,...(manifest.devDependencies?.typescript?['typescript']:[])])) visit(join(web,'node_modules',name));
+  return 'Frontend third-party licence texts (production and configured build-tool closure).\nBuild-tool notices cover emitted helpers and CSS; their binaries are not redistributed.\nNo external fonts; application icons/assets are covered by LICENSE.\n\n'+[...seen].sort(([a],[b])=>a.localeCompare(b)).map(([,text])=>text).join('\n\n'+'='.repeat(72)+'\n\n')+'\n';
 }
 export async function prepare(destination,revision) {
   const out=resolve(destination); requireThat(!out.startsWith(resolve(".")+"/"),"stage outside the checkout, so extracted crates have no workspace parent"); requireThat(!fs.existsSync(out),'destination must be fresh');
@@ -58,9 +61,9 @@ export async function prepare(destination,revision) {
     }
   }
   copy(join(src,'web/dist'));
-  const frontendNotices=notices(join(src,'web'));
-  source.notices_sha256=sha256(Buffer.from(frontendNotices));
-  fs.writeFileSync(join(kernel,'FRONTEND-NOTICES.txt'),frontendNotices);
+  const noticeText=frontendNotices(join(src,'web'));
+  source.notices_sha256=sha256(Buffer.from(noticeText));
+  fs.writeFileSync(join(kernel,'FRONTEND-NOTICES.txt'),noticeText);
   fs.writeFileSync(join(kernel,'SOURCE.json'),JSON.stringify(source,null,2)+'\n');
   fs.writeFileSync(join(kernel,'README.md'),fs.readFileSync(join(kernel,'README.md'),'utf8').replace('Generated with Claude AI',`Corresponding source: ${source.url}\n\nSource archive SHA-256: ${source.sha256}\n\nGenerated with Claude AI`));
   fs.writeFileSync(join(kernel,'release-ui.json'),JSON.stringify({schema:1,source_sha:revision,files:files(dist)},null,2)+'\n');

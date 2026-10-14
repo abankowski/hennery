@@ -113,3 +113,11 @@ test('a matching notice digest cannot authorize an empty frontend notice payload
  writeFileSync(join(root,'FRONTEND-NOTICES.txt'),'');writeFileSync(join(root,'SOURCE.json'),JSON.stringify(empty));
  assert.throws(()=>inspectPackage(root,'hennery-kernel',empty));
 });
+import { frontendNotices } from './prepare-crates.mjs';
+test('frontend notices include build-tool runtime helpers as well as production dependencies',()=>{
+ const web=mkdtempSync(join(tmpdir(),'r3-notice-closure-'));mkdirSync(join(web,'node_modules'));
+ writeFileSync(join(web,'package.json'),JSON.stringify({dependencies:{react:'1.0.0'},devDependencies:{vite:'1.0.0'}}));
+ writeFileSync(join(web,'vite.config.ts'),"import { defineConfig } from 'vite'\n");
+ for(const name of ['react','vite']){mkdirSync(join(web,'node_modules',name));writeFileSync(join(web,'node_modules',name,'package.json'),JSON.stringify({name,version:'1.0.0',license:'MIT'}));writeFileSync(join(web,'node_modules',name,'LICENSE'),`MIT License\nCopyright ${name}\nPermission is hereby granted to copy this fixture.`);}
+ const text=frontendNotices(web);assert.match(text,/react@1\.0\.0/);assert.match(text,/vite@1\.0\.0/);assert.match(text,/Copyright vite/);
+});

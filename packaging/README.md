@@ -95,8 +95,9 @@ not advertised install products.
 
 The `crates` CI workflow prepares from a fresh git-archive snapshot outside the
 checkout. `packaging/prepare-crates.mjs` builds the locked web UI, copies only
-its distributable output into the kernel, gathers production dependency licence
-texts and Tailwind's emitted CSS licence, and writes its source/UI inventories.
+its distributable output into the kernel, gathers licence texts for production
+dependencies and configured build tools (including emitted helpers and CSS), and
+writes its source/UI inventories.
 The canonical host manifest is `crates/hennery-host/manifest.json`; pin generation,
 CI and Nix read that same file. No agent or managed Node payload is packaged.
 Each final tarball is inspected for actual AGPL text, normalized registry
