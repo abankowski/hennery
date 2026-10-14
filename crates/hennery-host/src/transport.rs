@@ -612,6 +612,7 @@ mod ca_input_tests {
         assert!(ca_roots(&pem.repeat(32)).is_ok());
         assert!(ca_roots(&pem.repeat(33)).is_err());
         assert!(ca_roots(&" ".repeat(MAX_CA_BYTES + 1)).is_err());
+        assert!(ca_roots(&format!("{pem}{}", " ".repeat(MAX_CA_BYTES))).is_err());
         assert!(ca_roots(&format!("{pem}junk")).is_err());
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("ca.pem");
@@ -620,11 +621,21 @@ mod ca_input_tests {
         let link = dir.path().join("link.pem");
         std::os::unix::fs::symlink(&input, &link).unwrap();
         assert!(CollectorTrust::import(&link).is_err());
-        assert!(CollectorTrust::import(dir.path()).is_err());
+        assert!(
+            CollectorTrust::import(dir.path())
+                .unwrap_err()
+                .to_string()
+                .contains("regular file")
+        );
         let fifo = dir.path().join("fifo");
         let cpath = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
         // SAFETY: creates a FIFO at a fresh scratch path.
         assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
-        assert!(CollectorTrust::import(&fifo).is_err());
+        assert!(
+            CollectorTrust::import(&fifo)
+                .unwrap_err()
+                .to_string()
+                .contains("regular file")
+        );
     }
 }

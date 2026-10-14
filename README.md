@@ -142,6 +142,23 @@ roots are the default. `host join --ca-cert <file>` imports a private CA for
 this collector only and saves it; browsers and adapters need their own trust
 configuration. Use `hennery doctor` to check TLS, health and the host upgrade.
 
+To move an existing tunnel pairing, park its sessions and stop the host
+service, then use `hennery host transport set <https-origin> --system-roots`
+(or `--ca-cert <file>`) with the existing host data directory. This verifies
+the existing identity and preserves its key, roots, CLI settings and outbox.
+Restarting the host parks adapters; resume sessions normally afterwards.
+For CA rotation, save an old-plus-new CA bundle, restart, renew the server,
+then save a bundle without the old CA and restart again. Leaf renewal under
+the same CA needs no host restart. A `DurabilityUncertain` save means the new
+settings are visible but may not survive a crash: inspect the saved endpoint
+and repeat the explicit save after storage is healthy.
+
+An uncertain enrollment blocks `join`, `run` and `up`. Follow doctor's attempt
+id: inspect the collector's Hosts list, revoke any entry created by that
+attempt, then use the explicit enrollment archive action before joining
+again. Archiving preserves the journal and key locally; it cannot confirm a
+remote revoke. Automatic pairing remains suppressed after an archive.
+
 The SSH tunnel remains an optional deployment choice. On the other machine,
 open it with
 `ssh -N -L 7117:127.0.0.1:7117 <collector-machine>`; replace
