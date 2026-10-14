@@ -469,3 +469,21 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[test]
+    fn certificate_verdicts_are_structured_not_guessed_from_words() {
+        use rustls::CertificateError;
+        for (certificate, stage) in [
+            (CertificateError::UnknownIssuer, Stage::TlsUnknownIssuer),
+            (CertificateError::NotValidForName, Stage::TlsNameMismatch),
+            (CertificateError::Expired, Stage::TlsExpired),
+            (CertificateError::NotValidYet, Stage::TlsNotYetValid),
+        ] {
+            assert_eq!(classify(&rustls::Error::InvalidCertificate(certificate)), stage);
+        }
+        assert_eq!(classify(&std::io::Error::other("tls certificate words")), Stage::Connect);
+    }
+}
