@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = ["crates-io"]
+readme = "README.md"
+include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "build.rs", "package_ui.rs", "web-dist/**", "release-ui.json", "FRONTEND-NOTICES.txt", "SOURCE.json"]
+description = "Storage, authentication, HTTP kernel and embedded UI for hennery"
 
 [dependencies]
 anyhow.workspace = true
@@ -35,6 +40,8 @@ zeroize.workspace = true
 # The web UI's build is embedded by `build.rs` (plan 4b): it hashes each file.
 [build-dependencies]
 sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

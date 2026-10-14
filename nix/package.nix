@@ -38,7 +38,7 @@ let
     common
     // {
       inherit cargoArtifacts;
-      cargoExtraArgs = "--locked -p hennery";
+      cargoExtraArgs = "--locked -p hennery --no-default-features";
       # The web UI's build (`nix/web.nix`, plan 7e-ii-b), embedded by the
       # kernel's build script. Without it the build fails rather than embed
       # the placeholder page. The checks below build without it.

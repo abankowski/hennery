@@ -1209,7 +1209,7 @@ deletes every session of the hat the same way. As built (plan 9a):
     `codex app-server`. The binary is the installed set's bundled CLI
     (`<node> <set>/codex/node_modules/@openai/codex/bin/codex.js`) or
     `--use-cli`'s, run only if its `--version` (`codex-cli X.Y.Z`) is the
-    version `adapters/manifest.json` pins a call shape for
+    version `crates/hennery-host/manifest.json` pins a call shape for
     (`codex_app_server`: the version, the launcher, `initialize`'s params, the
     method and its params). It runs with the adapter spawn's hygiene,
     `CODEX_HOME` the recorded root, `CODEX_SQLITE_HOME` the recorded one or

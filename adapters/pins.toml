@@ -3,7 +3,7 @@
 # to: a product decision, not a detail. After changing a pin:
 #
 #   cargo run -p hennery-pins -- lock      # package.json + package-lock.json
-#   cargo run -p hennery-pins -- generate  # adapters/manifest.json
+#   cargo run -p hennery-pins -- generate  # crates/hennery-host/manifest.json
 #
 # The pin-bump CI job (`.github/workflows/pins.yml`) then checks the
 # manifest, the registry signatures and Node's signed checksums. The live

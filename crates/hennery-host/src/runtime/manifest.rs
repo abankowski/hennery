@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The manifest this binary pins.
-pub const EMBEDDED: &str = include_str!("../../../../adapters/manifest.json");
+pub const EMBEDDED: &str = include_str!("../../manifest.json");
 
 /// The only schema this binary reads.
 pub const SCHEMA: u32 = 1;

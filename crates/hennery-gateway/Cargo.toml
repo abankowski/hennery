@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = ["crates-io"]
+readme = "README.md"
+include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "build.rs"]
+description = "MCP gateway for the hennery ACP cockpit"
 
 # Never `hennery-sessions`, in any table (umbrella §9, gateway spec §10):
 # `tests/boundary.rs` reads the manifests and fails if it appears.

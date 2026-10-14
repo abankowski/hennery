@@ -14,6 +14,7 @@ on:
   pull_request:
     paths:
       - adapters/**
+      - crates/hennery-host/manifest.json
       - crates/hennery-pins/**
       - crates/hennery-host/src/runtime/manifest.rs
       - crates/hennery-host/src/runtime/extract.rs
@@ -24,6 +25,7 @@ on:
     branches: [main]
     paths:
       - adapters/**
+      - crates/hennery-host/manifest.json
       - crates/hennery-pins/**
       - crates/hennery-host/src/runtime/manifest.rs
       - crates/hennery-host/src/runtime/extract.rs
@@ -69,7 +71,7 @@ jobs:
           node-version: "24"
       - name: Node's checksums carry a release key's signature
         run: |
-          version=$(jq -r .node.version adapters/manifest.json)
+          version=$(jq -r .node.version crates/hennery-host/manifest.json)
           curl -fsSLo pubring.kbx \
             "https://raw.githubusercontent.com/nodejs/release-keys/$RELEASE_KEYS_COMMIT/gpg/pubring.kbx"
           echo "$RELEASE_KEYS_SHA256  pubring.kbx" | sha256sum -c -
@@ -84,7 +86,7 @@ jobs:
         run: |
           : > "$RUNNER_TEMP/npmrc-user"
           : > "$RUNNER_TEMP/npmrc-global"
-          for agent in $(jq -r '.adapters | keys[]' adapters/manifest.json); do
+          for agent in $(jq -r '.adapters | keys[]' crates/hennery-host/manifest.json); do
             for platform in darwin-arm64 linux-arm64 linux-x64; do
               case $platform in
                 darwin-arm64) flags=(--os=darwin --cpu=arm64) ;;
@@ -107,7 +109,7 @@ jobs:
                 jq -r '.packages | keys[] | select(. != "")' node_modules/.package-lock.json | sort > "$RUNNER_TEMP/installed"
               )
               jq -r --arg agent "$agent" --arg platform "$platform" \
-                '.adapters[$agent].platforms[$platform][].path' adapters/manifest.json | sort > "$RUNNER_TEMP/pinned"
+                '.adapters[$agent].platforms[$platform][].path' crates/hennery-host/manifest.json | sort > "$RUNNER_TEMP/pinned"
               diff -u "$RUNNER_TEMP/pinned" "$RUNNER_TEMP/installed"
               echo "::endgroup::"
             done

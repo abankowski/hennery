@@ -1,7 +1,8 @@
 //! Embeds the web UI's build in the binary (kernel spec §7; plan 4b).
 //!
 //! - `HENNERY_WEB_DIST`: the build to embed, an absolute path. When unset,
-//!   `<repo>/web/dist`. Set but missing, relative, or without `index.html`:
+//!   the marked package-local `web-dist`, then checkout `web/dist`.
+//!   Set but missing, relative, or without `index.html`:
 //!   the build fails.
 //! - The default build missing: a placeholder page is embedded instead, so
 //!   `cargo test` never needs pnpm. Only that page carries
@@ -11,6 +12,8 @@
 //!
 //! It writes `$OUT_DIR/web_assets.rs`, a table of every file of the build,
 //! each `include_bytes!`d, with its content type and ETag.
+
+mod package_ui;
 
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
@@ -32,6 +35,8 @@ fn main() {
         Ok(other) => panic!("HENNERY_WEB_REQUIRE must be 1, 0 or empty, not {other:?}"),
     };
     let web_dir = manifest_dir.join("../../web");
+    let marker = manifest_dir.join("release-ui.json");
+    println!("cargo::rerun-if-changed={}", manifest_dir.display());
     let dist = match env::var_os("HENNERY_WEB_DIST").filter(|d| !d.is_empty()) {
         Some(given) => {
             let given = PathBuf::from(given);
@@ -46,6 +51,10 @@ fn main() {
                 given.display()
             );
             Some(given)
+        }
+        None if marker.exists() || manifest_dir.join("Cargo.toml.orig").exists() => {
+            package_ui::validate(&manifest_dir).unwrap_or_else(|e| panic!("invalid packaged release UI: {e}"));
+            Some(manifest_dir.join("web-dist"))
         }
         None => Some(web_dir.join("dist")).filter(|d| d.join("index.html").is_file()),
     };
