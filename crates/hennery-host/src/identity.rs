@@ -239,6 +239,14 @@ fn read_config(path: &Path) -> Result<HostToml> {
     CollectorEndpoint::stored(&config.collector)?;
     Ok(config)
 }
+/// Inspect transport configuration without reading a private key.
+pub fn inspect_transport(data_dir: &Path) -> Result<()> {
+    let config = read_config(&data_dir.join(CONFIG_FILE))?;
+    if matches!(config.collector_tls, CollectorTrust::CaBundle { .. }) {
+        crate::transport::CollectorTransport::new(CollectorEndpoint::stored(&config.collector)?, config.collector_tls)?;
+    }
+    Ok(())
+}
 
 pub(crate) fn read_regular(path: &Path, bound: usize) -> Result<String> {
     use std::io::Read;

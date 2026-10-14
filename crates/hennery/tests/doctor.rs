@@ -91,7 +91,7 @@ fn doctor_reports_on_a_host_directory_and_changes_nothing() {
     // The pairing names a collector on loopback port 1, where nothing
     // listens: check 7 fails, and doctor exits 1; nothing else fails.
     assert!(
-        stdout.contains("fail  7 collector: nothing answers on 127.0.0.1:1"),
+        stdout.contains("fail  7 collector: trust: native system roots; nothing answers on 127.0.0.1:1"),
         "{stdout}"
     );
     assert_eq!(stdout.matches("\nfail ").count(), 1, "{stdout}");

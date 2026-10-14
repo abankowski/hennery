@@ -141,7 +141,12 @@ fn snapshot(dir: &Path) -> BTreeMap<PathBuf, (bool, u64, u32, i64, i64)> {
 /// a fix.
 fn checked(cx: &Context, dirs: Dirs, run: Runner, watched: &Path) -> Vec<Finding> {
     let before = snapshot(watched);
-    let doctor = Doctor { cx, dirs, run };
+    let doctor = Doctor {
+        collector_trust: Default::default(),
+        cx,
+        dirs,
+        run,
+    };
     let findings = checks(&doctor);
     assert_eq!(snapshot(watched), before, "doctor changed what it looked at");
     for finding in &findings {
@@ -685,6 +690,7 @@ fn the_loader_is_asked_first_and_getconf_never_on_nixos() {
     let loader = "/lib64/ld-linux-x86-64.so.2";
     let behind = |run: Runner, nixos| {
         let doctor = Doctor {
+            collector_trust: Default::default(),
             cx: &cx,
             dirs: dirs.clone(),
             run,
@@ -1218,6 +1224,7 @@ fn a_service_path_without_sh_or_git_fails_and_drift_warns() {
 /// The environment doctor gives the adapters on `cx`.
 fn agent_env_of(cx: &Context, dirs: &Dirs) -> Vec<(String, String)> {
     let doctor = Doctor {
+        collector_trust: Default::default(),
         cx,
         dirs: dirs.clone(),
         run: &nothing,
@@ -2334,10 +2341,7 @@ fn each_step_to_the_collector_fails_on_its_own() {
     assert!(!report(&dirs, &findings).contains("canary-7d"), "{findings:?}");
     let seven = line(&findings, 7).clone();
     assert_eq!(seven.status, Status::Fail, "{seven:?}");
-    assert!(
-        seven.summary.contains("only allowed to a loopback address"),
-        "{seven:?}"
-    );
+    assert!(seven.summary.contains("must not contain credentials"), "{seven:?}");
 
     let closed = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -2352,10 +2356,7 @@ fn each_step_to_the_collector_fails_on_its_own() {
     assert!(not_run(&findings, 8));
 
     let unavailable = answering("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n".into());
-    point_at(
-        &host,
-        &format!("ws://doctor:canary-7d-secret@{unavailable}/api/hosts/ws"),
-    );
+    point_at(&host, &format!("ws://{unavailable}/api/hosts/ws"));
     let findings = run();
     let seven = line(&findings, 7);
     assert!(seven.summary.contains("answered 503"), "{seven:?}");
@@ -2373,7 +2374,7 @@ fn each_step_to_the_collector_fails_on_its_own() {
     // A connection closed without an answer, over plain http: not a TLS
     // failure, whatever the URL's words (the error is judged without it).
     let closing = answering(String::new());
-    point_at(&host, &format!("ws://tls:certificate@{closing}/api/hosts/ws"));
+    point_at(&host, &format!("ws://{closing}/api/hosts/ws"));
     let seven = line(&run(), 7).clone();
     assert_eq!(seven.status, Status::Fail, "{seven:?}");
     assert!(!seven.summary.contains("TLS failed"), "{seven:?}");
@@ -2381,7 +2382,7 @@ fn each_step_to_the_collector_fails_on_its_own() {
     // https to a server that speaks no TLS: check 7 fails, and check 8
     // does not run on what it said.
     let plain = answering("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".into());
-    point_at(&host, &format!("wss://doctor:canary-7d-secret@{plain}/api/hosts/ws"));
+    point_at(&host, &format!("wss://{plain}/api/hosts/ws"));
     let findings = run();
     let seven = line(&findings, 7);
     assert_eq!(seven.status, Status::Fail, "{seven:?}");
@@ -2567,6 +2568,7 @@ fn the_collectors_secret_files_are_judged_as_the_collector_takes_them() {
     };
     let check18 = |dirs: &Dirs| {
         let doctor = Doctor {
+            collector_trust: Default::default(),
             cx: &cx,
             dirs: dirs.clone(),
             run: &nothing,
@@ -2699,6 +2701,7 @@ fn the_collectors_secret_files_are_judged_as_the_collector_takes_them() {
         ..dirs
     };
     let doctor = Doctor {
+        collector_trust: Default::default(),
         cx: &cx,
         dirs: no_collector,
         run: &nothing,
@@ -2785,4 +2788,36 @@ fn check_10_reports_a_revoke_without_the_service_manager() {
     let check = check10(&cx, &data);
     assert_eq!(check.status, Status::Fail, "{check:?}");
     assert!(check.summary.contains("host was revoked by the collector"), "{check:?}");
+}
+
+#[test]
+fn doctors_up_endpoint_derivation_refuses_a_secure_loopback_downgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("up");
+    let host = paired(&root.join("host"));
+    point_at(&host, "wss://localhost/api/hosts/ws");
+    let trap = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    trap.set_nonblocking(true).unwrap();
+    let collector = root.join("collector");
+    std::fs::create_dir_all(&collector).unwrap();
+    std::fs::write(
+        collector.join("config.toml"),
+        format!("listen=['{}']", trap.local_addr().unwrap()),
+    )
+    .unwrap();
+    let fake = Fake::none();
+    let cx = machine(dir.path(), Platform::Linux, &fake);
+    // Inspect only host check 7; listener health probes (check 16) do not
+    // authenticate an identity and are independently covered.
+    let doctor = Doctor {
+        cx: &cx,
+        dirs: Dirs::by_contents(root, Found::Given),
+        run: &nothing,
+        collector_trust: Default::default(),
+    };
+    let findings = collector::collector(&doctor);
+    let seven = line(&findings, 7);
+    assert_eq!(seven.status, Status::Fail);
+    assert!(seven.summary.contains("before hello"), "{seven:?}");
+    assert_eq!(trap.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
 }

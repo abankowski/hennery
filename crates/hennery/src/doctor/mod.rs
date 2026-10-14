@@ -41,6 +41,9 @@ pub struct DoctorArgs {
     /// `$XDG_DATA_HOME/hennery` on Linux).
     #[arg(long, env = "HENNERY_DATA_DIR")]
     data_dir: Option<PathBuf>,
+    /// Collector-only external health trust; never overrides a host's saved policy.
+    #[arg(long)]
+    collector_ca_cert: Option<PathBuf>,
 }
 
 /// A check's verdict (distribution spec §7).
@@ -140,6 +143,7 @@ pub struct Doctor<'a> {
     pub cx: &'a Context<'a>,
     pub dirs: Dirs,
     pub run: Runner<'a>,
+    pub collector_trust: hennery_host::transport::CollectorTrust,
 }
 
 impl Doctor<'_> {
@@ -229,6 +233,12 @@ pub fn run(args: DoctorArgs) -> Result<ExitCode> {
         cx: &cx,
         dirs,
         run: &run_bounded,
+        collector_trust: args
+            .collector_ca_cert
+            .as_deref()
+            .map(hennery_host::transport::CollectorTrust::import)
+            .transpose()?
+            .unwrap_or_default(),
     };
     stop_children_on_signals()?;
     let findings = checks(&doctor);

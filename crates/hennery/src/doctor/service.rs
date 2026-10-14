@@ -471,6 +471,19 @@ pub fn host_directory(doctor: &Doctor) -> Finding {
         );
     }
     let key = host.join(hennery_host::identity::KEY_FILE);
+    if host.join(hennery_host::identity::CONFIG_FILE).exists() || host.join(hennery_host::enrollment::JOURNAL).exists()
+    {
+        match hennery_host::identity::inspect_transport(host) {
+            Ok(()) => {}
+            Err(err) if host.join("host.toml.pending").exists() => {
+                verdict.warn(err.to_string(), "finish confirmed roll-forward with host run")
+            }
+            Err(err) => verdict.fail(
+                err.to_string(),
+                "repair transport configuration integrity or explicitly recover enrollment; preserve artifacts",
+            ),
+        }
+    }
     // The key's own mode: a link to it is followed.
     if std::fs::metadata(&key).is_ok_and(|m| m.mode() & 0o077 != 0) {
         verdict.warn(
