@@ -10,6 +10,7 @@ pub mod crypto;
 pub mod flows;
 pub mod identity;
 mod jsonrpc;
+pub use jsonrpc::decode_once as decode_json_once;
 pub mod key;
 pub mod model;
 pub mod notify;

@@ -848,7 +848,7 @@ fn stamp(at: time::OffsetDateTime) -> String {
     )
 }
 
-fn now() -> String {
+pub(crate) fn now() -> String {
     stamp(time::OffsetDateTime::now_utc())
 }
 
@@ -2062,7 +2062,7 @@ impl Store {
     /// session (decision E10). The session is `starting` already, so it
     /// counts itself in the mixedness: a session outside the default hat
     /// always finds its host mixed.
-    fn deliver_in(
+    pub(crate) fn deliver_in(
         &self,
         tx: &Transaction<'_>,
         session_id: &str,

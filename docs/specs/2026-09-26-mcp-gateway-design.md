@@ -217,9 +217,10 @@ ACP**, not through agent config files:
    `hennery_proto::rest::mcp_session_delivery`, the one mapping the host list
    reads too, plan 8e decision E8) and, inside the start's or resume's own
    transaction, calls `SessionMcp::servers_in(tx, session, mode)`. For a
-   mode that delivers, it mints the session token when a connection is
-   mounted there (a failed mint rolls the transition back; with none it mints
-   none; the session's previous token is revoked either way) and returns every connection of the session's hat
+   mode that delivers, it mints exactly one session token when a connection is
+   mounted there or the collector supplies the opted-in built-in descriptor
+   (a failed mint rolls the transition back; with neither it mints none;
+   the session's previous token is revoked either way) and returns every connection of the session's hat
    mounted on the session's host, as
    `{type: "http", name: "hennery-<slug>", url: "<public_url>/mcp/<slug>",
    headers: [{name: "Authorization", value: "Bearer <session token>"}]}`,
@@ -235,6 +236,21 @@ ACP**, not through agent config files:
    (`mcp_isolation_unavailable`, plan 8c).
 3. A mount change affects the **next** start or resume of a session on that
    host; a removed mount is refused at request time immediately.
+
+**Session-bound MCP delivery (D1).** Full collector wiring additionally
+supplies a typed optional descriptor named `hennery`, at the fixed path
+`/mcp/builtin/hennery`. It uses the same bearer as external mounts and the
+same isolation decision. Standalone gateway wiring supplies no built-in entry.
+The nullable `gw_session_tokens.delivered_delegation_revision` is stored in
+the mint transaction only when this descriptor is delivered; migrated and
+external-only tokens have NULL. Built-in admission checks the live generation,
+current enabled revision, session owner/host/hat and current isolation eligibility.
+A disable→enable cannot revive an old grant. The gateway's public identity seam
+imports no sessions and exports no plaintext bearer to handlers or plug-ins.
+The exact built-in route coexists with an external slug `builtin` at
+`/mcp/builtin`; other deeper paths remain refused. Local stdio entries use
+validated nonempty names prefixed with `hennery-`, so cannot collide with the
+reserved delivered name `hennery`.
 
 **Token in a header, not the URL.** *(G-2: the predecessor put the token in
 the URL path because one agent's CLI could not take a header from its config

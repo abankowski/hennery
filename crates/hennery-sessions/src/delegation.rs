@@ -174,3 +174,48 @@ impl Store {
             .optional()?)
     }
 }
+
+impl Store {
+    /// D1 allocation primitive for D2's validated launch path. The session,
+    /// family assignment, delivered revision and token share one commit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_delegated_session(
+        &self,
+        parent: &SessionIdentity,
+        revision: i64,
+        child_id: &str,
+        agent: &str,
+        canonical_cwd: &str,
+        mcp: crate::store::McpContext,
+        created_event_id: i64,
+    ) -> Result<Option<crate::store::McpGiven>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let Some(caller) = self.session_tool_context_in(&tx, parent, revision, true)? else {
+            return Ok(None);
+        };
+        if !hennery_kernel::hats::is_canonical(canonical_cwd) {
+            return Ok(None);
+        }
+        let ts = crate::store::now();
+        tx.execute(
+            "INSERT INTO sessions(id, owner_id, host_id, hat_id, agent, cwd, lifecycle, created_at, last_event_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'starting', ?7, ?7)",
+            params![
+                child_id,
+                self.owner_id(),
+                caller.host_id(),
+                caller.hat_id(),
+                agent,
+                canonical_cwd,
+                ts
+            ],
+        )?;
+        if !self.bind_family_in(&tx, parent, revision, child_id, created_event_id)? {
+            return Ok(None);
+        }
+        let (given, _new_child_cut) = self.deliver_in(&tx, child_id, caller.host_id(), caller.hat_id(), mcp, &ts)?;
+        tx.commit()?;
+        Ok(Some(given))
+    }
+}

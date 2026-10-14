@@ -50,7 +50,9 @@ pub struct Delivered {
 /// The gateway, as the sessions module sees it (umbrella §9, ACP core §1).
 pub trait SessionMcp: Send + Sync {
     /// Shared authentication seam; provided only by full collector wiring.
-    fn authenticator(&self) -> Option<Arc<GatewayStore>> { None }
+    fn authenticator(&self) -> Option<Arc<GatewayStore>> {
+        None
+    }
     fn plugin_control(&self) -> Option<Arc<crate::plugin::Control>> {
         None
     }
@@ -166,7 +168,9 @@ fn mounted_slugs_in(tx: &Transaction<'_>, owner: &str, host_id: &str, hat_id: &s
 }
 
 impl SessionMcp for GatewayMcp {
-    fn authenticator(&self) -> Option<Arc<GatewayStore>> { self.builtin.then(|| self.store.clone()) }
+    fn authenticator(&self) -> Option<Arc<GatewayStore>> {
+        self.builtin.then(|| self.store.clone())
+    }
     fn plugin_control(&self) -> Option<Arc<crate::plugin::Control>> {
         Some(self.store.plugins())
     }

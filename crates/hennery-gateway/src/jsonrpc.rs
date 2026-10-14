@@ -24,7 +24,6 @@
 
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Value, json};
-use std::collections::HashSet;
 
 /// The client capabilities never sent upstream (gateway spec §5.6).
 pub const STRIPPED_CAPABILITIES: &[&str] = &["sampling", "elicitation", "roots"];
@@ -391,8 +390,7 @@ pub fn take_refused_requests(value: Value) -> (Option<Value>, Vec<Value>) {
 /// reading for both ways: a request, an event, and a `tools/list` answer
 /// read whole (plan 2026-10-15).
 pub fn read(bytes: &[u8]) -> Option<Value> {
-    serde_json::from_slice::<Unique>(bytes).ok()?;
-    let value = serde_json::from_slice::<Value>(bytes).ok()?;
+    let value = decode_once(bytes)?;
     (!ambiguous(&value)).then_some(value)
 }
 
@@ -404,7 +402,10 @@ pub(crate) fn unique_keys(bytes: &[u8]) -> bool {
 }
 
 /// Any JSON, refusing a key twice in one object at any depth.
-struct Unique;
+pub fn decode_once(bytes: &[u8]) -> Option<Value> {
+    serde_json::from_slice::<Unique>(bytes).ok().map(|v| v.0)
+}
+struct Unique(Value);
 
 impl<'de> Deserialize<'de> for Unique {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -421,44 +422,51 @@ impl<'de> Visitor<'de> for UniqueVisitor {
         f.write_str("JSON without duplicate keys")
     }
 
-    fn visit_bool<E>(self, _: bool) -> Result<Unique, E> {
-        Ok(Unique)
+    fn visit_bool<E>(self, value: bool) -> Result<Unique, E> {
+        Ok(Unique(Value::Bool(value)))
     }
 
-    fn visit_i64<E>(self, _: i64) -> Result<Unique, E> {
-        Ok(Unique)
+    fn visit_i64<E>(self, value: i64) -> Result<Unique, E> {
+        Ok(Unique(Value::Number(value.into())))
     }
 
-    fn visit_u64<E>(self, _: u64) -> Result<Unique, E> {
-        Ok(Unique)
+    fn visit_u64<E>(self, value: u64) -> Result<Unique, E> {
+        Ok(Unique(Value::Number(value.into())))
     }
 
-    fn visit_f64<E>(self, _: f64) -> Result<Unique, E> {
-        Ok(Unique)
+    fn visit_f64<E>(self, value: f64) -> Result<Unique, E> {
+        Ok(Unique(
+            serde_json::Number::from_f64(value)
+                .map(Value::Number)
+                .unwrap_or(Value::Null),
+        ))
     }
 
-    fn visit_str<E>(self, _: &str) -> Result<Unique, E> {
-        Ok(Unique)
+    fn visit_str<E>(self, value: &str) -> Result<Unique, E> {
+        Ok(Unique(Value::String(value.into())))
     }
 
     fn visit_unit<E>(self) -> Result<Unique, E> {
-        Ok(Unique)
+        Ok(Unique(Value::Null))
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Unique, A::Error> {
-        while seq.next_element::<Unique>()?.is_some() {}
-        Ok(Unique)
+        let mut values = Vec::new();
+        while let Some(value) = seq.next_element::<Unique>()? {
+            values.push(value.0);
+        }
+        Ok(Unique(Value::Array(values)))
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Unique, A::Error> {
-        let mut seen = HashSet::new();
+        let mut values = serde_json::Map::new();
         while let Some(key) = map.next_key::<String>()? {
-            if !seen.insert(key) {
+            if values.contains_key(&key) {
                 return Err(de::Error::custom("a key twice in one object"));
             }
-            map.next_value::<Unique>()?;
+            values.insert(key, map.next_value::<Unique>()?.0);
         }
-        Ok(Unique)
+        Ok(Unique(Value::Object(values)))
     }
 }
 
