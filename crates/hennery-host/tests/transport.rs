@@ -63,6 +63,7 @@ async fn fixture(names: Vec<String>, nonce: &'static str) -> Fixture {
                             }
                             let reply = match reply.load(Ordering::SeqCst) {
                                 0 => "{\"type\":\"hello_ack\",\"protocol_version\":\"1.0\",\"collector_version\":\"fixture\",\"committed\":{}}".to_string(),
+                                4 => "{\"type\":\"sensitive-hello-body-canary\"}".to_string(),
                                 n => format!("{{\"type\":\"hello_error\",\"code\":\"{}\",\"message\":\"fixture\"}}", match n {1=>"already_connected",2=>"revoked",_=>"bad_proof"}),
                             };
                             ws.send(Message::Text(reply.into())).await.ok();
@@ -132,6 +133,30 @@ async fn invalid_nonce_is_refused_before_any_hello() {
     .unwrap();
     let err = transport.websocket(WebSocketConfig::default()).await.err().unwrap();
     assert_eq!(err.downcast_ref::<TransportFailure>().unwrap().0, Stage::MissingNonce);
+}
+
+#[tokio::test]
+async fn malformed_hello_diagnostics_never_reflect_response_bodies() {
+    let f = fixture(
+        vec!["localhost".into()],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    .await;
+    f.verdict.store(4, Ordering::SeqCst);
+    let transport = CollectorTransport::new(
+        CollectorEndpoint::public(&f.url).unwrap(),
+        CollectorTrust::CaBundle { pem: f.pem.clone() },
+    )
+    .unwrap();
+    let error = hennery_host::connection::probe_transport(
+        &transport,
+        "host-0123456789abcdef",
+        &hennery_host::identity::HostKey::from_seed([126; 32]),
+    )
+    .await
+    .unwrap_err();
+    assert!(!format!("{error:#}").contains("sensitive-hello-body-canary"));
+    assert!(error.to_string().contains("invalid collector hello response"));
 }
 
 struct NonceCallback {
