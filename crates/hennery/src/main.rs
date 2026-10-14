@@ -1508,14 +1508,16 @@ mod tests {
         let (sent, mut seen) = tokio::sync::mpsc::unbounded_channel();
         let app = axum::Router::new().route(
             "/mcp",
-            axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
-                let sent = sent.clone();
-                async move {
-                    sent.send(body.clone()).unwrap();
-                    axum::Json(serde_json::json!({"jsonrpc":"2.0","id":body["id"],"result":{
+            axum::routing::post(
+                move |hennery_kernel::json::ApiJson(body): hennery_kernel::json::ApiJson<serde_json::Value>| {
+                    let sent = sent.clone();
+                    async move {
+                        sent.send(body.clone()).unwrap();
+                        axum::Json(serde_json::json!({"jsonrpc":"2.0","id":body["id"],"result":{
                     "request_id":body["id"],"status":"confirmed","remaining_kinds":[]}}))
-                }
-            }),
+                    }
+                },
+            ),
         );
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
