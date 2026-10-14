@@ -132,3 +132,41 @@ fn transaction_rollback_keeps_grants_and_token_generations_and_watches() {
     assert!(!watch.token().is_cancelled());
     assert!(w.store.delegation_granted(&identity).unwrap().is_some());
 }
+
+#[test]
+fn independent_store_policy_edits_cut_the_same_grant_without_keeping_writer_ownership() {
+    let w = world();
+    w.store.set_session_tools(&w.hat(), true).unwrap();
+    let token = bearer(&deliver(&w, true, McpSessionDeliveryMode::Isolated));
+    let identity = w.store.authenticate_session(&token).unwrap().unwrap();
+    let watch = w.store.watch_delegation(&identity).unwrap().unwrap();
+    let other = hennery_gateway::store::GatewayStore::open(&w.db).unwrap();
+    other.set_session_tools(&w.hat(), false).unwrap();
+    assert!(watch.token().is_cancelled());
+}
+#[test]
+fn foreign_owner_session_and_grant_are_not_visible() {
+    let w = world();
+    let mut conn = w.raw();
+    conn.execute_batch("INSERT INTO owners(id, created_at) VALUES ('foreign', 9223372036854775807);
+        INSERT INTO hats(id, owner_id, name, colour, created_at) VALUES ('foreign-hat','foreign','Other','#000000',0);
+        INSERT INTO hosts(id, owner_id, name, public_key, platform, host_version, default_hat_id, created_at)
+            VALUES ('foreign-host','foreign','other','other-key','linux','0','foreign-hat',0);
+        INSERT INTO hat_session_tools(owner_id,hat_id,delegation_enabled,revision) VALUES ('foreign','foreign-hat',1,1);").unwrap();
+    let tx = conn.transaction().unwrap();
+    let token = tokens::mint_delegation_in(
+        &tx,
+        "foreign",
+        "foreign-session",
+        "foreign-host",
+        "foreign-hat",
+        Some(1),
+        unix_now(),
+    )
+    .unwrap();
+    tx.commit().unwrap();
+    assert!(w.store.authenticate_session(token.expose()).unwrap().is_none());
+    assert!(w.store.session_tools("foreign-hat").unwrap().is_none());
+    assert!(w.store.set_session_tools("foreign-hat", false).unwrap().is_none());
+    assert!(w.store.set_session_tools("absent", true).unwrap().is_none());
+}

@@ -1,0 +1,745 @@
+use axum::Router;
+use hennery_gateway::api::GatewayState;
+use hennery_gateway::key::MasterKey;
+use hennery_gateway::scope::ProxyStore;
+use hennery_gateway::session::GatewayMcp;
+use hennery_gateway::store::GatewayStore;
+use hennery_kernel::hosts::{Enrollment, Hosts};
+use hennery_kernel::operator::{Operator, SetupOutcome};
+use hennery_kernel::secret::unix_now;
+use hennery_proto::frames::{AgentIsolation, Capabilities, Capability, McpIsolation, McpServer};
+use hennery_sessions::{
+    AppState,
+    store::{McpContext, Store},
+};
+use reqwest::{Client, StatusCode};
+use serde_json::{Value, json};
+use std::sync::Arc;
+const ORIGIN: &str = "https://hennery.example";
+struct Harness {
+    _dir: tempfile::TempDir,
+    state: AppState,
+    gateway: GatewayState,
+    task: tokio::task::JoinHandle<()>,
+    url: String,
+    token: String,
+    hat: String,
+}
+impl Drop for Harness {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+impl Harness {
+    async fn new() -> Self {
+        Self::with_limits(Default::default()).await
+    }
+    async fn with_limits(limits: hennery_gateway::proxy::Limits) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let hosts = Hosts::open(&db).unwrap();
+        hosts
+            .register(
+                "host",
+                &Enrollment {
+                    public_key: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a".into(),
+                    name: "test".into(),
+                    host_version: "0".into(),
+                    platform: "linux".into(),
+                },
+                1,
+            )
+            .unwrap();
+        let hat = hosts.host("host").unwrap().unwrap().default_hat_id;
+        let operator = Operator::open(&db).unwrap();
+        let setup = operator.issue_setup_token(unix_now()).unwrap().unwrap();
+        assert!(matches!(
+            operator
+                .set_up(&setup, "correct horse battery", ORIGIN, unix_now())
+                .unwrap(),
+            SetupOutcome::Done { .. }
+        ));
+        let state = AppState::new(Store::open(&db).unwrap(), hosts, operator);
+        let gateway_store = Arc::new(GatewayStore::open(&db).unwrap());
+        let runtime = Arc::new(hennery_gateway::runtime::Runtime::new(
+            gateway_store.clone(),
+            Arc::new(ProxyStore::open(&db).unwrap()),
+            Arc::new(MasterKey::from_bytes([7; 32])),
+            hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap(),
+            Arc::new(hennery_gateway::notify::Silent),
+        ));
+        let gateway = GatewayState {
+            runtime,
+            operator: state.operator.clone(),
+        };
+        state
+            .store
+            .set_session_mcp(Arc::new(GatewayMcp::for_collector(&gateway)));
+        gateway_store.set_session_tools(&hat, true).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let registered = state
+            .hub
+            .register(
+                "host",
+                tx,
+                Capabilities(vec![Capability::McpServers]),
+                AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect()),
+            )
+            .unwrap();
+        state.hub.mark_ready("host", registered.conn_id);
+        let given = state
+            .store
+            .create_session_with_mcp(
+                "session",
+                "host",
+                "claude",
+                "/project",
+                &hat,
+                None,
+                McpContext {
+                    capable: true,
+                    isolation: McpIsolation::ClaudeStrict,
+                    rules_name_other_hats: false,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let McpServer::Http { headers, .. } = &given.servers[0] else {
+            panic!()
+        };
+        let token = headers[0].value.strip_prefix("Bearer ").unwrap().into();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp/builtin/hennery", listener.local_addr().unwrap());
+        let proxy = hennery_gateway::proxy::ProxyState::for_sessions(gateway.runtime.clone(), Default::default());
+        let app: Router = hennery_sessions::router(state.clone())
+            .merge(hennery_sessions::builtin::router_with_limits(
+                state.clone(),
+                gateway.clone(),
+                limits,
+            ))
+            .merge(hennery_gateway::proxy::router(proxy));
+        let task = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        Self {
+            _dir: dir,
+            state,
+            gateway,
+            task,
+            url,
+            token,
+            hat,
+        }
+    }
+    async fn post(&self, body: impl Into<Vec<u8>>) -> reqwest::Response {
+        Client::new()
+            .post(&self.url)
+            .bearer_auth(&self.token)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(body.into())
+            .send()
+            .await
+            .unwrap()
+    }
+    async fn rpc(&self, message: Value) -> Value {
+        let response = self.post(serde_json::to_vec(&message).unwrap()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert!(!response.headers().contains_key("mcp-session-id"));
+        assert!(!response.headers().contains_key("access-control-allow-origin"));
+        response.json().await.unwrap()
+    }
+}
+#[tokio::test]
+async fn starting_discovery_stateless_protocol_and_no_enabled_tools() {
+    let h = Harness::new().await;
+    for version in ["2025-03-26", "2025-06-18", "2025-11-25"] {
+        let response = h.rpc(json!({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":version,"capabilities":{},"clientInfo":{"name":"fixture", "version":"1"}}})).await;
+        assert_eq!(response["result"]["protocolVersion"], version);
+        assert_eq!(response["result"]["capabilities"], json!({"tools":{}}));
+    }
+    let initialized = h
+        .post(br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec())
+        .await;
+    assert_eq!(initialized.status(), StatusCode::ACCEPTED);
+    assert!(initialized.bytes().await.unwrap().is_empty());
+    assert_eq!(
+        h.rpc(json!({"jsonrpc":"2.0","id":"list","method":"tools/list"})).await["result"],
+        json!({"tools":[]})
+    );
+    assert_eq!(
+        h.rpc(json!({"jsonrpc":"2.0","id":2,"method":"ping"})).await["result"],
+        json!({})
+    );
+    let call = h
+        .rpc(json!({"jsonrpc":"2.0","id":3,"method":"tools/call", "params":{"name":"session_spawn","arguments":{}}}))
+        .await;
+    assert_eq!(call["result"]["isError"], true);
+    assert_eq!(call["result"]["structuredContent"]["code"], "session_starting");
+    h.state
+        .store
+        .ingest(
+            "session",
+            1,
+            &hennery_proto::frames::SessionBody::session_started("r", "agent"),
+        )
+        .unwrap();
+    let call = h
+        .rpc(json!({"jsonrpc":"2.0","id":3,"method":"tools/call", "params":{"name":"session_spawn","arguments":{}}}))
+        .await;
+    assert_eq!(call["result"]["structuredContent"]["code"], "tool_unavailable");
+    assert_eq!(
+        serde_json::from_str::<Value>(call["result"]["content"][0]["text"].as_str().unwrap()).unwrap(),
+        call["result"]["structuredContent"]
+    );
+    for method in [reqwest::Method::GET, reqwest::Method::DELETE] {
+        assert_eq!(
+            Client::new()
+                .request(method, &h.url)
+                .bearer_auth(&h.token)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+    }
+}
+#[tokio::test]
+async fn authority_and_origin_are_header_only_and_uniformly_refused() {
+    let h = Harness::new().await;
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+    for auth in [
+        None,
+        Some("Bearer bad"),
+        Some("Bearer hnry_client_bad"),
+        Some("Basic xxx"),
+    ] {
+        let mut req = Client::new()
+            .post(&h.url)
+            .header("content-type", "application/json")
+            .body(body);
+        if let Some(auth) = auth {
+            req = req.header("authorization", auth);
+        }
+        assert_eq!(req.send().await.unwrap().status(), StatusCode::NOT_FOUND);
+    }
+    let repeated = Client::new()
+        .post(&h.url)
+        .header("authorization", format!("Bearer {}", h.token))
+        .header("authorization", format!("Bearer {}", h.token))
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(repeated.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        Client::new()
+            .post(&h.url)
+            .header("cookie", format!("hennery_session={}", h.token))
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    for origin in [
+        "https://foreign.example",
+        "null",
+        "https://hennery.example/path",
+        "garbage",
+    ] {
+        assert_eq!(
+            Client::new()
+                .post(&h.url)
+                .bearer_auth(&h.token)
+                .header("origin", origin)
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    assert_eq!(
+        Client::new()
+            .post(&h.url)
+            .bearer_auth(&h.token)
+            .header("origin", ORIGIN)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        Client::new()
+            .post(format!("{}?caller=session", h.url))
+            .bearer_auth(&h.token)
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let response = h.post(body.as_bytes().to_vec()).await.text().await.unwrap();
+    assert!(!response.contains(&h.token));
+    h.gateway.runtime.store.set_session_tools(&h.hat, false).unwrap();
+    assert_eq!(h.post(body.as_bytes().to_vec()).await.status(), StatusCode::NOT_FOUND);
+    h.gateway.runtime.store.set_session_tools(&h.hat, true).unwrap();
+    assert_eq!(h.post(body.as_bytes().to_vec()).await.status(), StatusCode::NOT_FOUND);
+}
+#[tokio::test]
+async fn strict_dispatch_has_deterministic_differential_refusals_and_positive_escapes() {
+    let h = Harness::new().await;
+    for body in [
+        r#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"ping","method":"tools/call"}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"ping","\u006dethod":"tools/call"}"#,
+        r#"{"jsonrpc":"2.0","id":1,"Method":"ping"}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_spawn","arguments":{"owner_id":"foreign"},"caller":"spoof"}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_spawn","arguments":[]}}"#,
+        r#"{"jsonrpc":"2.0","id":true,"method":"ping"}"#,
+        "\u{feff}{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}",
+    ] {
+        let response = h.post(body.as_bytes().to_vec()).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        let answer: Value = response.json().await.unwrap();
+        assert!(answer["error"]["code"].as_i64().is_some());
+    }
+    assert_eq!(h.post(vec![0xff, 0xfe]).await.status(), StatusCode::BAD_REQUEST);
+    for body in [
+        r#"{ "jsonrpc" : "2.0", "id" : 1, "\u006dethod" : "ping" }"#,
+        "\r\n\t{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\t",
+    ] {
+        assert_eq!(h.post(body.as_bytes().to_vec()).await.status(), StatusCode::OK);
+    }
+    assert_eq!(
+        Client::new()
+            .post(&h.url)
+            .bearer_auth(&h.token)
+            .header("mcp-protocol-version", "unknown")
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let unknown = h.rpc(json!({"jsonrpc":"2.0","id":1,"method":"resources/list"})).await;
+    assert_eq!(unknown["error"]["code"], -32601);
+    assert_eq!(
+        Client::new()
+            .get(h.url.replace("/mcp/builtin/hennery", "/mcp/builtin/other"))
+            .bearer_auth(&h.token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn race_disable_or_revoke_cuts_body_read_and_keeps_external_identity() {
+    for revoke in [false, true] {
+        let h = Harness::new().await;
+        let (send, receive) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(2);
+        send.send(Ok(axum::body::Bytes::from_static(b"{"))).await.unwrap();
+        let stream = futures::stream::unfold(receive, |mut receive| async move {
+            receive.recv().await.map(|chunk| (chunk, receive))
+        });
+        let client = Client::new();
+        let request = client
+            .post(&h.url)
+            .bearer_auth(&h.token)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(reqwest::Body::wrap_stream(stream))
+            .send();
+        tokio::pin!(request);
+        let wait = async {
+            while h.gateway.runtime.revocations.watched() == 0 {
+                tokio::task::yield_now().await;
+            }
+        };
+        tokio::select! { result = &mut request => panic!("request ended before cut: {result:?}"), result = tokio::time::timeout(std::time::Duration::from_secs(5), wait) => result.unwrap() }
+        if revoke {
+            use hennery_gateway::session::SessionMcp;
+            let mcp = GatewayMcp::for_collector(&h.gateway);
+            let mut conn = hennery_kernel::db::open(&h._dir.path().join("hennery.db")).unwrap();
+            let tx = conn.transaction().unwrap();
+            let cut = mcp.revoke_in(&tx, "session").unwrap();
+            tx.commit().unwrap();
+            mcp.cut(cut);
+        } else {
+            h.gateway.runtime.store.set_session_tools(&h.hat, false).unwrap();
+        }
+        drop(send);
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(!response.text().await.unwrap().contains(&h.token));
+        assert_eq!(
+            h.gateway
+                .runtime
+                .store
+                .authenticate_session(&h.token)
+                .unwrap()
+                .is_some(),
+            !revoke
+        );
+    }
+}
+
+#[tokio::test]
+async fn response_ids_are_redacted_after_assembly() {
+    let h = Harness::new().await;
+    h.state
+        .store
+        .ingest(
+            "session",
+            1,
+            &hennery_proto::frames::SessionBody::session_started("r", "agent"),
+        )
+        .unwrap();
+    let id = h.token.clone();
+    let result = h.rpc(json!({"jsonrpc":"2.0","id":id,"method":"ping"})).await;
+    assert!(!result.to_string().contains(&h.token));
+}
+
+#[tokio::test]
+async fn repeated_origin_null_notification_and_nested_duplicates_are_refused() {
+    let h = Harness::new().await;
+    let response = Client::new()
+        .post(&h.url)
+        .bearer_auth(&h.token)
+        .header("origin", ORIGIN)
+        .header("origin", ORIGIN)
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    for raw in [
+        r#"{"jsonrpc":"2.0","id":null,"method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"x":1,"\u0078":2}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":[],"clientInfo":{"name":"x","version":"1"}}}"#,
+    ] {
+        assert_eq!(
+            h.post(raw.as_bytes().to_vec()).await.status(),
+            StatusCode::BAD_REQUEST,
+            "{raw}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn policy_management_requires_browser_auth_origin_and_fresh_step_up() {
+    let h = Harness::new().await;
+    let endpoint = h
+        .url
+        .replace("/mcp/builtin/hennery", &format!("/api/hats/{}/session-tools", h.hat));
+    let phc = h
+        .state
+        .operator
+        .verify_password("correct horse battery")
+        .unwrap()
+        .unwrap();
+    let fresh = h
+        .state
+        .operator
+        .open_session("test", &phc, unix_now())
+        .unwrap()
+        .unwrap();
+    let stale = h
+        .state
+        .operator
+        .open_session("test", &phc, unix_now() - 600)
+        .unwrap()
+        .unwrap();
+    let client = Client::new();
+    for (session, origin, status) in [
+        (Some(stale.as_str()), Some(ORIGIN), StatusCode::FORBIDDEN),
+        (None, Some(ORIGIN), StatusCode::UNAUTHORIZED),
+        (Some(fresh.as_str()), None, StatusCode::FORBIDDEN),
+        (
+            Some(fresh.as_str()),
+            Some("https://foreign.example"),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let mut request = client.patch(&endpoint).json(&json!({"delegation_enabled":false}));
+        if let Some(session) = session {
+            request = request.header("cookie", format!("hennery_session={session}"));
+        }
+        if let Some(origin) = origin {
+            request = request.header("origin", origin);
+        }
+        assert_eq!(request.send().await.unwrap().status(), status);
+    }
+    let get = client
+        .get(&endpoint)
+        .header("cookie", format!("hennery_session={stale}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+    assert_eq!(
+        get.json::<Value>().await.unwrap(),
+        json!({"delegation_enabled":true,"revision":1})
+    );
+    for body in [
+        r#"{"delegation_enabled":false,"delegation_enabled":true}"#,
+        r#"{"delegation_enabled":false,"owner_id":"foreign"}"#,
+    ] {
+        assert!(
+            !client
+                .patch(&endpoint)
+                .header("cookie", format!("hennery_session={fresh}"))
+                .header("origin", ORIGIN)
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .is_success()
+        );
+    }
+    let changed = client
+        .patch(&endpoint)
+        .header("cookie", format!("hennery_session={fresh}"))
+        .header("origin", ORIGIN)
+        .json(&json!({"delegation_enabled":false}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), StatusCode::OK);
+    assert_eq!(
+        changed.json::<Value>().await.unwrap(),
+        json!({"delegation_enabled":false,"revision":2})
+    );
+    assert_eq!(
+        h.post(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_vec())
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn body_caps_deadlines_content_types_and_request_permits_are_bounded() {
+    use hennery_gateway::proxy::Limits;
+    use std::time::Duration;
+    let h = Harness::with_limits(Limits::new(64, 32, Duration::from_secs(1), Duration::from_millis(50))).await;
+    assert_eq!(
+        h.post(vec![b' '; hennery_gateway::proxy::MAX_REQUEST_BODY + 1])
+            .await
+            .status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    let (send, receive) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(1);
+    let stream = futures::stream::unfold(receive, |mut receive| async move {
+        receive.recv().await.map(|v| (v, receive))
+    });
+    let stalled = Client::new()
+        .post(&h.url)
+        .bearer_auth(&h.token)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .body(reqwest::Body::wrap_stream(stream))
+        .send();
+    tokio::pin!(stalled);
+    let response = tokio::time::timeout(Duration::from_secs(2), &mut stalled)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    drop(send);
+    for (content, accept, status) in [
+        ("text/plain", "application/json", StatusCode::UNSUPPORTED_MEDIA_TYPE),
+        ("application/json", "text/event-stream", StatusCode::NOT_ACCEPTABLE),
+    ] {
+        assert_eq!(
+            Client::new()
+                .post(&h.url)
+                .bearer_auth(&h.token)
+                .header("content-type", content)
+                .header("accept", accept)
+                .body("{}")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            status
+        );
+    }
+    let busy = Harness::with_limits(Limits::new(0, 32, Duration::from_secs(1), Duration::from_secs(1))).await;
+    assert_eq!(
+        busy.post(b"{}".to_vec()).await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        h.post(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_vec())
+            .await
+            .status(),
+        StatusCode::OK
+    );
+}
+
+#[path = "../../hennery-gateway/tests/support/differential.rs"]
+mod differential;
+#[tokio::test]
+async fn differential_decoders_cannot_change_the_builtin_dispatch() {
+    use differential::{DECODERS, Node};
+    let h = Harness::new().await;
+    for (raw, accepted) in [
+        (r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#, true),
+        (r#"{ "jsonrpc" : "2.0", "id":1, "\u006dethod" : "ping" }"#, true),
+        (
+            r#"{"jsonrpc":"2.0","id":1,"method":"ping","method":"tools/list"}"#,
+            false,
+        ),
+        (
+            r#"{"jsonrpc":"2.0","id":1,"method":"ping","Method":"tools/list"}"#,
+            false,
+        ),
+        (r#"{"jsonrpc":"2.0","id":1,"METHOD":"ping"}"#, false),
+        (r#"{"jsonrpc":"2.0","id":1,"me_thod":"ping"}"#, false),
+        (r#"{"jsonrpc":"2.0","id":1,"method\u0000x":"ping"}"#, false),
+    ] {
+        let tree: Node = serde_json::from_slice(raw.as_bytes()).unwrap();
+        let decoded: Vec<_> = DECODERS.iter().map(|d| d.str(d.get(&tree, "method"))).collect();
+        let response = h.post(raw.as_bytes().to_vec()).await;
+        if accepted {
+            assert!(
+                decoded.iter().all(|m| m.as_deref() == Some("ping")),
+                "{raw}: {decoded:?}"
+            );
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.json::<Value>().await.unwrap()["result"], json!({}));
+        } else {
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{raw}: {decoded:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn exact_builtin_route_preserves_external_builtin_slug_and_rejects_deeper_paths() {
+    let h = Harness::new().await;
+    let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_url = format!("http://{}/mcp", upstream.local_addr().unwrap());
+    let app = Router::new().route(
+        "/mcp",
+        axum::routing::post(|| async { axum::Json(json!({"jsonrpc":"2.0","id":1,"result":{"external":true}})) }),
+    );
+    let upstream_task = tokio::spawn(async move { axum::serve(upstream, app).await.unwrap() });
+    let new = hennery_gateway::model::NewConnection {
+        slug: "builtin".into(),
+        label: "external".into(),
+        url: upstream_url,
+        hat_id: h.hat.clone(),
+        cred_kind: hennery_gateway::model::CredKind::None,
+        static_header: None,
+        static_prefix: None,
+        tool_allowlist: None,
+        internal_network: true,
+    };
+    let hennery_gateway::model::Change::Done(connection) = h.gateway.runtime.store.create(&new, unix_now()).unwrap()
+    else {
+        panic!()
+    };
+    h.gateway
+        .runtime
+        .store
+        .replace_mounts(&connection.id, &["host".into()])
+        .unwrap();
+    let external = h.url.replace("/mcp/builtin/hennery", "/mcp/builtin");
+    for disabled in [false, true] {
+        if disabled {
+            h.gateway.runtime.store.set_session_tools(&h.hat, false).unwrap();
+        }
+        let response = Client::new()
+            .post(&external)
+            .bearer_auth(&h.token)
+            .header("content-type", "application/json")
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"ping"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.json::<Value>().await.unwrap()["result"]["external"], true);
+        assert_eq!(
+            h.post(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_vec())
+                .await
+                .status(),
+            if disabled {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::OK
+            }
+        );
+    }
+    for path in ["/mcp/builtin/hennery/other", "/mcp/builtin/other", "/mcp/other/deeper"] {
+        assert_eq!(
+            Client::new()
+                .post(h.url.replace("/mcp/builtin/hennery", path))
+                .bearer_auth(&h.token)
+                .body("{}")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    upstream_task.abort();
+}
+
+#[tokio::test]
+async fn current_host_capability_and_isolation_are_rechecked_after_reconnect() {
+    let h = Harness::new().await;
+    for (capable, isolation, status) in [
+        (false, McpIsolation::ClaudeStrict, StatusCode::NOT_FOUND),
+        (true, McpIsolation::None, StatusCode::NOT_FOUND),
+        (true, McpIsolation::ClaudeStrict, StatusCode::OK),
+    ] {
+        if let Some(connection) = h.state.hub.routable_conn("host") {
+            h.state.hub.unregister("host", connection);
+        }
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let registration = h
+            .state
+            .hub
+            .register(
+                "host",
+                tx,
+                Capabilities(if capable { vec![Capability::McpServers] } else { vec![] }),
+                AgentIsolation([("claude".into(), isolation)].into_iter().collect()),
+            )
+            .unwrap();
+        h.state.hub.mark_ready("host", registration.conn_id);
+        assert_eq!(
+            h.post(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_vec())
+                .await
+                .status(),
+            status
+        );
+    }
+}

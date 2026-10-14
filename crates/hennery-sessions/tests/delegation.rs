@@ -174,3 +174,109 @@ fn family_storage_is_immutable_direct_scoped_and_terminally_detached() {
         .unwrap();
     assert_ne!(state, "deleted");
 }
+
+#[test]
+fn delegated_allocation_commits_session_family_token_together_and_rolls_back_all_three() {
+    let w = World::new();
+    let parent = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    w.active("parent");
+    let mcp = McpContext {
+        capable: true,
+        isolation: McpIsolation::ClaudeStrict,
+        rules_name_other_hats: false,
+    };
+    assert!(
+        w.store
+            .create_delegated_session(&parent, 1, "child", "claude", "/child", mcp, 0)
+            .unwrap()
+            .is_some()
+    );
+    assert!(w.store.direct_child(&parent, 1, "child").unwrap().is_some());
+    let conn = hennery_kernel::db::open(&w.db).unwrap();
+    conn.execute_batch("CREATE TRIGGER refuse_child_mint BEFORE INSERT ON gw_session_tokens WHEN NEW.session_id = 'fail' BEGIN SELECT RAISE(ABORT, 'test mint failure'); END;").unwrap();
+    assert!(
+        w.store
+            .create_delegated_session(&parent, 1, "fail", "claude", "/child", mcp, 0)
+            .is_err()
+    );
+    for table in ["sessions", "session_families", "gw_session_tokens"] {
+        let key = if table == "sessions" {
+            "id"
+        } else if table == "session_families" {
+            "child_id"
+        } else {
+            "session_id"
+        };
+        let count: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM {table} WHERE {key} = 'fail'"), [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+    w.gateway.set_session_tools(&w.hat, false).unwrap();
+    assert!(
+        w.store
+            .create_delegated_session(&parent, 1, "stale", "claude", "/child", mcp, 0)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn family_rollback_immutability_reassignment_delete_and_purge_cannot_restore_authority() {
+    for transition in ["reassign", "delete-child", "purge"] {
+        let w = World::new();
+        let parent = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+        w.active("parent");
+        w.start("child", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+        let mut conn = hennery_kernel::db::open(&w.db).unwrap();
+        let tx = conn.transaction().unwrap();
+        assert!(w.store.bind_family_in(&tx, &parent, 1, "child", 0).unwrap());
+        drop(tx);
+        assert!(w.store.direct_child(&parent, 1, "child").unwrap().is_none());
+        let tx = conn.transaction().unwrap();
+        assert!(w.store.bind_family_in(&tx, &parent, 1, "child", 0).unwrap());
+        tx.commit().unwrap();
+        assert!(
+            conn.execute("UPDATE session_families SET parent_id = 'child'", [])
+                .is_err()
+        );
+        // Reverse the endpoints' lifecycles so only the recursive cycle
+        // guard rejects this otherwise valid insertion. Roll back the fixture
+        // change before exercising the original family's terminal transitions.
+        let tx = conn.transaction().unwrap();
+        tx.execute(
+            "UPDATE sessions SET lifecycle = CASE id WHEN 'parent' THEN 'starting' ELSE 'active' END
+             WHERE id IN ('parent', 'child')",
+            [],
+        )
+        .unwrap();
+        assert!(tx.execute("INSERT INTO session_families(owner_id,child_id,parent_id,root_id,hat_id,created_event_id) VALUES (?1,'parent','child','child',?2,0)",rusqlite::params![w.store.owner_id(),w.hat]).is_err());
+        tx.rollback().unwrap();
+        match transition {
+            "reassign" => {
+                conn.execute("UPDATE sessions SET hat_id = ?1 WHERE id = 'child'", [&w.other])
+                    .unwrap();
+                conn.execute("UPDATE sessions SET hat_id = ?1 WHERE id = 'child'", [&w.hat])
+                    .unwrap();
+            }
+            "delete-child" => {
+                conn.execute("UPDATE sessions SET lifecycle = 'deleted' WHERE id = 'child'", [])
+                    .unwrap();
+            }
+            "purge" => {
+                conn.execute(
+                    "INSERT INTO purged_hats(hat_id,owner_id,purged_at) VALUES (?1,?2,0)",
+                    rusqlite::params![w.hat, w.store.owner_id()],
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            w.store.direct_child(&parent, 1, "child").unwrap().is_none(),
+            "{transition}"
+        );
+    }
+}
