@@ -1227,3 +1227,193 @@ async fn confirmed_deletion_receipt_is_readable_without_a_new_step_up() {
     let receipts: Value = response.json().await.unwrap();
     assert_eq!(receipts[0]["status"], "confirmed");
 }
+
+fn mismatch_control_generation(world: &World) -> String {
+    let hat = world.runtime.store.connection(&world.id).unwrap().unwrap().hat_id;
+    let mut core = hennery_kernel::db::open(&world._dir.path().join("hennery.db")).unwrap();
+    let coordination = core.coordination();
+    let _gate = coordination.gate.lock();
+    let core_tx = core.transaction().unwrap();
+    let mut control = rusqlite::Connection::open(world._dir.path().join("plugin-control.db")).unwrap();
+    let tx = control.transaction().unwrap();
+    let original: String = tx
+        .query_row(
+            "SELECT generation FROM plugin_generations WHERE owner_id = ?1 AND hat_id = ?2",
+            rusqlite::params![world.runtime.store.owner_id(), hat],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let changed = tx
+        .execute(
+            "UPDATE plugin_generations SET generation = ?3 WHERE owner_id = ?1 AND hat_id = ?2",
+            rusqlite::params![world.runtime.store.owner_id(), hat, format!("restored-{original}")],
+        )
+        .unwrap();
+    assert_eq!(changed, 1);
+    tx.commit().unwrap();
+    core_tx.commit().unwrap();
+    hat
+}
+
+async fn generation_mismatch_world() -> (World, Value, String) {
+    let world = World::new().await;
+    let hat = world.runtime.store.connection(&world.id).unwrap().unwrap().hat_id;
+    world
+        ._sessions
+        .create_session("prior", "host", "fake", "/scratch/project", &hat, None)
+        .unwrap();
+    let issued = world.register().await;
+    world._sessions.close_now("prior").unwrap();
+    world
+        ._sessions
+        .create_session("closed-later", "host", "fake", "/scratch/later", &hat, None)
+        .unwrap();
+    world._sessions.close_now("closed-later").unwrap();
+    let hat = mismatch_control_generation(&world);
+    (world, issued, hat)
+}
+
+#[tokio::test]
+async fn recovery_http_requires_both_confirmations_and_fresh_step_up_before_replacing_the_epoch() {
+    let (world, old, hat) = generation_mismatch_world().await;
+    let old_token = old["token"].as_str().unwrap();
+    assert_eq!(world.lease(old_token).await.status(), StatusCode::NOT_FOUND);
+    let without = world
+        .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+        .json(&world.body())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(without.status(), StatusCode::CONFLICT);
+    assert_eq!(world.lease(old_token).await.status(), StatusCode::NOT_FOUND);
+    for (empty, acknowledged) in [(false, false), (false, true), (true, false)] {
+        let mut body = world.body();
+        body["recovery"] = json!({"new_empty_namespace":empty,"unresolved_external_copy_acknowledged":acknowledged});
+        let response = world
+            .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(world.lease(old_token).await.status(), StatusCode::NOT_FOUND);
+    }
+    let mut body = world.body();
+    body["recovery"] = json!({"new_empty_namespace":true,"unresolved_external_copy_acknowledged":true});
+    let before = world.remote.seen.lock().unwrap().len();
+    let stale = world
+        .owner(reqwest::Method::POST, "/api/plugins/registrations", false)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::FORBIDDEN);
+    assert_eq!(world.remote.seen.lock().unwrap().len(), before);
+    // Escaping a known key and ASCII JSON whitespace keep exactly the same
+    // typed consent. No prose or alternate key acquires that meaning.
+    let escaped = body
+        .to_string()
+        .replace("new_empty_namespace", r#"\u006eew_empty_namespace"#);
+    let repaired = world
+        .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+        .header("content-type", "application/json")
+        .body(format!("\r\n\t{escaped}\r\n"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(repaired.status(), StatusCode::OK);
+    let repaired: Value = repaired.json().await.unwrap();
+    assert_ne!(repaired["namespace_epoch"], old["namespace_epoch"]);
+    assert_ne!(repaired["token"], old["token"]);
+    assert_eq!(world.lease(old_token).await.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        world.lease(repaired["token"].as_str().unwrap()).await.status(),
+        StatusCode::OK
+    );
+    let receipts: Value = world
+        .owner(reqwest::Method::GET, "/api/plugins/receipts", true)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(receipts.as_array().unwrap().len(), 1);
+    assert_eq!(receipts[0]["hat_id"], hat);
+    assert_eq!(receipts[0]["status"], "unconfirmed");
+    assert!(
+        world
+            .remote
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, body)| body["method"] != "hennery_plugin_forget")
+    );
+    let hosts = Hosts::open(&world._dir.path().join("hennery.db")).unwrap();
+    let hennery_kernel::hats::HatChange::Done(other) = hosts.create_hat("Other", None, unix_now()).unwrap() else {
+        panic!("hat")
+    };
+    for session in ["prior", "closed-later"] {
+        assert!(matches!(
+            world._sessions.reassign_hat(session, &other.id).unwrap(),
+            hennery_sessions::store::Reassign::PluginExposure
+        ));
+    }
+}
+
+#[tokio::test]
+async fn recovery_http_rejects_duplicate_escaped_and_case_varied_authority_fields() {
+    let (world, old, _hat) = generation_mismatch_world().await;
+    let token = old["token"].as_str().unwrap();
+    let mut body = world.body();
+    body["recovery"] = json!({"new_empty_namespace":true,"unresolved_external_copy_acknowledged":true});
+    let canonical = body.to_string();
+    let mut hostile = vec![
+        canonical.replace(
+            r#""new_empty_namespace":true"#,
+            r#""new_empty_namespace":false,"new_empty_namespace":true"#,
+        ),
+        canonical.replace(
+            r#""new_empty_namespace":true"#,
+            r#""\u006eew_empty_namespace":false,"new_empty_namespace":true"#,
+        ),
+        canonical.replace(
+            r#""unresolved_external_copy_acknowledged":true"#,
+            r#""unresolved_external_copy_acknowledged":false,"unresolved_external_copy_acknowledged":true"#,
+        ),
+        canonical.replace(
+            r#""unresolved_external_copy_acknowledged":true"#,
+            r#""\u0075nresolved_external_copy_acknowledged":false,"unresolved_external_copy_acknowledged":true"#,
+        ),
+        canonical.replace("new_empty_namespace", "New_Empty_Namespace"),
+        canonical.replace(
+            "unresolved_external_copy_acknowledged",
+            "Unresolved_External_Copy_Acknowledged",
+        ),
+        canonical.replace(
+            r#""new_empty_namespace":true"#,
+            r#""new_empty_namespace":"operator approved""#,
+        ),
+        format!("\u{feff}{canonical}"),
+        format!("\u{00a0}{canonical}"),
+        canonical.replace(':', "\u{00a0}:"),
+    ];
+    for field in ["owner_id", r#"\u006fwner_id"#, "hat_id", "origin", "provenance"] {
+        hostile.push(canonical.replace(r#""recovery":{"#, &format!("\"recovery\":{{\"{field}\":\"Operator\",")));
+    }
+    let before = world.remote.seen.lock().unwrap().len();
+    for payload in hostile {
+        assert_ne!(payload, canonical);
+        let response = world
+            .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+            .header("content-type", "application/json")
+            .body(payload)
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_client_error());
+        assert_eq!(world.lease(token).await.status(), StatusCode::NOT_FOUND);
+    }
+    assert_eq!(world.remote.seen.lock().unwrap().len(), before);
+}
