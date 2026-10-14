@@ -1,0 +1,558 @@
+# hennery — distribution and release design
+
+- **Date:** 2026-10-15.
+- **Status:** proposed; no publication authorized. Operator questions below have
+  recommended defaults, not assumed approval.
+- **Inventory base:** `6f68615183de3e1badc12a3d650eca27b8901261`.
+- **Refines:** [distribution](2026-09-26-distribution-design.md) and
+  [architecture §12](2026-09-25-hennery-architecture-design.md#12-distribution).
+
+This is a companion spec, rather than a rewrite of the distribution spec:
+runtime installation, services and doctor already have implemented contracts.
+This document supplies the missing publication contract and proposes additional
+channels and platforms. The umbrella remains authoritative. Intel macOS and GNU
+release archives require explicit scope approval and a spec write-back before
+they become supported. Historical plans are evidence, not current release status.
+
+The first useful outcome is a verified download with the real web UI, usable
+without a Rust or JavaScript toolchain. Release that before taking on every
+package ecosystem. Nothing here creates an account, reserves a name, publishes
+an artifact, creates a tag, or enables an external automation.
+
+## 1. Inventory: what actually exists
+
+| Area | Evidence on the inventory base | Missing before publication |
+|---|---|---|
+| Release build, [7a](../plans/2026-10-07-release-build.md) | [build.yml](../../.github/workflows/build.yml) builds native Linux x86_64/aarch64 musl archives and macOS arm64; checks contents, linkage, UI marker, binary execution, Alpine execution and collector image health | Only PR/main/manual builds, `contents: read`, seven-day workflow artifacts. No tag workflow or release. Release builds must use a pinned Rust toolchain, no restored Actions cache, and commit-pinned actions; the current build uses `stable`, a Rust cache and some action major tags |
+| Installers | [dist-workspace.toml](../../dist-workspace.toml) pins cargo-dist 0.30.4, SHA-256, shell/Homebrew, `~/.local/bin`, no updater, attestations configured. Global artifacts include hardened shell installer, formula and checksum list | Configuration does not publish or attest anything. Installer tests run on Linux x86_64/macOS arm64, not Linux arm64. Formula tests inspect hashes, not a real Homebrew install. Combined checksum list is not independently checked |
+| Runtime, [7b](../plans/2026-10-08-managed-runtime.md) | Compiled-in [adapter manifest](../../adapters/manifest.json), verified Node/npm downloads, safe extraction, staged sets, rollback hold, CLI overrides. `join` and a host start can install the runtime | [pins.yml](../../.github/workflows/pins.yml) verifies upstream signatures, digests and package selection, but does not run logged-in live agent acceptance. Three managed platforms only |
+| Services, [7c](../plans/2026-10-09-services.md) | User systemd/launchd installation, captured PATH, supervisor, locks; [7c-iii](../plans/2026-10-11-logs-parent-death.md) adds rotating logs and parent-death handling | Release acceptance must exercise real install, restart, upgrade and uninstall. A package install must not start a host or replace operator service choices |
+| Doctor, [7d](../plans/2026-10-13-doctor.md), [7d-ii](../plans/2026-10-14-doctor-ii.md) | Local checks, platform restrictions, adapter initialization/login probes, collector connectivity, version drift and restart diagnostics; current code also has secret-file checks | Not evidence that a new platform works. Package acceptance needs doctor on the installed artifact; defer unrelated historical doctor follow-ups |
+| Nix, [7e-i](../plans/2026-10-12-nix-package.md), [7e-ii-b](../plans/2026-10-20-nix-web.md) | [flake.nix](../../flake.nix) exports default binary and web packages on x86_64-linux, aarch64-linux and aarch64-darwin. Crane uses nixpkgs Rust/OpenSSL; the UI is built offline from pinned pnpm dependencies and embedded | [nix.yml](../../.github/workflows/nix.yml) checks Linux x86_64 and macOS arm64 only; Linux arm64 is neither built nor evaluated there. No public binary cache, adapters or module exports on main; no nixpkgs submission |
+| Nix modules, 7e-ii-a | Read `docs/plans/2026-10-20-nix-modules.md` at local `plan/nix-modules`, SHA `683422841ce7acb12711a16a409bff436438f7a1`: five-task plan with prior build/replay/review evidence | Paused, never merged, and explicitly “Not executed yet.” Its earlier scratch CI is not evidence on current main; do not advertise its options as available |
+| Container | [Dockerfile](../../Dockerfile) copies the same musl binary into digest-pinned distroless static, with CA roots, UID/GID 65532, private data directory and healthcheck | Per-architecture images are built/smoked, not pushed or joined into a public multi-arch manifest. No shipped third-party notices yet |
+| Source build | [README](../../README.md) requires UI build first and `HENNERY_WEB_REQUIRE=1`. PR #138 is merged (`4598b1c1`): [Build without Nix](../plans/2026-10-25-build-without-nix.md) uses stable Rust, Node 24, pnpm 12.3.4 through npx and vendored OpenSSL; CI runs that block on Ubuntu/macOS | This is a checkout build, not a crates.io install. Declared Rust minimum 1.88 is not a proven minimum build. Intel Mac support is not established by the generic prerequisites |
+| Crates | [workspace](../../Cargo.toml): nine crates, version `0.0.0`, all inherit `publish = false`; six internal workspace dependency entries are path-only. `hennery` alone is opted into cargo-dist | Publication metadata, registry versions, package-local assets, registry installation checks and ownership setup |
+| Embedded files | [kernel build.rs](../../crates/hennery-kernel/build.rs) embeds an existing `web/dist` or absolute `HENNERY_WEB_DIST`; it does **not** invoke pnpm. Missing default UI becomes a placeholder unless required. [host manifest.rs](../../crates/hennery-host/src/runtime/manifest.rs) includes `../../../../adapters/manifest.json` | Both inputs sit outside their crate package roots. A `.crate` cannot rely on the checkout layout. The UI must be inside the kernel package that embeds it, not merely inside the CLI package |
+
+[packaging/README.md](../../packaging/README.md) already lists publishing blockers:
+notices, OpenSSL maintenance, hardened/attested installer, release workflow,
+tap credentials, GHCR permissions, dependency monitoring and fork workflow
+approval. Preserve those obligations. In particular, review support/advisories
+for the locked vendored OpenSSL before shipping; a system OpenSSL update does
+not repair the static release binaries.
+
+### Name availability
+
+On 2026-10-15, an unauthenticated, read-only GET of the
+[crates.io API for hennery](https://crates.io/api/v1/crates/hennery) returned
+HTTP 404 with ``crate `hennery` does not exist``. The same check returned 404 for
+`hennery-proto`, `hennery-kernel`, `hennery-view`, `hennery-gateway`,
+`hennery-host` and `hennery-sessions`. These names were unclaimed at the check;
+this neither reserves them nor proves availability at publication time. Recheck
+all seven immediately before the maintainer's first real publication. Do not
+publish placeholders to reserve them.
+
+## 2. Decisions and operator questions
+
+“Settled by spec” is binding existing scope. “Designer's recommendation” is a
+proposed implementation direction for independent review. An “OPERATOR QUESTION”
+requires the maintainer's answer before the affected public commitment.
+
+| ID | Classification | Decision or question | Basis / recommended default |
+|---|---|---|---|
+| S1 | Settled by spec | One executable, embedded UI, no self-update; Linux musl archives, macOS arm64; WSL2 rather than native Windows | Architecture §12; distribution §§1–2 |
+| S2 | Settled by spec | GitHub Releases, hardened checksum installer, Homebrew project tap, collector-only GHCR image, Nix flake | Distribution §§2, 4. Homebrew core is not the initial channel |
+| S3 | Settled by spec | GitHub keyless artifact attestations; no maintainer-held general artifact signing key | Distribution §2. Attest archives, checksum list, installer and image; extend coverage to new artifacts below |
+| S4 | Settled by spec | Managed Node/adapters by default; no redistribution of the Claude CLI; Linux hosts need glibc ≥2.28; logged-in macOS user | Distribution §§1.1, 3, 13; maintainer decisions in the docs index |
+| S5 | Settled by spec / brief | Publishing remains disabled until explicit maintainer go-ahead | Applies separately to Releases, crates.io, tap, GHCR, AUR, package repositories and caches; merging implementation is not consent to publish |
+| D1 | Designer's recommendation | Publish the seven-crate production dependency closure in lockstep; keep pins/testkit private | Avoid merging modules merely for packaging; exact internal version requirements prevent mixed release internals |
+| D2 | Designer's recommendation | Package prebuilt UI in kernel and manifest in host; no build-time asset fetching | Ordinary Cargo install works without Node/pnpm; distro builds may supply freshly built UI |
+| D3 | Designer's recommendation | Carry source revision, UI digest and adapter-manifest digest in release metadata and diagnostic build identity | Resolves 7d's build-id follow-up; preserve existing platform-specific process identity checks |
+| D4 | Designer's recommendation | Start native Linux packages as wrappers of the verified musl executable; separately design distro-native source builds | Small incremental reach; no implicit glibc dependency for collector-only use, no install-time runtime downloads |
+| D5 | Designer's recommendation | Resume 7e-ii-a against current main rather than rewrite it | Preserve its four recorded maintainer answers and revalidate its assumptions (§4.5) |
+| Q1 | OPERATOR QUESTION | Which channels should the first public release enable? | GitHub Releases plus the already-available flake at the release tag first; enable Homebrew, crates.io and GHCR in that order as their own acceptance gates pass. Defer native packages and AUR |
+| Q2 | OPERATOR QUESTION | Should the first public version be a prerelease or 0.1.0? | First a GitHub-only `0.1.0-alpha.1` rehearsal; then `0.1.0` for normal package-manager discovery, explicitly labelled early testing with no 1.0 stability promise. Bare `cargo install hennery` is a goal of the non-prerelease publication; prereleases require an explicit version |
+| Q3 | OPERATOR QUESTION | Should Intel macOS become a supported host platform in the next distribution wave? | Yes, after R5's native binary, managed-runtime, live-agent and service gates pass; do not block the three-platform first release or advertise Intel support before that |
+| Q4 | OPERATOR QUESTION | Should upstream publish separate GNU Linux archives in addition to musl? | Defer until a tester or packager needs them; retain musl as the universal upstream Linux download. If approved, R9 adds both architectures with an explicit glibc baseline |
+| Q5 | OPERATOR QUESTION | Should the first release require Apple Developer ID signing and notarization? | Defer the account/certificate work unless real Gatekeeper acceptance blocks testers. Ship keyless attestations and accurately describe the absence of Developer ID/notarization; never instruct users to disable Gatekeeper |
+| Q6 | OPERATOR QUESTION | Should hennery operate APT and RPM repositories during early testing? | No initially: publish downloadable `.deb`/`.rpm` assets after R7. Add signed repository metadata and a key lifecycle only if enough testers need automatic package-manager updates |
+
+These questions are recorded for the parent rather than blocking this design
+deliverable. Defaults are not approval to widen the umbrella's platform scope.
+
+## 3. Platform contract
+
+Separate **executable compatibility** from **managed host compatibility**. A
+static executable can start on Alpine while its downloaded Node/agent cannot.
+
+| Target / environment | Present state | Proposed support and acceptance |
+|---|---|---|
+| `aarch64-apple-darwin` | Native archive and managed `darwin-arm64`; Nix package | First wave. Record/test minimum macOS version and deployment target, UI, logged-in agent access, launchd and first-exec behavior |
+| `x86_64-apple-darwin` | No archive, no flake system, no managed `darwin-x64` enum/manifest entry | R5, conditional on Q3. Add native runner, Node/adapter pins and generator validation, pin-job matrix, doctor, services, formula and Nix system together. Native live ACP acceptance; cross-compilation or Rosetta alone is insufficient |
+| `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl` | Both native archives and image smoke builds exist | First wave. Static linkage and no loader; collector on glibc and musl. Hosts on glibc ≥2.28 and kernel ≥4.18, subject to the pinned agents' actual requirements; no managed Alpine host promise |
+| `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` | Source builds use local libc; no upstream release archives | Optional R9, Q4. Build against an approved oldest baseline, proposed glibc 2.28, measure ELF symbol requirements and run on that baseline plus current distros. If toolchain/dependencies need newer glibc, disclose and obtain a support-floor decision; a recent Ubuntu build cannot establish the old floor |
+| NixOS / Nix | Three exported systems; two systems exercised in Nix CI | First wave advertises tested flake systems honestly; add native Linux arm64 Nix CI. Managed host needs nix-ld. Declarative Nix adapters/modules become available only after R6 |
+
+Linux release smoke coverage should include supported Debian and Ubuntu LTS,
+Fedora and an enterprise-compatible glibc baseline, plus Alpine for the
+collector. Pin exact image versions/digests in the implementation plan; call a
+distribution supported only after its install/start/UI/upgrade tests run. The
+glibc floor alone does not certify every distro. Native systemd/launchd tests
+need VM or host runners; ordinary container smoke tests do not prove services.
+
+For GNU archives, propose vendored OpenSSL as for other upstream downloads,
+while libc remains dynamic. Distro-native source packages may instead use
+system OpenSSL and carry distro-specific dependency metadata. Never rename a
+musl archive to a GNU target to satisfy a downloader. Intel macOS runner
+availability and ongoing cost are qualification inputs, not assumptions.
+
+## 4. Channel design and maintenance cost
+
+### 4.1 GitHub Releases and installer
+
+Keep cargo-dist 0.30.4 initially; regenerate and inspect its workflow rather
+than assuming its defaults meet 7a's requirements. A release build starts from
+the approved tag's exact commit in a fresh job, never from PR/main workflow
+artifacts. Pin Rust, cargo-dist's digest, every action commit, Node/pnpm and
+builder images where used; record runner OS/SDK versions. Pinning improves
+repeatability but does not itself prove byte-reproducible binaries.
+
+For each target ship an archive, per-file SHA-256, SPDX JSON SBOM and provenance
+attestation. Global assets are the hardened installer, formula, independently
+verified `sha256.sum`, complete `dist-manifest.json`, release inventory and a
+source archive. Archives contain the executable, README, licence and generated
+third-party notices. Extend the current exact-content check intentionally.
+Define the checksum inventory without cycles: list the payload artifacts,
+not `sha256.sum` itself or its signature sidecars; attest the checksum file
+separately. The verifier checks both inventory completeness and each digest.
+Include Rust dependencies, vendored OpenSSL/SQLite and bundled frontend
+dependencies in SBOM/notices; a Cargo.lock-only report omits the web UI. Image
+SBOMs also cover the base image. Describe downloaded runtime dependencies in a
+separate inventory tied to the adapter-manifest digest, without packaging them.
+
+Generate notices and corresponding source material before freezing hashes.
+Preserve the release source, Cargo/web lockfiles and build instructions, plus
+third-party source/notice material required by the chosen licence obligations.
+Review frontend assets/fonts as well as code. A link to a moving branch is not
+the release's source record. The maintainer reviews unresolved licence findings
+before publication; this design does not infer a redistribution licence for
+third-party agent binaries.
+
+The signer is the approved release workflow's GitHub OIDC identity, not a
+maintainer's laptop key. Attest the **final bytes**, including the hardened
+installer, checksum list, manifests, SBOMs, source bundle and later native
+packages. Downloadable Sigstore bundles accompany assets for durable verification.
+Verification must check digest, expected repository/workflow identity and release
+commit/tag; a SHA-256 downloaded beside an archive alone authenticates no author.
+GitHub documents file, container and SBOM attestations in its
+[attestation guide](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).
+
+The convenient install path checks archive hashes and fails without a SHA-256
+tool, as today. The verified path downloads and verifies the installer before
+executing it, then checks the archive; document both trust levels. Fail closed
+on unsupported OS/architecture, missing digest, wrong digest and failed download;
+install atomically into the selected user directory without sudo. Test Linux
+arm64 too. Never start services, install adapters, or silently overwrite another
+package manager's installation. Explain PATH conflicts through doctor.
+
+**Value / cost:** highest reach with the least user setup, building on existing
+work. Medium-to-large initial release/security work; recurring platform CI,
+dependency/advisory triage and one acceptance run per release. No parallel
+home-grown installer implementation.
+
+### 4.2 crates.io and cargo-binstall
+
+Publish this production graph in topological order (same version throughout):
+
+| Crate | Internal production dependencies | Publication role |
+|---|---|---|
+| `hennery-proto` | None | Shared protocol/types |
+| `hennery-kernel` | proto | Kernel plus packaged UI |
+| `hennery-view` | proto | Display fold |
+| `hennery-host` | proto | Host plus packaged adapter manifest |
+| `hennery-gateway` | kernel, proto | Gateway |
+| `hennery-sessions` | gateway, kernel, proto, view | Sessions |
+| `hennery` | gateway, host, kernel, sessions | User-facing executable; publish last |
+
+`hennery-pins` and `hennery-testkit` stay explicitly `publish = false`, and
+generator binaries in proto/view should not become advertised installable
+products. Keep the workspace default private and opt in only this closure.
+Each publishable crate needs description, repository, licence and a useful
+package README; each internal production edge needs `path` plus an exact
+registry version. Versionless testkit dev-dependencies can remain local: Cargo
+omits them from published manifests. Repository-level tests still run against
+the full source, and release source includes their fixtures; do not claim that
+the normalized individual crates retain the entire workspace test harness.
+[Cargo's dependency rules](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#multiple-locations)
+describe registry fallbacks and dev-dependency normalization.
+
+**UI packaging contract:** prepare release packages from an isolated copy of
+the approved source. Build the web UI once from the pinned web lockfile, copy
+only distributable output into a package-local directory such as
+`hennery-kernel/web-dist/`, and include it explicitly in the kernel tarball.
+Include `index.html`, referenced chunks, CSS, icons and other required assets;
+exclude node_modules, credentials, build caches and source maps. Record a file
+inventory/digest and its source revision. Include a package marker declaring
+that this is a release carrying the UI; missing or invalid UI must fail a
+published-package build even without `HENNERY_WEB_REQUIRE`.
+
+Build-script precedence: explicit absolute `HENNERY_WEB_DIST` (validated), then
+the release package's marked UI, then checkout `web/dist`. Only an unmarked
+development checkout may fall back to the existing placeholder. A release
+marker with missing UI must never fall back to a neighboring checkout. Neither
+the build script nor Cargo install fetches or rebuilds the UI. Nix and distro
+builders can use the explicit override for UI they built from source.
+
+Move the canonical adapter manifest into the host crate's package root, or
+generate an exact package-local copy during release preparation. Prefer moving
+the canonical file with all generator, pin-job and Nix consumers updated, so
+there is still one authority. Test byte/digest equality against the pin source;
+`include_str!` must not traverse outside the package. UI placement in `hennery`
+alone cannot fix the kernel's independent build, and a Cargo `include` glob
+cannot make arbitrary parent directories part of the package.
+
+Default Cargo install should work with a supported Rust/C build toolchain and
+no Node, pnpm or preinstalled OpenSSL. Recommend making `vendored-openssl` a
+default CLI feature, retaining `--no-default-features` for Nix and distro
+system-library builds and updating their feature/check contracts together.
+Document C compiler, make and Perl prerequisites; macOS uses Xcode Command Line
+Tools. Test both bare `cargo install hennery` and the recommended reproducible
+form `cargo install hennery --locked`. Recheck unlocked dependency resolution
+on each release. Prove Rust 1.88 on the packaged graph or raise `rust-version`
+to a tested minimum; do not repeat the unproven minimum as support policy.
+
+Before any real publication, inspect each `cargo package --list` and normalized
+manifest, enforce the registry size limit (currently documented as 10 MB), and
+build extracted packages with no checkout paths available. Use a temporary
+local registry containing the candidate seven packages to test the dependency
+graph before their first versions exist on crates.io. Run package verification
+and install with registry dependencies prefetched and network disabled for the
+build phase; run the resulting collector and browser tests with Node/pnpm
+absent. Fetch `/` and its referenced assets, and assert no placeholder. A normal
+checkout build or `cargo install --path` against that checkout is insufficient.
+The [Cargo publishing guide](https://doc.rust-lang.org/cargo/reference/publishing.html)
+describes package inspection and verification.
+
+The exact prepared package digests are release inputs. Publication tooling must
+verify the bytes Cargo uploads match the approved package inventory; it must
+not quietly rebuild the UI between checking and publishing. Allow dirty files
+only in the isolated generated release staging tree, with an explicit inventory.
+Wait for each published dependency to become resolvable before publishing its
+consumers. Partial failure is recoverable by continuing only missing versions
+whose prepared digests still match; otherwise make a new coherent release.
+
+Add `package.metadata.binstall` to the CLI package with a versioned release URL,
+`pkg-fmt = txz`, and the archive's actual `hennery-<target>/hennery` binary path.
+For example, metadata describes `releases/download/v<version>/hennery-<target>.tar.xz`;
+do not point to `latest`. Verify GNU-host selection of the musl artifact on both
+Linux architectures, or provide explicit per-target overrides to those actual
+musl URLs. A missing GNU artifact must not be advertised. Pin the binstall
+version for acceptance tests. Its defaults can use third-party quickinstall
+and source fallback; document an upstream-only recipe and do not claim it
+verifies GitHub attestations automatically. Metadata/signature support must be
+tested independently of the verified installer path.
+[Binstall documentation](https://docs.rs/crate/cargo-binstall/latest/source/README.md)
+describes these discovery and fallback behaviors.
+
+**Value / cost:** familiar Rust install and discoverability; binstall makes it
+fast. High initial cost because seven crates, embedded inputs, feature defaults
+and first-publication ordering change. Recurring lockstep releases and crate
+ownership/security work. Internal libraries are published to support the app,
+not promised as a separately stable SDK; document their pre-1.0 compatibility.
+
+### 4.3 Homebrew
+
+Use the existing `marcinwadon/homebrew-tap` configuration after the maintainer
+creates/approves the tap. Publish a generated formula only after its referenced
+release artifacts are public and verified. It installs the same archive bytes
+and checks hashes; add notices and a test of version plus embedded UI. Test
+actual install, upgrade and uninstall on each advertised Homebrew platform in
+an isolated environment. Do not add a second service implementation through
+`brew services`; initially document `hennery service install` and explicit
+restart/reinstall when a Cellar path changes.
+
+The tap is settled scope. Core would be a separate source-build formula and
+upstream review; it is not a promotion of the generated binary formula. Core
+requires stable releases under its
+[acceptance policy](https://docs.brew.sh/Acceptable-Formulae), and cargo-dist's
+[Homebrew documentation](https://axodotdev.github.io/cargo-dist/book/installers/homebrew.html)
+describes the binary tap approach. Keep prereleases out of the normal formula.
+
+**Value / cost:** high for Mac testers, low initial work after Releases; one
+formula and isolated install matrix per release, plus tap credential upkeep.
+Core adds upstream policy/review and bottle maintenance; defer until usage and
+release stability justify it.
+
+### 4.4 Linux packages and AUR
+
+Start with release-attached `.deb` and `.rpm` files for both architectures,
+not a package for every distribution. Use pinned `cargo-deb` in no-build mode
+and `cargo-generate-rpm` over the already verified musl executable, preserving
+its bytes (no second stripping pass). Include licence/notices and package docs.
+Record Debian architecture names `amd64`/`arm64` and RPM names
+`x86_64`/`aarch64`; verify declared architecture against the ELF file.
+Their [deb](https://docs.rs/crate/cargo-deb/latest) and
+[rpm](https://docs.rs/crate/cargo-generate-rpm/latest) documentation supports
+this separation of compilation and packaging. The cargo-dist
+[installer list](https://axodotdev.github.io/cargo-dist/book/installers/index.html)
+does not establish native deb/rpm support; do not assume the pinned 0.30.4
+handles either without proving it.
+
+Install the executable under the package manager's binary directory and docs
+under its documentation directory. No post-install registry access, agent login,
+data migration, host pairing, service start, linger enablement or root-owned
+per-user data. Uninstall removes package files, preserving data and operator
+service definitions; document stopping/removing services explicitly. Upgrade
+reports a pending restart. Test install/upgrade/remove, file ownership, no
+unexpected network calls and restart behavior on Debian/Ubuntu and Fedora/
+enterprise-compatible systems. RPM signature policy varies: test the target
+system's local-package path rather than recommending a signature bypass.
+
+Initially use release attestations and digest verification before local package
+installation. APT/DNF repository integration is Q6's later commitment: signed
+APT Release/InRelease metadata, RPM package/repository signing as required,
+key distribution/rotation/revocation, metadata hosting and retention. GitHub
+attestations do not automatically satisfy APT or RPM native trust policies.
+If a target refuses an unattached native signature, gate that package channel
+on the corresponding signing setup rather than weakening its verification.
+
+For Arch, begin with an explicitly maintained `hennery-bin` AUR recipe using
+versioned upstream archives, fixed digests, architecture restrictions and
+`provides/conflicts` for `hennery`. Generate/review `.SRCINFO`; test in a clean
+Arch environment and sign/verify sources through the supported package workflow.
+A later `hennery` source recipe builds Rust and web from the exact source tag.
+Do not label AUR as an official Arch repository or presume Arch ARM has the
+same support coverage. Defer the source recipe until someone will maintain its
+web dependency/offline build plumbing; never fetch runtime agents in PKGBUILD.
+
+**Value / cost:** medium value for users wanting tracked files/removal; medium
+initial deb/rpm cost, recurring distro/version matrix and security rebuilds.
+AUR binary recipe is small but needs a responsive owner. Official Debian,
+Fedora or other distro inclusion is a different, high-maintenance effort:
+source builds, bundled-dependency policy, licensing review, offline tests and
+downstream patch support. No acceptance promise is made here.
+
+### 4.5 Nix and the paused modules
+
+First document/install the existing flake at an immutable release tag/revision.
+Build its package on all three exported systems, preserving the separate UI
+derivation, reference guards, web hash update procedure and system OpenSSL.
+No public cache is necessary for correctness; source builds cost testers time.
+An optional binary-only cache needs separate maintainer approval, a signing key
+and an allowlist of outputs/closures. Never use whole-store upload hooks where
+unfree adapter downloads or their fixed-output derivations may enter the store.
+
+Resume 7e-ii-a's five tasks on current main, retaining its recorded decisions:
+Claude remains in the default agents with explicit unfree acceptance; the host
+unit has no `NoNewPrivileges`; CI may build/check the CLI but never cache or
+publish it; revoked hosts stop restarting with exit 78. Its intended model is
+NixOS system units (dedicated hardened collector user, host as the project
+owner), Linux Home Manager user units, and `adapters.source = nix | managed`
+with Nix default. Pairing remains an operator step as the host user. These
+system units are the Nix-specific extension recorded by that plan, not a new
+default for generic native packages.
+
+Re-review merge drift in flake outputs and doctor; run native Linux arm64 checks
+in addition to the old x86_64 VM tests. Preserve safe extraction, no stripping
+of bundled CLIs, Node-major checks, real adapter initialization and explicit
+Claude licence handling. Revisit its recorded limits: doctor does not fully
+inspect system unit state/PATH/drop-ins; Codex voice helper remains unpatched;
+macOS adapter checks require unsandboxed execution. Do not silently mark these
+resolved. Home Manager's real module integration needs acceptance beyond the
+old stand-in option tests.
+
+A later nixpkgs submission should start with the free hennery binary and built
+web UI, using nixpkgs conventions rather than requiring this repository's flake
+at evaluation time. Assign a nixpkgs maintainer, add package tests and review
+licence/source requirements. Offer NixOS modules separately after their service
+contract settles. Do not put the Claude CLI in a public closure/cache.
+
+**Value / cost:** existing flake is immediately useful to Nix testers; modules
+have high value to NixOS deployments. Low incremental work for tagged package
+docs, substantial work for modules/adapters and native CI. Ongoing nixpkgs,
+pnpm-fetcher, Node and adapter drift; nixpkgs review adds an external cadence.
+
+### 4.6 GHCR collector image
+
+Publish `ghcr.io/marcinwadon/hennery` only after namespace/visibility approval.
+Use the approved musl binaries unchanged, add source/revision/licence OCI
+labels and notices, and produce linux/amd64 and linux/arm64 images plus one
+OCI index. Verify binary digests against the release inventory, smoke-test
+each architecture, and attest both platform manifests and the final index;
+attach per-image SBOMs. Record the index digest in release notes.
+
+Use immutable version tags and digest references for reproducible deployment;
+moving `latest` and minor-version tags advance only after both architectures
+pass, never for prereleases. Keep old digests available for rollback. Document
+the non-root volume owner, local storage, TLS proxy/loopback publication,
+`HENNERY_LISTEN`, and reading setup through `hennery admin setup-url` rather
+than logs. Image users must still pair separate hosts next to their projects.
+No Node, adapters or real user data enters the image.
+
+**Value / cost:** high for a remote collector, little benefit for installing an
+agent host. Medium initial work over the existing image; recurring base-image
+security rebuilds, two-platform tests and storage. A base-image-only rebuild
+gets a new immutable image revision and provenance, never replaces an existing
+version digest silently.
+
+## 5. Managed runtime and downstream packaging
+
+Installation of hennery and first use of a host are distinct network events.
+Release archives, Cargo, Homebrew and native packages carry the application,
+UI and manifest only. A collector needs no Node. A default host fetches pinned
+Node and npm tarballs into its user's data directory on join/start; roughly
+700 MB per adapter set and about 1.5 GB for two sets plus Node are the existing
+spec's estimates, to remeasure for each pin. Agent subscriptions/logins are
+the user's; installing a package does not authenticate them.
+
+For distro packagers this means offline package installation does not imply
+offline host operation, and the host's runtime dependencies are not serviced
+by the OS package manager. Document download sources, digests, disk use, update/
+rollback controls and the separate runtime inventory. A host with a prepared
+matching set can avoid those initial downloads; do not advertise general
+air-gapped support without end-to-end proof, including service startup.
+
+The existing escape hatch is `join --no-runtime` plus explicit `--agent`
+commands supplied by the operator/package integration. `--use-cli` replaces
+only an agent CLI and still needs its adapter/Node; it is not an offline switch.
+A distro that forbids runtime downloads should supply approved external
+adapters and arrange this mode, or package collector use only. There is no
+existing generic “distro/offline” build profile to claim. Nix's planned adapter
+derivations are a concrete integration, still subject to the unfree restriction.
+
+Audit the actual service propagation of registry/Node mirror configuration:
+7b recorded a gap where interactive mirror settings did not survive into the
+service. Close/test that gap before claiming mirror-only deployments. Do not
+silently substitute distro Node for the managed default. Different adapter
+commands affect isolation guarantees and must retain the existing visible
+fallback reporting. All artifacts and package hooks must be checked for absent
+adapter payloads, not just absent `node_modules` names.
+
+## 6. Release process and recovery
+
+1. **Prepare a release PR.** One workspace SemVer version; update CLI/library
+   versions, internal exact edges, web release metadata and changelog together.
+   Patch for compatible fixes, minor for pre-1.0 breaking behavior. Changelog
+   states platform floors, runtime pins, security changes, schema/config changes,
+   restart/backup needs, migration direction and known limitations. Never imply
+   that package availability changes the README's early-testing data guarantees.
+2. **Qualify the exact commit.** Require fmt, both Clippy modes, workspace tests,
+   both generator checks, web typecheck/unit/build/Playwright, non-Nix README
+   builds, Nix checks on claimed systems, all archive/linkage/UI/installer/formula
+   checks and image smoke tests. Require a current advisory/licence review, not
+   just the flake's pinned RustSec snapshot. Preserve security failures rather
+   than weakening gates. For the first release and every pin/platform change,
+   run signature/file checks
+   and logged-in agent acceptance on every claimed host platform, including
+   start/prompt/tool/permission/resume/MCP and the pinned Codex delete contract.
+3. **Authorize candidate creation.** Maintainer approves version, source SHA,
+   channel list and target list, then creates/protects the annotated `v<version>`
+   tag. Recommend signing it with the maintainer's personal release identity;
+   verify the chosen signing fingerprint if used. Tag signatures and workflow
+   artifact signatures serve different purposes. Never move a published tag.
+4. **Build and stage.** A tag identifies a candidate; it is not permission to
+   publish. Fresh jobs at that SHA rebuild all release inputs, without restored
+   Actions caches. Separate unprivileged build jobs from publishing credentials.
+   Assemble notices, SBOMs, source and digest inventory, run channel acceptance,
+   and retain the exact candidate outputs. Staging is within the authorized
+   release workflow, never promotion of PR/main build artifacts.
+5. **Approve publication.** A protected release environment binds the maintainer's
+   approval to the candidate digest inventory and enabled channels. Only then
+   obtain OIDC/write credentials and create public attestations or publish.
+   Use minimal job permissions: `contents: write` for releases, `id-token: write`
+   and `attestations: write` for provenance, `packages: write` for GHCR; no
+   secrets or write authority in untrusted PR execution. Fork runs require
+   approval. No automatic publish merely because a version changed.
+6. **Publish in dependency order.** Release archives/verification assets first;
+   crates dependencies then CLI once registry-ready; tap/AUR metadata only once
+   URLs exist; GHCR index only after all image checks. Channel failure is recorded
+   explicitly: this is not a transaction across registries. Retry the same
+   verified bytes without overwriting existing versions; hold announcements and
+   moving aliases until the enabled channel set is healthy.
+7. **Verify the public path.** In scratch homes, download and verify signatures,
+   install through each enabled channel, load the real UI and run doctor and
+   a disposable session. Record OS/architecture, source SHA, digests and results.
+   Only now update installation docs from “no published releases” and announce
+   the release. Pin examples to an actual existing release; test README commands.
+
+For crates.io, prefer trusted publishing for subsequent releases. Its documented
+bootstrap requires a first manual publication, then configuration of the trusted
+repository/workflow/environment; confirm the current settings when implementing.
+Use a short-lived narrowly scoped bootstrap token and revoke it afterwards,
+rather than a standing all-crates CI secret.
+[Rust's trusted publishing announcement](https://blog.rust-lang.org/2025/07/11/crates-io-development-update-2025-07/)
+describes the bootstrap and OIDC model.
+
+**Rollback is not binary replacement alone.** Stop affected services and record
+their binary/config/runtime versions. Preserve a backup of the complete data
+directory, including databases, attachments and secret keys; use a verified
+backup facility if implemented, otherwise a documented stopped-service copy.
+Do not assume an old binary reads a migrated database. Downgrade only when the
+release compatibility record says it is safe; otherwise restore the matching
+backup or ship a forward fix. Adapter rollback/hold is separate and does not
+roll back collector schema or application code.
+
+For a bad release, mark it withdrawn with remediation, remove it from moving
+aliases, revert tap/AUR pointers when data compatibility permits, and publish a
+new patch version. On crates.io, yanking discourages new resolution but does
+not remove installed copies or invalidate existing lockfiles. Keep a coherent
+set of working internal crate versions. Never reuse a version, silently replace
+checksums/assets, or retag an old SHA. Images roll back by retained digest only
+when data compatibility permits. Security incidents additionally revoke affected
+tokens/keys and identify the affected artifact digests.
+
+## 7. Plan split, in value order
+
+These are design-sized implementation briefs, **not executable plans**. Each
+must follow the repository's built-first, review, replay and probe process when
+assigned. Sizes are relative: S = 1–2 tasks, M = 3–4, L = 5 or more, including
+acceptance work; shared infrastructure and external review can increase them.
+
+| Order / proposed plan | Size | Deliverable / exit gate | Dependencies and value |
+|---|---|---|---|
+| R1 — publishable release foundation | L, 5 tasks, likely 2 PRs | Version/build identity; notices/SBOM/source; pinned cache-free candidate workflow; attestation/manual approval; tested installer and tagged flake, adding Linux arm64 acceptance. First authorized release installed from a clean machine | Reuses 7a/7b/7c/7d/7e. Highest value; Q1/Q2 determine first publication. No new platform promise |
+| R2 — Homebrew tap | S, 2 tasks | Actual formula install/upgrade/remove, then gated tap publication and service-path guidance | R1 and maintainer tap setup; low-cost Mac adoption |
+| R3 — crates.io and binstall | L, 5 tasks, likely 2 PRs | Seven-crate metadata/versions; package-local UI/manifest; feature/MSRV checks; temporary-registry install; controlled publish/binstall acceptance | R1; useful familiar channel but larger engineering cost. Bare Cargo install only promised after non-prerelease publication |
+| R4 — GHCR | M, 3 tasks | Notices/labels/SBOM; native images and index; gated push, digest verification and volume/upgrade docs | R1; remote collectors without a build toolchain |
+| R5 — Intel macOS qualification | M–L, 4–5 tasks | Native archive + runtime manifest/generator/pin checks + doctor/services + flake/formula + live acceptance; declared OS floor | R1, Q3, and Q5 disposition. Add to all enabled channels only after qualification |
+| R6 — resume 7e-ii-a | L, existing 5 tasks plus re-anchoring | Nix adapters, doctor system-unit interpretation, NixOS/Home Manager modules and VM/native checks, current spec write-back | Existing paused plan, current 7e-ii-b and R1; substantial NixOS user value. No new licence/cache permission implied |
+| R7 — downloadable deb/rpm | M, 4 tasks | Metadata wrappers, architecture/dependency checks, distro install/upgrade/remove matrix, attested release assets | R1; optionally R3's source packaging. Q6 defaults to no hosted repositories |
+| R8 — AUR binary recipe | S, 1–2 tasks | Clean Arch install/update/removal and reviewed PKGBUILD/.SRCINFO, explicit maintainer ownership | R1 plus stable release; optional tester reach, no official Arch claim |
+| R9 — GNU archives, if requested | M, 3–4 tasks | Oldest-baseline builders, linkage/symbol/runtime checks on both architectures, downloader mapping/docs | R1 and Q4 approval; lower initial value since musl already covers glibc machines |
+| R10 — upstream ecosystem submissions / hosted repos | Separate plans, M–L each | nixpkgs binary first; later Homebrew core or distro source recipes; APT/RPM repository signing/hosting if authorized | Stable releases, real users and named ongoing owners. No single omnibus packaging PR; no promised external acceptance |
+
+Q5's optional Apple signing/notarization is a separate M-sized 3-task adjunct:
+credential/key handling, signing/notarization before final archive hashing, and
+quarantined-download acceptance on both Mac architectures. It may move ahead
+of R1 if actual tester acceptance requires it. GitHub keyless signatures are
+not Apple Developer ID signatures or a Gatekeeper notarization ticket.
+
+The smallest useful rollout stops after R1; R2–R4 can then ship independently
+as they pass. R5–R10 are not hidden prerequisites for giving early testers a
+working download. Existing source-build instructions remain supported.
+
+## 8. Maintainer-only setup and approvals
+
+| Account / surface | One-time step or secret | Ongoing owner action |
+|---|---|---|
+| Release identity and repository | Choose first version/channel scope; protect main and release tags; configure the release environment/allowed refs and manual reviewer; choose tag-signing identity and verify fingerprint. Enable required checks and fork-workflow approval | Explicit approval of each candidate SHA/digest inventory; designate who may release. If environment review cannot enforce a sole maintainer's intended flow, use a documented explicit manual publish step rather than silently omitting approval |
+| GitHub artifact signing | Approve public transparency-log disclosure; enable narrowly scoped workflow OIDC/attestation permissions | Review pinned signing actions and verification identity. No long-lived Sigstore private key is needed |
+| crates.io | Personal account and verified email; recheck seven names; approve first real publication of all seven crates; bootstrap token with only needed publish rights; configure trusted publisher per crate, workflow and environment afterwards; revoke bootstrap token | Ownership/recovery contacts, release approval and emergency yanks. No name reservation or upload by this design lane |
+| Homebrew tap | Create/approve `marcinwadon/homebrew-tap`; scoped GitHub App token or fine-grained token limited to tap contents, stored only in protected publishing environment | Rotate credential and maintain/review formula updates; verify generated workflow supports the chosen credential method |
+| GHCR | Approve namespace/package creation, repository linkage, public visibility and retention; enable job-scoped `packages: write` | Release/purge policy and base-image rebuild approval; no personal broad registry token by default |
+| Dependency security | Enable Dependabot alerts or approved equivalent; approve update automation if wanted; establish an OpenSSL/runtime advisory owner | Triage live advisories, refresh pinned RustSec inputs, approve dependency/pin changes; never rely solely on old pinned audit data |
+| Agent acceptance | Confirm pinned versions and supply isolated, logged-in test accounts/machines on claimed host platforms; approve usage costs | Run/attest live gates and Codex deletion-contract checks. Never expose agent credentials to PR builds or publish their homes |
+| Intel Mac runners / Apple, conditional | Approve runner access/cost. For Q5: Apple Developer membership, Developer ID certificate/private-key storage and notarization credentials, with recovery/rotation | OS/SDK floor and certificate lifecycle; platform expansion acceptance |
+| Native package repositories, conditional | Q6 approval; hosting/domain/storage choice; APT signing key and RPM signing credentials with public-key distribution, expiry/rotation/revocation and recovery procedure | Publish signed metadata, retain versions, monitor availability; no repo keys needed for the initial design-only work |
+| AUR / upstream submissions, conditional | AUR account and scoped SSH key, confirm package names and ownership; nominate nixpkgs/Homebrew/distro maintainers and authorize submissions | Respond to downstream breakage/reviews and releases; publication remains maintainer-controlled |
+| Nix cache, optional | Explicit binary-cache approval, service account/token and cache-signing trust setup; allowlist free binary/UI closure only | Audit uploads, retention and key rotation; no Claude CLI, downloaded tarball or unrestricted whole-store cache |
+| Licence/source review | Approve generated notices, corresponding source delivery and any unresolved third-party licence findings | Repeat for changed dependency sets and keep source material available with releases |
+
+Parent review should concentrate on publication trust boundaries, crate tarball
+completeness, platform claims versus actual runtime support, licence/source
+coverage, the paused modules' preserved decisions, and recovery after a partial
+multi-channel release. No independent review or implementation validation is
+claimed by this design document.
+
+Generated with Claude AI — please review before distribution.
