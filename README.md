@@ -33,8 +33,9 @@ Known limitations:
 - Web Push is built on the collector, but the web UI has no subscribe
   button yet.
 - Codex sessions get hennery MCP servers only in the host's default hat, without per-hat isolation, and also load the user's own `~/.codex` MCP servers; other hats get none, until per-hat isolation lands.
-- Hosts cannot connect over `wss://` yet; remote hosts reach the collector
-  through an SSH tunnel.
+- Hosts support verified `wss://`; the public proxy deployment and separate
+  client rate-limit budgets are still pending. Restrict public ingress until
+  those deployment checks are complete.
 - The designs are in [`docs/specs/`](docs/specs/) and the plans in
   [`docs/plans/`](docs/plans/); [`docs/README.md`](docs/README.md) lists
   them.
@@ -135,16 +136,38 @@ If the setup link has expired, `hennery admin setup-url` prints a fresh one.
 
 ### 3. Pair another machine
 
-Hosts currently connect only over loopback HTTP. On the other machine,
-open an SSH tunnel to the collector with
+With a verified HTTPS front end, use the public `https://` origin printed by
+**Hosts → Add host**: the host enrolls over HTTPS and runs over WSS. System
+roots are the default. `host join --ca-cert <file>` imports a private CA for
+this collector only and saves it; browsers and adapters need their own trust
+configuration. Use `hennery doctor` to check TLS, health and the host upgrade.
+
+To move an existing tunnel pairing, park its sessions and stop the host
+service, then use `hennery host transport set <https-origin> --system-roots`
+(or `--ca-cert <file>`) with the existing host data directory. This verifies
+the existing identity and preserves its key, roots, CLI settings and outbox.
+Restarting the host parks adapters; resume sessions normally afterwards.
+For CA rotation, save an old-plus-new CA bundle, restart, renew the server,
+then save a bundle without the old CA and restart again. Leaf renewal under
+the same CA needs no host restart. A `DurabilityUncertain` save means the new
+settings are visible but may not survive a crash: inspect the saved endpoint
+and repeat the explicit save after storage is healthy.
+
+An uncertain enrollment blocks `join`, `run` and `up`. Follow doctor's attempt
+id: inspect the collector's Hosts list, revoke any entry created by that
+attempt, then use the explicit enrollment archive action before joining
+again. Archiving preserves the journal and key locally; it cannot confirm a
+remote revoke. Automatic pairing remains suppressed after an archive.
+
+The SSH tunnel remains an optional deployment choice. On the other machine,
+open it with
 `ssh -N -L 7117:127.0.0.1:7117 <collector-machine>`; replace
 `<collector-machine>` with your SSH destination. Keep this terminal open
 while pairing and while `hennery host run` runs. If local port 7117 is
 already in use, choose another local port in the tunnel and join command.
 
 For browser access over HTTPS, a reverse proxy on the collector's machine
-can serve `up` at an `https://` address. This does not enable secure
-WebSockets for hosts; they still use the tunnel. If `up` is already running,
+can serve `up` at an `https://` address, including its host WebSocket. If `up` is already running,
 stop it with Ctrl-C and restart it with that address before setup:
 
 <!-- check: up-public -->
@@ -161,7 +184,7 @@ sign-in by submitting wrong passwords.
 
 In the web UI, **Hosts → Add host** shows a pairing code, valid for ten
 minutes, after asking for your password again if a fresh step-up is needed.
-Its printed command uses the public URL; adapt it to the tunnel's
+Its printed command uses the public URL; when choosing the tunnel, adapt it to the
 `http://127.0.0.1` address as below. Build hennery on the other machine and
 run the join command in another terminal (it also downloads the runtime).
 In this block, `7117` is a placeholder for the tunnel's local port, and

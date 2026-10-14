@@ -48,6 +48,7 @@ fn doctor_reports_on_a_host_directory_and_changes_nothing() {
     let host = dir.path().join("host");
     hennery_host::identity::Paired {
         collector_url: "ws://127.0.0.1:1/api/hosts/ws".into(),
+        trust: Default::default(),
         host_id: "host-doctor".into(),
         key: hennery_host::identity::HostKey::generate(),
         workspace_roots: Vec::new(),
@@ -66,6 +67,10 @@ fn doctor_reports_on_a_host_directory_and_changes_nothing() {
         .env("HENNERY_NODE_MIRROR", OFFLINE)
         .env_remove("HENNERY_DATA_DIR")
         .env_remove("HENNERY_HOST_DATA_DIR")
+        // The trust check names these overrides when they are set (CI's
+        // Linux runners set them): the expected text below assumes neither.
+        .env_remove("SSL_CERT_FILE")
+        .env_remove("SSL_CERT_DIR")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -90,7 +95,7 @@ fn doctor_reports_on_a_host_directory_and_changes_nothing() {
     // The pairing names a collector on loopback port 1, where nothing
     // listens: check 7 fails, and doctor exits 1; nothing else fails.
     assert!(
-        stdout.contains("fail  7 collector: nothing answers on 127.0.0.1:1"),
+        stdout.contains("fail  7 collector: trust: native system roots; nothing answers on 127.0.0.1:1"),
         "{stdout}"
     );
     assert_eq!(stdout.matches("\nfail ").count(), 1, "{stdout}");
@@ -113,6 +118,7 @@ fn an_interrupted_doctor_leaves_no_adapter_running() {
     let host = dir.path().join("host");
     hennery_host::identity::Paired {
         collector_url: "ws://127.0.0.1:1/api/hosts/ws".into(),
+        trust: Default::default(),
         host_id: "host-doctor".into(),
         key: hennery_host::identity::HostKey::generate(),
         workspace_roots: Vec::new(),

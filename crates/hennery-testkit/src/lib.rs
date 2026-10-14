@@ -1,6 +1,7 @@
 //! Test support for hennery: the fake ACP adapter binary and shared helpers.
 
 use serde::{Deserialize, Serialize};
+pub mod tls;
 
 /// Behaviour of `hennery-fake-acp`, passed as JSON in `HENNERY_FAKE_ACP_SCRIPT`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

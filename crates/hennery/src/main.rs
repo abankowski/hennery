@@ -61,6 +61,16 @@ enum HostCommand {
     Join(JoinArgs),
     /// Run a host.
     Run(HostArgs),
+    /// Change this host's collector endpoint without replacing its identity.
+    Transport {
+        #[command(subcommand)]
+        command: TransportCommand,
+    },
+    /// Explicit recovery of a possibly committed enrollment.
+    Enrollment {
+        #[command(subcommand)]
+        command: EnrollmentCommand,
+    },
     /// The managed adapter set (distribution spec §3.2).
     Adapters {
         #[command(subcommand)]
@@ -72,6 +82,9 @@ enum HostCommand {
 struct JoinArgs {
     /// The collector's public URL, e.g. https://hennery.example.
     url: String,
+    /// Import collector-only private CA roots; copied into host.toml.
+    #[arg(long)]
+    ca_cert: Option<PathBuf>,
     /// The pairing code shown by the collector (`XXXX-XXXX`). Leave it out
     /// to type it, or pipe it, on standard input instead: that keeps it out
     /// of the process list and the shell history.
@@ -94,6 +107,31 @@ struct JoinArgs {
     no_runtime: bool,
     #[command(flatten)]
     mirrors: runtime::MirrorArgs,
+}
+
+#[derive(Subcommand)]
+enum TransportCommand {
+    Set(TransportSetArgs),
+}
+#[derive(Args)]
+struct TransportSetArgs {
+    url: String,
+    #[arg(long, env = "HENNERY_HOST_DATA_DIR")]
+    data_dir: Option<PathBuf>,
+    #[arg(long, conflicts_with = "system_roots")]
+    ca_cert: Option<PathBuf>,
+    #[arg(long)]
+    system_roots: bool,
+}
+#[derive(Subcommand)]
+enum EnrollmentCommand {
+    /// After checking Hosts and revoking any possible enrollment, durably
+    /// archive local artifacts. This action cannot confirm remote revocation.
+    Archive {
+        attempt_id: String,
+        #[arg(long, env = "HENNERY_HOST_DATA_DIR")]
+        data_dir: Option<PathBuf>,
+    },
 }
 
 /// `collector` runs the collector; `collector healthcheck` checks one.
@@ -308,7 +346,7 @@ async fn main() -> std::process::ExitCode {
     // group. Returning an `ExitCode` here instead lets the runtime finish
     // and drop normally first, exactly like a plain `Ok(())` return always
     // did; only then does the process actually exit with that code.
-    let result = match cli.command {
+    let result = async { match cli.command {
         Command::Collector(CollectorCli {
             command: Some(CollectorCommand::Healthcheck(args)),
             ..
@@ -324,13 +362,52 @@ async fn main() -> std::process::ExitCode {
             command: HostCommand::Run(args),
         } => run_host(args).await,
         Command::Host {
+            command: HostCommand::Transport {
+                command: TransportCommand::Set(args),
+            },
+        } => {
+            let dir = data_dir::host_or_installed(args.data_dir, data_dir::HostUse::Join)?;
+            let _guard = hennery_host::pairing::PairingLock::acquire(&dir)?;
+            let trust = if let Some(path) = args.ca_cert {
+                Some(hennery_host::transport::CollectorTrust::import(&path)?)
+            } else if args.system_roots {
+                Some(hennery_host::transport::CollectorTrust::System)
+            } else {
+                None
+            };
+            let result = hennery_host::pairing::set_transport(&dir, &args.url, trust).await?;
+            if result == hennery_host::connection::Standing::Connected {
+                println!("another connection still uses this identity");
+            }
+            println!("transport saved; restart the host (this parks adapters) and resume sessions normally");
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+        Command::Host {
+            command:
+                HostCommand::Enrollment {
+                    command:
+                        EnrollmentCommand::Archive {
+                            attempt_id,
+                            data_dir: given,
+                        },
+                },
+        } => {
+            let dir = data_dir::host_or_installed(given, data_dir::HostUse::Join)?;
+            let _guard = hennery_host::pairing::PairingLock::acquire(&dir)?;
+            hennery_host::enrollment::archive(&dir, &attempt_id)?;
+            println!(
+                "attempt archived locally; this does not confirm remote revocation. Check Hosts and revoke any entry before a fresh join"
+            );
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+        Command::Host {
             command: HostCommand::Adapters { command },
         } => runtime::run(command).await.map(|()| std::process::ExitCode::SUCCESS),
         Command::Up(args) => run_up(args).await,
         Command::Admin(args) => admin::run(args).await.map(|()| std::process::ExitCode::SUCCESS),
         Command::Service(args) => service::run(args),
         Command::Doctor(args) => doctor::run(args),
-    };
+    } }.await;
     match result {
         Ok(code) => code,
         // `{err:?}`, not `{err:#}`: this replaces the default `Result<(),
@@ -684,16 +761,25 @@ fn private_data_dir(dir: &std::path::Path) -> Result<()> {
 
 async fn join_host(args: JoinArgs) -> Result<()> {
     let data_dir = data_dir::host_or_installed(args.data_dir.clone(), data_dir::HostUse::Join)?;
+    hennery_host::identity::create_private_dir(&data_dir)?;
+    let _guard = hennery_host::pairing::PairingLock::acquire(&data_dir)?;
+    let trust = args
+        .ca_cert
+        .as_deref()
+        .map(hennery_host::transport::CollectorTrust::import)
+        .transpose()?;
+    let prepared = hennery_host::pairing::prepare_join(&args.url, trust, &data_dir).await?;
     // Before the code is spent: a bad mirror stops the join here.
     if !args.no_runtime {
         args.mirrors.sources()?;
     }
     let name = args.name.unwrap_or_else(hennery_host::pairing::default_name);
-    let code = match args.code {
-        Some(code) => code,
-        None => read_code_from_stdin()?,
+    let code = match (&prepared, args.code) {
+        (hennery_host::pairing::PreparedJoin::Already(_), _) => String::new(),
+        (_, Some(code)) => code,
+        (_, None) => read_code_from_stdin()?,
     };
-    let host_id = match hennery_host::pairing::join(&args.url, &code, &data_dir, &name).await? {
+    let host_id = match hennery_host::pairing::complete_join(prepared, &code, &data_dir, &name).await? {
         Joined::Paired { host_id } => {
             println!("paired as {host_id}");
             host_id
@@ -787,6 +873,7 @@ async fn run_host(args: HostArgs) -> Result<std::process::ExitCode> {
             paired
         }
         None => {
+            hennery_host::enrollment::require_automatic_join_allowed(&data_dir)?;
             let (Some(url), Some(fd)) = (&args.join_url, args.join_code_fd) else {
                 bail!(
                     "{} holds no pairing; run `hennery host join <url> <code>` first",
@@ -795,10 +882,17 @@ async fn run_host(args: HostArgs) -> Result<std::process::ExitCode> {
             };
             let code = inherit::read_code(fd).await?;
             let name = hennery_host::pairing::default_name();
-            hennery_host::pairing::join(url, &code, &data_dir, &name).await?;
+            hennery_host::pairing::join_locked(url, &code, &data_dir, &name, None).await?;
             Paired::load(&data_dir)?.context("the pairing just stored")?
         }
     };
+    let collector_url = args
+        .collector_url
+        .clone()
+        .unwrap_or_else(|| paired.collector_url.clone());
+    let endpoint = hennery_host::transport::CollectorEndpoint::stored(&collector_url)?;
+    hennery_host::transport::CollectorEndpoint::stored(&paired.collector_url)?.require_compatible(&endpoint)?;
+    hennery_host::transport::CollectorTransport::new(endpoint, paired.trust.clone())?;
     // Checked before connecting: a bad root fails the start (decision 6).
     let workspace_roots =
         hennery_host::projects::workspace_roots(&args.workspace_roots, &paired.workspace_roots, home.as_deref())?;
@@ -816,7 +910,6 @@ async fn run_host(args: HostArgs) -> Result<std::process::ExitCode> {
     // The pairing's collector, as `host join` takes it again: never a
     // `--collector-url` override (development only).
     let paired_collector = paired.collector_url.clone();
-    let collector_url = args.collector_url.unwrap_or(paired.collector_url);
     // What a revoke records, beside the pairing it names.
     let record_dir = data_dir.clone();
     let revoke = revoked::Revoked {
@@ -825,6 +918,7 @@ async fn run_host(args: HostArgs) -> Result<std::process::ExitCode> {
         at: 0,
     };
     let mut cfg = HostConfig::new(collector_url, paired.host_id, paired.key, data_dir);
+    cfg.trust = paired.trust;
     cfg.workspace_roots = workspace_roots;
     cfg.home = home;
     cfg.agents = agents;
@@ -979,7 +1073,7 @@ enum Pairing {
 /// (decision 8 of plan 7c).
 fn pairing_in(dir: &std::path::Path) -> Pairing {
     use hennery_host::identity::{CONFIG_FILE, KEY_FILE};
-    if dir.join(format!("{CONFIG_FILE}.pending")).exists() {
+    if dir.join(format!("{CONFIG_FILE}.pending")).exists() || hennery_host::enrollment::has_artifacts(dir) {
         Pairing::Interrupted
     } else if dir.join(KEY_FILE).is_file() && dir.join(CONFIG_FILE).is_file() {
         Pairing::Whole
@@ -1109,10 +1203,16 @@ async fn run_up(args: UpArgs) -> Result<std::process::ExitCode> {
     // Validated before any child starts: with no address that loopback
     // reaches (or only schemes it cannot make sense of) `up` fails here,
     // not after the collector is already up and serving.
-    let Some(host_listener) = addresses
-        .iter()
-        .position(|address| hennery_host::pairing::collector_ws_url(&loopback_url(address)).is_ok())
-    else {
+    let Some(host_listener) = addresses.iter().position(|address| {
+        let candidate = loopback_url(address);
+        // Port 0 requests an ephemeral local listener. Validate the
+        // address here; the transport uses its nonzero bound port below.
+        let candidate = candidate
+            .strip_suffix(":0")
+            .map(|base| format!("{base}:1"))
+            .unwrap_or(candidate);
+        hennery_host::pairing::collector_ws_url(&candidate).is_ok()
+    }) else {
         let err = hennery_host::pairing::collector_ws_url(&loopback_url(&addresses[0]))
             .expect_err("no address passed the check");
         return Err(err.context("the all-in-one host reaches its collector over loopback"));
@@ -1129,12 +1229,24 @@ async fn run_up(args: UpArgs) -> Result<std::process::ExitCode> {
     // this data root would run a second collector on its database, also
     // where the collector's admin socket cannot tell (its path too long).
     let _lock = lock::acquire(&data_dir, lock::UP_LOCK, "hennery up")?;
+    // up's listener-derived override must not downgrade stored WSS, and
+    // uncertainty must stop before collector spawn/code minting.
+    if host_dir.is_dir() {
+        let _guard = hennery_host::pairing::PairingLock::acquire(&host_dir)?;
+        hennery_host::enrollment::require_resolved(&host_dir)?;
+        if let Some(stored) = hennery_host::identity::stored_endpoint(&host_dir)? {
+            stored.require_compatible(&hennery_host::transport::CollectorEndpoint::stored(&collector_ws_url)?)?;
+        }
+    }
     // The host pairs itself on first start only; a pairing that was revoked
     // is not replaced (kernel spec §4.2). One left half-done needs no code:
     // the host child finishes it, under its lock.
     let pairing = match pairing_in(&host_dir) {
         Pairing::Whole | Pairing::Interrupted => None,
-        Pairing::None => Some(std::io::pipe()?),
+        Pairing::None => {
+            hennery_host::enrollment::require_automatic_join_allowed(&host_dir)?;
+            Some(std::io::pipe()?)
+        }
     };
     let mut children = UpChildren {
         exe,

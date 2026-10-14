@@ -123,6 +123,7 @@ mod tests {
     fn paired(dir: &Path, host_id: &str) {
         hennery_host::identity::Paired {
             collector_url: "ws://127.0.0.1:1/api/hosts/ws".into(),
+            trust: Default::default(),
             host_id: host_id.into(),
             key: hennery_host::identity::HostKey::generate(),
             workspace_roots: Vec::new(),

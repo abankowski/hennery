@@ -471,6 +471,41 @@ pub fn host_directory(doctor: &Doctor) -> Finding {
         );
     }
     let key = host.join(hennery_host::identity::KEY_FILE);
+    if host
+        .join(hennery_host::identity::CONFIG_FILE)
+        .symlink_metadata()
+        .is_ok()
+        || hennery_host::enrollment::has_artifacts(host)
+    {
+        let integrity = match hennery_host::enrollment::inspect(host) {
+            Ok(hennery_host::enrollment::EnrollmentState::Uncertain(attempt)) => {
+                Err(anyhow::anyhow!(attempt.diagnostic()))
+            }
+            Ok(hennery_host::enrollment::EnrollmentState::Confirmed(_)) => {
+                Err(anyhow::anyhow!("confirmed enrollment needs durable roll-forward"))
+            }
+            Ok(hennery_host::enrollment::EnrollmentState::Clear) => hennery_host::identity::inspect_transport(host),
+            Err(error) => Err(error),
+        };
+        match integrity {
+            Ok(()) => {}
+            Err(err)
+                if matches!(
+                    hennery_host::enrollment::inspect(host),
+                    Ok(hennery_host::enrollment::EnrollmentState::Confirmed(_))
+                ) || (matches!(
+                    hennery_host::enrollment::inspect(host),
+                    Ok(hennery_host::enrollment::EnrollmentState::Clear)
+                ) && host.join("host.toml.pending").exists()) =>
+            {
+                verdict.warn(err.to_string(), "finish confirmed roll-forward with host run")
+            }
+            Err(err) => verdict.fail(
+                err.to_string(),
+                "repair transport configuration integrity or explicitly recover enrollment; preserve artifacts",
+            ),
+        }
+    }
     // The key's own mode: a link to it is followed.
     if std::fs::metadata(&key).is_ok_and(|m| m.mode() & 0o077 != 0) {
         verdict.warn(

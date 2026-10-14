@@ -2388,7 +2388,15 @@ fn join_refuses_an_overlong_line_on_standard_input_at_once() {
         !stderr.contains(&code) && !stderr.contains("xxxxxxxx"),
         "echoed: {stderr}"
     );
-    assert!(!host.exists(), "a pairing was stored");
+    let entries: Vec<_> = std::fs::read_dir(&host)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        entries,
+        [std::ffi::OsString::from("host.lock")],
+        "identity or enrollment artifacts were stored before a valid code"
+    );
 
     let mut child = join_from_stdin(addr, &host);
     child
@@ -3637,6 +3645,7 @@ fn link_set(host_dir: &std::path::Path, link: &str, id: &str) {
 fn paired_host(dir: &std::path::Path) {
     hennery_host::identity::Paired {
         collector_url: "ws://127.0.0.1:1/api/hosts/ws".into(),
+        trust: Default::default(),
         host_id: "host-cli".into(),
         key: hennery_host::identity::HostKey::generate(),
         workspace_roots: Vec::new(),
@@ -4295,4 +4304,88 @@ fn password_session(listen: &str, origin: &str) -> String {
                 .then(|| value.split(';').next().unwrap().to_string())
         })
         .unwrap_or_else(|| panic!("no session cookie: {response}"))
+}
+
+#[test]
+fn a_secure_loopback_pairing_rejects_join_run_and_up_plaintext_overrides() {
+    hennery_testkit::first_exec(&hennery().get_program().to_string_lossy());
+    let root = tempfile::tempdir().unwrap();
+    let host = root.path().join("host");
+    hennery_host::identity::Paired {
+        collector_url: "wss://localhost/api/hosts/ws".into(),
+        trust: Default::default(),
+        host_id: "host-0123456789abcdef".into(),
+        key: hennery_host::identity::HostKey::from_seed([47; 32]),
+        workspace_roots: vec![],
+    }
+    .save(&host)
+    .unwrap();
+    let trap = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    trap.set_nonblocking(true).unwrap();
+    let origin = format!("http://{}", trap.local_addr().unwrap());
+    let ws = hennery_host::pairing::collector_ws_url(&origin).unwrap();
+    for args in [
+        vec![
+            "host",
+            "join",
+            &origin,
+            "ABCD-EFGH",
+            "--no-runtime",
+            "--data-dir",
+            host.to_str().unwrap(),
+        ],
+        vec![
+            "host",
+            "run",
+            "--collector-url",
+            &ws,
+            "--data-dir",
+            host.to_str().unwrap(),
+        ],
+        vec![
+            "host",
+            "transport",
+            "set",
+            &origin,
+            "--system-roots",
+            "--data-dir",
+            host.to_str().unwrap(),
+        ],
+        vec![
+            "up",
+            "--listen",
+            "127.0.0.1:0",
+            "--data-dir",
+            root.path().to_str().unwrap(),
+        ],
+    ] {
+        use std::os::unix::process::CommandExt;
+        let mut child = hennery()
+            .args(args)
+            .process_group(0)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let status = wait_with_timeout(&mut child, Duration::from_secs(15));
+        if status.is_none() {
+            unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(status.is_some(), "downgrade refusal must happen before startup");
+        assert!(!output.status.success());
+        assert!(
+            !root.path().join("collector").exists(),
+            "up must refuse its derived downgrade before spawning a collector"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("before hello"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(matches!(
+        trap.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    ));
 }

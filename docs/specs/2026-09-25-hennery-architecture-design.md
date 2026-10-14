@@ -635,8 +635,12 @@ Wrong codes are rate-limited per client address. Pairing is idempotent: a host
 whose existing key the collector still accepts is not paired again. The
 all-in-one host is paired automatically over the local channel. A revoked host
 pairs again with `host join`, under a new key and id; its old outbox is kept
-aside (kernel §4.1). *Built so far:* `join` takes `http://` to loopback only,
-until the host WebSocket supports `wss://`.
+aside (kernel §4.1). *Built so far (W1):* HTTPS enrollment and WSS share native
+roots or a collector-only private CA. Transport changes preserve identity;
+uncertain enrollment is durably journaled and blocks automatic re-enrollment.
+Plaintext aliases apply only to two validated loopback endpoints. Public proxy
+attribution and deployment verification remain W2; see the
+[WSS design](2026-10-14-wss-design.md).
 
 *Rejected:* one shared fleet token. In the predecessor a single token
 authenticated every machine: impossible to revoke one laptop, and anyone holding

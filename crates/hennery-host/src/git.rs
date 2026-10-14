@@ -294,7 +294,14 @@ mod tests {
         }
         let out = cmd
             .current_dir(dir)
-            .args(["-c", "user.name=test", "-c", "user.email=test@example.invalid"])
+            .args([
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
             .args(args)
             .output()
             .unwrap();

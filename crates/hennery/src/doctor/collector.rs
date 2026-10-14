@@ -12,8 +12,8 @@ use super::service::{Holder, holder};
 use super::{Doctor, Finding, Verdict};
 use hennery_host::connection::Standing;
 use hennery_host::identity::Paired;
+use hennery_host::transport::{CollectorEndpoint, CollectorTransport, CollectorTrust};
 use reqwest::Url;
-use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 /// Each step's budget.
@@ -40,7 +40,7 @@ fn quoted(text: &str) -> String {
 }
 
 /// `url` as the report may show it: without a user name or password, which
-/// `parse_public_url` accepts in a URL (`https://user:secret@host`).
+/// are refused by the transport parser, including in legacy configuration.
 pub fn shown_url(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut parsed) if !parsed.username().is_empty() || parsed.password().is_some() => {
@@ -88,55 +88,38 @@ pub enum Health {
 /// `GET <base>/healthz`, straight to it (no proxy, no redirect), within
 /// `STEP_TIMEOUT`; only its status and `Date` are read.
 pub fn healthz(base: &Url) -> Health {
-    let Ok(url) = base.join("/healthz") else {
-        return Health::Failed(format!("{} cannot take a path", shown_url(base.as_str())));
-    };
-    let https = url.scheme() == "https";
+    healthz_with(base, CollectorTrust::System)
+}
+fn healthz_with(base: &Url, trust: CollectorTrust) -> Health {
+    let transport =
+        CollectorEndpoint::public(base.as_str()).and_then(|endpoint| CollectorTransport::new(endpoint, trust));
+    match transport {
+        Ok(transport) => healthz_transport(&transport),
+        Err(_) => Health::Failed("collector endpoint or trust configuration failed".into()),
+    }
+}
+fn healthz_transport(transport: &CollectorTransport) -> Health {
+    let transport = transport.clone();
     block_on(async move {
-        let client = match reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(STEP_TIMEOUT)
-            .build()
-        {
-            Ok(client) => client,
-            Err(err) => return Health::Failed(quoted(&err.to_string())),
-        };
-        match client.get(url).send().await {
-            Ok(response) => Health::Answered {
+        let operation = async {
+            let response = transport.health().await?;
+            Ok::<_, anyhow::Error>(Health::Answered {
                 status: response.status().as_u16(),
                 date: response
                     .headers()
                     .get(reqwest::header::DATE)
                     .and_then(|v| v.to_str().ok())
                     .and_then(http_date),
-            },
-            Err(err) => {
-                // Without the URL: a name with "tls" in it is not a TLS
-                // failure, and a URL's credentials are not printed.
-                let err = err.without_url();
-                // reqwest's own text names none of its causes: the chain is
-                // walked, and the innermost cause is the one shown.
-                let mut chain = err.to_string();
-                let mut why = chain.clone();
-                let mut cause = std::error::Error::source(&err);
-                while let Some(inner) = cause {
-                    why = inner.to_string();
-                    chain = format!("{chain}: {why}");
-                    cause = inner.source();
-                }
-                let lower = chain.to_ascii_lowercase();
-                // Over https, step 3 has just reached this address: a
-                // connect that fails, not out of time, is the handshake's,
-                // even when its words name neither TLS nor a certificate
-                // (plain http behind an https URL: "corrupt message").
-                let handshake = https && err.is_connect() && !err.is_timeout();
-                if handshake || lower.contains("certificate") || lower.contains("tls") {
-                    Health::Tls(quoted(&why))
-                } else {
-                    Health::Failed(quoted(&why))
-                }
-            }
+            })
+        };
+        match tokio::time::timeout(STEP_TIMEOUT, operation).await {
+            Ok(Ok(health)) => health,
+            Ok(Err(error)) if hennery_host::transport::classify(error.as_ref()).is_tls() => Health::Tls(format!(
+                "{}",
+                hennery_host::transport::failure(hennery_host::transport::classify(error.as_ref()))
+            )),
+            Ok(Err(_)) => Health::Failed("DNS/TCP/HTTP connection failed".into()),
+            Err(_) => Health::Failed("collector health deadline exceeded".into()),
         }
     })
 }
@@ -193,6 +176,9 @@ fn collector_of(doctor: &Doctor, paired: &Paired) -> Result<(String, String), St
             .find(|base| hennery_host::pairing::collector_ws_url(base).is_ok())
             .ok_or("no listen address of the collector's is reached over loopback")?;
         let ws = hennery_host::pairing::collector_ws_url(&base).map_err(|e| format!("{e:#}"))?;
+        CollectorEndpoint::stored(&paired.collector_url)
+            .and_then(|stored| stored.require_compatible(&CollectorEndpoint::stored(&ws)?))
+            .map_err(|e| e.to_string())?;
         return Ok((base, ws));
     }
     let ws = paired.collector_url.clone();
@@ -214,16 +200,47 @@ pub fn collector(doctor: &Doctor) -> [Finding; 2] {
         return not_run(NO_HOST);
     };
     let mut verdict = Verdict::default();
+    match hennery_host::enrollment::inspect(host) {
+        Ok(hennery_host::enrollment::EnrollmentState::Uncertain(attempt)) => {
+            verdict.fail(attempt.diagnostic(), "check Hosts, revoke the possible enrollment and explicitly archive this attempt; no identity probe was sent");
+            return [
+                Finding::Checked(verdict.check(7, "collector")),
+                Finding::NotRun {
+                    number: 8,
+                    why: NO_ANSWER,
+                },
+            ];
+        }
+        Err(err) => {
+            verdict.fail(
+                err.to_string(),
+                "preserve enrollment artifacts and complete explicit recovery; no identity probe was sent",
+            );
+            return [
+                Finding::Checked(verdict.check(7, "collector")),
+                Finding::NotRun {
+                    number: 8,
+                    why: NO_ANSWER,
+                },
+            ];
+        }
+        _ => {}
+    }
     let paired = match Paired::read(host) {
         Ok(Some(paired)) => paired,
         Ok(None) => return not_run(NOT_PAIRED),
         Err(err) => {
-            let fix = if host.join("host.toml.pending").exists() {
-                "run `hennery host run` once (it finishes the pairing), then doctor again"
+            let fix =
+                if host.join("host.toml.pending").exists() || host.join(hennery_host::enrollment::JOURNAL).exists() {
+                    "run `hennery host run` once (it finishes the pairing), then doctor again"
+                } else {
+                    "fix host.toml, or pair this host again (`hennery host join`)"
+                };
+            if host.join("host.toml.pending").exists() || host.join(hennery_host::enrollment::JOURNAL).exists() {
+                verdict.warn(format!("{err}"), fix);
             } else {
-                "fix host.toml, or pair this host again (`hennery host join`)"
-            };
-            verdict.warn(format!("{err}"), fix);
+                verdict.fail(format!("{err}"), fix);
+            }
             return [
                 Finding::Checked(verdict.check(7, "collector")),
                 Finding::NotRun {
@@ -280,18 +297,44 @@ fn reach(doctor: &Doctor, host: &std::path::Path, paired: &Paired, verdict: &mut
             return None;
         }
     };
-    let port = url.port_or_known_default().unwrap_or(443);
+    let transport = match CollectorEndpoint::public(url.as_str())
+        .and_then(|endpoint| CollectorTransport::new(endpoint, paired.trust.clone()))
+    {
+        Ok(transport) => transport,
+        Err(_) => {
+            verdict.fail(
+                "collector trust configuration failed",
+                "install the intended CA or repair native roots; TLS validation is required",
+            );
+            return None;
+        }
+    };
+    verdict.ok(format!("trust: {}", paired.trust.source()));
+    if transport.root_warnings > 0 {
+        verdict.warn(
+            format!(
+                "native root loading had {} failures with usable roots",
+                transport.root_warnings
+            ),
+            "inspect native root sources",
+        );
+    }
     let name = url.host_str().unwrap_or_default().to_string();
-    let addresses = match resolve(name.trim_start_matches('[').trim_end_matches(']'), port) {
-        Some(addresses) if !addresses.is_empty() => addresses,
-        Some(_) => {
+    let endpoint = transport.endpoint.clone();
+    let addresses = match block_on(async move {
+        tokio::time::timeout(STEP_TIMEOUT, endpoint.addresses())
+            .await
+            .unwrap_or_else(|_| Err(hennery_host::transport::failure(hennery_host::transport::Stage::Dns)))
+    }) {
+        Ok(addresses) if !addresses.is_empty() => addresses,
+        Ok(_) => {
             verdict.fail(
                 format!("{name} does not resolve"),
                 "check the name in DNS, or the collector's URL in host.toml",
             );
             return None;
         }
-        None => {
+        Err(_) => {
             verdict.fail(
                 format!("{name} did not resolve within {STEP_TIMEOUT:?}"),
                 "check this machine's DNS",
@@ -306,7 +349,7 @@ fn reach(doctor: &Doctor, host: &std::path::Path, paired: &Paired, verdict: &mut
         );
         return None;
     }
-    let date = match healthz(&url) {
+    let date = match healthz_transport(&transport) {
         Health::Tls(why) => {
             verdict.fail(
                 format!("{shown}: TLS failed: {why}"),
@@ -328,59 +371,61 @@ fn reach(doctor: &Doctor, host: &std::path::Path, paired: &Paired, verdict: &mut
         Health::Answered { date, .. } => date,
     };
     verdict.ok(format!("{shown} answers"));
-    hello(doctor, host, paired, &ws, verdict);
+    let _ = ws;
+    hello(doctor, host, paired, &transport, verdict);
     Some(date)
-}
-
-/// `name`'s addresses, looked up on a thread of its own: `None` when the
-/// lookup takes longer than `STEP_TIMEOUT` (the system's resolver has no
-/// bound of its own; the thread is left to end on its own).
-fn resolve(name: &str, port: u16) -> Option<Vec<std::net::SocketAddr>> {
-    let name = name.to_string();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let found = (name.as_str(), port)
-            .to_socket_addrs()
-            .map(|a| a.collect::<Vec<_>>())
-            .unwrap_or_default();
-        let _ = tx.send(found);
-    });
-    rx.recv_timeout(STEP_TIMEOUT).ok()
 }
 
 /// A TCP connection to the first of `addresses` that takes one, each
 /// within `STEP_TIMEOUT`, closed at once; the first address's error else.
 fn connect(addresses: &[std::net::SocketAddr]) -> std::io::Result<()> {
-    let mut first = None;
-    for address in addresses {
-        match std::net::TcpStream::connect_timeout(address, STEP_TIMEOUT) {
-            Ok(_) => return Ok(()),
-            Err(err) => {
-                first.get_or_insert(err);
+    let addresses = addresses.to_vec();
+    block_on(async move {
+        tokio::time::timeout(STEP_TIMEOUT, async move {
+            let mut first = None;
+            for address in addresses {
+                match tokio::net::TcpStream::connect(address).await {
+                    Ok(_) => return Ok(()),
+                    Err(err) => {
+                        first.get_or_insert(err);
+                    }
+                }
             }
-        }
-    }
-    Err(first.unwrap_or_else(|| std::io::ErrorKind::NotFound.into()))
+            Err(first.unwrap_or_else(|| std::io::ErrorKind::NotFound.into()))
+        })
+        .await
+        .unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()))
+    })
 }
 
 /// The `hello`, only when no host runs on this directory (decision 17).
-fn hello(doctor: &Doctor, host: &std::path::Path, paired: &Paired, ws: &str, verdict: &mut Verdict) {
+fn hello(
+    doctor: &Doctor,
+    host: &std::path::Path,
+    paired: &Paired,
+    transport: &CollectorTransport,
+    verdict: &mut Verdict,
+) {
+    let check = transport.clone();
+    if let Err(error) = block_on(async move { check.preflight().await }) {
+        verdict.fail(
+            format!("WSS upgrade/nonce check failed: {error}"),
+            "forward the WebSocket upgrade and hennery-hello-nonce; remove ingress login redirects",
+        );
+        return;
+    }
     if holder(doctor, &host.join(crate::lock::HOST_LOCK)) != Holder::Nobody {
-        verdict.ok("hello not sent: a host may be connected on this directory (see check 14)");
+        verdict.ok("WSS upgrade/nonce checked; authentication not checked: hello not sent because a host may be connected on this directory (see check 14)");
         return;
     }
-    if ws.starts_with("wss://") {
-        verdict.warn(
-            "this binary's host cannot reach an https collector yet (no TLS for its WebSocket)",
-            "reach the collector over loopback or a tunnel until hosts speak wss",
-        );
-        return;
-    }
-    let (ws, id, key) = (ws.to_string(), paired.host_id.clone(), paired.key.clone());
-    let standing =
-        block_on(
-            async move { tokio::time::timeout(HELLO_TIMEOUT, hennery_host::connection::probe(&ws, &id, &key)).await },
-        );
+    let (transport, id, key) = (transport.clone(), paired.host_id.clone(), paired.key.clone());
+    let standing = block_on(async move {
+        tokio::time::timeout(
+            HELLO_TIMEOUT,
+            hennery_host::connection::probe_transport(&transport, &id, &key),
+        )
+        .await
+    });
     let rejoin = "pair it again: remove host.key and host.toml, then `hennery host join <url>`";
     match standing {
         Err(_) => verdict.fail(
@@ -502,7 +547,11 @@ pub fn listeners(doctor: &Doctor) -> Finding {
                 format!("{err}").replace(&public, &shown_url(&public)),
                 "fix public_url in config.toml",
             ),
-            Ok(url) => match healthz(&url) {
+            Ok(url) => match if doctor.collector_trust == CollectorTrust::System {
+                healthz(&url)
+            } else {
+                healthz_with(&url, doctor.collector_trust.clone())
+            } {
                 Health::Answered { status: 200, .. } => {
                     verdict.ok(format!("public_url {} answers /healthz", shown_url(&public)))
                 }
@@ -516,6 +565,13 @@ pub fn listeners(doctor: &Doctor) -> Finding {
                 ),
             },
         },
+    }
+    if file
+        .public_url(None)
+        .is_some_and(|url| Url::parse(&url).is_ok_and(|url| url.scheme() == "https"))
+    {
+        verdict.warn("proxy-address attribution is unconfigured in W1; health success cannot prove header stripping or separate limiter budgets", "restrict public ingress until the W2 deployment and attribution checks pass");
+        verdict.ok(format!("external collector trust: {}", doctor.collector_trust.source()));
     }
     Finding::Checked(verdict.check(16, "listeners"))
 }

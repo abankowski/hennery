@@ -16,11 +16,11 @@ use crate::session::{
 use crate::uplink::Uplink;
 use anyhow::{Context, Result, bail};
 use futures::{SinkExt, StreamExt};
+use hennery_proto::PROTOCOL_VERSION;
 use hennery_proto::frames::{
     AgentIsolation, AttachedSession, Capabilities, Capability, CollectorFrame, ForgetReason, HostFrame, McpDelivery,
     SessionConfig,
 };
-use hennery_proto::{HELLO_NONCE_HEADER, PROTOCOL_VERSION};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -39,6 +39,7 @@ const MAX_FRAME: usize = 32 << 20;
 pub struct HostConfig {
     /// e.g. `ws://127.0.0.1:7117/api/hosts/ws`
     pub collector_url: String,
+    pub trust: crate::transport::CollectorTrust,
     pub host_id: String,
     /// The key this host paired with; it signs every `hello` (ACP core §3.5).
     pub key: HostKey,
@@ -80,6 +81,7 @@ impl HostConfig {
     pub fn new(collector_url: impl Into<String>, host_id: impl Into<String>, key: HostKey, data_dir: PathBuf) -> Self {
         Self {
             collector_url: collector_url.into(),
+            trust: Default::default(),
             host_id: host_id.into(),
             key,
             data_dir,
@@ -157,6 +159,10 @@ pub async fn run(cfg: HostConfig) -> Result<()> {
 
 /// Run the host until `shutdown` resolves.
 pub async fn run_until(cfg: HostConfig, shutdown: impl Future<Output = ()>) -> Result<()> {
+    let transport = crate::transport::CollectorTransport::new(
+        crate::transport::CollectorEndpoint::stored(&cfg.collector_url)?,
+        cfg.trust.clone(),
+    )?;
     // Before the first adapter (smoke test #1, F3); a no-op once made.
     crate::adapter::prepare_death_pipe().context("the adapters' death pipe")?;
     std::fs::create_dir_all(&cfg.data_dir)?;
@@ -173,8 +179,25 @@ pub async fn run_until(cfg: HostConfig, shutdown: impl Future<Output = ()>) -> R
     let serve = async {
         let mut backoff = cfg.reconnect_min;
         loop {
-            if let Err(err) = connect_once(&cfg, &uplink, &sessions, &probes, &homes, &mut replies, &mut backoff).await
+            let mut retry_after = None;
+            if let Err(err) = connect_once(
+                (&cfg, &transport),
+                &uplink,
+                &sessions,
+                &probes,
+                &homes,
+                &mut replies,
+                &mut backoff,
+            )
+            .await
             {
+                if let Some(crate::transport::TransportFailure(crate::transport::Stage::Upgrade {
+                    retry_after: retry,
+                    ..
+                })) = err.downcast_ref::<crate::transport::TransportFailure>()
+                {
+                    retry_after = *retry;
+                }
                 if revoked(&err) {
                     return err;
                 }
@@ -191,7 +214,8 @@ pub async fn run_until(cfg: HostConfig, shutdown: impl Future<Output = ()>) -> R
                     tracing::warn!(error = %err, "collector connection ended");
                 }
             }
-            tokio::time::sleep(backoff).await;
+            let sample = jitter_sample(backoff, cfg.reconnect_min);
+            tokio::time::sleep(reconnect_delay(backoff, cfg.reconnect_min, sample, retry_after)).await;
             backoff = (backoff * 2).min(cfg.reconnect_max);
         }
     };
@@ -218,7 +242,14 @@ pub struct HelloRejected {
 
 impl std::fmt::Display for HelloRejected {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "hello rejected: {}: {}", self.code, self.message)
+        let code = match self.code.as_str() {
+            "revoked" => "revoked",
+            "bad_proof" => "bad_proof",
+            "already_connected" => "already_connected",
+            "protocol_mismatch" => "protocol_mismatch",
+            _ => "unrecognized refusal",
+        };
+        write!(f, "hello rejected: {code}")
     }
 }
 
@@ -255,10 +286,21 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 /// rather than being displaced by a probe that never sends `resend_complete`
 /// and holds nothing open.
 pub async fn probe(collector_url: &str, host_id: &str, key: &HostKey) -> Result<Standing> {
+    let transport = crate::transport::CollectorTransport::new(
+        crate::transport::CollectorEndpoint::stored(collector_url)?,
+        Default::default(),
+    )?;
+    probe_transport(&transport, host_id, key).await
+}
+pub async fn probe_transport(
+    transport: &crate::transport::CollectorTransport,
+    host_id: &str,
+    key: &HostKey,
+) -> Result<Standing> {
     // No roots: the collector stores them only from a reconciled
     // connection, which a probe never becomes (decision 7).
     let (mut sink, _stream, answer) = handshake(
-        collector_url,
+        transport,
         host_id,
         key,
         Announce::default(),
@@ -267,7 +309,7 @@ pub async fn probe(collector_url: &str, host_id: &str, key: &HostKey) -> Result<
         PROBE_TIMEOUT,
     )
     .await?;
-    let _ = sink.close().await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), sink.close()).await;
     Ok(match answer {
         CollectorFrame::HelloAck { .. } => Standing::Accepted,
         // Refused only after the proof checked out (ACP core §3.5).
@@ -275,7 +317,7 @@ pub async fn probe(collector_url: &str, host_id: &str, key: &HostKey) -> Result<
         CollectorFrame::HelloError { code, .. } if code == "revoked" => Standing::Revoked,
         CollectorFrame::HelloError { code, .. } if code == "bad_proof" => Standing::Unknown,
         CollectorFrame::HelloError { code, message } => return Err(HelloRejected { code, message }.into()),
-        other => bail!("expected hello_ack, got {other:?}"),
+        _ => bail!("unexpected collector hello response"),
     })
 }
 
@@ -299,7 +341,7 @@ struct Announce {
 }
 
 async fn handshake(
-    collector_url: &str,
+    transport: &crate::transport::CollectorTransport,
     host_id: &str,
     key: &HostKey,
     announce: Announce,
@@ -310,20 +352,12 @@ async fn handshake(
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_FRAME))
         .max_frame_size(Some(MAX_FRAME));
-    let connect = tokio_tungstenite::connect_async_with_config(collector_url, Some(config), false);
-    let (ws, response) = tokio::time::timeout(connect_timeout, connect)
+    let (ws, nonce) = tokio::time::timeout(connect_timeout, transport.websocket(config))
         .await
         .map_err(|_| anyhow::anyhow!("no WebSocket handshake within {connect_timeout:?}"))?
         .context("connect to collector")?;
     // The proof is over this connection's nonce, so it cannot be replayed on
     // another one. Without one there is nothing to sign.
-    let nonce = response
-        .headers()
-        .get(HELLO_NONCE_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| hex::decode(v).ok())
-        .filter(|n| n.len() == 32)
-        .context("the collector sent no hello nonce")?;
     let (mut sink, mut stream) = ws.split();
     send(
         &mut sink,
@@ -353,8 +387,9 @@ async fn handshake(
     )
     .await?;
     let answer = match tokio::time::timeout(read_timeout, stream.next()).await {
-        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<CollectorFrame>(&text)?,
-        other => bail!("no hello_ack: {other:?}"),
+        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<CollectorFrame>(&text)
+            .map_err(|_| anyhow::anyhow!("invalid collector hello response"))?,
+        _ => return Err(crate::transport::failure(crate::transport::Stage::HelloTimeout)),
     };
     Ok((sink, stream, answer))
 }
@@ -381,7 +416,7 @@ async fn shut_down(sessions: &Sessions, bound: Duration) {
 }
 
 async fn connect_once(
-    cfg: &HostConfig,
+    configured: (&HostConfig, &crate::transport::CollectorTransport),
     uplink: &Uplink,
     sessions: &Sessions,
     probes: &Probes,
@@ -389,8 +424,9 @@ async fn connect_once(
     replies: &mut mpsc::UnboundedReceiver<HostFrame>,
     backoff: &mut Duration,
 ) -> Result<()> {
+    let (cfg, transport) = configured;
     let (mut sink, mut stream, answer) = handshake(
-        &cfg.collector_url,
+        transport,
         &cfg.host_id,
         &cfg.key,
         Announce {
@@ -409,7 +445,7 @@ async fn connect_once(
             }
         }
         CollectorFrame::HelloError { code, message } => return Err(HelloRejected { code, message }.into()),
-        other => bail!("expected hello_ack, got {other:?}"),
+        _ => bail!("unexpected collector hello response"),
     }
     // A bare handshake is not proof the collector is actually committing
     // anything: a persistently failing collector (e.g. disk full) can still
@@ -421,7 +457,7 @@ async fn connect_once(
     // `healthy_after` (an idle host has nothing to ack). So a collector that
     // never acks anything now costs at most one reconnect per
     // `healthy_after`, not an ever-growing backoff.
-    tracing::info!(collector = %cfg.collector_url, "connected to collector");
+    tracing::info!(collector = %transport.endpoint.origin(), "connected to collector");
 
     // Resend everything unacked, then tell the collector we are done.
     let mut sent: HashMap<String, u64> = HashMap::new();
@@ -1041,5 +1077,58 @@ mod tests {
             });
         }
         assert_eq!(kinds, ["session#1", "not_attached", "not_attached"]);
+    }
+}
+
+#[cfg(test)]
+mod reconnect_tests {
+    use super::*;
+    #[test]
+    fn jitter_has_floor_half_ceiling_and_retry_after_bounds() {
+        let floor = Duration::from_millis(500);
+        assert_eq!(reconnect_delay(floor, floor, 0, None), floor);
+        assert_eq!(
+            reconnect_delay(Duration::from_secs(30), floor, 0, None),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            reconnect_delay(Duration::from_secs(30), floor, 15_000, None),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            reconnect_delay(Duration::from_secs(30), floor, 0, Some(1)),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            reconnect_delay(Duration::from_secs(30), floor, 0, Some(999)),
+            Duration::from_secs(300)
+        );
+    }
+}
+
+/// Deterministic seam: production supplies a uniformly sampled offset.
+pub fn reconnect_delay(ceiling: Duration, floor: Duration, sample: u64, retry_after: Option<u64>) -> Duration {
+    let upper = ceiling.as_millis().min(u64::MAX as u128) as u64;
+    let lower = (upper / 2)
+        .max(floor.as_millis().min(u64::MAX as u128) as u64)
+        .min(upper);
+    let span = upper.saturating_sub(lower).saturating_add(1);
+    let jitter = Duration::from_millis(lower + sample % span);
+    jitter.max(Duration::from_secs(retry_after.unwrap_or(0).min(300)))
+}
+fn jitter_sample(ceiling: Duration, floor: Duration) -> u64 {
+    let upper = ceiling.as_millis().min(u64::MAX as u128) as u64;
+    let lower = (upper / 2)
+        .max(floor.as_millis().min(u64::MAX as u128) as u64)
+        .min(upper);
+    let span = upper.saturating_sub(lower).saturating_add(1);
+    let limit = u64::MAX - (u64::MAX % span);
+    loop {
+        let mut bytes = [0; 8];
+        getrandom::fill(&mut bytes).expect("OS randomness");
+        let sample = u64::from_le_bytes(bytes);
+        if sample < limit {
+            return sample;
+        }
     }
 }

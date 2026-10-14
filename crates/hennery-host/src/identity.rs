@@ -4,15 +4,80 @@
 //! `host.key` (the key's 32-byte seed in hex, mode 0600) and `host.toml`,
 //! which also holds the operator's workspace roots (ACP core §7).
 
+use crate::transport::{CollectorEndpoint, CollectorTrust};
 use anyhow::{Context, Result, bail};
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub const KEY_FILE: &str = "host.key";
 pub const CONFIG_FILE: &str = "host.toml";
+/// A dangling symlink is present recovery state, never an absent file.
+pub(crate) fn exists(path: &Path) -> Result<bool> {
+    match path.symlink_metadata() {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[derive(Debug)]
+pub struct DurabilityUncertain {
+    pub path: PathBuf,
+}
+impl std::fmt::Display for DurabilityUncertain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "DurabilityUncertain: {} changed visibly but directory fsync failed; inspect the saved endpoint and repeat the explicit save once storage is healthy; no rollback was attempted",
+            self.path.display()
+        )
+    }
+}
+impl std::error::Error for DurabilityUncertain {}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod storage_hooks {
+    use std::{
+        path::PathBuf,
+        sync::{Mutex, OnceLock},
+    };
+    static FAIL: OnceLock<Mutex<Vec<(PathBuf, &'static str)>>> = OnceLock::new();
+    pub fn fail_once(path: PathBuf, stage: &'static str) {
+        FAIL.get_or_init(Default::default).lock().unwrap().push((path, stage));
+    }
+    pub(super) fn check(path: &std::path::Path, stage: &'static str) -> anyhow::Result<()> {
+        let mut failures = FAIL.get_or_init(Default::default).lock().unwrap();
+        if let Some(index) = failures.iter().position(|(p, s)| p == path && *s == stage) {
+            failures.remove(index);
+            anyhow::bail!("injected storage failure at {stage}");
+        }
+        Ok(())
+    }
+}
+pub(crate) fn storage_boundary(path: &Path, stage: &'static str) -> Result<()> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    storage_hooks::check(path, stage)?;
+    let _ = (path, stage);
+    Ok(())
+}
+pub(crate) fn durable_rename(from: &Path, to: &Path) -> Result<()> {
+    storage_boundary(to, "before_rename")?;
+    std::fs::rename(from, to)?;
+    fsync_parent(to).map_err(|_| DurabilityUncertain { path: to.to_path_buf() }.into())
+}
+pub(crate) fn durable_remove(path: &Path) -> Result<()> {
+    storage_boundary(path, "before_remove")?;
+    std::fs::remove_file(path)?;
+    fsync_parent(path).map_err(|_| {
+        DurabilityUncertain {
+            path: path.to_path_buf(),
+        }
+        .into()
+    })
+}
 
 /// The host's private key.
 #[derive(Clone)]
@@ -58,7 +123,7 @@ impl HostKey {
                 "the host key is readable by other users; restrict it with `chmod 600`, or pair again if it may have leaked"
             );
         }
-        let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        let text = read_regular(path, 256)?;
         let seed: [u8; 32] = hex::decode(text.trim())
             .ok()
             .and_then(|b| b.try_into().ok())
@@ -79,6 +144,8 @@ struct HostToml {
     /// The collector's host WebSocket, e.g. `wss://c.example/api/hosts/ws`.
     collector: String,
     host_id: String,
+    #[serde(default)]
+    collector_tls: CollectorTrust,
     /// The public key enrolled under `host_id`, hex. Written by `join`, so
     /// that a staged pairing is rolled forward only onto its own key; absent
     /// from pairings stored before it, and then not checked.
@@ -94,6 +161,7 @@ struct HostToml {
 #[derive(Debug, Clone)]
 pub struct Paired {
     pub collector_url: String,
+    pub trust: CollectorTrust,
     pub host_id: String,
     pub key: HostKey,
     /// `host.toml`'s `workspace_roots`, as written there.
@@ -104,7 +172,9 @@ impl Paired {
     /// The pairing stored in `data_dir`: `None` if the host was never
     /// paired there, an error if only half of it is there.
     pub fn load(data_dir: &Path) -> Result<Option<Self>> {
+        crate::enrollment::require_resolved(data_dir)?;
         finish_interrupted_pairing(data_dir)?;
+        crate::enrollment::clear_confirmed(data_dir)?;
         Self::read(data_dir)
     }
 
@@ -112,7 +182,14 @@ impl Paired {
     /// that was interrupted is not finished (only its host may do that,
     /// under `host.lock`), but refused (`hennery doctor`).
     pub fn read(data_dir: &Path) -> Result<Option<Self>> {
-        if pending_path(data_dir, CONFIG_FILE).exists() {
+        match crate::enrollment::inspect(data_dir)? {
+            crate::enrollment::EnrollmentState::Uncertain(attempt) => bail!("{}", attempt.diagnostic()),
+            crate::enrollment::EnrollmentState::Confirmed(_) => {
+                bail!("confirmed enrollment needs durable roll-forward; run `hennery host run` under host.lock")
+            }
+            crate::enrollment::EnrollmentState::Clear => {}
+        }
+        if exists(&pending_path(data_dir, CONFIG_FILE))? {
             bail!(
                 "{} holds a pairing that was interrupted: `hennery host run` finishes it",
                 data_dir.display()
@@ -120,7 +197,7 @@ impl Paired {
         }
         let key_path = data_dir.join(KEY_FILE);
         let config_path = data_dir.join(CONFIG_FILE);
-        match (key_path.exists(), config_path.exists()) {
+        match (exists(&key_path)?, exists(&config_path)?) {
             (false, false) => return Ok(None),
             (true, true) => {}
             (true, false) => bail!(
@@ -145,6 +222,7 @@ impl Paired {
         }
         Ok(Some(Self {
             collector_url: config.collector,
+            trust: config.collector_tls,
             host_id: config.host_id,
             key,
             workspace_roots: config.workspace_roots,
@@ -158,6 +236,10 @@ impl Paired {
         self.key.save(&data_dir.join(KEY_FILE))?;
         write_config_with(&data_dir.join(CONFIG_FILE), |table| {
             set_pairing(table, &self.collector_url, &self.host_id, &self.key);
+            table.insert(
+                "collector_tls".into(),
+                toml::Value::try_from(&self.trust).expect("TLS policy serializes"),
+            );
             if self.workspace_roots.is_empty() {
                 table.remove("workspace_roots");
             } else {
@@ -169,8 +251,86 @@ impl Paired {
 }
 
 fn read_config(path: &Path) -> Result<HostToml> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    toml::from_str(&text).with_context(|| format!("parse {}", path.display()))
+    let text = read_regular(path, 512 * 1024)?;
+    let config: HostToml =
+        toml::from_str(&text).map_err(|_| anyhow::anyhow!("invalid host configuration or collector TLS policy"))?;
+    CollectorEndpoint::stored(&config.collector)?;
+    Ok(config)
+}
+/// Inspect transport configuration without reading a private key.
+pub fn inspect_transport(data_dir: &Path) -> Result<()> {
+    let config = read_config(&data_dir.join(CONFIG_FILE))?;
+    if matches!(config.collector_tls, CollectorTrust::CaBundle { .. }) {
+        crate::transport::CollectorTransport::new(CollectorEndpoint::stored(&config.collector)?, config.collector_tls)?;
+    }
+    Ok(())
+}
+/// The complete stored endpoint for up's pre-spawn override check. No key
+/// is read and no configuration is repaired; private PEM never enters errors.
+pub fn stored_endpoint(data_dir: &Path) -> Result<Option<CollectorEndpoint>> {
+    let pending = pending_path(data_dir, CONFIG_FILE);
+    let path = if exists(&pending)? {
+        pending
+    } else {
+        data_dir.join(CONFIG_FILE)
+    };
+    if !exists(&path)? {
+        return Ok(None);
+    }
+    let config = read_config(&path)?;
+    let endpoint = CollectorEndpoint::stored(&config.collector)?;
+    if !endpoint.secure() && config.collector_tls != CollectorTrust::System {
+        bail!("a private CA requires HTTPS/WSS");
+    }
+    Ok(Some(endpoint))
+}
+pub(crate) fn inspect_receipt(data_dir: &Path) -> Result<()> {
+    let staged = read_config(&pending_path(data_dir, CONFIG_FILE))?;
+    let pending = pending_path(data_dir, KEY_FILE);
+    let key_path = if exists(&pending)? {
+        pending
+    } else {
+        data_dir.join(KEY_FILE)
+    };
+    let key = HostKey::load(&key_path)
+        .context("host.toml.pending has no matching key; preserve artifacts for explicit archive recovery")?;
+    if staged.public_key != Some(key.public_key_hex()) {
+        bail!("host.toml.pending has no matching key; preserve artifacts for explicit archive recovery");
+    }
+    Ok(())
+}
+
+pub(crate) fn read_regular(path: &Path, bound: usize) -> Result<String> {
+    String::from_utf8(read_regular_bytes(path, bound)?)
+        .map_err(|_| anyhow::anyhow!("transport configuration is not UTF-8; preserve recovery artifacts"))
+}
+/// Archive recovery copies damaged artifacts without interpreting their bytes;
+/// the same ownership, regular-file and size restrictions still apply.
+pub(crate) fn read_regular_bytes(path: &Path, bound: usize) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let meta = file.metadata()?;
+    // SAFETY: geteuid has no arguments or memory preconditions.
+    let uid = unsafe { libc::geteuid() };
+    let parent = path.parent().context("transport configuration parent")?;
+    if !meta.is_file()
+        || meta.permissions().mode() & 0o022 != 0
+        || meta.uid() != uid
+        || std::fs::metadata(parent)?.permissions().mode() & 0o022 != 0
+    {
+        bail!("transport configuration must be a regular file, not writable by group or others");
+    }
+    let mut text = Vec::new();
+    std::io::Read::by_ref(&mut file)
+        .take((bound + 1) as u64)
+        .read_to_end(&mut text)?;
+    if text.len() > bound {
+        bail!("transport configuration exceeds its size bound");
+    }
+    Ok(text)
 }
 
 /// Write a `host.toml` at `path`, naming `key`'s public half:
@@ -179,6 +339,7 @@ fn read_config(path: &Path) -> Result<HostToml> {
 /// place beside `path` is kept: the operator's `workspace_roots` survive a
 /// re-pair after a revoke (plan 6c decision 6), and so do the `[cli]`
 /// overrides (plan 7b).
+#[cfg(test)]
 pub(crate) fn write_config_to(path: &Path, collector_url: &str, host_id: &str, key: &HostKey) -> Result<()> {
     write_config_with(path, |table| set_pairing(table, collector_url, host_id, key))
 }
@@ -201,11 +362,11 @@ pub(crate) fn write_config_with(path: &Path, change: impl FnOnce(&mut toml::Tabl
 /// `path` as a TOML table: empty if there is no file, an error if it does
 /// not parse.
 pub(crate) fn read_table(path: &Path) -> Result<toml::Table> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => toml::from_str(&text).with_context(|| format!("parse {}", path.display())),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(toml::Table::new()),
-        Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
+    if !exists(path)? {
+        return Ok(toml::Table::new());
     }
+    let text = read_regular(path, 512 * 1024)?;
+    toml::from_str(&text).map_err(|_| anyhow::anyhow!("invalid host configuration"))
 }
 
 /// Where `join` stages `file` (`host.key` or `host.toml`) before renaming it
@@ -223,16 +384,16 @@ pub(crate) fn pending_path(data_dir: &Path, file: &str) -> PathBuf {
 /// Roll both forward, in `join`'s order.
 fn finish_interrupted_pairing(data_dir: &Path) -> Result<()> {
     let config_pending = pending_path(data_dir, CONFIG_FILE);
-    if !config_pending.exists() {
+    if !exists(&config_pending)? {
         return Ok(());
     }
     let staged = read_config(&config_pending)?;
     let key_path = data_dir.join(KEY_FILE);
     let key_pending = pending_path(data_dir, KEY_FILE);
-    let key_at = if key_pending.exists() { &key_pending } else { &key_path };
+    let key_at = if exists(&key_pending)? { &key_pending } else { &key_path };
     // Rolled forward only onto the key it was enrolled with: never onto an
     // older identity's `host.key`.
-    let matches = key_at.exists() && staged.public_key == Some(HostKey::load(key_at)?.public_key_hex());
+    let matches = exists(key_at)? && staged.public_key == Some(HostKey::load(key_at)?.public_key_hex());
     if !matches {
         bail!(
             "{} holds a {} without the key it was paired with: remove it to pair this host again",
@@ -241,27 +402,51 @@ fn finish_interrupted_pairing(data_dir: &Path) -> Result<()> {
         );
     }
     if key_at == &key_pending {
-        std::fs::rename(&key_pending, &key_path)
-            .with_context(|| format!("rename {} to {}", key_pending.display(), key_path.display()))?;
-        fsync_parent(&key_path)?;
+        durable_rename(&key_pending, &key_path)?;
     }
-    crate::pairing::orphan_outbox(data_dir, "unpaired")?;
+    let prior = match crate::enrollment::inspect(data_dir)? {
+        crate::enrollment::EnrollmentState::Confirmed(attempt) => attempt.prior_host_id,
+        _ => None,
+    };
+    crate::pairing::orphan_outbox(data_dir, prior.as_deref().unwrap_or("unpaired"))?;
     let config_path = data_dir.join(CONFIG_FILE);
-    std::fs::rename(&config_pending, &config_path)
-        .with_context(|| format!("rename {} to {}", config_pending.display(), config_path.display()))?;
-    fsync_parent(&config_path)?;
+    durable_rename(&config_pending, &config_path)?;
     tracing::warn!(dir = %data_dir.display(), host_id = %staged.host_id, "finished a pairing that was interrupted");
     Ok(())
 }
 
 /// Create `dir` (and its parents) with mode 0700: it holds the host key
-/// and the outbox. An existing directory is left as it is.
+/// and the outbox. Validate its owner/permissions and durably link every
+/// ancestor, including existing entries left by a failed earlier attempt.
 pub fn create_private_dir(dir: &Path) -> Result<()> {
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(dir)
-        .with_context(|| format!("create {}", dir.display()))
+        .with_context(|| format!("create {}", dir.display()))?;
+    let directory = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(dir)
+        .with_context(|| format!("open data directory {}", dir.display()))?;
+    // SAFETY: geteuid has no arguments or memory preconditions.
+    validate_data_directory(&directory.metadata()?, unsafe { libc::geteuid() })?;
+    // A durable journal is insufficient if a newly created ancestor can
+    // disappear. Sync every link before enrollment, including pre-existing
+    // links left by an earlier failed attempt. Resolve relative paths so
+    // their parents are included too; root itself has no parent entry.
+    let absolute = std::env::current_dir()?.join(dir);
+    for entry in absolute.ancestors().filter(|entry| entry.parent().is_some()) {
+        fsync_parent(entry)?;
+    }
+    Ok(())
+}
+
+fn validate_data_directory(metadata: &std::fs::Metadata, owner: libc::uid_t) -> Result<()> {
+    if metadata.uid() != owner || metadata.permissions().mode() & 0o022 != 0 {
+        bail!("host data directory must be owned by the current user and not writable by group or others");
+    }
+    Ok(())
 }
 
 /// Whether nobody but its owner can read or write `path`.
@@ -288,10 +473,11 @@ pub(crate) fn write_private(path: &Path, contents: &[u8]) -> Result<()> {
         .mode(0o600)
         .open(&tmp)
         .with_context(|| format!("create {}", tmp.display()))?;
+    storage_boundary(path, "before_write")?;
     file.write_all(contents)?;
+    storage_boundary(path, "before_file_sync")?;
     file.sync_all()?;
-    std::fs::rename(&tmp, path).with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
-    fsync_parent(path)
+    durable_rename(&tmp, path)
 }
 
 /// Fsync `path`'s parent directory: on its own, a rename is only guaranteed
@@ -299,6 +485,7 @@ pub(crate) fn write_private(path: &Path, contents: &[u8]) -> Result<()> {
 /// a crash right after a bare rename, some filesystems can still lose the
 /// rename (or leave both names) even though the file's own `sync_all` ran.
 pub(crate) fn fsync_parent(path: &Path) -> Result<()> {
+    storage_boundary(path, "directory_sync")?;
     let dir = path.parent().context("a file path has a parent")?;
     let dir_file = std::fs::File::open(dir).with_context(|| format!("open {}", dir.display()))?;
     dir_file.sync_all().with_context(|| format!("fsync {}", dir.display()))
@@ -307,6 +494,17 @@ pub(crate) fn fsync_parent(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lone_pending_key_blocks_every_pairing_load_without_overwriting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let pending = pending_path(dir.path(), KEY_FILE);
+        HostKey::from_seed([19; 32]).save(&pending).unwrap();
+        let before = std::fs::read(&pending).unwrap();
+        assert!(Paired::read(dir.path()).is_err());
+        assert!(Paired::load(dir.path()).is_err());
+        assert_eq!(std::fs::read(&pending).unwrap(), before);
+    }
 
     /// Checked by the collector too (`hennery-kernel`'s `hosts` tests).
     const VECTOR_SIGNATURE: &str = "bd2b7388413c333e9ed69c330b4a8be8ffb6228609979b30607236fcdefab259\
@@ -324,6 +522,7 @@ cdf6b48fb39bfaa9b5a3cd01538280ec9e6d50c8831e9aae4d791f68112a6c04";
         assert!(Paired::load(dir.path()).unwrap().is_none());
         let paired = Paired {
             collector_url: "ws://127.0.0.1:7117/api/hosts/ws".into(),
+            trust: Default::default(),
             host_id: "host-1".into(),
             key: HostKey::generate(),
             workspace_roots: vec!["/srv/projects".into(), "~/src".into()],
@@ -357,6 +556,37 @@ cdf6b48fb39bfaa9b5a3cd01538280ec9e6d50c8831e9aae4d791f68112a6c04";
         HostKey::load(&key).expect("still usable, with a warning");
     }
 
+    #[test]
+    fn every_data_directory_ancestor_is_durable_including_after_a_failed_creation() {
+        let root = tempfile::tempdir().unwrap();
+        let ancestor = root.path().join("new-parent");
+        let data = ancestor.join("host");
+        for boundary in [&ancestor, &data] {
+            storage_hooks::fail_once(boundary.clone(), "directory_sync");
+            let error = create_private_dir(&data).unwrap_err();
+            assert!(error.to_string().contains("injected storage failure"), "{error}");
+            assert!(!data.join("host.key.pending").exists());
+            // Existing ancestors from a failed attempt must be synced again.
+            storage_hooks::fail_once(boundary.clone(), "directory_sync");
+            assert!(create_private_dir(&data).is_err());
+        }
+        create_private_dir(&data).unwrap();
+    }
+
+    #[test]
+    fn data_directory_metadata_requires_the_current_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let metadata = std::fs::metadata(dir.path()).unwrap();
+        validate_data_directory(&metadata, metadata.uid()).unwrap();
+        assert!(validate_data_directory(&metadata, metadata.uid().wrapping_add(1)).is_err());
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(dir.path(), &alias).unwrap();
+        assert!(
+            create_private_dir(&alias).is_err(),
+            "a symlink destination must be refused"
+        );
+    }
+
     /// 3a's M4: `join` crashed after enrolling a new key, at either point
     /// between its two renames. The older (revoked) `host.toml` must not be
     /// loaded beside the new key: the pairing is rolled forward.
@@ -367,6 +597,7 @@ cdf6b48fb39bfaa9b5a3cd01538280ec9e6d50c8831e9aae4d791f68112a6c04";
             let dir = tempfile::tempdir().unwrap();
             Paired {
                 collector_url: "ws://127.0.0.1:7117/api/hosts/ws".into(),
+                trust: Default::default(),
                 host_id: "host-old".into(),
                 key: HostKey::from_seed([1; 32]),
                 workspace_roots: Vec::new(),
@@ -408,11 +639,15 @@ cdf6b48fb39bfaa9b5a3cd01538280ec9e6d50c8831e9aae4d791f68112a6c04";
         let staged = pending_path(dir.path(), CONFIG_FILE);
         write_config_to(&staged, url, "host-new", &HostKey::from_seed([2; 32])).unwrap();
         let err = Paired::load(dir.path()).unwrap_err().to_string();
-        assert!(err.contains("host.toml.pending") && err.contains("remove"), "{err}");
+        assert!(
+            err.contains("host.toml.pending") && err.contains("preserve") && err.contains("archive"),
+            "{err}"
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let old = Paired {
             collector_url: url.into(),
+            trust: Default::default(),
             host_id: "host-old".into(),
             key: HostKey::from_seed([1; 32]),
             workspace_roots: Vec::new(),
@@ -532,5 +767,47 @@ cdf6b48fb39bfaa9b5a3cd01538280ec9e6d50c8831e9aae4d791f68112a6c04";
             "not = [toml",
             "a host.toml that does not parse was replaced"
         );
+    }
+}
+
+#[cfg(test)]
+mod transport_config_tests {
+    use super::*;
+    #[test]
+    fn saved_transport_refuses_writable_unknown_and_credential_bearing_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let paired = Paired {
+            collector_url: "wss://localhost/api/hosts/ws".into(),
+            trust: CollectorTrust::System,
+            host_id: "host-0123456789abcdef".into(),
+            key: HostKey::from_seed([110; 32]),
+            workspace_roots: vec![],
+        };
+        paired.save(dir.path()).unwrap();
+        let path = dir.path().join(CONFIG_FILE);
+        let original = std::fs::read_to_string(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o622)).unwrap();
+        assert!(Paired::read(dir.path()).is_err());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        for extra in [
+            "mode='unknown'",
+            "mode='system'\nca_pem='private-canary'",
+            "mode='ca_bundle'",
+            "mode='system'\nextra='private-canary'",
+        ] {
+            let text = format!(
+                "collector='wss://localhost/api/hosts/ws'\nhost_id='host-0123456789abcdef'\n[collector_tls]\n{extra}"
+            );
+            std::fs::write(&path, text).unwrap();
+            let error = Paired::read(dir.path()).unwrap_err().to_string();
+            assert!(!error.contains("private-canary"));
+        }
+        std::fs::write(
+            &path,
+            original.replace("wss://localhost", "wss://user:private-canary@localhost"),
+        )
+        .unwrap();
+        let error = Paired::read(dir.path()).unwrap_err().to_string();
+        assert!(!error.contains("private-canary"));
     }
 }
