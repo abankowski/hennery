@@ -124,11 +124,11 @@ impl GatewayStore {
         self.plugins.clone()
     }
 
-    pub fn admit_plugin(
+    pub fn admit_proxy(
         &self,
         token: &str,
         principal: &crate::scope::Principal,
-        connection: &str,
+        connection: &crate::scope::ScopedConnection,
     ) -> Result<crate::revocation::Watch> {
         let crate::scope::PrincipalKind::Session { session_id, host_id } = &principal.kind;
         let mut conn = self.conn();
@@ -138,9 +138,24 @@ impl GatewayStore {
             WHERE t.owner_id = ?1 AND t.token_hash = ?2 AND t.session_id = ?3 AND t.host_id = ?4 AND t.hat_id = ?5
             AND t.revoked_at IS NULL AND h.revoked_at IS NULL
             AND EXISTS(SELECT 1 FROM gw_mounts m WHERE m.owner_id = ?1 AND m.connection_id = c.id AND m.host_id = t.host_id))",
-            params![self.owner,crate::tokens::token_hash(token),session_id,host_id,principal.hat_id,connection], |r|r.get(0))?;
+            params![self.owner,crate::tokens::token_hash(token),session_id,host_id,principal.hat_id,connection.id], |r|r.get(0))?;
         anyhow::ensure!(live, "gateway scope changed before plug-in admission");
-        let watch = self.plugins.admit_in(&tx, connection, session_id, &principal.hat_id)?;
+        let current = read(&tx, &self.owner, Some(&connection.id))?
+            .pop()
+            .context("gateway connection disappeared before admission")?;
+        // Policy resolution and watch installation share the owner gate. A
+        // registration cut cannot miss an admission using an earlier policy.
+        anyhow::ensure!(
+            current.slug == connection.slug
+                && current.url == connection.url
+                && current.cred_kind == connection.cred_kind
+                && current.internal_network == connection.internal_network
+                && current.tool_allowlist == connection.tool_allowlist,
+            "gateway policy changed before admission"
+        );
+        let watch = self
+            .plugins
+            .admit_in(&tx, &connection.id, session_id, &principal.hat_id)?;
         tx.commit()?;
         Ok(watch)
     }
@@ -792,10 +807,23 @@ impl GatewayStore {
                  WHERE connection_id = ?1 AND owner_id = ?2 AND pending_client_id = ?3 AND pending_issuer IS NULL"
             }
         };
-        Ok(self
-            .conn()
-            .execute(sql, params![id, self.owner, client_id, issuer, token_endpoint])?
-            == 1)
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let old = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        let changed = tx.execute(sql, params![id, self.owner, client_id, issuer, token_endpoint])?;
+        if changed == 1 {
+            let result = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+            let intent = hennery_kernel::secret::sha256_hex(
+                serde_json::to_string(&("pin_client", client_id, issuer, token_endpoint))?.as_bytes(),
+            );
+            self.plugins
+                .authorize_mutation_in(&tx, id, &old, &intent, &result, hennery_kernel::secret::unix_now())?;
+        }
+        tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
+        Ok(changed == 1)
     }
 
     /// Security review F2: an unlocked pre-exchange check. This is only
@@ -1104,11 +1132,27 @@ impl GatewayStore {
     /// The operator accepted `resource` for the connection at `url`
     /// (api-8e-8f F3): kept until the URL changes.
     pub fn accept_resource(&self, id: &str, url: &str, resource: &str) -> Result<bool> {
-        Ok(self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let old = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        let changed = tx.execute(
             "UPDATE gw_connections SET accepted_resource = ?4, resource_mismatch = NULL
              WHERE id = ?1 AND owner_id = ?2 AND url = ?3",
             params![id, self.owner, url, resource],
-        )? == 1)
+        )?;
+        if changed == 1 {
+            let result = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+            let intent = hennery_kernel::secret::sha256_hex(
+                serde_json::to_string(&("accept_resource", url, resource))?.as_bytes(),
+            );
+            self.plugins
+                .authorize_mutation_in(&tx, id, &old, &intent, &result, hennery_kernel::secret::unix_now())?;
+        }
+        tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
+        Ok(changed == 1)
     }
 
     /// Whether any credential is stored: then a missing master key is an
@@ -1253,6 +1297,11 @@ impl GatewayStore {
             [hat_id, &self.owner],
         )?;
         tx.commit()?;
+        let completion = conn.transaction()?;
+        for id in &ids {
+            self.plugins.complete_in(&completion, id)?;
+        }
+        completion.commit()?;
         for id in ids {
             self.evict_refresh(&id);
         }

@@ -102,6 +102,7 @@ impl Control {
     }
 
     pub(crate) fn prepare_purge_in(&self, core: &Transaction<'_>, hat: &str, now: i64) -> Result<Vec<String>> {
+        self.require_control_for_hat(core, hat)?;
         let ids = self.registered_ids_in(core, Some(hat))?;
         self.with(false, |conn| {
             let tx=conn.transaction()?;
@@ -119,6 +120,7 @@ impl Control {
         Ok(ids)
     }
     pub(crate) fn guard_purge_in(&self, core: &Transaction<'_>, hat: &str) -> Result<()> {
+        self.require_control_for_hat(core, hat)?;
         for id in self.registered_ids_in(core, Some(hat))? {
             self.with(false, |conn| {
                 let row = Self::row(conn, &self.owner, &id)?.context("registration disappeared")?;
@@ -129,6 +131,21 @@ impl Control {
                 Ok(())
             })?;
         }
+        Ok(())
+    }
+
+    fn require_control_for_hat(&self, core: &Connection, hat: &str) -> Result<()> {
+        let anchored: bool = core.query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings s JOIN gw_connections c
+             ON s.key = 'plugin_epoch:' || c.id AND c.owner_id = ?1
+             WHERE s.owner_id = ?1 AND c.hat_id = ?2)",
+            params![self.owner, hat],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            !anchored || self.with(false, |_| Ok(()))?.is_some(),
+            "plug-in control state missing"
+        );
         Ok(())
     }
 
@@ -260,6 +277,39 @@ impl Control {
             params![self.owner, input.connection_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
+        let (kind, version, sealed): (String, u32, Vec<u8>) = core.query_row(
+            "SELECT c.cred_kind, k.key_version, k.ciphertext FROM gw_connections c
+             JOIN gw_credentials k ON k.connection_id = c.id AND k.owner_id = ?1
+             WHERE c.owner_id = ?1 AND c.id = ?2",
+            params![self.owner, input.connection_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let kind = crate::model::CredKind::parse(&kind).context("invalid credential kind")?;
+        ensure!(kind != crate::model::CredKind::None, "namespace credential required");
+        let opened = crypto::open(
+            key,
+            input.connection_id,
+            crypto::credential_field(kind),
+            version,
+            &sealed,
+        )?;
+        let namespace = if kind.is_oauth() {
+            let tokens = crate::model::GrantTokens::from_opened(&opened).context("invalid namespace grant")?;
+            ensure!(
+                tokens
+                    .refresh_token
+                    .as_ref()
+                    .is_none_or(|token| token.as_str() != input.lifecycle_credential),
+                "distinct lifecycle credential required"
+            );
+            tokens.access_token
+        } else {
+            zeroize::Zeroizing::new(String::from_utf8(opened.to_vec())?)
+        };
+        ensure!(
+            namespace.as_str() != input.lifecycle_credential,
+            "distinct lifecycle credential required"
+        );
         let tools: Vec<String> = serde_json::from_str(
             allowlist
                 .as_deref()
@@ -348,12 +398,38 @@ impl Control {
         ensure!(found.is_some() || anchors.is_empty(), "plug-in control state missing");
         Ok(found.unwrap_or(false))
     }
-    pub fn remove_binding_in(&self, _: &Transaction<'_>, session: &str) -> Result<()> {
+    /// Called only after the core tombstone is durable, while still holding
+    /// the owner gate. A crash can preserve a conservative binding, never
+    /// release one for a live session.
+    pub fn remove_binding_in(&self, core: &Transaction<'_>, session: &str) -> Result<()> {
+        let deleted: bool = core.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = ?2 AND lifecycle = 'deleted')",
+            params![self.owner, session],
+            |r| r.get(0),
+        )?;
+        ensure!(deleted, "live session exposure cannot be removed");
         self.with(false, |conn| {
-            conn.execute(
+            let tx = conn.transaction()?;
+            let hat: Option<String> = tx
+                .query_row(
+                    "SELECT hat_id FROM plugin_bindings WHERE owner_id = ?1 AND session_id = ?2",
+                    params![self.owner, session],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(hat) = &hat {
+                // Deletion cannot repair a restore that may have lost other
+                // sessions' exposure. Only explicit conservative recovery can.
+                verify_generation(core, &tx, &self.owner, hat)?;
+            }
+            tx.execute(
                 "DELETE FROM plugin_bindings WHERE owner_id = ?1 AND session_id = ?2",
                 params![self.owner, session],
             )?;
+            if let Some(hat) = hat {
+                record_generation(core, &tx, &self.owner, &hat)?;
+            }
+            tx.commit()?;
             Ok(())
         })?;
         Ok(())
@@ -485,10 +561,23 @@ impl Control {
                 && row.state == "disposed"
                 && row.result_fingerprint.as_deref() == Some(&fingerprint(core, &self.owner, connection)?)
             {
-                conn.execute(
-                    "UPDATE plugin_registrations SET state = 'complete' WHERE owner_id = ?1 AND connection_id = ?2",
-                    params![self.owner, connection],
-                )?;
+                if row.result_fingerprint.as_deref() == Some("deleted") {
+                    conn.execute(
+                        "DELETE FROM plugin_registrations WHERE owner_id = ?1 AND connection_id = ?2",
+                        params![self.owner, connection],
+                    )?;
+                    core.execute(
+                        "DELETE FROM settings WHERE owner_id = ?1 AND key = ?2",
+                        params![self.owner, format!("plugin_epoch:{connection}")],
+                    )?;
+                } else {
+                    conn.execute(
+                        "UPDATE plugin_registrations SET state = 'complete', epoch = '', start_event = 0,
+                         fingerprint = '', internal_network = 0, intent = NULL, result_fingerprint = NULL,
+                         deadline = NULL WHERE owner_id = ?1 AND connection_id = ?2",
+                        params![self.owner, connection],
+                    )?;
+                }
             }
             Ok(())
         })?;
@@ -500,6 +589,9 @@ impl Control {
             let Some(row) = Self::row(conn, &self.owner, connection)? else {
                 return Ok(());
             };
+            if row.state == "complete" {
+                return Ok(());
+            }
             ensure!(
                 row.state == "active" && row.fingerprint == old,
                 "registered connection is fenced"
@@ -699,7 +791,10 @@ pub(crate) fn fingerprint(core: &Connection, owner: &str, id: &str) -> Result<St
     let json: Option<String> = core
         .query_row(
             "SELECT json_array(c.id,c.hat_id,c.slug,c.label,c.url,c.cred_kind,c.static_header,c.static_prefix,
-        c.tool_allowlist,c.internal_network,hex(k.ciphertext)) FROM gw_connections c
+        c.tool_allowlist,c.internal_network,c.accepted_resource,hex(k.ciphertext),
+        (SELECT json_array(o.client_id,hex(o.client_secret_ciphertext),o.issuer,o.token_endpoint,
+            o.token_endpoint_auth_method,o.resource,o.scopes,o.pending_client_id,hex(o.pending_secret_ciphertext),
+            o.pending_issuer,o.pending_token_endpoint) FROM gw_oauth_clients o WHERE o.owner_id = ?1 AND o.connection_id = c.id)) FROM gw_connections c
         LEFT JOIN gw_credentials k ON k.connection_id = c.id AND k.owner_id = ?1 WHERE c.owner_id = ?1 AND c.id = ?2",
             params![owner, id],
             |r| r.get(0),
@@ -810,11 +905,13 @@ impl crate::runtime::Runtime {
             crate::tokens::revoke_hat_in(&tx, self.store.owner_id(), hat, hennery_kernel::secret::unix_now())?;
             tx.commit()?;
             self.revocations.cut(cut);
-            self.store.plugins().cut_connections(&ids);
-            if prepared.is_err() {
-                self.store.plugins().cut_all();
+            match prepared {
+                Ok(registered) => ids.extend(registered),
+                Err(err) => {
+                    self.store.plugins().cut_all();
+                    return Err(err);
+                }
             }
-            ids.extend(prepared?);
             self.store.plugins().cut_connections(&ids);
             ids.sort();
             ids.dedup();

@@ -788,7 +788,7 @@ async fn forward(
         Ok(None) => return not_found(),
         Err(err) => return internal(err),
     };
-    let watch = match state.runtime.store.admit_plugin(token, &principal, &connection.id) {
+    let watch = match state.runtime.store.admit_proxy(token, &principal, &connection) {
         Ok(watch) => watch,
         Err(_) => return not_found(),
     };

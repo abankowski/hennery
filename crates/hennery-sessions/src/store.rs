@@ -1883,6 +1883,19 @@ impl Store {
     /// The gateway's part of a hat's purge (lane L6): through the gateway
     /// this store was given, so a store without one has none to purge.
     pub async fn purge_gateway_hat(&self, hat_id: &str) -> Result<()> {
+        let anchored: bool = self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE owner_id = ?1 AND key LIKE 'plugin_epoch:%')",
+            [&self.owner],
+            |r| r.get(0),
+        )?;
+        if !self.has_session_mcp() && (anchored || self.plugins.configured()?) {
+            let mut conn = self.conn();
+            let tx = conn.transaction()?;
+            hennery_gateway::tokens::revoke_hat_in(&tx, &self.owner, hat_id, hennery_kernel::secret::unix_now())?;
+            tx.commit()?;
+            self.plugins.cut_all();
+            anyhow::bail!("plug-in lifecycle runtime unavailable");
+        }
         self.mcp().purge_hat(hat_id).await
     }
 
@@ -2920,6 +2933,9 @@ impl Store {
         // a parked or failed session's is revoked already, a no-op then.
         let cut = cut.and(mcp.revoke_in(&tx, session_id)?);
         commit_then_cut(tx, mcp.as_ref(), cut)?;
+        let cleanup = conn.transaction()?;
+        self.plugins.remove_binding_in(&cleanup, session_id)?;
+        cleanup.commit()?;
         self.remove_files(&conn, &dropped);
         Ok(Deletion::Done {
             event,
