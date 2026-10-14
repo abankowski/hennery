@@ -1133,6 +1133,11 @@ async fn deletion_receipts_remain_owner_visible_after_registration_cleanup() {
             rusqlite::params![world.runtime.store.owner_id(), world.id],
         )
         .unwrap();
+        tx.execute(
+            "INSERT INTO plugin_receipts(owner_id,hat_id,request_id,result) VALUES(?1,?2,?3,?4)",
+            rusqlite::params!["foreign-owner", hat, "foreign-request", "confirmed"],
+        )
+        .unwrap();
         tx.commit().unwrap();
         core_tx.commit().unwrap();
     }
@@ -1196,4 +1201,29 @@ async fn owner_routes_reject_scope_queries_and_unexpected_read_or_delete_bodies(
             .unwrap();
         assert_eq!(result.status(), StatusCode::BAD_REQUEST);
     }
+}
+
+#[tokio::test]
+async fn confirmed_deletion_receipt_is_readable_without_a_new_step_up() {
+    let world = World::new().await;
+    let _issued = world.register().await;
+    world
+        .owner(
+            reqwest::Method::DELETE,
+            &format!("/api/plugins/registrations/{}", world.id),
+            true,
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let response = world
+        .owner(reqwest::Method::GET, "/api/plugins/receipts", false)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let receipts: Value = response.json().await.unwrap();
+    assert_eq!(receipts[0]["status"], "confirmed");
 }
