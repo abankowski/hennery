@@ -308,6 +308,17 @@ pub(crate) fn fsync_parent(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_lone_pending_key_blocks_every_pairing_load_without_overwriting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let pending = pending_path(dir.path(), KEY_FILE);
+        HostKey::from_seed([19; 32]).save(&pending).unwrap();
+        let before = std::fs::read(&pending).unwrap();
+        assert!(Paired::read(dir.path()).is_err());
+        assert!(Paired::load(dir.path()).is_err());
+        assert_eq!(std::fs::read(&pending).unwrap(), before);
+    }
+
     /// Checked by the collector too (`hennery-kernel`'s `hosts` tests).
     const VECTOR_SIGNATURE: &str = "bd2b7388413c333e9ed69c330b4a8be8ffb6228609979b30607236fcdefab259\
 cdf6b48fb39bfaa9b5a3cd01538280ec9e6d50c8831e9aae4d791f68112a6c04";
@@ -355,6 +366,37 @@ cdf6b48fb39bfaa9b5a3cd01538280ec9e6d50c8831e9aae4d791f68112a6c04";
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(!is_private(&key).unwrap());
         HostKey::load(&key).expect("still usable, with a warning");
+    }
+
+    #[test]
+    fn every_data_directory_ancestor_is_durable_including_after_a_failed_creation() {
+        let root = tempfile::tempdir().unwrap();
+        let ancestor = root.path().join("new-parent");
+        let data = ancestor.join("host");
+        for boundary in [&ancestor, &data] {
+            storage_hooks::fail_once(boundary.clone(), "directory_sync");
+            let error = create_private_dir(&data).unwrap_err();
+            assert!(error.to_string().contains("injected storage failure"), "{error}");
+            assert!(!data.join("host.key.pending").exists());
+            // Existing ancestors from a failed attempt must be synced again.
+            storage_hooks::fail_once(boundary.clone(), "directory_sync");
+            assert!(create_private_dir(&data).is_err());
+        }
+        create_private_dir(&data).unwrap();
+    }
+
+    #[test]
+    fn data_directory_metadata_requires_the_current_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let metadata = std::fs::metadata(dir.path()).unwrap();
+        validate_data_directory(&metadata, metadata.uid()).unwrap();
+        assert!(validate_data_directory(&metadata, metadata.uid().wrapping_add(1)).is_err());
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(dir.path(), &alias).unwrap();
+        assert!(
+            create_private_dir(&alias).is_err(),
+            "a symlink destination must be refused"
+        );
     }
 
     /// 3a's M4: `join` crashed after enrolling a new key, at either point
