@@ -9,7 +9,20 @@ inventory binds one complete channel/target set and every byte; adding a crate,
 image descriptor, SBOM or target means a new inventory and approval. OCI image
 payloads use OCI layout blobs plus a descriptor containing the registry digest;
 R4 must verify both remote platform manifests and index by content digest.
+The flat contribution names are `ghcr-oci-layout.tar` (packed OCI layout) and
+`ghcr-index.json`; crate contributions are `<crate>-<version>.crate` for all
+seven production crates. The signed inventory's `binaries[target]` gives the
+executable's SHA-256, size, archive name and member path; R4 verifies its image
+binary against that digest. The gate recomputes it from the archive. Missing
+enabled-channel payloads refuse freeze and
+the live CLI gate.
 The first alpha enables GitHub only. Later channels require their own approval.
+
+The outer publishing workflow in v1 is `.github/workflows/release-publish.yml`,
+manual dispatch from `main`. R3/R4 add their final protected jobs there and call
+this script/composite interface; a separate arbitrary publisher workflow is
+refused. Reusable job wrappers must not obscure the callee's authority; the
+current static policy refuses unreviewed reusable job indirection.
 
 Inside each publishing or signing job:
 
@@ -23,6 +36,9 @@ Inside each publishing or signing job:
    `candidate`, `inventory-sha256`, `channel`, `phase: preflight` and a fresh
    `receipt` pathname outside the candidate directory. Supply a read-only
    platform token as `GH_TOKEN`. It performs live GETs, not artifact evidence.
+   The release shell supplies the pinned tools. `RELEASE_AUDIT_BUCKET` and a
+   storage-only AWS principal must permit conditional held audit writes; an
+   audit failure stops before signing/uploading.
 4. Only after success obtain channel credentials/OIDC. Run the same action with
    `phase: boundary` immediately before each signing/upload operation, using a
    new receipt path. The action must run **in this job**; a `needs:` dependency

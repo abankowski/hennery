@@ -205,3 +205,46 @@ TOOL
     [ ! -e "$scratch/failing-$command/hennery" ] || fail "$command failure published an executable"
 done
 echo 'ok: copy, chmod and publication failures leave no executable'
+
+# Unsupported OS and CPU each refuse before installation.
+real_uname=$(command -v uname)
+for kind in os cpu; do
+    tool_dir="$scratch/unsupported-$kind-tools"
+    tools "$tool_dir" uname
+    cat > "$tool_dir/uname" <<TOOL
+#!/bin/sh
+if [ '$kind' = os ]; then echo UnsupportedOS; exit 0; fi
+if [ "\${1:-}" = -m ]; then echo unsupported-cpu; exit 0; fi
+exec '$real_uname' "\$@"
+TOOL
+    chmod +x "$tool_dir/uname"
+    (PATH="$tool_dir" && ! run_installer "$dist" "$scratch/unsupported-$kind" "$scratch/unsupported-$kind.log") ||
+        fail "unsupported $kind installed"
+    [ ! -e "$scratch/unsupported-$kind/hennery" ] || fail "unsupported $kind left a binary"
+done
+echo 'ok: unsupported OS and CPU abort'
+
+# The copy runs while the final pathname is absent, and a destination raced
+# into existence after the initial check is never replaced.
+real_cp=$(command -v cp)
+real_ln=$(command -v ln)
+tools "$scratch/observe-copy-tools" cp
+cat > "$scratch/observe-copy-tools/cp" <<TOOL
+#!/bin/sh
+[ ! -e "\$HENNERY_UNMANAGED_INSTALL/hennery" ] || exit 1
+printf observed > '$scratch/copy-observed'
+exec '$real_cp' "\$@"
+TOOL
+chmod +x "$scratch/observe-copy-tools/cp"
+(PATH="$scratch/observe-copy-tools" && run_installer "$dist" "$scratch/observe-copy" "$scratch/observe-copy.log") || fail 'staged copy failed'
+[ -f "$scratch/copy-observed" ] || fail 'the installer did not stage the copy'
+tools "$scratch/raced-tools" ln
+cat > "$scratch/raced-tools/ln" <<TOOL
+#!/bin/sh
+printf raced > "\$HENNERY_UNMANAGED_INSTALL/hennery"
+exec '$real_ln' "\$@"
+TOOL
+chmod +x "$scratch/raced-tools/ln"
+(PATH="$scratch/raced-tools" && ! run_installer "$dist" "$scratch/raced" "$scratch/raced.log") || fail 'concurrent destination was replaced'
+[ "$(cat "$scratch/raced/hennery")" = raced ] || fail 'concurrent destination changed'
+echo 'ok: staging is invisible and concurrent destinations survive'

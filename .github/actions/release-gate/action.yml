@@ -28,6 +28,6 @@ runs:
         RELEASE_PHASE: ${{ inputs.phase }}
         RELEASE_RECEIPT: ${{ inputs.receipt }}
       run: |
-        python3 packaging/release/gate.py --candidate "$RELEASE_CANDIDATE" \
+        nix develop .#release -c python3 packaging/release/gate.py --candidate "$RELEASE_CANDIDATE" \
           --inventory-sha256 "$RELEASE_INVENTORY" --channel "$RELEASE_CHANNEL" \
           --phase "$RELEASE_PHASE" --receipt "$RELEASE_RECEIPT"

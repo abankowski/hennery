@@ -1,0 +1,37 @@
+name: release-tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  refusal-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Negative gates, recovery, supply chain and workflow graph
+        run: nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py'
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: 1.98.1
+      - name: cargo-dist's actual installer with tiny shell executables
+        run: |
+          sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+          "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global
+          python3 packaging/release/make_installer_fixture.py target/distrib/hennery-installer.sh "$RUNNER_TEMP/installer-fixture"
+          python3 packaging/harden-installer.py "$RUNNER_TEMP/installer-fixture/hennery-installer.sh"
+          sh packaging/test-installer.sh "$RUNNER_TEMP/installer-fixture"
+      - name: Actionlint
+        run: nix develop .#release -c actionlint .github/workflows/release-candidate.yml .github/workflows/release-publish.yml .github/workflows/release-tests.yml

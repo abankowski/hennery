@@ -5,6 +5,14 @@ What a hennery release would ship is built by the `build` workflow
 `main` (distribution spec §2, plan 7a). It is checked, then kept as workflow
 artifacts for a week. **Nothing is published:** there are no releases yet.
 
+R1 adds separate, disabled-by-default candidate and publication workflows.
+They rebuild at the approved tag, add notices/SBOM/source, retain exact candidate
+versions, and bind protected-environment approval to inventory/run attempts.
+The [release process](../docs/release-process.md) lists maintainer setup and the
+[shared gate interface](release/README.md) is the R3/R4 integration contract.
+The original `build` workflow remains a qualification probe; its artifacts are
+never promoted to a release.
+
 | Artifact | Built by | Checked by |
 |---|---|---|
 | `hennery-x86_64-unknown-linux-musl.tar.xz`, `hennery-aarch64-unknown-linux-musl.tar.xz` | `dist build`, natively on each architecture, with `musl-gcc` | `check-archive.sh` (the binary, its licence and README, nothing else); `check-linkage.sh` (no shared library, no loader); runs on the runner and on Alpine |
@@ -82,8 +90,8 @@ These need the operator's decision, credentials, or both. None is set up:
 
 - **GitHub Releases.** `dist generate` writes a `release.yml` that builds the
   same archives and creates a release on every version tag. It is not
-  committed (`allow-dirty = ["ci"]` in `dist-workspace.toml`). Committed, it
-  must:
+  committed (`allow-dirty = ["ci"]` in `dist-workspace.toml`). Any generated
+  replacement for R1's explicit gated workflows must:
   - keep this workflow's checks: `check-archive.sh`, `check-linkage.sh`,
     `test-installer.sh`, `check-formula.sh`;
   - run `harden-installer.py` before the installer is uploaded, and before
@@ -112,7 +120,10 @@ These need the operator's decision, credentials, or both. None is set up:
   not `--listen` on the command, because the `HEALTHCHECK` reads
   `HENNERY_LISTEN`.
 - **Third-party licence notices:** the archives carry only hennery's
-  `LICENSE`, and the image none. Before the first release, generate the
+  `LICENSE` in the original `build` probe, and its image none. R1's candidates
+  generate target-specific notices, SPDX and corresponding-source bundles;
+  their immutable supplemental licence texts need maintainer review. Before
+  the first release, review the
   notices for the Rust crates and the vendored OpenSSL (Apache-2.0), e.g.
   with `cargo-about`; ship them in each archive and in the image; and
   update `check-archive.sh`'s exact list and the `.dockerignore`.

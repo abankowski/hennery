@@ -137,7 +137,7 @@ def validate(inventory, expected_digest, root, context, snapshot):
     tag = snapshot.get('tag') or {}
     require(tag.get('object', {}).get('type') == 'tag', 'release tag missing or not annotated')
     obj = snapshot.get('tag_object') or {}
-    require(obj.get('tag') == inventory['tag'] and obj.get('object') == {'type': 'commit', 'sha': inventory['source_sha']}, 'release tag moved/deleted or wrong SHA')
+    require(obj.get('tag') == inventory['tag'] and obj.get('object', {}).get('type') == 'commit' and obj.get('object', {}).get('sha') == inventory['source_sha'], 'release tag moved/deleted or wrong SHA')
     candidate = snapshot.get('candidate_run', {})
     require(candidate.get('id') == inventory['candidate']['run_id'] and candidate.get('run_attempt') == inventory['candidate']['run_attempt'], 'candidate run attempt changed')
     trusted_run(candidate, inventory['source_sha'], '.github/workflows/release-candidate.yml')
@@ -147,6 +147,10 @@ def validate(inventory, expected_digest, root, context, snapshot):
             and publisher.get('head_branch') == 'main' and path_of(publisher) == '.github/workflows/release-publish.yml', 'unexpected publisher workflow/ref/event')
     reviews = [r for r in snapshot.get('reviews', []) if any(e.get('id') == env.get('id') and e.get('name') == 'release' for e in r.get('environments', []))]
     require(reviews, 'environment approval absent')
+    require(all(r.get('state') == 'approved' for r in reviews), 'environment review includes a rejection: start a fresh dispatch')
+    reviews = [r for r in reviews if r.get('comment') == challenge(context)]
+    require(reviews, 'approval does not bind this inventory and publishing attempt')
+    require(all(r.get('state') == 'approved' for r in reviews), 'matching approval was rejected')
     review = reviews[-1]
     require(review.get('state') == 'approved' and review.get('user', {}).get('id') in reviewers, 'approval absent/rejected or unauthorized actor')
     require(review.get('comment') == challenge(context), 'approval does not bind this inventory and publishing attempt')
@@ -215,10 +219,13 @@ class GitHub:
                 run = max(runs, key=lambda r: r['id'])
                 jobs = self.pages(f"/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", 'jobs')
                 require(jobs and all(j.get('status') == 'completed' and j.get('conclusion') == 'success' for j in jobs), f'{path}: missing/skipped/unsuccessful jobs')
+        candidate_run = self.get(f"/actions/runs/{inventory['candidate']['run_id']}")
+        candidate_jobs = self.pages(f"/actions/runs/{candidate_run['id']}/attempts/{candidate_run['run_attempt']}/jobs", 'jobs')
+        require(candidate_jobs and all(j.get('status') == 'completed' and j.get('conclusion') == 'success' for j in candidate_jobs), 'candidate has skipped/missing/unsuccessful acceptance or retention jobs')
         return {'tag': tag, 'tag_object': obj, 'rulesets': rules,
                 'environment': self.get('/environments/release'),
                 'branch_policies': [{k: p[k] for k in ('name', 'type')} for p in branch],
-                'candidate_run': self.get(f"/actions/runs/{inventory['candidate']['run_id']}"),
+                'candidate_run': candidate_run,
                 'publisher_run': self.get(f"/actions/runs/{context['publishing']['run_id']}"),
                 'reviews': self.get(f"/actions/runs/{context['publishing']['run_id']}/approvals"), 'checks': checks}
 
@@ -244,12 +251,17 @@ def main():
         require(supplied == inventory[key], f'dispatch {key} changed')
     require(inputs.get('inventory_sha256') == args.inventory_sha256, 'dispatch inventory changed')
     require(args.channel in inventory['channels'], 'channel not approved')
+    import supply
+    supply.require_contract(args.candidate, inventory['channels'], inventory['targets'], inventory['tag'])
+    supply.verify_binary_inventory(inventory, args.candidate)
     snapshot = GitHub(os.environ['GH_TOKEN']).evidence(inventory, context)
     receipt = validate(inventory, args.inventory_sha256, args.candidate, context, snapshot)
     receipt['phase'] = args.phase
     # Never replace an audit receipt. Store with candidate in the retained archive.
     with args.receipt.open('xb') as output:
         output.write(canonical(receipt))
+    import retention
+    retention.audit(args.receipt, os.environ['RELEASE_AUDIT_BUCKET'], context['publishing']['run_id'], context['publishing']['run_attempt'])
     print(challenge(context))
 
 

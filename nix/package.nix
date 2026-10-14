@@ -3,7 +3,7 @@
 # shell has, so `nix flake check` and the dev shell's `cargo clippy` agree.
 # OpenSSL is nixpkgs', not the release build's vendored copy: a Nix build
 # links its dependencies from the store.
-{ pkgs, crane, advisory-db, webUi }:
+{ pkgs, crane, advisory-db, webUi, sourceRevision ? "unrecorded (development build)" }:
 let
   inherit (pkgs) lib stdenv;
   craneLib = crane.mkLib pkgs;
@@ -40,6 +40,22 @@ let
       # the placeholder page. The checks below build without it.
       HENNERY_WEB_DIST = "${webUi}";
       HENNERY_WEB_REQUIRE = "1";
+      HENNERY_BUILD_SOURCE_SHA = sourceRevision;
+      nativeBuildInputs = common.nativeBuildInputs ++ [ pkgs.python3 ];
+      # The same tree digest as R1's candidate metadata, with no run-time
+      # reference to Python or the UI derivation left in the executable.
+      preBuild = ''
+        export HENNERY_BUILD_UI_SHA256="$(${pkgs.python3}/bin/python3 - '${webUi}' <<'PY'
+        import hashlib, json, pathlib, sys
+        root = pathlib.Path(sys.argv[1])
+        files = [{'name': str(p.relative_to(root)), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
+                 for p in sorted(root.rglob('*')) if p.is_file()]
+        raw = (json.dumps(files, sort_keys=True, separators=(',', ':'), ensure_ascii=True) + '\n').encode()
+        print(hashlib.sha256(raw).hexdigest())
+        PY
+        )"
+        export HENNERY_BUILD_MANIFEST_SHA256="$(sha256sum ${src}/adapters/manifest.json | cut -d' ' -f1)"
+      '';
       # The UI is in the binary, so the package never needs it at run time.
       disallowedReferences = [ webUi ];
       # The tests run in CI's own jobs (`ci.yml`): they spawn processes and

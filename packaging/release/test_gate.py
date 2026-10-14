@@ -30,7 +30,7 @@ class Gates(unittest.TestCase):
             'branch_policies': [{'name': 'main', 'type': 'branch'}],
             'rulesets': [gate.frozen_tag_ruleset()],
             'tag': {'object': {'type': 'tag', 'sha': 'b' * 40}},
-            'tag_object': {'tag': self.inventory['tag'], 'object': {'type': 'commit', 'sha': 'a' * 40}},
+            'tag_object': {'tag': self.inventory['tag'], 'object': {'type': 'commit', 'sha': 'a' * 40, 'url': 'https://api.github.com/repos/marcinwadon/hennery/git/commits/' + 'a' * 40}},
             'candidate_run': {'id': 10, 'run_attempt': 1, 'head_sha': 'a' * 40, 'head_repository': {'full_name': 'marcinwadon/hennery'},
                               'event': 'push', 'path': '.github/workflows/release-candidate.yml', 'status': 'completed', 'conclusion': 'success'},
             'publisher_run': {'id': 20, 'run_attempt': 1, 'head_sha': 'c' * 40, 'head_branch': 'main', 'event': 'workflow_dispatch',
@@ -103,6 +103,21 @@ class Gates(unittest.TestCase):
                 with self.assertRaises(gate.Refused):
                     gate.validate(self.inventory, self.digest, self.root, self.context, s)
 
+
+    def test_review_order_does_not_reuse_prior_attempt(self):
+        old = copy.deepcopy(self.snapshot['reviews'][0])
+        old['comment'] = 'prior-attempt'
+        for reviews in ([old, self.snapshot['reviews'][0]], [self.snapshot['reviews'][0], old]):
+            self.snapshot['reviews'] = reviews
+            self.validate()
+
+    def test_withdrawal_is_not_hidden_by_an_unbound_review_comment(self):
+        rejected = copy.deepcopy(self.snapshot['reviews'][0])
+        rejected.update(state='rejected', comment='withdrawn')
+        self.snapshot['reviews'].append(rejected)
+        with self.assertRaises(gate.Refused):
+            self.validate()
+
     def test_binding_each_field(self):
         for field, value in [('inventory_sha256', 'f' * 64), ('source_sha', 'f' * 40), ('tag', 'v0.1.0'),
                              ('channels', ['crates']), ('targets', ['x86_64-unknown-linux-musl']),
@@ -120,6 +135,21 @@ class Gates(unittest.TestCase):
         (self.root / 'archive').write_bytes(b'changed bytes!')
         with self.assertRaises(gate.Refused):
             self.validate()
+
+    def test_candidate_digest_cannot_be_rewritten_under_old_approval(self):
+        data = b'rewritten bytes'
+        (self.root / 'archive').write_bytes(data)
+        self.inventory['artifacts'][0].update(sha256=gate.digest(data), size=len(data))
+        with self.assertRaises(gate.Refused):
+            self.validate()
+
+    def test_inventory_channel_and_target_changes_after_approval(self):
+        for field, value in [('channels', ['crates']), ('targets', ['x86_64-unknown-linux-musl'])]:
+            with self.subTest(field=field):
+                inventory = copy.deepcopy(self.inventory)
+                inventory[field] = value
+                with self.assertRaises(gate.Refused):
+                    gate.validate(inventory, self.digest, self.root, self.context, self.snapshot)
 
     def test_missing_candidate(self):
         (self.root / 'archive').unlink()

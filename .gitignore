@@ -5,3 +5,6 @@ node_modules/
 /.claude/
 /.superpowers/
 /dist/
+
+# Release validation tools.
+__pycache__/

@@ -77,6 +77,15 @@ def fetch(receipt, destination, inventory_sha256):
     gate.verify_files(gate.strict_json(raw), destination)
 
 
+def audit(path, bucket, run_id, run_attempt):
+    path = Path(path)
+    info = aws('put-object', '--bucket', bucket, '--key', f'audit/{run_id}/{run_attempt}/{path.name}',
+               '--body', str(path), '--if-none-match', '*', '--object-lock-mode', 'COMPLIANCE',
+               '--object-lock-retain-until-date', (datetime.now(timezone.utc) + timedelta(days=365)).isoformat(),
+               '--object-lock-legal-hold-status', 'ON', '--checksum-algorithm', 'SHA256')
+    gate.require(info.get('VersionId') not in (None, '', 'null'), 'audit storage not versioned')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation', choices=['stage', 'fetch', 'verify'])

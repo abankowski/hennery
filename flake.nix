@@ -17,7 +17,7 @@
     };
   };
 
-  outputs = { nixpkgs, nixpkgs-web, flake-utils, crane, advisory-db, ... }:
+  outputs = { self, nixpkgs, nixpkgs-web, flake-utils, crane, advisory-db, ... }:
     # The v1 platforms (distribution spec §1): Intel Macs are not one.
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
@@ -25,7 +25,10 @@
         web = import nixpkgs-web { inherit system; };
         # The web UI (plan 7e-ii-b), built with nixpkgs-web's Node and pnpm.
         webUi = import ./nix/web.nix { pkgs = web; };
-        hennery = import ./nix/package.nix { inherit pkgs crane advisory-db webUi; };
+        hennery = import ./nix/package.nix {
+          inherit pkgs crane advisory-db webUi;
+          sourceRevision = self.rev or "unrecorded (dirty source)";
+        };
         # Chromium alone (headless): what the browser checks run on.
         browsers = web.playwright-driver.browsers.override {
           withChromium = false;
@@ -48,7 +51,9 @@
           packages = [
             (pkgs.python3.withPackages (ps: [ ps.pyyaml ]))
             pkgs.actionlint
+            pkgs.cargo-audit
             pkgs.awscli2
+            pkgs.gh
           ];
         };
         devShells.default = pkgs.mkShell {

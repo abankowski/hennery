@@ -1,0 +1,5 @@
+# Fresh upstream release builds use this exact toolchain; Nix uses flake.lock.
+[toolchain]
+channel = "1.98.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
