@@ -28,26 +28,9 @@ pub enum Joined {
 /// The collector's base URL, checked: `https://`, or `http://` to a
 /// loopback address only (umbrella spec §7.5), with no path.
 pub fn parse_public_url(public_url: &str) -> Result<Url> {
-    let url = Url::parse(public_url.trim()).with_context(|| format!("{public_url} is not a URL"))?;
-    let Some(host) = url.host_str() else {
-        bail!("{public_url} has no host");
-    };
-    let loopback = host.eq_ignore_ascii_case("localhost")
-        || host
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback());
-    match url.scheme() {
-        "https" => {}
-        "http" if loopback => {}
-        "http" => bail!("{public_url}: plain http is only allowed to a loopback address; use https"),
-        other => bail!("{public_url}: unsupported scheme {other}"),
-    }
-    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
-        bail!("{public_url}: give the collector's base URL, without a path");
-    }
-    Ok(url)
+    Ok(crate::transport::CollectorEndpoint::public(public_url)?
+        .origin()
+        .clone())
 }
 
 /// The host WebSocket of the collector at `public_url`.
@@ -115,19 +98,13 @@ pub fn orphan_outbox(data_dir: &Path, label: &str) -> Result<Option<PathBuf>> {
 /// on loopback (the all-in-one host's collector may listen on another port,
 /// or be reached as `localhost` instead of `127.0.0.1`).
 pub fn same_collector(a: &str, b: &str) -> bool {
-    let loopback = |u: &str| {
-        Url::parse(u)
-            .ok()
-            .and_then(|u| u.host_str().map(str::to_string))
-            .is_some_and(|h| {
-                h.eq_ignore_ascii_case("localhost")
-                    || h.trim_start_matches('[')
-                        .trim_end_matches(']')
-                        .parse::<std::net::IpAddr>()
-                        .is_ok_and(|ip| ip.is_loopback())
-            })
-    };
-    a == b || (loopback(a) && loopback(b))
+    match (
+        crate::transport::CollectorEndpoint::stored(a),
+        crate::transport::CollectorEndpoint::stored(b),
+    ) {
+        (Ok(a), Ok(b)) => a.compatible(&b),
+        _ => false,
+    }
 }
 
 /// Pair the host whose data directory is `data_dir` with the collector at
@@ -291,12 +268,21 @@ mod tests {
 
     #[test]
     fn collector_policy_rejects_credentials_and_all_secure_loopback_aliases() {
-        for input in ["https://user:secret@localhost", "https://localhost:0", "https://localhost/?x=1", "https://localhost/#x"] {
+        for input in [
+            "https://user:secret@localhost",
+            "https://localhost:0",
+            "https://localhost/?x=1",
+            "https://localhost/#x",
+        ] {
             let error = parse_public_url(input).unwrap_err().to_string();
             assert!(!error.contains("secret"));
         }
         for a in ["wss://localhost/api/hosts/ws", "wss://127.0.0.1:443/api/hosts/ws"] {
-            for b in ["ws://localhost/api/hosts/ws", "ws://127.0.0.1:7117/api/hosts/ws", "wss://localhost:8443/api/hosts/ws"] {
+            for b in [
+                "ws://localhost/api/hosts/ws",
+                "ws://127.0.0.1:7117/api/hosts/ws",
+                "wss://localhost:8443/api/hosts/ws",
+            ] {
                 assert!(!same_collector(a, b), "{a} -> {b}");
             }
         }
