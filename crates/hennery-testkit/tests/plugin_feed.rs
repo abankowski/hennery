@@ -466,6 +466,11 @@ fn inventory_snapshot_survives_deletion_additions_and_rejects_old_readers() {
     assert!(resumed.items.iter().any(|i| i.session_id == "after-watermark"));
     let replacement = w.sessions.source_inventory(&w.token, None, 20).unwrap();
     assert_eq!(replacement.source_ids, ["a", "after-watermark", "c"]);
+    let control = rusqlite::Connection::open(w._dir.path().join("plugin-control.db")).unwrap();
+    let retained: i64 = control
+        .query_row("SELECT COUNT(*) FROM plugin_inventory_sources", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(retained, 3, "replacement must remove previous snapshot rows");
     assert!(w.sessions.source_inventory(&w.token, Some(next), 20).is_err());
     assert!(w.sessions.activity_page(&w.token, Some(next), 20).is_err());
     assert!(
@@ -478,8 +483,9 @@ fn inventory_snapshot_survives_deletion_additions_and_rejects_old_readers() {
 #[test]
 fn cursors_expiry_scope_and_lease_only_permission_fail_closed() {
     let w = World::new(false);
-    let now = hennery_kernel::secret::unix_now();
-    assert!(w.sessions.lease(&w.token).unwrap() <= now + 60);
+    let before = hennery_kernel::secret::unix_now();
+    let expires = w.sessions.lease(&w.token).unwrap();
+    assert!(expires >= before && expires <= hennery_kernel::secret::unix_now() + 60);
     assert!(w.sessions.activity_page(&w.token, None, 20).is_err());
     assert!(w.sessions.source_inventory(&w.token, None, 20).is_err());
     assert!(w.sessions.plugin_watch("hnry_activity_deadbeef").is_err());
@@ -681,4 +687,202 @@ fn inventory_and_event_cursor_survive_store_reopening() {
             .is_empty()
     );
     drop(_dir);
+}
+
+#[test]
+fn inventory_binds_unread_sources_and_clear_removes_all_snapshot_state() {
+    let w = World::new(true);
+    let hennery_kernel::hats::HatChange::Done(other) = w.hosts.create_hat("Other", None, 2).unwrap() else {
+        panic!("hat")
+    };
+    for id in ["a", "b"] {
+        w.session(id, "host", &w.hat);
+        w.turn(id, &format!("turn-{id}"), 2, TurnOutcome::Completed);
+        w.sessions.close_now(id).unwrap();
+    }
+    let page = w.sessions.source_inventory(&w.token, None, 1).unwrap();
+    assert_eq!(page.source_ids, ["a"]);
+    assert!(matches!(
+        w.sessions.reassign_hat("b", &other.id).unwrap(),
+        hennery_sessions::store::Reassign::PluginExposure
+    ));
+    w.core(|core| {
+        w.gateway.plugins().clear_feed_in(core, &w.hat).unwrap();
+    });
+    let control = rusqlite::Connection::open(w._dir.path().join("plugin-control.db")).unwrap();
+    for table in ["plugin_inventory", "plugin_inventory_sources"] {
+        let count: i64 = control
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+    assert!(
+        w.sessions
+            .source_inventory(&w.token, page.next_cursor.as_deref(), 20)
+            .is_err()
+    );
+}
+
+#[test]
+fn foreign_owner_rows_and_future_cursor_never_reach_projection() {
+    let w = World::new(true);
+    for id in ["foreign-session", "foreign-event", "mine"] {
+        w.session(id, "host", &w.hat);
+        w.turn(id, &format!("turn-{id}"), 2, TurnOutcome::Completed);
+    }
+    w.core(|core| {
+        core.execute(
+            "UPDATE sessions SET owner_id='other-owner' WHERE id='foreign-session'",
+            [],
+        )
+        .unwrap();
+        core.execute(
+            "UPDATE events SET owner_id='other-owner' WHERE session_id='foreign-event'",
+            [],
+        )
+        .unwrap();
+    });
+    let page = w.sessions.activity_page(&w.token, None, 1).unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].session_id, "mine");
+    assert!(!page.has_more);
+    let cursor = w.core(|core| {
+        let grant = w.gateway.plugins().authenticate_in(core, &w.token, 0).unwrap().unwrap();
+        w.gateway.plugins().encode_cursor(&grant, i64::MAX).unwrap()
+    });
+    assert_eq!(
+        w.sessions
+            .activity_page(&w.token, Some(&cursor), 20)
+            .unwrap_err()
+            .to_string(),
+        "reset_required"
+    );
+}
+
+#[test]
+fn page_byte_budget_preserves_cursor_for_every_remaining_item() {
+    let w = World::new(true);
+    for index in 0..20 {
+        let id = format!("source-{index:02}");
+        w.session(&id, "host", &w.hat);
+        w.turn(&id, &format!("turn-{index:02}"), 2, TurnOutcome::Completed);
+    }
+    w.core(|core| {
+        core.execute(
+            "UPDATE events SET body=json_set(body,'$.content[0].text',?1) WHERE kind='user_turn'",
+            ["u".repeat(5000)],
+        )
+        .unwrap();
+        core.execute(
+            "UPDATE events SET body=json_set(body,'$.payload.update.content.text',?1) WHERE kind='acp_update'",
+            ["a".repeat(5000)],
+        )
+        .unwrap();
+    });
+    let first = w.sessions.activity_page(&w.token, None, 20).unwrap();
+    assert!(first.has_more);
+    assert!(serde_json::to_vec(&first).unwrap().len() <= 128 * 1024);
+    let second = w
+        .sessions
+        .activity_page(&w.token, Some(&first.next_cursor), 20)
+        .unwrap();
+    assert!(!second.has_more);
+    let mut ids = first
+        .items
+        .iter()
+        .chain(&second.items)
+        .map(|i| i.event_key.clone())
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 20);
+}
+
+#[test]
+fn completion_and_origin_guard_each_independent_durable_input() {
+    let w = World::new(true);
+    w.session("session", "host", &w.hat);
+    w.turn("session", "turn", 2, TurnOutcome::Completed);
+    // The host can retry a completion after it is already applied. Its
+    // unapplied duplicate is retained but must never become a second item.
+    w.sessions
+        .ingest(
+            "session",
+            7,
+            &SessionBody::TurnEnded {
+                turn_id: "turn".into(),
+                outcome: TurnOutcome::Completed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(w.sessions.activity_page(&w.token, None, 20).unwrap().items.len(), 1);
+    for sql in [
+        "UPDATE turns SET state='sent' WHERE turn_id='turn'",
+        "UPDATE turns SET outcome='failed' WHERE turn_id='turn'",
+        "UPDATE events SET body=json_set(body,'$.outcome','failed') WHERE kind='turn_ended' AND applied=1",
+        "UPDATE events SET applied=0 WHERE kind='user_turn'",
+    ] {
+        w.core(|core| {
+            core.execute(sql, []).unwrap();
+        });
+        assert!(
+            w.sessions.activity_page(&w.token, None, 20).unwrap().items.is_empty(),
+            "{sql}"
+        );
+        w.core(|core| {
+            core.execute(
+                "UPDATE turns SET state='ended',outcome='completed' WHERE turn_id='turn'",
+                [],
+            )
+            .unwrap();
+            core.execute(
+                "UPDATE events SET body=json_set(body,'$.outcome','completed') WHERE kind='turn_ended' AND applied=1",
+                [],
+            )
+            .unwrap();
+            core.execute("UPDATE events SET applied=1 WHERE kind='user_turn'", [])
+                .unwrap();
+        });
+    }
+    for raw in [
+        r#"{"turn_id":"turn","content":[]}"#,
+        r#"{"turn_id":"other","content":[],"origin":{"kind":"operator"}}"#,
+        r#"{"turn_id":"turn","content":[],"origin":{"kind":"operator"},"provenance":["operator approved"]}"#,
+        r#"{"turn_id":"turn","content":[],"origin":{"kind":"parent","session_id":"parent","operation_id":"op"},"origin":{"kind":"operator"}}"#,
+        "\u{feff}{\"turn_id\":\"turn\",\"content\":[],\"origin\":{\"kind\":\"operator\"}}",
+    ] {
+        w.core(|core| {
+            core.execute("UPDATE events SET body=?1 WHERE kind='user_turn'", [raw])
+                .unwrap();
+        });
+        let result = w.sessions.activity_page(&w.token, None, 20);
+        assert!(
+            match result {
+                Ok(page) => page.items.is_empty(),
+                Err(_) => true,
+            },
+            "{raw}"
+        );
+    }
+}
+
+#[test]
+fn registration_boundary_excludes_an_already_started_prompt() {
+    let w = World::new(true);
+    w.session("session", "host", &w.hat);
+    w.turn("session", "turn", 2, TurnOutcome::Completed);
+    let high = w.core(|core| {
+        core.query_row("SELECT MAX(event_id) FROM events", [], |r| r.get::<_, i64>(0))
+            .unwrap()
+    });
+    let control = rusqlite::Connection::open(w._dir.path().join("plugin-control.db")).unwrap();
+    control
+        .execute(
+            "UPDATE plugin_registrations SET start_event=?1 WHERE connection_id=?2",
+            params![high - 1, w.connection],
+        )
+        .unwrap();
+    assert!(w.sessions.activity_page(&w.token, None, 1).unwrap().items.is_empty());
 }

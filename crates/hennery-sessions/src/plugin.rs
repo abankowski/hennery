@@ -113,7 +113,6 @@ impl Store {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let grant = self.plugin_grant_in(&tx, token, true)?;
-        let watch = plugins.watch_grant_in(&tx, token, unix_now())?;
         let high = watermark(&tx, self.owner_id())?;
         let after = match after {
             Some(cursor) => plugins
@@ -170,7 +169,6 @@ impl Store {
         if !has_more {
             next = high;
         }
-        ensure!(!watch.token().is_cancelled(), "plug-in access revoked");
         let page = PluginActivityPage {
             version: 1,
             items,
@@ -303,7 +301,6 @@ impl Store {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let grant = self.plugin_grant_in(&tx, token, true)?;
-        let watch = plugins.watch_grant_in(&tx, token, unix_now())?;
         let first;
         let cursor = match cursor {
             Some(cursor) => cursor,
@@ -329,19 +326,9 @@ impl Store {
             }
         };
         let slice = plugins.inventory_slice_in(&tx, &grant, cursor, limit, unix_now())?;
-        for id in &slice.source_ids {
-            // Snapshot ids remain stable if deletion happens between pages;
-            // its tombstone is delivered after the snapshot's watermark.
-            let live: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = ?2 AND lifecycle <> 'deleted')",
-                params![self.owner_id(), id],
-                |r| r.get(0),
-            )?;
-            if live {
-                let _watch = plugins.admit_in(&tx, &grant.connection_id, id, &grant.hat_id)?;
-            }
-        }
-        ensure!(!watch.token().is_cancelled(), "plug-in access revoked");
+        // Every member was bound before the first snapshot page, so unread
+        // members cannot be reassigned. Snapshot ids remain stable if a source
+        // is deleted between pages; resume delivers its deletion tombstone.
         let resume = slice.resume_cursor;
         let page = PluginSourceInventoryPage {
             version: 1,

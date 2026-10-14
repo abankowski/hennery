@@ -38,7 +38,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-sessions/src/plugin.rs",
         include_str!("../../hennery-sessions/src/plugin.rs"),
-        6,
+        5,
     ),
     (
         "hennery-gateway/src/plugin/feed.rs",
