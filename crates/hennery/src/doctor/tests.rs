@@ -2374,6 +2374,10 @@ fn each_step_to_the_collector_fails_on_its_own() {
     // A connection closed without an answer, over plain http: not a TLS
     // failure, whatever the URL's words (the error is judged without it).
     let closing = answering(String::new());
+    assert!(matches!(
+        collector::healthz(&reqwest::Url::parse(&format!("http://{closing}")).unwrap()),
+        collector::Health::Failed(_)
+    ));
     point_at(&host, &format!("ws://{closing}/api/hosts/ws"));
     let seven = line(&run(), 7).clone();
     assert_eq!(seven.status, Status::Fail, "{seven:?}");
@@ -2382,6 +2386,17 @@ fn each_step_to_the_collector_fails_on_its_own() {
     // https to a server that speaks no TLS: check 7 fails, and check 8
     // does not run on what it said.
     let plain = answering("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".into());
+    assert!(matches!(
+        collector::healthz(&reqwest::Url::parse(&format!("https://{plain}")).unwrap()),
+        collector::Health::Tls(_)
+    ));
+    assert_eq!(
+        collector::healthz(&reqwest::Url::parse(&format!("http://{plain}")).unwrap()),
+        collector::Health::Answered {
+            status: 200,
+            date: None
+        }
+    );
     point_at(&host, &format!("wss://{plain}/api/hosts/ws"));
     let findings = run();
     let seven = line(&findings, 7);

@@ -485,6 +485,7 @@ mod tests {
         }
         for input in [
             "https://user@localhost",
+            "https://@localhost",
             "https://%75ser@localhost",
             "http://localhost.example",
             "http://localhost.",
@@ -566,6 +567,30 @@ mod diagnostic_tests {
             classify(&std::io::Error::other("tls certificate words")),
             Stage::Connect
         );
+        assert_eq!(classify(&rustls::Error::General("fixture".into())), Stage::Tls);
+        let nested = std::io::Error::other(rustls::Error::InvalidCertificate(CertificateError::Expired));
+        assert_eq!(classify(&nested), Stage::TlsExpired);
+        let wrapped = tungstenite::error::TlsError::Rustls(
+            rustls::Error::InvalidCertificate(CertificateError::UnknownIssuer).into(),
+        );
+        assert_eq!(classify(&wrapped), Stage::TlsUnknownIssuer);
+        for stage in [
+            Stage::Dns,
+            Stage::Connect,
+            Stage::Tls,
+            Stage::TlsUnknownIssuer,
+            Stage::TlsNameMismatch,
+            Stage::TlsExpired,
+            Stage::TlsNotYetValid,
+            Stage::Upgrade {
+                status: Some(503),
+                retry_after: Some(3),
+            },
+            Stage::MissingNonce,
+            Stage::HelloTimeout,
+        ] {
+            assert_eq!(classify(failure(stage.clone()).as_ref()), stage);
+        }
     }
 }
 

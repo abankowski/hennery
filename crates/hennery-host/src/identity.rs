@@ -292,8 +292,10 @@ pub(crate) fn inspect_receipt(data_dir: &Path) -> Result<()> {
     } else {
         data_dir.join(KEY_FILE)
     };
-    if staged.public_key != Some(HostKey::load(&key_path)?.public_key_hex()) {
-        bail!("staged enrollment receipt has no matching key; preserve recovery artifacts");
+    let key = HostKey::load(&key_path)
+        .context("host.toml.pending has no matching key; preserve artifacts for explicit archive recovery")?;
+    if staged.public_key != Some(key.public_key_hex()) {
+        bail!("host.toml.pending has no matching key; preserve artifacts for explicit archive recovery");
     }
     Ok(())
 }
@@ -631,7 +633,10 @@ cdf6b48fb39bfaa9b5a3cd01538280ec9e6d50c8831e9aae4d791f68112a6c04";
         let staged = pending_path(dir.path(), CONFIG_FILE);
         write_config_to(&staged, url, "host-new", &HostKey::from_seed([2; 32])).unwrap();
         let err = Paired::load(dir.path()).unwrap_err().to_string();
-        assert!(err.contains("host.toml.pending") && err.contains("remove"), "{err}");
+        assert!(
+            err.contains("host.toml.pending") && err.contains("preserve") && err.contains("archive"),
+            "{err}"
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let old = Paired {
