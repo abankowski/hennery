@@ -513,7 +513,7 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
     // credentials are stored, or that does not open them, stops the start
     // (plan 8a decision 8; `KeyUnavailable` tells that case apart).
     let keys = hennery_gateway::key::KeySource::from_env(&data_dir)?;
-    let (gateway, proxy) = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY)?;
+    let (gateway, proxy) = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY).await?;
     state.offline_threshold = std::time::Duration::from_secs(args.host_offline_secs);
     hennery_sessions::offline::after_startup(&state);
     hennery_sessions::sweep::after_startup(&state);
@@ -1311,7 +1311,7 @@ async fn run_up(args: UpArgs) -> Result<std::process::ExitCode> {
 /// - a problem already there is announced once (gateway spec §7); from
 ///   here on, only transitions;
 /// - the probe of OAuth connections runs every `every` until shutdown.
-fn start_gateway(
+async fn start_gateway(
     db: &std::path::Path,
     keys: &hennery_gateway::key::KeySource,
     state: &AppState,
@@ -1328,6 +1328,7 @@ fn start_gateway(
     state
         .store
         .set_session_mcp(std::sync::Arc::new(hennery_gateway::session::GatewayMcp::new(&gateway)));
+    gateway.runtime.recover_plugins().await?;
     gateway.runtime.announce_startup()?;
     let proxy = hennery_gateway::proxy::ProxyState::for_sessions(
         gateway.runtime.clone(),
@@ -1368,7 +1369,9 @@ mod tests {
         assert!(!state.store.has_session_mcp());
         let keys = hennery_gateway::key::KeySource::from_vars(dir.path(), Some("07".repeat(32).into()), None).unwrap();
         let egress = hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap();
-        let _routes = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY).unwrap();
+        let _routes = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY)
+            .await
+            .unwrap();
         assert!(state.store.has_session_mcp());
     }
 
@@ -1394,7 +1397,9 @@ mod tests {
         // a grant whose upstream is a listener here.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/mcp", listener.local_addr().unwrap());
-        let (first, _) = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_secs(3600)).unwrap();
+        let (first, _) = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_secs(3600))
+            .await
+            .unwrap();
         let runtime = first.runtime.clone();
         let hennery_gateway::model::Change::Done(record) = runtime
             .store
@@ -1454,7 +1459,9 @@ mod tests {
         while notices.try_recv().is_some() {}
         drop((first, runtime));
         // The start this test is about.
-        let started = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_millis(20)).unwrap();
+        let started = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_millis(20))
+            .await
+            .unwrap();
         // One runtime for the API and the proxy: one refresh lock per
         // connection (plan 8f decision 3).
         assert!(std::sync::Arc::ptr_eq(&started.0.runtime, &started.1.runtime));

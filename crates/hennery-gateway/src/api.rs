@@ -311,7 +311,11 @@ async fn update(
         Ok(before) => before,
         Err(err) => return internal(err),
     };
-    match state.runtime.store.update(&id, &patch, unix_now()) {
+    match state
+        .runtime
+        .plugin_mutation(&id, || state.runtime.store.update(&id, &patch, unix_now()))
+        .await
+    {
         Ok(change) => {
             if let (Change::Done(record), Some(before)) = (&change, &before) {
                 tracing::info!(
@@ -338,7 +342,11 @@ async fn update(
 /// credential and OAuth client gone, and its flows dropped.
 async fn delete(State(state): State<GatewayState>, Path(id): Path<String>) -> Response {
     let _lock = state.runtime.lock(&id).await;
-    match state.runtime.store.delete(&id) {
+    match state
+        .runtime
+        .plugin_mutation(&id, || state.runtime.store.delete(&id))
+        .await
+    {
         Ok(true) => {
             state.runtime.flows.drop_connection(&id);
             tracing::info!(connection_id = %id, "gateway connection deleted");
@@ -356,7 +364,11 @@ async fn mounts(
     Path(id): Path<String>,
     ApiJson(req): ApiJson<McpMountsRequest>,
 ) -> Response {
-    match state.runtime.store.replace_mounts(&id, &req.host_ids) {
+    match state
+        .runtime
+        .plugin_mutation(&id, || state.runtime.store.replace_mounts(&id, &req.host_ids))
+        .await
+    {
         Ok(change) => {
             if let Change::Done(record) = &change {
                 tracing::info!(connection_id = %record.id, hosts = ?record.mounts, "gateway connection mounted");
@@ -377,8 +389,13 @@ async fn credential(
     let _lock = state.runtime.lock(&id).await;
     match state
         .runtime
-        .store
-        .set_static_credential(&id, &req.token, &state.runtime.key, unix_now())
+        .plugin_mutation(&id, || {
+            state
+                .runtime
+                .store
+                .set_static_credential(&id, &req.token, &state.runtime.key, unix_now())
+        })
+        .await
     {
         Ok(CredentialChange::Done) => {
             tracing::info!(connection_id = %id, "gateway connection's static credential set");

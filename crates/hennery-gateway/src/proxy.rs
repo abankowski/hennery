@@ -788,6 +788,15 @@ async fn forward(
         Ok(None) => return not_found(),
         Err(err) => return internal(err),
     };
+    let watch = match state.runtime.store.admit_plugin(token, &principal, &connection.id) {
+        Ok(watch) => watch,
+        Err(_) => return not_found(),
+    };
+    let revoked = watch.token();
+    let answer = tokio::select! {
+        biased;
+        () = revoked.cancelled() => not_found(),
+        answer = async {
     // The client's session id, unwrapped (plan 8e decision 13): one that is
     // not this token's on this connection, or more than one, is the same
     // 404 as an unknown token, and nothing goes up.
@@ -1063,6 +1072,10 @@ async fn forward(
     *answer.status_mut() = status;
     *answer.headers_mut() = out;
     answer
+        } => answer,
+    };
+    let (parts, body) = answer.into_parts();
+    Response::from_parts(parts, Body::from_stream(cut_off(body.into_data_stream(), watch)))
 }
 
 fn body_too_large() -> Response {

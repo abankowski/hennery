@@ -98,14 +98,17 @@ impl hennery_kernel::lifecycle::LifecycleHooks for AppState {
     /// session module's (plan 9c decision 10d, `hats::purge_sessions`),
     /// and the one checkpoint the deletes owe. Each is idempotent: a purge
     /// that stopped runs both again.
-    fn on_hat_purged(&self, hat_id: &str) -> anyhow::Result<()> {
-        self.store.owe_checkpoint();
-        let purged = self
-            .store
-            .purge_gateway_hat(hat_id)
-            .and_then(|()| hats::purge_sessions(self, hat_id).map(drop));
-        self.store.checkpoint();
-        purged
+    fn on_hat_purged<'a>(&'a self, hat_id: &'a str) -> hennery_kernel::lifecycle::Purge<'a> {
+        Box::pin(async move {
+            self.store.owe_checkpoint();
+            let purged = self
+                .store
+                .purge_gateway_hat(hat_id)
+                .await
+                .and_then(|()| hats::purge_sessions(self, hat_id).map(drop));
+            self.store.checkpoint();
+            purged
+        })
     }
 }
 

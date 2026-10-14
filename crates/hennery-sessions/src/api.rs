@@ -628,6 +628,13 @@ async fn update_session(
             state.hub.publish(event);
         }
         Ok(Reassign::Unchanged) => {}
+        Ok(Reassign::PluginExposure) => {
+            return error(
+                StatusCode::CONFLICT,
+                "plugin_exposure",
+                "start a clean session to change hats after plug-in exposure",
+            );
+        }
         Ok(Reassign::Attached(lifecycle)) => {
             return error(
                 StatusCode::CONFLICT,

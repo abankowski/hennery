@@ -49,6 +49,9 @@ pub struct Delivered {
 
 /// The gateway, as the sessions module sees it (umbrella §9, ACP core §1).
 pub trait SessionMcp: Send + Sync {
+    fn plugin_control(&self) -> Option<Arc<crate::plugin::Control>> {
+        None
+    }
     /// The servers of `session`'s start or resume, inside its transaction:
     /// with a delivering `mode`, the hat's connections mounted on the host,
     /// with a fresh token minted (superseding the session's previous one),
@@ -76,7 +79,7 @@ pub trait SessionMcp: Send + Sync {
 
     /// The gateway's part of a hat's purge (kernel spec §5.5, lane L6), in
     /// its own transaction, cut once it commits. Idempotent.
-    fn purge_hat(&self, hat_id: &str) -> Result<()>;
+    fn purge_hat<'a>(&'a self, hat_id: &'a str) -> hennery_kernel::lifecycle::Purge<'a>;
 }
 
 /// No gateway: no servers, nothing to revoke. A sessions store opened on
@@ -101,8 +104,8 @@ impl SessionMcp for NoSessionMcp {
 
     fn cut(&self, _: Cut) {}
 
-    fn purge_hat(&self, _: &str) -> Result<()> {
-        Ok(())
+    fn purge_hat<'a>(&'a self, _: &'a str) -> hennery_kernel::lifecycle::Purge<'a> {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -151,6 +154,9 @@ fn mounted_slugs_in(tx: &Transaction<'_>, owner: &str, host_id: &str, hat_id: &s
 }
 
 impl SessionMcp for GatewayMcp {
+    fn plugin_control(&self) -> Option<Arc<crate::plugin::Control>> {
+        Some(self.store.plugins())
+    }
     fn servers_in(
         &self,
         tx: &Transaction<'_>,
@@ -185,6 +191,15 @@ impl SessionMcp for GatewayMcp {
                 .ok_or_else(|| anyhow!("no public_url to name the gateway's /mcp/ by"))?;
             let token = tokens::mint_in(tx, owner, session.session_id, session.host_id, session.hat_id, now)?;
             for slug in slugs {
+                let connection: String = tx.query_row(
+                    "SELECT id FROM gw_connections WHERE owner_id = ?1 AND slug = ?2 AND hat_id = ?3",
+                    params![owner, slug, session.hat_id],
+                    |r| r.get(0),
+                )?;
+                let _watch = self
+                    .store
+                    .plugins()
+                    .admit_in(tx, &connection, session.session_id, session.hat_id)?;
                 servers.push(McpServer::Http {
                     name: format!("hennery-{slug}"),
                     url: format!("{}/mcp/{slug}", public.origin()),
@@ -221,21 +236,24 @@ impl SessionMcp for GatewayMcp {
         self.revocations.cut(cut);
     }
 
-    fn purge_hat(&self, hat_id: &str) -> Result<()> {
-        // The kernel has frozen the hat before this hook (kernel §5.5).
-        // Do not take asynchronous refresh locks in this synchronous purge.
-        let ids: Vec<_> = self
-            .store
-            .list()?
-            .into_iter()
-            .filter(|connection| connection.hat_id == hat_id)
-            .map(|connection| connection.id)
-            .collect();
-        let cut = self.store.purge_hat(hat_id)?;
-        for id in ids {
-            self.runtime.flows.drop_connection(&id);
-        }
-        self.revocations.cut(cut);
-        Ok(())
+    fn purge_hat<'a>(&'a self, hat_id: &'a str) -> hennery_kernel::lifecycle::Purge<'a> {
+        Box::pin(async move {
+            self.runtime.purge_plugins(hat_id).await?;
+            // The kernel has frozen the hat before this hook (kernel §5.5).
+            // Do not take asynchronous refresh locks in this synchronous purge.
+            let ids: Vec<_> = self
+                .store
+                .list()?
+                .into_iter()
+                .filter(|connection| connection.hat_id == hat_id)
+                .map(|connection| connection.id)
+                .collect();
+            let cut = self.store.purge_hat(hat_id)?;
+            for id in ids {
+                self.runtime.flows.drop_connection(&id);
+            }
+            self.revocations.cut(cut);
+            Ok(())
+        })
     }
 }

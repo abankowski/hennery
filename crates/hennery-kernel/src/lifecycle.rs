@@ -15,5 +15,8 @@ pub trait LifecycleHooks: Send + Sync {
     /// deletes the hat's row. Runs in transactions of its own. Must be
     /// idempotent: a purge that stopped is resumed by running it again. An
     /// error leaves the hat frozen, for a later purge to resume.
-    fn on_hat_purged(&self, hat_id: &str) -> anyhow::Result<()>;
+    fn on_hat_purged<'a>(&'a self, hat_id: &'a str) -> Purge<'a>;
 }
+
+/// Purge releases all gates/transactions before bounded external lifecycle I/O.
+pub type Purge<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>>;

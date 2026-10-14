@@ -111,6 +111,13 @@ pub fn revoke_host_in(tx: &Transaction<'_>, owner_id: &str, host_id: &str, now: 
     )?)
 }
 
+pub fn revoke_hat_in(tx: &Transaction<'_>, owner_id: &str, hat_id: &str, now: i64) -> Result<usize> {
+    Ok(tx.execute(
+        "UPDATE gw_session_tokens SET revoked_at = ?3 WHERE owner_id = ?1 AND hat_id = ?2 AND revoked_at IS NULL",
+        params![owner_id, hat_id, now],
+    )?)
+}
+
 /// Delete every token of `hat_id`, revoked or not, inside the caller's
 /// transaction: the gateway's part of a hat purge (gateway spec §2, kernel
 /// spec §5.5), before the hat row goes. Idempotent.

@@ -596,6 +596,8 @@ pub enum ResumeRequest {
 /// The outcome of `Store::reassign_hat` (ACP core §4.9).
 #[derive(Debug, PartialEq)]
 pub enum Reassign {
+    /// Delivered plug-in context cannot be recalled. Start a clean session.
+    PluginExposure,
     /// Its `hat_reassigned` event.
     Done(EventDto),
     /// It is in that hat already: nothing written.
@@ -688,6 +690,7 @@ pub struct Reconciliation {
 }
 
 pub struct Store {
+    plugins: Arc<hennery_gateway::plugin::Control>,
     conn: hennery_kernel::db::CoordinatedConnection,
     /// The database's owner (`hennery_kernel::db::kernel_owner`), whom
     /// every query names.
@@ -1841,6 +1844,7 @@ impl Store {
     ) -> Result<Self> {
         let owner = hennery_kernel::db::kernel_owner(&mut conn)?;
         hennery_kernel::db::migrate(&mut conn, MIGRATIONS)?;
+        let plugins = hennery_gateway::plugin::Control::for_core(path.as_deref(), &owner, conn.coordination());
         let checkpoints = path.map(|path| {
             Arc::new(Checkpoints {
                 path,
@@ -1856,6 +1860,7 @@ impl Store {
         }
         Ok(Self {
             conn: hennery_kernel::db::CoordinatedConnection::new(conn),
+            plugins,
             owner,
             attachments,
             checkpoints,
@@ -1877,8 +1882,8 @@ impl Store {
 
     /// The gateway's part of a hat's purge (lane L6): through the gateway
     /// this store was given, so a store without one has none to purge.
-    pub fn purge_gateway_hat(&self, hat_id: &str) -> Result<()> {
-        self.mcp().purge_hat(hat_id)
+    pub async fn purge_gateway_hat(&self, hat_id: &str) -> Result<()> {
+        self.mcp().purge_hat(hat_id).await
     }
 
     /// A revoked host's tokens, and what is open on them, at once (plan 8e,
@@ -1910,11 +1915,15 @@ impl Store {
         }
     }
 
-    fn conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
+    pub(crate) fn conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
         self.conn.lock().expect("store lock")
     }
 
     /// The owner whose sessions these are.
+    pub fn plugins(&self) -> Arc<hennery_gateway::plugin::Control> {
+        self.plugins.clone()
+    }
+
     pub fn owner_id(&self) -> &str {
         &self.owner
     }
@@ -3214,6 +3223,9 @@ impl Store {
         }
         if from == hat_id {
             return Ok(Reassign::Unchanged);
+        }
+        if self.plugins.bound_in(&tx, session_id)? {
+            return Ok(Reassign::PluginExposure);
         }
         let changed = tx.execute(
             "UPDATE sessions SET hat_id = ?2, hat_rule_id = NULL

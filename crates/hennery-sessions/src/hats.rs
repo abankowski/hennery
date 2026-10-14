@@ -587,6 +587,7 @@ async fn purge_hat(State(state): State<AppState>, Path(id): Path<String>) -> Res
     let purged = state
         .store
         .purge_gateway_hat(&id)
+        .await
         .and_then(|()| purge_sessions(&state, &id))
         .and_then(|purged| {
             // `false`: a purge alongside got there first; it is done either way.

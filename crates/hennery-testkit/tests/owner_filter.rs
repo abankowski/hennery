@@ -36,6 +36,11 @@ use std::sync::{Arc, Mutex};
 /// The audited sources, and the fewest statements each holds.
 const SOURCES: &[(&str, &str, usize)] = &[
     (
+        "hennery-gateway/src/plugin.rs",
+        include_str!("../../hennery-gateway/src/plugin.rs"),
+        27,
+    ),
+    (
         "hennery-kernel/src/operator.rs",
         include_str!("../../hennery-kernel/src/operator.rs"),
         29,
@@ -107,7 +112,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
 ];
 
 /// The gateway store's statements, including stdio and OAuth clients.
-const GATEWAY_STATEMENTS: usize = 48;
+const GATEWAY_STATEMENTS: usize = 49;
 
 /// Files under `crates/*/src` with SQL that the audit does not read, and
 /// why (3b-iii review, A3). Any other such file fails
@@ -323,6 +328,11 @@ struct Touched {
 fn audit_connection(db: &Path) -> rusqlite::Connection {
     use rusqlite::config::DbConfig;
     let conn = rusqlite::Connection::open(db).unwrap();
+    // Audit against the union of the real schemas. Production keeps control
+    // tables in its optional file; no statement may escape owner auditing.
+    for migration in hennery_gateway::plugin::MIGRATIONS {
+        conn.execute_batch(migration).unwrap();
+    }
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, false).unwrap();
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DDL, false).unwrap();
     conn
