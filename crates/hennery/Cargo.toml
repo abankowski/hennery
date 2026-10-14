@@ -50,3 +50,18 @@ tokio = { workspace = true, features = ["test-util"] }
 # cargo-dist ships the same CLI as the Cargo package.
 [package.metadata.dist]
 dist = true
+
+# Upstream archives only. GNU users receive the qualified musl archives.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/hennery-{ target }.tar.xz"
+bin-dir = "hennery-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"
+disabled-strategies = ["quick-install", "compile"]
+
+[package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/hennery-x86_64-unknown-linux-musl.tar.xz"
+bin-dir = "hennery-x86_64-unknown-linux-musl/{ bin }"
+
+[package.metadata.binstall.overrides.aarch64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/hennery-aarch64-unknown-linux-musl.tar.xz"
+bin-dir = "hennery-aarch64-unknown-linux-musl/{ bin }"

@@ -26,8 +26,8 @@ Every archive builds with the `vendored-openssl` feature
 (`dist-workspace.toml`). OpenSSL, which `webauthn-rs-core` links, is then
 compiled in from source. Without it, the macOS binary would load Homebrew's
 `libssl` and fail on a Mac without it, and a static musl build would not
-link at all (distribution §1.1). Development and `ci.yml` use the system
-OpenSSL.
+link at all (distribution §1.1). Cargo builds now enable vendored OpenSSL by default (R3); Nix opts out with
+`--no-default-features` and uses its system-library inputs.
 
 Third-party actions are pinned by commit, every image by its multi-arch
 digest, and cargo-dist by the SHA-256 in `install-dist.sh`.
@@ -83,6 +83,109 @@ live, with logged-in agents, and the operator's to run before it merges:
     prefixes);
   - the `codexHome` field of `initialize`'s answer, canonical;
   - `--version`'s `codex-cli X.Y.Z` line.
+
+## Crates.io and cargo-binstall (R3)
+
+The seven production crates opt into crates.io at one exact version. Publish
+in this order: hennery-proto, hennery-kernel, hennery-view, hennery-host,
+hennery-gateway, hennery-sessions, hennery. The workspace default, testkit and
+pin generator remain private. Library compatibility is pre-1.0 application
+support, not a separately stable SDK. Protocol/view generators are build tools,
+not advertised install products.
+
+The `crates` CI workflow prepares from a fresh git-archive snapshot outside the
+checkout. `packaging/prepare-crates.mjs` builds the locked web UI, copies only
+its distributable output into the kernel, gathers production dependency licence
+texts and Tailwind's emitted CSS licence, and writes its source/UI inventories.
+The canonical host manifest is `crates/hennery-host/manifest.json`; pin generation,
+CI and Nix read that same file. No agent or managed Node payload is packaged.
+Each final tarball is inspected for actual AGPL text, normalized registry
+metadata and its exact production dependency versions, and the 10 MB size cap.
+The kernel also carries FRONTEND-NOTICES.txt and SOURCE.json, and its README
+links to the immutable corresponding-source archive and SHA-256. The complete
+source archive includes Rust/web sources, lockfiles, build scripts, repository
+tests and fixtures. Individual crates intentionally omit the workspace's tests.
+
+`packaging/check-crates.mjs` creates a temporary loopback sparse registry
+containing these seven exact candidates and prefetched upstream dependencies.
+The overlay only exists in a scratch CARGO_HOME; it is never a real publishing
+registry or user configuration. Cargo package verification and publish dry runs
+run on extracted tarballs, then builds/installations run with Cargo offline and
+OS network access denied to subprocesses. The OS restriction includes build
+scripts and is tested with a reachable loopback positive control. Cargo's
+publish dry run itself needs registry HTTP, so it is separate from that phase.
+Both locked and unlocked registry installs run from an empty directory. Their
+collectors run in disposable homes with Node/pnpm absent from PATH, serve all
+HTML-referenced assets and render the app in the pinned Chromium. A separate
+Rust 1.88 toolchain builds the extracted CLI's complete dependency graph.
+Source installs need Rust, a C compiler, make and Perl (macOS: Xcode Command
+Line Tools); default vendored OpenSSL removes the system OpenSSL prerequisite.
+
+Binstall 1.24.0 is pinned by the flake and checked against real loopback txz
+archives. Metadata uses versioned upstream release URLs and the actual
+`hennery-<target>/hennery` path. GNU x86_64/arm64 explicitly select the musl
+archives. Intel macOS is not qualified. After an approved version exists, the
+upstream-only recipe uses `cargo binstall hennery@<approved-version> --strategies
+crate-meta-data --disable-telemetry --no-discover-github-token`. QuickInstall
+and source fallback are disabled in metadata too. This path does not verify
+GitHub attestations: the fixture suite proves unsigned `--only-signed` refuses.
+No new binstall signature scheme is claimed. Bare Cargo installation is only
+promised after non-prerelease publication; the first alpha is GitHub-only.
+
+### R1 integration and maintainer-only setup
+
+The publish job has no dispatch/tag/version trigger, no bootstrap secret and
+no auth action yet. It is disabled while R3_PUBLISH_ENABLED is unset. Its fixed
+`packaging/release-gate` dependency is deliberately absent: enabling the variable
+alone still refuses. R1 must provide that trusted adapter, protected environment
+`release` (or reconcile the name), and a pinned crates.io OIDC auth action after
+initial revalidation. Never replace it with an artifact-supplied executable.
+The authenticated approval must bind the root inventory and R3 subinventory,
+source/tag, channel/target sets, candidate run/attempt and publishing run/attempt.
+Revalidation covers environment/tag bypass settings, exact-SHA trusted checks,
+retained bytes and every upload/signing boundary. Set R3_PUBLISH_ENABLED only
+after independent integration review and negative acceptance. This is a merge
+integration point, not an already connected authorization system.
+
+R1 must retain all seven .crate files, crates-inventory.json and
+`hennery-source-<sha>.tar.gz` unchanged. Publish and verify the source archive
+at its inventory URL before enabling crates.io. Its digest must also appear in
+R1's authenticated inventory; retain it for the required AGPL availability
+period. The publisher fetches it without credentials and refuses unavailable
+or mismatched bytes. Missing candidate bytes stop recovery; never rebuild them
+under old approval. A fresh approved attempt reconciles each existing registry
+package against its digest and waits for index resolution before consumers.
+Ambiguous uploads or conflicting remote bytes stop, requiring renewed approval
+and a new candidate/version where immutable published versions prevent repair.
+The uploader uses the documented registry API to send frozen tarball bytes;
+it does not invoke Cargo publication and repackage approved inputs.
+
+Maintainer steps, never performed by a builder:
+
+1. Approve the exact source/version/channels, all platform/MSRV/licence/advisory
+   gates, protected tag/environment rules with bypass disabled, candidate
+   retention and the unauthenticated source-delivery URL. Review the full notice
+   closure and application assets/fonts; no licence permission is inferred for
+   third-party agent binaries. No real publication is authorized by CI green.
+2. For the first versions, arrange a one-off R1-gated bootstrap using a narrowly
+   scoped, short-lived crates.io token. The same approval tuple and exact-byte
+   uploader apply. Do not add a standing all-crates token to this workflow.
+3. After each of the seven crates exists, configure its trusted publisher for
+   the exact repository, publishing workflow and protected environment. Check
+   current crates.io support/settings and pin the official auth action. Test
+   the OIDC identity in the gated workflow; no local registry login substitutes.
+4. Revoke the bootstrap token immediately after successful bootstrap/trusted
+   publishing configuration. Remove any temporary secret and verify it is no
+   longer usable. Future runs use the short-lived OIDC token and revoke it via
+   the auth action's post step. The builder never receives any token.
+5. Verify public installs and UI from clean scratch homes before advertising the
+   channel. Keep the early-testing data/migration guarantees unchanged.
+
+Cargo's [registry API](https://doc.rust-lang.org/cargo/reference/registry-web-api.html#publish),
+[source replacement](https://doc.rust-lang.org/cargo/reference/source-replacement.html),
+[binstall metadata](https://github.com/cargo-bins/cargo-binstall/blob/main/SUPPORT.md)
+and [trusted publishing bootstrap](https://blog.rust-lang.org/2025/07/11/crates-io-development-update-2025-07/)
+are the implementation contracts to recheck on changes.
 
 ## Publishing is the operator's
 

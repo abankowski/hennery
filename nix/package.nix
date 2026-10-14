@@ -26,6 +26,7 @@ let
   common = {
     inherit src;
     strictDeps = true;
+    cargoExtraArgs = "--workspace --no-default-features";
     pname = "hennery";
     inherit (workspace) version;
     nativeBuildInputs = [ pkgs.pkg-config ];
@@ -84,7 +85,7 @@ in
       common
       // {
         inherit cargoArtifacts;
-        cargoClippyExtraArgs = "--workspace --all-targets -- -D warnings";
+        cargoClippyExtraArgs = "--workspace --all-targets --no-default-features -- -D warnings";
       }
     );
     # The binary embeds the web UI, not the placeholder: the release
