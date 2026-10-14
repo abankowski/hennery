@@ -179,6 +179,7 @@ pub async fn run_until(cfg: HostConfig, shutdown: impl Future<Output = ()>) -> R
     let serve = async {
         let mut backoff = cfg.reconnect_min;
         loop {
+            let mut retry_after = None;
             if let Err(err) = connect_once(
                 (&cfg, &transport),
                 &uplink,
@@ -190,6 +191,13 @@ pub async fn run_until(cfg: HostConfig, shutdown: impl Future<Output = ()>) -> R
             )
             .await
             {
+                if let Some(crate::transport::TransportFailure(crate::transport::Stage::Upgrade {
+                    retry_after: retry,
+                    ..
+                })) = err.downcast_ref::<crate::transport::TransportFailure>()
+                {
+                    retry_after = *retry;
+                }
                 if revoked(&err) {
                     return err;
                 }
@@ -206,7 +214,8 @@ pub async fn run_until(cfg: HostConfig, shutdown: impl Future<Output = ()>) -> R
                     tracing::warn!(error = %err, "collector connection ended");
                 }
             }
-            tokio::time::sleep(backoff).await;
+            let sample = jitter_sample(backoff, cfg.reconnect_min);
+            tokio::time::sleep(reconnect_delay(backoff, cfg.reconnect_min, sample, retry_after)).await;
             backoff = (backoff * 2).min(cfg.reconnect_max);
         }
     };
@@ -233,7 +242,14 @@ pub struct HelloRejected {
 
 impl std::fmt::Display for HelloRejected {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "hello rejected: {}: {}", self.code, self.message)
+        let code = match self.code.as_str() {
+            "revoked" => "revoked",
+            "bad_proof" => "bad_proof",
+            "already_connected" => "already_connected",
+            "protocol_mismatch" => "protocol_mismatch",
+            _ => "unrecognized refusal",
+        };
+        write!(f, "hello rejected: {code}")
     }
 }
 
@@ -301,7 +317,7 @@ pub async fn probe_transport(
         CollectorFrame::HelloError { code, .. } if code == "revoked" => Standing::Revoked,
         CollectorFrame::HelloError { code, .. } if code == "bad_proof" => Standing::Unknown,
         CollectorFrame::HelloError { code, message } => return Err(HelloRejected { code, message }.into()),
-        other => bail!("expected hello_ack, got {other:?}"),
+        _ => bail!("unexpected collector hello response"),
     })
 }
 
@@ -372,7 +388,7 @@ async fn handshake(
     .await?;
     let answer = match tokio::time::timeout(read_timeout, stream.next()).await {
         Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<CollectorFrame>(&text)?,
-        other => bail!("no hello_ack: {other:?}"),
+        _ => return Err(crate::transport::failure(crate::transport::Stage::HelloTimeout)),
     };
     Ok((sink, stream, answer))
 }
@@ -428,7 +444,7 @@ async fn connect_once(
             }
         }
         CollectorFrame::HelloError { code, message } => return Err(HelloRejected { code, message }.into()),
-        other => bail!("expected hello_ack, got {other:?}"),
+        _ => bail!("unexpected collector hello response"),
     }
     // A bare handshake is not proof the collector is actually committing
     // anything: a persistently failing collector (e.g. disk full) can still
@@ -1070,9 +1086,48 @@ mod reconnect_tests {
     fn jitter_has_floor_half_ceiling_and_retry_after_bounds() {
         let floor = Duration::from_millis(500);
         assert_eq!(reconnect_delay(floor, floor, 0, None), floor);
-        assert_eq!(reconnect_delay(Duration::from_secs(30), floor, 0, None), Duration::from_secs(15));
-        assert_eq!(reconnect_delay(Duration::from_secs(30), floor, 15_000, None), Duration::from_secs(30));
-        assert_eq!(reconnect_delay(Duration::from_secs(30), floor, 0, Some(1)), Duration::from_secs(15));
-        assert_eq!(reconnect_delay(Duration::from_secs(30), floor, 0, Some(999)), Duration::from_secs(300));
+        assert_eq!(
+            reconnect_delay(Duration::from_secs(30), floor, 0, None),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            reconnect_delay(Duration::from_secs(30), floor, 15_000, None),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            reconnect_delay(Duration::from_secs(30), floor, 0, Some(1)),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            reconnect_delay(Duration::from_secs(30), floor, 0, Some(999)),
+            Duration::from_secs(300)
+        );
+    }
+}
+
+/// Deterministic seam: production supplies a uniformly sampled offset.
+pub fn reconnect_delay(ceiling: Duration, floor: Duration, sample: u64, retry_after: Option<u64>) -> Duration {
+    let upper = ceiling.as_millis().min(u64::MAX as u128) as u64;
+    let lower = (upper / 2)
+        .max(floor.as_millis().min(u64::MAX as u128) as u64)
+        .min(upper);
+    let span = upper.saturating_sub(lower).saturating_add(1);
+    let jitter = Duration::from_millis(lower + sample % span);
+    jitter.max(Duration::from_secs(retry_after.unwrap_or(0).min(300)))
+}
+fn jitter_sample(ceiling: Duration, floor: Duration) -> u64 {
+    let upper = ceiling.as_millis().min(u64::MAX as u128) as u64;
+    let lower = (upper / 2)
+        .max(floor.as_millis().min(u64::MAX as u128) as u64)
+        .min(upper);
+    let span = upper.saturating_sub(lower).saturating_add(1);
+    let limit = u64::MAX - (u64::MAX % span);
+    loop {
+        let mut bytes = [0; 8];
+        getrandom::fill(&mut bytes).expect("OS randomness");
+        let sample = u64::from_le_bytes(bytes);
+        if sample < limit {
+            return sample;
+        }
     }
 }
