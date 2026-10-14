@@ -1477,6 +1477,150 @@ mod tests {
         state.shutdown.cancel();
     }
 
+    #[tokio::test]
+    async fn a_configured_start_recovers_later_store_transitions_without_an_http_retry() {
+        use hennery_gateway::{
+            model::{Change, CredKind, NewConnection},
+            plugin::RegistrationInput,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = AppState::new(
+            Store::open(&db).unwrap(),
+            Hosts::open(&db).unwrap(),
+            Operator::open(&db).unwrap(),
+        );
+        state
+            .hosts
+            .register(
+                "plugin-host",
+                &hennery_kernel::hosts::Enrollment {
+                    public_key: hennery_host::identity::HostKey::from_seed([7; 32]).public_key_hex(),
+                    name: "Test".into(),
+                    host_version: "0.0.0".into(),
+                    platform: "test".into(),
+                },
+                1,
+            )
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let (sent, mut seen) = tokio::sync::mpsc::unbounded_channel();
+        let app = axum::Router::new().route(
+            "/mcp",
+            axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let sent = sent.clone();
+                async move {
+                    sent.send(body.clone()).unwrap();
+                    axum::Json(serde_json::json!({"jsonrpc":"2.0","id":body["id"],"result":{
+                    "request_id":body["id"],"status":"confirmed","remaining_kinds":[]}}))
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let keys = hennery_gateway::key::KeySource::from_vars(dir.path(), None, None).unwrap();
+        let egress = hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap();
+        // Configure durable state without invoking the HTTP registration route,
+        // which would start its own optional worker.
+        let first = hennery_gateway::open(
+            &db,
+            &keys,
+            state.operator.clone(),
+            egress.clone(),
+            std::sync::Arc::new(hennery_gateway::notify::Silent),
+        )
+        .unwrap();
+        let Change::Done(connection) = first
+            .runtime
+            .store
+            .create(
+                &NewConnection {
+                    slug: "plugin".into(),
+                    label: "Test plug-in".into(),
+                    url,
+                    hat_id: state.hosts.default_hat_for_new_hosts().unwrap(),
+                    cred_kind: CredKind::Static,
+                    static_header: None,
+                    static_prefix: None,
+                    tool_allowlist: Some(vec!["search".into()]),
+                    internal_network: true,
+                },
+                1,
+            )
+            .unwrap()
+        else {
+            panic!("connection")
+        };
+        first
+            .runtime
+            .store
+            .replace_mounts(&connection.id, &["plugin-host".into()])
+            .unwrap();
+        first
+            .runtime
+            .store
+            .set_static_credential(&connection.id, "namespace", &first.runtime.key, 1)
+            .unwrap();
+        let fingerprint = first.runtime.store.plugin_fingerprint(&connection.id).unwrap();
+        first
+            .runtime
+            .store
+            .register_plugin(
+                RegistrationInput {
+                    connection_id: &connection.id,
+                    lifecycle_credential: "separate-lifecycle",
+                    activity: false,
+                    startup: false,
+                    capabilities: serde_json::from_value(
+                        serde_json::json!({"version":1,"activity_v1":true,"forget_v1":true,"startup_context_v1":false}),
+                    )
+                    .unwrap(),
+                },
+                &first.runtime.key,
+                &fingerprint,
+                1,
+            )
+            .unwrap();
+        drop(first);
+        let started = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_secs(3600))
+            .await
+            .unwrap();
+        let error = started
+            .0
+            .runtime
+            .store
+            .update(
+                &connection.id,
+                &hennery_gateway::model::ConnectionPatch {
+                    label: Some("Changed".into()),
+                    ..Default::default()
+                },
+                hennery_kernel::secret::unix_now(),
+            )
+            .unwrap_err();
+        assert!(error.is::<hennery_gateway::plugin::PendingMutation>());
+        let body = tokio::time::timeout(std::time::Duration::from_secs(3), seen.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(body["method"], "hennery_plugin_forget");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if !started.0.runtime.store.plugin_deletion_receipts().unwrap().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        state.shutdown.cancel();
+        server.abort();
+        let _ = server.await;
+    }
+
     /// Plan 10b-ii: the collector's notices reach delivery, and delivery is
     /// public only. A subscription at a loopback address gets a notice
     /// refused, recorded on it; nothing is sent.
