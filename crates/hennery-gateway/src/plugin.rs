@@ -900,6 +900,11 @@ pub(crate) async fn rpc<T: serde::de::DeserializeOwned>(
         .context("plug-in operation timed out")?
 }
 
+fn forget_budget(deadline: i64, now: std::time::SystemTime) -> std::time::Duration {
+    let seconds = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    std::time::Duration::from_secs(deadline.saturating_sub(seconds as i64).clamp(0, 5) as u64)
+}
+
 impl crate::runtime::Runtime {
     pub async fn purge_plugins(&self, hat: &str) -> Result<()> {
         let ids = {
@@ -945,11 +950,8 @@ impl crate::runtime::Runtime {
             pending
         };
         let Some(work) = pending else { return Ok(()) };
-        let remaining = work
-            .deadline
-            .saturating_sub(hennery_kernel::secret::unix_now())
-            .clamp(0, 5);
-        let receipt = if remaining > 0 {
+        let remaining = forget_budget(work.deadline, std::time::SystemTime::now());
+        let receipt = if !remaining.is_zero() {
             rpc::<hennery_proto::plugin::ForgetReceipt>(
                 self,
                 RpcCall {
@@ -961,7 +963,7 @@ impl crate::runtime::Runtime {
                     params: serde_json::json!({
                     "request_id":work.request_id,"namespace_epoch":work.epoch,"target":{"kind":"scope"}}),
                 },
-                std::time::Duration::from_secs(remaining as u64),
+                remaining,
             )
             .await
             .ok()
