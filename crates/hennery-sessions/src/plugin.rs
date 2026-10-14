@@ -73,7 +73,7 @@ fn page_limit(limit: usize) -> Result<usize> {
 
 fn watermark(core: &Transaction<'_>, owner: &str) -> Result<i64> {
     Ok(core.query_row(
-        "SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1 AND applied = 1",
+        "SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1",
         [owner],
         |r| r.get(0),
     )?)

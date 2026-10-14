@@ -515,7 +515,10 @@ fn cursors_expiry_scope_and_lease_only_permission_fail_closed() {
     control.execute("UPDATE plugin_inventory SET expires=0", []).unwrap();
     assert!(other.sessions.source_inventory(&other.token, Some(&cursor), 1).is_err());
     let watch = other.sessions.plugin_watch(&other.token).unwrap();
-    other.gateway.plugins().cut_connections(&[other.connection.clone()]);
+    other
+        .gateway
+        .plugins()
+        .cut_connections(std::slice::from_ref(&other.connection));
     assert!(watch.token().is_cancelled());
 }
 
@@ -978,4 +981,45 @@ fn terminal_inventory_erasure_is_per_registration_and_never_creates_tables() {
         assert_eq!(left, 0, "{table}");
         assert_eq!(other, 1, "{table}");
     }
+}
+
+#[test]
+fn a_grant_after_an_unapplied_fact_has_a_valid_committed_watermark() {
+    let w = World::new(true);
+    w.session("session", "host", &w.hat);
+    w.turn("session", "turn", 2, TurnOutcome::Completed);
+    w.sessions
+        .ingest(
+            "session",
+            7,
+            &SessionBody::TurnEnded {
+                turn_id: "turn".into(),
+                outcome: TurnOutcome::Completed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    // register_in starts at the greatest committed event, including facts
+    // retained as unapplied. Feed and inventory use that same position space.
+    let high = w.core(|core| {
+        core.query_row("SELECT MAX(event_id) FROM events", [], |r| r.get::<_, i64>(0))
+            .unwrap()
+    });
+    let control = rusqlite::Connection::open(w._dir.path().join("plugin-control.db")).unwrap();
+    control
+        .execute(
+            "UPDATE plugin_registrations SET start_event=?1 WHERE connection_id=?2",
+            params![high, w.connection],
+        )
+        .unwrap();
+    assert!(w.sessions.activity_page(&w.token, None, 20).unwrap().items.is_empty());
+    let inventory = w.sessions.source_inventory(&w.token, None, 20).unwrap();
+    assert!(
+        w.sessions
+            .activity_page(&w.token, Some(&inventory.resume_cursor), 20)
+            .unwrap()
+            .items
+            .is_empty()
+    );
 }
