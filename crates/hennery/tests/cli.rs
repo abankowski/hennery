@@ -59,6 +59,16 @@ fn offline(cmd: &mut Command) {
 const UNWRITABLE_HOME: &str = "/nonexistent-hennery-test/home";
 
 #[test]
+fn long_version_records_release_identity() {
+    let output = hennery().arg("--version").output().unwrap();
+    assert!(output.status.success());
+    let version = String::from_utf8(output.stdout).unwrap();
+    for field in ["source: ", "UI SHA-256: ", "adapter manifest SHA-256: "] {
+        assert!(version.contains(field), "missing {field}: {version}");
+    }
+}
+
+#[test]
 fn help_lists_the_skeleton_commands() {
     let out = hennery().arg("--help").output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout);

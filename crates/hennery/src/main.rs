@@ -3,6 +3,7 @@
 //! with; the operator with the session the setup link or a login opened.
 
 mod admin;
+mod build_identity;
 mod config;
 mod data_dir;
 mod doctor;
@@ -29,7 +30,7 @@ use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "hennery", version, about = "Self-hosted cockpit for ACP coding agents")]
+#[command(name = "hennery", version, long_version = build_identity::long_version(), about = "Self-hosted cockpit for ACP coding agents")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
