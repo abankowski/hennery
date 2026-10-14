@@ -1,8 +1,10 @@
 # hennery — optional memory plug-in and activity contract
 
 - **Date:** 2026-10-14
-- **Status:** Proposed; independent design/security review pending. No code or
-  live-adapter verification is claimed.
+- **Status:** Amended after the 2026-10-14 Codex gpt-6-astra review of
+  `0fe663b..8c3601ad` (approve after amendments); scoped re-confirmation pending.
+  Incorporates the parent's shared-contract ruling and the operator's Q1
+  decision. No code or live-adapter verification is claimed.
 - **Authority:** the operator's 2026-10-14 brief, **as corrected by the later
   steer: memory is an opt-in plug-in, not an embedded core feature**.
 - **Amends:** [umbrella §1.2.1](2026-09-25-hennery-architecture-design.md#121-optional-memory-amendment-2026-10-14)
@@ -15,6 +17,11 @@
   Memory does not define, register tools on, or require that internal server.
   The later plug-in steer supersedes the earlier shared-server assumption.
   Both lanes reuse the existing session MCP delivery and isolation gates.
+  The memory lane owns **C1: generic feed/lifecycle**, including owner/hat
+  namespace identity, typed provenance and the startup data contract;
+  delegation depends on it. C2 implements startup delivery. Signed per-session
+  attestation is a separately reviewed future **generic signed-principal
+  extension**, not a C1 prerequisite (delegation design `adf56fb9`, §3.2).
 
 ## 1. Product and non-goals
 
@@ -62,19 +69,20 @@ general plug-in marketplace/process supervisor, and core-owned memory UI.
 | M8 | Explicit agent remember immediately readable, marked agent-authored; owner can disable writes | Automatic extraction is excluded; a compulsory approval inbox adds work before an entry has proved useful | **designer's recommendation** |
 | M9 | No model required; optional per-hat credentials and budgets in plug-in | Reusing agent subscriptions, global provider fallback or hidden paid jobs violates isolation and opt-in | **designer's recommendation**; per-hat model endpoint settled by umbrella §8.3 |
 | M10 | Manifest-mapped import, one file to one hat or exclude | Guessing from filenames/paths and inheriting legacy shared access risks leakage | **designer's recommendation**, M2 binding |
-| M11 | Refuse cross-hat reassignment of a session exposed to a registered plug-in; start a clean session | Revoking tokens cannot erase context already delivered to an adapter or external service | **designer's recommendation**; safety refinement to umbrella §8.2/ACP core §4.9 |
-| M12 | Local purge plus explicit external deletion acknowledgement/unconfirmed status | Claiming an arbitrary external service erased data is unverifiable; indefinite blocking of local deletion leaves local data behind | **designer's recommendation**, Q1 below |
+| M11 | C1 binds exposure before registered proxy requests, including already-running sessions, and serializes reassignment across both stores | Start/resume-only binding misses connections registered while a session runs; token revocation cannot erase delivered context | **designer's recommendation**, required security amendment from the 2026-10-14 review; umbrella §8.2/ACP core §4.9 refinement |
+| M12 | Local purge may finish with external deletion explicitly unconfirmed; reference lease lasts at most 60 s | Unreachable services cannot prove erasure; no claim of immediate external deletion | **settled by spec** — operator Q1 ruling, 2026-10-14, recorded below |
+| M13 | C1 namespace authentication, unmount cuts feed/access, typed source provenance and `PluginContext`; per-session attestation deferred | Unsigned session hints and parsed text cannot prove identity or operator authority; preserving feed on unmount contradicts the shared contract | **settled by spec** — parent shared-contract ruling, 2026-10-14; delegation `adf56fb9` §3.2 |
+| M14 | Persist terminal state/deletion obligation before registered connection mutation; revoke/cut before remote waits | Forgetting after URL replacement can leak the lifecycle credential; hat freeze alone does not invalidate existing gateway tokens | **designer's recommendation**, required security amendment from the 2026-10-14 review |
 
-**Q1 — When a registered plug-in is unreachable during hat purge, may local
-purge finish with external deletion marked unconfirmed? Recommended default:
-yes; revoke access immediately, show the unresolved external copy, and require
-the reference plug-in to refuse serving that namespace after its lease expires
-until the owner completes deletion.**
+**Q1 — Resolved by the operator, 2026-10-14:** yes, local hat purge may finish
+while external deletion is **explicitly unconfirmed**. Revoke collector access
+and cut registered work before any remote wait. The reference plug-in may
+retain a previously issued lease for **at most 60 seconds**; after expiry it
+refuses access until deletion is completed. There is **no claim of immediate
+external erasure**, and the UI retains the unresolved external-copy status.
 
-This is a product deletion guarantee, not permission to implement. The
-following protocol specifies that recommended default; the operator must
-settle it before the purge plan is finalised. All other recommendations need
-the parent's independent design/security review.
+There are no remaining operator questions in this revision. Technical
+amendments need the parent's scoped review re-confirmation before planning.
 
 ## 3. Generic core contract
 
@@ -113,8 +121,10 @@ Recent/search can use a caller-supplied project key only as a narrowing filter
 within the already authenticated hat. Remember records “agent wrote”, without
 a verified source-session claim. The reference implementation accepts optional
 unverified source hints as labelled text, not authenticated provenance. A
-future generic signed-principal extension belongs with delegation/gateway
-design, not as a hidden memory-specific header in this lane.
+future **generic signed-principal extension** (signed per-session attestation)
+requires a separate reviewed contract shared with delegation/gateway. C1 owns
+namespace identity; it exports neither `SessionToolContext` nor an unsigned
+claimed identity. This extension is deferred and is not required for memory.
 
 The existing isolation delivery gates apply to HTTP and stdio. Non-default
 Codex hats on the mixed-host fallback get no mounted plug-in MCP until 8h's
@@ -140,9 +150,11 @@ Contract-enabled registrations live in a separate optional
 `<data>/plugin-control.db`, opened/created only on explicit registration or
 when existing registrations need recovery. There are **no new tables or
 memory migrations in `hennery.db`**. This control store holds only scoped
-registrations, hashed activity tokens, grant start/epoch, exposure bindings
-and deletion receipts, never transcript bodies or plug-in results. Every row
-has owner and hat. Migrations follow the existing immediate-transaction and
+registrations, hashed activity tokens, grant start/epoch, exposure bindings,
+terminal transitions and deletion receipts, never transcript bodies or plug-in
+results. A pending deletion obligation temporarily holds its immutable old
+endpoint and sealed lifecycle credential (§3.4); no new destination inherits
+them. Every row has owner and hat. Migrations follow the existing immediate-transaction and
 newer-version-refusal discipline. No registered plug-ins means no worker,
 control database or recovery loop. A present but unreadable control store
 must fail closed for its grants and affected lifecycle operations.
@@ -154,29 +166,65 @@ the grant until explicitly re-registered. The plug-in's data/key are a separate
 backup, never implicitly included or restored by the collector.
 
 The authoritative hat/session/connection state is still the core database.
-There is no claimed atomic transaction across the two files. Grant creation
-writes pending control state first, checks live core scope, then activates;
-each use rechecks core state. Exposure is recorded **before** data leaves.
-Purge/revoke first freezes or revokes in core, so a stale control row can
-never authorise a read. Startup recovery reconciles pending registrations and
-purged hats before serving plug-in traffic. Failure can conservatively deny
-access or leave a binding; it must not leak or lose a deletion obligation.
+There is no claimed atomic transaction across the two files. **C1 owns a
+single lifecycle gate per owner**, shared by registration/mount changes,
+registered proxy/feed/context admission, connection edit/delete, hat
+reassignment and both purge entry points. C1 must prove process-lifetime
+exclusive ownership before any collector/gateway writer opens the core DB,
+using the collector's admin-socket ownership or a generic writer lock if that
+is insufficient. Existing host/up locks alone are not that proof. This also
+applies before the first registration: a second already-running unconfigured
+writer must not escape coordination. An offline mutator acquires the same
+ownership; a second writer refuses to open the DB. No code may mutate either
+database outside this coordination. Fixed lock order: owner gate,
+core `IMMEDIATE` transaction, then control-store transaction. Never acquire
+them in reverse, and never hold a transaction or gate across network I/O.
 
-An activity token is random, unguessable, stored hashed, shown only once to
-the owner to configure the service, and bound to `(owner, hat, registration,
-epoch, permissions)`. It is distinct from session and upstream MCP credentials.
+For admission, hold the gate and core transaction, re-read token generation,
+session hat, connection/grant revision, mount and freeze state; install the
+cancellation watch and durably commit the exposure binding in the control
+store. End the core transaction before releasing the gate and dispatching.
+Reassignment takes the same gate/core transaction, checks control bindings,
+and commits only if none prohibit it. If admission wins, reassignment sees
+the binding and refuses; if reassignment wins, admission re-resolves scope
+and refuses the old identity. A control commit followed by a crash or core
+failure leaves a conservative binding, never an unrecorded exposure. Control
+read/write failure denies admission and reassignment. Gate release is not
+permission to ignore later revocation: the watch stays active through the
+request/response and scope is checked again before delivery.
+
+Grant creation writes pending control state first under this ordering, then
+activates only after live core scope is verified. Purge must explicitly
+revoke/cut session tokens as well as freeze the hat (§3.4): current gateway
+token/mount resolution does not itself test `purged_hats`. Pending terminal
+control state also denies registered proxy/feed/context access immediately.
+Startup recovery runs under the same gate and completes revocation/cuts and
+reconciles pending states before any registered traffic is admitted. The
+connection-mutation crash protocol is specified in §3.4.1.
+
+An activity token is `hnry_activity_` plus 64 random lowercase hexadecimal
+digits, stored hashed, shown only once to the owner to configure the service,
+and bound to `(owner, hat, registration, epoch, permissions)`. It is distinct
+from session and upstream MCP credentials.
 It grants no operator, session-control or gateway access. Rotation uses an
 explicit handover within the same epoch; revocation is terminal for the epoch.
 No credential is accepted in a URL, query string, browser storage or logs.
+Reference-service lifecycle credentials use `hnry_lifecycle_` plus 64 random
+hexadecimal digits, and its minted upstream namespace credentials use
+`hnry_plugin_` with the same random suffix. These classes and `hnry_session_`
+share the redaction contract in §8; it must land in C1 before any is issued.
+Third-party credentials are opaque and must never be mistaken for a token
+class this scanner can recognise.
 
 ### 3.3 Activity feed: pull, scope and replay
 
 `GET /api/plugins/activity?after=<opaque>&limit=<n>` authenticates the activity
 bearer. This is a separate machine route: no cookie authentication or CORS;
 reject any present browser Origin. Missing Origin is normal for its server
-client. Check registration, connection owner/hat, current hat freeze/deletion
-and token revocation on **every page**, including after waits and before
-releasing results. Filter in SQL before hydration/limiting. Rate/budget limits
+client. Check registration, connection owner/hat, current hat freeze/deletion,
+current mount eligibility, grant revision and token revocation on **every
+page**, including after waits and before releasing results. Filter in SQL
+before hydration/limiting. Rate/budget limits
 are per registration; body, query and error logs contain no source content.
 
 Default polling is every 15 seconds while enabled, with backoff on failure.
@@ -185,16 +233,30 @@ No SSE or webhook is required. A page contains typed Rust-owned envelopes:
 | Shape | Fields / behavior |
 |---|---|
 | `PluginActivityPage` | `version`, `items`, `next_cursor`, `has_more`, `lease_until`; cursor is opaque and bound to grant/epoch |
-| `CompletedTurn` | event key, session/turn ids, scope epoch, canonical project key, completion time, user/assistant text excerpts, coverage/truncation flags |
-| `SessionRemoved` | event key and source session id only; no old title/body |
-| `SourceReset` | session id and epoch boundary; discard previous observation rather than replay pre-boundary content |
+| `CompletedTurn` | event key, session/turn ids, scope epoch, canonical project key, completion time, typed input provenance, role-labelled text excerpts and source refs, coverage/truncation flags |
+| `SessionRemoved` | event key, source session id and typed causal provenance; no old title/body |
+| `SourceReset` | session id, epoch boundary and typed causal provenance; discard previous observation rather than replay pre-boundary content |
+
+Every feed item has a required typed `provenance` field. C1 consumes the
+server-written input-origin contract `Operator | Parent {session_id,
+operation_id} | ChildReport {child_id, source_event_id, delivery_id}` owned by
+delegation, preserving source refs and roles. A system-generated reset has
+explicit empty causal provenance, not an invented `Operator` author. Assistant
+output remains assistant output even when its initiating prompt was Operator;
+that provenance never certifies its assertions as operator decisions.
+Never infer origin from prose, delimiters or the view's current `UserTurn`
+shape (`hennery-view/src/fold.rs`). C1 must join the stored typed origin and
+fail closed on missing/unsupported origin for new delegated inputs. Only
+historical records proven to precede delegated-input support may use the
+existing operator-only migration rule. The feed cannot ship delegated input
+support before that typed contract exists.
 
 The grant starts at registration's committed-event high-water mark; no
 historical backfill by default. New completed turns only, not failed/cancelled
 turns. Data comes from committed typed turn facts and `hennery-view`, not a
 new ACP parser. Include at most 8 KiB of user/assistant text per turn, 20
 items/128 KiB per page; omit thinking, tool arguments/results, images,
-permission forms and injected context. Redact after merging chunks; report
+permission forms and injected context. Assemble, redact, then truncate; report
 gaps/truncation honestly. Session ids/project keys are authenticated source
 metadata here, unlike hints passed through an agent's MCP arguments.
 
@@ -211,12 +273,31 @@ consistent watermark, then resumes from that watermark; consumers remove
 observations absent from the inventory. No transcript backfill is implied.
 
 Hat reassignment is an exposure boundary. A registered feed may read only
-turns after the session's latest assignment into that hat. Bind a session
-before its first feed read, contract-mounted start/resume or startup context
-delivery. Bound sessions cannot be reassigned across hats; a clean session
-is required. Ordinary unregistered MCP retains today's semantics. Remove
-bindings on session deletion; revoking a registration alone cannot erase the
-context already seen and therefore does not clear its session bindings.
+turns after the session's latest assignment into that hat and from currently
+eligible mounted hosts. **Bind before the first registered proxy request**,
+including a session already running when its mounted connection is registered
+or changed; start/resume binding alone is insufficient. Conservatively bind
+every eligible attached session at registration activation too, before any
+registered request can leave. Registration uses the owner gate to cut
+pre-registration in-flight requests for that connection before activation,
+so a response cannot slip across the transition unbound. New mount eligibility
+uses the same gate and binds eligible attached sessions before release.
+
+Feed read, contract-mounted start/resume and startup delivery use the same
+admission/binding path. Bound sessions cannot be reassigned across hats;
+start a clean session. This entire guard ships in **C1**, not C2. Ordinary
+unregistered MCP retains today's semantics. Remove bindings on session
+deletion; grant revocation/unmount alone does not erase delivered context and
+therefore does not clear bindings.
+
+**An unmount cuts the feed and revokes access.** On any host removal from a
+registered connection, terminate the registration's current activity/context
+grant and lease, cancel pending delivery and cut its registered proxy work
+before the mount change completes. This conservatively ends the whole
+registration epoch; other hosts do not keep the old feed alive. Remaining
+hosts need a fresh explicitly granted epoch. Stored copies follow the
+revocation/deletion contract below, with the same maximum-60-second external
+lease window; unmount does not imply immediate external erasure.
 
 ### 3.4 Generic deletion lifecycle, revocation and plan 9
 
@@ -236,15 +317,41 @@ at the reference service for management/lifecycle operations. The collector's
 optional registration stores that separate lifecycle credential encrypted,
 never in a session mount or plaintext control row.
 
-Plan 9 preview lists registered destinations and deletion status. Purge first
-freezes the hat and revokes activity access, cuts active feed/context work,
-then attempts bounded remote forget **before** removing connection metadata.
-Plan 9 continues local session/gateway purge under Q1's proposed default,
-while recording confirmed/unconfirmed plug-in erasure separately. Remove
-activity token hashes, lifecycle secrets, grants and scoped control state;
-retain only a minimal owner/hat/request-id/result tombstone like existing
-purge evidence, never content or credentials. Do not retain a hidden remote
-access credential merely to retry after hat purge.
+Plan 9 preview lists registered destinations and deletion status. Both the
+HTTP purge route (`hennery-sessions/src/hats.rs`) and lifecycle hook
+(`hennery-sessions/src/lib.rs::on_hat_purged`) call the **same C1 coordinator**:
+
+1. Under the owner gate, freeze the hat; persist terminal registrations and
+   their deletion obligations, pinned to the old endpoint/epoch/credential.
+   Revoke all affected session tokens in the core transaction and commit;
+   then invoke their revocation cuts. Revoke activity/lease grants and cancel
+   all registered proxy/feed/context work. Complete these cuts before
+   releasing the gate for any remote operation. Freezing alone is insufficient
+   (`gateway/src/scope.rs` currently checks tokens/mounts, not hat freeze).
+2. With no gate/database transaction held, make bounded forget attempts using
+   only the snapshotted old destination and separate lifecycle credential.
+   Normal gateway access is already cut. Retain the minimum destination
+   metadata/secret only while needed for the bounded attempt and recovery;
+   never re-resolve through a changed connection or follow a redirect.
+3. Persist confirmed/unconfirmed receipts, erase retained endpoint/secret
+   snapshots, finish gateway/session/hat cleanup and checkpoint. Local purge
+   can finish with explicitly unconfirmed external deletion under resolved
+   Q1; it cannot restore grants to compensate for a remote failure.
+
+If obligation persistence fails after freeze, **still revoke and cut session
+tokens before returning the error**; leave the hat frozen and local cleanup
+unfinished so the obligation can be retried. Never begin a remote wait on that
+failure path. A crash after freeze or token commit is recovered before serving
+traffic: the coordinator re-runs idempotent token revocation/cuts, then resolves
+obligations. In-memory cuts cannot survive restart, so nothing is reopened
+until durable core/control state has been reconciled. Preserve today's
+gateway-before-session purge ordering; only the minimum old destination
+snapshot may outlive gateway revocation.
+
+Remove activity token hashes, lifecycle secrets, grants and scoped control
+state at completion; retain only owner/hat/request-id/result tombstones like
+existing purge evidence, never content or credentials. Do not retain a hidden
+remote access credential for indefinite retries after completed hat purge.
 
 The reference service additionally validates its grant lease before serving
 MCP reads, writes or startup context: acquire/refresh a maximum-60-second
@@ -264,16 +371,87 @@ against the unconfirmed purge; no revoked token regains access to activity.
 Re-registration must not reactivate that old epoch: erase it first, then use
 a new empty namespace. An arbitrary server may not obey. The UI must never
 report “all external data erased” in that case. Snapshots, exports and provider
-retention remain outside local purge's reach. A registration can be removed without deleting its gateway
-connection only after explicit notice that its namespace will be erased;
-merely unmounting a host is not revocation or deletion.
+retention remain outside local purge's reach. Removing a registration, including
+the unmount transition in §3.3, revokes access immediately and starts this
+bounded deletion protocol, with notice that its namespace will be erased.
+An unresolved remote copy is explicitly unconfirmed after the lease window;
+it never keeps the feed or the old grant usable.
+
+### 3.4.1 Connection edit/delete and crash recovery
+
+C1 wraps **every registered connection edit/delete** and mount removal with
+one lifecycle transition, including the store entry points currently in
+`hennery-gateway/src/store.rs::update`, `delete` and `replace_mounts`.
+Calling only an HTTP handler hook is insufficient: internal/admin paths must
+not bypass it. Label-only edits may conservatively use the same transition;
+no URL, credential or policy change inherits the old active registration.
+
+Under the owner gate and lock order of §3.2, validate the request and expected
+core connection revision/fingerprint, then **commit** a control transition:
+`Active → TerminalPendingForget`. It contains owner/hat, old registration and
+namespace epoch, idempotent forget request id, an immutable snapshot of the
+old endpoint and encrypted lifecycle credential, the old connection fingerprint,
+the intended mutation kind/result fingerprint and a bounded attempt deadline.
+The old registration denies access from this commit onward. Cut its registered
+proxy/feed/context work and revoke its activity/lease tokens before releasing
+the gate. Do not change the core connection yet.
+
+The terminal routing fence remains attached to the connection id even after
+grant/secret erasure: an absent active grant must not fall through to ordinary
+unregistered proxy access. Only a fresh explicit registration or completed
+connection deletion resolves that fence.
+
+Attempt forget against that snapshot only, bounded to five seconds total for
+this transition, including recovery (an expired deadline means unconfirmed).
+No redirect or lookup of a replacement endpoint. Persist the receipt
+(`Confirmed` or `Unconfirmed`, including timeout/unknown outcome) and remove
+the snapshot/secret in the **same control transaction**. Only after that
+durable disposition may the core edit/delete/mount change commit, under the
+gate and expected-old-fingerprint check. The replacement has no active grant:
+register it explicitly with fresh credentials/epoch. The lifecycle credential
+must never follow a changed destination, even when the hostname is unchanged.
+
+There is no cross-database atomic-commit assumption. Recovery is explicit:
+
+| Crash point | Recovery before registered traffic resumes |
+|---|---|
+| Before terminal control commit | Core mutation has not happened; old state remains. Nothing remote was sent. |
+| After terminal commit, before cuts or forget | Deny old registration, complete idempotent revocations/cuts, then attempt only the old pinned destination within the persisted deadline. |
+| During forget or after response but before receipt commit | Outcome unknown; retry the same request id only within the original deadline, otherwise record unconfirmed. Never send to the replacement. |
+| After receipt/secret erasure, before core mutation | Old connection remains disabled. A matching owner retry may apply the intended mutation after checking old fingerprint; no secret or remote retry remains. Recovery does not invent a new edit. |
+| After core mutation, before control completion marker | Compare current core fingerprint/deletion with intended result; mark complete if it matches. A mismatch remains disabled/conflicted for owner resolution; never revive the old grant. |
+| After completion | Receipt remains; no old credential/endpoint snapshot or active grant. New registration is independent. |
+
+Concurrent edits serialize through the gate and terminal-state/fingerprint
+checks, not just the gateway refresh lock. An unexpected core mutation found
+at restart is fail-closed with an explicit unconfirmed obligation; it is never
+treated as successful erasure. Purge consumes these same pending transitions
+and performs its earlier all-hat token revocation before any remote attempt.
 
 ### 3.5 Optional startup context
 
 With the owner's separate opt-in, call the registered server's generic
 `hennery_plugin_context {request_id, namespace_epoch, project_key}` over its
 existing validated HTTP transport and lifecycle credential. The result is
-`PluginContext {text, sources, generated_at, truncated}`, bounded to 8 KiB.
+`PluginContext {entries, generated_at, truncated}`, bounded to 8 KiB.
+Each entry has typed `text`, `source_refs` and required `provenance`. C1 owns
+these generated data types and the source-origin contract; C2 implements
+delivery using the distinct `InputOrigin::PluginContext` variant. It must
+never reuse `Operator` just because the ACP wire carries a prompt.
+
+Preserve `Operator` / `Parent` / `ChildReport` as typed source provenance,
+including their ids, through feed, notes, briefs and every startup entry.
+An entry without authenticated source evidence (for example an imported
+document or agent-written memory without an attested session id) explicitly
+has `Unverified` evidence; never invent one of those three origins. A startup
+entry's claimed verified origin must match its core source reference before
+the UI labels it verified; otherwise refuse it or mark it unverified. This
+source verification is not signed per-session MCP caller attestation.
+Mixed-source summaries retain all source provenance rather than choosing the
+highest-authority origin. The outer `PluginContext` remains untrusted reference
+data even when it quotes a past Operator statement. It cannot approve a tool,
+alter permission policy or satisfy step-up.
+
 Core does not request a memory brief or choose its contents. One provider per
 hat initially avoids combining conflicting context and unbounded latency.
 The reference implementation never calls a model on this path.
@@ -281,9 +459,12 @@ The reference implementation never calls a model on this path.
 Fetch once, just before committing the new session's first prompt. Two-second
 total deadline; unavailable/disabled/unsupported context lets the user's
 prompt proceed with a visible status. Recheck scope and record exposure before
-delivery. Carry an optional generic context block in the existing typed host
+delivery. Carry an optional typed `PluginContext` block in the existing host
 prompt frame, gated by a host capability; prepend it as labelled untrusted
-reference material in the same ACP prompt. No synthetic turn or global hook.
+reference material in the same ACP prompt. User-authored input retains its
+own separate typed origin. No synthetic turn or global hook. Display labels
+and delimiter text cannot change either origin; parsers never reconstruct
+authority by scanning rendered prompt text.
 Store the bounded block and request id with that session's prompt event for
 normal retry/reconciliation; no separate context table. Render provenance
 separately from user-authored text and exclude it from the activity projection.
@@ -338,7 +519,8 @@ Three entry kinds:
 
 - **Session note:** automatic, bounded, dated observation, one per source
   session/hat epoch. Includes covered-through event key, gap/stale state,
-  source references and optional separate owner annotation.
+  source references, typed input provenance/roles and optional separate owner
+  annotation.
 - **Memory:** deliberately retained title and Markdown body, optional kind
   (`user`, `feedback`, `project`, `reference`, `decision`, `entity`), tags,
   author class (`owner`, `agent`, `import`), dates and revision. No automatic
@@ -370,11 +552,19 @@ or deleting a note records suppression so later turns cannot resurrect it.
 Source deletion removes the automatic note and detaches references from
 deliberate entries; scope deletion removes all kinds and pending work.
 
+Keep each excerpt's source role and typed `Operator` / `Parent` / `ChildReport`
+provenance beside the text, in storage and on every retrieval surface. A child
+report saying “the operator approved” remains a child report. Summarisation,
+explicit retention, pinning, editing and export must not silently relabel it
+as Operator evidence. Owner annotation is a separate act with its own author;
+it does not rewrite the original source. Imported or unattested agent content
+retains explicit unverified evidence and cannot manufacture typed authority.
+
 | Tool | Rust-shaped arguments | Result |
 |---|---|---|
-| `memory_recent` | `{project_key?, limit?, cursor?}`; default 5, max 20, within credential's hat | Dated notes, coverage/staleness, next cursor |
-| `memory_search` | `{query, kind?, project_key?, limit?, cursor?}`; default 10, max 20 | Bounded hits with origin, source refs and revision |
-| `memory_brief` | `{subject, project_key?, mode: Deterministic | Model}`; deterministic default | Text, cited source ids, mode used, fallback reason, freshness |
+| `memory_recent` | `{project_key?, limit?, cursor?}`; default 5, max 20, within credential's hat | Dated notes, typed provenance/roles, coverage/staleness, next cursor |
+| `memory_search` | `{query, kind?, project_key?, limit?, cursor?}`; default 10, max 20 | Bounded hits with typed provenance, source refs and revision |
+| `memory_brief` | `{subject, project_key?, mode: Deterministic | Model}`; deterministic default | Text, cited source ids and their typed provenance, mode used, fallback reason, freshness |
 | `memory_remember` | `{title, body, kind?, tags?, idempotency_key}` | Stored id, revision, redaction notice |
 
 All request types reject unknown authority fields, including owner/hat.
@@ -461,6 +651,9 @@ coverage or replaces good content. Coalesce updates, check revision/epoch and
 lease again before commit, discard late output after purge. No automatic paid
 retry on unknown delivery. A provider may retain data already sent; enabling
 model work makes that limitation explicit. Startup always stays deterministic.
+Attach provenance from validated source records after generation, never from
+model-authored labels. A model claiming operator approval cannot upgrade a
+Parent/ChildReport source or the outer PluginContext into operator authority.
 
 ## 6. Scoped predecessor vault import
 
@@ -551,14 +744,29 @@ erasure or leak its own data; core limits what it sends and reports evidence
 truthfully. A reference namespace cannot read another namespace by choosing
 a path, source id, cursor, project filter or requested hat.
 
-Apply existing `hnry_session_` redaction behavior to assembled activity text
-and all reference plug-in text before persistence, FTS, snippets, export and
-model requests. Structured credentials/cookies/Authorization never enter the
-projection. Redact imports, owner/agent writes, unknown metadata and model
-output too, with visible notices. No bodies, queries or private paths in logs.
-Encoded arbitrary secrets remain a documented limit; this does not silently
-resolve plan 8e's broader env-value redaction question. No memory in Web Push,
-service-worker caches or anonymous HTTP responses.
+The current `hennery-sessions/src/redact.rs` recognises only `hnry_session_`.
+**C1 extends the shared first-party redactor before issuing new tokens** to
+include `hnry_activity_`, `hnry_lifecycle_` and `hnry_plugin_`. All use 64
+random hex digits; preserve the existing conservative case-insensitive,
+partial-token behavior (prefix plus at least eight hex digits masks the
+whole token-shaped run). Share the matcher with the plug-in; do not maintain
+drifting scanner definitions. Structured credentials/cookies/Authorization
+never enter the projection.
+
+The ordering is **assemble logical text → redact → truncate → persist/index/
+export/render/send to model**. Bounded streaming assembly must keep enough
+lookbehind to catch prefix and suffix split across chunks; on an assembly cap,
+discard an incomplete sensitive run rather than storing or exporting its
+unredacted prefix. Cover tool-visible/feed/startup text, imported bodies and
+metadata, owner/agent writes, error text and model output. Extend existing
+ingest redaction for the new classes too; do not log raw chunks before the
+scanner. Return visible redaction notices, never token values.
+
+**Arbitrary provider secrets in plaintext are not covered by this shape-based
+redactor**, nor are arbitrary encodings/obfuscations of tokens. Do not claim
+that secret-field exclusion or these prefixes solve plan 8e's broader
+env-value redaction question. No bodies, queries or private paths in logs;
+no memory in Web Push, service-worker caches or anonymous HTTP responses.
 
 Reference purge removes every entry kind, source ref, FTS posting/shadow data,
 cursor/job, import/idempotency record, suppression, settings and namespace
@@ -598,9 +806,35 @@ Core contract tests:
 4. Feed replay, deletion-before-read, source reset, cursor gaps, inventory
    watermark races, old readers, reassign refusal, two-database crash points
    and every plan 9 phase. Revert-probe each scope/cancellation/binding guard.
+   Specifically: register an already-mounted connection while a session runs,
+   let it issue a proxy read, park it, and prove reassignment refuses; race the
+   read/registration/mount change against reassignment in both orders. Assert
+   control-binding failure sends no upstream request. Crash after each of the
+   two stores commits and verify conservative binding/denial on restart.
+   Prove a second collector/gateway writer cannot bypass the optional-store
+   process lock, including the first-registration transition.
+   In both purge entry points, stall remote forget and prove session tokens
+   are already revoked and all streams/feed/context work cut. Repeat through
+   restart and failed obligation persistence. Exercise every §3.4.1 crash
+   row for URL/path changes, deletion and unmount; old lifecycle credentials
+   never reach a replacement endpoint or redirect, even on recovery. Assert
+   unmount immediately cuts the feed/lease and cannot fall through to ordinary
+   proxy access, while the external lease expires within at most 60 seconds.
 5. Startup: same prompt once, generated context excluded from the feed,
    provenance visible, timeout/unsupported path, no reinjection on resume,
    unknown-delivery reconciliation and revocation before dispatch.
+6. Typed provenance round-trips `Operator`, `Parent`, `ChildReport` and outer
+   `PluginContext` through storage, feed, notes, brief and prompt serialization.
+   Supply hostile instructions, spoofed context delimiters and “operator
+   approved” labels in parent/child reports, imports and model output: they
+   must never change typed origin, satisfy an approval/step-up check or acquire
+   operator authority. Revert-probe the origin guard and reject unsupported
+   new input provenance rather than folding it into `UserTurn`/Operator.
+7. Redact every first-party token class, including uppercase/partial tokens,
+   tokens split at every chunk boundary and tokens crossing a truncation cap,
+   before feed/context persistence, FTS, export and model dispatch. Include
+   metadata keys/values and errors; negative fixtures document that an
+   arbitrary plaintext provider secret is not promised to be detected.
 
 Reference plug-in tests:
 
@@ -638,8 +872,8 @@ memory. “Small core” means a narrow generic API, not waived security work.
 
 | Order | Plan | Size | Completion boundary |
 |---|---|---|---|
-| C1 | Generic optional registration, activity pull and deletion contract | M–L, 3–4 tasks | Existing mounts reused; optional control store, scoped feed/lease, plan 9 receipts, crash/isolation tests; no memory code |
-| C2 | Optional generic startup context | S–M, 2 tasks | Capability-gated prompt block, timeout/reconciliation, exposure/reassignment guard and both live adapters; may follow R1 |
+| C1 | Generic feed/lifecycle: namespace identity, optional registration, activity and deletion | M–L, 3–4 tasks | Existing mounts reused; optional control store, running-session exposure/reassignment gate, typed provenance/PluginContext contract, unmount cuts, terminal connection transitions, revoke-before-wait purge, new-token redaction and crash/isolation tests; no memory code |
+| C2 | Optional generic startup context delivery | S–M, 2 tasks | Uses C1's typed PluginContext and exposure guard; capability-gated prompt block, timeout/reconciliation and both live adapters; may follow R1 |
 | R1 | Reference memory service, store, four MCP tools and deterministic note consumer | L, about 4 tasks | Separate binary/data/auth, FTS, no-model operation, lease/revoke/purge, live tool proof; consumes C1 |
 | R2 | Reference management UI, scoped vault import and export | L, about 4 tasks | Separate authenticated screen, curated CRUD, manifest preview/apply, provenance and deletion/export proof; consumes R1 |
 | R3 | Optional model summaries/briefs | M, about 3 tasks, later | Per-hat credentials/egress/budgets, usage visibility, live provider test and deterministic fallback |
@@ -650,16 +884,27 @@ smaller PRs within their plans. Independent minimum continuity is C1, C2,
 R1, R2, with no model account. Existing legacy adaptation is an alternative
 implementation of R1/R2, not extra core scope or automatic parity.
 
+C1 owns the generic namespace identity/feed/lifecycle contract and its
+provenance wire shapes; delegation depends on that contract. Delegation D1
+owns its internal `SessionToolContext` seam, and D3 supplies parent/child
+turn-origin production. C1 can be implemented against the typed contract
+before D3 execution, but must reject unsupported delegated origins until the
+producer is available. C2 owns actual startup injection and adds the typed
+PluginContext origin before writing any prompt. The **generic signed-principal
+extension** (signed per-session attestation) is deferred to a separate reviewed
+plan, named identically in delegation; it is not hidden inside C1 or R1.
+
 Each plan uses plan 3c's structure, built/replayed code and repository checks.
 Targeted tests plus the full required suite run per implemented task; this
 document-only change runs consistency/hygiene checks, not builds. Record real
 Linux/macOS and live-adapter results before calling the feature ready.
 
-Parent review focus: separate optional state and two-database lifecycle races;
-grant/namespace authentication; Q1 and remote purge truthfulness; reference
-management auth/cost; FTS erasure; import scope mapping; startup reconciliation
-and reassignment. The delegation designer should confirm that memory remains
-an external mounted plug-in, with no new dependency on the built-in hennery
-MCP, and share gateway/session interfaces rather than duplicate them.
+Review record: Codex gpt-6-astra reviewed `0fe663b..8c3601ad` on the maintainer's
+behalf, 2026-10-14: **approve after amendments**, no Critical findings. This
+revision addresses running-session exposure, revoke-before-wait purge,
+durable connection transitions, new-token redaction and the parent's later
+shared-contract ruling; Q1 is resolved above. Request scoped re-confirmation
+of those changes, especially the two-store crash ordering and provenance
+boundaries. It is not yet an unconditional approval or implementation claim.
 
 Generated with Claude AI — please review before distribution.

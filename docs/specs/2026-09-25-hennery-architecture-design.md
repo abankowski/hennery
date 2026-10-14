@@ -95,8 +95,10 @@ no extra tools/context, optional control database or background model work.
 
 The [memory plug-in design](2026-10-14-memory-design.md) proposes that contract,
 the separate reference implementation, scoped legacy import, and integration
-with plan 9 purge. Its technical recommendations and external-deletion product
-question remain subject to review. This amendment authorises the scope, not
+with plan 9 purge. The operator permits local purge with explicitly unconfirmed
+external deletion and a maximum 60-second reference-service lease; this is no
+claim of immediate external erasure. Technical amendments remain subject to
+review. This amendment authorises the scope, not
 an implementation claim or a relaxation of hats. It also narrows frontend
 §13's exclusion: memory UI belongs to the optional service, not the core app.
 
