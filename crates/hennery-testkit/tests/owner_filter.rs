@@ -58,7 +58,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-gateway/src/plugin.rs",
         include_str!("../../hennery-gateway/src/plugin.rs"),
-        27,
+        41,
     ),
     (
         "hennery-kernel/src/operator.rs",
@@ -99,7 +99,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-sessions/src/store.rs",
         include_str!("../../hennery-sessions/src/store.rs"),
-        152,
+        153,
     ),
     (
         "hennery-gateway/src/store.rs",
@@ -110,7 +110,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-gateway/src/tokens.rs",
         include_str!("../../hennery-gateway/src/tokens.rs"),
-        7,
+        8,
     ),
     (
         "hennery-gateway/src/scope.rs",
@@ -122,7 +122,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-gateway/src/session.rs",
         include_str!("../../hennery-gateway/src/session.rs"),
-        1,
+        2,
     ),
     (
         "hennery-gateway/src/stdio.rs",
@@ -132,7 +132,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
 ];
 
 /// The gateway store's statements, including stdio and OAuth clients.
-const GATEWAY_STATEMENTS: usize = 49;
+const GATEWAY_STATEMENTS: usize = 53;
 
 /// Files under `crates/*/src` with SQL that the audit does not read, and
 /// why (3b-iii review, A3). Any other such file fails
