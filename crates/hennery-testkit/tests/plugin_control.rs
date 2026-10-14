@@ -2045,3 +2045,90 @@ async fn completed_transition_minimizes_metadata_and_deleted_connection_erases_e
         }
     }
 }
+
+#[tokio::test]
+async fn frozen_hat_restart_revokes_before_forget_even_when_obligation_persistence_fails() {
+    for fault in [false, true] {
+        let mut upstream = Upstream::start().await;
+        let w = registered_at(&upstream.url, true);
+        w.core(|tx| {
+            hennery_gateway::tokens::mint_in(tx, w.sessions.owner_id(), "running", "host", &w.hat, 5).unwrap();
+        });
+        assert!(matches!(
+            w.hosts.begin_purge(&w.hat, 5).unwrap(),
+            hennery_kernel::hats::PurgeStart::Frozen { .. }
+        ));
+        if fault {
+            rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap().execute_batch("CREATE TRIGGER refuse_terminal BEFORE UPDATE ON plugin_registrations BEGIN SELECT RAISE(ABORT,'fault'); END;").unwrap();
+        }
+        let World {
+            _dir: dir,
+            path,
+            sessions,
+            hosts,
+            gateway,
+            hat: _,
+            id: _,
+            token: _,
+        } = w;
+        drop(sessions);
+        drop(hosts);
+        drop(gateway);
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "plugin_recovery_child_entry", "--nocapture"])
+            .env("HENNERY_PLUGIN_RECOVERY_DB", &path)
+            .env("HOME", dir.path())
+            .env("XDG_DATA_HOME", dir.path())
+            .env("XDG_CONFIG_HOME", dir.path())
+            .env_remove("HENNERY_DATA_DIR")
+            .env_remove("HENNERY_HOST_DATA_DIR")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let finished = tokio::task::spawn_blocking(move || child.wait_with_output().unwrap());
+        if !fault {
+            let (headers, body) = upstream.entered().await;
+            assert_eq!(headers["authorization"], "Bearer hnry_lifecycle_deadbeefdeadbeef");
+            assert_eq!(body["method"], "hennery_plugin_forget");
+            let core = rusqlite::Connection::open(&path).unwrap();
+            assert_eq!(
+                core.query_row(
+                    "SELECT count(*) FROM gw_session_tokens WHERE revoked_at IS NULL",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                0,
+                "startup must durably revoke frozen-hat session tokens before remote forget"
+            );
+            upstream.release.add_permits(1);
+        }
+        let output = tokio::time::timeout(std::time::Duration::from_secs(15), finished)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            output.status.success(),
+            !fault,
+            "startup outcome: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let core = rusqlite::Connection::open(&path).unwrap();
+        assert_eq!(
+            core.query_row(
+                "SELECT count(*) FROM gw_session_tokens WHERE revoked_at IS NULL",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0,
+            "startup must commit revocation even when recording a forget obligation fails"
+        );
+        assert!(
+            upstream.seen.try_recv().is_err(),
+            "fault recovery must not send remote lifecycle traffic"
+        );
+    }
+}
