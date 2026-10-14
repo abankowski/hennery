@@ -1,3 +1,4 @@
 # The image takes only the staged binary (see Dockerfile).
 *
 !dist/
+!LICENSE
