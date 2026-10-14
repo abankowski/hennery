@@ -267,7 +267,7 @@ impl Upstream {
                     let gate = gate.clone();
                     async move {
                         sent.send((headers, body.clone())).unwrap();
-                        if body["method"] == "ping" {
+                        if body["method"] == "ping" && mode != Some("finite") {
                             use futures::StreamExt;
                             let first = if mode == Some("sse") {
                                 "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"
@@ -2244,4 +2244,346 @@ async fn first_registered_http_proxy_request_binds_before_upstream_observes_it()
     }
     server.abort();
     let _ = server.await;
+}
+
+#[tokio::test]
+async fn failed_control_binding_insert_or_commit_denies_the_http_request_before_upstream() {
+    for commit in [false, true] {
+        let mut upstream = Upstream::start_mode(Some("finite")).await;
+        upstream.release.add_permits(1);
+        let w = registered_at(&upstream.url, true);
+        w.sessions
+            .create_session("late-failed", "host", "fake", "/scratch", &w.hat, None)
+            .unwrap();
+        let token = w.core(|tx| {
+            hennery_gateway::tokens::mint_in(tx, w.sessions.owner_id(), "late-failed", "host", &w.hat, 5).unwrap()
+        });
+        let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+        if commit {
+            raw.execute_batch("CREATE TABLE probe_parent(id INTEGER PRIMARY KEY); CREATE TABLE probe_deferred(id INTEGER REFERENCES probe_parent(id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER refuse_bind_commit AFTER INSERT ON plugin_bindings WHEN NEW.session_id = 'late-failed' BEGIN INSERT INTO probe_deferred VALUES(1); END;").unwrap();
+        } else {
+            raw.execute_batch("CREATE TRIGGER refuse_bind_insert BEFORE INSERT ON plugin_bindings WHEN NEW.session_id = 'late-failed' BEGIN SELECT RAISE(ABORT,'binding insert fault'); END;").unwrap();
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp/test-plugin", listener.local_addr().unwrap());
+        let app = hennery_gateway::proxy::router(hennery_gateway::proxy::ProxyState::for_sessions(
+            w.runtime(),
+            Default::default(),
+        ));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let response = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap()
+            .post(url)
+            .bearer_auth(token.expose())
+            .header("accept", "application/json, text/event-stream")
+            .json(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"ping"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "control binding {} failure must deny before forwarding",
+            if commit { "commit" } else { "insert" }
+        );
+        assert!(
+            upstream.seen.try_recv().is_err(),
+            "a completed binding denial must send no upstream request"
+        );
+        assert!(
+            !w.core(|tx| w.gateway.plugins().bound_in(tx, "late-failed").unwrap()),
+            "failed control transaction cannot leave a partially exported source"
+        );
+        server.abort();
+        let _ = server.await;
+    }
+}
+
+#[test]
+fn registration_and_mount_add_serialize_with_reassignment_in_both_orders() {
+    for mount in [false, true] {
+        for exposure_first in [false, true] {
+            let w = registered_world();
+            let hennery_kernel::hats::HatChange::Done(other) = w.hosts.create_hat("Other", None, 4).unwrap() else {
+                panic!("hat")
+            };
+            let host = if mount {
+                let key = HostKey::from_seed([8; 32]);
+                w.hosts
+                    .register(
+                        "second",
+                        &Enrollment {
+                            public_key: key.public_key_hex(),
+                            name: "Second".into(),
+                            host_version: "0.0.0".into(),
+                            platform: "test".into(),
+                        },
+                        1,
+                    )
+                    .unwrap();
+                "second"
+            } else {
+                rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db"))
+                    .unwrap()
+                    .execute("DELETE FROM plugin_registrations", [])
+                    .unwrap();
+                w.core(|tx| {
+                    tx.execute("DELETE FROM settings WHERE key LIKE 'plugin_epoch:%'", [])
+                        .unwrap();
+                });
+                "host"
+            };
+            w.sessions
+                .create_session("ordered", host, "fake", "/scratch", &w.hat, None)
+                .unwrap();
+            let expose = || {
+                if mount {
+                    w.gateway
+                        .replace_mounts(&w.id, &["host".into(), "second".into()])
+                        .unwrap();
+                } else {
+                    issue_again(&w);
+                }
+            };
+            if exposure_first {
+                expose();
+            }
+            w.sessions
+                .ingest(
+                    "ordered",
+                    1,
+                    &hennery_proto::frames::SessionBody::session_started("request", "agent"),
+                )
+                .unwrap();
+            w.sessions
+                .ingest(
+                    "ordered",
+                    2,
+                    &hennery_proto::frames::SessionBody::SessionParked {
+                        reason: hennery_proto::frames::ParkReason::Idle,
+                    },
+                )
+                .unwrap();
+            let moved = Store::open(&w.path)
+                .unwrap()
+                .reassign_hat("ordered", &other.id)
+                .unwrap();
+            if !exposure_first {
+                assert!(matches!(moved, hennery_sessions::store::Reassign::Done(_)));
+                expose();
+            } else {
+                assert_eq!(moved, hennery_sessions::store::Reassign::PluginExposure);
+            }
+            assert_eq!(
+                w.core(|tx| w.gateway.plugins().bound_in(tx, "ordered").unwrap()),
+                exposure_first,
+                "mount={mount} exposure_first={exposure_first}"
+            );
+            if !exposure_first {
+                assert!(
+                    w.core(|tx| w.gateway.plugins().admit_in(tx, &w.id, "ordered", &w.hat))
+                        .is_err()
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn explicit_repair_and_disposition_erase_rotation_and_inventory_state() {
+    for repair in [false, true] {
+        let mut upstream = Upstream::start().await;
+        let w = registered_at(&upstream.url, true);
+        w.sessions
+            .ingest(
+                "running",
+                1,
+                &hennery_proto::frames::SessionBody::session_started("request", "agent"),
+            )
+            .unwrap();
+        let next = w.gateway.rotate_plugin(&w.id, None).unwrap().token.unwrap();
+        w.sessions.source_inventory(&w.token, None, 1).unwrap();
+        let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+        for table in ["plugin_rotations", "plugin_inventory", "plugin_inventory_sources"] {
+            assert!(
+                raw.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))
+                    .unwrap()
+                    > 0,
+                "seed {table}"
+            );
+        }
+        let watch = w.core(|tx| w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat).unwrap());
+        if repair {
+            let consent = hennery_proto::plugin_management::PluginRecoveryConfirmation {
+                new_empty_namespace: true,
+                unresolved_external_copy_acknowledged: true,
+            };
+            w.core(|tx| w.gateway.plugins().repair_registration_in(tx, &w.id, &consent, 6))
+                .unwrap();
+        } else {
+            assert!(mutate(&w, "edit").is_err());
+            upstream.release.add_permits(1);
+            w.runtime().settle_plugin(&w.id).await.unwrap();
+            upstream.entered().await;
+        }
+        assert!(watch.token().is_cancelled());
+        for table in ["plugin_rotations", "plugin_inventory", "plugin_inventory_sources"] {
+            assert_eq!(
+                raw.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                0,
+                "repair={repair}: erase {table}"
+            );
+        }
+        w.core(|tx| {
+            assert!(w.gateway.plugins().authenticate_in(tx, &w.token, 7).unwrap().is_none());
+            assert!(w.gateway.plugins().authenticate_in(tx, &next, 7).unwrap().is_none());
+        });
+        assert_eq!(raw.query_row("SELECT count(*) FROM plugin_registrations WHERE token_hash IS NOT NULL OR lifecycle IS NOT NULL OR endpoint IS NOT NULL",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+}
+
+#[test]
+fn optional_hat_cleanup_refuses_live_core_sessions_connections_or_unsettled_secrets() {
+    let w = registered_world();
+    assert!(
+        w.core(|tx| w.gateway.plugins().clear_purged_anchors_in(tx, &w.hat))
+            .is_err()
+    );
+    assert!(
+        w.core(|tx| w.gateway.plugins().finish_hat_purge_in(tx, &w.hat))
+            .is_err()
+    );
+    assert!(matches!(
+        w.hosts.begin_purge(&w.hat, 5).unwrap(),
+        hennery_kernel::hats::PurgeStart::Frozen { .. }
+    ));
+    w.core(|tx| {
+        tx.execute("UPDATE sessions SET lifecycle = 'deleted' WHERE id = 'running'", [])
+            .unwrap();
+        tx.execute("DELETE FROM gw_mounts", []).unwrap();
+        tx.execute("DELETE FROM gw_credentials", []).unwrap();
+        tx.execute("DELETE FROM gw_connections", []).unwrap();
+    });
+    assert!(
+        w.sessions.finish_plugin_purge(&w.hat).is_err(),
+        "live lifecycle secrets must settle before optional evidence is deleted"
+    );
+    let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+    assert_eq!(
+        raw.query_row(
+            "SELECT count(*) FROM plugin_registrations WHERE lifecycle IS NOT NULL",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn final_purge_clears_orphaned_optional_rows_and_anchors_after_durable_core_tombstones() {
+    let w = registered_world();
+    w.sessions
+        .ingest(
+            "running",
+            1,
+            &hennery_proto::frames::SessionBody::session_started("request", "agent"),
+        )
+        .unwrap();
+    w.gateway.rotate_plugin(&w.id, None).unwrap();
+    w.sessions.source_inventory(&w.token, None, 1).unwrap();
+    let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+    // Model stale optional evidence restored after authoritative core deletion.
+    // No active namespace or lifecycle secret remains in the restored row.
+    raw.execute(
+        "UPDATE plugin_registrations SET state = 'complete', token_hash = NULL, endpoint = NULL, lifecycle = NULL",
+        [],
+    )
+    .unwrap();
+    assert!(matches!(
+        w.hosts.begin_purge(&w.hat, 5).unwrap(),
+        hennery_kernel::hats::PurgeStart::Frozen { .. }
+    ));
+    w.core(|tx| {
+        tx.execute("UPDATE sessions SET lifecycle = 'deleted' WHERE id = 'running'", [])
+            .unwrap();
+        tx.execute("DELETE FROM gw_mounts", []).unwrap();
+        tx.execute("DELETE FROM gw_credentials", []).unwrap();
+        tx.execute("DELETE FROM gw_connections", []).unwrap();
+    });
+    for table in [
+        "plugin_registrations",
+        "plugin_bindings",
+        "plugin_generations",
+        "plugin_rotations",
+        "plugin_inventory",
+        "plugin_inventory_sources",
+    ] {
+        assert!(
+            raw.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))
+                .unwrap()
+                > 0,
+            "seed {table}"
+        );
+    }
+    w.sessions.finish_plugin_purge(&w.hat).unwrap();
+    for table in [
+        "plugin_registrations",
+        "plugin_bindings",
+        "plugin_generations",
+        "plugin_rotations",
+        "plugin_inventory",
+        "plugin_inventory_sources",
+    ] {
+        assert_eq!(
+            raw.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "purge removes stale {table}"
+        );
+    }
+    assert_eq!(
+        w.core(|tx| tx
+            .query_row(
+                "SELECT count(*) FROM settings WHERE key LIKE 'plugin_epoch:%' OR key LIKE 'plugin_generation:%'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap()),
+        0,
+        "authoritative deletion removes both core anchor types"
+    );
+}
+
+#[test]
+fn explicit_repair_cannot_abandon_a_frozen_hat_namespace() {
+    let w = registered_world();
+    assert!(matches!(
+        w.hosts.begin_purge(&w.hat, 5).unwrap(),
+        hennery_kernel::hats::PurgeStart::Frozen { .. }
+    ));
+    let consent = hennery_proto::plugin_management::PluginRecoveryConfirmation {
+        new_empty_namespace: true,
+        unresolved_external_copy_acknowledged: true,
+    };
+    assert!(
+        w.core(|tx| w.gateway.plugins().repair_registration_in(tx, &w.id, &consent, 6))
+            .is_err()
+    );
+    let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+    assert_eq!(
+        raw.query_row(
+            "SELECT count(*) FROM plugin_registrations WHERE state = 'active' AND lifecycle IS NOT NULL",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1,
+        "failed repair preserves pending purge evidence"
+    );
 }
