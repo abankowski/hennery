@@ -467,6 +467,24 @@ mod tests {
 mod recovery_tests {
     use super::*;
     #[test]
+    fn malformed_binary_journal_is_archived_byte_for_byte_without_reinterpreting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        HostKey::from_seed([82; 32])
+            .save(&dir.path().join("host.key.pending"))
+            .unwrap();
+        let bytes = [0xff, 0x00, 0x01];
+        crate::identity::write_private(&dir.path().join(JOURNAL), &bytes).unwrap();
+        assert!(inspect(dir.path()).is_err());
+        let id = artifacts_id(dir.path()).unwrap();
+        archive(dir.path(), &id).unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join(format!("enrollment-archive-{id}/{JOURNAL}"))).unwrap(),
+            bytes
+        );
+        assert_eq!(inspect(dir.path()).unwrap(), EnrollmentState::Clear);
+        assert!(require_automatic_join_allowed(dir.path()).is_err());
+    }
+    #[test]
     fn legacy_artifacts_archive_under_their_bound_id_and_never_auto_pair() {
         let dir = tempfile::tempdir().unwrap();
         HostKey::from_seed([81; 32])
