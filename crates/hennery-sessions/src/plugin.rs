@@ -102,7 +102,8 @@ impl Store {
     pub fn lease(&self, token: &str) -> Result<i64> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        self.plugin_grant_in(&tx, token, false)?;
+        let grant = self.plugin_grant_in(&tx, token, false)?;
+        self.plugins().charge(&grant, 128)?;
         tx.commit()?;
         Ok(unix_now().saturating_add(60))
     }
@@ -113,6 +114,7 @@ impl Store {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let grant = self.plugin_grant_in(&tx, token, true)?;
+        plugins.charge(&grant, PAGE_BYTES)?;
         let high = watermark(&tx, self.owner_id())?;
         let after = match after {
             Some(cursor) => plugins
@@ -301,6 +303,7 @@ impl Store {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let grant = self.plugin_grant_in(&tx, token, true)?;
+        plugins.charge(&grant, PAGE_BYTES)?;
         let first;
         let cursor = match cursor {
             Some(cursor) => cursor,

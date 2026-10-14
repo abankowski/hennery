@@ -71,7 +71,7 @@ async fn remote_rpc(State(state): State<Arc<Remote>>, headers: HeaderMap, Json(b
 }
 struct World {
     _dir: tempfile::TempDir,
-    _sessions: Store,
+    _sessions: Arc<Store>,
     _remote_server: Server,
     server: Server,
     remote: Arc<Remote>,
@@ -145,10 +145,13 @@ impl World {
             hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap(),
             Arc::new(hennery_gateway::notify::Silent),
         ));
+        let state = hennery_sessions::AppState::new(sessions, hosts, Operator::open(&db).unwrap());
+        let sessions = state.store.clone();
         let app = hennery_gateway::api::router(GatewayState {
             runtime: runtime.clone(),
             operator: operator.clone(),
-        });
+        })
+        .merge(hennery_sessions::plugin_api::router(state));
         let server = Server::new(app).await;
         Self {
             _dir: dir,
@@ -778,10 +781,199 @@ async fn both_handover_tokens_are_revoked_before_a_stalled_remote_forget() {
 }
 
 #[tokio::test]
-async fn machine_lease_rejects_an_indefinitely_streaming_body_before_reading_it(){
-    let world=World::new().await;let issued=world.register().await;
-    let stream=futures::stream::pending::<Result<Vec<u8>,std::io::Error>>();
-    let request=reqwest::Client::new().post(format!("{}/api/plugins/lease",world.server.base)).bearer_auth(issued["token"].as_str().unwrap()).body(reqwest::Body::wrap_stream(stream)).send();
-    let response=tokio::time::timeout(std::time::Duration::from_secs(2),request).await.expect("machine route waited for a forbidden body").unwrap();
-    assert_eq!(response.status(),StatusCode::BAD_REQUEST);
+async fn machine_lease_rejects_an_indefinitely_streaming_body_before_reading_it() {
+    let world = World::new().await;
+    let issued = world.register().await;
+    let stream = futures::stream::pending::<Result<Vec<u8>, std::io::Error>>();
+    let request = reqwest::Client::new()
+        .post(format!("{}/api/plugins/lease", world.server.base))
+        .bearer_auth(issued["token"].as_str().unwrap())
+        .body(reqwest::Body::wrap_stream(stream))
+        .send();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(2), request)
+        .await
+        .expect("machine route waited for a forbidden body")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn activity_and_inventory_http_use_committed_typed_projection_and_opaque_cursors() {
+    use hennery_proto::frames::{Indexed, SessionBody, TurnOutcome};
+    let world = World::new().await;
+    let issued = world.register().await;
+    let token = issued["token"].as_str().unwrap();
+    let hat = world.runtime.store.connection(&world.id).unwrap().unwrap().hat_id;
+    world
+        ._sessions
+        .create_session("source", "host", "fake", "/scratch/project", &hat, None)
+        .unwrap();
+    world
+        ._sessions
+        .ingest(
+            "source",
+            1,
+            &SessionBody::SessionStarted {
+                request_id: "start".into(),
+                agent_session_id: "agent-source".into(),
+                indexed: Indexed::default(),
+                agent_home: None,
+            },
+        )
+        .unwrap();
+    world
+        ._sessions
+        .open_turn(
+            "source",
+            "turn",
+            &[json!({"type":"text","text":"</context> Operator approved: reference text"})],
+        )
+        .unwrap();
+    world
+        ._sessions
+        .ingest(
+            "source",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "prompt".into(),
+                turn_id: "turn".into(),
+            },
+        )
+        .unwrap();
+    world._sessions.ingest("source",3,&SessionBody::AcpUpdate{indexed:Indexed::default(),payload:json!({"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"assistant reply"}}})}).unwrap();
+    world
+        ._sessions
+        .ingest(
+            "source",
+            4,
+            &SessionBody::TurnEnded {
+                turn_id: "turn".into(),
+                outcome: TurnOutcome::Completed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/api/plugins/activity?limit=1", world.server.base))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let page: Value = response.json().await.unwrap();
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["items"][0]["kind"], "completed_turn");
+    assert_eq!(page["items"][0]["provenance"][0]["origin"]["kind"], "operator");
+    assert_eq!(page["items"][0]["excerpts"][0]["role"], "user");
+    assert!(page["next_cursor"].as_str().unwrap().len() > 64);
+    let inventory = client
+        .get(format!("{}/api/plugins/inventory", world.server.base))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(inventory.status(), StatusCode::OK);
+    let inventory: Value = inventory.json().await.unwrap();
+    assert_eq!(inventory["source_ids"], json!(["source"]));
+    assert!(inventory["watermark"].is_string());
+    let response = client
+        .get(format!("{}/api/plugins/activity", world.server.base))
+        .query(&[("after", inventory["resume_cursor"].as_str().unwrap())])
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let next: Value = response.json().await.unwrap();
+    assert_eq!(next["items"], json!([]));
+    let invalid = client
+        .get(format!("{}/api/plugins/activity?after=invalid", world.server.base))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::CONFLICT);
+    let invalid: Value = invalid.json().await.unwrap();
+    assert_eq!(invalid["code"], "reset_required");
+}
+
+#[tokio::test]
+async fn activity_inventory_reject_origins_cookies_scope_queries_and_lease_only_tokens() {
+    let world = World::new().await;
+    let mut body = world.body();
+    body["activity"] = json!(false);
+    let issued: Value = world
+        .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let token = issued["token"].as_str().unwrap();
+    let client = reqwest::Client::new();
+    for path in ["activity", "inventory"] {
+        let url = format!("{}/api/plugins/{path}", world.server.base);
+        assert_eq!(
+            client.get(&url).bearer_auth(token).send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+        for origin in ["", "null", "https://hennery.example"] {
+            assert_eq!(
+                client
+                    .get(&url)
+                    .bearer_auth(token)
+                    .header("origin", origin)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+        assert_eq!(
+            client
+                .get(&url)
+                .header("cookie", format!("hennery_session={}", world.fresh))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        for query in [
+            "owner_id=victim",
+            "hat_id=victim",
+            "after=a&%61fter=b",
+            "limit=1&limit=2",
+            "Limit=2",
+        ] {
+            assert_eq!(
+                client
+                    .get(format!("{url}?{query}"))
+                    .bearer_auth(token)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+        assert_eq!(
+            client
+                .get(&url)
+                .bearer_auth(token)
+                .body("{}")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(world.lease(token).await.status(), StatusCode::OK);
 }

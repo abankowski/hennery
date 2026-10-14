@@ -7,7 +7,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Request, State},
     handler::Handler,
     http::{HeaderMap, StatusCode, header},
     middleware,
@@ -76,6 +76,12 @@ pub fn machine_token(headers: &HeaderMap) -> Option<&str> {
     }
     let token = value.strip_prefix("Bearer ")?;
     plugin::is_activity_token(token).then_some(token)
+}
+/// These routes have no body schema. Refuse unknown-length/chunked bodies
+/// before polling them, so a caller cannot hold a task with a silent stream.
+pub fn empty_machine_body(request: &Request) -> bool {
+    use axum::body::HttpBody;
+    !request.headers().contains_key(header::TRANSFER_ENCODING) && request.body().size_hint().exact() == Some(0)
 }
 /// URL decoding happens before uniqueness/type checks; encoded aliases do not
 /// bypass the same policy. Scope/token authority is never taken from queries.
@@ -254,11 +260,7 @@ async fn lease(State(state): State<GatewayState>, request: axum::extract::Reques
     }
     let token = token.to_string();
     // No caller-controlled lease body or alternate credential transport.
-    let bytes = match axum::body::to_bytes(request.into_body(), 0).await {
-        Ok(b) => b,
-        Err(_) => return error(StatusCode::BAD_REQUEST, "invalid_body"),
-    };
-    if !bytes.is_empty() {
+    if !empty_machine_body(&request) {
         return error(StatusCode::BAD_REQUEST, "invalid_body");
     }
     let watch = match state.runtime.store.watch_plugin(&token) {

@@ -187,7 +187,10 @@ impl crate::store::GatewayStore {
         let tx = conn.transaction()?;
         self.plugins().revoke_registration_in(&tx, id, now)?;
         tx.commit()?;
-        self.plugins().complete_in(&conn, id)
+        let completion = conn.transaction()?;
+        self.plugins().complete_in(&completion, id)?;
+        completion.commit()?;
+        Ok(())
     }
     pub fn rotate_plugin(&self, id: &str, finish: Option<&str>) -> Result<RotatePluginResponse> {
         let mut conn = self.conn();

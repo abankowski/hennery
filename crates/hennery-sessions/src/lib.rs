@@ -10,6 +10,7 @@ pub mod hub;
 pub mod notify;
 pub mod offline;
 pub mod plugin;
+pub mod plugin_api;
 pub mod projects;
 pub mod push;
 mod redact;
@@ -168,6 +169,7 @@ pub fn router(state: AppState) -> Router {
         .merge(projects::router(state.clone()))
         .merge(push::router(state.clone()))
         .merge(view::router(state.clone()))
+        .merge(plugin_api::router(state.clone()))
         .merge(hennery_kernel::auth_api::router(state.operator.clone()))
         .merge(hennery_kernel::capabilities::router(state.operator.clone()))
         .merge(hennery_kernel::health::router(state.operator.clone()))
