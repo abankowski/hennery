@@ -2527,6 +2527,22 @@ impl Store {
         self.open_turn_with(session_id, turn_id, content, &[])
     }
 
+    /// C1's typed production boundary. Delegation producers are not enabled
+    /// until D3; accepting their wire types here would manufacture authority.
+    pub fn open_turn_with_origin(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        content: &[Value],
+        origin: &hennery_proto::plugin::InputOrigin,
+    ) -> Result<bool> {
+        anyhow::ensure!(
+            matches!(origin, hennery_proto::plugin::InputOrigin::Operator {}),
+            "unsupported input origin"
+        );
+        self.open_turn(session_id, turn_id, content)
+    }
+
     /// Open a turn for a checked prompt (plan 6a): the turn holds the
     /// stored blocks and its links to the images (plan 9a decision 6), and
     /// each image gets the owner's row, if it has none yet. Its file must
@@ -3671,7 +3687,11 @@ impl Store {
                         )
                         .optional()?;
                     if let Some(content) = content {
-                        let body = json!({ "turn_id": turn_id, "content": serde_json::from_str::<Value>(&content)? });
+                        // Only the authenticated operator producer exists in
+                        // C1. This event is collector-written, never copied
+                        // from an ACP payload or inferred from prompt text.
+                        let body = json!({ "turn_id": turn_id, "content": serde_json::from_str::<Value>(&content)?,
+                            "origin": hennery_proto::plugin::InputOrigin::Operator {} });
                         let user_turn = collector_event(&tx, &self.owner, session_id, "user_turn", body, &ts)?;
                         link_attachments(&tx, &self.owner, user_turn.event_id, &user_turn.body["content"])?;
                         created.push(user_turn);

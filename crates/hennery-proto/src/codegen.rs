@@ -33,6 +33,7 @@ pub fn render_schema() -> String {
     }
     add!(
         plugin::PluginActivityPage,
+        plugin::PluginSourceInventoryPage,
         plugin::PluginContext,
         plugin::PluginCapabilities,
         plugin::ForgetReceipt,
@@ -197,6 +198,7 @@ pub fn render_ts() -> String {
         plugin::PluginActivityItem,
         plugin::ActivityBody,
         plugin::PluginActivityPage,
+        plugin::PluginSourceInventoryPage,
         plugin::PluginCapabilities,
         plugin::ForgetStatus,
         plugin::ForgetReceipt,

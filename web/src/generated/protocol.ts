@@ -24,6 +24,12 @@ export type ActivityBody = { "kind": "completed_turn", turn_id: string, project_
 
 export type PluginActivityPage = { version: number, items: Array<PluginActivityItem>, next_cursor: string, has_more: boolean, lease_until: number, };
 
+/**
+ * A source-id snapshot at an opaque watermark. Resume activity only after
+ * consuming every inventory page; the resume cursor does not backfill text.
+ */
+export type PluginSourceInventoryPage = { version: number, source_ids: Array<string>, next_cursor: string | null, resume_cursor: string, watermark: string, lease_until: number, };
+
 export type PluginCapabilities = { version: number, activity_v1: boolean, forget_v1: boolean, startup_context_v1: boolean, };
 
 export type ForgetStatus = "confirmed" | "unconfirmed";

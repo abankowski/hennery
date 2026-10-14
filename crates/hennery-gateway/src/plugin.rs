@@ -1,6 +1,8 @@
 //! Generic optional plug-in registration, exposure, and terminal transitions.
 //! The core transaction is always held before opening the control transaction.
 
+pub mod feed;
+
 use crate::{
     crypto,
     key::MasterKey,

@@ -3243,6 +3243,47 @@
       ],
       "type": "object"
     },
+    "PluginSourceInventoryPage": {
+      "additionalProperties": false,
+      "description": "A source-id snapshot at an opaque watermark. Resume activity only after\nconsuming every inventory page; the resume cursor does not backfill text.",
+      "properties": {
+        "lease_until": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resume_cursor": {
+          "type": "string"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "watermark": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "source_ids",
+        "resume_cursor",
+        "watermark",
+        "lease_until"
+      ],
+      "type": "object"
+    },
     "Project": {
       "description": "One git repository `list_projects` found under a workspace root (ACP\ncore §7).",
       "properties": {
@@ -3257,6 +3298,7 @@
       "type": "object"
     },
     "PromptRequest": {
+      "additionalProperties": false,
       "properties": {
         "content": {
           "items": true,

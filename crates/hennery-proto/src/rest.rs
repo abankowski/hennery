@@ -23,6 +23,7 @@ pub struct StartSessionResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
 pub struct PromptRequest {
     #[ts(type = "unknown[]")]
     pub content: Vec<Value>,

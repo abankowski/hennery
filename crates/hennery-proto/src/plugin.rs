@@ -105,6 +105,20 @@ pub struct PluginActivityPage {
     pub lease_until: i64,
 }
 
+/// A source-id snapshot at an opaque watermark. Resume activity only after
+/// consuming every inventory page; the resume cursor does not backfill text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSourceInventoryPage {
+    pub version: u32,
+    pub source_ids: Vec<String>,
+    pub next_cursor: Option<String>,
+    pub resume_cursor: String,
+    pub watermark: String,
+    #[ts(type = "number")]
+    pub lease_until: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
 pub struct PluginCapabilities {

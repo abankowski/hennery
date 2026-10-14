@@ -36,6 +36,16 @@ use std::sync::{Arc, Mutex};
 /// The audited sources, and the fewest statements each holds.
 const SOURCES: &[(&str, &str, usize)] = &[
     (
+        "hennery-sessions/src/plugin.rs",
+        include_str!("../../hennery-sessions/src/plugin.rs"),
+        6,
+    ),
+    (
+        "hennery-gateway/src/plugin/feed.rs",
+        include_str!("../../hennery-gateway/src/plugin/feed.rs"),
+        8,
+    ),
+    (
         "hennery-gateway/src/plugin.rs",
         include_str!("../../hennery-gateway/src/plugin.rs"),
         27,
@@ -331,6 +341,9 @@ fn audit_connection(db: &Path) -> rusqlite::Connection {
     // Audit against the union of the real schemas. Production keeps control
     // tables in its optional file; no statement may escape owner auditing.
     for migration in hennery_gateway::plugin::MIGRATIONS {
+        conn.execute_batch(migration).unwrap();
+    }
+    for migration in hennery_gateway::plugin::feed::INVENTORY_MIGRATIONS {
         conn.execute_batch(migration).unwrap();
     }
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, false).unwrap();

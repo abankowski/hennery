@@ -9,6 +9,7 @@ pub mod hosts;
 pub mod hub;
 pub mod notify;
 pub mod offline;
+pub mod plugin;
 pub mod projects;
 pub mod push;
 mod redact;
