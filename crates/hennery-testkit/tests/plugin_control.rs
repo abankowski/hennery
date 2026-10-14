@@ -1014,3 +1014,279 @@ async fn restart_reconciles_every_mutation_crash_point_without_retargeting_secre
         }
     }
 }
+
+fn issue_again(w: &World) -> hennery_gateway::plugin::IssuedGrant {
+    w.core(|tx| {
+        w.gateway
+            .plugins()
+            .register_in(
+                tx,
+                RegistrationInput {
+                    connection_id: &w.id,
+                    lifecycle_credential: "hnry_lifecycle_deadbeefdeadbeef",
+                    activity: true,
+                    startup: false,
+                    capabilities: PluginCapabilities {
+                        version: 1,
+                        activity_v1: true,
+                        forget_v1: true,
+                        startup_context_v1: false,
+                    },
+                },
+                &MasterKey::from_bytes([3; 32]),
+                5,
+            )
+            .unwrap()
+    })
+}
+
+#[test]
+fn registration_cuts_preexisting_ordinary_traffic_before_activating() {
+    let w = registered_world();
+    let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+    raw.execute("DELETE FROM plugin_registrations", []).unwrap();
+    w.core(|tx| {
+        tx.execute("DELETE FROM settings WHERE key LIKE 'plugin_epoch:%'", [])
+            .unwrap();
+    });
+    let watch = w.core(|tx| w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat).unwrap());
+    assert!(!watch.token().is_cancelled());
+    let issued = issue_again(&w);
+    assert!(
+        watch.token().is_cancelled(),
+        "registration must cut ordinary in-flight traffic"
+    );
+    assert!(
+        w.core(|tx| w.gateway.plugins().authenticate_in(tx, &issued.token, 6).unwrap())
+            .is_some()
+    );
+}
+
+#[test]
+fn first_registered_admission_binds_a_new_session_before_returning() {
+    let w = registered_world();
+    w.sessions
+        .create_session("late", "host", "fake", "/scratch", &w.hat, None)
+        .unwrap();
+    w.core(|tx| {
+        assert!(!w.gateway.plugins().bound_in(tx, "late").unwrap());
+        let watch = w.gateway.plugins().admit_in(tx, &w.id, "late", &w.hat).unwrap();
+        assert!(!watch.token().is_cancelled());
+        assert!(
+            w.gateway.plugins().bound_in(tx, "late").unwrap(),
+            "admission must bind before any work escapes"
+        );
+    });
+}
+
+#[test]
+fn added_mount_binds_running_sessions_and_updates_the_active_fingerprint() {
+    let w = registered_world();
+    let key = HostKey::from_seed([8; 32]);
+    w.hosts
+        .register(
+            "second",
+            &Enrollment {
+                public_key: key.public_key_hex(),
+                name: "Second".into(),
+                host_version: "0.0.0".into(),
+                platform: "test".into(),
+            },
+            1,
+        )
+        .unwrap();
+    w.sessions
+        .create_session("second-session", "second", "fake", "/scratch", &w.hat, None)
+        .unwrap();
+    assert!(!w.core(|tx| w.gateway.plugins().bound_in(tx, "second-session").unwrap()));
+    w.gateway
+        .replace_mounts(&w.id, &["host".into(), "second".into()])
+        .unwrap();
+    w.core(|tx| {
+        assert!(w.gateway.plugins().bound_in(tx, "second-session").unwrap());
+        assert!(
+            w.gateway.plugins().authenticate_in(tx, &w.token, 6).unwrap().is_some(),
+            "mount additions preserve the active grant after binding"
+        );
+    });
+}
+
+#[test]
+fn restore_generation_mismatch_denies_authentication_admission_and_reassignment() {
+    for control_side in [true, false] {
+        let w = registered_world();
+        if control_side {
+            rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db"))
+                .unwrap()
+                .execute("UPDATE plugin_generations SET generation = 'older-backup'", [])
+                .unwrap();
+        } else {
+            w.core(|tx| {
+                tx.execute(
+                    "UPDATE settings SET value = 'older-backup' WHERE key LIKE 'plugin_generation:%'",
+                    [],
+                )
+                .unwrap();
+            });
+        }
+        w.core(|tx| {
+            assert!(
+                w.gateway.plugins().authenticate_in(tx, &w.token, 6).is_err(),
+                "generation mismatch must deny authentication"
+            );
+            assert!(
+                w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat).is_err(),
+                "generation mismatch must deny new exposure"
+            );
+            assert!(
+                w.gateway.plugins().bound_in(tx, "running").is_err(),
+                "generation mismatch must deny reassignment lookup"
+            );
+        });
+    }
+}
+
+#[test]
+fn raw_purge_cannot_bypass_immutable_lifecycle_obligation() {
+    let w = registered_world();
+    let err = w.gateway.purge_hat(&w.hat).unwrap_err();
+    assert!(err.is::<hennery_gateway::plugin::PendingMutation>());
+    assert!(w.gateway.connection(&w.id).unwrap().is_some());
+    assert!(
+        w.core(|tx| w.gateway.plugins().authenticate_in(tx, &w.token, 6).unwrap())
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn no_runtime_purge_fails_closed_after_revoking_tokens_and_cutting_work() {
+    let w = registered_world();
+    let watch = w.core(|tx| w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat).unwrap());
+    w.core(|tx| {
+        hennery_gateway::tokens::mint_in(tx, w.sessions.owner_id(), "running", "host", &w.hat, 5).unwrap();
+    });
+    assert!(w.sessions.purge_gateway_hat(&w.hat).await.is_err());
+    assert!(watch.token().is_cancelled(), "runtime-less purge must cut plug-in work");
+    assert_eq!(
+        w.core(|tx| tx
+            .query_row(
+                "SELECT count(*) FROM gw_session_tokens WHERE revoked_at IS NULL",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap()),
+        0,
+        "runtime-less purge must revoke tokens before returning"
+    );
+    assert!(w.gateway.connection(&w.id).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn pending_snapshot_load_cuts_work_even_when_terminal_write_preceded_watch() {
+    let mut upstream = Upstream::start().await;
+    let w = registered_at(&upstream.url, true);
+    let watch = w.core(|tx| w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat).unwrap());
+    rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap().execute("UPDATE plugin_registrations SET state = 'terminal', token_hash = NULL, request_id = 'pending-request', deadline = ?1",[hennery_kernel::secret::unix_now()+5]).unwrap();
+    let runtime = w.runtime();
+    let id = w.id.clone();
+    let task = tokio::spawn(async move { runtime.settle_plugin(&id).await });
+    upstream.entered().await;
+    assert!(
+        watch.token().is_cancelled(),
+        "loading a pending obligation must cut in-flight work before remote wait"
+    );
+    upstream.release.add_permits(1);
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn recovery_cuts_disposed_namespace_work_without_a_remote_wait() {
+    let w = registered_world();
+    let watch = w.core(|tx| w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat).unwrap());
+    rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db"))
+        .unwrap()
+        .execute(
+            "UPDATE plugin_registrations SET state = 'disposed', token_hash = NULL, endpoint = NULL, lifecycle = NULL",
+            [],
+        )
+        .unwrap();
+    w.runtime().recover_plugins().await.unwrap();
+    assert!(
+        watch.token().is_cancelled(),
+        "reconciliation must cut disposed namespaces without pending RPC"
+    );
+}
+
+#[test]
+fn missing_registration_row_never_falls_back_to_ordinary_proxy_or_core_mutation() {
+    let w = registered_world();
+    rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db"))
+        .unwrap()
+        .execute("DELETE FROM plugin_registrations", [])
+        .unwrap();
+    assert!(
+        w.core(|tx| w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat))
+            .is_err()
+    );
+    assert!(mutate(&w, "edit").is_err());
+    assert!(w.gateway.connection(&w.id).unwrap().is_some());
+}
+
+#[test]
+fn start_and_resume_delivery_bind_new_sessions_and_refuse_terminal_namespaces() {
+    use hennery_gateway::session::{GatewayMcp, SessionMcp, SessionRef};
+    use hennery_proto::rest::McpSessionDeliveryMode;
+    let w = registered_world();
+    let operator = std::sync::Arc::new(hennery_kernel::operator::Operator::open(&w.path).unwrap());
+    let setup = operator.issue_setup_token(1).unwrap().unwrap();
+    assert!(matches!(
+        operator
+            .set_up(&setup, "correct horse battery", "https://hennery.example", 1)
+            .unwrap(),
+        hennery_kernel::operator::SetupOutcome::Done { .. }
+    ));
+    let mcp = GatewayMcp::new(&hennery_gateway::api::GatewayState {
+        runtime: w.runtime(),
+        operator,
+    });
+    for session in ["start-late", "resume-late"] {
+        w.sessions
+            .create_session(session, "host", "fake", "/scratch", &w.hat, None)
+            .unwrap();
+        w.core(|tx| {
+            assert!(!w.gateway.plugins().bound_in(tx, session).unwrap());
+            let result = mcp
+                .servers_in(
+                    tx,
+                    SessionRef {
+                        session_id: session,
+                        host_id: "host",
+                        hat_id: &w.hat,
+                    },
+                    McpSessionDeliveryMode::Isolated,
+                )
+                .unwrap();
+            assert_eq!(result.servers.len(), 1);
+            assert!(
+                w.gateway.plugins().bound_in(tx, session).unwrap(),
+                "start/resume must bind before MCP delivery"
+            );
+        });
+    }
+    assert!(mutate(&w, "edit").is_err());
+    w.core(|tx| {
+        assert!(
+            mcp.servers_in(
+                tx,
+                SessionRef {
+                    session_id: "running",
+                    host_id: "host",
+                    hat_id: &w.hat
+                },
+                McpSessionDeliveryMode::Isolated
+            )
+            .is_err(),
+            "terminal namespace must deny start/resume delivery"
+        )
+    });
+}
