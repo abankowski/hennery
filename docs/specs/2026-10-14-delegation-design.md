@@ -3,6 +3,10 @@
 - **Date:** 2026-10-14.
 - **Status:** proposed design; needs parent review and the operator decisions
   in §12. No implementation or live acceptance is claimed.
+- **Review:** Codex gpt-6-astra, on the maintainer's behalf, reviewed
+  `0fe663b8..72f24e58`: approve after amendments, no Critical findings.
+  The grant, resume, close-intent and child-loss amendments below address that
+  review; scoped re-confirmation remains with the parent.
 - **Scope:** sessions delegate work to independently configured children,
   receive their reports and questions, and expose their families in the UI.
   This document owns **session-bound MCP delivery**, shared with optional
@@ -103,6 +107,21 @@ revoke unrelated external mounts: cut built-in in-flight calls with a separate
 hat-grant watch in addition to the existing token watch. Recheck this grant at
 acceptance and dispatch. Re-enabling does not replay cancelled work.
 
+The hat flag alone is insufficient authorization. Persist a nullable
+`delivered_delegation_revision` on the existing `gw_session_tokens` row, bound
+to that row's token hash/generation. Set it to the current hat revision only
+when this start/resume actually delivers the built-in descriptor; otherwise
+write NULL, including for an external-mount-only token. Mint/replacement and
+this field commit atomically. Existing rows migrate to NULL. Authorization
+requires a live token, a non-NULL delivered revision equal to the current
+enabled hat revision, and the current isolation eligibility. Check all of
+these again in the mutation transaction. Every enable/disable transition
+advances the revision monotonically; never reset/reuse it. Thus enabling does
+not upgrade an existing external-MCP token, and disable→enable cannot revive
+an earlier delivered grant. Only a new start/resume can deliver the new grant.
+Queued commands carry their accepted grant revision and cannot cross a policy
+revision change, even if a fresh token has since been minted.
+
 This is a collector-local server, not a `gw_connections` row or a proxy
 upstream. External `/mcp/<slug>` routes stay external. The binary wires the
 exact built-in route before the proxy's deeper-path rejection; tests must prove
@@ -158,24 +177,26 @@ owner, so the endpoint must never accept a client-provided owner to complete it.
 The session-side built-in router constructs a private
 `SessionToolContext { owner_id, session_id, host_id, hat_id, canonical_cwd,
 token_generation }` after verifying the session row against that principal.
-`token_generation` is an internal revocation fence, never returned to a tool.
+`token_generation` is an internal revocation fence, never returned to a tool;
+built-in authorization additionally carries the verified delivered delegation
+revision from §3.1. Neither is inferred from the current hat flag alone.
 Handlers receive this context, bounded typed arguments, and a cancellation
 watch. They do not receive the plaintext bearer. Rechecks use the same
 transaction as reads/writes where authorization could race a reassign/purge.
 
 Only session-lifecycle tools are registered in the built-in router. An external
 plug-in uses the existing gateway mount and upstream service authentication;
-never forward the raw hennery session bearer to it. The shared generic contract
-must make the gateway-resolved `SessionToolContext` available to explicitly
-registered plug-ins without trusting tool arguments. Recommended shape: a
-collector-signed, short-lived request context, audience-bound to the connection
-and grant revision, forwarded in a reserved header stripped from agent input.
-Only disclosed fields are included; cwd disclosure is separately scoped.
-The plug-in validates the collector key pinned at registration, signature,
-audience and expiry. This attests caller identity; it is not a bearer capable
-of calling the collector or other plug-ins. Ordinary vendor connections get
-no context header. Final encoding/key rotation belongs to the generic plug-in
-contract plan, coordinated with memory; do not ship an unsigned claimed identity.
+never forward the raw hennery session bearer to it. The separate generic
+contract is the memory design's **C1: generic feed/lifecycle** plan: authenticated
+registration, owner/hat namespace credentials, scoped activity/lease and deletion
+lifecycle. The upstream credential authenticates exactly one owner/hat namespace;
+the gateway's internal `SessionToolContext` is not automatically exported.
+Existing mounts do not attest the calling session id. A tool-supplied cwd or
+session id is at most a narrowing filter or explicitly unverified source hint;
+remember records agent authorship, not verified session authorship. Verified
+session provenance comes from C1's authorized activity feed. A future generic
+signed-principal extension requires its own reviewed contract; it is neither
+a hidden memory header nor a prerequisite for the reference memory tools.
 
 The generic core contract additionally offers an **opt-in scoped event feed**
 for completed turns, with owner/hat authorization derived from a connection's
@@ -183,12 +204,13 @@ explicit grant. A service feed credential is distinct from a live agent token;
 it does not impersonate a session or gain session-control tools. Feed cursors
 cannot widen scope. Revocation/unmount/purge cuts the feed and pending delivery;
 stored plug-in copies follow its documented retention/deletion contract. Optional
-startup context uses the same scoped plug-in grant and is marked plug-in data,
-never operator instruction. Its plan adds a distinct `PluginContext` provenance
+startup context is the separate **C2: startup** plan, uses its explicitly scoped
+plug-in grant and is marked plug-in data, never operator instruction.
+Its plan adds a distinct `PluginContext` provenance
 variant before it can write a prompt; it cannot reuse `Operator`. No feed or
 startup callback runs without opt-in.
-The memory lane owns that generic feed/startup API proposal; delegation supplies
-turn provenance and the identity seam, without implementing memory logic.
+The memory lane owns C1/C2; delegation supplies turn provenance and the internal
+identity seam, without implementing memory logic. §11 names their dependencies.
 
 Memory may read only its verified context's owner/hat and approved subscopes.
 An optional cwd can narrow a lookup after canonical validation; it cannot
@@ -307,6 +329,29 @@ in the existing UI; the saved brief is released only when its required values
 are confirmed, or cancelled explicitly. A fresh spawn with another operation
 key is a distinct child, not an implicit retry.
 
+Apply the same release gate after **every automatic resume**, whether the
+destination is a child receiving a follow-up or a parent receiving a report.
+Normal resume success does not prove configuration: `session_started` can
+precede a `reapply_failed` note, and an absent read-back leaves old stored
+values intact. Before starting the resume, invalidate dispatch eligibility and
+allocate an attach generation. Require a host-produced typed
+`ConfigEvidence { attach_generation, config_revision, completeness, actual }`
+from the completed reapply/read-back for that generation, carried on the
+sequenced session stream. No evidence, partial evidence, a stale generation,
+or a retained `sessions.model/mode/config_axes` value is proof of current config.
+
+Release queued work only after fresh complete evidence satisfies the saved
+required configuration and the operator's current execution policy, including
+security-relevant axes. On mismatch or unknown configuration hold it in
+`waiting_config`, expose requested/actual/unknown values, and apply the normal
+attention deadline/fallback. A current-generation repair/read-back may release
+it after revalidation; never silently run under adapter defaults. Record the
+validated config and policy revisions on dispatch; invalidate eligibility on
+later relevant config/policy changes. The host's serialized prompt admission
+checks the expected attach/config revision too, so a switch after collector
+validation cannot run the queued prompt under another configuration. Hosts
+without this evidence/fencing capability cannot auto-resume delegated work.
+
 The canonical cwd must exist, be a directory under the host's canonical workspace
 roots, and resolve to the parent's stored hat. Check before allocating the
 child, and again at the host spawn boundary; a symlink/root/rule change cannot
@@ -351,25 +396,65 @@ outcome. Never mark delivered from a socket write, MCP success or model prose.
 Operator prompts retain their current `turn_in_progress` response; whichever
 submission reserves the slot first wins. Queued work never interrupts a turn.
 
-An idle destination drains FIFO. A parked destination is resumed once through
-the normal resume path, only after any reconnect reconciliation. A presumed
-park with an unreconciled host is not permission to launch another adapter.
+Acceptance and dispatch must test **close intent**, not just lifecycle. In the
+transaction that accepts a command, reserves a turn or begins an automatic
+resume, require `close_requested = 0` and non-closed/non-deleted endpoints on
+both sides of the family transfer, together with the current family/grant
+revision. Committing close intent atomically cancels all undispatched transfers
+involving that endpoint. A prior eligibility read or worker lease cannot
+authorize a later commit. Serialize final host handoff with close through the
+same per-session dispatch fence: a reservation not handed off when close wins
+is cancelled; a frame already handed off is reconciled and then torn down.
+Closing the source also fences a target start/dispatch already being prepared.
+
+An idle eligible destination drains FIFO. Automatic resume shares the ordinary
+resume machinery but has a separate transactional compare-and-set predicate:
+`lifecycle = parked`, `presumed_parked = 0`, `close_requested = 0`, both family
+endpoints eligible, and the host connected and reconciled. It must not call
+the ordinary operator path with a precheck alone: that path accepts closed and
+failed sessions and clears close intent. A presumed park first reconciles;
+confirmed attachment uses that actor, confirmed loss may enter the genuinely
+parked path. Automatic resume never clears close intent. After resume, §4.1's
+fresh generation-bound configuration gate precedes every queued prompt.
 Closed, deleted, failed-to-resume or hat-mismatched destinations stop dispatch
 and cause the visible fallback below. Pending questions in the destination
 prevent report prompts, even when asked outside a turn.
 
 ### 5.2 Source events and delivery identities
 
-On an applied child `turn_ended` (including synthesized interrupted outcomes),
-an applied `pending_opened`, or an applied start/resume failure, record a
-`DelegationNotice` in the same transaction as that fact. Its kind is
-`TurnEnded { turn_id, outcome }`, `Question { pending_id, kind }` or
-`SessionFailed { code }`. Unique key:
+On applied child turn, pending, failure and availability transitions, record a
+`DelegationNotice` in the same transaction as the fact/transition. Its kind is
+`TurnEnded { turn_id, outcome }`, `Question { pending_id, kind }`,
+`QuestionCancelled { pending_id, reason }`, `SessionFailed { code }` or
+`SessionUnavailable { attach_generation, reason, affected_pending_ids }`.
+Include `AdapterExited` outside a turn, confirmed loss after reconciliation,
+host revoke, reported park, and pending cancellations from adapter loss, host
+restart, park, close or withdrawal. Presumed offline parking is an availability
+notice, not proof that pending callbacks were lost. An ordinary idle park with
+no pending work is status-only and does not repeatedly wake the parent.
+An isolated withdrawal uses `QuestionCancelled`, not a claim that the session
+is unavailable; cancellation caused by loss joins that loss incident below.
+Unique source key:
 `(owner_id, child_id, source_event_id, notice_kind)`.
 Use applied outcomes only; replayed/non-applied facts create nothing. One
 failed/interrupted turn produces one report with its failure detail, not a
-second redundant generic-error report. Failures outside a turn get their own
-notice.
+second redundant generic-error report. Additionally coalesce loss-related
+adapter-exit, park, cancellation and interrupted-turn facts by one persisted
+incident identity for the child's attach generation/detach transition. Merge
+their source references and reasons into one notice; if already delivered,
+update status rather than starting another parent turn for the same incident.
+Do not fold an unrelated later question withdrawal into that incident.
+
+In the transaction that applies a loss or pending cancellation, also mark all
+affected undelivered question notices obsolete and cancel their queued prompt
+transfers. This includes diagnostic `AdapterExited` before its subsequent park:
+its callbacks are already unusable, even if the canonical pending cancellation
+arrives in the next frame. The loss notice explains that the parent must inspect
+or resume instead of answering the old question. Canonical pending transitions
+and answer verdicts retain their existing sequencing; delivered question text
+cannot be recalled, and stale answers still consult live state. An idle adapter
+crash or loss of an out-of-turn question must therefore notify the parent even
+when no `turn_ended` exists. With a closing/absent parent, use operator fallback.
 
 Persist references to source events, not a second full transcript. At dispatch,
 read the bounded assistant report through `hennery-view`, preserve its ending
@@ -456,10 +541,12 @@ Existing sessions have no family edge and their existing turns default to
 | Store addition | Required data and invariants |
 |---|---|
 | `hat_session_tools` (kernel component) | Owner/hat, delegation enabled flag and grant revision. Disabled by default, changed only through stepped-up operator settings; feeds/plug-ins have separate explicit grants defined by the plug-in contract. |
+| Existing `gw_session_tokens` extension (gateway component) | Nullable `delivered_delegation_revision`, bound to the current token hash/generation; NULL unless the built-in entry was delivered, including for migrated rows. Mint/replacement updates it atomically; every built-in authorization compares it to the current enabled hat revision. |
+| Session dispatch evidence | Attach generation, fresh config evidence/revision and validated execution-policy revision; invalidate at automatic resume/config change. Existing `close_requested` participates in every acceptance/dispatch/automatic-resume compare-and-set and final handoff fence. |
 | `session_families` | `owner_id`, unique `child_id`, `parent_id`, `root_id`, `hat_id`, `created_event_id`, routing state/reason. Both sessions have the same owner/hat; no self-edge or cycle. Parent is assigned once at child creation; disabling an edge grants no new parent. |
 | `session_operations` | Owner, caller, operation key/digest, tool kind, target child, receipt state, linked request/turn/pending ids, timestamps. Unique owner/caller/key; no plaintext credentials. |
-| `session_dispatch_queue` | Owner, source/target sessions, origin, operation or delivery id, bounded content or source reference, queue order, claim lease, dispatch generation and receipt. One dispatch association per delivery; cancellation is explicit. |
-| `delegation_notices` | Owner/hat/family ids, source event and kind, attention routing, destination turn, deadline and resolution. Unique source identity; indexed by pending work/deadline and target. |
+| `session_dispatch_queue` | Owner, source/target sessions, origin, operation or delivery id, bounded content or source reference, accepted grant revision, queue order, claim lease, attach/config/policy revisions and receipt. One dispatch association per delivery; cancellation is explicit. |
+| `delegation_notices` | Owner/hat/family ids, source events and kind, loss-incident identity, attention routing, destination turn, deadline and resolution. Unique source identity and coalesced loss incident; indexed by pending work/deadline and target. |
 | `delegation_budgets` | Owner/root id, operator-prompt epoch and reserved wake-ups. Durable across collector restarts and child replacement. |
 | Turn/answer provenance | Tagged `InputOrigin = Operator | Parent { session_id, operation_id } | ChildReport { child_id, source_event_id, delivery_id }`; submitted answer origin is operator or parent. Server-written, never supplied in public prompt JSON. |
 
@@ -489,6 +576,10 @@ naming, push suppression and budget resets, must use provenance explicitly.
   pending cancellation and token revocation; cancel queued follow-ups. A close
   while busy ends the turn according to ACP core, and its report remains visible.
   No auto-close on a “done” message; no worktree deletion.
+- The fence begins when `close_requested` commits, while lifecycle may still
+  be active. Apply §5.1 at either endpoint; do not wait for `session_closed`.
+  Terminal facts remain visible through status/operator attention, but do not
+  start a new automatic prompt across a closed/closing endpoint's fence.
 - Closing a parent stops automatic wake-ups and cancels its undispatched
   outbound commands, retaining receipts. Already delivered child work continues;
   children fall back to the operator. Resuming the parent explicitly may restore
@@ -513,6 +604,10 @@ naming, push suppression and budget resets, must use provenance explicitly.
   and the moved session retains its history. Agents in either hat cannot traverse
   the disabled edge or fetch its other endpoint. Returning to the old hat does
   not adopt the old family automatically. No bulk family move is added here.
+  The optional plug-in contract can impose a stricter exposure guard: C1/C2's
+  memory design refuses cross-hat reassignment after registered plug-in exposure
+  and requires a clean session. Disabling a delegation edge does not bypass
+  that guard; the reassignment behavior above applies only when it permits it.
 
 Every worker rereads deletion/purge/reassignment/close state at its commit
 boundary; a lease acquired before a transition is insufficient authority.
@@ -593,6 +688,10 @@ replace live adapter checks.
    built-in entry; opted-out hats get none and cannot invoke it using a token
    obtained for an external mount. Disable during a call/dispatch, rollback a
    grant change, re-enable without replay, and prove external mounts still work.
+   Enable after an external-only token was minted: that token stays denied.
+   Disable/re-enable with an old delivered token: denied until a fresh
+   start/resume delivers the current revision. Test token/grant transaction
+   rollback, stale queued grant revisions and positive fresh-token admission.
    `starting` can initialize/list; invalid and standalone credentials cannot
    invoke tools; foreign Origin, cookie-only, header duplication, duplicate or
    Unicode-escaped JSON keys, BOM, invalid UTF-8 and batches have deterministic
@@ -608,16 +707,28 @@ replace live adapter checks.
    arbitrary catalog model ids, stale/cold catalogs, config clamp, probe timeout,
    adapter override, unavailable model, and no brief before successful read-back.
    Test the same catalog service through tools and launcher-facing API.
+   After automatic parent and child resume, test reapply failure, absent/partial
+   read-back with old stored values, late old-generation evidence, execution
+   policy changes and a config switch between validation and host admission.
+   No queued prompt runs until current-generation evidence proves eligibility.
 4. **Durability:** fault injection after every acceptance/source-event/claim/
    dispatch/ack transaction boundary; collector and host restart separately;
    two workers; operator prompt versus delivery; late `turn_started`; interrupted
    work; lost spawn response; resend of the same pending answer. Prove queue
    depth and budget caps under concurrency. A restart never resets the budget.
+   Put close intent between the eligibility read and commit, at either endpoint,
+   and between reservation and host handoff; assert no dispatch when close wins.
+   Race close with automatic resume; test closed, failed and presumed-parked
+   rows cannot pass its genuinely-parked-only transactional predicate.
 5. **Attention and deletion:** busy and unanswered-parent deadline, immediate
    permission fallback, notification failure/muting, question withdrawal,
    duplicate notices, close in flight, child delete with retained report copies,
    parent delete with surviving child, reassign and complete hat purge. Test
    source filters so non-applied facts cannot wake a parent.
+   Crash an idle child and a child with an out-of-turn pending question; repeat
+   with reconciliation loss and host revoke. Assert one coalesced loss notice,
+   obsolete queued questions in the same transaction, and no duplicate wake-up
+   from the subsequent park/cancellations/interrupted-turn facts.
 6. **UI:** golden view fixtures for provenance, partial reports, all receipt
    states and unknown ACP; Playwright family navigation, operator takeover,
    waiting badge, SSE resync and mobile layout. Exact text or role locators.
@@ -646,10 +757,22 @@ through the parent. This design does not attempt to supply executable plans.
 
 | Order | Plan | Size | Exit condition |
 |---|---|---|---|
-| 1 | **D1: session-bound MCP and family identity** | M | Token/descriptor/auth seam, per-hat opt-in, shared session context, family storage, owner/hat checks, scope lifecycle hooks and generated types; actual Claude/Codex tool discovery. Optional plug-ins reuse this identity seam. No externally enabled spawn yet. |
-| 2 | **D2: child control and launch configuration** | L | Shared catalog service/probe, all seven tools, operation receipts, bounded follow-up queue, validated first prompt, answer/close policy and permission enforcement. Can split catalog and tools into separate small PRs. Delegation stays preview-gated pending D3. |
-| 3 | **D3: durable parent delivery and operator fallback** | L | Transactional notices, scheduler, provenance, wake-up budget, restart reconciliation, attention deadlines, push routing, delete/reassign races. End-to-end parent/child loop; no polling-only release. |
+| 1 | **D1: session-bound MCP and family identity** | M | Token/descriptor/auth seam, generation-bound delivered opt-in revision, shared session context, family storage, owner/hat checks, scope lifecycle hooks and generated types; actual Claude/Codex tool discovery. Optional plug-ins reuse this identity seam. No externally enabled spawn yet. |
+| 2 | **D2: child control and launch configuration** | L | Shared catalog service/probe, all seven tools, operation receipts, bounded follow-up queue, fresh config evidence on start/automatic resume, close-intent fencing and permission enforcement. Can split catalog and tools into separate small PRs. Delegation stays preview-gated pending D3. |
+| 3 | **D3: durable parent delivery and operator fallback** | L | Transactional notices including out-of-turn loss/coalescing, scheduler, provenance, wake-up budget, restart reconciliation, attention deadlines, push routing, delete/reassign races. End-to-end parent/child loop; no polling-only release. |
 | 4 | **D4: families and live acceptance** | M | Family API/view fold/UI, correct attention counts and operator takeover, cross-runtime live matrix and mobile/phone integration. Enables delegation for ordinary use. |
+
+**Explicit cross-lane dependencies:** the memory design's **C1 (generic
+feed/lifecycle, M–L)** owns authenticated plug-in registration/namespace context,
+activity/lease and deletion receipts. **C2 (startup, S–M)** owns optional scoped
+startup context and its prompt provenance. External full plug-in integration
+depends on C1; startup integration additionally depends on C2. A simple MCP
+mount needs neither new feed nor startup grant. D1–D4 implement no replacement
+for C1/C2, and built-in delegation can ship without a memory service. Coordinate
+C1 with D1's identity seam and D3's provenance/loss events; coordinate C2 with
+D2/D3's prompt/config/close fences before combining startup and delegation.
+The common authority is session-bound gateway delivery, not a shared endpoint
+or an upstream assertion of session identity that the proxy does not provide.
 
 Review the following spec changes before D1/D2, and land their text with the
 appropriate plan rather than letting conflicting rules persist:
@@ -674,9 +797,12 @@ appropriate plan rather than letting conflicting rules persist:
 **Memory:** reference §3 under the exact name **session-bound MCP delivery**:
 existing `SessionMcp`, rotating session token and gateway principal. Serve
 memory tools externally through existing connection mounts, not on built-in
-`hennery`. Coordinate the authenticated plug-in context and opt-in event
-feed/startup contract; consume provenance and purge hooks. No competing agent
-token scheme, cwd-derived identity, embedded memory module or forced capture.
+`hennery`. C1/C2 are the explicit authenticated namespace/feed/lifecycle and
+startup dependencies above; consume provenance and purge hooks. Match memory's
+credential-bound owner/hat context and unverified agent-supplied session hints;
+no signed session-principal header is required by either initial design. No
+competing agent token scheme, cwd-derived identity, embedded memory module or
+forced capture.
 
 **Phone:** consume canonical operator-attention routing and stable child links.
 Do not suppress a notification merely because `parent_id` exists, and do not
