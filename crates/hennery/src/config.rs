@@ -92,6 +92,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn proxy_peers_are_machine_only_exact_bounded_and_not_mistyped() {
+        for text in ["", "proxy_client_ip_peers = []", "proxy_client_ip_peers = ['127.0.0.1', '::1']"] {
+            assert!(FileConfig::parse(text).is_ok(), "{text}");
+        }
+        for text in [
+            "proxy_client_ip_peers = ['localhost']", "proxy_client_ip_peers = ['127.0.0.0/8']",
+            "proxy_client_ip_peers = ['127.0.0.1:7117']", "proxy_client_ip_peers = ['0.0.0.0']",
+            "proxy_client_ip_peers = ['::']", "proxy_client_ip_peers = ['224.0.0.1']",
+            "proxy_client_ip_peers = ['127.0.0.1', '::ffff:127.0.0.1']",
+            "proxy_client_ip_peers = ['127.0.0.1', '127.0.0.2', '127.0.0.3', '127.0.0.4', '127.0.0.5', '127.0.0.6', '127.0.0.7', '127.0.0.8', '127.0.0.9']",
+            "proxy_client_ip_peer = ['127.0.0.1']",
+        ] { assert!(FileConfig::parse(text).is_err(), "{text}"); }
+    }
+
+    #[test]
     fn the_file_holds_listen_and_public_url_and_nothing_else() {
         let config = FileConfig::parse(
             "listen = [\"127.0.0.1:7117\", \"[::1]:7117\"]\npublic_url = \"https://hennery.example\"\n",
