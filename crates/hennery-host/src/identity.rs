@@ -301,6 +301,12 @@ pub(crate) fn inspect_receipt(data_dir: &Path) -> Result<()> {
 }
 
 pub(crate) fn read_regular(path: &Path, bound: usize) -> Result<String> {
+    String::from_utf8(read_regular_bytes(path, bound)?)
+        .map_err(|_| anyhow::anyhow!("transport configuration is not UTF-8; preserve recovery artifacts"))
+}
+/// Archive recovery copies damaged artifacts without interpreting their bytes;
+/// the same ownership, regular-file and size restrictions still apply.
+pub(crate) fn read_regular_bytes(path: &Path, bound: usize) -> Result<Vec<u8>> {
     use std::io::Read;
     let mut file = std::fs::OpenOptions::new()
         .read(true)
@@ -317,10 +323,10 @@ pub(crate) fn read_regular(path: &Path, bound: usize) -> Result<String> {
     {
         bail!("transport configuration must be a regular file, not writable by group or others");
     }
-    let mut text = String::new();
+    let mut text = Vec::new();
     std::io::Read::by_ref(&mut file)
         .take((bound + 1) as u64)
-        .read_to_string(&mut text)?;
+        .read_to_end(&mut text)?;
     if text.len() > bound {
         bail!("transport configuration exceeds its size bound");
     }

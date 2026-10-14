@@ -208,7 +208,7 @@ pub fn artifacts_id(dir: &Path) -> Result<String> {
         let path = dir.join(name);
         if exists(&path)? {
             hash.update(name.as_bytes());
-            hash.update(crate::identity::read_regular(&path, 512 * 1024)?.as_bytes());
+            hash.update(crate::identity::read_regular_bytes(&path, 512 * 1024)?);
         }
     }
     Ok(format!("artifacts-{}", hex::encode(hash.finalize())))
@@ -279,7 +279,7 @@ pub fn archive(dir: &Path, attempt_id: &str) -> Result<()> {
         let from = dir.join(name);
         let to = archive.join(name);
         if exists(&from)? {
-            let bytes = crate::identity::read_regular(&from, 512 * 1024)?.into_bytes();
+            let bytes = crate::identity::read_regular_bytes(&from, 512 * 1024)?;
             if exists(&to)? && std::fs::read(&to)? != bytes {
                 bail!("archive artifact mismatch; preserve both copies");
             }
