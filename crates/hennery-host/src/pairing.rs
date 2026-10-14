@@ -290,6 +290,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn collector_policy_rejects_credentials_and_all_secure_loopback_aliases() {
+        for input in ["https://user:secret@localhost", "https://localhost:0", "https://localhost/?x=1", "https://localhost/#x"] {
+            let error = parse_public_url(input).unwrap_err().to_string();
+            assert!(!error.contains("secret"));
+        }
+        for a in ["wss://localhost/api/hosts/ws", "wss://127.0.0.1:443/api/hosts/ws"] {
+            for b in ["ws://localhost/api/hosts/ws", "ws://127.0.0.1:7117/api/hosts/ws", "wss://localhost:8443/api/hosts/ws"] {
+                assert!(!same_collector(a, b), "{a} -> {b}");
+            }
+        }
+        assert!(!same_collector("ws://localhost/wrong", "ws://127.0.0.1/api/hosts/ws"));
+    }
+
+    #[test]
     fn the_host_websocket_is_derived_from_the_public_url() {
         assert_eq!(
             collector_ws_url("https://c.example").unwrap(),
