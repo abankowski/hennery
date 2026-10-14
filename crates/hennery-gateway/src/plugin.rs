@@ -2,6 +2,7 @@
 //! The core transaction is always held before opening the control transaction.
 
 pub mod feed;
+pub mod management;
 
 use crate::{
     crypto,
@@ -89,6 +90,8 @@ pub struct Control {
     coordination: Arc<Coordination>,
     conn: Mutex<Option<db::OwnedConnection>>,
     work: Revocations,
+    pub(crate) management: management::State,
+    pub(crate) pending: tokio::sync::Notify,
 }
 
 impl Control {
@@ -194,6 +197,8 @@ impl Control {
             coordination,
             conn: Mutex::new(None),
             work: Revocations::new(),
+            management: management::State::default(),
+            pending: tokio::sync::Notify::new(),
         });
         controls.insert(key, Arc::downgrade(&control));
         control
@@ -444,6 +449,7 @@ impl Control {
             let id: Option<String> = conn.query_row(
                 "SELECT connection_id FROM plugin_registrations WHERE owner_id = ?1 AND token_hash = ?2 AND state = 'active'",
                 params![self.owner,sha256_hex(token.as_bytes())], |r|r.get(0)).optional()?;
+            let id = match id { Some(id) => Some(id), None => self.rotation_connection_in(conn, token)? };
             let Some(row) = id.map(|id| Self::row(conn, &self.owner, &id)).transpose()?.flatten() else {
                 return Ok(None);
             };
@@ -656,6 +662,7 @@ impl Control {
     pub(crate) fn dispose_in(&self, _: &Transaction<'_>, work: &ForgetWork, confirmed: bool) -> Result<()> {
         self.with(false, |conn| {
             let tx = conn.transaction()?;
+            self.erase_rotation_in(&tx, &work.connection_id)?;
             let changed = tx.execute(
                 "UPDATE plugin_registrations SET state = 'disposed',endpoint = NULL,lifecycle = NULL,
                 token_hash = NULL,activity = 0,startup = 0,cursor_key = '' WHERE owner_id = ?1 AND connection_id = ?2

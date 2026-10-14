@@ -31,6 +31,7 @@ pub struct Runtime {
     pub flows: Flows,
     /// One registry shared by session transitions and proxy requests.
     pub revocations: crate::revocation::Revocations,
+    pub(crate) plugin_worker_started: std::sync::atomic::AtomicBool,
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     pub(crate) attempts: Arc<crate::refresh::Attempts>,
     pub(crate) probes: crate::probe::Probes,
@@ -56,6 +57,7 @@ impl Runtime {
             notifier,
             flows: Flows::default(),
             revocations: crate::revocation::Revocations::new(),
+            plugin_worker_started: std::sync::atomic::AtomicBool::new(false),
             locks: Mutex::default(),
             attempts,
             probes: crate::probe::Probes::default(),
