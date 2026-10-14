@@ -4,7 +4,13 @@ export type RegisterPluginRequest = { connection_id: string, lifecycle_credentia
 /**
  * Owner confirmation that the upstream credential isolates this owner/hat.
  */
-namespace_isolated: boolean, };
+namespace_isolated: boolean,
+/**
+ * Explicit recovery of a mismatched or incomplete configured backup.
+ */
+recovery?: PluginRecoveryConfirmation, };
+
+export type PluginRecoveryConfirmation = { new_empty_namespace: boolean, unresolved_external_copy_acknowledged: boolean, };
 
 export type PluginGrantResponse = { connection_id: string, namespace_epoch: string,
 /**

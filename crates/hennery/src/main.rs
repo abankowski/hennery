@@ -1329,6 +1329,7 @@ async fn start_gateway(
         .store
         .set_session_mcp(std::sync::Arc::new(hennery_gateway::session::GatewayMcp::new(&gateway)));
     gateway.runtime.recover_plugins().await?;
+    gateway.runtime.ensure_plugin_worker();
     gateway.runtime.announce_startup()?;
     let proxy = hennery_gateway::proxy::ProxyState::for_sessions(
         gateway.runtime.clone(),

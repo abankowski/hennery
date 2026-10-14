@@ -3306,6 +3306,22 @@
       ],
       "type": "object"
     },
+    "PluginRecoveryConfirmation": {
+      "additionalProperties": false,
+      "properties": {
+        "new_empty_namespace": {
+          "type": "boolean"
+        },
+        "unresolved_external_copy_acknowledged": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "new_empty_namespace",
+        "unresolved_external_copy_acknowledged"
+      ],
+      "type": "object"
+    },
     "PluginRegistration": {
       "additionalProperties": false,
       "properties": {
@@ -3832,6 +3848,18 @@
         "namespace_isolated": {
           "description": "Owner confirmation that the upstream credential isolates this owner/hat.",
           "type": "boolean"
+        },
+        "recovery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginRecoveryConfirmation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Explicit recovery of a mismatched or incomplete configured backup."
         },
         "startup": {
           "type": "boolean"

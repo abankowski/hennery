@@ -1115,36 +1115,99 @@ fn explicit_restore_recovery_preserves_exposure_and_never_revives_the_old_epoch(
     use hennery_proto::plugin_management::PluginRecoveryConfirmation;
     for side in ["core", "control", "missing"] {
         let w = registered_world();
-        w.sessions.create_session("unexposed", "host", "fake", "/scratch", &w.hat, None).unwrap();
+        w.sessions
+            .create_session("unexposed", "host", "fake", "/scratch", &w.hat, None)
+            .unwrap();
         w.sessions.close_now("unexposed").unwrap();
-        assert!(!w.core(|tx|w.gateway.plugins().bound_in(tx,"unexposed").unwrap()));
-        let World { _dir:dir,path,sessions,hosts,gateway,hat,id,token }=w;
-        drop(sessions);drop(hosts);drop(gateway);
-        if side=="missing" {
-            std::fs::rename(dir.path().join("plugin-control.db"),dir.path().join("old-plugin-control.db")).unwrap();
-        } else if side=="control" {
-            rusqlite::Connection::open(dir.path().join("plugin-control.db")).unwrap().execute("UPDATE plugin_generations SET generation = 'restore-mismatch'",[]).unwrap();
+        assert!(!w.core(|tx| w.gateway.plugins().bound_in(tx, "unexposed").unwrap()));
+        let World {
+            _dir: dir,
+            path,
+            sessions,
+            hosts,
+            gateway,
+            hat,
+            id,
+            token,
+        } = w;
+        drop(sessions);
+        drop(hosts);
+        drop(gateway);
+        if side == "missing" {
+            std::fs::rename(
+                dir.path().join("plugin-control.db"),
+                dir.path().join("old-plugin-control.db"),
+            )
+            .unwrap();
+        } else if side == "control" {
+            rusqlite::Connection::open(dir.path().join("plugin-control.db"))
+                .unwrap()
+                .execute("UPDATE plugin_generations SET generation = 'restore-mismatch'", [])
+                .unwrap();
         } else {
-            rusqlite::Connection::open(&path).unwrap().execute("UPDATE settings SET value = 'restore-mismatch' WHERE key LIKE 'plugin_generation:%'",[]).unwrap();
+            rusqlite::Connection::open(&path)
+                .unwrap()
+                .execute(
+                    "UPDATE settings SET value = 'restore-mismatch' WHERE key LIKE 'plugin_generation:%'",
+                    [],
+                )
+                .unwrap();
         }
-        let w=World {sessions:Store::open(&path).unwrap(),hosts:Hosts::open(&path).unwrap(),gateway:std::sync::Arc::new(GatewayStore::open(&path).unwrap()),_dir:dir,path,hat,id,token};
-        let old=w.core(|tx|w.gateway.plugins().authenticate_in(tx,&w.token,6));
-        assert!(!matches!(old,Ok(Some(_))),"{side}: oldgrant must deny before recovery");
-        let consent=PluginRecoveryConfirmation {new_empty_namespace:true,unresolved_external_copy_acknowledged:true};
-        for (fresh,ack) in [(false,true),(true,false)] {
-            let refused=PluginRecoveryConfirmation {new_empty_namespace:fresh,unresolved_external_copy_acknowledged:ack};
-            assert!(w.core(|tx|w.gateway.plugins().repair_registration_in(tx,&w.id,&refused,6)).is_err());
+        let w = World {
+            sessions: Store::open(&path).unwrap(),
+            hosts: Hosts::open(&path).unwrap(),
+            gateway: std::sync::Arc::new(GatewayStore::open(&path).unwrap()),
+            _dir: dir,
+            path,
+            hat,
+            id,
+            token,
+        };
+        let old = w.core(|tx| w.gateway.plugins().authenticate_in(tx, &w.token, 6));
+        assert!(
+            !matches!(old, Ok(Some(_))),
+            "{side}: oldgrant must deny before recovery"
+        );
+        let consent = PluginRecoveryConfirmation {
+            new_empty_namespace: true,
+            unresolved_external_copy_acknowledged: true,
+        };
+        for (fresh, ack) in [(false, true), (true, false)] {
+            let refused = PluginRecoveryConfirmation {
+                new_empty_namespace: fresh,
+                unresolved_external_copy_acknowledged: ack,
+            };
+            assert!(
+                w.core(|tx| w.gateway.plugins().repair_registration_in(tx, &w.id, &refused, 6))
+                    .is_err()
+            );
         }
-        w.core(|tx|w.gateway.plugins().repair_registration_in(tx,&w.id,&consent,6)).unwrap();
-        let new=issue_again(&w);
-        assert_ne!(new.token,w.token);
+        w.core(|tx| w.gateway.plugins().repair_registration_in(tx, &w.id, &consent, 6))
+            .unwrap();
+        let new = issue_again(&w);
+        assert_ne!(new.token, w.token);
         w.core(|tx| {
-            assert!(w.gateway.plugins().bound_in(tx,"running").unwrap());
-            assert!(w.gateway.plugins().bound_in(tx,"unexposed").unwrap(),"closed sessions are conservatively bound too");
-            assert!(w.gateway.plugins().authenticate_in(tx,&w.token,7).unwrap().is_none());
-            assert!(w.gateway.plugins().authenticate_in(tx,&new.token,7).unwrap().is_some());
+            assert!(w.gateway.plugins().bound_in(tx, "running").unwrap());
+            assert!(
+                w.gateway.plugins().bound_in(tx, "unexposed").unwrap(),
+                "closed sessions are conservatively bound too"
+            );
+            assert!(w.gateway.plugins().authenticate_in(tx, &w.token, 7).unwrap().is_none());
+            assert!(
+                w.gateway
+                    .plugins()
+                    .authenticate_in(tx, &new.token, 7)
+                    .unwrap()
+                    .is_some()
+            );
         });
-        assert!(w.gateway.plugin_deletion_receipts().unwrap().iter().any(|r|r.status==hennery_proto::plugin::ForgetStatus::Unconfirmed));
+        assert!(
+            w.gateway
+                .plugin_deletion_receipts()
+                .unwrap()
+                .iter()
+                .any(|r| r.status == hennery_proto::plugin::ForgetStatus::Unconfirmed)
+        );
     }
 }
 
@@ -1301,22 +1364,35 @@ fn repairing_one_registration_keeps_sibling_epochs_fenced_until_individual_renew
 #[test]
 fn restore_recovery_refuses_a_surviving_cross_hat_binding_and_control_only_commit_stays_closed() {
     use hennery_proto::plugin_management::PluginRecoveryConfirmation;
-    let w=registered_world();
-    let consent=PluginRecoveryConfirmation {new_empty_namespace:true,unresolved_external_copy_acknowledged:true};
-    let raw=rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
-    raw.execute("UPDATE plugin_bindings SET hat_id = 'other-hat'",[]).unwrap();
-    assert!(w.core(|tx|w.gateway.plugins().repair_registration_in(tx,&w.id,&consent,6)).is_err());
-    raw.execute("UPDATE plugin_bindings SET hat_id = ?1",[&w.hat]).unwrap();
-    let mut core=hennery_kernel::db::open(&w.path).unwrap();
-    let coordination=core.coordination();
-    let _gate=coordination.gate.lock();
-    let tx=core.transaction().unwrap();
-    w.gateway.plugins().repair_registration_in(&tx,&w.id,&consent,6).unwrap();
+    let w = registered_world();
+    let consent = PluginRecoveryConfirmation {
+        new_empty_namespace: true,
+        unresolved_external_copy_acknowledged: true,
+    };
+    let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+    raw.execute("UPDATE plugin_bindings SET hat_id = 'other-hat'", [])
+        .unwrap();
+    assert!(
+        w.core(|tx| w.gateway.plugins().repair_registration_in(tx, &w.id, &consent, 6))
+            .is_err()
+    );
+    raw.execute("UPDATE plugin_bindings SET hat_id = ?1", [&w.hat]).unwrap();
+    let mut core = hennery_kernel::db::open(&w.path).unwrap();
+    let coordination = core.coordination();
+    let _gate = coordination.gate.lock();
+    let tx = core.transaction().unwrap();
+    w.gateway
+        .plugins()
+        .repair_registration_in(&tx, &w.id, &consent, 6)
+        .unwrap();
     // The conservative control binding/generation committed. Core did not.
     tx.rollback().unwrap();
     drop(core);
-    assert!(w.core(|tx|w.gateway.plugins().bound_in(tx,"running")).is_err());
-    assert!(!matches!(w.core(|tx|w.gateway.plugins().authenticate_in(tx,&w.token,7)),Ok(Some(_))));
+    assert!(w.core(|tx| w.gateway.plugins().bound_in(tx, "running")).is_err());
+    assert!(!matches!(
+        w.core(|tx| w.gateway.plugins().authenticate_in(tx, &w.token, 7)),
+        Ok(Some(_))
+    ));
 }
 
 #[test]

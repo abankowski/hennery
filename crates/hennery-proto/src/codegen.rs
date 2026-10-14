@@ -34,6 +34,7 @@ pub fn render_schema() -> String {
     }
     add!(
         plugin_management::RegisterPluginRequest,
+        plugin_management::PluginRecoveryConfirmation,
         plugin_management::PluginGrantResponse,
         plugin_management::PluginRegistration,
         plugin_management::RotatePluginRequest,
@@ -197,6 +198,7 @@ pub fn render_ts() -> String {
     }
     add!(
         plugin_management::RegisterPluginRequest,
+        plugin_management::PluginRecoveryConfirmation,
         plugin_management::PluginGrantResponse,
         plugin_management::PluginRegistration,
         plugin_management::RotationAction,

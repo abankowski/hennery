@@ -210,12 +210,26 @@ impl crate::store::GatewayStore {
         expected: &str,
         now: i64,
     ) -> Result<IssuedGrant> {
+        self.register_plugin_with_recovery(input, key, expected, now, None)
+    }
+    pub fn register_plugin_with_recovery(
+        &self,
+        input: RegistrationInput<'_>,
+        key: &MasterKey,
+        expected: &str,
+        now: i64,
+        recovery: Option<&hennery_proto::plugin_management::PluginRecoveryConfirmation>,
+    ) -> Result<IssuedGrant> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         ensure!(
             fingerprint(&tx, self.owner_id(), input.connection_id)? == expected,
             "connection changed during discovery"
         );
+        if let Some(consent) = recovery {
+            self.plugins()
+                .repair_registration_in(&tx, input.connection_id, consent, now)?;
+        }
         let result = self.plugins().register_in(&tx, input, key, now)?;
         tx.commit()?;
         Ok(result)

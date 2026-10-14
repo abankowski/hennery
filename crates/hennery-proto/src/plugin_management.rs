@@ -13,6 +13,17 @@ pub struct RegisterPluginRequest {
     pub startup: bool,
     /// Owner confirmation that the upstream credential isolates this owner/hat.
     pub namespace_isolated: bool,
+    /// Explicit recovery of a mismatched or incomplete configured backup.
+    #[serde(default)]
+    #[ts(optional)]
+    pub recovery: Option<PluginRecoveryConfirmation>,
+}
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct PluginRecoveryConfirmation {
+    pub new_empty_namespace: bool,
+    pub unresolved_external_copy_acknowledged: bool,
 }
 #[derive(Clone, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]

@@ -458,6 +458,7 @@ pub fn purge_sessions(state: &AppState, hat_id: &str) -> anyhow::Result<PurgedSe
         }
         delete_as_read(state, session, &mut purged)?;
     }
+    state.store.finish_plugin_purge(hat_id)?;
     Ok(purged)
 }
 

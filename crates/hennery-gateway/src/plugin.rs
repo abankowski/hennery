@@ -3,6 +3,7 @@
 
 pub mod feed;
 pub mod management;
+pub mod recovery;
 
 use crate::{
     crypto,
@@ -665,6 +666,7 @@ impl Control {
         self.with(false, |conn| {
             let tx = conn.transaction()?;
             self.erase_rotation_in(&tx, &work.connection_id)?;
+            self.erase_inventory_in(&tx, &work.connection_id)?;
             let changed = tx.execute(
                 "UPDATE plugin_registrations SET state = 'disposed',endpoint = NULL,lifecycle = NULL,
                 token_hash = NULL,activity = 0,startup = 0,cursor_key = '' WHERE owner_id = ?1 AND connection_id = ?2
@@ -1029,6 +1031,13 @@ impl crate::runtime::Runtime {
 }
 
 fn verify_generation(core: &Connection, control: &Connection, owner: &str, hat: &str) -> Result<()> {
+    ensure!(
+        generation_matches(core, control, owner, hat)?,
+        "plug-in binding restore mismatch"
+    );
+    Ok(())
+}
+fn generation_matches(core: &Connection, control: &Connection, owner: &str, hat: &str) -> Result<bool> {
     let expected: Option<String> = core
         .query_row(
             "SELECT value FROM settings WHERE owner_id = ?1 AND key = ?2",
@@ -1043,8 +1052,7 @@ fn verify_generation(core: &Connection, control: &Connection, owner: &str, hat: 
             |r| r.get(0),
         )
         .optional()?;
-    ensure!(expected == actual, "plug-in binding restore mismatch");
-    Ok(())
+    Ok(expected == actual)
 }
 fn record_generation(core: &Transaction<'_>, control: &Transaction<'_>, owner: &str, hat: &str) -> Result<()> {
     let generation = hex::encode(random_bytes::<32>());

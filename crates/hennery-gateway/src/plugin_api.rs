@@ -218,7 +218,7 @@ async fn register(State(state): State<GatewayState>, ApiJson(request): ApiJson<R
     let Ok(capabilities) = capabilities else {
         return error(StatusCode::BAD_GATEWAY, "unsupported_plugin");
     };
-    let result = state.runtime.store.register_plugin(
+    let result = state.runtime.store.register_plugin_with_recovery(
         RegistrationInput {
             connection_id: &record.id,
             lifecycle_credential: &lifecycle_credential,
@@ -229,6 +229,7 @@ async fn register(State(state): State<GatewayState>, ApiJson(request): ApiJson<R
         &state.runtime.key,
         &record.fingerprint,
         unix_now(),
+        request.recovery.as_ref(),
     );
     match result {
         Ok(grant) => {

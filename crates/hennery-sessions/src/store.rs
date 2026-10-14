@@ -1899,6 +1899,20 @@ impl Store {
         self.mcp().purge_hat(hat_id).await
     }
 
+    pub fn finish_plugin_purge(&self, hat: &str) -> Result<()> {
+        if !self.plugins.configured()? {
+            return Ok(());
+        }
+        let mut conn = self.conn();
+        let anchors = conn.transaction()?;
+        self.plugins.clear_purged_anchors_in(&anchors, hat)?;
+        anchors.commit()?;
+        let cleanup = conn.transaction()?;
+        self.plugins.finish_hat_purge_in(&cleanup, hat)?;
+        cleanup.commit()?;
+        Ok(())
+    }
+
     /// A revoked host's tokens, and what is open on them, at once (plan 8e,
     /// the security review's finding 2): the host revoke route runs this
     /// before it waits for the host's connection to close. Idempotent: the
