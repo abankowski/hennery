@@ -52,7 +52,7 @@ pub async fn serve(method: Method, uri: Uri, headers: HeaderMap) -> Response {
         };
         return file(asset, cache, &headers);
     }
-    if path.starts_with("/assets/") {
+    if path.starts_with("/assets/") || matches!(path, "/sw.js" | "/manifest.webmanifest") {
         return (
             StatusCode::NOT_FOUND,
             [(header::X_CONTENT_TYPE_OPTIONS, "nosniff")],
@@ -98,6 +98,12 @@ fn file(asset: &'static Asset, cache: &'static str, request: &HeaderMap) -> Resp
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    if asset.path == "/sw.js" {
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(crate::csp::WORKER_POLICY),
+        );
+    }
     if cache != "no-store" {
         headers.insert(header::ETAG, HeaderValue::from_static(asset.etag));
     }

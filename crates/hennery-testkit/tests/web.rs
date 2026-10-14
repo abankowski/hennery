@@ -242,6 +242,43 @@ async fn the_theme_script_revalidates() {
     );
 }
 
+#[tokio::test]
+async fn pwa_files_are_real_assets_or_404_and_the_worker_has_its_own_policy() {
+    let addr = start().await;
+    let client = reqwest::Client::new();
+    for (path, mime) in [
+        ("/sw.js", "text/javascript; charset=utf-8"),
+        ("/manifest.webmanifest", "application/manifest+json"),
+    ] {
+        let first = get(addr, path).await;
+        if !hennery_kernel::web::ui_embedded() {
+            assert_eq!(first.status(), 404);
+            continue;
+        }
+        assert_eq!(first.status(), 200);
+        assert_eq!(header(&first, "content-type").as_deref(), Some(mime));
+        assert_eq!(header(&first, "cache-control").as_deref(), Some("no-cache"));
+        if path == "/sw.js" {
+            assert_eq!(
+                header(&first, "content-security-policy").as_deref(),
+                Some(hennery_kernel::csp::WORKER_POLICY)
+            );
+        }
+        let etag = header(&first, "etag").unwrap();
+        let second = client
+            .get(format!("http://{addr}{path}"))
+            .header("if-none-match", etag)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(second.status(), 304);
+    }
+    let html = get(addr, "/").await;
+    let policy = header(&html, "content-security-policy").unwrap();
+    assert!(policy.contains("worker-src 'self'") && policy.contains("manifest-src 'self'"));
+    assert!(!policy.contains("unsafe-inline") && !policy.contains("unsafe-eval"));
+}
+
 /// A missing hashed file is a plain 404, never the page: a browser that
 /// asks for a stale chunk must not run HTML as a script. The real build's
 /// own hashed files are cached for good.

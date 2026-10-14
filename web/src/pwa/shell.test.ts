@@ -40,7 +40,7 @@ describe('verified static shell', () => {
     await installShell(api, async () => response(), [entry], 'v1', 'active', deps)
     const fetcher = async () => {
       if (fault === 'fetch') throw new Error('offline')
-      const r = fault === 'status' ? new Response('missing', { status: 404 }) : response()
+      const r = fault === 'status' ? new Response('missing', { status: 404, headers: { 'Content-Type': 'text/html' } }) : response()
       if (fault === 'mime') r.headers.set('Content-Type', 'text/plain')
       if (fault === 'redirect') Object.defineProperty(r, 'redirected', { value: true })
       if (fault === 'foreign') Object.defineProperty(r, 'url', { value: 'https://evil.example/index.html' })
@@ -55,6 +55,23 @@ describe('verified static shell', () => {
     let call = 0
     await expect(installShell(api, async () => response(), [entry, { ...entry, url: '/theme.js' }], 'v1', 'mix', { ...deps, digest: async () => ++call === 1 ? 'good' : 'bad' })).rejects.toThrow()
     expect(data.size).toBe(0)
+  })
+  it('does not overwrite an existing attempt even when retrying the same build', async () => {
+    const { api } = storage()
+    await installShell(api, async () => response(), [entry], 'v1', 'active', deps)
+    await expect(installShell(api, async () => response(), [entry], 'v1', 'active', deps)).rejects.toThrow('already exists')
+    expect(await (await (await selectShell(api, 'v1'))?.match('/index.html'))?.text()).toBe('shell')
+  })
+  it('checks the namespace as well as completion, and ignores unexpected cached URLs', async () => {
+    const { api } = storage()
+    const foreign = await api.open('hennery-shell-v2-other')
+    await foreign.put('/__hennery_shell_complete__', new Response('v1'))
+    await foreign.put('/index.html', response())
+    expect(await selectShell(api, 'v1')).toBeNull()
+    await installShell(api, async () => response(), [entry], 'v1', 'active', deps)
+    const cache = (await selectShell(api, 'v1'))!
+    await cache.put('/api/secret', new Response('secret'))
+    expect(await shellResponse(api, 'v1', '/api/secret', false, [entry])).toBeNull()
   })
   it('serves only exact static URLs and controlled routes, never APIs or queries', async () => {
     const { api } = storage()

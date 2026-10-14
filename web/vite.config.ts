@@ -2,6 +2,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { pwaBuild } from './pwa-build.ts'
 
 // Tests run in a zone with daylight saving time, so the session list's day
 // buckets are tested across a 23 h and a 25 h day (lib/time.test.ts). The
@@ -9,7 +10,7 @@ import tailwindcss from '@tailwindcss/vite'
 process.env.TZ = 'Europe/Warsaw'
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), pwaBuild()],
   build: { outDir: 'dist', target: 'es2022' },
   test: {
     environment: 'jsdom',
