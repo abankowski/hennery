@@ -1,6 +1,7 @@
 //! Renders the generated artefacts. The `gen` binary writes them to disk or,
 //! with `--check`, fails if the checked-in copies differ.
 
+use crate::plugin_management;
 use crate::{frames, plugin, rest};
 use schemars::generate::SchemaSettings;
 use ts_rs::{Config, TS};
@@ -32,6 +33,12 @@ pub fn render_schema() -> String {
         )*};
     }
     add!(
+        plugin_management::RegisterPluginRequest,
+        plugin_management::PluginGrantResponse,
+        plugin_management::PluginRegistration,
+        plugin_management::RotatePluginRequest,
+        plugin_management::RotatePluginResponse,
+        plugin_management::PluginLease,
         plugin::PluginActivityPage,
         plugin::PluginSourceInventoryPage,
         plugin::PluginContext,
@@ -188,6 +195,13 @@ pub fn render_ts() -> String {
         )*};
     }
     add!(
+        plugin_management::RegisterPluginRequest,
+        plugin_management::PluginGrantResponse,
+        plugin_management::PluginRegistration,
+        plugin_management::RotationAction,
+        plugin_management::RotatePluginRequest,
+        plugin_management::RotatePluginResponse,
+        plugin_management::PluginLease,
         plugin::InputOrigin,
         plugin::SourceRef,
         plugin::Provenance,

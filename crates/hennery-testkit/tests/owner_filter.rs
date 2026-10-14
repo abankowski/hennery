@@ -46,6 +46,11 @@ const SOURCES: &[(&str, &str, usize)] = &[
         8,
     ),
     (
+        "hennery-gateway/src/plugin/management.rs",
+        include_str!("../../hennery-gateway/src/plugin/management.rs"),
+        8,
+    ),
+    (
         "hennery-gateway/src/plugin.rs",
         include_str!("../../hennery-gateway/src/plugin.rs"),
         27,
@@ -344,6 +349,9 @@ fn audit_connection(db: &Path) -> rusqlite::Connection {
         conn.execute_batch(migration).unwrap();
     }
     for migration in hennery_gateway::plugin::feed::INVENTORY_MIGRATIONS {
+        conn.execute_batch(migration).unwrap();
+    }
+    for migration in hennery_gateway::plugin::management::MANAGEMENT_MIGRATIONS {
         conn.execute_batch(migration).unwrap();
     }
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, false).unwrap();

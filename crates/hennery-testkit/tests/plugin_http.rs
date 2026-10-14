@@ -1,0 +1,726 @@
+//! Generic contract HTTP proof against a fake MCP destination and scratch data.
+use axum::{
+    Json, Router,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    routing::post,
+};
+use hennery_gateway::{
+    api::GatewayState,
+    key::MasterKey,
+    model::{Change, CredKind, NewConnection},
+    runtime::Runtime,
+    scope::ProxyStore,
+    store::GatewayStore,
+};
+use hennery_kernel::{
+    hosts::{Enrollment, Hosts},
+    operator::{Operator, SetupOutcome},
+    secret::unix_now,
+};
+use hennery_sessions::store::Store;
+use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
+
+struct Server {
+    base: String,
+    task: tokio::task::JoinHandle<()>,
+}
+impl Server {
+    async fn new(app: Router) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        Self { base, task }
+    }
+}
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.task.abort()
+    }
+}
+#[derive(Default)]
+struct Remote {
+    seen: Mutex<Vec<(HeaderMap, Value)>>,
+    caps: Mutex<Option<Value>>,
+    forget: Mutex<Option<Value>>,
+}
+async fn remote_rpc(State(state): State<Arc<Remote>>, headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
+    state.seen.lock().unwrap().push((headers, body.clone()));
+    let result =
+        match body["method"].as_str().unwrap_or("") {
+            "hennery_plugin_capabilities" => state
+                .caps
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or(json!({"version":1,"activity_v1":true,"forget_v1":true,"startup_context_v1":true})),
+            "hennery_plugin_forget" => state.forget.lock().unwrap().clone().unwrap_or(
+                json!({"request_id":body["params"]["request_id"],"status":"confirmed","remaining_kinds":[]}),
+            ),
+            _ => json!({}),
+        };
+    Json(json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
+}
+struct World {
+    _dir: tempfile::TempDir,
+    _sessions: Store,
+    _remote_server: Server,
+    server: Server,
+    remote: Arc<Remote>,
+    runtime: Arc<Runtime>,
+    fresh: String,
+    stale: String,
+    id: String,
+}
+impl World {
+    async fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let sessions = Store::open(&db).unwrap();
+        let hosts = Hosts::open(&db).unwrap();
+        let operator = Arc::new(Operator::open(&db).unwrap());
+        let now = unix_now();
+        let setup = operator.issue_setup_token(now).unwrap().unwrap();
+        let SetupOutcome::Done { phc, .. } = operator
+            .set_up(&setup, "correct horse battery", "https://hennery.example", now)
+            .unwrap()
+        else {
+            panic!("setup")
+        };
+        let fresh = operator.open_session("test", &phc, now).unwrap().unwrap();
+        let stale = operator.open_session("test", &phc, now - 3600).unwrap().unwrap();
+        let key = hennery_host::identity::HostKey::from_seed([19; 32]);
+        hosts
+            .register(
+                "host",
+                &Enrollment {
+                    public_key: key.public_key_hex(),
+                    name: "Test".into(),
+                    host_version: "0.0.0".into(),
+                    platform: "test".into(),
+                },
+                now,
+            )
+            .unwrap();
+        let remote = Arc::new(Remote::default());
+        let remote_server = Server::new(Router::new().route("/mcp", post(remote_rpc)).with_state(remote.clone())).await;
+        let store = Arc::new(GatewayStore::open(&db).unwrap());
+        let hat = hosts.default_hat_for_new_hosts().unwrap();
+        let Change::Done(record) = store
+            .create(
+                &NewConnection {
+                    slug: "plugin".into(),
+                    label: "Plug-in".into(),
+                    url: format!("{}/mcp", remote_server.base),
+                    hat_id: hat,
+                    cred_kind: CredKind::Static,
+                    static_header: None,
+                    static_prefix: None,
+                    tool_allowlist: Some(vec!["search".into()]),
+                    internal_network: true,
+                },
+                now,
+            )
+            .unwrap()
+        else {
+            panic!("connection")
+        };
+        store.replace_mounts(&record.id, &["host".into()]).unwrap();
+        let key = Arc::new(MasterKey::from_bytes([8; 32]));
+        store
+            .set_static_credential(&record.id, "namespace-token", &key, now)
+            .unwrap();
+        let runtime = Arc::new(Runtime::new(
+            store,
+            Arc::new(ProxyStore::open(&db).unwrap()),
+            key,
+            hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap(),
+            Arc::new(hennery_gateway::notify::Silent),
+        ));
+        let app = hennery_gateway::api::router(GatewayState {
+            runtime: runtime.clone(),
+            operator: operator.clone(),
+        });
+        let server = Server::new(app).await;
+        Self {
+            _dir: dir,
+            _sessions: sessions,
+            _remote_server: remote_server,
+            server,
+            remote,
+            runtime,
+            fresh,
+            stale,
+            id: record.id,
+        }
+    }
+    fn owner(&self, method: reqwest::Method, path: &str, fresh: bool) -> reqwest::RequestBuilder {
+        reqwest::Client::new()
+            .request(method, format!("{}{path}", self.server.base))
+            .header("origin", "https://hennery.example")
+            .header(
+                "cookie",
+                format!("hennery_session={}", if fresh { &self.fresh } else { &self.stale }),
+            )
+    }
+    fn body(&self) -> Value {
+        json!({"connection_id":self.id,"lifecycle_credential":"lifecycle-admin-token","activity":true,"startup":false,"namespace_isolated":true})
+    }
+    async fn register(&self) -> Value {
+        let response = self
+            .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+            .json(&self.body())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response.json().await.unwrap()
+    }
+    async fn lease(&self, token: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(format!("{}/api/plugins/lease", self.server.base))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn registration_discovers_capabilities_then_owner_list_hides_all_credentials() {
+    let world = World::new().await;
+    let grant = world.register().await;
+    let token = grant["token"].as_str().unwrap();
+    assert!(token.starts_with("hnry_activity_"));
+    assert_eq!(grant["namespace_epoch"].as_str().unwrap().len(), 64);
+    {
+        let seen = world.remote.seen.lock().unwrap();
+        assert_eq!(seen[0].1["method"], "hennery_plugin_capabilities");
+        assert_eq!(seen[0].0["authorization"], "Bearer lifecycle-admin-token");
+    }
+    let listed = world
+        .owner(reqwest::Method::GET, "/api/plugins/registrations", true)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(listed.headers()["cache-control"], "no-store");
+    let text = listed.text().await.unwrap();
+    assert!(!text.contains(token) && !text.contains("namespace-token") && !text.contains("lifecycle-admin-token"));
+    let value: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(value[0]["state"], "active");
+    let lease = world.lease(token).await;
+    assert_eq!(lease.status(), StatusCode::OK);
+    assert_eq!(lease.headers()["cache-control"], "no-store");
+    let lease: Value = lease.json().await.unwrap();
+    assert_eq!(lease["namespace_epoch"], grant["namespace_epoch"]);
+    let until = lease["lease_until"].as_i64().unwrap();
+    assert!((unix_now()..=unix_now() + 60).contains(&until));
+}
+#[tokio::test]
+async fn explicit_rotation_preserves_epoch_and_handover_then_retires_the_old_token() {
+    let world = World::new().await;
+    let grant = world.register().await;
+    let old = grant["token"].as_str().unwrap();
+    let path = format!("/api/plugins/registrations/{}/rotate", world.id);
+    let denied = world
+        .owner(reqwest::Method::POST, &path, false)
+        .json(&json!({"action":"prepare"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let response = world
+        .owner(reqwest::Method::POST, &path, true)
+        .json(&json!({"action":"prepare"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let rotated: Value = response.json().await.unwrap();
+    assert_eq!(rotated["namespace_epoch"], grant["namespace_epoch"]);
+    let new = rotated["token"].as_str().unwrap();
+    assert_ne!(new, old);
+    assert_eq!(world.lease(old).await.status(), StatusCode::OK);
+    assert_eq!(world.lease(new).await.status(), StatusCode::OK);
+    let watch = world.runtime.store.watch_plugin(old).unwrap();
+    let wrong = world
+        .owner(reqwest::Method::POST, &path, true)
+        .json(&json!({"action":"finish","handover_id":"0".repeat(64)}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), StatusCode::CONFLICT);
+    assert_eq!(world.lease(old).await.status(), StatusCode::OK);
+    let response = world
+        .owner(reqwest::Method::POST, &path, true)
+        .json(&json!({"action":"finish","handover_id":rotated["handover_id"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(watch.token().is_cancelled());
+    let done: Value = response.json().await.unwrap();
+    assert!(done["token"].is_null());
+    assert_eq!(world.lease(old).await.status(), StatusCode::NOT_FOUND);
+    assert_eq!(world.lease(new).await.status(), StatusCode::OK);
+    assert!(!world.runtime.store.plugin_registrations().unwrap()[0].rotation_pending);
+}
+#[tokio::test]
+async fn revoke_erases_both_rotation_hashes_and_never_reopens_ordinary_routing() {
+    let world = World::new().await;
+    let grant = world.register().await;
+    let old = grant["token"].as_str().unwrap();
+    let rotated: Value = world
+        .owner(
+            reqwest::Method::POST,
+            &format!("/api/plugins/registrations/{}/rotate", world.id),
+            true,
+        )
+        .json(&json!({"action":"prepare"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let new = rotated["token"].as_str().unwrap();
+    let watch = world.runtime.store.watch_plugin(old).unwrap();
+    let revoked = world
+        .owner(
+            reqwest::Method::DELETE,
+            &format!("/api/plugins/registrations/{}", world.id),
+            true,
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+    assert!(watch.token().is_cancelled());
+    assert_eq!(world.lease(old).await.status(), StatusCode::NOT_FOUND);
+    assert_eq!(world.lease(new).await.status(), StatusCode::NOT_FOUND);
+    assert_eq!(world.runtime.store.plugin_registrations().unwrap()[0].state, "complete");
+    let seen = world.remote.seen.lock().unwrap();
+    let forget = seen
+        .iter()
+        .find(|(_, body)| body["method"] == "hennery_plugin_forget")
+        .unwrap();
+    assert_eq!(forget.0["authorization"], "Bearer lifecycle-admin-token");
+    drop(seen);
+    let db = rusqlite::Connection::open(world._dir.path().join("plugin-control.db")).unwrap();
+    let remaining: i64 = db
+        .query_row("SELECT count(*) FROM plugin_rotations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(remaining, 0);
+}
+#[tokio::test]
+async fn capability_failure_never_activates_or_creates_control_state() {
+    let world = World::new().await;
+    for capabilities in [
+        json!({"version":2,"activity_v1":true,"forget_v1":true,"startup_context_v1":true}),
+        json!({"version":1,"activity_v1":true,"forget_v1":false,"startup_context_v1":true}),
+        json!({"version":1,"activity_v1":false,"forget_v1":true,"startup_context_v1":true}),
+        json!({"version":1,"activity_v1":true,"forget_v1":true,"startup_context_v1":true,"owner_id":"spoof"}),
+    ] {
+        *world.remote.caps.lock().unwrap() = Some(capabilities);
+        let result = world
+            .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+            .json(&world.body())
+            .send()
+            .await
+            .unwrap();
+        assert!(!result.status().is_success());
+        assert!(!world._dir.path().join("plugin-control.db").exists());
+    }
+}
+#[tokio::test]
+async fn unsafe_namespace_confirmation_credentials_and_management_allowlist_are_refused() {
+    let world = World::new().await;
+    for (key, value) in [
+        ("namespace_isolated", json!(false)),
+        ("lifecycle_credential", json!("namespace-token")),
+        ("lifecycle_credential", json!("")),
+    ] {
+        let mut body = world.body();
+        body[key] = value;
+        let response = world
+            .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    assert!(world.remote.seen.lock().unwrap().is_empty());
+    let patch = hennery_gateway::model::ConnectionPatch {
+        tool_allowlist: Some(Some(vec!["hennery_plugin_forget".into()])),
+        ..Default::default()
+    };
+    world.runtime.store.update(&world.id, &patch, unix_now()).unwrap();
+    let response = world
+        .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+        .json(&world.body())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(world.remote.seen.lock().unwrap().is_empty());
+}
+#[tokio::test]
+async fn machine_routes_reject_browser_origin_duplicate_auth_queries_and_bodies() {
+    let world = World::new().await;
+    let grant = world.register().await;
+    let token = grant["token"].as_str().unwrap();
+    let url = format!("{}/api/plugins/lease", world.server.base);
+    let client = reqwest::Client::new();
+    for origin in ["", "null", "https://hennery.example"] {
+        let response = client
+            .post(&url)
+            .bearer_auth(token)
+            .header("origin", origin)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.append("authorization", format!("Bearer {token}").parse().unwrap());
+    headers.append("authorization", format!("Bearer {token}").parse().unwrap());
+    assert_eq!(
+        client.post(&url).headers(headers).send().await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        client
+            .post(format!("{url}?owner_id=victim"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        client
+            .post(&url)
+            .bearer_auth(token)
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        client
+            .post(&url)
+            .header("cookie", format!("hennery_session={}", world.fresh))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+#[tokio::test]
+async fn lease_only_grant_and_request_budget_are_scoped_to_registration() {
+    let world = World::new().await;
+    let mut body = world.body();
+    body["activity"] = json!(false);
+    let response = world
+        .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let grant: Value = response.json().await.unwrap();
+    let token = grant["token"].as_str().unwrap();
+    for _ in 0..60 {
+        assert_eq!(world.lease(token).await.status(), StatusCode::OK);
+    }
+    let response = world.lease(token).await;
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["code"], "busy");
+}
+
+#[tokio::test]
+async fn queued_response_body_is_cut_when_rotation_retires_its_admission() {
+    let world = World::new().await;
+    let grant = world.register().await;
+    let token = grant["token"].as_str().unwrap();
+    let watch = world.runtime.store.watch_plugin(token).unwrap();
+    let response = hennery_gateway::plugin_api::watched_json(&json!({"private":"source body"}), watch);
+    let path = format!("/api/plugins/registrations/{}/rotate", world.id);
+    let rotation: Value = world
+        .owner(reqwest::Method::POST, &path, true)
+        .json(&json!({"action":"prepare"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    world
+        .owner(reqwest::Method::POST, &path, true)
+        .json(&json!({"action":"finish","handover_id":rotation["handover_id"]}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert!(axum::body::to_bytes(response.into_body(), 1024).await.is_err());
+}
+
+#[tokio::test]
+async fn request_byte_budget_is_enforced_before_any_further_admission() {
+    let world = World::new().await;
+    let issued = world.register().await;
+    let control = world.runtime.store.plugins();
+    let mut core = hennery_kernel::db::open(&world._dir.path().join("hennery.db")).unwrap();
+    let coordination = core.coordination();
+    let _gate = coordination.gate.lock();
+    let tx = core.transaction().unwrap();
+    let grant = control
+        .authenticate_in(&tx, issued["token"].as_str().unwrap(), unix_now())
+        .unwrap()
+        .unwrap();
+    control.charge(&grant, 8 * 1024 * 1024).unwrap();
+    assert_eq!(
+        control.charge(&grant, 1).unwrap_err().to_string(),
+        "plug-in budget exceeded"
+    );
+    tx.commit().unwrap();
+}
+
+#[tokio::test]
+async fn owner_mutations_reject_differential_authority_json_without_remote_dispatch() {
+    let world = World::new().await;
+    let canonical = world.body().to_string();
+    let mut cases = vec![
+        canonical.replacen('{', "{\"activity\":false,", 1),
+        canonical.replacen('{', r#"{"\u0061ctivity":false,"#, 1),
+        canonical.replace("activity", "Activity"),
+        format!("\u{feff}{canonical}"),
+    ];
+    for key in [
+        "owner_id",
+        "Owner_Id",
+        r#"\u006fwner_id"#,
+        "hat_id",
+        "origin",
+        "provenance",
+    ] {
+        cases.push(canonical.replacen('{', &format!("{{\"{key}\":\"Operator\","), 1));
+    }
+    for raw in cases {
+        let response = world
+            .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+            .header("content-type", "application/json")
+            .body(raw)
+            .send()
+            .await
+            .unwrap();
+        assert!(!response.status().is_success());
+        let body = response.text().await.unwrap();
+        assert!(!body.contains("lifecycle-admin-token"));
+    }
+    assert!(world.remote.seen.lock().unwrap().is_empty());
+    assert!(!world._dir.path().join("plugin-control.db").exists());
+}
+
+#[tokio::test]
+async fn rotation_and_machine_lease_race_never_revives_a_retired_token() {
+    let world = World::new().await;
+    let issued = world.register().await;
+    let old = issued["token"].as_str().unwrap();
+    let path = format!("/api/plugins/registrations/{}/rotate", world.id);
+    let prepared: Value = world
+        .owner(reqwest::Method::POST, &path, true)
+        .json(&json!({"action":"prepare"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let old_lease = world.lease(old);
+    let finish = world
+        .owner(reqwest::Method::POST, &path, true)
+        .json(&json!({"action":"finish","handover_id":prepared["handover_id"]}))
+        .send();
+    let (lease, finished) = tokio::join!(old_lease, finish);
+    assert!(matches!(lease.status(), StatusCode::OK | StatusCode::NOT_FOUND));
+    assert_eq!(finished.unwrap().status(), StatusCode::OK);
+    assert_eq!(world.lease(old).await.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        world.lease(prepared["token"].as_str().unwrap()).await.status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn changed_discovery_fingerprint_never_activates_a_grant() {
+    let world = World::new().await;
+    let fingerprint = world.runtime.store.plugin_fingerprint(&world.id).unwrap();
+    world
+        .runtime
+        .store
+        .update(
+            &world.id,
+            &hennery_gateway::model::ConnectionPatch {
+                label: Some("Changed".into()),
+                ..Default::default()
+            },
+            unix_now(),
+        )
+        .unwrap();
+    let result = world.runtime.store.register_plugin(
+        hennery_gateway::plugin::RegistrationInput {
+            connection_id: &world.id,
+            lifecycle_credential: "lifecycle-admin-token",
+            activity: true,
+            startup: false,
+            capabilities: hennery_proto::plugin::PluginCapabilities {
+                version: 1,
+                activity_v1: true,
+                forget_v1: true,
+                startup_context_v1: true,
+            },
+        },
+        &world.runtime.key,
+        &fingerprint,
+        unix_now(),
+    );
+    assert!(result.is_err());
+    assert!(!world._dir.path().join("plugin-control.db").exists());
+}
+
+#[tokio::test]
+async fn optional_worker_settles_a_durable_store_transition_without_an_http_retry() {
+    let world = World::new().await;
+    let _grant = world.register().await;
+    let result = world.runtime.store.update(
+        &world.id,
+        &hennery_gateway::model::ConnectionPatch {
+            label: Some("Changed".into()),
+            ..Default::default()
+        },
+        unix_now(),
+    );
+    assert!(result.unwrap_err().is::<hennery_gateway::plugin::PendingMutation>());
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if world.runtime.store.plugin_registrations().unwrap()[0].state == "disposed" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("worker did not settle terminal snapshot");
+    assert!(
+        world
+            .remote
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, b)| b["method"] == "hennery_plugin_forget")
+    );
+    assert_eq!(
+        world.runtime.store.connection(&world.id).unwrap().unwrap().label,
+        "Plug-in"
+    );
+}
+
+#[tokio::test]
+async fn unconfirmed_remote_deletion_is_visible_and_never_reactivates_the_grant() {
+    let world = World::new().await;
+    let issued = world.register().await;
+    *world.remote.forget.lock().unwrap() =
+        Some(json!({"request_id":"wrong-receipt-id","status":"confirmed","remaining_kinds":[]}));
+    let response = world
+        .owner(
+            reqwest::Method::DELETE,
+            &format!("/api/plugins/registrations/{}", world.id),
+            true,
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let items = world.runtime.store.plugin_registrations().unwrap();
+    assert!(matches!(
+        items[0].deletion,
+        Some(hennery_proto::plugin::ForgetStatus::Unconfirmed)
+    ));
+    assert_eq!(
+        world.lease(issued["token"].as_str().unwrap()).await.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn revoke_requires_step_up_and_rotation_rejects_inconsistent_handover_requests() {
+    let world = World::new().await;
+    let issued = world.register().await;
+    let response = world
+        .owner(
+            reqwest::Method::DELETE,
+            &format!("/api/plugins/registrations/{}", world.id),
+            false,
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        world.lease(issued["token"].as_str().unwrap()).await.status(),
+        StatusCode::OK
+    );
+    for body in [
+        json!({"action":"prepare","handover_id":"0".repeat(64)}),
+        json!({"action":"finish"}),
+        json!({"action":"finish","handover_id":"short"}),
+        json!({"action":"finish","handover_id":"A".repeat(64)}),
+    ] {
+        let response = world
+            .owner(
+                reqwest::Method::POST,
+                &format!("/api/plugins/registrations/{}/rotate", world.id),
+                true,
+            )
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn permissions_are_discovered_independently_and_startup_requires_its_capability() {
+    let world = World::new().await;
+    *world.remote.caps.lock().unwrap() =
+        Some(json!({"version":1,"activity_v1":true,"forget_v1":true,"startup_context_v1":false}));
+    let mut request = world.body();
+    request["startup"] = json!(true);
+    let response = world
+        .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(!world._dir.path().join("plugin-control.db").exists());
+    request["startup"] = json!(false);
+    let response = world
+        .owner(reqwest::Method::POST, "/api/plugins/registrations", true)
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}

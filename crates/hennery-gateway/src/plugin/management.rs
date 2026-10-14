@@ -2,9 +2,12 @@
 //! machine access goes through the same active registration checks.
 use super::*;
 use hennery_proto::plugin_management::{PluginRegistration, RotatePluginResponse};
-use std::{collections::HashMap, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
-const MANAGEMENT_MIGRATIONS: &[&str] = &["
+pub const MANAGEMENT_MIGRATIONS: &[&str] = &["
 CREATE TABLE plugin_rotations (
     owner_id TEXT NOT NULL, hat_id TEXT NOT NULL, connection_id TEXT NOT NULL,
     epoch TEXT NOT NULL, handover_id TEXT NOT NULL, token_hash TEXT NOT NULL,
@@ -14,9 +17,23 @@ CREATE TABLE plugin_rotations (
 pub(crate) struct State {
     budgets: Mutex<HashMap<String, Budget>>,
 }
-struct Budget { since: Instant, requests: usize, bytes: usize }
+struct Budget {
+    since: Instant,
+    requests: usize,
+    bytes: usize,
+}
 
-fn migrate(conn: &mut Connection) -> Result<()> {
+pub(crate) struct Discovery {
+    pub id: String,
+    pub url: String,
+    pub internal_network: bool,
+    pub cred_kind: crate::model::CredKind,
+    pub has_credential: bool,
+    pub tool_allowlist: Option<Vec<String>>,
+    pub fingerprint: String,
+}
+
+pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {
     db::migrate_component(conn, "plugin_management", MANAGEMENT_MIGRATIONS)
 }
 
@@ -38,8 +55,8 @@ impl Control {
         })?.unwrap_or_default())
     }
     /// Explicit same-epoch handover: both hashes authenticate until finish.
-    pub fn prepare_rotation_in(&self, core:&Transaction<'_>, id:&str, now:i64) -> Result<RotatePluginResponse> {
-        let _=now;
+    pub fn prepare_rotation_in(&self, core: &Transaction<'_>, id: &str, now: i64) -> Result<RotatePluginResponse> {
+        let _ = now;
         self.with(false, |conn| {
             migrate(conn)?;
             let row=Self::row(conn,&self.owner,id)?.context("registration unavailable")?;
@@ -52,7 +69,7 @@ impl Control {
             Ok(RotatePluginResponse{namespace_epoch:row.grant.epoch,handover_id,token:Some(token)})
         })?.context("registration unavailable")
     }
-    pub fn finish_rotation_in(&self, core:&Transaction<'_>, id:&str, handover:&str) -> Result<RotatePluginResponse> {
+    pub fn finish_rotation_in(&self, core: &Transaction<'_>, id: &str, handover: &str) -> Result<RotatePluginResponse> {
         self.with(false, |conn| {
             migrate(conn)?;
             let row=Self::row(conn,&self.owner,id)?.context("registration unavailable")?;
@@ -69,91 +86,182 @@ impl Control {
             Ok(RotatePluginResponse{namespace_epoch:row.grant.epoch,handover_id:handover.into(),token:None})
         })?.context("registration unavailable")
     }
-    pub(crate) fn rotation_connection_in(&self, conn:&mut Connection, token:&str) -> Result<Option<String>> {
+    pub(crate) fn rotation_connection_in(&self, conn: &mut Connection, token: &str) -> Result<Option<String>> {
         migrate(conn)?;
-        Ok(conn.query_row("SELECT r.connection_id FROM plugin_rotations r JOIN plugin_registrations p
+        Ok(conn
+            .query_row(
+                "SELECT r.connection_id FROM plugin_rotations r JOIN plugin_registrations p
             ON p.owner_id = ?1 AND p.connection_id = r.connection_id AND p.epoch = r.epoch
             WHERE r.owner_id = ?1 AND r.token_hash = ?2 AND p.state = 'active'",
-            params![self.owner,sha256_hex(token.as_bytes())],|r|r.get(0)).optional()?)
+                params![self.owner, sha256_hex(token.as_bytes())],
+                |r| r.get(0),
+            )
+            .optional()?)
     }
     /// Called in the terminal disposition transaction, before secrets vanish.
-    pub(crate) fn erase_rotation_in(&self, conn:&Connection, id:&str) -> Result<()> {
-        let exists:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'plugin_rotations')",[],|r|r.get(0))?;
-        if exists {conn.execute("DELETE FROM plugin_rotations WHERE owner_id = ?1 AND connection_id = ?2",params![self.owner,id])?;}
+    pub(crate) fn erase_rotation_in(&self, conn: &Connection, id: &str) -> Result<()> {
+        conn.execute(
+            "DELETE FROM plugin_rotations WHERE owner_id = ?1 AND connection_id = ?2",
+            params![self.owner, id],
+        )?;
         Ok(())
     }
     /// 60 requests and 8 MiB per registration/epoch per minute. No key is
     /// inserted before authentication, and expired entries are bounded.
-    pub fn charge(&self, grant:&Grant, bytes:usize) -> Result<()> {
-        let mut budgets=self.management.budgets.lock().expect("plug-in budgets");
-        let now=Instant::now();
-        budgets.retain(|_, b| now.duration_since(b.since)<Duration::from_secs(60));
-        let key=format!("{}:{}",grant.connection_id,grant.epoch);
-        let budget=budgets.entry(key).or_insert(Budget{since:now,requests:0,bytes:0});
-        ensure!(budget.requests<60 && budget.bytes.saturating_add(bytes)<=8*1024*1024,"plug-in budget exceeded");
-        budget.requests+=1; budget.bytes=budget.bytes.saturating_add(bytes);
+    pub fn charge(&self, grant: &Grant, bytes: usize) -> Result<()> {
+        let mut budgets = self.management.budgets.lock().expect("plug-in budgets");
+        let now = Instant::now();
+        budgets.retain(|_, b| now.duration_since(b.since) < Duration::from_secs(60));
+        let key = format!("{}:{}", grant.connection_id, grant.epoch);
+        let budget = budgets.entry(key).or_insert(Budget {
+            since: now,
+            requests: 0,
+            bytes: 0,
+        });
+        ensure!(
+            budget.requests < 60 && budget.bytes.saturating_add(bytes) <= 8 * 1024 * 1024,
+            "plug-in budget exceeded"
+        );
+        budget.requests += 1;
+        budget.bytes = budget.bytes.saturating_add(bytes);
         Ok(())
     }
-    pub fn revoke_registration_in(&self, core:&Transaction<'_>, id:&str, now:i64) -> Result<()> {
-        let exists=self.with(false,|conn|Ok(Self::row(conn,&self.owner,id)?.is_some()))?.unwrap_or(false);
-        ensure!(exists,"registration unavailable");
-        let fingerprint=fingerprint(core,&self.owner,id)?;
-        self.authorize_mutation_in(core,id,&fingerprint,"revoke",&fingerprint,now)
+    pub fn revoke_registration_in(&self, core: &Transaction<'_>, id: &str, now: i64) -> Result<()> {
+        let exists = self
+            .with(false, |conn| Ok(Self::row(conn, &self.owner, id)?.is_some()))?
+            .unwrap_or(false);
+        ensure!(exists, "registration unavailable");
+        let fingerprint = fingerprint(core, &self.owner, id)?;
+        self.authorize_mutation_in(core, id, &fingerprint, "revoke", &fingerprint, now)
     }
 }
 
 impl crate::store::GatewayStore {
-    pub fn plugin_registrations(&self)->Result<Vec<PluginRegistration>> {
-        let mut conn=self.conn(); let tx=conn.transaction()?;
-        let result=self.plugins().registrations_in(&tx)?; tx.commit()?; Ok(result)
+    pub(crate) fn plugin_discovery(&self, id: &str) -> Result<Option<Discovery>> {
+        let conn = self.conn();
+        let row:Option<(String,bool,String,bool,Option<String>)>=conn.query_row(
+            "SELECT c.url,c.internal_network,c.cred_kind,EXISTS(SELECT 1 FROM gw_credentials k WHERE k.owner_id = ?1 AND k.connection_id = c.id),c.tool_allowlist
+            FROM gw_connections c WHERE c.owner_id = ?1 AND c.id = ?2",params![self.owner_id(),id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+        let Some((url, internal_network, kind, has_credential, tools)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(Discovery {
+            id: id.into(),
+            url,
+            internal_network,
+            cred_kind: crate::model::CredKind::parse(&kind).context("stored credential kind")?,
+            has_credential,
+            tool_allowlist: tools.map(|s| serde_json::from_str(&s)).transpose()?,
+            fingerprint: fingerprint(&conn, self.owner_id(), id)?,
+        }))
     }
-    pub fn register_plugin(&self, input:RegistrationInput<'_>, key:&MasterKey, expected:&str, now:i64)->Result<IssuedGrant> {
-        let mut conn=self.conn(); let tx=conn.transaction()?;
-        ensure!(fingerprint(&tx,self.owner_id(),input.connection_id)?==expected,"connection changed during discovery");
-        let result=self.plugins().register_in(&tx,input,key,now)?; tx.commit()?; Ok(result)
+    pub fn plugin_registrations(&self) -> Result<Vec<PluginRegistration>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let result = self.plugins().registrations_in(&tx)?;
+        tx.commit()?;
+        Ok(result)
     }
-    pub fn plugin_fingerprint(&self,id:&str)->Result<String>{fingerprint(&self.conn(),self.owner_id(),id)}
-    pub fn revoke_plugin(&self,id:&str,now:i64)->Result<()> {
-        let mut conn=self.conn(); let tx=conn.transaction()?;
-        self.plugins().revoke_registration_in(&tx,id,now)?;
-        tx.commit()?; self.plugins().complete_in(&conn,id)
+    pub fn register_plugin(
+        &self,
+        input: RegistrationInput<'_>,
+        key: &MasterKey,
+        expected: &str,
+        now: i64,
+    ) -> Result<IssuedGrant> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        ensure!(
+            fingerprint(&tx, self.owner_id(), input.connection_id)? == expected,
+            "connection changed during discovery"
+        );
+        let result = self.plugins().register_in(&tx, input, key, now)?;
+        tx.commit()?;
+        Ok(result)
     }
-    pub fn rotate_plugin(&self,id:&str,finish:Option<&str>)->Result<RotatePluginResponse>{
-        let mut conn=self.conn(); let tx=conn.transaction()?;
-        let result=match finish{Some(handover)=>self.plugins().finish_rotation_in(&tx,id,handover)?,None=>self.plugins().prepare_rotation_in(&tx,id,hennery_kernel::secret::unix_now())?};
-        tx.commit()?; Ok(result)
+    pub fn plugin_fingerprint(&self, id: &str) -> Result<String> {
+        fingerprint(&self.conn(), self.owner_id(), id)
     }
-    pub fn plugin_lease(&self,token:&str)->Result<hennery_proto::plugin_management::PluginLease>{
-        let mut conn=self.conn();let tx=conn.transaction()?;
-        let grant=self.plugins().authenticate_in(&tx,token,hennery_kernel::secret::unix_now())?.context("plug-in access denied")?;
-        self.plugins().charge(&grant,128)?;
-        let lease=hennery_proto::plugin_management::PluginLease{namespace_epoch:grant.epoch,lease_until:hennery_kernel::secret::unix_now().saturating_add(60)};
-        tx.commit()?;Ok(lease)
+    pub fn revoke_plugin(&self, id: &str, now: i64) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        self.plugins().revoke_registration_in(&tx, id, now)?;
+        tx.commit()?;
+        self.plugins().complete_in(&conn, id)
     }
-    pub fn watch_plugin(&self, token:&str)->Result<Watch>{
-        let mut conn=self.conn();let tx=conn.transaction()?;
-        let grant=self.plugins().authenticate_in(&tx,token,hennery_kernel::secret::unix_now())?.context("plug-in access denied")?;
-        let watch=self.plugins().work.watch(&grant.connection_id);
-        tx.commit()?;Ok(watch)
+    pub fn rotate_plugin(&self, id: &str, finish: Option<&str>) -> Result<RotatePluginResponse> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let result = match finish {
+            Some(handover) => self.plugins().finish_rotation_in(&tx, id, handover)?,
+            None => self
+                .plugins()
+                .prepare_rotation_in(&tx, id, hennery_kernel::secret::unix_now())?,
+        };
+        tx.commit()?;
+        Ok(result)
+    }
+    pub fn plugin_lease(&self, token: &str) -> Result<hennery_proto::plugin_management::PluginLease> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let grant = self
+            .plugins()
+            .authenticate_in(&tx, token, hennery_kernel::secret::unix_now())?
+            .context("plug-in access denied")?;
+        self.plugins().charge(&grant, 128)?;
+        let lease = hennery_proto::plugin_management::PluginLease {
+            namespace_epoch: grant.epoch,
+            lease_until: hennery_kernel::secret::unix_now().saturating_add(60),
+        };
+        tx.commit()?;
+        Ok(lease)
+    }
+    pub fn watch_plugin(&self, token: &str) -> Result<Watch> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let grant = self
+            .plugins()
+            .authenticate_in(&tx, token, hennery_kernel::secret::unix_now())?
+            .context("plug-in access denied")?;
+        let watch = self.plugins().work.watch(&grant.connection_id);
+        tx.commit()?;
+        Ok(watch)
     }
 }
 
 impl crate::runtime::Runtime {
     /// An unconfigured collector has no task. Weak ownership prevents an idle
     /// recovery worker retaining Runtime, its master key or its data directory.
-    pub fn ensure_plugin_worker(self:&Arc<Self>){
-        if !matches!(self.store.plugins().configured(),Ok(true))
-            || self.plugin_worker_started.swap(true,std::sync::atomic::Ordering::AcqRel){return;}
-        let weak=Arc::downgrade(self);
-        tokio::spawn(async move{
-            loop{
-                let Some(runtime)=weak.upgrade()else{return};
-                let control=runtime.store.plugins();
+    pub fn ensure_plugin_worker(self: &Arc<Self>) {
+        if !matches!(self.store.plugins().configured(), Ok(true))
+            || matches!(self.store.plugin_registrations(), Ok(rows) if !rows.iter().any(|r| matches!(r.state.as_str(),"active"|"pending"|"terminal")))
+            || self
+                .plugin_worker_started
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return;
+        }
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                let Some(runtime) = weak.upgrade() else { return };
+                let control = runtime.store.plugins();
                 // Reconcile frozen hats first; never send an early remote wait.
-                let _=runtime.recover_plugins().await;
+                let _ = runtime.recover_plugins().await;
+                if matches!(runtime.store.plugin_registrations(),Ok(rows) if !rows.iter().any(|r|matches!(r.state.as_str(),"active"|"pending"|"terminal")))
+                {
+                    runtime
+                        .plugin_worker_started
+                        .store(false, std::sync::atomic::Ordering::Release);
+                    // Cover a registration racing the decision to stop.
+                    runtime.ensure_plugin_worker();
+                    return;
+                }
                 drop(runtime);
-                tokio::select!{ _=control.pending.notified()=>{}, _=tokio::time::sleep(Duration::from_secs(1))=>{} }
-                if weak.strong_count()==0{return;}
+                tokio::select! { _=control.pending.notified()=>{}, _=tokio::time::sleep(Duration::from_secs(1))=>{} }
+                if weak.strong_count() == 0 {
+                    return;
+                }
             }
         });
     }

@@ -3243,6 +3243,90 @@
       ],
       "type": "object"
     },
+    "PluginGrantResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "namespace_epoch": {
+          "type": "string"
+        },
+        "token": {
+          "description": "One-time handover; never present on a GET.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "connection_id",
+        "namespace_epoch",
+        "token"
+      ],
+      "type": "object"
+    },
+    "PluginLease": {
+      "additionalProperties": false,
+      "properties": {
+        "lease_until": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "namespace_epoch": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "namespace_epoch",
+        "lease_until"
+      ],
+      "type": "object"
+    },
+    "PluginRegistration": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "type": "boolean"
+        },
+        "connection_id": {
+          "type": "string"
+        },
+        "deletion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ForgetStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hat_id": {
+          "type": "string"
+        },
+        "namespace_epoch": {
+          "type": "string"
+        },
+        "rotation_pending": {
+          "type": "boolean"
+        },
+        "startup": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "connection_id",
+        "hat_id",
+        "namespace_epoch",
+        "state",
+        "activity",
+        "startup",
+        "rotation_pending"
+      ],
+      "type": "object"
+    },
     "PluginSourceInventoryPage": {
       "additionalProperties": false,
       "description": "A source-id snapshot at an opaque watermark. Resume activity only after\nconsuming every inventory page; the resume cursor does not backfill text.",
@@ -3685,6 +3769,35 @@
       ],
       "type": "object"
     },
+    "RegisterPluginRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "type": "boolean"
+        },
+        "connection_id": {
+          "type": "string"
+        },
+        "lifecycle_credential": {
+          "type": "string"
+        },
+        "namespace_isolated": {
+          "description": "Owner confirmation that the upstream credential isolates this owner/hat.",
+          "type": "boolean"
+        },
+        "startup": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "connection_id",
+        "lifecycle_credential",
+        "activity",
+        "startup",
+        "namespace_isolated"
+      ],
+      "type": "object"
+    },
     "RemovalItem": {
       "description": "One kind of entry left on the host, how many, and why (plan 9d B2). Its\npath is `kind`'s masked one (`ForgetKind::masked`).",
       "properties": {
@@ -3762,6 +3875,53 @@
           "type": "string"
         }
       ]
+    },
+    "RotatePluginRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/RotationAction"
+        },
+        "handover_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "RotatePluginResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "handover_id": {
+          "type": "string"
+        },
+        "namespace_epoch": {
+          "type": "string"
+        },
+        "token": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "namespace_epoch",
+        "handover_id"
+      ],
+      "type": "object"
+    },
+    "RotationAction": {
+      "enum": [
+        "prepare",
+        "finish"
+      ],
+      "type": "string"
     },
     "SessionBody": {
       "description": "The body of a sequenced, outboxed session frame.",

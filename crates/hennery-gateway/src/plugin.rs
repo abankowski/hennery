@@ -211,11 +211,13 @@ impl Control {
                 Some(path) if create || path.try_exists()? => {
                     let mut opened = db::open(path).context("plug-in control unavailable")?;
                     db::migrate(&mut opened, MIGRATIONS)?;
+                    management::migrate(&mut opened)?;
                     *conn = Some(opened);
                 }
                 None if create => {
                     let mut opened = db::open_in_memory()?;
                     db::migrate(&mut opened, MIGRATIONS)?;
+                    management::migrate(&mut opened)?;
                     *conn = Some(opened);
                 }
                 _ => return Ok(None),

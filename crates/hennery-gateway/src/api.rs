@@ -105,7 +105,8 @@ pub fn router(state: GatewayState) -> Router {
     operator_only(routes, state.operator.clone())
         .layer(middleware::map_response(no_store))
         .with_state(state.clone())
-        .merge(crate::callback::router(state))
+        .merge(crate::callback::router(state.clone()))
+        .merge(crate::plugin_api::router(state))
 }
 
 /// Every answer is private (connection URLs, hat and host ids), and none
