@@ -1070,3 +1070,18 @@ fn record_generation(core: &Transaction<'_>, control: &Transaction<'_>, owner: &
     )?;
     Ok(())
 }
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::forget_budget;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn recovery_budget_never_rounds_past_the_persisted_absolute_deadline() {
+        assert_eq!(forget_budget(105, UNIX_EPOCH + Duration::from_millis(100_900)), Duration::from_millis(4100));
+        assert_eq!(forget_budget(105, UNIX_EPOCH + Duration::from_millis(104_800)), Duration::from_millis(200));
+        assert_eq!(forget_budget(105, UNIX_EPOCH + Duration::from_millis(105_001)), Duration::ZERO);
+        assert_eq!(forget_budget(-1, UNIX_EPOCH), Duration::ZERO);
+        assert_eq!(forget_budget(1100, UNIX_EPOCH + Duration::from_millis(100_100)), Duration::from_secs(5));
+    }
+}
