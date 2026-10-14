@@ -92,6 +92,7 @@ fn paired(dir: &Path) -> PathBuf {
     let data = dir.join("host-data");
     hennery_host::identity::Paired {
         collector_url: "http://127.0.0.1:7117".into(),
+        trust: Default::default(),
         host_id: "host-test".into(),
         key: hennery_host::identity::HostKey::generate(),
         workspace_roots: Vec::new(),

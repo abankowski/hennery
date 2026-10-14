@@ -257,7 +257,7 @@ async fn enroll(base: &Url, code: &str, key: &HostKey, name: &str) -> Result<Str
 
 /// `host-` followed by 16 lowercase hex characters (kernel spec §4.1): the
 /// only shape a host id ever takes.
-fn is_valid_host_id(id: &str) -> bool {
+pub(crate) fn is_valid_host_id(id: &str) -> bool {
     id.strip_prefix("host-")
         .is_some_and(|rest| rest.len() == 16 && rest.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
 }

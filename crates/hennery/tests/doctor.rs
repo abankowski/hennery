@@ -48,6 +48,7 @@ fn doctor_reports_on_a_host_directory_and_changes_nothing() {
     let host = dir.path().join("host");
     hennery_host::identity::Paired {
         collector_url: "ws://127.0.0.1:1/api/hosts/ws".into(),
+        trust: Default::default(),
         host_id: "host-doctor".into(),
         key: hennery_host::identity::HostKey::generate(),
         workspace_roots: Vec::new(),
@@ -113,6 +114,7 @@ fn an_interrupted_doctor_leaves_no_adapter_running() {
     let host = dir.path().join("host");
     hennery_host::identity::Paired {
         collector_url: "ws://127.0.0.1:1/api/hosts/ws".into(),
+        trust: Default::default(),
         host_id: "host-doctor".into(),
         key: hennery_host::identity::HostKey::generate(),
         workspace_roots: Vec::new(),

@@ -184,6 +184,7 @@ fn report(dirs: &Dirs, findings: &[Finding]) -> String {
 fn paired(dir: &Path) -> PathBuf {
     hennery_host::identity::Paired {
         collector_url: "ws://127.0.0.1:1/api/hosts/ws".into(),
+        trust: Default::default(),
         host_id: "host-test".into(),
         key: hennery_host::identity::HostKey::generate(),
         workspace_roots: Vec::new(),
@@ -2697,6 +2698,7 @@ fn check_10_reports_a_revoked_host_from_its_record() {
     let pair = |host_id: &str| {
         hennery_host::identity::Paired {
             collector_url: "ws://127.0.0.1:7117/api/hosts/ws".into(),
+            trust: Default::default(),
             host_id: host_id.into(),
             key: hennery_host::identity::HostKey::generate(),
             workspace_roots: Vec::new(),
@@ -2743,6 +2745,7 @@ fn check_10_reports_a_revoke_without_the_service_manager() {
     let data = dir.path().join("host");
     hennery_host::identity::Paired {
         collector_url: "ws://127.0.0.1:7117/api/hosts/ws".into(),
+        trust: Default::default(),
         host_id: "host-1".into(),
         key: hennery_host::identity::HostKey::generate(),
         workspace_roots: Vec::new(),

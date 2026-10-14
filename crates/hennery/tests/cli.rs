@@ -3637,6 +3637,7 @@ fn link_set(host_dir: &std::path::Path, link: &str, id: &str) {
 fn paired_host(dir: &std::path::Path) {
     hennery_host::identity::Paired {
         collector_url: "ws://127.0.0.1:1/api/hosts/ws".into(),
+        trust: Default::default(),
         host_id: "host-cli".into(),
         key: hennery_host::identity::HostKey::generate(),
         workspace_roots: Vec::new(),
