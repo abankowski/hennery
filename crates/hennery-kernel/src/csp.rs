@@ -18,7 +18,7 @@ pub const POLICY: &str = "script-src 'self'; worker-src 'self'; manifest-src 'se
 pub const LOGO_POLICY: &str = "default-src 'none'; sandbox; frame-ancestors 'none'";
 
 /// The worker can execute and fetch only from its own origin.
-pub const WORKER_POLICY: &str = "default-src 'none'; script-src 'self'; connect-src 'self'";
+pub const WORKER_POLICY: &str = "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'";
 
 /// Set `POLICY` on a `text/html` response. Use as
 /// `axum::middleware::map_response(csp::on_html)`, outermost.

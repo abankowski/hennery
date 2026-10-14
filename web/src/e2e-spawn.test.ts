@@ -38,7 +38,8 @@ describe('the browser checks', () => {
   it('start it, there, only in scratchEnv', () => {
     const helper = readFileSync(join(ROOT, HELPER), 'utf8')
     expect(helper.match(/(?<![.\w])spawn\s*\(/g)).toHaveLength(1)
-    expect(helper).toContain('spawn(BIN, args, { stdio, env: { ...scratchEnv(dir), ...extra } })')
+    expect(helper).toContain('spawn(binary, args, { stdio, env: { ...scratchEnv(dir), ...extra } })')
+    expect(helper).toContain('binary = BIN')
   })
 })
 

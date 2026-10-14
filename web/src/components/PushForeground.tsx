@@ -16,10 +16,11 @@ export default function PushForeground() {
       if (!live || running || document.visibilityState === 'hidden') return
       running = true; clearTimeout(timer)
       try {
+        const observed = await pushJournal().read()
         const [rows, key] = await Promise.all([pushDevices(client), vapid(client)])
         if (!live) return
         const device = new BrowserPush(client, registration, pushJournal(), key.public_key)
-        const inspected = await device.reconcile(rows)
+        const inspected = await device.reconcile(rows, fetch, observed.generation)
         if (live && inspected.record.rotation && inspected.record.repair !== 'sign_in') {
           timer = setTimeout(() => void reconcile(), Math.max(1000, inspected.record.rotation.nextAt - Date.now()))
         }

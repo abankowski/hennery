@@ -38,6 +38,7 @@ export function spawnHennery(
   dir: string,
   extra: NodeJS.ProcessEnv,
   stdio: StdioOptions = ['ignore', 'ignore', 'pipe'],
+  binary = BIN,
 ): ChildProcess {
-  return spawn(BIN, args, { stdio, env: { ...scratchEnv(dir), ...extra } })
+  return spawn(binary, args, { stdio, env: { ...scratchEnv(dir), ...extra } })
 }

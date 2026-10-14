@@ -51,7 +51,7 @@ export function pwaBuild(): Plugin {
       }
       visit(out, '/')
       entries.sort((a, b) => a.url.localeCompare(b.url))
-      await build({ configFile: false, root, define: { __PRECACHE__: JSON.stringify(entries), __BUILD_ID__: JSON.stringify(hash(JSON.stringify(entries))) },
+      await build({ configFile: false, publicDir: false, root, define: { __PRECACHE__: JSON.stringify(entries), __BUILD_ID__: JSON.stringify(hash(JSON.stringify(entries))) },
         build: { outDir: out, emptyOutDir: false, target: 'es2022', lib: { entry: resolve(root, 'worker.js'), name: 'henneryWorker', formats: ['iife'], fileName: () => 'sw.js' } } })
     },
   }

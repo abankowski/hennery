@@ -22,7 +22,7 @@ export async function installShell(
       const r = await fetcher(url.href, { credentials: 'omit', redirect: 'error', cache: 'no-store' })
       if (!r.ok || r.redirected || (r.url && new URL(r.url).origin !== deps.origin)
         || r.headers.get('content-type')?.split(';')[0].trim() !== entry.mime
-        || await deps.digest(await r.clone().arrayBuffer()) !== entry.digest) throw new Error('shell verification failed')
+        || await deps.digest(await r.clone().arrayBuffer()) !== entry.digest) throw new Error(`shell verification failed: ${entry.url}`)
       await cache.put(entry.url, r)
     }
     await cache.put(COMPLETE, new Response(build))

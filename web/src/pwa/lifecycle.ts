@@ -1,13 +1,16 @@
 import { useSyncExternalStore } from 'react'
 interface PwaStatus { registration: ServiceWorkerRegistration | null; error: string | null; waiting: boolean; cleanupWarning: string | null }
-let status: PwaStatus = { registration: null, error: null, waiting: false, cleanupWarning: sessionStorage.getItem('hennery.logout-cleanup') }
+const rememberedCleanup = () => { try { return sessionStorage.getItem('hennery.logout-cleanup') } catch { return null } }
+let status: PwaStatus = { registration: null, error: null, waiting: false, cleanupWarning: rememberedCleanup() }
 const listeners = new Set<() => void>()
 const set = (change: Partial<PwaStatus>) => { status = { ...status, ...change }; listeners.forEach((f) => f()) }
 let pending: Promise<void> | null = null
 export const usePwa = () => useSyncExternalStore((fn) => { listeners.add(fn); return () => { listeners.delete(fn) } }, () => status)
 export const setCleanupWarning = (warning: string | null) => {
-  if (warning) sessionStorage.setItem('hennery.logout-cleanup', warning)
-  else sessionStorage.removeItem('hennery.logout-cleanup')
+  try {
+    if (warning) sessionStorage.setItem('hennery.logout-cleanup', warning)
+    else sessionStorage.removeItem('hennery.logout-cleanup')
+  } catch { /* Still show the result when browser storage is unavailable. */ }
   set({ cleanupWarning: warning })
 }
 
@@ -23,7 +26,14 @@ export function registerWorker(): Promise<void> {
     try {
       const registration = await bounded(navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }))
       const check = () => set({ waiting: !!registration.waiting })
-      registration.addEventListener('updatefound', () => { registration.installing?.addEventListener('statechange', check); check() })
+      registration.addEventListener('updatefound', () => {
+        const worker = registration.installing
+        worker?.addEventListener('statechange', () => {
+          check()
+          if (worker.state === 'redundant') set({ error: 'Offline shell verification or storage failed. Retry worker setup.' })
+        })
+        check()
+      })
       await bounded(new Promise<void>((resolve, reject) => {
         if (registration.active?.state === 'activated') { resolve(); return }
         const worker = registration.installing ?? registration.waiting ?? registration.active

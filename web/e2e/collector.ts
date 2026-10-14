@@ -18,11 +18,11 @@ export interface Collector {
   stop(): Promise<void>
 }
 
-export async function startCollector(): Promise<Collector> {
+export async function startCollector(binary?: string): Promise<Collector> {
   const dir = mkdtempSync(join(tmpdir(), 'hennery-e2e-'))
   const child: ChildProcess = spawnHennery(['collector', '--data-dir', dir, '--listen', '127.0.0.1:0'], dir, {
     RUST_LOG: 'warn',
-  })
+  }, undefined, binary)
   let stderr = ''
   child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
   // A binary that cannot start fails the test that asked for it, rather

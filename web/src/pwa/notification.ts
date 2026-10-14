@@ -4,6 +4,10 @@ const neutral: PushPayload = { title: 'hennery needs your attention', body: 'Ope
 // Canonical literal paths only. P2 owns card targeting and window navigation.
 export function notificationTarget(value: unknown): string {
   if (typeof value !== 'string' || value.length > 512 || /[\\#\s]/.test(value)) return '/sessions'
+  try {
+    const parsed = new URL(value, 'https://hennery.invalid')
+    if (parsed.origin !== 'https://hennery.invalid' || parsed.pathname + parsed.search !== value) return '/sessions'
+  } catch { return '/sessions' }
   if (value === '/mcp' || value === '/sessions') return value
   return /^\/sessions\/[A-Za-z0-9_-]{1,128}(\?pending=[A-Za-z0-9_-]{1,128})?$/.test(value) ? value : '/sessions'
 }

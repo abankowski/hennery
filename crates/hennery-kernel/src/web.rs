@@ -36,6 +36,11 @@ const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
 /// The router's fallback.
 pub async fn serve(method: Method, uri: Uri, headers: HeaderMap) -> Response {
+    serve_assets(method, uri, headers, FILES)
+}
+
+fn serve_assets(method: Method, uri: Uri, headers: HeaderMap, assets: &'static [Asset]) -> Response {
+    let find = |path: &str| assets.iter().find(|a| a.path == path);
     let path = uri.path();
     if is_reserved(path) || (method != Method::GET && method != Method::HEAD) {
         let mut response = error(StatusCode::NOT_FOUND, "not_found", "no such route");
@@ -78,6 +83,7 @@ fn is_setup(path: &str) -> bool {
     path == "/setup" || path.starts_with("/setup/")
 }
 
+#[cfg(test)]
 fn find(path: &str) -> Option<&'static Asset> {
     FILES.iter().find(|a| a.path == path)
 }
@@ -134,5 +140,38 @@ mod tests {
         let index = find("/index.html").unwrap();
         assert_eq!(index.content_type, "text/html; charset=utf-8");
         assert!(index.etag.starts_with('"') && index.etag.len() == 18, "{}", index.etag);
+    }
+
+    #[test]
+    fn missing_worker_and_manifest_do_not_fall_back_to_html() {
+        static INDEX_ONLY: &[Asset] = &[Asset {
+            path: "/index.html",
+            body: b"index",
+            content_type: "text/html; charset=utf-8",
+            etag: "\"index\"",
+        }];
+        for path in ["/sw.js", "/manifest.webmanifest"] {
+            let response = serve_assets(Method::GET, path.parse().unwrap(), HeaderMap::new(), INDEX_ONLY);
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+    }
+
+    #[test]
+    fn a_worker_response_has_its_own_policy() {
+        static WORKER: Asset = Asset {
+            path: "/sw.js",
+            body: b"worker",
+            content_type: "text/javascript; charset=utf-8",
+            etag: "\"worker\"",
+        };
+        let response = file(&WORKER, "no-cache", &HeaderMap::new());
+        assert_eq!(
+            response.headers()[header::CONTENT_SECURITY_POLICY],
+            crate::csp::WORKER_POLICY
+        );
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+        assert_eq!(response.headers()[header::ETAG], "\"worker\"");
+        assert!(crate::csp::WORKER_POLICY.contains("img-src 'self'"));
+        assert!(crate::csp::POLICY.contains("worker-src 'self'") && crate::csp::POLICY.contains("manifest-src 'self'"));
     }
 }

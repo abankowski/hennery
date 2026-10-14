@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { appRoute, installShell, selectShell, shellResponse, type StaticEntry } from './shell'
+import { webcrypto } from 'node:crypto'
+import { sha256 } from './shell'
 
 // The same Cache API calls as the worker, with separate cache instances.
 function storage() {
@@ -21,6 +23,19 @@ const deps = { origin: 'https://app.example', digest: async () => 'good' }
 const response = () => new Response('shell', { headers: { 'Content-Type': 'text/html', 'Content-Security-Policy': "script-src 'self'" } })
 
 describe('verified static shell', () => {
+  it('hashes decoded bytes with SHA-256', async () => {
+    vi.stubGlobal('crypto', webcrypto)
+    try { expect(await sha256(new TextEncoder().encode('abc').buffer)).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad') }
+    finally { vi.unstubAllGlobals() }
+  })
+  it.each([
+    ['/index.html', 'text/html'], ['/theme.js', 'text/javascript'], ['/manifest.webmanifest', 'application/manifest+json'],
+    ['/icon-192.png', 'image/png'], ['/assets/main-hash.js', 'text/javascript'], ['/assets/lazy-hash.js', 'text/javascript'], ['/assets/main-hash.css', 'text/css'],
+  ])('rejects unexpected bytes in %s despite status 200 and the expected MIME', async (url, mime) => {
+    const { api, data } = storage()
+    await expect(installShell(api, async () => new Response('changed bytes', { headers: { 'Content-Type': mime } }), [{ ...entry, url, mime }], 'v1', 'mixed', { ...deps, digest: async () => 'bad' })).rejects.toThrow()
+    expect(data.size).toBe(0)
+  })
   it('selects only a completed cache for this build, preserving response headers', async () => {
     const { api } = storage()
     const fetcher = vi.fn(async () => response()) as unknown as typeof fetch
