@@ -1093,29 +1093,107 @@ async fn purge_preview_lists_only_hat_destinations_and_retains_deletion_disposit
 }
 
 #[tokio::test]
-async fn deletion_receipts_remain_owner_visible_after_registration_cleanup(){
-    let world=World::new().await;let hat=world.runtime.store.connection(&world.id).unwrap().unwrap().hat_id;
-    let before=world.owner(reqwest::Method::GET,"/api/plugins/receipts",true).send().await.unwrap();assert_eq!(before.status(),StatusCode::OK);let empty:Value=before.json().await.unwrap();assert_eq!(empty,json!([]));assert!(!world._dir.path().join("plugin-control.db").exists());
-    let _issued=world.register().await;*world.remote.forget.lock().unwrap()=Some(json!({"request_id":"unknown","status":"confirmed","remaining_kinds":[]}));
-    world.owner(reqwest::Method::DELETE,&format!("/api/plugins/registrations/{}",world.id),true).send().await.unwrap().error_for_status().unwrap();
+async fn deletion_receipts_remain_owner_visible_after_registration_cleanup() {
+    let world = World::new().await;
+    let hat = world.runtime.store.connection(&world.id).unwrap().unwrap().hat_id;
+    let before = world
+        .owner(reqwest::Method::GET, "/api/plugins/receipts", true)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(before.status(), StatusCode::OK);
+    let empty: Value = before.json().await.unwrap();
+    assert_eq!(empty, json!([]));
+    assert!(!world._dir.path().join("plugin-control.db").exists());
+    let _issued = world.register().await;
+    *world.remote.forget.lock().unwrap() =
+        Some(json!({"request_id":"unknown","status":"confirmed","remaining_kinds":[]}));
+    world
+        .owner(
+            reqwest::Method::DELETE,
+            &format!("/api/plugins/registrations/{}", world.id),
+            true,
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
     // Model the parent's completed connection/hat cleanup: minimal receipts
     // survive the removable registration row and hold no destination secret.
     {
-        let mut core=hennery_kernel::db::open(&world._dir.path().join("hennery.db")).unwrap();let coordination=core.coordination();let _gate=coordination.gate.lock();let core_tx=core.transaction().unwrap();
-        let mut control=rusqlite::Connection::open(world._dir.path().join("plugin-control.db")).unwrap();let tx=control.transaction().unwrap();tx.execute("DELETE FROM plugin_registrations WHERE owner_id = ?1 AND connection_id = ?2",rusqlite::params![world.runtime.store.owner_id(),world.id]).unwrap();tx.commit().unwrap();core_tx.commit().unwrap();
+        let mut core = hennery_kernel::db::open(&world._dir.path().join("hennery.db")).unwrap();
+        let coordination = core.coordination();
+        let _gate = coordination.gate.lock();
+        let core_tx = core.transaction().unwrap();
+        let mut control = rusqlite::Connection::open(world._dir.path().join("plugin-control.db")).unwrap();
+        let tx = control.transaction().unwrap();
+        tx.execute(
+            "DELETE FROM plugin_registrations WHERE owner_id = ?1 AND connection_id = ?2",
+            rusqlite::params![world.runtime.store.owner_id(), world.id],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        core_tx.commit().unwrap();
     }
-    let response=world.owner(reqwest::Method::GET,"/api/plugins/receipts",true).send().await.unwrap();assert_eq!(response.status(),StatusCode::OK);assert_eq!(response.headers()["cache-control"],"no-store");let receipts:Value=response.json().await.unwrap();assert_eq!(receipts.as_array().unwrap().len(),1);assert_eq!(receipts[0]["owner_id"],world.runtime.store.owner_id());assert_eq!(receipts[0]["hat_id"],hat);assert_eq!(receipts[0]["status"],"unconfirmed");assert_eq!(receipts[0]["request_id"].as_str().unwrap().len(),64);assert!(receipts[0].get("destination").is_none());
-    let preview:Value=world.owner(reqwest::Method::GET,&format!("/api/hats/{hat}/purge"),true).send().await.unwrap().json().await.unwrap();assert_eq!(preview["plugin_registrations"],json!([]));assert_eq!(preview["plugin_receipts"],receipts);
-    let hosts=Hosts::open(&world._dir.path().join("hennery.db")).unwrap();let hennery_kernel::hats::HatChange::Done(other)=hosts.create_hat("Other",None,unix_now()).unwrap()else{panic!("hat")};
-    let other:Value=world.owner(reqwest::Method::GET,&format!("/api/hats/{}/purge",other.id),true).send().await.unwrap().json().await.unwrap();assert_eq!(other["plugin_receipts"],json!([]));
-    let denied=reqwest::Client::new().get(format!("{}/api/plugins/receipts",world.server.base)).send().await.unwrap();assert_eq!(denied.status(),StatusCode::UNAUTHORIZED);
+    let response = world
+        .owner(reqwest::Method::GET, "/api/plugins/receipts", true)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let receipts: Value = response.json().await.unwrap();
+    assert_eq!(receipts.as_array().unwrap().len(), 1);
+    assert_eq!(receipts[0]["owner_id"], world.runtime.store.owner_id());
+    assert_eq!(receipts[0]["hat_id"], hat);
+    assert_eq!(receipts[0]["status"], "unconfirmed");
+    assert_eq!(receipts[0]["request_id"].as_str().unwrap().len(), 64);
+    assert!(receipts[0].get("destination").is_none());
+    let preview: Value = world
+        .owner(reqwest::Method::GET, &format!("/api/hats/{hat}/purge"), true)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(preview["plugin_registrations"], json!([]));
+    assert_eq!(preview["plugin_receipts"], receipts);
+    let hosts = Hosts::open(&world._dir.path().join("hennery.db")).unwrap();
+    let hennery_kernel::hats::HatChange::Done(other) = hosts.create_hat("Other", None, unix_now()).unwrap() else {
+        panic!("hat")
+    };
+    let other: Value = world
+        .owner(reqwest::Method::GET, &format!("/api/hats/{}/purge", other.id), true)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(other["plugin_receipts"], json!([]));
+    let denied = reqwest::Client::new()
+        .get(format!("{}/api/plugins/receipts", world.server.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
-async fn owner_routes_reject_scope_queries_and_unexpected_read_or_delete_bodies(){
-    let world=World::new().await;
-    for route in ["registrations","receipts"]{
-        let path=format!("/api/plugins/{route}?owner_id=victim&owner_id=other");let result=world.owner(reqwest::Method::GET,&path,true).send().await.unwrap();assert_eq!(result.status(),StatusCode::BAD_REQUEST);
-        let result=world.owner(reqwest::Method::GET,&format!("/api/plugins/{route}"),true).body("{}").send().await.unwrap();assert_eq!(result.status(),StatusCode::BAD_REQUEST);
+async fn owner_routes_reject_scope_queries_and_unexpected_read_or_delete_bodies() {
+    let world = World::new().await;
+    for route in ["registrations", "receipts"] {
+        let path = format!("/api/plugins/{route}?owner_id=victim&owner_id=other");
+        let result = world.owner(reqwest::Method::GET, &path, true).send().await.unwrap();
+        assert_eq!(result.status(), StatusCode::BAD_REQUEST);
+        let result = world
+            .owner(reqwest::Method::GET, &format!("/api/plugins/{route}"), true)
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(result.status(), StatusCode::BAD_REQUEST);
     }
 }

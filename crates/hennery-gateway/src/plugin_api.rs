@@ -27,6 +27,7 @@ pub fn router(state: GatewayState) -> Router {
             "/api/plugins/registrations",
             get(list).post(register.layer(middleware::from_fn(require_step_up))),
         )
+        .route("/api/plugins/receipts", get(receipts))
         .route(
             "/api/plugins/registrations/{id}",
             delete(revoke.layer(middleware::from_fn(require_step_up))),
@@ -35,11 +36,25 @@ pub fn router(state: GatewayState) -> Router {
             "/api/plugins/registrations/{id}/rotate",
             post(rotate.layer(middleware::from_fn(require_step_up))),
         )
-        .layer(DefaultBodyLimit::max(16 * 1024));
+        .layer(DefaultBodyLimit::max(16 * 1024))
+        .layer(middleware::from_fn(owner_input));
     operator_only(owner, state.operator.clone())
         .with_state(state.clone())
         .merge(Router::new().route("/api/plugins/lease", post(lease)).with_state(state))
         .layer(middleware::map_response(no_store))
+}
+async fn owner_input(request: Request, next: middleware::Next) -> Response {
+    if request.uri().query().is_some() {
+        return error(StatusCode::BAD_REQUEST, "invalid_query");
+    }
+    if matches!(
+        *request.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::DELETE
+    ) && !empty_machine_body(&request)
+    {
+        return error(StatusCode::BAD_REQUEST, "invalid_body");
+    }
+    next.run(request).await
 }
 pub async fn no_store(mut response: Response) -> Response {
     response
@@ -127,6 +142,12 @@ pub fn machine_failure(err: anyhow::Error) -> Response {
 async fn list(State(state): State<GatewayState>) -> Response {
     match state.runtime.store.plugin_registrations() {
         Ok(items) => Json(items).into_response(),
+        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+    }
+}
+async fn receipts(State(state): State<GatewayState>) -> Response {
+    match state.runtime.store.plugin_deletion_receipts() {
+        Ok(rows) => Json(rows).into_response(),
         Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
     }
 }

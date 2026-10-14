@@ -38,6 +38,35 @@ pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {
 }
 
 impl Control {
+    pub fn deletion_receipts_in(
+        &self,
+        _: &Transaction<'_>,
+        hat: Option<&str>,
+    ) -> Result<Vec<hennery_proto::plugin_management::PluginDeletionReceipt>> {
+        use hennery_proto::{plugin::ForgetStatus, plugin_management::PluginDeletionReceipt};
+        Ok(self
+            .with(false, |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT hat_id,request_id,result FROM plugin_receipts
+                WHERE owner_id = ?1 AND (?2 IS NULL OR hat_id = ?2) ORDER BY request_id",
+                )?;
+                let rows = stmt.query_map(params![self.owner, hat], |row| {
+                    let result: String = row.get(2)?;
+                    Ok(PluginDeletionReceipt {
+                        owner_id: self.owner.clone(),
+                        hat_id: row.get(0)?,
+                        request_id: row.get(1)?,
+                        status: if result == "confirmed" {
+                            ForgetStatus::Confirmed
+                        } else {
+                            ForgetStatus::Unconfirmed
+                        },
+                    })
+                })?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            })?
+            .unwrap_or_default())
+    }
     /// Owner-visible metadata only; an unconfigured GET creates nothing.
     pub fn registrations_in(&self, core: &Transaction<'_>) -> Result<Vec<PluginRegistration>> {
         self.registrations_for_hat_in(core, None)
@@ -142,6 +171,13 @@ impl Control {
 }
 
 impl crate::store::GatewayStore {
+    pub fn plugin_deletion_receipts(&self) -> Result<Vec<hennery_proto::plugin_management::PluginDeletionReceipt>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let receipts = self.plugins().deletion_receipts_in(&tx, None)?;
+        tx.commit()?;
+        Ok(receipts)
+    }
     pub(crate) fn plugin_discovery(&self, id: &str) -> Result<Option<Discovery>> {
         let conn = self.conn();
         let row:Option<(String,bool,String,bool,Option<String>)>=conn.query_row(

@@ -694,6 +694,9 @@ pub struct PurgePreview {
     /// Optional generic destinations and their confirmed/unconfirmed deletion.
     #[serde(default)]
     pub plugin_registrations: Vec<crate::plugin_management::PluginRegistration>,
+    /// Minimal receipt evidence also survives registration row cleanup.
+    #[serde(default)]
+    pub plugin_receipts: Vec<crate::plugin_management::PluginDeletionReceipt>,
     /// A purge began and has not finished: a purge resumes it.
     pub purging: bool,
     /// The hat's sessions, in every lifecycle and on every host.

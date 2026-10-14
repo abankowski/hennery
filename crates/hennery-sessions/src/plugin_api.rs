@@ -13,6 +13,16 @@ use hennery_gateway::plugin_api::{
 };
 
 impl crate::store::Store {
+    pub fn plugin_purge_receipts(
+        &self,
+        hat: &str,
+    ) -> anyhow::Result<Vec<hennery_proto::plugin_management::PluginDeletionReceipt>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let receipts = self.plugins().deletion_receipts_in(&tx, Some(hat))?;
+        tx.commit()?;
+        Ok(receipts)
+    }
     pub fn plugin_purge_preview(
         &self,
         hat: &str,

@@ -62,3 +62,13 @@ pub struct PluginLease {
     #[ts(type = "number")]
     pub lease_until: i64,
 }
+
+/// Minimal deletion evidence retained after connection/registration cleanup.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct PluginDeletionReceipt {
+    pub owner_id: String,
+    pub hat_id: String,
+    pub request_id: String,
+    pub status: ForgetStatus,
+}

@@ -26,6 +26,11 @@ export type RotatePluginResponse = { namespace_epoch: string, handover_id: strin
 
 export type PluginLease = { namespace_epoch: string, lease_until: number, };
 
+/**
+ * Minimal deletion evidence retained after connection/registration cleanup.
+ */
+export type PluginDeletionReceipt = { owner_id: string, hat_id: string, request_id: string, status: ForgetStatus, };
+
 export type InputOrigin = { "kind": "operator", } | { "kind": "parent", session_id: string, operation_id: string, } | { "kind": "child_report", child_id: string, source_event_id: string, delivery_id: string, };
 
 export type SourceRef = { session_id: string, turn_id: string | null, event_id: number, };
@@ -987,6 +992,10 @@ export type PurgePreview = { hat_id: string,
  * Optional generic destinations and their confirmed/unconfirmed deletion.
  */
 plugin_registrations: Array<PluginRegistration>,
+/**
+ * Minimal receipt evidence also survives registration row cleanup.
+ */
+plugin_receipts: Array<PluginDeletionReceipt>,
 /**
  * A purge began and has not finished: a purge resumes it.
  */

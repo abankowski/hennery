@@ -3243,6 +3243,31 @@
       ],
       "type": "object"
     },
+    "PluginDeletionReceipt": {
+      "additionalProperties": false,
+      "description": "Minimal deletion evidence retained after connection/registration cleanup.",
+      "properties": {
+        "hat_id": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ForgetStatus"
+        }
+      },
+      "required": [
+        "owner_id",
+        "hat_id",
+        "request_id",
+        "status"
+      ],
+      "type": "object"
+    },
     "PluginGrantResponse": {
       "additionalProperties": false,
       "properties": {
@@ -3475,6 +3500,14 @@
       "properties": {
         "hat_id": {
           "type": "string"
+        },
+        "plugin_receipts": {
+          "default": [],
+          "description": "Minimal receipt evidence also survives registration row cleanup.",
+          "items": {
+            "$ref": "#/$defs/PluginDeletionReceipt"
+          },
+          "type": "array"
         },
         "plugin_registrations": {
           "default": [],

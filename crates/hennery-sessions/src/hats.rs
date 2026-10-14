@@ -529,6 +529,7 @@ async fn purge_preview(State(state): State<AppState>, Path(id): Path<String>) ->
         Ok(PurgePreview {
             hat_id: id.clone(),
             plugin_registrations: state.store.plugin_purge_preview(&id)?,
+            plugin_receipts: state.store.plugin_purge_receipts(&id)?,
             purging: hat.purging,
             sessions: sessions.len() as u64,
             running: running_ids(&state, &sessions),
