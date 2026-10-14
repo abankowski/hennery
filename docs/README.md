@@ -20,6 +20,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
      web UI reused from the predecessor frontend.
    - [Frontend](specs/2026-09-26-frontend-design.md) — views, data layer,
      transcript fold rules, cards, PWA.
+   - [Phone, Web Push and PWA](specs/2026-10-14-phone-design.md) — proposed browser push/device controls, installed app shell, question deep links, mobile answers and iOS acceptance.
    - [Distribution](specs/2026-09-26-distribution-design.md) — binary,
      managed runtime and adapter manifest, release pipeline, services, doctor.
 3. Evidence:
