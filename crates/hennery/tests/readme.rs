@@ -36,10 +36,11 @@ const EXAMPLE_CODE: &str = "ABCD-EFGH";
 const EXAMPLE_PORT: u16 = 7117;
 
 /// Every block name in the README, in order, with what runs it.
-const BLOCKS: [(&str, Runner); 9] = [
-    ("clone", Runner::Workflow("ci.yml")),
-    ("build", Runner::Workflow("ci.yml")),
-    ("nix", Runner::Workflow("nix.yml")),
+const BLOCKS: [(&str, Runner); 10] = [
+    ("clone", Runner::Workflow("ci.yml", "readme")),
+    ("build", Runner::Workflow("ci.yml", "readme")),
+    ("nix", Runner::Workflow("nix.yml", "flake")),
+    ("build-without-nix", Runner::Workflow("ci.yml", "readme-without-nix")),
     ("up", Runner::Here),
     ("up-public", Runner::Here),
     ("join", Runner::Here),
@@ -52,8 +53,8 @@ const BLOCKS: [(&str, Runner); 9] = [
 enum Runner {
     /// A test in this file.
     Here,
-    /// This workflow, through `readme-blocks.sh README.md <name>`.
-    Workflow(&'static str),
+    /// This workflow's job, through `readme-blocks.sh README.md <name>`.
+    Workflow(&'static str, &'static str),
 }
 
 fn repo() -> PathBuf {
@@ -343,6 +344,25 @@ fn a_failing_awk_exits_3() {
     );
 }
 
+/// The repository's workflow jobs use two-space indentation. Limit a
+/// runner check to its named job, ignoring comments and other jobs.
+fn workflow_job(workflow: &str, job: &str) -> String {
+    let header = format!("\n  {job}:\n");
+    let (_, body) = workflow
+        .split_once(&header)
+        .unwrap_or_else(|| panic!("no workflow job {job}"));
+    body.lines()
+        .take_while(|line| {
+            !line.starts_with("  ")
+                || line.starts_with("   ")
+                || line.trim().is_empty()
+                || line.trim_start().starts_with('#')
+        })
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Every block of the README has a runner: these tests, or a workflow
 /// that runs the script on it.
 #[test]
@@ -361,14 +381,43 @@ fn every_readme_block_is_run() {
                 "no test here runs the block {name}"
             );
         }
-        if let Runner::Workflow(file) = runner {
+        if let Runner::Workflow(file, job) = runner {
             let workflow = std::fs::read_to_string(repo().join(".github/workflows").join(file)).unwrap();
+            let workflow = workflow_job(&workflow, job);
             assert!(
                 workflow.contains(&format!("readme-blocks.sh README.md {name} ")),
-                "{file} does not run the block {name}"
+                "{file}'s {job} job does not run the block {name}"
             );
         }
     }
+}
+
+#[test]
+fn the_non_nix_build_runs_on_both_platforms_without_nix() {
+    let workflow = std::fs::read_to_string(repo().join(".github/workflows/ci.yml")).unwrap();
+    let job = workflow_job(&workflow, "readme-without-nix");
+    assert!(job.contains("os: [ubuntu-latest, macos-latest]"), "{job}");
+    assert!(job.contains("runs-on: ${{ matrix.os }}"), "{job}");
+    assert!(job.contains("timeout-minutes: 60"), "{job}");
+    assert!(job.contains("toolchain: stable"), "{job}");
+    assert!(job.contains("node-version: 24"), "{job}");
+    assert!(
+        !job.contains("install-nix-action") && !job.contains("nix develop"),
+        "{job}"
+    );
+    // Extraction alone must not count as running the block. Its PATH
+    // export and the UI check must execute in the same shell on each OS.
+    assert!(
+        job.contains("readme-blocks.sh README.md build-without-nix > \"$RUNNER_TEMP/build-without-nix.sh\""),
+        "{job}"
+    );
+    assert!(
+        job.contains(
+            "cat >> \"$RUNNER_TEMP/build-without-nix.sh\" <<'CHECK'\n          sh packaging/check-web-ui.sh \"$(command -v hennery)\"\n          CHECK"
+        ),
+        "{job}"
+    );
+    assert!(job.contains("sh -eux \"$RUNNER_TEMP/build-without-nix.sh\""), "{job}");
 }
 
 // ---------------------------------------------------------------------

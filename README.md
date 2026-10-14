@@ -41,8 +41,9 @@ Known limitations:
 
 ## Quickstart
 
-You need [Nix](https://nixos.org/download/) with flakes enabled, and on
-every machine that runs agents, the CLI for each agent you want to use
+Build with [Nix](https://nixos.org/download/) with flakes enabled, or use
+[Build without Nix](#build-without-nix) below. On every machine that runs
+agents, you need the CLI for each agent you want to use
 already logged in with your own subscription. The flake supports Apple
 Silicon macOS, and x86_64 and aarch64 Linux.
 The bundled CLIs are not added to your `PATH`. After `up` or `host join`
@@ -83,6 +84,30 @@ nix build
 
 The binary is then `result/bin/hennery`; put that directory on your `PATH`
 instead.
+
+#### Build without Nix
+
+Prerequisites (plus Git to get the source above):
+
+- **Linux:** a C compiler, `make` and `perl` (including its core modules).
+- **macOS:** Xcode Command Line Tools; macOS supplies `perl`.
+- **Both:** Rust via [rustup](https://rustup.rs/) (latest stable, the
+  toolchain CI uses), and Node 24 with its `npm`/`npx` on `PATH`.
+
+From the source directory, build the web UI with the flake's pinned pnpm
+12.3.4 through `npx`, without installing pnpm globally. OpenSSL is built
+and linked into the binary; no system OpenSSL is needed.
+
+<!-- check: build-without-nix -->
+```sh
+npx --yes pnpm@12.3.4 --dir web install --frozen-lockfile
+npx --yes pnpm@12.3.4 --dir web build
+HENNERY_WEB_REQUIRE=1 cargo build --release --locked -p hennery --features vendored-openssl
+export PATH="$PWD/target/release:$PATH"
+```
+
+Continue with step 2 below. Starting hennery, setup, `doctor` and agent
+logins are the same for both builds.
 
 ### 2. Start
 

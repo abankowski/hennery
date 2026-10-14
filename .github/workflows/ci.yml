@@ -90,6 +90,43 @@ jobs:
           echo 'sh packaging/check-web-ui.sh "$(command -v hennery)"' >> "$RUNNER_TEMP/build.sh"
           sh -eux "$RUNNER_TEMP/build.sh"
 
+  # The alternative README build: no Nix, no global pnpm install and no
+  # system OpenSSL. Run the documented block on both supported OSes.
+  readme-without-nix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: readme-without-nix
+      - name: Vendored OpenSSL build tools (ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential perl
+      - name: Vendored OpenSSL build tools (macOS)
+        if: runner.os == 'macOS'
+        run: xcode-select -p && cc --version && make --version && perl -v
+      # Run the UI check in the same shell as the block's PATH export.
+      - name: The README's build without Nix block
+        run: |
+          sh packaging/readme-blocks.sh README.md build-without-nix > "$RUNNER_TEMP/build-without-nix.sh"
+          cat >> "$RUNNER_TEMP/build-without-nix.sh" <<'CHECK'
+          sh packaging/check-web-ui.sh "$(command -v hennery)"
+          CHECK
+          sh -eux "$RUNNER_TEMP/build-without-nix.sh"
+
   rust:
     strategy:
       fail-fast: false
