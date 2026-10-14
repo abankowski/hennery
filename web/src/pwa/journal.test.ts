@@ -22,6 +22,36 @@ async function enabled(s = store()) {
 const ok = () => new Response(JSON.stringify({ id: 'row1' }), { headers: { 'Content-Type': 'application/json' } })
 
 describe('origin-local registration journal', () => {
+  it('overlapping disables reserve one cleanup owner instead of invalidating each other', async () => {
+    const { journal } = await enabled()
+    await journal.disable()
+    const owner = (await journal.read()).lease
+    await journal.disable()
+    expect((await journal.read()).generation).toBe(2)
+    expect((await journal.read()).lease).toEqual(owner)
+  })
+  it('cleanup completion also checks the owner token within the same generation', async () => {
+    const { journal } = await enabled()
+    const disabled = await journal.disable()
+    const owner = { ...disabled.cleanup, token: 'wrong-owner' }
+    await journal.finishDisable(true, true, owner.generation, owner)
+    expect((await journal.read()).lease).toEqual(disabled.cleanup)
+    expect((await journal.read()).id).toBe('row1')
+    await journal.finishDisable(true, true, disabled.cleanup.generation, disabled.cleanup)
+    expect((await journal.read()).lease).toBeUndefined()
+  })
+  it('reserves disable browser cleanup and renewal against another window enabling', async () => {
+    const { journal } = await enabled()
+    const now = Date.now()
+    const owned = await journal.beginRenew(now)
+    await expect(journal.beginEnable(now + 1)).rejects.toThrow('busy')
+    await journal.release(owned)
+    await journal.disable(now + 2)
+    await expect(journal.beginEnable(now + 3)).rejects.toThrow('busy')
+    await journal.finishDisable(true, true, 2)
+    const next = await journal.beginEnable(now + 4)
+    expect(next.generation).toBe(3)
+  })
   it('records only collector-confirmed identity and aborts a failed explicit enable', async () => {
     const { journal } = await enabled()
     expect(await journal.read()).toEqual({ generation: 1, enabled: true, id: 'row1', endpoint: 'https://push.example/a', key: 'vapid' })
@@ -34,12 +64,19 @@ describe('origin-local registration journal', () => {
   it('stale cleanup and subscription events cannot change a new explicit enable', async () => {
     const { journal } = await enabled()
     const previous = await journal.disable()
+    await journal.finishDisable(true, true, previous.generation + 1)
     const next = await journal.beginEnable(100)
     await journal.finishEnable(next, 'new-row', 'new-endpoint', 'new-key')
     await journal.finishDisable(true, true, previous.generation + 1)
     await journal.needsRepair(previous.generation)
     expect(await journal.queueRotation(subscription('stale'), 200, previous.generation)).toBe(false)
     expect(await journal.read()).toEqual({ generation: 3, enabled: true, id: 'new-row', endpoint: 'new-endpoint', key: 'new-key' })
+  })
+  it('a retained removal identity never authorizes repair after a missing-row verdict', async () => {
+    const { journal } = await enabled()
+    await journal.needsRepair(1)
+    expect(await journal.queueRotation(subscription('https://push.example/b'), 2)).toBe(false)
+    expect(await journal.read()).toMatchObject({ enabled: false, repair: 'reenable' })
   })
   it('requires an explicit enable, and fences simultaneous enables and stale completions', async () => {
     const s = store(), a = new Journal(s), b = new Journal(s)
@@ -158,9 +195,17 @@ describe('origin-local registration journal', () => {
     const first = journal.attempt(() => new Promise<Response>((r) => { resolve = r }), 2)
     await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
     expect(await new Journal(s).attempt(async () => ok(), 13000)).toBe('success')
+    await new Journal(s).queueRotation(subscription('https://push.example/c'), 13001)
     resolve(ok())
     expect(await first).toBe('stale')
     expect((await journal.read()).endpoint).toBe('https://push.example/b')
+    expect((await journal.read()).rotation?.subscription.endpoint).toBe('https://push.example/c')
+  })
+  it('a success for a different collector id remains unconfirmed', async () => {
+    const { journal } = await enabled()
+    await journal.queueRotation(subscription('https://push.example/b'), 1)
+    expect(await journal.attempt(async () => new Response(JSON.stringify({ id: 'foreign-row' })), 2)).toBe('retry')
+    expect((await journal.read()).endpoint).toBe('https://push.example/a')
   })
   it('scrubs capability material after disable, preserving only the removal id on partial failure', async () => {
     const { journal } = await enabled()
