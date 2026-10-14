@@ -67,6 +67,10 @@ fn doctor_reports_on_a_host_directory_and_changes_nothing() {
         .env("HENNERY_NODE_MIRROR", OFFLINE)
         .env_remove("HENNERY_DATA_DIR")
         .env_remove("HENNERY_HOST_DATA_DIR")
+        // The trust check names these overrides when they are set (CI's
+        // Linux runners set them): the expected text below assumes neither.
+        .env_remove("SSL_CERT_FILE")
+        .env_remove("SSL_CERT_DIR")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
