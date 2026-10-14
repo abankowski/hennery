@@ -151,7 +151,8 @@ impl World {
             runtime: runtime.clone(),
             operator: operator.clone(),
         })
-        .merge(hennery_sessions::plugin_api::router(state));
+        .merge(hennery_sessions::plugin_api::router(state.clone()))
+        .merge(hennery_sessions::hats::router(state));
         let server = Server::new(app).await;
         Self {
             _dir: dir,
@@ -976,4 +977,117 @@ async fn activity_inventory_reject_origins_cookies_scope_queries_and_lease_only_
         );
     }
     assert_eq!(world.lease(token).await.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn activity_and_inventory_apply_the_shared_registration_budget_before_projection() {
+    for route in ["activity", "inventory"] {
+        let world = World::new().await;
+        let issued = world.register().await;
+        let token = issued["token"].as_str().unwrap();
+        let client = reqwest::Client::new();
+        for _ in 0..60 {
+            let response = client
+                .get(format!("{}/api/plugins/{route}", world.server.base))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let _body: Value = response.json().await.unwrap();
+        }
+        let response = client
+            .get(format!("{}/api/plugins/{route}", world.server.base))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+}
+#[tokio::test]
+async fn direct_projection_lease_also_applies_registration_budget() {
+    let world = World::new().await;
+    let issued = world.register().await;
+    let token = issued["token"].as_str().unwrap();
+    for _ in 0..60 {
+        world._sessions.lease(token).unwrap();
+    }
+    assert_eq!(
+        world._sessions.lease(token).unwrap_err().to_string(),
+        "plug-in budget exceeded"
+    );
+}
+
+#[tokio::test]
+async fn purge_preview_lists_only_hat_destinations_and_retains_deletion_disposition() {
+    let world = World::new().await;
+    let hat = world.runtime.store.connection(&world.id).unwrap().unwrap().hat_id;
+    let url = format!("/api/hats/{hat}/purge");
+    let before: Value = world
+        .owner(reqwest::Method::GET, &url, true)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(before["plugin_registrations"], json!([]));
+    assert!(!world._dir.path().join("plugin-control.db").exists());
+    let _issued = world.register().await;
+    let active: Value = world
+        .owner(reqwest::Method::GET, &url, true)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(active["plugin_registrations"].as_array().unwrap().len(), 1);
+    assert_eq!(active["plugin_registrations"][0]["connection_id"], world.id);
+    assert_eq!(
+        active["plugin_registrations"][0]["destination"],
+        world._remote_server.base
+    );
+    assert_eq!(active["plugin_registrations"][0]["state"], "active");
+    let hosts = Hosts::open(&world._dir.path().join("hennery.db")).unwrap();
+    let hennery_kernel::hats::HatChange::Done(other) = hosts.create_hat("Other", None, unix_now()).unwrap() else {
+        panic!("hat")
+    };
+    let other: Value = world
+        .owner(reqwest::Method::GET, &format!("/api/hats/{}/purge", other.id), true)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(other["plugin_registrations"], json!([]));
+    world
+        .owner(
+            reqwest::Method::DELETE,
+            &format!("/api/plugins/registrations/{}", world.id),
+            true,
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let completed: Value = world
+        .owner(reqwest::Method::GET, &url, true)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(completed["plugin_registrations"][0]["deletion"], "confirmed");
+    assert!(completed["plugin_registrations"][0]["destination"].is_null());
+    let text = completed.to_string();
+    assert!(!text.contains("lifecycle-admin-token") && !text.contains("namespace-token"));
+    let mut historical = completed;
+    historical.as_object_mut().unwrap().remove("plugin_registrations");
+    let parsed: hennery_proto::rest::PurgePreview = serde_json::from_value(historical).unwrap();
+    assert!(parsed.plugin_registrations.is_empty());
 }

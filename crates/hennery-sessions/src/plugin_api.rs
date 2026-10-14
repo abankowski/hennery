@@ -12,6 +12,19 @@ use hennery_gateway::plugin_api::{
     empty_machine_body, error, machine_failure, machine_query, machine_token, no_store, watched_json,
 };
 
+impl crate::store::Store {
+    pub fn plugin_purge_preview(
+        &self,
+        hat: &str,
+    ) -> anyhow::Result<Vec<hennery_proto::plugin_management::PluginRegistration>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let result = self.plugins().registrations_for_hat_in(&tx, Some(hat))?;
+        tx.commit()?;
+        Ok(result)
+    }
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/plugins/activity", get(activity))

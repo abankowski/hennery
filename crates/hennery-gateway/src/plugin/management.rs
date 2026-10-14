@@ -39,17 +39,22 @@ pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {
 
 impl Control {
     /// Owner-visible metadata only; an unconfigured GET creates nothing.
-    pub fn registrations_in(&self, _: &Transaction<'_>) -> Result<Vec<PluginRegistration>> {
+    pub fn registrations_in(&self, core: &Transaction<'_>) -> Result<Vec<PluginRegistration>> {
+        self.registrations_for_hat_in(core, None)
+    }
+    pub fn registrations_for_hat_in(&self, _: &Transaction<'_>, hat: Option<&str>) -> Result<Vec<PluginRegistration>> {
         Ok(self.with(false, |conn| {
             migrate(conn)?;
             let mut stmt=conn.prepare("SELECT p.connection_id,p.hat_id,p.epoch,p.state,p.activity,p.startup,
                 EXISTS(SELECT 1 FROM plugin_rotations r WHERE r.owner_id = ?1 AND r.connection_id = p.connection_id AND r.epoch = p.epoch),
-                (SELECT result FROM plugin_receipts r WHERE r.owner_id = ?1 AND r.request_id = p.request_id)
-                FROM plugin_registrations p WHERE p.owner_id = ?1 ORDER BY p.connection_id")?;
-            let rows=stmt.query_map([&self.owner],|r| {
+                (SELECT result FROM plugin_receipts r WHERE r.owner_id = ?1 AND r.request_id = p.request_id),p.endpoint
+                FROM plugin_registrations p WHERE p.owner_id = ?1 AND (?2 IS NULL OR p.hat_id = ?2) ORDER BY p.connection_id")?;
+            let rows=stmt.query_map(params![self.owner,hat],|r| {
                 let receipt:Option<String>=r.get(7)?;
+                let endpoint:Option<String>=r.get(8)?;
                 Ok(PluginRegistration{connection_id:r.get(0)?,hat_id:r.get(1)?,namespace_epoch:r.get(2)?,state:r.get(3)?,activity:r.get(4)?,startup:r.get(5)?,rotation_pending:r.get(6)?,
-                deletion:receipt.map(|s|if s=="confirmed" {hennery_proto::plugin::ForgetStatus::Confirmed}else{hennery_proto::plugin::ForgetStatus::Unconfirmed})})
+                deletion:receipt.map(|s|if s=="confirmed" {hennery_proto::plugin::ForgetStatus::Confirmed}else{hennery_proto::plugin::ForgetStatus::Unconfirmed}),
+                destination:endpoint.map(|url|crate::model::url_for_logs(&url))})
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })?.unwrap_or_default())
@@ -267,5 +272,41 @@ impl crate::runtime::Runtime {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn expired_request_windows_refresh_and_other_registrations_keep_their_budget() {
+        let control = Control::for_core(None, "owner", Arc::default());
+        let grant = Grant {
+            connection_id: "one".into(),
+            hat_id: "hat".into(),
+            epoch: "epoch".into(),
+            activity: true,
+            startup: false,
+            start_event: 0,
+            cursor_key: String::new(),
+        };
+        for _ in 0..60 {
+            control.charge(&grant, 1).unwrap();
+        }
+        assert!(control.charge(&grant, 1).is_err());
+        let other = Grant {
+            connection_id: "two".into(),
+            ..grant.clone()
+        };
+        control.charge(&other, 1).unwrap();
+        control
+            .management
+            .budgets
+            .lock()
+            .unwrap()
+            .get_mut("one:epoch")
+            .unwrap()
+            .since = Instant::now() - Duration::from_secs(61);
+        control.charge(&grant, 1).unwrap();
     }
 }

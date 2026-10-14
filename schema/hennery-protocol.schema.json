@@ -3300,6 +3300,13 @@
             }
           ]
         },
+        "destination": {
+          "description": "Destination origin only; cleared when its lifecycle snapshot is erased.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "hat_id": {
           "type": "string"
         },
@@ -3468,6 +3475,14 @@
       "properties": {
         "hat_id": {
           "type": "string"
+        },
+        "plugin_registrations": {
+          "default": [],
+          "description": "Optional generic destinations and their confirmed/unconfirmed deletion.",
+          "items": {
+            "$ref": "#/$defs/PluginRegistration"
+          },
+          "type": "array"
         },
         "purging": {
           "description": "A purge began and has not finished: a purge resumes it.",

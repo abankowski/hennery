@@ -12,7 +12,11 @@ export type PluginGrantResponse = { connection_id: string, namespace_epoch: stri
  */
 token: string, };
 
-export type PluginRegistration = { connection_id: string, hat_id: string, namespace_epoch: string, state: string, activity: boolean, startup: boolean, rotation_pending: boolean, deletion: ForgetStatus | null, };
+export type PluginRegistration = { connection_id: string, hat_id: string, namespace_epoch: string, state: string, activity: boolean, startup: boolean, rotation_pending: boolean, deletion: ForgetStatus | null,
+/**
+ * Destination origin only; cleared when its lifecycle snapshot is erased.
+ */
+destination: string | null, };
 
 export type RotationAction = "prepare" | "finish";
 
@@ -979,6 +983,10 @@ logo?: string | undefined, };
  * counted.
  */
 export type PurgePreview = { hat_id: string,
+/**
+ * Optional generic destinations and their confirmed/unconfirmed deletion.
+ */
+plugin_registrations: Array<PluginRegistration>,
 /**
  * A purge began and has not finished: a purge resumes it.
  */

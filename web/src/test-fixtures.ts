@@ -41,6 +41,7 @@ export function preview(over: Partial<PurgePreview> = {}): PurgePreview {
     recents: 1,
     unassigned: [],
     unassigned_count: 0,
+    plugin_registrations: [],
     ...over,
   }
 }

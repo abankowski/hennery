@@ -22,7 +22,7 @@ pub struct PluginGrantResponse {
     /// One-time handover; never present on a GET.
     pub token: String,
 }
-#[derive(Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
 pub struct PluginRegistration {
     pub connection_id: String,
@@ -33,6 +33,8 @@ pub struct PluginRegistration {
     pub startup: bool,
     pub rotation_pending: bool,
     pub deletion: Option<ForgetStatus>,
+    /// Destination origin only; cleared when its lifecycle snapshot is erased.
+    pub destination: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
