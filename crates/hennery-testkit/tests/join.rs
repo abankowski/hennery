@@ -50,6 +50,91 @@ impl Collector {
 }
 
 #[tokio::test]
+async fn unsafe_empty_destinations_are_rejected_before_any_key_or_enrollment_post() {
+    use axum::{
+        Router,
+        response::IntoResponse,
+        routing::{get, post},
+    };
+    use std::{
+        os::unix::fs::PermissionsExt,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+    let posts = Arc::new(AtomicUsize::new(0));
+    let seen = posts.clone();
+    let router = Router::new()
+        .route(
+            "/api/hosts/ws",
+            get(|upgrade: axum::extract::ws::WebSocketUpgrade| async {
+                let mut response = upgrade
+                    .on_upgrade(|mut ws| async move {
+                        let _ = ws.recv().await;
+                    })
+                    .into_response();
+                response.headers_mut().insert(
+                    hennery_proto::HELLO_NONCE_HEADER,
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .parse()
+                        .unwrap(),
+                );
+                response
+            }),
+        )
+        .route(
+            "/api/hosts/enroll",
+            post(move || {
+                let seen = seen.clone();
+                async move {
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    (axum::http::StatusCode::BAD_GATEWAY, "ambiguous")
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    for mode in [0o720, 0o702, 0o777] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+        let result = join(&url, "ABCD-EFGH", dir.path(), "fixture").await;
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err(), "unsafe mode {mode:o}");
+        assert_eq!(posts.load(Ordering::SeqCst), 0, "unsafe mode {mode:o} spent a code");
+        for file in ["host.key.pending", "host.key", hennery_host::enrollment::JOURNAL] {
+            assert!(!dir.path().join(file).exists(), "unsafe mode {mode:o} staged {file}");
+        }
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn data_directory_sync_failures_stop_before_any_enrollment_and_retry_safely() {
+    use hennery_host::identity::storage_hooks;
+    let collector = Collector::start().await;
+    for component in ["parent", "host"] {
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().join("parent");
+        let host = parent.join("host");
+        let boundary = if component == "parent" { &parent } else { &host };
+        storage_hooks::fail_once(boundary.clone(), "directory_sync");
+        let code = collector.mint().await;
+        assert!(join(&collector.public_url(), &code, &host, "fixture").await.is_err());
+        assert!(collector.state.hosts.list().unwrap().is_empty());
+        assert!(!host.join("host.key.pending").exists());
+        assert!(!host.join(hennery_host::enrollment::JOURNAL).exists());
+        // Fail the existing directory's parent sync on a subsequent attempt too.
+        storage_hooks::fail_once(boundary.clone(), "directory_sync");
+        assert!(join(&collector.public_url(), &code, &host, "fixture").await.is_err());
+        assert!(collector.state.hosts.list().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn joining_pairs_the_host_with_a_key_the_collector_accepts() {
     let collector = Collector::start().await;
     let dir = tempfile::tempdir().unwrap();
@@ -268,4 +353,29 @@ async fn joining_a_collector_that_does_not_know_the_key_is_refused() {
     // Nothing was touched.
     assert!(dir.path().join("outbox.db").exists());
     assert!(Paired::load(dir.path()).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn uncertain_enrollment_results_never_authorize_a_second_post_or_key() {
+    use axum::{Router, routing::{get, post}, response::IntoResponse};
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    for (status, body) in [(502, "bad gateway"), (504, "timeout"), (201, "{"), (201, "{\"host_id\":\"../bad\"}"), (409, "{\"error\":\"already_paired\",\"message\":\"unknown\"}")] {
+        let posts = Arc::new(AtomicUsize::new(0)); let capture = posts.clone();
+        let router = Router::new().route("/api/hosts/ws", get(|upgrade: axum::extract::ws::WebSocketUpgrade| async {
+            let mut response = upgrade.on_upgrade(|mut ws| async move { let _ = ws.recv().await; }).into_response();
+            response.headers_mut().insert(hennery_proto::HELLO_NONCE_HEADER, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap()); response
+        })).route("/api/hosts/enroll", post(move || { let capture = capture.clone(); async move { capture.fetch_add(1, Ordering::SeqCst); (axum::http::StatusCode::from_u16(status).unwrap(), body) } }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+        let dir = tempfile::tempdir().unwrap();
+        assert!(join(&url, "ABCD-EFGH", dir.path(), "fixture").await.is_err());
+        let pending = dir.path().join("host.key.pending"); let before = std::fs::read(&pending).unwrap();
+        assert!(dir.path().join(hennery_host::enrollment::JOURNAL).exists());
+        for _ in 0..2 {
+            assert!(join(&url, "FRESH-CODE", dir.path(), "fixture").await.is_err());
+            assert!(Paired::load(dir.path()).is_err());
+            assert_eq!(std::fs::read(&pending).unwrap(), before);
+        }
+        assert_eq!(posts.load(Ordering::SeqCst), 1, "{status} {body}"); server.abort();
+    }
 }
