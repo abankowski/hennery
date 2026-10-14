@@ -266,6 +266,7 @@ pub(crate) fn read_regular(path: &Path, bound: usize) -> Result<String> {
 /// place beside `path` is kept: the operator's `workspace_roots` survive a
 /// re-pair after a revoke (plan 6c decision 6), and so do the `[cli]`
 /// overrides (plan 7b).
+#[cfg(test)]
 pub(crate) fn write_config_to(path: &Path, collector_url: &str, host_id: &str, key: &HostKey) -> Result<()> {
     write_config_with(path, |table| set_pairing(table, collector_url, host_id, key))
 }
@@ -288,11 +289,11 @@ pub(crate) fn write_config_with(path: &Path, change: impl FnOnce(&mut toml::Tabl
 /// `path` as a TOML table: empty if there is no file, an error if it does
 /// not parse.
 pub(crate) fn read_table(path: &Path) -> Result<toml::Table> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => toml::from_str(&text).with_context(|| format!("parse {}", path.display())),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(toml::Table::new()),
-        Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
+    if !path.try_exists()? {
+        return Ok(toml::Table::new());
     }
+    let text = read_regular(path, 512 * 1024)?;
+    toml::from_str(&text).map_err(|_| anyhow::anyhow!("invalid host configuration"))
 }
 
 /// Where `join` stages `file` (`host.key` or `host.toml`) before renaming it
@@ -330,7 +331,11 @@ fn finish_interrupted_pairing(data_dir: &Path) -> Result<()> {
     if key_at == &key_pending {
         durable_rename(&key_pending, &key_path)?;
     }
-    crate::pairing::orphan_outbox(data_dir, "unpaired")?;
+    let prior = match crate::enrollment::inspect(data_dir)? {
+        crate::enrollment::EnrollmentState::Confirmed(attempt) => attempt.prior_host_id,
+        _ => None,
+    };
+    crate::pairing::orphan_outbox(data_dir, prior.as_deref().unwrap_or("unpaired"))?;
     let config_path = data_dir.join(CONFIG_FILE);
     durable_rename(&config_pending, &config_path)?;
     tracing::warn!(dir = %data_dir.display(), host_id = %staged.host_id, "finished a pairing that was interrupted");

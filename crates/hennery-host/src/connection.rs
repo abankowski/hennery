@@ -16,11 +16,11 @@ use crate::session::{
 use crate::uplink::Uplink;
 use anyhow::{Context, Result, bail};
 use futures::{SinkExt, StreamExt};
+use hennery_proto::PROTOCOL_VERSION;
 use hennery_proto::frames::{
     AgentIsolation, AttachedSession, Capabilities, Capability, CollectorFrame, ForgetReason, HostFrame, McpDelivery,
     SessionConfig,
 };
-use hennery_proto::{HELLO_NONCE_HEADER, PROTOCOL_VERSION};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -39,6 +39,7 @@ const MAX_FRAME: usize = 32 << 20;
 pub struct HostConfig {
     /// e.g. `ws://127.0.0.1:7117/api/hosts/ws`
     pub collector_url: String,
+    pub trust: crate::transport::CollectorTrust,
     pub host_id: String,
     /// The key this host paired with; it signs every `hello` (ACP core §3.5).
     pub key: HostKey,
@@ -80,6 +81,7 @@ impl HostConfig {
     pub fn new(collector_url: impl Into<String>, host_id: impl Into<String>, key: HostKey, data_dir: PathBuf) -> Self {
         Self {
             collector_url: collector_url.into(),
+            trust: Default::default(),
             host_id: host_id.into(),
             key,
             data_dir,
@@ -157,6 +159,10 @@ pub async fn run(cfg: HostConfig) -> Result<()> {
 
 /// Run the host until `shutdown` resolves.
 pub async fn run_until(cfg: HostConfig, shutdown: impl Future<Output = ()>) -> Result<()> {
+    let transport = crate::transport::CollectorTransport::new(
+        crate::transport::CollectorEndpoint::stored(&cfg.collector_url)?,
+        cfg.trust.clone(),
+    )?;
     // Before the first adapter (smoke test #1, F3); a no-op once made.
     crate::adapter::prepare_death_pipe().context("the adapters' death pipe")?;
     std::fs::create_dir_all(&cfg.data_dir)?;
@@ -173,7 +179,16 @@ pub async fn run_until(cfg: HostConfig, shutdown: impl Future<Output = ()>) -> R
     let serve = async {
         let mut backoff = cfg.reconnect_min;
         loop {
-            if let Err(err) = connect_once(&cfg, &uplink, &sessions, &probes, &homes, &mut replies, &mut backoff).await
+            if let Err(err) = connect_once(
+                (&cfg, &transport),
+                &uplink,
+                &sessions,
+                &probes,
+                &homes,
+                &mut replies,
+                &mut backoff,
+            )
+            .await
             {
                 if revoked(&err) {
                     return err;
@@ -255,10 +270,21 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 /// rather than being displaced by a probe that never sends `resend_complete`
 /// and holds nothing open.
 pub async fn probe(collector_url: &str, host_id: &str, key: &HostKey) -> Result<Standing> {
+    let transport = crate::transport::CollectorTransport::new(
+        crate::transport::CollectorEndpoint::stored(collector_url)?,
+        Default::default(),
+    )?;
+    probe_transport(&transport, host_id, key).await
+}
+pub async fn probe_transport(
+    transport: &crate::transport::CollectorTransport,
+    host_id: &str,
+    key: &HostKey,
+) -> Result<Standing> {
     // No roots: the collector stores them only from a reconciled
     // connection, which a probe never becomes (decision 7).
     let (mut sink, _stream, answer) = handshake(
-        collector_url,
+        transport,
         host_id,
         key,
         Announce::default(),
@@ -267,7 +293,7 @@ pub async fn probe(collector_url: &str, host_id: &str, key: &HostKey) -> Result<
         PROBE_TIMEOUT,
     )
     .await?;
-    let _ = sink.close().await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), sink.close()).await;
     Ok(match answer {
         CollectorFrame::HelloAck { .. } => Standing::Accepted,
         // Refused only after the proof checked out (ACP core §3.5).
@@ -299,7 +325,7 @@ struct Announce {
 }
 
 async fn handshake(
-    collector_url: &str,
+    transport: &crate::transport::CollectorTransport,
     host_id: &str,
     key: &HostKey,
     announce: Announce,
@@ -310,20 +336,12 @@ async fn handshake(
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_FRAME))
         .max_frame_size(Some(MAX_FRAME));
-    let connect = tokio_tungstenite::connect_async_with_config(collector_url, Some(config), false);
-    let (ws, response) = tokio::time::timeout(connect_timeout, connect)
+    let (ws, nonce) = tokio::time::timeout(connect_timeout, transport.websocket(config))
         .await
         .map_err(|_| anyhow::anyhow!("no WebSocket handshake within {connect_timeout:?}"))?
         .context("connect to collector")?;
     // The proof is over this connection's nonce, so it cannot be replayed on
     // another one. Without one there is nothing to sign.
-    let nonce = response
-        .headers()
-        .get(HELLO_NONCE_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| hex::decode(v).ok())
-        .filter(|n| n.len() == 32)
-        .context("the collector sent no hello nonce")?;
     let (mut sink, mut stream) = ws.split();
     send(
         &mut sink,
@@ -381,7 +399,7 @@ async fn shut_down(sessions: &Sessions, bound: Duration) {
 }
 
 async fn connect_once(
-    cfg: &HostConfig,
+    configured: (&HostConfig, &crate::transport::CollectorTransport),
     uplink: &Uplink,
     sessions: &Sessions,
     probes: &Probes,
@@ -389,8 +407,9 @@ async fn connect_once(
     replies: &mut mpsc::UnboundedReceiver<HostFrame>,
     backoff: &mut Duration,
 ) -> Result<()> {
+    let (cfg, transport) = configured;
     let (mut sink, mut stream, answer) = handshake(
-        &cfg.collector_url,
+        transport,
         &cfg.host_id,
         &cfg.key,
         Announce {

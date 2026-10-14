@@ -4297,3 +4297,61 @@ fn password_session(listen: &str, origin: &str) -> String {
         })
         .unwrap_or_else(|| panic!("no session cookie: {response}"))
 }
+
+#[test]
+fn a_secure_loopback_pairing_rejects_join_run_and_up_plaintext_overrides() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery"));
+    let root = tempfile::tempdir().unwrap();
+    let host = root.path().join("host");
+    hennery_host::identity::Paired {
+        collector_url: "wss://localhost/api/hosts/ws".into(),
+        trust: Default::default(),
+        host_id: "host-0123456789abcdef".into(),
+        key: hennery_host::identity::HostKey::from_seed([47; 32]),
+        workspace_roots: vec![],
+    }
+    .save(&host)
+    .unwrap();
+    let trap = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    trap.set_nonblocking(true).unwrap();
+    let origin = format!("http://{}", trap.local_addr().unwrap());
+    let ws = hennery_host::pairing::collector_ws_url(&origin).unwrap();
+    for args in [
+        vec![
+            "host",
+            "join",
+            &origin,
+            "ABCD-EFGH",
+            "--no-runtime",
+            "--data-dir",
+            host.to_str().unwrap(),
+        ],
+        vec![
+            "host",
+            "run",
+            "--collector-url",
+            &ws,
+            "--data-dir",
+            host.to_str().unwrap(),
+        ],
+        vec![
+            "up",
+            "--listen",
+            "127.0.0.1:0",
+            "--data-dir",
+            root.path().to_str().unwrap(),
+        ],
+    ] {
+        let output = hennery().args(args).output().unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("before hello"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(matches!(
+        trap.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    ));
+}

@@ -60,7 +60,7 @@ async fn fixture(names: Vec<String>, nonce: &'static str) -> Fixture {
                             if msg.is_close() {
                                 break;
                             }
-                            ws.send(Message::Text("{}".into())).await.ok();
+                            ws.send(Message::Text("{\"type\":\"hello_ack\",\"protocol_version\":\"1.0\",\"collector_version\":\"fixture\",\"committed\":{}}".into())).await.ok();
                         }
                     }
                 }
@@ -160,4 +160,68 @@ impl tokio_tungstenite::tungstenite::handshake::server::Callback for NonceCallba
             .insert(hennery_proto::HELLO_NONCE_HEADER, self.nonce.parse().unwrap());
         Ok(response)
     }
+}
+
+#[tokio::test]
+#[cfg(feature = "test-hooks")]
+async fn transport_move_preserves_identity_outbox_and_configuration_and_reports_fsync() {
+    use hennery_host::{
+        identity::{DurabilityUncertain, HostKey, Paired, storage_hooks},
+        pairing::set_transport,
+    };
+    let fixture = fixture(
+        vec!["localhost".into()],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let paired = Paired {
+        collector_url: "ws://localhost:7117/api/hosts/ws".into(),
+        trust: CollectorTrust::System,
+        host_id: "host-0123456789abcdef".into(),
+        key: HostKey::from_seed([31; 32]),
+        workspace_roots: vec!["/srv/projects".into()],
+    };
+    paired.save(dir.path()).unwrap();
+    std::fs::write(dir.path().join("outbox.db"), b"preserved").unwrap();
+    let path = dir.path().join("host.toml");
+    let mut table: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    table.insert(
+        "cli".into(),
+        toml::Value::Table(toml::Table::from_iter([(
+            "claude".into(),
+            toml::Value::String("/opt/fixture".into()),
+        )])),
+    );
+    std::fs::write(&path, toml::to_string(&table).unwrap()).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let key = std::fs::read(dir.path().join("host.key")).unwrap();
+    assert!(set_transport(dir.path(), &fixture.url, None).await.is_err());
+    assert_eq!(fixture.seen.load(Ordering::SeqCst), 0);
+    let trust = CollectorTrust::CaBundle {
+        pem: fixture.pem.clone(),
+    };
+    storage_hooks::fail_once(path.clone(), "before_rename");
+    assert!(
+        set_transport(dir.path(), &fixture.url, Some(trust.clone()))
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    storage_hooks::fail_once(path.clone(), "directory_sync");
+    let error = set_transport(dir.path(), &fixture.url, Some(trust.clone()))
+        .await
+        .unwrap_err();
+    assert!(error.downcast_ref::<DurabilityUncertain>().is_some(), "{error:#}");
+    assert!(error.to_string().contains("read-back"));
+    assert_ne!(std::fs::read(&path).unwrap(), original);
+    set_transport(dir.path(), &fixture.url, None).await.unwrap();
+    let loaded = Paired::read(dir.path()).unwrap().unwrap();
+    assert_eq!(loaded.host_id, paired.host_id);
+    assert_eq!(loaded.trust, trust);
+    assert_eq!(loaded.workspace_roots, paired.workspace_roots);
+    assert_eq!(std::fs::read(dir.path().join("host.key")).unwrap(), key);
+    assert_eq!(std::fs::read(dir.path().join("outbox.db")).unwrap(), b"preserved");
+    let table: toml::Table = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(table["cli"]["claude"].as_str(), Some("/opt/fixture"));
 }
