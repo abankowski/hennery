@@ -191,7 +191,7 @@ impl std::fmt::Debug for SetupLink {
 }
 
 pub struct Operator {
-    conn: Mutex<Connection>,
+    conn: crate::db::CoordinatedConnection,
     /// The database's owner (`db::kernel_owner`), whom every query names.
     owner: String,
     /// Loaded at open and replaced by setup and by `reset_public_url`: read
@@ -244,11 +244,11 @@ impl Operator {
         Self::init(db::open_in_memory()?)
     }
 
-    fn init(mut conn: Connection) -> Result<Self> {
+    fn init(mut conn: crate::db::OwnedConnection) -> Result<Self> {
         let owner = db::kernel_owner(&mut conn)?;
         let public_url = load_public_url(&conn, &owner)?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: crate::db::CoordinatedConnection::new(conn),
             owner,
             public_url: RwLock::new(public_url),
             setup: Mutex::new(None),
@@ -269,7 +269,7 @@ impl Operator {
         })
     }
 
-    pub(crate) fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+    pub(crate) fn conn(&self) -> crate::db::ConnectionGuard<'_> {
         self.conn.lock().expect("operator lock")
     }
 

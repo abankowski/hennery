@@ -4,6 +4,70 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+use std::sync::Arc;
+
+/// A SQLite connection retaining its process ownership. Dereferencing it
+/// exposes SQLite only while the ownership handle remains alive.
+#[derive(Debug)]
+pub struct OwnedConnection {
+    conn: Connection,
+    coordination: Arc<crate::coordination::Coordination>,
+}
+
+impl OwnedConnection {
+    pub fn coordination(&self) -> Arc<crate::coordination::Coordination> {
+        self.coordination.clone()
+    }
+}
+impl std::ops::Deref for OwnedConnection {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        &self.conn
+    }
+}
+impl std::ops::DerefMut for OwnedConnection {
+    fn deref_mut(&mut self) -> &mut Connection {
+        &mut self.conn
+    }
+}
+
+/// Store mutex with a fixed ordering: owner gate, then the connection.
+pub struct CoordinatedConnection {
+    inner: std::sync::Mutex<OwnedConnection>,
+    coordination: Arc<crate::coordination::Coordination>,
+}
+pub struct ConnectionGuard<'a> {
+    inner: std::sync::MutexGuard<'a, OwnedConnection>,
+    _gate: crate::coordination::GateGuard,
+}
+impl CoordinatedConnection {
+    pub fn new(conn: OwnedConnection) -> Self {
+        let coordination = conn.coordination();
+        Self {
+            inner: std::sync::Mutex::new(conn),
+            coordination,
+        }
+    }
+    pub fn coordination(&self) -> Arc<crate::coordination::Coordination> {
+        self.coordination.clone()
+    }
+    pub fn lock(&self) -> Result<ConnectionGuard<'_>, &'static str> {
+        let gate = self.coordination.gate.lock();
+        let inner = self.inner.lock().map_err(|_| "database connection poisoned")?;
+        Ok(ConnectionGuard { inner, _gate: gate })
+    }
+}
+impl std::ops::Deref for ConnectionGuard<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        &self.inner
+    }
+}
+impl std::ops::DerefMut for ConnectionGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        &mut self.inner
+    }
+}
 
 /// Open (or create) a database with the pragmas every hennery database uses.
 ///
@@ -16,7 +80,7 @@ use std::path::Path;
 /// None of the three is followed if it is a symlink: the mode is changed
 /// through the descriptor of the file itself, never through a path that
 /// could name some other file of this user's.
-pub fn open(path: &Path) -> Result<Connection> {
+pub fn open(path: &Path) -> Result<OwnedConnection> {
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -27,7 +91,7 @@ pub fn open(path: &Path) -> Result<Connection> {
         .open(path)
         .with_context(|| format!("open {} (a symlink is refused)", path.display()))?;
     make_private(&file, path)?;
-    drop(file);
+    let coordination = crate::coordination::Coordination::acquire(file, path)?;
     let conn = configure(Connection::open(path)?)?;
     for suffix in ["-wal", "-shm"] {
         let mut name = path.as_os_str().to_os_string();
@@ -46,7 +110,7 @@ pub fn open(path: &Path) -> Result<Connection> {
             }
         }
     }
-    Ok(conn)
+    Ok(OwnedConnection { conn, coordination })
 }
 
 /// `fchmod`, through the open file rather than its path.
@@ -55,8 +119,11 @@ fn make_private(file: &std::fs::File, path: &Path) -> Result<()> {
         .with_context(|| format!("make {} private", path.display()))
 }
 
-pub fn open_in_memory() -> Result<Connection> {
-    configure(Connection::open_in_memory()?)
+pub fn open_in_memory() -> Result<OwnedConnection> {
+    Ok(OwnedConnection {
+        conn: configure(Connection::open_in_memory()?)?,
+        coordination: Arc::default(),
+    })
 }
 
 /// Every transaction is `IMMEDIATE`: it takes the write lock when it

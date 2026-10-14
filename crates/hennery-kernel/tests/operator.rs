@@ -189,9 +189,10 @@ fn the_setup_link_is_written_privately_and_removed_by_setup() {
     // No temporary file is left behind.
     assert_eq!(
         std::fs::read_dir(dir.path()).unwrap().count(),
-        4,
-        "hennery.db, -wal, -shm and setup-url"
+        5,
+        "hennery.db, -wal, -shm, writer lock and setup-url"
     );
+    assert_eq!(mode(&dir.path().join("hennery.db.writer.lock")), 0o600);
 
     assert!(matches!(
         op.set_up(token, PASSWORD, "https://hennery.example", NOW).unwrap(),

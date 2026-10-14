@@ -135,7 +135,7 @@ impl World {
     }
 
     /// A raw connection to `hennery.db`, as the sessions store's would be.
-    pub fn raw(&self) -> rusqlite::Connection {
+    pub fn raw(&self) -> hennery_kernel::db::OwnedConnection {
         hennery_kernel::db::open(&self.db).unwrap()
     }
 

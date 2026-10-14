@@ -688,7 +688,7 @@ pub struct Reconciliation {
 }
 
 pub struct Store {
-    conn: Mutex<Connection>,
+    conn: hennery_kernel::db::CoordinatedConnection,
     /// The database's owner (`hennery_kernel::db::kernel_owner`), whom
     /// every query names.
     owner: String,
@@ -1834,7 +1834,11 @@ impl Store {
     /// The kernel's tables first: they hold the owner, which this store's
     /// rows name and its last migration fills in. So the store and the
     /// kernel agree on the owner whichever opens the database first.
-    fn init(mut conn: Connection, attachments: Option<PathBuf>, path: Option<PathBuf>) -> Result<Self> {
+    fn init(
+        mut conn: hennery_kernel::db::OwnedConnection,
+        attachments: Option<PathBuf>,
+        path: Option<PathBuf>,
+    ) -> Result<Self> {
         let owner = hennery_kernel::db::kernel_owner(&mut conn)?;
         hennery_kernel::db::migrate(&mut conn, MIGRATIONS)?;
         let checkpoints = path.map(|path| {
@@ -1851,7 +1855,7 @@ impl Store {
             checkpoints.run();
         }
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: hennery_kernel::db::CoordinatedConnection::new(conn),
             owner,
             attachments,
             checkpoints,
@@ -1906,7 +1910,7 @@ impl Store {
         }
     }
 
-    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+    fn conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
         self.conn.lock().expect("store lock")
     }
 
@@ -4250,7 +4254,7 @@ impl Store {
     }
 
     /// The connection, for one of the view's reads.
-    fn view_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+    fn view_conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
         self.view_reads.fetch_add(1, Ordering::Relaxed);
         self.conn()
     }

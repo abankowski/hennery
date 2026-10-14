@@ -31,7 +31,7 @@ use anyhow::{Context, Result, anyhow};
 use hennery_kernel::db;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use zeroize::Zeroizing;
 
 /// A connection's columns, then whether it has a credential, then its OAuth
@@ -56,7 +56,7 @@ const SELECT_MOUNTS: &str = "SELECT m.connection_id, m.host_id
      ORDER BY m.connection_id, m.host_id";
 
 pub struct GatewayStore {
-    conn: Mutex<Connection>,
+    conn: hennery_kernel::db::CoordinatedConnection,
     /// The database's owner (`db::kernel_owner`), whom every query names.
     owner: String,
     refresh_caches: Mutex<Vec<Weak<crate::refresh::Attempts>>>,
@@ -73,11 +73,11 @@ impl GatewayStore {
         Self::init(db::open_in_memory()?)
     }
 
-    fn init(mut conn: Connection) -> Result<Self> {
+    fn init(mut conn: hennery_kernel::db::OwnedConnection) -> Result<Self> {
         let owner = db::kernel_owner(&mut conn)?;
         db::migrate_component(&mut conn, COMPONENT, MIGRATIONS)?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: hennery_kernel::db::CoordinatedConnection::new(conn),
             owner,
             refresh_caches: Mutex::default(),
         })
@@ -108,7 +108,7 @@ impl GatewayStore {
 
     /// The store's connection: `stdio.rs` and `session.rs` hold their
     /// statements on it, which the owner audit reads too.
-    pub(crate) fn conn(&self) -> MutexGuard<'_, Connection> {
+    pub(crate) fn conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
         self.conn.lock().expect("gateway store lock")
     }
 

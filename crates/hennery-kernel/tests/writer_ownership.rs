@@ -33,10 +33,15 @@ fn a_forked_child_cannot_cause_a_false_live_writer_refusal() {
     let child = unsafe { libc::fork() };
     assert!(child >= 0);
     if child == 0 {
-        unsafe { libc::usleep(150_000); libc::_exit(0); }
+        unsafe {
+            libc::usleep(150_000);
+            libc::_exit(0);
+        }
     }
     drop(first);
     let reopened = db::open(&path);
-    unsafe { libc::waitpid(child, std::ptr::null_mut(), 0); }
+    unsafe {
+        libc::waitpid(child, std::ptr::null_mut(), 0);
+    }
     assert!(reopened.is_ok(), "{:?}", reopened.err());
 }
