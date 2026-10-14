@@ -387,7 +387,8 @@ async fn handshake(
     )
     .await?;
     let answer = match tokio::time::timeout(read_timeout, stream.next()).await {
-        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<CollectorFrame>(&text)?,
+        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<CollectorFrame>(&text)
+            .map_err(|_| anyhow::anyhow!("invalid collector hello response"))?,
         _ => return Err(crate::transport::failure(crate::transport::Stage::HelloTimeout)),
     };
     Ok((sink, stream, answer))
