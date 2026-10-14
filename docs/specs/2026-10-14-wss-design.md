@@ -1,8 +1,10 @@
 # hennery — remote hosts over WSS
 
 - **Date:** 2026-10-14
-- **Status:** Proposed; designer's recommendations await the parent's security
-  and design review. No implementation or live acceptance is claimed.
+- **Status:** Proposed; independent Codex review on the maintainer's behalf:
+  APPROVE AFTER AMENDMENTS. Enrollment uncertainty, loopback downgrade and
+  post-rename durability amendments are included below, pending scoped
+  re-confirmation. No implementation or live acceptance is claimed.
 - **Scope:** host enrollment, the host uplink, transport diagnostics and the
   reverse-proxy deployment contract. The
   [umbrella](2026-09-25-hennery-architecture-design.md) wins. This refines its
@@ -199,13 +201,65 @@ A confirmed enrollment followed by a failed host connection reports “paired;
 connection failed” and leaves that identity available for retry. Runtime
 installation failure also leaves a completed pairing intact, as today.
 
-If enrollment times out after the collector may have committed, do not claim
-the code is unspent, retry automatically, or overwrite the uncertainty as a
-successful pairing. Keep the pending private key for recovery, report that
-the Hosts list may contain the new entry, and direct the operator to revoke
-that unused entry and mint a fresh code before an explicit retry. Atomic
-recovery of a lost enrollment response is outside this transport change;
-there is no new unauthenticated key-lookup endpoint.
+**Enrollment uncertainty is durable state, not an error-message convention.**
+Before the POST can begin, persist and fsync both `host.key.pending` and a
+0600 `enrollment.pending.toml` journal, including their directory entries.
+The journal's Rust shape is `EnrollmentAttempt { version, attempt_id,
+phase: MayHaveCommitted, collector_origin, trust, public_key, prior_host_id }`.
+It binds the pending key to the exact destination and trust policy; it stores
+no pairing code. Generate it under `host.lock`, refuse to overwrite an
+existing attempt, and send no POST if either write or fsync fails. Marking
+the attempt before sending deliberately also covers death just before the
+POST: local state cannot prove whether the request reached the collector.
+
+A timeout, connection reset, proxy 502/504, truncated or malformed success
+body, invalid returned host id, or process death after the POST can all leave
+the collector enrolled while the host lacks a confirmed result. Keep the
+journal and its key unchanged. Neither a failed request nor a fresh code
+authorizes another POST or replacement key. Only a complete, validated
+collector rejection whose contract guarantees no enrollment (such as
+`invalid_code`) permits clearing the attempt; generic HTTP errors and
+`already_paired` do not prove that. A crash before clearing even a definitive
+rejection leaves the conservative uncertain state.
+
+On validated success, durably stage `host.toml.pending` with the returned id,
+destination, trust and matching public key before installing the pairing.
+That staged receipt permits the existing roll-forward without another POST.
+Remove and directory-fsync the journal only after the matching installed
+key/config are durable. A leftover journal with that complete matching
+staged receipt or installed pairing is confirmed recovery work; a mismatch
+is an error, never guessed away. Failures while staging the receipt still
+leave the original uncertain attempt. Do not delete its key in a generic
+enrollment-error cleanup.
+
+Every entry point inspects these states before normal pairing loads:
+
+- `join` blocks on an uncertain attempt before prompting for a code,
+  generating a key or sending enrollment. A supplied code does not bypass it.
+- `host run` refuses to start an uncertain identity. `up` propagates that
+  diagnostic and suppresses automatic host pairing/re-enrollment, including
+  supervisor restarts; it must not treat the state as “not paired”.
+- `doctor` reports a failure with the attempt id and sanitized destination,
+  distinguishing uncertain enrollment from confirmed roll-forward work. It
+  changes no files and sends no identity probe for the uncertain attempt.
+- `transport set` also refuses an unresolved attempt. A lone pending key,
+  journal without its matching pending or installed key, or malformed or
+  mismatched journal is a blocking recovery condition, never ignored or
+  overwritten. This also protects
+  artifacts left by the old implementation, even when the destination is
+  unavailable from them.
+
+Explicit recovery means the operator checks the collector's Hosts list,
+revokes any entry created by this attempt, and deliberately archives the
+attempt's journal and key under the host lock before a fresh join. The
+implementation plan must provide a local recovery action bound to the
+attempt id that explains the possible remote enrollment and preserves those
+artifacts durably before clearing the active attempt; it cannot assert that
+a remote revoke happened from local state. Interrupted archive recovery
+must remain recoverable and must not permit an automatic fresh enrollment.
+No timeout, restart or ordinary join performs that action. Preserve an older
+pairing and its outbox throughout. Automatic discovery of a lost host id is
+outside this change; there is no new unauthenticated key-lookup endpoint.
 
 For an existing pairing, `join` retains the stored trust when no TLS option
 is supplied and performs the authenticated probe before asking for a code.
@@ -229,9 +283,17 @@ selection. This is local operator configuration, not a browser API.
    pairing code. Only `Accepted` or `Connected` permits saving. For the
    latter, explain that another connection still uses this identity.
 4. Atomically replace only the endpoint and trust fields in `host.toml`,
-   preserving host id, key, workspace roots, CLI overrides and outbox. On any
-   failure leave the old configuration byte-for-byte intact. Print the
-   restart instruction, not a claim that sessions are already connected.
+   preserving host id, key, workspace roots, CLI overrides and outbox. Before
+   the rename, a failure leaves the old configuration byte-for-byte intact.
+   After a successful rename, a directory-fsync failure means the new file
+   is visible but its survival across a crash is uncertain. Report
+   `DurabilityUncertain`, not “unchanged” or success; do not attempt an
+   automatic rollback or begin connecting. Read back the file when possible
+   for the diagnostic and direct the operator to inspect the saved endpoint and
+   repeat the explicit save once storage is healthy. After a restart, validate
+   whichever complete configuration survived; never assume the old one won.
+   Only a durably completed save prints the ordinary restart instruction,
+   without claiming that sessions are already connected.
 
 This authorizes a new endpoint by the local operator's explicit URL and TLS
 trust, not by treating a `hello_ack` as a collector signature. A malicious
@@ -240,10 +302,23 @@ proof does not prove two origins are the same installation. No automatic
 cross-origin redirect or discovery is added. A rejected move never suggests
 deleting the old key as the way to repair a certificate failure.
 
-Retain `join`'s historical loopback alias rule for local pairing, but never
-use it to equate loopback with a public origin or to copy private-CA trust
-across origins. Validate the development `--collector-url` override through
-the same policy; cross-origin secure moves go through `transport set`.
+Restrict the legacy loopback alias exception to **two validated plaintext
+loopback endpoints** (`http`/`ws` after the normal HTTP-to-WS conversion).
+Only that case may equate different loopback names or ports. If either
+endpoint is HTTPS/WSS, require exact canonical endpoint equality and the
+stored trust, or the explicit endpoint/trust-change flow. A stored
+`wss://localhost` pairing must never probe a plaintext loopback candidate.
+WSS-to-WS downgrades are refused; the proposed `transport set` takes HTTPS
+destinations only. WSS-to-WSS name or port changes require explicit handling
+even if both names resolve to loopback; WS-to-WSS is an explicit upgrade.
+
+Apply this comparison **before any hello** in `join`, `host run`, `up`,
+doctor's derivation of `up`'s local endpoint, and `--collector-url`. Neither
+`up`'s listener-derived URL nor the development override bypasses a stored
+WSS endpoint or its trust. Refuse incompatible overrides with a migration
+diagnostic, rather than probing them. Plaintext-to-plaintext aliases still
+serve existing all-in-one installations. Never equate loopback with a public
+origin or copy private-CA trust across origins implicitly.
 
 ### 4.3 Storage and compatibility
 
@@ -254,6 +329,12 @@ than silently reverting to defaults. Keep the existing `collector` WS(S)
 field; do not persist two independent URLs. CA data is public but its
 integrity matters: maintain 0600 atomic writes, refuse group/other-writable
 transport configuration and redact PEM from diagnostics and `Debug` output.
+
+The versioned enrollment journal is new local persistent state. Loaders must
+check it and pending-key fragments before interpreting absent `host.toml` as
+an unpaired host; this replaces the current lone-pending-key behavior. Its
+writes and pairing/transport writes distinguish pre-rename failure from
+post-rename durability uncertainty, including failures removing the journal.
 
 No SQLite migration, host-registry column, frame field or protocol-version
 bump is needed. Old loopback configurations keep working. Old binaries do
@@ -403,7 +484,9 @@ No new browser API or independently handwritten TypeScript model is needed;
 if a later host-report lane publishes these types, generate its wire types
 from Rust through `hennery-proto` as usual.
 
-- **Check 7:** show the effective collector origin and trust source, then
+- **Check 7:** first report unresolved enrollment as specified in §4.1,
+  without network pairing work. Otherwise show the effective collector origin
+  and trust source, then
   configuration, DNS, TCP, TLS/name/chain, HTTP health, WSS upgrade/nonce and
   authenticated hello. Reuse actual transport code and overall deadlines.
   A failed certificate check stops before a code or hello is sent. A 200
@@ -462,10 +545,12 @@ lane must not assume this flag makes a private certificate acceptable to iOS.
 |---|---|
 | Unknown CA, wrong SAN, expired certificate, TLS sent to a plaintext port | Fail before HTTP/hello secrets; retain identity and retry on the running host. Repair certificate/trust/clock. |
 | Health works, upgrade is redirected or nonce stripped | Preflight/doctor identifies the stage; no enrollment during failed preflight. Repair the proxy. |
-| Lost enrollment response | Pairing outcome is uncertain, never automatically replayed; retain pending key and use explicit revoke/fresh-code recovery (§4.1). |
+| Enrollment result unknown, including reset, 502/504, malformed success or process death | Durable journal retains destination, trust and pending key; `join`, `run`, `up` and doctor recognize it after restart. No automatic POST or key replacement; explicit recovery only (§4.1). |
 | Proxy/collector outage or address change in DNS | Backoff and reconnect; adapters keep running, bounded outbox rules still apply. No endpoint discovery or automatic re-pair. |
 | Certificate renewed under the same CA | New connections validate normally; no pin or pairing changes. |
 | Trust bundle replaced or origin moved | Explicit local change under the host lock, atomic save, restart/resume; failed probe preserves old settings. |
+| Loopback alias or override would downgrade WSS to WS | Refuse before hello, including in `up` and doctor. Only two plaintext loopback endpoints qualify as legacy aliases. |
+| Directory fsync fails after a config rename | New config is visible; crash durability is uncertain. Report that distinction, without rollback or an “unchanged” promise (§4.2). |
 | Proxy passes spoofed or duplicate client-address headers | Reject malformed trusted-peer headers; deployment test must prove inbound headers are overwritten. Default mode ignores headers. |
 | Revoked, bad proof or duplicate live identity | Preserve ACP core refusal ordering and existing remedies; only authenticated `revoked` shuts down adapters. |
 
@@ -488,13 +573,30 @@ fail a positive WSS test, not merely pass rejection tests.
    redirects/downgrades, non-loopback plaintext and poisoned `localhost`
    resolution on every call site. Proxy traps receive nothing. Test stored
    configuration and the development override as well as CLI parsing.
+   Cover every loopback scheme/name/port combination: plaintext aliases
+   remain accepted; any WSS transition needs exact equality or explicit
+   secure migration. Drive `join`, `run`, `up`, doctor and `--collector-url`
+   against a plaintext trap and assert **zero hello frames**, particularly
+   from a stored `wss://localhost` pairing.
    Prove that public-only egress and runtime downloads retain their policy.
 3. **Pairing/storage:** successful HTTPS pairing and idempotent rerun;
    unspent code on preflight failure; rejected trust changes; write failures
    at pending-file boundaries; lost enrollment reply; post-enroll upgrade
    failure; revoked re-pair and orphaned outbox; transport move preserving
-   identity, roots, overrides and outbox, and failing atomically. Both old
-   loopback configurations and private-CA service startup need positive tests.
+   identity, roots, overrides and outbox. Inject failures before rename and
+   after rename at directory fsync: assert old bytes only in the former;
+   assert new visible bytes plus `DurabilityUncertain`, no automatic rollback
+   and correct read-back/retry behavior in the latter. Both old loopback
+   configurations and private-CA service startup need positive tests.
+   Crash at each key/journal/POST/receipt/config durability boundary. For
+   timeouts, resets, 502/504, truncated/malformed success and process death
+   after a committed POST, restart each of `join`, `run`, `up` and doctor:
+   assert no second enrollment, no regenerated/overwritten key, preserved
+   destination/trust and no loss of an older identity/outbox. Also cover
+   death before POST, lone pending artifacts, explicit archive recovery,
+   definitive rejection cleanup and confirmed receipt roll-forward without
+   POST. Journal cleanup failure must not turn confirmed recovery into a
+   new enrollment.
 4. **Reconnect:** put a fake adapter in an active turn with a pending
    question, cut the proxy, produce facts offline, reconnect and verify one
    adapter PID, exact ordered transcript, one delivery acknowledgement and
@@ -508,6 +610,13 @@ fail a positive WSS test, not merely pass rejection tests.
    Include direct backend access, untrusted peer, spoofed headers, duplicates,
    comma lists, mapped IPv4, IPv6 grouping and missing-header fallback.
    Differential header vectors must not produce competing interpretations.
+   Have the proxy lose a committed enrollment response with reset, 502/504
+   and truncated/malformed success, then restart the host entry points and
+   prove durable refusal to re-enroll or replace the key. Reject a proxy
+   redirect or override from WSS to a plaintext loopback trap with zero
+   hello frames. Exercise the deployment recovery instructions after an
+   injected post-rename fsync failure and distinguish visible settings from
+   durability, rather than claiming the old settings were restored.
 6. **Doctor:** each stage and each verdict has a positive assertion and a
    revert-probe. Include a URL containing “tls” whose failure is DNS, no
    Date, skew, active host lock, accepted/revoked/unknown/connected hello,
@@ -539,8 +648,8 @@ runtime tests.
 | 4 | **designer's recommendation** | Native roots by default; explicit collector-only private-CA roots replace defaults. Reject bundled-roots-only behavior and an implicit union in private-CA mode because trust should be predictable and narrow. |
 | 5 | **designer's recommendation** | Deliver CA bundles, defer pinning. Leaf pins add renewal work; SPKI/pin-only modes add verifier and rollover surface without being necessary for this brief's private-CA-or-pin requirement. |
 | 6 | **designer's recommendation** — refines kernel §7.1; plan 7d-ii decision 21 | Host-owned transport for a locally authorized destination, retaining no-proxy/no-redirect/bounds and strict loopback HTTP. Do not route through public-only egress or broaden its caller allowance. |
-| 7 | **designer's recommendation** | WSS preflight before new enrollment; never replay an ambiguous POST. Reject treating HTTPS health alone as evidence a paired host can connect. |
-| 8 | **designer's recommendation** | Persist imported CA PEM atomically with pairing; explicit transport-change command under host lock. Reject transient CLI-only trust, accidental cross-origin inheritance and deleting an identity to move off a tunnel. |
+| 7 | **designer's recommendation** | WSS preflight before new enrollment; durably journal possible enrollment before POST and block automatic re-enrollment after restart. Reject treating a pending key alone or an in-memory error as sufficient recovery state. |
+| 8 | **designer's recommendation** | Persist CA PEM with pairing; explicit transport changes under host lock; legacy aliases only between plaintext loopback endpoints. Distinguish pre-rename failure from post-rename durability uncertainty. Reject silent WSS downgrade, transient trust and deleting an identity to move off a tunnel. |
 | 9 | **settled by spec** — umbrella §5.8, ACP core §5 | Adapters survive disconnection; outbox reconciliation precedes readiness; backoff with jitter. Reject reconnect-driven respawn and reset-on-dial behavior. Exact jitter distribution is a designer's recommendation (§6). |
 | 10 | **designer's recommendation** | Explicit exact proxy peers plus one overwritten address-only header; preserve all limiter budgets. Reject trusting arbitrary XFF, treating loopback as authenticated, disabling backend limits or claiming edge limits alone fix shared lockout. |
 | 11 | **settled by spec** — umbrella §§7.1–7.4, kernel §§3.3–3.4 | No proxy identity; keep owner/hat/token checks, step-up and browser Origin semantics. Transport trust never grants operator access. |
@@ -562,6 +671,19 @@ task reviews and whole-branch review. The parent commissions the reviews.
 | 1 | **WSS host transport and diagnostics** | **M**, approximately 5–6 tasks | Shared endpoint/trust/connector; HTTPS enrollment and pending config; migration/CA command; reconnect jitter; doctor parity; TLS, storage and disconnect tests. Old tunnel path works. Amend the umbrella/kernel “built so far” notes only when implementation exists. Real remote host with both adapters passes the transport gate. |
 | 2 | **Proxy attribution and public deployment** | **M**, approximately 3–4 tasks | Exact-peer/header policy shared by all rate-limit consumers, config and doctor findings, Caddy/nginx examples and two-client regression tests, README quickstart and acceptance evidence. Review the kernel address-policy amendment. Replace the tunnel-first instructions only when tested WSS and public-ingress gates pass. |
 
+Required review-amendment tests in **plan 1**: §9's persistent uncertainty
+matrix across all four entry points and each crash boundary; no enrollment
+replay or key replacement after restart; no hello to a plaintext downgrade
+target through aliases, `up` or overrides; and separate assertions for
+pre-rename failure and post-rename directory-fsync uncertainty. Test the
+recovery action and receipt roll-forward, not just the error text.
+
+Required review-amendment tests in **plan 2**: §9's actual proxy reset,
+502/504 and truncated/malformed-response cases followed by process restart;
+WSS-to-plaintext redirect/override traps receiving no hello; and deployment
+recovery instructions exercised with an injected post-rename fsync failure.
+These are integration checks of plan 1's state machine, not a second one.
+
 Plan 2 depends on plan 1 for its end-to-end deployment checks. Plan 1 can ship
 WSS with the current warning retained; it must not claim the unrestricted
 public deployment recipe is finished. Preserve the SSH tunnel as an optional
@@ -571,7 +693,10 @@ approved spec amendment; pinning a separate **S–M** plan if later requested.
 Review focus: TLS policy parity and no downgrades; enrollment uncertainty;
 identity-preserving endpoint changes; proxy-header spoofing and limiter
 success clearing; certificate renewal and reconciliation; no trust leakage
-into gateway, push or agent processes. No reviews are claimed in this draft.
+into gateway, push or agent processes. Independent review found no Critical
+issues and approved after the three amendments above; the parent should
+request scoped re-confirmation of durable enrollment uncertainty, loopback
+transitions and post-rename durability reporting. Final approval is pending.
 
 Other-lane assumptions:
 
