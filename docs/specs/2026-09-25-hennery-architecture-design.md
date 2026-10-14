@@ -69,13 +69,36 @@ In:
   phone" is a core loop, not a nicety.
 - Hats (§8) as an isolation boundary.
 - The MCP gateway module (§10).
+- An optional, generic plug-in activity/startup contract (§1.2.1), consumed
+  by a separately installed reference memory plug-in.
 
 Later (the design must not preclude them — see §15): observed sessions,
-memory, Changes tab, worktree per session, workflows, config explorer, LLM
+Changes tab, worktree per session, workflows, config explorer, LLM
 auto-naming.
 
 Never part of hennery: the predecessor's chat-app orchestrator, task hub and
 similar personal automation.
+
+### 1.2.1 Optional memory amendment (2026-10-14)
+
+The operator pulls cross-session memory forward from §15's original v2 row
+(line 1072 at `0fe663b`), with an explicit constraint: **memory is an opt-in
+plug-in, not an embedded feature forced on every user**. The reference
+implementation ships in this repository as a separate executable/crate with
+its own store. Other external MCP memory servers remain valid choices.
+
+Core supplies existing per-hat MCP connections/mounts and a minimal generic,
+explicitly granted session-activity feed, revocation/deletion lifecycle and
+optional startup-context contribution. It owns no memory tables, note worker,
+model configuration or Memory screen. An installation without a plug-in gets
+no extra tools/context, optional control database or background model work.
+
+The [memory plug-in design](2026-10-14-memory-design.md) proposes that contract,
+the separate reference implementation, scoped legacy import, and integration
+with plan 9 purge. Its technical recommendations and external-deletion product
+question remain subject to review. This amendment authorises the scope, not
+an implementation claim or a relaxation of hats. It also narrows frontend
+§13's exclusion: memory UI belongs to the optional service, not the core app.
 
 ---
 
@@ -659,8 +682,8 @@ client B's integrations, which is the actual risk.
 Isolation applies to what sessions, agents and data flows can reach — **not** to
 the operator's view. The single operator sees all hats; the "All" view stays.
 
-- A session in hat A must not be able to use hat B's MCP connections (and, in
-  v2, hat B's memory or context).
+- A session in hat A must not be able to use hat B's MCP connections,
+  plug-in activity, memory or startup context (§1.2.1).
 - A gateway connection belongs to **exactly one hat**. The same vendor in two
   hats is two connections with **separate OAuth grants**.
 - Gateway client tokens are minted **per session** for that session's (host,
@@ -674,7 +697,8 @@ Side channels that must respect the boundary:
 - Push notification content is minimal by default (session name, no transcript
   excerpt), configurable per hat, including a generic title that omits the
   session name.
-- v2 LLM features configure their LLM endpoint per hat.
+- Optional plug-in LLM features, and later core LLM features, configure their
+  LLM endpoint per hat; no implicit cross-hat credential or provider fallback.
 
 Hats also drive UI filtering, theming and per-hat push muting.
 
@@ -1069,7 +1093,7 @@ hermetic package builds stay green.
 | Item | Status | What the v1 design reserves |
 |---|---|---|
 | Observed (terminal) sessions | Later | `session.source_kind`; capability checks by source (§6.4). |
-| Memory / cross-session context | v2 | Per-hat scoping and per-hat LLM endpoint (§8.3). |
+| Memory / cross-session context | Optional plug-in, pulled forward 2026-10-14 (§1.2.1) | Separate service/store; generic opt-in activity/startup contract, per-hat scope and optional per-hat model credentials. No embedded memory. |
 | Changes tab (git diff since session start) | Later | Host capability flag; base commit recordable at start. |
 | Worktree per session | Later | Session `cwd` is already per session. |
 | Workflows / saved kickoffs | Later | — |

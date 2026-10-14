@@ -460,9 +460,14 @@ script; its hash is allowed by the Content-Security-Policy (kernel spec §7.2).
 
 ## 13. Out of scope
 
-Board view, workflows, memory, config explorer, changes/diff view, quick chat
+Board view, workflows, embedded memory UI, config explorer, changes/diff view, quick chat
 (a preset in New session may come later), transcript full-text search,
 cross-tab stream sharing.
+
+Amendment 2026-10-14: [optional memory](2026-10-14-memory-design.md) is a separate
+plug-in with its own management screen. Core may expose generic per-connection
+activity/context grants and deletion status; it does not add a Memory page
+or enable a plug-in by default (umbrella §1.2.1).
 
 ---
 
