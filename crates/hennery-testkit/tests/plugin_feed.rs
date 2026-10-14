@@ -190,6 +190,11 @@ fn completed_projection_is_replayable_typed_bounded_and_redacted() {
     w.session("session", "host", &w.hat);
     w.turn("session", "turn", 2, TurnOutcome::Completed);
     let page = w.sessions.activity_page(&w.token, None, 20).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<hennery_proto::plugin::PluginActivityPage>(&serde_json::to_vec(&page).unwrap())
+            .unwrap(),
+        page
+    );
     assert_eq!(page.items.len(), 1);
     assert!(!page.has_more);
     assert!(page.lease_until <= hennery_kernel::secret::unix_now() + 60);
@@ -726,7 +731,13 @@ fn inventory_binds_unread_sources_and_clear_removes_all_snapshot_state() {
 #[test]
 fn foreign_owner_rows_and_future_cursor_never_reach_projection() {
     let w = World::new(true);
-    for id in ["foreign-session", "foreign-event", "mine"] {
+    for id in [
+        "foreign-session",
+        "foreign-event",
+        "foreign-turn",
+        "foreign-prompt",
+        "mine",
+    ] {
         w.session(id, "host", &w.hat);
         w.turn(id, &format!("turn-{id}"), 2, TurnOutcome::Completed);
     }
@@ -737,10 +748,13 @@ fn foreign_owner_rows_and_future_cursor_never_reach_projection() {
         )
         .unwrap();
         core.execute(
-            "UPDATE events SET owner_id='other-owner' WHERE session_id='foreign-event'",
+            "UPDATE events SET owner_id='other-owner' WHERE session_id='foreign-event' AND kind='turn_ended'",
             [],
         )
         .unwrap();
+        core.execute("UPDATE turns SET owner_id='other-owner' WHERE session_id='foreign-turn'",[]).unwrap();
+        core.execute("UPDATE events SET owner_id='other-owner' WHERE session_id='foreign-prompt' AND kind='user_turn'",[]).unwrap();
+        core.execute("INSERT INTO events(session_id,kind,body,ts,owner_id) VALUES('mine','hat_reassigned','{}','2026-10-14T00:00:00Z','other-owner')",[]).unwrap();
     });
     let page = w.sessions.activity_page(&w.token, None, 1).unwrap();
     assert_eq!(page.items.len(), 1);
@@ -817,6 +831,9 @@ fn completion_and_origin_guard_each_independent_durable_input() {
             },
         )
         .unwrap();
+    // Move the committed high-water mark beyond the unapplied duplicate;
+    // otherwise the watermark alone would hide the missing applied filter.
+    w.session("watermark", "host", &w.hat);
     assert_eq!(w.sessions.activity_page(&w.token, None, 20).unwrap().items.len(), 1);
     for sql in [
         "UPDATE turns SET state='sent' WHERE turn_id='turn'",
@@ -885,4 +902,80 @@ fn registration_boundary_excludes_an_already_started_prompt() {
         )
         .unwrap();
     assert!(w.sessions.activity_page(&w.token, None, 1).unwrap().items.is_empty());
+}
+
+#[test]
+fn authenticated_project_metadata_is_redacted_before_delivery() {
+    let w = World::new(true);
+    w.session("session", "host", &w.hat);
+    w.turn("session", "turn", 2, TurnOutcome::Completed);
+    w.core(|core| {
+        core.execute(
+            "UPDATE sessions SET cwd='/scratch/hnry_plugin_deadbeef' WHERE id='session'",
+            [],
+        )
+        .unwrap();
+    });
+    let page = w.sessions.activity_page(&w.token, None, 20).unwrap();
+    let text = serde_json::to_string(&page).unwrap();
+    assert!(!text.contains("deadbeef"));
+    assert!(text.contains("hnry_plugin_<redacted>"));
+}
+
+#[test]
+fn terminal_inventory_erasure_is_per_registration_and_never_creates_tables() {
+    let w = World::new(true);
+    let mut control = rusqlite::Connection::open(w._dir.path().join("plugin-control.db")).unwrap();
+    w.core(|_| {
+        let tx = control.transaction().unwrap();
+        w.gateway.plugins().erase_inventory_in(&tx, &w.connection).unwrap();
+        tx.commit().unwrap();
+    });
+    assert!(!control.table_exists(None, "plugin_inventory").unwrap());
+    for id in ["a", "b"] {
+        w.session(id, "host", &w.hat);
+    }
+    let first = w.sessions.source_inventory(&w.token, None, 1).unwrap();
+    control
+        .execute(
+            "INSERT INTO plugin_inventory(owner_id,hat_id,connection_id,epoch,snapshot,watermark,expires,resume_cursor)
+        VALUES(?1,?2,'other-registration','other','other',0,9223372036854775807,'opaque')",
+            params![w.sessions.owner_id(), w.hat],
+        )
+        .unwrap();
+    control
+        .execute(
+            "INSERT INTO plugin_inventory_sources(owner_id,hat_id,connection_id,snapshot,session_id)
+        VALUES(?1,?2,'other-registration','other','other-source')",
+            params![w.sessions.owner_id(), w.hat],
+        )
+        .unwrap();
+    w.core(|_| {
+        let tx = control.transaction().unwrap();
+        w.gateway.plugins().erase_inventory_in(&tx, &w.connection).unwrap();
+        tx.commit().unwrap();
+    });
+    assert!(
+        w.sessions
+            .source_inventory(&w.token, first.next_cursor.as_deref(), 20)
+            .is_err()
+    );
+    for table in ["plugin_inventory", "plugin_inventory_sources"] {
+        let left: i64 = control
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE connection_id=?1"),
+                [&w.connection],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let other: i64 = control
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE connection_id='other-registration'"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "{table}");
+        assert_eq!(other, 1, "{table}");
+    }
 }

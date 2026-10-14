@@ -66,7 +66,7 @@ pub struct Excerpt {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
 pub struct PluginActivityItem {
     pub event_key: String,
@@ -76,6 +76,97 @@ pub struct PluginActivityItem {
     pub provenance: Vec<Provenance>,
     #[serde(flatten)]
     pub body: ActivityBody,
+}
+
+// Serde's derived deny_unknown_fields cannot consume a flattened tagged enum.
+// Decode each verdict directly into typed fields, retaining duplicate-key
+// evidence at every nesting level. Do not round-trip authority through Value.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ActivityInput {
+    CompletedTurn {
+        event_key: String,
+        session_id: String,
+        namespace_epoch: String,
+        provenance: Vec<Provenance>,
+        turn_id: String,
+        project_key: String,
+        completed_at: String,
+        excerpts: Vec<Excerpt>,
+        source_refs: Vec<SourceRef>,
+        truncated: bool,
+        gaps: bool,
+    },
+    SessionRemoved {
+        event_key: String,
+        session_id: String,
+        namespace_epoch: String,
+        provenance: Vec<Provenance>,
+    },
+    SourceReset {
+        event_key: String,
+        session_id: String,
+        namespace_epoch: String,
+        provenance: Vec<Provenance>,
+    },
+}
+
+impl<'de> Deserialize<'de> for PluginActivityItem {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match ActivityInput::deserialize(deserializer)? {
+            ActivityInput::CompletedTurn {
+                event_key,
+                session_id,
+                namespace_epoch,
+                provenance,
+                turn_id,
+                project_key,
+                completed_at,
+                excerpts,
+                source_refs,
+                truncated,
+                gaps,
+            } => Self {
+                event_key,
+                session_id,
+                namespace_epoch,
+                provenance,
+                body: ActivityBody::CompletedTurn {
+                    turn_id,
+                    project_key,
+                    completed_at,
+                    excerpts,
+                    source_refs,
+                    truncated,
+                    gaps,
+                },
+            },
+            ActivityInput::SessionRemoved {
+                event_key,
+                session_id,
+                namespace_epoch,
+                provenance,
+            } => Self {
+                event_key,
+                session_id,
+                namespace_epoch,
+                provenance,
+                body: ActivityBody::SessionRemoved,
+            },
+            ActivityInput::SourceReset {
+                event_key,
+                session_id,
+                namespace_epoch,
+                provenance,
+            } => Self {
+                event_key,
+                session_id,
+                namespace_epoch,
+                provenance,
+                body: ActivityBody::SourceReset,
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

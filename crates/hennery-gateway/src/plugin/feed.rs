@@ -31,6 +31,22 @@ pub struct InventorySlice {
 }
 
 impl Control {
+    /// Terminal disposition/restore repair calls this within its already-open
+    /// control transaction, after taking the owner gate and core transaction.
+    pub fn erase_inventory_in(&self, conn: &Connection, connection: &str) -> Result<()> {
+        if conn.table_exists(None, "plugin_inventory")? {
+            conn.execute(
+                "DELETE FROM plugin_inventory_sources WHERE owner_id = ?1 AND connection_id = ?2",
+                params![self.owner, connection],
+            )?;
+            conn.execute(
+                "DELETE FROM plugin_inventory WHERE owner_id = ?1 AND connection_id = ?2",
+                params![self.owner, connection],
+            )?;
+        }
+        Ok(())
+    }
+
     /// Purge calls this under its core transaction. Do not create a feed
     /// component for a namespace that never used source inventories.
     pub fn clear_feed_in(&self, _: &Transaction<'_>, hat: &str) -> Result<()> {
