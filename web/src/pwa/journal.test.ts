@@ -22,6 +22,25 @@ async function enabled(s = store()) {
 const ok = () => new Response(JSON.stringify({ id: 'row1' }), { headers: { 'Content-Type': 'application/json' } })
 
 describe('origin-local registration journal', () => {
+  it('records only collector-confirmed identity and aborts a failed explicit enable', async () => {
+    const { journal } = await enabled()
+    expect(await journal.read()).toEqual({ generation: 1, enabled: true, id: 'row1', endpoint: 'https://push.example/a', key: 'vapid' })
+    await journal.queueRotation(subscription('https://push.example/b'), 1)
+    const next = await journal.beginEnable(20000)
+    expect((await journal.read()).rotation).toBeUndefined()
+    await journal.abortEnable(next)
+    expect(await journal.read()).toEqual({ generation: 2, enabled: false, repair: 'reenable' })
+  })
+  it('stale cleanup and subscription events cannot change a new explicit enable', async () => {
+    const { journal } = await enabled()
+    const previous = await journal.disable()
+    const next = await journal.beginEnable(100)
+    await journal.finishEnable(next, 'new-row', 'new-endpoint', 'new-key')
+    await journal.finishDisable(true, true, previous.generation + 1)
+    await journal.needsRepair(previous.generation)
+    expect(await journal.queueRotation(subscription('stale'), 200, previous.generation)).toBe(false)
+    expect(await journal.read()).toEqual({ generation: 3, enabled: true, id: 'new-row', endpoint: 'new-endpoint', key: 'new-key' })
+  })
   it('requires an explicit enable, and fences simultaneous enables and stale completions', async () => {
     const s = store(), a = new Journal(s), b = new Journal(s)
     expect(await a.queueRotation(subscription('https://push.example/b'))).toBe(false)
@@ -55,6 +74,34 @@ describe('origin-local registration journal', () => {
     expect(await pending).toBe('success')
     expect(await other.read()).toMatchObject({ endpoint: 'https://push.example/b', rotation: { oldEndpoint: 'https://push.example/b', subscription: subscription('https://push.example/c') } })
     expect(await other.attempt(async (_url, init) => { expect(JSON.parse(String(init?.body)).old_endpoint).toBe('https://push.example/b'); return ok() }, 5)).toBe('success')
+  })
+  it('failure backoff is bounded, and a newer replacement keeps its sequence', async () => {
+    const { journal } = await enabled()
+    await journal.queueRotation(subscription('https://push.example/b'), 1)
+    let now = 1
+    for (let i = 0; i < 20; i++) {
+      expect(await journal.attempt(async () => new Response(null, { status: 500, headers: { 'Retry-After': '999999' } }), now)).toBe('retry')
+      const row = await journal.read()
+      expect(row.rotation!.nextAt).toBe(now + 3600000)
+      now = row.rotation!.nextAt
+    }
+    expect((await journal.read()).rotation!.attempts).toBe(16)
+  })
+  it('uses credentials, JSON and a cancellable ten-second deadline for an attempt', async () => {
+    const { journal } = await enabled()
+    await journal.queueRotation(subscription('https://push.example/b'), 1)
+    vi.useFakeTimers()
+    try {
+      const call = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init!.signal!.addEventListener('abort', () => reject(new Error('timeout')))
+      }))
+      const pending = journal.attempt(call, 2)
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+      expect(call).toHaveBeenCalledWith('/api/push/subscriptions/rotate', expect.objectContaining({ credentials: 'include', headers: { 'Content-Type': 'application/json', Accept: 'application/json' } }))
+      await vi.advanceTimersByTimeAsync(10001)
+      expect(await pending).toBe('retry')
+      expect((await journal.read()).repair).toBe('retry')
+    } finally { vi.useRealTimers() }
   })
   it('disable cancels deferred work and cannot be undone by an HTTP success', async () => {
     const { journal } = await enabled()
@@ -118,11 +165,11 @@ describe('origin-local registration journal', () => {
   it('scrubs capability material after disable, preserving only the removal id on partial failure', async () => {
     const { journal } = await enabled()
     expect(await journal.disable()).toMatchObject({ id: 'row1', endpoint: 'https://push.example/a' })
-    await journal.finishDisable(false, false)
+    await journal.finishDisable(false, false, 2)
     expect(await journal.read()).toEqual({ generation: 2, enabled: false, id: 'row1', repair: 'remove_server_and_browser' })
-    await journal.finishDisable(true, false)
+    await journal.finishDisable(true, false, 2)
     expect((await journal.read()).repair).toBe('remove_browser')
-    await journal.finishDisable(true, true)
+    await journal.finishDisable(true, true, 2)
     expect(await journal.read()).toEqual({ generation: 2, enabled: false })
   })
 })
