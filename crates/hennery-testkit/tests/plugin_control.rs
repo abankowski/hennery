@@ -619,6 +619,25 @@ async fn both_purge_entry_points_cut_before_wait_even_if_obligation_write_fails(
                 .unwrap(),
                 0
             );
+            if !fault {
+                let control = rusqlite::Connection::open(path.parent().unwrap().join("plugin-control.db")).unwrap();
+                for table in ["plugin_registrations", "plugin_bindings", "plugin_generations"] {
+                    assert_eq!(
+                        control
+                            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))
+                            .unwrap(),
+                        0,
+                        "completed purge must clear per-hat optional state: {table}"
+                    );
+                }
+                assert_eq!(
+                    control
+                        .query_row("SELECT count(*) FROM plugin_receipts", [], |r| r.get::<_, i64>(0))
+                        .unwrap(),
+                    1,
+                    "completed purge retains its minimal receipt"
+                );
+            }
             state.shutdown.cancel();
             server.await.unwrap().unwrap();
             drop(dir);
