@@ -204,3 +204,40 @@ async fn address_middleware_refuses_a_router_without_connection_metadata() {
         .unwrap();
     assert_eq!(response.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
 }
+
+#[tokio::test]
+async fn outer_resolution_is_inserted_once_before_inner_middleware() {
+    use tower::ServiceExt;
+    let inner = axum::middleware::from_fn(
+        |mut request: axum::extract::Request, next: axum::middleware::Next| async move {
+            request
+                .headers_mut()
+                .insert("hennery-client-ip", HeaderValue::from_static("bad"));
+            next.run(request).await
+        },
+    );
+    let router = axum::Router::new()
+        .route(
+            "/",
+            axum::routing::get(|address: ClientAddress| async move { address.effective.to_string() }),
+        )
+        .route_layer(inner)
+        .layer(axum::middleware::from_fn(
+            hennery_kernel::client_address::resolve_request,
+        ))
+        .layer(axum::Extension(policy()));
+    let mut request = axum::http::Request::builder()
+        .uri("/")
+        .header("hennery-client-ip", "192.0.2.1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    request.extensions_mut().insert(axum::extract::ConnectInfo(
+        "127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
+    ));
+    let response = router.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), 128).await.unwrap(),
+        "192.0.2.1"
+    );
+}

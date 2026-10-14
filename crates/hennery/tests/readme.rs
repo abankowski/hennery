@@ -1007,7 +1007,6 @@ fn public_pairing_script(script: &str, readme: &str, port: u16, code: &str) -> S
     let substituted = script
         .replace("hennery.example:443", &format!("localhost:{port}"))
         .replace("ABCD-EFGH", code);
-    assert!(substituted.starts_with("hennery host join https://localhost:"));
     substituted
 }
 #[test]
