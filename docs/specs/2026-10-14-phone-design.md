@@ -3,6 +3,10 @@
 - **Date:** 2026-10-14
 - **Status:** Design proposal; recommendations need the parent's independent
   review. No implementation or live acceptance is claimed.
+- **Review:** Codex gpt-6-astra, on the maintainer's behalf, reviewed
+  `0fe663b8..798168ed`: APPROVE AFTER AMENDMENTS, no Critical findings.
+  This revision addresses build consistency, input-preserving navigation
+  and coherent question snapshots; scoped re-confirmation remains pending.
 - **Refines:** [Architecture](2026-09-25-hennery-architecture-design.md)
   §§6.8, 7, 8.3 and 13; [Kernel](2026-09-26-kernel-design.md) §§3, 6 and 7;
   [Frontend](2026-09-26-frontend-design.md) §§3, 6.3, 8–12;
@@ -155,9 +159,12 @@ to `/mcp`. Installation does not register a server device or imply login.
 
 All registration is external code in the Vite entry. Produce stable `/sw.js`
 at the origin root, with scope `/`, and a generated precache list/build id
-from the actual Vite output, including lazily imported chunks. Emit that
-worker after enumerating app assets and exclude the worker itself from its
-precache hash. No runtime CDN, inline bootstrap, eval, blob worker or remote
+from the actual Vite output, including lazily imported chunks. Generate an
+expected SHA-256 content digest for every allowlisted file together with
+that list, including fixed-name `index.html`, `/theme.js`, manifest and icons.
+Derive the build id from those URL/digest entries. Emit that worker after
+enumerating app assets and exclude the worker itself from its precache hash.
+No runtime CDN, inline bootstrap, eval, blob worker or remote
 import is allowed. The build output, worker, manifest and icons all go through
 the existing embedding pipeline, including release/Nix builds. A dev-server
 check cannot prove the shipped binary contains them.
@@ -176,7 +183,21 @@ The precached shell retains its CSP and other security headers offline.
 Cache only a generated allowlist of static app files in a build-versioned
 CacheStorage cache. Fetch the static shell without credentials for precache;
 accept successful same-origin, expected-MIME, non-redirected responses only.
-An install missing any required shell file fails and leaves the old worker.
+Hash each fetched response's decoded body bytes and compare against the
+worker's build-time digest before caching it. Per-file ETags or a successful
+fetch do not prove that all responses came from the intended build: a deploy
+can change fixed-name files between requests. Verify every file, even one
+with a hashed URL, against this worker's expected bytes.
+
+Install into a cache isolated from the active worker, and make the new shell
+eligible for activation only after the entire allowlist verifies. A missing
+file, digest mismatch or incomplete install rejects that install and
+discards only its partial cache; the active worker/cache remains untouched.
+Retry must not overwrite an active cache with the same build id. The
+implementation plan must define cache completion/selection so a worker
+restart cannot serve a partial staging cache; CacheStorage writes alone
+are not an atomic multi-file commit. A deploy mid-install is therefore a
+failed update rather than an accepted mixture of index, theme and chunks.
 Do not discover cacheable URLs from arbitrary responses or query strings.
 
 For controlled app-route navigations, use the installed version's static
@@ -397,15 +418,39 @@ that turn an id into a route. Use URL parsing and normalization plus a route
 allowlist, with differential tests, not a string prefix alone. Invalid
 targets land at Sessions without attempting the supplied destination.
 
-On click, close the notification, find a same-origin app WindowClient,
-prefer one already at the target then a visible/focused app window, navigate
-it to the validated target and focus the resulting client. If navigation
-fails or no suitable client exists, `openWindow` the target. Do not seize
-setup, login or OAuth callback windows. Navigation occurs even when a window
-already exists: merely focusing it repeats F-19. A null/failed open is not
-reported as successful; leave the failure bounded and the app usable on
-manual launch. Existing sessionStorage draft preservation applies before
-switching sessions; no notification submits or replaces draft content.
+On click, close the notification and find a same-origin app WindowClient.
+If one is already at the exact validated target (path and query), focus it
+without `navigate` or a reload, including while it has dirty input or an
+answer in flight. Merely focusing a window at another session repeats F-19;
+reloading a correct window would needlessly lose its in-memory state.
+
+Before navigating any other app window, require a bounded readiness
+handshake with that specific client and target. Question text/selection,
+unsent composer input, images/attachments and any in-flight answer or other
+mutation all make it busy or dirty. Keep such windows untouched and open a
+separate target window. A missing, timed-out or untrusted acknowledgement
+also means unavailable; prefer a visible/focused ready window, not a dirty
+one. Do not seize setup, login or OAuth callback windows.
+
+The handshake uses a per-attempt id and dedicated response channel, checks
+the worker/client source, and binds readiness to the target and a short
+lease. A ready page must prevent a new edit/mutation from racing the
+acknowledgement and document navigation until that lease is released or
+expires; an acknowledgement followed by unchecked new input is insufficient.
+The implementation must release readiness on navigation failure/timeout.
+Only a ready client receives `WindowClient.navigate`; then focus the
+resulting client. If navigation fails or no ready client exists, open a
+separate target window where that behavior preserves existing clients.
+Do not assume `openWindow` always creates another document: installed-app
+platforms can reuse a browsing context. Where separate-window behavior
+cannot be established, keep a dirty client untouched, deliver the validated
+target as a non-destructive in-app hint, and defer navigation until it is
+ready; acceptance must prove that the fallback preserves its input.
+A null/failed open is not reported as successful; leave the
+failure bounded and the app usable on manual launch. No notification
+submits, clears or replaces draft content. Existing sessionStorage composer
+drafts do not protect question drafts or images held only in memory, so
+they cannot substitute for this readiness gate.
 
 Login return targets already retain path/query via `safeNext`; use that
 path for `pending`, not a fragment lost during login. Explicit deep-linked
@@ -418,9 +463,24 @@ Add one owner-authenticated read route:
 `GET /api/view/sessions/{id}/questions/{pending_id}` → 200 with the existing
 Rust-owned `hennery-view::Item`, constrained to its Question body, or 404.
 No migration. It validates ids, checks the owned session before reading,
-requires the question to belong to that session, and uses the existing
-`stored_question`/pending overlay and view caps. Foreign, deleted, unknown
-session/question combinations all look like 404. It reads the question and
+requires the question to belong to that session, and retains the existing
+question parsing/overlay semantics and view caps. Its owned session
+existence, question state/answerability, last-event version and grouping
+metadata must come from one coherent SQLite read snapshot under one
+connection guard and read transaction. Finish that read before serialization
+or network delivery; do not hold a database guard across an asynchronous send.
+
+Do not compose the existing `stored_question` helper's individually guarded
+reads unchanged: today it can read an open pending record, then read a newer
+version after another transaction queues an answer. That would stamp stale
+answerability with a newer version and defeat the client's version fence.
+Provide a coherent store accessor and use it wherever the shared helper
+constructs that Question Item, including HTTP and SSE paths. Ownership and
+question/session association must be checked inside that same snapshot.
+An answer or delete committing concurrently yields either the complete
+before state or complete after state, never a mixed record/version pair.
+Foreign, deleted, unknown session/question combinations all look like 404.
+It reads the question and
 its grouping metadata, not the full transcript. Add its owner-filtered
 statement/access path to the existing owner audit. Reuse the generated view
 type rather than duplicating raw ACP parsing in React.
@@ -430,6 +490,11 @@ merge by stable item id/version or place it in the session's pinned question
 area when its turn is not paged in. Paging that turn later deduplicates it.
 The existing item stream supplies later changes for older questions; verify
 that behavior with this route rather than opening a third SSE connection.
+Merge both HTTP and SSE items using the same stable-id/version fence: a
+late older HTTP response cannot overwrite a newer SSE item, nor can an older
+SSE item overwrite a newer HTTP result. Equal-version items must represent
+the same question state. Session removal also fences an in-flight question
+read, so it cannot resurrect a removed session's card.
 Focus/scroll to the card once it exists; an explicit navigation may focus it
 but must never activate an option. On 404, show Question no longer available
 and the remaining session/current questions, not a fabricated card. A
@@ -594,8 +659,15 @@ logout with failed local cleanup is visibly signed out with cleanup pending.
 - Rust contract tests for percent-encoded pending URLs, unchanged payload
   fields/default hat policy, and the new bounded view read: owner/foreign
   session, mismatched question, deleted session, old turn, outside-turn,
-  delivered/cancelled state, caps and concurrent answer. Add owner audit
-  coverage and run both real generators with `--check`. Revert-probe the
+  delivered/cancelled state, caps and concurrent answer. Add a deterministic
+  interleaving test using an independent writer connection to commit an
+  answer between the helper's record and version reads. The reader's
+  transaction must retain the coherent before state/version; a fresh read
+  must return the complete after state. A stale answerable record with the
+  post-answer version must fail. Probe removal of the coherent-snapshot
+  boundary. Add HTTP/SSE response-order tests in both directions, including equal versions,
+  outside-tail question upserts and session removal while HTTP is pending.
+  Add owner audit coverage and run both real generators with `--check`. Revert-probe the
   owner/session fence, URL selection and capability advertisement.
 - Vitest/Testing Library for permission and registration classifiers,
   both step-up stages, expiry/key mismatch, POST partial success, row-id
@@ -611,7 +683,13 @@ logout with failed local cleanup is visibly signed out with cleanup pending.
   installation, and inspect CacheStorage for the exact static allowlist.
   Check offline launch/reconnect, lazy chunks, forbidden API/auth/proxy/
   attachment caching, denied permission, update waiting with input in two
-  windows, and failed new-version install preserving the old shell.
+  windows, and failed new-version install preserving the old shell. Deploy
+  a second embedded build between precache requests, changing fixed-name
+  index/theme bytes as well as chunks; assert digest rejection, no activation
+  of mixed files and the old offline shell still working. The digest-specific
+  case returns 200 and expected MIME for all requested files, so a missing
+  chunk or status check cannot accidentally prove the digest fence. Cover
+  each digest check with mismatched bytes, and revert-probe that fence.
 - Mock push at two explicit boundaries. For deterministic UI tests, fake
   PushManager's subscription service and feed encrypted-delivery plaintext
   fixtures as PushEvent data into the actual worker handler; observe
@@ -630,6 +708,12 @@ logout with failed local cleanup is visibly signed out with cleanup pending.
   (using a clients harness for OS click), pending query through cold
   navigation/login, cross-hat link, old question outside tail, invalid URL
   normalization, withdrawn/deleted question and desktop/phone answer race.
+  With unsent question text, unsent images and an in-flight answer, assert
+  an exact-target click focuses without document navigation and a different
+  target opens separately, preserving the old window's input/operation.
+  Test missing/dirty readiness, an edit racing acknowledgement, lease expiry,
+  and a clean ready window navigating to the target. Revert-probe the
+  exact-target no-reload branch and the navigation readiness gate.
   Actual cold launch is repeated on iOS (§10.3); harness `openWindow`
   assertions alone are not proof of an OS launch. Card buttons remain
   reachable under a mobile viewport; real keyboard/safe areas stay manual.
@@ -672,6 +756,9 @@ gap, not a pass. Every release repeats the installed-app smoke checklist:
    Reach the correct hat/session/card. Repeat after auth expiry/login,
    with an older question outside the tail and with a withdrawn/deleted
    question. An action button may be absent; the default tap still works.
+   Repeat with unsent question text/images and an answer in flight: an exact
+   target tap never reloads; a different target preserves the busy view via
+   a separate window or deferred in-app hint when the OS reuses windows.
 5. Answer a permission, single/multi-select and text elicitation with the
    real keyboard. Check custom-text exclusivity, no numeric shortcut
    approval, visible Send and queued→delivered state. Answer concurrently
@@ -711,10 +798,11 @@ fleet session is authorized by this design.
 | Per-hat privacy defaults | Unmuted, details off, title shown; three independent global hat controls. | Generic-by-default or per-device policy would change settled behavior. | **settled by spec:** kernel §6. |
 | Auth lifecycle | Step-up on subscribe; none on rotate/unsubscribe/policy/answer; revoke requires step-up; expired login retains push. | Silent new subscriptions or expiry-based deletion change security/lifecycle decisions. | **settled by spec:** kernel §§3.2, 3.4, 6; ACP core §4.6. |
 | Offline contents | Static shell only; no offline answer queue. | Cached API/transcript and background answers add sensitive storage and conflicting delivery semantics. | **settled by spec:** frontend §9, umbrella §6.8. |
-| Existing-window click | Navigate to the validated target, then focus; open new if needed. | Focus-only repeats F-19; always opening duplicates windows. | **settled by spec:** frontend §9. |
+| Existing-window click | Focus an exact target without reload; navigate another window only with readiness; otherwise open a separate target. | Focus-only at the wrong target repeats F-19; unconditional document navigation discards in-memory input/answers. | Target behavior **settled by spec:** frontend §9; readiness amendment required by maintainer's review. |
 | Pending deep links | Encode pending id in existing URL, plus bounded Question Item read route. | New payload schema is unnecessary; unbounded history paging is slow; browser raw ACP parsing violates client-view design. | **designer's recommendation**; needs API/security review. |
 | Manifest identity and capability | Stable app id/scope, start Sessions with gateway redirect; additive `web_push` advertisement. | Hat-specific install identities and mode inference do not match one operator app/API availability. | **designer's recommendation**. |
-| Worker build/cache | Generated allowlist, one pinned shell build, external root worker; no new PWA library by default. | A hand-maintained chunk list loses lazy imports; blanket runtime caching risks owner data; a new dependency has no demonstrated need. | **designer's recommendation**; shell/no-inline constraints settled by frontend §9/current CSP. |
+| Worker build/cache | Generated URL/content-digest allowlist, verify every file before accepting one pinned shell build; external root worker, no new PWA library by default. | ETags lack a cross-request build fence; a hand-maintained list loses lazy imports; blanket runtime caching risks owner data. | **designer's recommendation**; digest amendment required by maintainer's review; shell/no-inline settled by frontend §9/current CSP. |
+| Question snapshot and merge | One coherent owner/session/question/state/version/grouping snapshot for shared HTTP/SSE item construction; version-fenced client merges. | Individually guarded reads can stamp stale answerability with a newer version; response order alone cannot establish freshness. | **designer's recommendation** under the client-view contract; coherent-snapshot amendment required by maintainer's review. |
 | Update lifecycle | Waiting worker, next-launch activation; explicit coordinated update only when clients ready. | Unconditional skipWaiting/reload loses edits and mixes builds. | **settled by spec:** frontend §9; coordination detail **designer's recommendation**. |
 | Renewal recovery | Bounded IndexedDB record, existing cookie/rotate, explicit re-enable for missing rows. | In-memory-only loses worker retries; bearer renewal credentials expand scope; automatic POST resurrects revoked push. | **designer's recommendation** under kernel §6's rotation contract. |
 | Foreground attention | Always display valid push once; SSE supplies badges, no duplicate native notification. | Suppression based on an open tab conflicts with visible-push expectations; a second notification path adds duplication. | **designer's recommendation**. |
