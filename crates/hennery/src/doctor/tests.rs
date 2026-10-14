@@ -2297,6 +2297,26 @@ fn the_collector_is_reached_step_by_step_and_its_hello_judged() {
     assert!(seven.fix.contains("remove host.key and host.toml"), "{seven:?}");
 }
 
+#[test]
+fn doctor_fails_an_uncertain_enrollment_and_changes_no_artifacts() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = dir.path().join("host");
+    hennery_host::identity::create_private_dir(&host).unwrap();
+    let key = hennery_host::identity::HostKey::from_seed([57; 32]);
+    key.save(&host.join("host.key.pending")).unwrap();
+    let endpoint = hennery_host::transport::CollectorEndpoint::public("https://c.example").unwrap();
+    let attempt = hennery_host::enrollment::EnrollmentAttempt::new(&endpoint, Default::default(), &key, None);
+    attempt.save(&host).unwrap();
+    let before = snapshot(&host);
+    let fake = Fake::none();
+    let cx = machine(dir.path(), Platform::Linux, &fake);
+    let findings = checked(&cx, Dirs::by_contents(host.clone(), Found::Given), &nothing, &host);
+    let seven = line(&findings, 7);
+    assert_eq!(seven.status, Status::Fail, "{seven:?}");
+    assert!(seven.summary.contains(&attempt.attempt_id), "{seven:?}");
+    assert_eq!(snapshot(&host), before);
+}
+
 /// Check 7's earlier steps, each failing on its own: plain http to another
 /// machine, nothing listening, a status other than 200; and check 8 on a
 /// skewed `Date`. Nothing beyond loopback is reached.
