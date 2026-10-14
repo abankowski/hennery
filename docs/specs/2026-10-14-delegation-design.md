@@ -189,7 +189,11 @@ plug-in uses the existing gateway mount and upstream service authentication;
 never forward the raw hennery session bearer to it. The separate generic
 contract is the memory design's **C1: generic feed/lifecycle** plan: authenticated
 registration, owner/hat namespace credentials, scoped activity/lease and deletion
-lifecycle. The upstream credential authenticates exactly one owner/hat namespace;
+lifecycle. C1 also owns and defines the shared typed provenance (`Operator`,
+`Parent`, `ChildReport`) on every feed item and startup-context entry, and the
+typed `PluginContext` for startup. Delegation depends on these C1 types as
+defined in the memory design; it does not define a parallel enum or payload.
+The upstream credential authenticates exactly one owner/hat namespace;
 the gateway's internal `SessionToolContext` is not automatically exported.
 Existing mounts do not attest the calling session id. A tool-supplied cwd or
 session id is at most a narrowing filter or explicitly unverified source hint;
@@ -206,8 +210,8 @@ cannot widen scope. Revocation/unmount/purge cuts the feed and pending delivery;
 stored plug-in copies follow its documented retention/deletion contract. Optional
 startup context is the separate **C2: startup** plan, uses its explicitly scoped
 plug-in grant and is marked plug-in data, never operator instruction.
-Its plan adds a distinct `PluginContext` provenance
-variant before it can write a prompt; it cannot reuse `Operator`. No feed or
+It consumes C1's typed `PluginContext`, preserving each entry's C1 provenance
+instead of treating retrieved context as new operator instruction. No feed or
 startup callback runs without opt-in.
 The memory lane owns C1/C2; delegation supplies turn provenance and the internal
 identity seam, without implementing memory logic. §11 names their dependencies.
@@ -548,7 +552,7 @@ Existing sessions have no family edge and their existing turns default to
 | `session_dispatch_queue` | Owner, source/target sessions, origin, operation or delivery id, bounded content or source reference, accepted grant revision, queue order, claim lease, attach/config/policy revisions and receipt. One dispatch association per delivery; cancellation is explicit. |
 | `delegation_notices` | Owner/hat/family ids, source events and kind, loss-incident identity, attention routing, destination turn, deadline and resolution. Unique source identity and coalesced loss incident; indexed by pending work/deadline and target. |
 | `delegation_budgets` | Owner/root id, operator-prompt epoch and reserved wake-ups. Durable across collector restarts and child replacement. |
-| Turn/answer provenance | Tagged `InputOrigin = Operator | Parent { session_id, operation_id } | ChildReport { child_id, source_event_id, delivery_id }`; submitted answer origin is operator or parent. Server-written, never supplied in public prompt JSON. |
+| Turn/answer provenance | Import C1's typed provenance (`Operator`, `Parent`, `ChildReport`) from the memory design; persist the corresponding server-verified source/operation/delivery references. Submitted answer origin is operator or parent. Never supplied in public prompt JSON; no independently defined delegation enum. |
 
 Use composite owner foreign keys where possible, owner predicates in every
 query, and transaction checks/triggers for same-hat and lifecycle invariants.
@@ -565,6 +569,12 @@ Wrap child content as untrusted data with escaped metadata; restate that it is
 not operator input or approval. The wrapper is defense in depth, not an
 authorization mechanism. Consumers of user turns, including memory, automatic
 naming, push suppression and budget resets, must use provenance explicitly.
+Every feed item and startup-context entry carries C1's typed provenance through
+projection and replay. Startup uses C1's typed `PluginContext`; C2 owns delivery,
+not another type definition. Hostile text or spoofed role/delimiter strings
+cannot set provenance, turn retrieved material into operator authorization, or
+reset the delegation budget. Signed per-session attestation remains deferred
+to a separately reviewed extension.
 
 ## 7. Close, delete, reassign and family ownership
 
@@ -732,6 +742,9 @@ replace live adapter checks.
 6. **UI:** golden view fixtures for provenance, partial reports, all receipt
    states and unknown ACP; Playwright family navigation, operator takeover,
    waiting badge, SSE resync and mobile layout. Exact text or role locators.
+   C1 contract tests cover hostile text and spoofed delimiters in feed items,
+   child reports and startup-context entries: typed provenance survives, no
+   operator authority is inferred, and no retrieved text resets a budget.
 7. **Live acceptance:** on pinned Claude and Codex adapters run Claude→Claude,
    Claude→Codex, Codex→Claude and Codex→Codex. Prove the discovered tool list,
    independent model/effort choice with actual read-back before prompt, a real
@@ -764,11 +777,16 @@ through the parent. This design does not attempt to supply executable plans.
 
 **Explicit cross-lane dependencies:** the memory design's **C1 (generic
 feed/lifecycle, M–L)** owns authenticated plug-in registration/namespace context,
-activity/lease and deletion receipts. **C2 (startup, S–M)** owns optional scoped
-startup context and its prompt provenance. External full plug-in integration
+activity/lease, unmount access/feed revocation, deletion receipts, the shared
+provenance types (`Operator`, `Parent`, `ChildReport`) and typed `PluginContext`.
+These types are defined in the memory design and are a dependency of
+delegation's provenance integration. **C2 (startup, S–M)** owns optional scoped
+startup delivery using C1's types. External full plug-in integration
 depends on C1; startup integration additionally depends on C2. A simple MCP
 mount needs neither new feed nor startup grant. D1–D4 implement no replacement
 for C1/C2, and built-in delegation can ship without a memory service. Coordinate
+C1's shared type definitions to land before D2/D3 consume them; using those
+types does not enable a plug-in, its feed or its startup worker. Coordinate
 C1 with D1's identity seam and D3's provenance/loss events; coordinate C2 with
 D2/D3's prompt/config/close fences before combining startup and delegation.
 The common authority is session-bound gateway delivery, not a shared endpoint
@@ -800,7 +818,9 @@ memory tools externally through existing connection mounts, not on built-in
 `hennery`. C1/C2 are the explicit authenticated namespace/feed/lifecycle and
 startup dependencies above; consume provenance and purge hooks. Match memory's
 credential-bound owner/hat context and unverified agent-supplied session hints;
-no signed session-principal header is required by either initial design. No
+signed per-session attestation is deferred to a separately reviewed extension.
+C1 defines the shared provenance and `PluginContext`; delegation references
+those definitions, including hostile-text/spoofed-delimiter tests. No
 competing agent token scheme, cwd-derived identity, embedded memory module or
 forced capture.
 
