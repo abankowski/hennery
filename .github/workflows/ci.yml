@@ -182,6 +182,8 @@ jobs:
       # it (it asserts it ran, under `CI`).
       # macOS has no network namespaces (`sandbox-exec` is deprecated), so its
       # tests run with the network: ubuntu is where a leak is caught.
+      - name: Real proxy binaries for the deployment gate
+        run: nix develop -c sh -c 'dirname "$(command -v caddy)"; dirname "$(command -v nginx)"' >> "$GITHUB_PATH"
       - name: Tests
         run: |
           if [ "$RUNNER_OS" != Linux ]; then

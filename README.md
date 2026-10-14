@@ -33,8 +33,8 @@ Known limitations:
 - Web Push is built on the collector, but the web UI has no subscribe
   button yet.
 - Codex sessions get hennery MCP servers only in the host's default hat, without per-hat isolation, and also load the user's own `~/.codex` MCP servers; other hats get none, until per-hat isolation lands.
-- Hosts support verified `wss://`; the public proxy deployment and separate
-  client rate-limit budgets are still pending. Restrict public ingress until
+- Hosts support verified `wss://`; exact trusted proxy peers provide separate
+  client rate-limit budgets. Public adapter/MCP acceptance is pending. Restrict ingress until
   those deployment checks are complete.
 - The designs are in [`docs/specs/`](docs/specs/) and the plans in
   [`docs/plans/`](docs/plans/); [`docs/README.md`](docs/README.md) lists
@@ -178,9 +178,45 @@ hennery up --public-url https://hennery.example
 Already set up at `localhost`? Then `--public-url` is ignored: move it
 with `hennery admin reset-public-url` (see [Recovery](#recovery)), and from
 then on open hennery at the new address, since the old one is refused.
-With a same-machine reverse proxy, all remote clients share the loopback
-rate-limit budget, so exposing the collector lets anyone lock out password
-sign-in by submitting wrong passwords.
+For the collector's machine configuration, set `proxy_client_ip_peers` to
+only the proxy's exact backend connection IP (for these loopback recipes,
+`["127.0.0.1"]`) in `<collector-data>/config.toml`, then restart the
+collector. It is an address budget policy, never login authority. A missing
+header falls back to the TCP peer, so local `up` enrollment still works;
+without this setting all clients behind the proxy share its limiter budget.
+A typo, CIDR, hostname, port, duplicate, unspecified/multicast address, or
+more than eight peers fails configuration. IPv4-mapped peers are normalized.
+
+Use the [tested Caddy/nginx recipes](packaging/proxy/README.md). The final
+same-machine proxy must overwrite every `Hennery-Client-IP` instance from
+its actual connection peer; standard forwarding headers grant nothing.
+Restrict backend access, preserve Origin and the upgrade nonce, and apply
+edge connection/request caps. A trusted loopback peer also trusts local
+processes to assert budget addresses. Healthy HTTPS alone cannot establish
+header stripping or two separate client budgets; doctor says so.
+
+The fixture deployment gate covers both recipes and W1 recovery through
+them. Public acceptance with both pinned real adapters and mounted MCP is
+still pending; keep ingress restricted to a trusted population until the
+[public deployment gate](packaging/proxy/README.md#public-deployment-gate)
+is recorded. Tailscale Serve needs its own attribution qualification; if
+it cannot overwrite an authenticated client address, use a trusted VPN
+population and retain the shared-budget limitation.
+
+With that HTTPS origin configured, **Hosts → Add host** supplies the remote
+pairing command. Here `hennery.example` is a public-join placeholder for your
+collector's DNS name, `443` is a public-join placeholder for its HTTPS port,
+and `ABCD-EFGH` is a public-join placeholder for the displayed code. Replace
+only those values; retain `https://`. Omitting the code reads it from stdin.
+
+<!-- check: join-public -->
+```sh
+hennery host join https://hennery.example:443 ABCD-EFGH
+```
+
+Run the host block below after pairing. It saves and reconnects through
+`wss://<your-origin>/api/hosts/ws`, validating the same server name and roots.
+The tunnel command below remains an optional fallback.
 
 In the web UI, **Hosts → Add host** shows a pairing code, valid for ten
 minutes, after asking for your password again if a fresh step-up is needed.
@@ -202,8 +238,9 @@ hennery host join http://127.0.0.1:7117 ABCD-EFGH
 hennery host run
 ```
 
-`host run` uses the saved `ws://127.0.0.1:<port>/api/hosts/ws` URL, including
-when it reconnects. Keep the same tunnel port available on future runs.
+`host run` uses the saved WSS endpoint for HTTPS pairings. A tunnel pairing
+uses `ws://127.0.0.1:<port>/api/hosts/ws`; keep that tunnel port available
+on future runs. Transport failures never authorize a fresh pairing.
 
 ### 4. Start a session
 

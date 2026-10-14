@@ -35,7 +35,7 @@
 //!   `127.0.0.0/8` address counts as `127.0.0.1` (on Linux the whole block
 //!   reaches `lo`, so per-address entries would give a local process
 //!   millions of budgets), and loopback always gets its own entry, past
-//!   capacity too: `hennery up`'s own host and a reverse proxy on the same
+//!   capacity too: `hennery up`'s own host and an unconfigured reverse proxy on the same
 //!   machine are never pushed into the shared overflow budget by a flood
 //!   from elsewhere. It is not exempt: its budget is the same as anyone's.
 //!

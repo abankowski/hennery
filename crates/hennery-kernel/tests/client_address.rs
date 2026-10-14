@@ -161,3 +161,46 @@ fn proxy_configuration_is_bounded_exact_and_canonical() {
     }
     assert!(ProxyPolicy::new((1..=8).map(|n| ip(&format!("192.0.2.{n}"))).collect()).is_ok());
 }
+
+#[tokio::test]
+async fn extractor_reuses_the_resolved_address_and_requires_connection_metadata() {
+    use axum::extract::{ConnectInfo, FromRequestParts};
+    use std::net::SocketAddr;
+    let (mut parts, _) = axum::http::Request::new(()).into_parts();
+    let response = ClientAddress::from_request_parts(&mut parts, &()).await.unwrap_err();
+    assert_eq!(response.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    parts
+        .extensions
+        .insert(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()));
+    parts.extensions.insert(policy());
+    parts.headers = headers(&["192.0.2.1"]);
+    let expected = ClientAddress::from_request_parts(&mut parts, &()).await.unwrap();
+    assert_eq!(expected.effective, ip("192.0.2.1"));
+    parts.extensions.insert(expected);
+    // Later middleware cannot force a second interpretation of the header.
+    parts.headers = headers(&["bad"]);
+    assert_eq!(
+        ClientAddress::from_request_parts(&mut parts, &()).await.unwrap(),
+        expected
+    );
+}
+
+#[tokio::test]
+async fn address_middleware_refuses_a_router_without_connection_metadata() {
+    use tower::ServiceExt;
+    let router = axum::Router::new()
+        .route("/", axum::routing::get(|| async { "unexpected" }))
+        .layer(axum::middleware::from_fn(
+            hennery_kernel::client_address::resolve_request,
+        ));
+    let response = router
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+}

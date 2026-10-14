@@ -186,8 +186,9 @@ frontend), and `SetupRequest` has no default hat name; hats add it.
   starts, so a parallel burst gets no more in than the budget. State is in
   memory, bounded, and a restart clears it; past capacity a live entry is
   never evicted (new addresses share one overflow budget), and loopback always
-  keeps an entry of its own. `X-Forwarded-For` is not trusted: behind a
-  reverse proxy every client shares the proxy's budget.
+  keeps an entry of its own. `X-Forwarded-For` is not trusted. Behind an
+  unconfigured proxy every client shares its budget; §2's exact-peer,
+  dedicated-header policy provides address-only attribution.
 - **Passkeys:** `webauthn-rs` with RP id and origin derived from `public_url`;
   subdomains and arbitrary ports not allowed. The RP id is `public_url`'s host
   exactly (not a registrable parent) and its origin the only one accepted; a

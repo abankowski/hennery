@@ -25,7 +25,7 @@ pub const MAX_BODY_BYTES: usize = 16 * 1024;
 
 /// The operator auth routes. Setup has its own `Origin` rule; the rest are
 /// browser routes (kernel spec §3.3). Serve with `ConnectInfo<SocketAddr>`:
-/// login rate-limits on the peer address.
+/// the address policy resolves the limiter key from that peer, never identity.
 pub fn router(operator: Arc<Operator>) -> Router {
     let browser = Router::new()
         .route("/api/auth/login", post(login))
