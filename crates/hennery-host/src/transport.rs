@@ -522,10 +522,20 @@ mod tests {
     #[test]
     fn trust_deserialization_and_debug_never_silently_fall_back() {
         for text in [
+            "mode='system'",
+            " \"mode\" = \"system\" \n",
+            "\"mo\\u0064e\" = 'system'",
+        ] {
+            assert_eq!(toml::from_str::<CollectorTrust>(text).unwrap(), CollectorTrust::System);
+        }
+        for text in [
             "mode='unknown'",
             "mode='system'\nca_pem='secret'",
             "mode='ca_bundle'",
             "mode='system'\nextra=1",
+            "Mode='system'",
+            "mode='system'\nmode='ca_bundle'",
+            "mode='ca_bundle'\nca_pem='a'\nca_pem='b'",
         ] {
             assert!(toml::from_str::<CollectorTrust>(text).is_err());
         }
@@ -545,6 +555,38 @@ mod tests {
         assert_eq!(retry_after("999"), Some(300));
         for value in ["", "-1", " 2", "99999999999999999999999999", "secret"] {
             assert_eq!(retry_after(value), None);
+        }
+    }
+    #[tokio::test]
+    async fn upgrade_status_and_retry_after_are_structured() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for (header, retry_after) in [("42", Some(42)), ("999", Some(300)), ("secret", None)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = CollectorEndpoint::public(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = [0; 4096];
+                socket.read(&mut bytes).await.unwrap();
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 503 Service Unavailable\r\nRetry-After: {header}\r\nContent-Length: 0\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            });
+            let transport = CollectorTransport::new(endpoint, CollectorTrust::System).unwrap();
+            let error = transport.websocket(WebSocketConfig::default()).await.err().unwrap();
+            assert_eq!(
+                classify(error.as_ref()),
+                Stage::Upgrade {
+                    status: Some(503),
+                    retry_after
+                }
+            );
+            server.await.unwrap();
         }
     }
 }

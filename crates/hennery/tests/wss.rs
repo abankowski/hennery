@@ -294,6 +294,10 @@ async fn every_ambiguous_reply_blocks_join_run_up_and_doctor_after_restart() {
                 journal
             );
             assert_eq!(posts.load(Ordering::SeqCst), 1);
+            assert!(
+                !root.path().join("collector").exists(),
+                "uncertainty must stop up before collector spawn/code mint"
+            );
         }
         task.abort();
     }
@@ -616,13 +620,17 @@ async fn committed_post_uncertainty(kill: bool) {
             journal
         );
         assert_eq!(state.hosts.list().unwrap().len(), 1);
+        assert!(
+            !root.path().join("collector").exists(),
+            "uncertainty must stop up before collector spawn/code mint"
+        );
     }
     server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn health_success_never_hides_broken_upgrade_nonce_or_redirects() {
-    for kind in ["missing", "malformed", "duplicate", "redirect"] {
+    for kind in ["missing", "malformed", "short", "long", "duplicate", "redirect"] {
         let root = tempfile::tempdir().unwrap();
         let hellos = Arc::new(AtomicUsize::new(0));
         let seen = hellos.clone();
@@ -665,6 +673,10 @@ async fn health_success_never_hides_broken_upgrade_nonce_or_redirects() {
                                 "hennery-hello-nonce",
                                 (if kind == "malformed" {
                                     "bad"
+                                } else if kind == "short" {
+                                    "aa"
+                                } else if kind == "long" {
+                                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                                 } else {
                                     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                                 })

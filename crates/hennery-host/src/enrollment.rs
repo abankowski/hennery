@@ -331,6 +331,7 @@ mod tests {
         let bytes = std::fs::read(dir.path().join("host.key.pending")).unwrap();
         for _ in 0..3 {
             assert_eq!(inspect(dir.path()).unwrap(), EnrollmentState::Uncertain(a.clone()));
+            assert!(require_resolved(dir.path()).is_err());
             assert!(crate::identity::Paired::load(dir.path()).is_err());
             assert!(crate::identity::Paired::read(dir.path()).is_err());
         }
@@ -390,7 +391,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let a = attempt(dir.path());
         let before = std::fs::read(dir.path().join("host.key.pending")).unwrap();
-        assert!(archive(dir.path(), "another-attempt").is_err());
+        assert!(archive(dir.path(), &uuid::Uuid::now_v7().to_string()).is_err());
         assert!(dir.path().join(JOURNAL).exists());
         archive(dir.path(), &a.attempt_id).unwrap();
         let saved = dir.path().join(format!("enrollment-archive-{}", a.attempt_id));
