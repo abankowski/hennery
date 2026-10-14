@@ -49,6 +49,8 @@ pub struct Delivered {
 
 /// The gateway, as the sessions module sees it (umbrella §9, ACP core §1).
 pub trait SessionMcp: Send + Sync {
+    /// Shared authentication seam; provided only by full collector wiring.
+    fn authenticator(&self) -> Option<Arc<GatewayStore>> { None }
     fn plugin_control(&self) -> Option<Arc<crate::plugin::Control>> {
         None
     }
@@ -117,6 +119,7 @@ pub struct GatewayMcp {
     key: Arc<MasterKey>,
     operator: Arc<Operator>,
     revocations: Revocations,
+    builtin: bool,
 }
 
 impl GatewayMcp {
@@ -124,11 +127,20 @@ impl GatewayMcp {
     /// `Revocations` its proxy watches.
     pub fn new(gateway: &GatewayState) -> Self {
         Self {
+            builtin: false,
             runtime: gateway.runtime.clone(),
             store: gateway.runtime.store.clone(),
             key: gateway.runtime.key.clone(),
             operator: gateway.operator.clone(),
             revocations: gateway.runtime.revocations.clone(),
+        }
+    }
+
+    /// Full collector wiring only; standalone gateways never deliver this server.
+    pub fn for_collector(gateway: &GatewayState) -> Self {
+        Self {
+            builtin: true,
+            ..Self::new(gateway)
         }
     }
 
@@ -154,6 +166,7 @@ fn mounted_slugs_in(tx: &Transaction<'_>, owner: &str, host_id: &str, hat_id: &s
 }
 
 impl SessionMcp for GatewayMcp {
+    fn authenticator(&self) -> Option<Arc<GatewayStore>> { self.builtin.then(|| self.store.clone()) }
     fn plugin_control(&self) -> Option<Arc<crate::plugin::Control>> {
         Some(self.store.plugins())
     }
@@ -180,8 +193,13 @@ impl SessionMcp for GatewayMcp {
             });
         }
         let slugs = mounted_slugs_in(tx, owner, session.host_id, session.hat_id)?;
-        let mut servers = Vec::with_capacity(slugs.len());
-        if slugs.is_empty() {
+        let builtin = if self.builtin {
+            crate::identity::builtin_in(tx, owner, session.hat_id)?
+        } else {
+            None
+        };
+        let mut servers = Vec::with_capacity(slugs.len() + usize::from(builtin.is_some()));
+        if slugs.is_empty() && builtin.is_none() {
             // No connection to reach: no token at all.
             tokens::revoke_in(tx, owner, session.session_id, now)?;
         } else {
@@ -189,7 +207,18 @@ impl SessionMcp for GatewayMcp {
                 .operator
                 .public_url()
                 .ok_or_else(|| anyhow!("no public_url to name the gateway's /mcp/ by"))?;
-            let token = tokens::mint_in(tx, owner, session.session_id, session.host_id, session.hat_id, now)?;
+            let token = tokens::mint_delegation_in(
+                tx,
+                owner,
+                session.session_id,
+                session.host_id,
+                session.hat_id,
+                builtin.as_ref().map(|b| b.revision),
+                now,
+            )?;
+            if let Some(builtin) = builtin {
+                servers.push(builtin.server(public.origin(), token.expose()));
+            }
             for slug in slugs {
                 let connection: String = tx.query_row(
                     "SELECT id FROM gw_connections WHERE owner_id = ?1 AND slug = ?2 AND hat_id = ?3",

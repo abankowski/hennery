@@ -8,6 +8,7 @@ pub mod api;
 pub mod callback;
 pub mod crypto;
 pub mod flows;
+pub mod identity;
 mod jsonrpc;
 pub mod key;
 pub mod model;

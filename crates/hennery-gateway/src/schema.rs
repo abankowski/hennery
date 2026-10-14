@@ -152,4 +152,9 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         pending_token_endpoint TEXT,
         FOREIGN KEY (connection_id, owner_id) REFERENCES gw_connections(id, owner_id));
     ",
+    // D1: old generations have no delivered built-in grant. Revision is
+    // monotonic for a hat's lifetime; no enabled default rows are inserted.
+    "
+    ALTER TABLE gw_session_tokens ADD COLUMN delivered_delegation_revision INTEGER;
+    ",
 ];

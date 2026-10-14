@@ -70,19 +70,33 @@ pub fn mint_in(
     hat_id: &str,
     now: i64,
 ) -> Result<SessionToken> {
+    mint_delegation_in(tx, owner_id, session_id, host_id, hat_id, None, now)
+}
+
+/// Atomically bind the delivered built-in revision to this token generation.
+#[allow(clippy::too_many_arguments)]
+pub fn mint_delegation_in(
+    tx: &Transaction<'_>,
+    owner_id: &str,
+    session_id: &str,
+    host_id: &str,
+    hat_id: &str,
+    delivered_revision: Option<i64>,
+    now: i64,
+) -> Result<SessionToken> {
     let random = Zeroizing::new(hex::encode(Zeroizing::new(random_bytes::<32>()).as_slice()));
     // Built at its final size, so no grown-out buffer keeps part of it.
     let mut token = Zeroizing::new(String::with_capacity(SESSION_TOKEN_PREFIX.len() + RANDOM_HEX));
     token.push_str(SESSION_TOKEN_PREFIX);
     token.push_str(&random);
     let changed = tx.execute(
-        "INSERT INTO gw_session_tokens(session_id, owner_id, host_id, hat_id, token_hash, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO gw_session_tokens(session_id, owner_id, host_id, hat_id, token_hash, created_at, delivered_delegation_revision)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(session_id) DO UPDATE SET host_id = excluded.host_id, hat_id = excluded.hat_id,
              token_hash = excluded.token_hash, created_at = excluded.created_at, last_used_at = NULL,
-             revoked_at = NULL
+             revoked_at = NULL, delivered_delegation_revision = excluded.delivered_delegation_revision
              WHERE gw_session_tokens.owner_id = excluded.owner_id",
-        params![session_id, owner_id, host_id, hat_id, token_hash(&token), now],
+        params![session_id, owner_id, host_id, hat_id, token_hash(&token), now, delivered_revision],
     )?;
     // Another owner's row under this id: never taken over.
     anyhow::ensure!(changed == 1, "session {session_id} has a token of another owner's");

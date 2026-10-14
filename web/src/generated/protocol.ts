@@ -47,6 +47,12 @@ export type ContextEntry = { text: string, source_refs: Array<SourceRef>, proven
 
 export type PluginContext = { entries: Array<ContextEntry>, generated_at: string, truncated: boolean, };
 
+export type HatSessionTools = { delegation_enabled: boolean, revision: number, };
+
+export type SetSessionTools = { delegation_enabled: boolean, };
+
+export type SessionFamily = { child_id: string, parent_id: string, root_id: string, hat_id: string, created_event_id: number, detached: boolean, reason: string | null, };
+
 export type TextRole = "user" | "assistant";
 
 export type Excerpt = { role: TextRole, text: string, };

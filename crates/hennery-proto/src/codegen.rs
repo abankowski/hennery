@@ -2,7 +2,7 @@
 //! with `--check`, fails if the checked-in copies differ.
 
 use crate::plugin_management;
-use crate::{frames, plugin, rest};
+use crate::{delegation, frames, plugin, rest};
 use schemars::generate::SchemaSettings;
 use ts_rs::{Config, TS};
 
@@ -44,6 +44,9 @@ pub fn render_schema() -> String {
         plugin::PluginActivityPage,
         plugin::PluginSourceInventoryPage,
         plugin::PluginContext,
+        delegation::HatSessionTools,
+        delegation::SetSessionTools,
+        delegation::SessionFamily,
         plugin::PluginCapabilities,
         plugin::ForgetReceipt,
         frames::HostFrame,
@@ -211,6 +214,9 @@ pub fn render_ts() -> String {
         plugin::Provenance,
         plugin::ContextEntry,
         plugin::PluginContext,
+        delegation::HatSessionTools,
+        delegation::SetSessionTools,
+        delegation::SessionFamily,
         plugin::TextRole,
         plugin::Excerpt,
         plugin::PluginActivityItem,
