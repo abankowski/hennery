@@ -665,8 +665,6 @@ impl Control {
     pub(crate) fn dispose_in(&self, _: &Transaction<'_>, work: &ForgetWork, confirmed: bool) -> Result<()> {
         self.with(false, |conn| {
             let tx = conn.transaction()?;
-            self.erase_rotation_in(&tx, &work.connection_id)?;
-            self.erase_inventory_in(&tx, &work.connection_id)?;
             let changed = tx.execute(
                 "UPDATE plugin_registrations SET state = 'disposed',endpoint = NULL,lifecycle = NULL,
                 token_hash = NULL,activity = 0,startup = 0,cursor_key = '' WHERE owner_id = ?1 AND connection_id = ?2
@@ -674,6 +672,8 @@ impl Control {
                 params![self.owner, work.connection_id, work.request_id],
             )?;
             if changed == 1 {
+                self.erase_rotation_in(&tx, &work.connection_id)?;
+                self.erase_inventory_in(&tx, &work.connection_id)?;
                 tx.execute(
                     "INSERT INTO plugin_receipts(owner_id,hat_id,request_id,result) VALUES(?1,?2,?3,?4)",
                     params![
