@@ -39,6 +39,10 @@
 .pairing-code code { font-family:var(--font-mono); font-weight:700; }
 .hint { color:var(--fg-muted); font-size:13px; }
 .empty { color:var(--fg-muted); }
+.pwa-banner { margin:0; padding:10px 16px; background:var(--surface-2); color:var(--fg-1); border-bottom:1px solid var(--border); }
+.policy-control { display:flex; gap:10px; align-items:center; min-height:44px; }
+.device-settings .btn { min-height:44px; }
+.device-settings input.input { width:100%; min-height:44px; }
 .sign-out-error { margin-top:8px; font-size:13px; }
 
 .rules { margin-top:12px; }

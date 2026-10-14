@@ -8,10 +8,7 @@ import { logOut } from '../api/auth'
 import { messageOf } from '../api/errors'
 import { Text } from '../lib/text'
 import { useClient } from '../app-client'
-import { forgetAllAttachments } from '../lib/attachments'
-import { forgetAllDrafts } from '../lib/drafts'
-import { forgetAllSends } from '../lib/sending'
-import { navigate } from '../router'
+import { completeLogout } from '../pwa/logout'
 
 export default function SignOut({ className = 'btn btn-ghost btn-sm' }: { className?: string }) {
   const client = useClient()
@@ -33,10 +30,7 @@ export default function SignOut({ className = 'btn btn-ghost btn-sm' }: { classN
     // is let go of, so no composer waits on it. Only here: a failed
     // sign-out keeps them (still signed in), and so does a 401's redirect to
     // the login screen, so work survives an expired session.
-    forgetAllDrafts()
-    forgetAllAttachments()
-    forgetAllSends()
-    navigate('/login')
+    await completeLogout(client)
   }
 
   return (

@@ -4,7 +4,7 @@ interface Rotation {
   oldEndpoint: string; subscription: PushSubscribeRequest; sequence: number
   attempts: number; nextAt: number
 }
-export interface Lease { token: string; generation: number; until: number }
+export interface Lease { token: string; generation: number; until: number; purpose?: 'disable' }
 export interface PushRecord {
   generation: number; enabled: boolean; id?: string; endpoint?: string; key?: string
   rotation?: Rotation; lease?: Lease; repair?: string
@@ -47,21 +47,40 @@ export class Journal {
       if (r.generation === attempt.generation) r.repair = 'reenable'
     })
   }
-  disable(): Promise<PushRecord> {
+  disable(now = Date.now()): Promise<PushRecord & { cleanup: Lease }> {
     return this.store.transact((r) => {
+      // Repeated logout broadcasts share the same pending disabled intent.
+      if (!r.enabled && r.lease?.purpose === 'disable') return { generation: r.generation - 1, enabled: false, id: r.id, cleanup: structuredClone(r.lease) }
       const previous = structuredClone(r)
+      const cleanup: Lease = { ...lease(previous.generation + 1, now), purpose: 'disable' }
       Object.keys(r).forEach((k) => delete r[k as keyof PushRecord])
-      Object.assign(r, { generation: previous.generation + 1, enabled: false, ...(previous.id ? { id: previous.id } : {}) })
-      return previous
+      Object.assign(r, { generation: previous.generation + 1, enabled: false, lease: cleanup, ...(previous.id ? { id: previous.id } : {}) })
+      return { ...previous, cleanup }
     })
   }
-  finishDisable(server: boolean, browser: boolean, generation: number): Promise<void> {
+  finishDisable(server: boolean, browser: boolean, generation: number, owner?: Lease): Promise<void> {
     return this.store.transact((r) => {
-      if (r.enabled || r.generation !== generation) return
+      if (r.enabled || r.generation !== generation || (owner && !same(r.lease, owner))) return
+      delete r.lease
       if (server) delete r.id
       if (server && browser) delete r.repair
       else r.repair = server ? 'remove_browser' : browser ? 'remove_server' : 'remove_server_and_browser'
     })
+  }
+  beginRenew(now = Date.now()): Promise<Lease> {
+    return this.store.transact((r) => {
+      if (!r.enabled || !r.id || !r.endpoint) throw new Error('Enable again to renew this registration.')
+      if (r.lease && r.lease.until > now) throw new Error('Notification operation busy; retry shortly.')
+      const owned = lease(r.generation, now)
+      r.lease = owned
+      return owned
+    })
+  }
+  release(attempt: Lease): Promise<void> {
+    return this.store.transact((r) => { if (same(r.lease, attempt)) delete r.lease })
+  }
+  current(attempt: Lease): Promise<boolean> {
+    return this.store.transact((r) => r.generation === attempt.generation && same(r.lease, attempt))
   }
   needsRepair(generation: number): Promise<void> {
     return this.store.transact((r) => {
