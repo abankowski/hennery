@@ -291,10 +291,39 @@ impl Upstream {
                                 .unwrap();
                         }
                         gate.acquire().await.unwrap().forget();
-                        axum::response::IntoResponse::into_response(axum::Json(
-                            serde_json::json!({"jsonrpc":"2.0", "id":body["id"],
-                        "result":{"request_id":body["id"], "status":"confirmed", "remaining_kinds":[]}}),
-                        ))
+                        let mut answer = serde_json::json!({"jsonrpc":"2.0", "id":body["id"],
+                            "result":{"request_id":body["id"], "status":"confirmed", "remaining_kinds":[]}});
+                        match mode {
+                            Some("unconfirmed") => answer["result"]["status"] = serde_json::json!("unconfirmed"),
+                            Some("wrong-request-id") => answer["result"]["request_id"] = serde_json::json!("other"),
+                            Some("wrong-rpc-id") => answer["id"] = serde_json::json!("other"),
+                            Some("wrong-rpc-version") => answer["jsonrpc"] = serde_json::json!("1.0"),
+                            Some("remaining") => answer["result"]["remaining_kinds"] = serde_json::json!(["events"]),
+                            Some("unknown-field") => answer["unexpected"] = serde_json::json!(true),
+                            _ => {}
+                        }
+                        let mut payload = serde_json::to_string(&answer).unwrap();
+                        if mode == Some("duplicate-id") {
+                            payload.insert_str(1, "\"id\":\"forged\",");
+                        }
+                        if mode == Some("invalid-json") {
+                            payload = "{".into();
+                        }
+                        if mode == Some("oversize") {
+                            payload.push_str(&" ".repeat(16 * 1024));
+                        }
+                        axum::response::Response::builder()
+                            .status(if mode == Some("http-error") { 500 } else { 200 })
+                            .header(
+                                "content-type",
+                                if mode == Some("wrong-content-type") {
+                                    "text/plain"
+                                } else {
+                                    "application/json"
+                                },
+                            )
+                            .body(axum::body::Body::from(payload))
+                            .unwrap()
                     }
                 },
             ),
@@ -1498,4 +1527,426 @@ fn start_and_resume_delivery_bind_new_sessions_and_refuse_terminal_namespaces() 
             "terminal namespace must deny start/resume delivery"
         )
     });
+}
+
+#[test]
+fn stale_or_frozen_scopes_and_terminal_states_deny_activity_and_proxy_admission() {
+    for fault in [
+        "frozen-hat",
+        "revoked-host",
+        "wrong-epoch",
+        "changed-connection",
+        "pending",
+        "terminal",
+        "disposed",
+        "complete",
+    ] {
+        let w = registered_world();
+        match fault {
+            "frozen-hat" => {
+                assert!(matches!(
+                    w.hosts.begin_purge(&w.hat, 5).unwrap(),
+                    hennery_kernel::hats::PurgeStart::Frozen { .. }
+                ));
+            }
+            "revoked-host" => {
+                w.core(|tx| {
+                    tx.execute("UPDATE hosts SET revoked_at = 5 WHERE id = 'host'", [])
+                        .unwrap();
+                });
+            }
+            "wrong-epoch" => {
+                w.core(|tx| {
+                    tx.execute(
+                        "UPDATE settings SET value = 'older-epoch' WHERE key LIKE 'plugin_epoch:%'",
+                        [],
+                    )
+                    .unwrap();
+                });
+            }
+            "changed-connection" => {
+                w.core(|tx| {
+                    tx.execute("UPDATE gw_connections SET url = 'https://replacement.invalid/new'", [])
+                        .unwrap();
+                });
+            }
+            state => {
+                rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db"))
+                    .unwrap()
+                    .execute("UPDATE plugin_registrations SET state = ?1", [state])
+                    .unwrap();
+            }
+        }
+        w.core(|tx| {
+            assert!(
+                w.gateway.plugins().authenticate_in(tx, &w.token, 6).unwrap().is_none(),
+                "{fault}: activity denied"
+            );
+            assert!(
+                w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat).is_err(),
+                "{fault}: proxy admission denied"
+            );
+        });
+    }
+}
+
+#[test]
+fn admission_rejects_a_session_moved_or_deleted_after_token_resolution() {
+    for deleted in [false, true] {
+        let w = registered_world();
+        if deleted {
+            w.core(|tx| {
+                tx.execute("UPDATE sessions SET lifecycle = 'deleted' WHERE id = 'running'", [])
+                    .unwrap();
+            });
+        } else {
+            w.core(|tx| {
+                tx.execute("UPDATE sessions SET hat_id = 'changed-hat' WHERE id = 'running'", [])
+                    .unwrap();
+            });
+        }
+        assert!(
+            w.core(|tx| w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat))
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn expired_forget_deadline_is_not_reset_and_records_unconfirmed_without_network() {
+    let mut upstream = Upstream::start().await;
+    let w = registered_at(&upstream.url, true);
+    assert!(mutate(&w, "edit").is_err());
+    rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db"))
+        .unwrap()
+        .execute("UPDATE plugin_registrations SET deadline = 0", [])
+        .unwrap();
+    w.runtime().settle_plugin(&w.id).await.unwrap();
+    assert!(
+        upstream.seen.try_recv().is_err(),
+        "expired total deadline cannot acquire a fresh network wait"
+    );
+    let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+    assert_eq!(
+        raw.query_row("SELECT result FROM plugin_receipts", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "unconfirmed"
+    );
+    assert_eq!(
+        raw.query_row("SELECT deadline FROM plugin_registrations", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn lifecycle_receipt_classifier_accepts_only_matching_empty_confirmed_receipts() {
+    for mode in [
+        "confirmed",
+        "unconfirmed",
+        "wrong-request-id",
+        "wrong-rpc-id",
+        "wrong-rpc-version",
+        "remaining",
+        "unknown-field",
+        "duplicate-id",
+        "invalid-json",
+        "wrong-content-type",
+        "oversize",
+        "http-error",
+    ] {
+        let mut upstream = Upstream::start_mode(Some(mode)).await;
+        let w = registered_at(&upstream.url, true);
+        assert!(mutate(&w, "edit").is_err());
+        let runtime = w.runtime();
+        let id = w.id.clone();
+        let task = tokio::spawn(async move { runtime.settle_plugin(&id).await });
+        upstream.entered().await;
+        upstream.release.add_permits(1);
+        task.await.unwrap().unwrap();
+        let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+        assert_eq!(
+            raw.query_row("SELECT result FROM plugin_receipts", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            if mode == "confirmed" {
+                "confirmed"
+            } else {
+                "unconfirmed"
+            },
+            "{mode}"
+        );
+    }
+}
+
+#[test]
+fn terminal_transition_revokes_hash_and_retains_bounded_immutable_snapshot_before_core_edit() {
+    let w = registered_world();
+    let now = hennery_kernel::secret::unix_now();
+    assert!(mutate(&w, "edit").is_err());
+    let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+    let (state, hash, deadline, endpoint, secret): (String, Option<String>, i64, String, Vec<u8>) = raw
+        .query_row(
+            "SELECT state,token_hash,deadline,endpoint,lifecycle FROM plugin_registrations",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap();
+    assert_eq!(state, "terminal");
+    assert!(hash.is_none(), "terminal transition physically erases the bearer hash");
+    assert!((now + 5..=hennery_kernel::secret::unix_now() + 5).contains(&deadline));
+    assert_eq!(endpoint, "https://example.invalid/mcp");
+    assert!(!secret.is_empty());
+    assert_eq!(w.gateway.connection(&w.id).unwrap().unwrap().url, endpoint);
+}
+
+#[test]
+fn binding_removal_updates_both_restore_generations_after_core_tombstone() {
+    let w = registered_world();
+    let key = format!("plugin_generation:{}", w.hat);
+    let before = w.core(|tx| {
+        tx.query_row("SELECT value FROM settings WHERE key = ?1", [&key], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap()
+    });
+    w.sessions.close_now("running").unwrap();
+    w.sessions.delete_session("running", None).unwrap();
+    let after = w.core(|tx| {
+        tx.query_row("SELECT value FROM settings WHERE key = ?1", [&key], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap()
+    });
+    let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+    let control = raw
+        .query_row("SELECT generation FROM plugin_generations", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap();
+    assert_ne!(before, after, "releasing an exposure advances the restore generation");
+    assert_eq!(after, control);
+}
+
+#[test]
+fn conflicting_existing_exposure_cannot_bind_a_session_to_a_second_hat() {
+    let w = registered_world();
+    rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db"))
+        .unwrap()
+        .execute("UPDATE plugin_bindings SET hat_id = 'other-hat'", [])
+        .unwrap();
+    assert!(
+        w.core(|tx| w.gateway.plugins().admit_in(tx, &w.id, "running", &w.hat))
+            .is_err(),
+        "conflicting exposure binding cannot be silently reused"
+    );
+}
+
+#[tokio::test]
+async fn purge_cuts_session_token_watches_and_ordinary_unregistered_connection_work() {
+    for fault in [false, true] {
+        let mut upstream = Upstream::start().await;
+        let w = registered_at(&upstream.url, true);
+        let Change::Done(ordinary) = w
+            .gateway
+            .create(
+                &NewConnection {
+                    slug: "ordinary".into(),
+                    label: "Ordinary".into(),
+                    url: "https://ordinary.invalid/mcp".into(),
+                    hat_id: w.hat.clone(),
+                    cred_kind: CredKind::None,
+                    static_header: None,
+                    static_prefix: None,
+                    tool_allowlist: None,
+                    internal_network: false,
+                },
+                1,
+            )
+            .unwrap()
+        else {
+            panic!("connection")
+        };
+        w.gateway.replace_mounts(&ordinary.id, &["host".into()]).unwrap();
+        let ordinary_watch = w.core(|tx| {
+            w.gateway
+                .plugins()
+                .admit_in(tx, &ordinary.id, "running", &w.hat)
+                .unwrap()
+        });
+        let runtime = w.runtime();
+        w.core(|tx| {
+            hennery_gateway::tokens::mint_in(tx, w.sessions.owner_id(), "running", "host", &w.hat, 5).unwrap();
+        });
+        let hash = w.core(|tx| {
+            tx.query_row(
+                "SELECT token_hash FROM gw_session_tokens WHERE revoked_at IS NULL",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap()
+        });
+        let token_watch = runtime.revocations.watch(&hash);
+        if fault {
+            rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap().execute_batch("CREATE TRIGGER refuse_terminal BEFORE UPDATE ON plugin_registrations BEGIN SELECT RAISE(ABORT,'fault'); END;").unwrap();
+        }
+        let hat = w.hat.clone();
+        let mut task = tokio::spawn(async move { runtime.purge_plugins(&hat).await });
+        if !fault {
+            upstream.entered().await;
+            assert!(!task.is_finished());
+        } else {
+            assert!((&mut task).await.unwrap().is_err());
+        }
+        assert!(
+            ordinary_watch.token().is_cancelled(),
+            "ordinary connection traffic must cut before any registered forget wait or failure"
+        );
+        assert!(
+            token_watch.token().is_cancelled(),
+            "durably revoked session token work must cut before remote wait or failure"
+        );
+        if !fault {
+            upstream.release.add_permits(1);
+            assert!(task.await.unwrap().is_ok());
+        }
+    }
+}
+
+#[tokio::test]
+async fn missing_optional_database_with_core_anchors_denies_all_lifecycle_fallbacks() {
+    let World {
+        _dir: dir,
+        path,
+        sessions,
+        hosts,
+        gateway,
+        hat,
+        id,
+        token,
+    } = registered_world();
+    drop(sessions);
+    drop(hosts);
+    drop(gateway);
+    std::fs::rename(
+        dir.path().join("plugin-control.db"),
+        dir.path().join("retired-control.db"),
+    )
+    .unwrap();
+    let gateway = std::sync::Arc::new(GatewayStore::open(&path).unwrap());
+    let mut core = hennery_kernel::db::open(&path).unwrap();
+    let tx = core.transaction().unwrap();
+    assert!(gateway.plugins().authenticate_in(&tx, &token, 6).unwrap().is_none());
+    assert!(gateway.plugins().admit_in(&tx, &id, "running", &hat).is_err());
+    assert!(gateway.plugins().bound_in(&tx, "running").is_err());
+    tx.commit().unwrap();
+    assert!(
+        gateway.purge_hat(&hat).is_err(),
+        "raw purge cannot erase the core anchor without its lifecycle snapshot"
+    );
+    assert!(
+        gateway
+            .update(
+                &id,
+                &hennery_gateway::model::ConnectionPatch {
+                    url: Some("https://replacement.invalid/new".into()),
+                    ..Default::default()
+                },
+                6
+            )
+            .is_err()
+    );
+    let runtime = hennery_gateway::runtime::Runtime::new(
+        gateway,
+        std::sync::Arc::new(hennery_gateway::scope::ProxyStore::open(&path).unwrap()),
+        std::sync::Arc::new(MasterKey::from_bytes([3; 32])),
+        hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap(),
+        std::sync::Arc::new(hennery_kernel::push::Push::detached()),
+    );
+    assert!(
+        runtime.recover_plugins().await.is_err(),
+        "startup cannot recover by silently treating a restored core as unconfigured"
+    );
+    assert!(
+        !dir.path().join("plugin-control.db").exists(),
+        "denial must not fabricate an empty replacement database"
+    );
+}
+
+#[test]
+fn activity_token_classifier_requires_the_exact_prefix_length_and_lower_hex_alphabet() {
+    let hex = "0a".repeat(32);
+    assert!(hennery_gateway::plugin::is_activity_token(&format!(
+        "hnry_activity_{hex}"
+    )));
+    for invalid in [
+        format!("hnry_session_{hex}"),
+        format!("HNRY_ACTIVITY_{hex}"),
+        format!("hnry_activity_{}", hex.to_uppercase()),
+        format!("hnry_activity_{}", &hex[..63]),
+        format!("hnry_activity_{hex}0"),
+        format!("hnry_activity_{}g", &hex[..63]),
+        format!("hnry_activity_{}é", &hex[..62]),
+        format!("hnry_activity_{hex}\n"),
+    ] {
+        assert!(
+            !hennery_gateway::plugin::is_activity_token(&invalid),
+            "invalid activity bearer shape accepted"
+        );
+    }
+}
+
+#[test]
+fn cursor_identity_includes_hat_connection_epoch_and_registration_high_water_mark() {
+    let w = registered_world();
+    w.core(|tx| {
+        let control = w.gateway.plugins();
+        let grant = control.authenticate_in(tx, &w.token, 6).unwrap().unwrap();
+        let cursor = control.encode_cursor(&grant, grant.start_event).unwrap();
+        let old = control.encode_cursor(&grant, grant.start_event - 1).unwrap();
+        assert!(
+            control.decode_cursor(&grant, &old).is_err(),
+            "cursor must not read before registration high water mark"
+        );
+        for field in ["hat", "connection", "epoch"] {
+            let mut changed = control.authenticate_in(tx, &w.token, 6).unwrap().unwrap();
+            match field {
+                "hat" => changed.hat_id.push('x'),
+                "connection" => changed.connection_id.push('x'),
+                _ => changed.epoch.push('x'),
+            }
+            assert!(
+                control.decode_cursor(&changed, &cursor).is_err(),
+                "cursor identity includes {field}"
+            );
+        }
+    });
+}
+
+#[tokio::test]
+async fn completed_transition_minimizes_metadata_and_deleted_connection_erases_epoch_anchor() {
+    for operation in ["edit", "delete"] {
+        let mut upstream = Upstream::start().await;
+        let w = registered_at(&upstream.url, true);
+        assert!(mutate(&w, operation).is_err());
+        upstream.release.add_permits(1);
+        w.runtime().settle_plugin(&w.id).await.unwrap();
+        upstream.entered().await;
+        mutate(&w, operation).unwrap();
+        let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+        if operation == "delete" {
+            assert_eq!(
+                w.core(|tx| tx
+                    .query_row(
+                        "SELECT count(*) FROM settings WHERE key = ?1",
+                        [format!("plugin_epoch:{}", w.id)],
+                        |r| r.get::<_, i64>(0)
+                    )
+                    .unwrap()),
+                0,
+                "completed deletion removes core epoch anchor"
+            );
+        } else {
+            assert_eq!(raw.query_row("SELECT count(*) FROM plugin_registrations WHERE state = 'complete' AND epoch = '' AND start_event = 0 AND fingerprint = '' AND internal_network = 0 AND intent IS NULL AND result_fingerprint IS NULL AND deadline IS NULL AND endpoint IS NULL AND lifecycle IS NULL AND token_hash IS NULL AND activity = 0 AND startup = 0 AND cursor_key = ''",[],|r|r.get::<_,i64>(0)).unwrap(),1,"completed routing fence retains no namespace snapshot metadata");
+        }
+    }
 }
