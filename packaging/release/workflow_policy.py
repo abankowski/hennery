@@ -98,7 +98,9 @@ def optional_job_status(data, name):
 
 def privileged(job):
     return tap_credential(job) or any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
-        s.get('uses', '').startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) or 'publish.py upload' in s.get('run', '')
+        s.get('uses', '').startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) or
+        'publish.py upload' in s.get('run', '') or
+        re.search(r'(?m)(?:^|[|;&])\s*(?:(?:nix\s+develop\s+\S+\s+-c\s+)?(?:ba)?sh\s+)?(?:packaging/ghcr-publish\.sh|docker\s+login)(?:\s|$)', s.get('run', ''))
         for s in job.get('steps', []))
 
 

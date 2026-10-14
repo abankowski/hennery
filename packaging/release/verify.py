@@ -34,7 +34,16 @@ def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/prove
     gate.verify_files(inventory, candidate)
     gate.require(inventory['tag'] == tag and 'ghcr' in inventory['channels'], 'image inventory release/channel mismatch')
     index = gate.strict_json((candidate / 'ghcr-index.json').read_bytes())
-    gate.require(index.get('digest') == image.split('@', 1)[1], 'image digest is not in maintainer-signed inventory')
+    digests = [index.get('digest')]
+    if 'platforms' in index:
+        gate.require(index.get('schema') == 1 and index.get('source_sha') == inventory['source_sha']
+                     and index.get('version') == tag.removeprefix('v')
+                     and isinstance(index['platforms'], dict)
+                     and set(index['platforms']) == {'amd64', 'arm64'}, 'invalid signed image descriptor')
+        digests.extend(index['platforms'].values())
+        gate.require(all(isinstance(d, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', d) for d in digests)
+                     and len(set(digests)) == 3, 'invalid signed image digest set')
+    gate.require(image.split('@', 1)[1] in digests, 'image digest is not in maintainer-signed inventory')
     command = attestation_command('oci://' + image, tag, bundle) + ['--predicate-type', predicate_type]
     if bundle is None:
         command += ['--bundle-from-oci']

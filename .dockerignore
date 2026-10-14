@@ -1,4 +1,4 @@
-# The image takes only the staged binary (see Dockerfile).
+# Only staged distribution inputs and the project licence reach the build context.
 *
 !dist/
 !LICENSE
