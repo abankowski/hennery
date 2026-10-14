@@ -1,12 +1,9 @@
 use futures::{SinkExt, StreamExt};
 use hennery_host::transport::{CollectorEndpoint, CollectorTransport, CollectorTrust, Stage, TransportFailure};
 use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 
@@ -91,16 +88,8 @@ async fn private_ca_wss_and_https_share_the_same_verifier() {
     ws.close(None).await.unwrap();
     // The fixture speaks WS only: a normal HTTP request still reaches the
     // same verified TLS listener, then fails at HTTP rather than TLS.
-    let error = transport
-        .http()
-        .await
-        .unwrap()
-        .get(format!("{}/healthz", f.url))
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await
-        .unwrap_err();
-    assert_ne!(hennery_host::transport::classify(&error), Stage::TlsNameMismatch);
+    let error = transport.health().await.unwrap_err();
+    assert!(!hennery_host::transport::classify(error.as_ref()).is_tls());
     assert_eq!(f.seen.load(Ordering::SeqCst), 1);
 }
 #[tokio::test]
@@ -120,16 +109,8 @@ async fn failed_name_verification_sends_no_websocket_or_http_request() {
         err.downcast_ref::<TransportFailure>().unwrap().0,
         Stage::TlsNameMismatch
     );
-    let err = transport
-        .http()
-        .await
-        .unwrap()
-        .post(format!("{}/api/hosts/enroll", f.url))
-        .body("secret")
-        .send()
-        .await
-        .unwrap_err();
-    assert_eq!(hennery_host::transport::classify(&err), Stage::TlsNameMismatch);
+    let err = transport.health().await.unwrap_err();
+    assert_eq!(hennery_host::transport::classify(err.as_ref()), Stage::TlsNameMismatch);
     assert_eq!(f.seen.load(Ordering::SeqCst), 0);
 }
 #[tokio::test]
@@ -251,15 +232,8 @@ async fn injected_system_roots_share_the_wss_and_http_policy_without_fallback() 
     .unwrap();
     assert_eq!(transport.root_warnings, 1);
     transport.preflight().await.unwrap();
-    let error = transport
-        .http()
-        .await
-        .unwrap()
-        .get(format!("{}/healthz", fixture.url))
-        .send()
-        .await
-        .unwrap_err();
-    assert!(!hennery_host::transport::classify(&error).is_tls());
+    let error = transport.health().await.unwrap_err();
+    assert!(!hennery_host::transport::classify(error.as_ref()).is_tls());
     let explicit = CollectorTransport::with_native_roots(
         endpoint,
         CollectorTrust::CaBundle {

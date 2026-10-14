@@ -40,7 +40,7 @@ fn quoted(text: &str) -> String {
 }
 
 /// `url` as the report may show it: without a user name or password, which
-/// `parse_public_url` accepts in a URL (`https://user:secret@host`).
+/// are refused by the transport parser, including in legacy configuration.
 pub fn shown_url(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut parsed) if !parsed.username().is_empty() || parsed.password().is_some() => {
@@ -102,8 +102,7 @@ fn healthz_transport(transport: &CollectorTransport) -> Health {
     let transport = transport.clone();
     block_on(async move {
         let operation = async {
-            let client = transport.http().await?;
-            let response = client.get(transport.endpoint.origin().join("/healthz")?).send().await?;
+            let response = transport.health().await?;
             Ok::<_, anyhow::Error>(Health::Answered {
                 status: response.status().as_u16(),
                 date: response
@@ -231,11 +230,12 @@ pub fn collector(doctor: &Doctor) -> [Finding; 2] {
         Ok(Some(paired)) => paired,
         Ok(None) => return not_run(NOT_PAIRED),
         Err(err) => {
-            let fix = if host.join("host.toml.pending").exists() {
-                "run `hennery host run` once (it finishes the pairing), then doctor again"
-            } else {
-                "fix host.toml, or pair this host again (`hennery host join`)"
-            };
+            let fix =
+                if host.join("host.toml.pending").exists() || host.join(hennery_host::enrollment::JOURNAL).exists() {
+                    "run `hennery host run` once (it finishes the pairing), then doctor again"
+                } else {
+                    "fix host.toml, or pair this host again (`hennery host join`)"
+                };
             if host.join("host.toml.pending").exists() || host.join(hennery_host::enrollment::JOURNAL).exists() {
                 verdict.warn(format!("{err}"), fix);
             } else {

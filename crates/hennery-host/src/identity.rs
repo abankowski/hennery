@@ -14,6 +14,14 @@ use std::path::{Path, PathBuf};
 
 pub const KEY_FILE: &str = "host.key";
 pub const CONFIG_FILE: &str = "host.toml";
+/// A dangling symlink is present recovery state, never an absent file.
+pub(crate) fn exists(path: &Path) -> Result<bool> {
+    match path.symlink_metadata() {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
 
 #[derive(Debug)]
 pub struct DurabilityUncertain {
@@ -181,7 +189,7 @@ impl Paired {
             }
             crate::enrollment::EnrollmentState::Clear => {}
         }
-        if pending_path(data_dir, CONFIG_FILE).exists() {
+        if exists(&pending_path(data_dir, CONFIG_FILE))? {
             bail!(
                 "{} holds a pairing that was interrupted: `hennery host run` finishes it",
                 data_dir.display()
@@ -189,7 +197,7 @@ impl Paired {
         }
         let key_path = data_dir.join(KEY_FILE);
         let config_path = data_dir.join(CONFIG_FILE);
-        match (key_path.exists(), config_path.exists()) {
+        match (exists(&key_path)?, exists(&config_path)?) {
             (false, false) => return Ok(None),
             (true, true) => {}
             (true, false) => bail!(
@@ -257,6 +265,38 @@ pub fn inspect_transport(data_dir: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// The complete stored endpoint for up's pre-spawn override check. No key
+/// is read and no configuration is repaired; private PEM never enters errors.
+pub fn stored_endpoint(data_dir: &Path) -> Result<Option<CollectorEndpoint>> {
+    let pending = pending_path(data_dir, CONFIG_FILE);
+    let path = if exists(&pending)? {
+        pending
+    } else {
+        data_dir.join(CONFIG_FILE)
+    };
+    if !exists(&path)? {
+        return Ok(None);
+    }
+    let config = read_config(&path)?;
+    let endpoint = CollectorEndpoint::stored(&config.collector)?;
+    if !endpoint.secure() && config.collector_tls != CollectorTrust::System {
+        bail!("a private CA requires HTTPS/WSS");
+    }
+    Ok(Some(endpoint))
+}
+pub(crate) fn inspect_receipt(data_dir: &Path) -> Result<()> {
+    let staged = read_config(&pending_path(data_dir, CONFIG_FILE))?;
+    let pending = pending_path(data_dir, KEY_FILE);
+    let key_path = if exists(&pending)? {
+        pending
+    } else {
+        data_dir.join(KEY_FILE)
+    };
+    if staged.public_key != Some(HostKey::load(&key_path)?.public_key_hex()) {
+        bail!("staged enrollment receipt has no matching key; preserve recovery artifacts");
+    }
+    Ok(())
+}
 
 pub(crate) fn read_regular(path: &Path, bound: usize) -> Result<String> {
     use std::io::Read;
@@ -314,7 +354,7 @@ pub(crate) fn write_config_with(path: &Path, change: impl FnOnce(&mut toml::Tabl
 /// `path` as a TOML table: empty if there is no file, an error if it does
 /// not parse.
 pub(crate) fn read_table(path: &Path) -> Result<toml::Table> {
-    if !path.try_exists()? {
+    if !exists(path)? {
         return Ok(toml::Table::new());
     }
     let text = read_regular(path, 512 * 1024)?;
@@ -336,16 +376,16 @@ pub(crate) fn pending_path(data_dir: &Path, file: &str) -> PathBuf {
 /// Roll both forward, in `join`'s order.
 fn finish_interrupted_pairing(data_dir: &Path) -> Result<()> {
     let config_pending = pending_path(data_dir, CONFIG_FILE);
-    if !config_pending.exists() {
+    if !exists(&config_pending)? {
         return Ok(());
     }
     let staged = read_config(&config_pending)?;
     let key_path = data_dir.join(KEY_FILE);
     let key_pending = pending_path(data_dir, KEY_FILE);
-    let key_at = if key_pending.exists() { &key_pending } else { &key_path };
+    let key_at = if exists(&key_pending)? { &key_pending } else { &key_path };
     // Rolled forward only onto the key it was enrolled with: never onto an
     // older identity's `host.key`.
-    let matches = key_at.exists() && staged.public_key == Some(HostKey::load(key_at)?.public_key_hex());
+    let matches = exists(key_at)? && staged.public_key == Some(HostKey::load(key_at)?.public_key_hex());
     if !matches {
         bail!(
             "{} holds a {} without the key it was paired with: remove it to pair this host again",

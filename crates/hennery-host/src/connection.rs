@@ -456,7 +456,7 @@ async fn connect_once(
     // `healthy_after` (an idle host has nothing to ack). So a collector that
     // never acks anything now costs at most one reconnect per
     // `healthy_after`, not an ever-growing backoff.
-    tracing::info!(collector = %cfg.collector_url, "connected to collector");
+    tracing::info!(collector = %transport.endpoint.origin(), "connected to collector");
 
     // Resend everything unacked, then tell the collector we are done.
     let mut sent: HashMap<String, u64> = HashMap::new();

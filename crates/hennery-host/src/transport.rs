@@ -383,7 +383,7 @@ impl CollectorTransport {
             root_warnings: warnings,
         })
     }
-    pub async fn http(&self) -> Result<reqwest::Client> {
+    pub(crate) async fn http(&self) -> Result<reqwest::Client> {
         let addresses = self.endpoint.addresses().await?;
         let mut builder = reqwest::Client::builder()
             .no_proxy()
@@ -398,6 +398,16 @@ impl CollectorTransport {
         builder
             .build()
             .map_err(|_| anyhow::anyhow!("collector HTTP client configuration failed"))
+    }
+    /// A health request is fixed to this collector's authorized origin;
+    /// callers cannot reuse its private CA through a generic HTTP client.
+    pub async fn health(&self) -> Result<reqwest::Response> {
+        self.http()
+            .await?
+            .get(self.endpoint.origin().join("/healthz")?)
+            .send()
+            .await
+            .map_err(|error| failure(classify(&error)))
     }
     pub async fn websocket(&self, config: WebSocketConfig) -> Result<(Socket, Vec<u8>)> {
         tokio::time::timeout(TIMEOUT, self.open(config))

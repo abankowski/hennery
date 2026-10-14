@@ -1,4 +1,5 @@
 //! Conservative, durable enrollment intent. No pairing code is persisted.
+use crate::identity::exists;
 use crate::{
     identity::{CONFIG_FILE, HostKey, KEY_FILE, fsync_parent, write_private},
     transport::{CollectorEndpoint, CollectorTrust},
@@ -62,7 +63,7 @@ impl EnrollmentAttempt {
         }
     }
     pub fn save(&self, dir: &Path) -> Result<()> {
-        if dir.join(JOURNAL).try_exists()? {
+        if exists(&dir.join(JOURNAL))? {
             bail!("an enrollment attempt already exists; do not overwrite it");
         }
         write_private(&dir.join(JOURNAL), toml::to_string(self)?.as_bytes())
@@ -122,7 +123,7 @@ fn receipt_matches(path: &Path, attempt: &EnrollmentAttempt) -> Result<bool> {
     )
 }
 pub fn inspect(dir: &Path) -> Result<EnrollmentState> {
-    if dir.join(RECOVERY).try_exists()? {
+    if exists(&dir.join(RECOVERY))? {
         bail!(
             "interrupted enrollment archive recovery; repeat the explicit archive action for its attempt id; automatic enrollment is blocked"
         );
@@ -130,7 +131,7 @@ pub fn inspect(dir: &Path) -> Result<EnrollmentState> {
     let journal = dir.join(JOURNAL);
     let pending = dir.join(format!("{KEY_FILE}.pending"));
     let receipt = dir.join(format!("{CONFIG_FILE}.pending"));
-    if !journal.try_exists()? {
+    if !exists(&journal)? {
         if ARCHIVE_FILES[3..]
             .iter()
             .any(|name| dir.join(name).symlink_metadata().is_ok())
@@ -140,27 +141,30 @@ pub fn inspect(dir: &Path) -> Result<EnrollmentState> {
                 artifacts_id(dir)?
             );
         }
-        if pending.try_exists()? && !receipt.try_exists()? {
+        if exists(&pending)? && !exists(&receipt)? {
             bail!("lone pending enrollment key; preserve it for explicit recovery, never generate or overwrite a key");
+        }
+        if exists(&receipt)? {
+            crate::identity::inspect_receipt(dir)?;
         }
         return Ok(EnrollmentState::Clear);
     }
     let attempt = read_attempt(&journal)?;
-    let key = if pending.try_exists()? {
-        pending
-    } else {
-        dir.join(KEY_FILE)
-    };
-    if !key.try_exists()? || HostKey::load(&key)?.public_key_hex() != attempt.public_key {
+    let key = if exists(&pending)? { pending } else { dir.join(KEY_FILE) };
+    if !exists(&key)? || HostKey::load(&key)?.public_key_hex() != attempt.public_key {
         bail!("enrollment journal has no matching key; preserve artifacts for explicit recovery");
     }
-    if receipt.try_exists()? {
+    if exists(&receipt)? {
         if !receipt_matches(&receipt, &attempt)? {
             bail!("enrollment journal and staged receipt disagree; preserve both");
         }
         return Ok(EnrollmentState::Confirmed(attempt));
     }
-    if dir.join(CONFIG_FILE).try_exists()? && receipt_matches(&dir.join(CONFIG_FILE), &attempt)? {
+    if exists(&dir.join(CONFIG_FILE))? && receipt_matches(&dir.join(CONFIG_FILE), &attempt)? {
+        let installed = dir.join(KEY_FILE);
+        if !exists(&installed)? || HostKey::load(&installed)?.public_key_hex() != attempt.public_key {
+            bail!("installed enrollment receipt has no matching installed key; preserve all artifacts");
+        }
         return Ok(EnrollmentState::Confirmed(attempt));
     }
     Ok(EnrollmentState::Uncertain(attempt))
@@ -177,6 +181,10 @@ pub(crate) fn clear_confirmed(dir: &Path) -> Result<()> {
             std::fs::File::open(dir.join(KEY_FILE))?.sync_all()?;
             std::fs::File::open(dir.join(CONFIG_FILE))?.sync_all()?;
             fsync_parent(&dir.join(CONFIG_FILE))?;
+            let pending = dir.join("host.key.pending");
+            if exists(&pending)? {
+                crate::identity::durable_remove(&pending)?;
+            }
             crate::identity::durable_remove(&dir.join(JOURNAL))?;
             Ok(())
         }
@@ -198,7 +206,7 @@ pub fn artifacts_id(dir: &Path) -> Result<String> {
     let mut hash = Sha256::new();
     for name in ARCHIVE_FILES {
         let path = dir.join(name);
-        if path.try_exists()? {
+        if exists(&path)? {
             hash.update(name.as_bytes());
             hash.update(crate::identity::read_regular(&path, 512 * 1024)?.as_bytes());
         }
@@ -208,7 +216,7 @@ pub fn artifacts_id(dir: &Path) -> Result<String> {
 /// Recovery archives always require a subsequent explicit join. up and its
 /// automatic host join must not mint a code after any local archive action.
 pub fn require_automatic_join_allowed(dir: &Path) -> Result<()> {
-    if dir.try_exists()?
+    if exists(dir)?
         && std::fs::read_dir(dir)?
             .filter_map(Result::ok)
             .any(|entry| entry.file_name().to_string_lossy().starts_with("enrollment-archive-"))
@@ -221,7 +229,7 @@ pub fn require_automatic_join_allowed(dir: &Path) -> Result<()> {
 }
 pub fn archive(dir: &Path, attempt_id: &str) -> Result<()> {
     let marker = dir.join(RECOVERY);
-    let intent = if marker.try_exists()? {
+    let intent = if exists(&marker)? {
         let text = crate::identity::read_regular(&marker, 8192)?;
         let intent: ArchiveIntent =
             toml::from_str(&text).map_err(|_| anyhow::anyhow!("malformed archive recovery marker; preserve it"))?;
@@ -233,7 +241,7 @@ pub fn archive(dir: &Path, attempt_id: &str) -> Result<()> {
         if matches!(inspect(dir), Ok(EnrollmentState::Confirmed(_))) {
             bail!("confirmed enrollment must roll forward, never be archived as uncertain");
         }
-        let expected = if dir.join(JOURNAL).try_exists()? {
+        let expected = if exists(&dir.join(JOURNAL))? {
             read_attempt(&dir.join(JOURNAL)).ok().map(|a| a.attempt_id)
         } else {
             None
@@ -270,23 +278,23 @@ pub fn archive(dir: &Path, attempt_id: &str) -> Result<()> {
     for name in &intent.files {
         let from = dir.join(name);
         let to = archive.join(name);
-        if from.try_exists()? {
+        if exists(&from)? {
             let bytes = crate::identity::read_regular(&from, 512 * 1024)?.into_bytes();
-            if to.try_exists()? && std::fs::read(&to)? != bytes {
+            if exists(&to)? && std::fs::read(&to)? != bytes {
                 bail!("archive artifact mismatch; preserve both copies");
             }
             write_private(&to, &bytes)?;
-        } else if !to.try_exists()? {
+        } else if !exists(&to)? {
             bail!("missing archive artifact; automatic enrollment remains blocked");
         }
     }
     fsync_parent(&archive)?;
-    if !marker.try_exists()? {
+    if !exists(&marker)? {
         write_private(&marker, toml::to_string(&intent)?.as_bytes())?;
     }
     for name in &intent.files {
         let from = dir.join(name);
-        if from.try_exists()? {
+        if exists(&from)? {
             std::fs::remove_file(&from)?;
             fsync_parent(&from)?;
         }
@@ -436,5 +444,56 @@ mod recovery_tests {
         );
         assert_eq!(inspect(dir.path()).unwrap(), EnrollmentState::Clear);
         assert!(require_automatic_join_allowed(dir.path()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod fragment_tests {
+    use super::*;
+    #[test]
+    fn dangling_links_and_nonregular_pending_fragments_are_never_absent_state() {
+        for name in ARCHIVE_FILES {
+            let dir = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(dir.path().join("missing"), dir.path().join(name)).unwrap();
+            assert!(has_artifacts(dir.path()));
+            assert!(crate::identity::Paired::load(dir.path()).is_err(), "{name}");
+            assert!(crate::identity::Paired::read(dir.path()).is_err(), "{name}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod installed_receipt_tests {
+    use super::*;
+    #[test]
+    fn an_installed_receipt_checks_the_installed_key_before_pruning_a_duplicate_pending_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = HostKey::from_seed([120; 32]);
+        key.save(&dir.path().join("host.key.pending")).unwrap();
+        let attempt = EnrollmentAttempt::new(
+            &CollectorEndpoint::public("https://c.example").unwrap(),
+            CollectorTrust::System,
+            &key,
+            None,
+        );
+        attempt.save(dir.path()).unwrap();
+        HostKey::from_seed([121; 32]).save(&dir.path().join(KEY_FILE)).unwrap();
+        crate::identity::write_config_to(
+            &dir.path().join(CONFIG_FILE),
+            "wss://c.example/api/hosts/ws",
+            "host-0123456789abcdef",
+            &key,
+        )
+        .unwrap();
+        assert!(inspect(dir.path()).is_err());
+        assert!(crate::identity::Paired::load(dir.path()).is_err());
+        assert!(dir.path().join(JOURNAL).exists());
+        assert!(dir.path().join("host.key.pending").exists());
+        key.save(&dir.path().join(KEY_FILE)).unwrap();
+        assert_eq!(inspect(dir.path()).unwrap(), EnrollmentState::Confirmed(attempt));
+        let loaded = crate::identity::Paired::load(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded.key.public_key_hex(), key.public_key_hex());
+        assert!(!dir.path().join("host.key.pending").exists());
+        assert!(!dir.path().join(JOURNAL).exists());
     }
 }

@@ -2388,7 +2388,15 @@ fn join_refuses_an_overlong_line_on_standard_input_at_once() {
         !stderr.contains(&code) && !stderr.contains("xxxxxxxx"),
         "echoed: {stderr}"
     );
-    assert!(!host.exists(), "a pairing was stored");
+    let entries: Vec<_> = std::fs::read_dir(&host)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        entries,
+        [std::ffi::OsString::from("host.lock")],
+        "identity or enrollment artifacts were stored before a valid code"
+    );
 
     let mut child = join_from_stdin(addr, &host);
     child
@@ -4300,7 +4308,7 @@ fn password_session(listen: &str, origin: &str) -> String {
 
 #[test]
 fn a_secure_loopback_pairing_rejects_join_run_and_up_plaintext_overrides() {
-    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery"));
+    hennery_testkit::first_exec(&hennery().get_program().to_string_lossy());
     let root = tempfile::tempdir().unwrap();
     let host = root.path().join("host");
     hennery_host::identity::Paired {
@@ -4342,7 +4350,20 @@ fn a_secure_loopback_pairing_rejects_join_run_and_up_plaintext_overrides() {
             root.path().to_str().unwrap(),
         ],
     ] {
-        let output = hennery().args(args).output().unwrap();
+        use std::os::unix::process::CommandExt;
+        let mut child = hennery()
+            .args(args)
+            .process_group(0)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let status = wait_with_timeout(&mut child, Duration::from_secs(15));
+        if status.is_none() {
+            unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(status.is_some(), "downgrade refusal must happen before startup");
         assert!(!output.status.success());
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("before hello"),

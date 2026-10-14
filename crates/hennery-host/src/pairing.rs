@@ -221,7 +221,7 @@ pub async fn complete_join(prepared: PreparedJoin, code: &str, data_dir: &Path, 
     transport.preflight().await?;
     let key = HostKey::generate();
     let pending = pending_path(data_dir, KEY_FILE);
-    if pending.try_exists()? {
+    if crate::identity::exists(&pending)? {
         bail!("a pending key exists; no overwrite is permitted");
     }
     key.save(&pending)?;
@@ -521,6 +521,28 @@ mod alias_matrix {
                     left == right || (left.starts_with("ws://") && right.starts_with("ws://")),
                     "{left} -> {right}"
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod pairing_lock_tests {
+    use super::*;
+    #[test]
+    fn pairing_changes_hold_the_same_host_lock_as_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = PairingLock::acquire(dir.path()).unwrap();
+        assert!(PairingLock::acquire(dir.path()).is_err());
+        drop(first);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match PairingLock::acquire(dir.path()) {
+                Ok(_) => break,
+                Err(error) => {
+                    assert!(std::time::Instant::now() < deadline, "{error}");
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
             }
         }
     }

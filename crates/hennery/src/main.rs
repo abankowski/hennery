@@ -1223,33 +1223,21 @@ async fn run_up(args: UpArgs) -> Result<std::process::ExitCode> {
     let listeners = bind_all(&addresses)?;
     let collector_url = loopback_url(&listeners[host_listener].local_addr()?.to_string());
     let collector_ws_url = hennery_host::pairing::collector_ws_url(&collector_url)?;
-    // up's listener-derived override must not downgrade stored WSS, and
-    // uncertainty must stop before collector spawn/code minting.
-    if host_dir.is_dir() {
-        let _guard = hennery_host::pairing::PairingLock::acquire(&host_dir)?;
-        hennery_host::enrollment::require_resolved(&host_dir)?;
-        let config = if host_dir.join("host.toml.pending").exists() {
-            host_dir.join("host.toml.pending")
-        } else {
-            host_dir.join("host.toml")
-        };
-        if config.exists() {
-            let table: toml::Table =
-                toml::from_str(&std::fs::read_to_string(config)?).context("invalid host transport configuration")?;
-            let stored = table
-                .get("collector")
-                .and_then(|v| v.as_str())
-                .context("missing stored collector")?;
-            hennery_host::transport::CollectorEndpoint::stored(stored)?
-                .require_compatible(&hennery_host::transport::CollectorEndpoint::stored(&collector_ws_url)?)?;
-        }
-    }
     // Before either child creates its own directory in it.
     private_data_dir(&data_dir)?;
     // Held until `up` returns, before either child starts: a second `up` on
     // this data root would run a second collector on its database, also
     // where the collector's admin socket cannot tell (its path too long).
     let _lock = lock::acquire(&data_dir, lock::UP_LOCK, "hennery up")?;
+    // up's listener-derived override must not downgrade stored WSS, and
+    // uncertainty must stop before collector spawn/code minting.
+    if host_dir.is_dir() {
+        let _guard = hennery_host::pairing::PairingLock::acquire(&host_dir)?;
+        hennery_host::enrollment::require_resolved(&host_dir)?;
+        if let Some(stored) = hennery_host::identity::stored_endpoint(&host_dir)? {
+            stored.require_compatible(&hennery_host::transport::CollectorEndpoint::stored(&collector_ws_url)?)?;
+        }
+    }
     // The host pairs itself on first start only; a pairing that was revoked
     // is not replaced (kernel spec §4.2). One left half-done needs no code:
     // the host child finishes it, under its lock.
