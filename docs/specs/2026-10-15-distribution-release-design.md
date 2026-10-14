@@ -3,6 +3,10 @@
 - **Date:** 2026-10-15.
 - **Status:** proposed; no publication authorized. Operator questions below have
   recommended defaults, not assumed approval.
+- **Review:** Codex gpt-6-astra, on the maintainer's behalf, reviewed
+  `6f686151..1efb4f70`: APPROVE AFTER AMENDMENTS, no Critical findings. The
+  approval-binding, crate licence/source and recovery amendments are recorded
+  below; scoped re-confirmation remains with the parent.
 - **Inventory base:** `6f68615183de3e1badc12a3d650eca27b8901261`.
 - **Refines:** [distribution](2026-09-26-distribution-design.md) and
   [architecture §12](2026-09-25-hennery-architecture-design.md#12-distribution).
@@ -197,6 +201,22 @@ inventory/digest and its source revision. Include a package marker declaring
 that this is a release carrying the UI; missing or invalid UI must fail a
 published-package build even without `HENNERY_WEB_REQUIRE`.
 
+**Crate licence/source acceptance gate (R3):** inspect the extracted contents of
+every final `.crate` for the actual licence text, not just the SPDX value in
+Cargo metadata. The kernel tarball must also contain the frontend third-party
+notices for the compiled assets it carries, including required dependency and
+asset licence texts. Its packaged README/source notice must give an immutable,
+release-specific corresponding-source link covering the web sources, lockfiles
+and build scripts used to produce those assets, alongside the Rust source.
+Record the source archive's digest in the candidate inventory; verify the link
+is accessible without charge before publishing the kernel crate and retain the
+source for the required availability period. A moving branch link, minified
+bundle or source maps alone does not meet this design's AGPL source-delivery
+gate ([LICENSE §6](../../LICENSE)). R3 acceptance must fail when a tarball lacks
+licence text, the kernel lacks frontend notices, or the source link is missing,
+mutable, unavailable or points to incomplete/mismatched source. A repository
+licence file outside the tarball cannot substitute for this inspection.
+
 Build-script precedence: explicit absolute `HENNERY_WEB_DIST` (validated), then
 the release package's marked UI, then checkout `web/dist`. Only an unmarked
 development checkout may fall back to the existing placeholder. A release
@@ -240,7 +260,9 @@ not quietly rebuild the UI between checking and publishing. Allow dirty files
 only in the isolated generated release staging tree, with an explicit inventory.
 Wait for each published dependency to become resolvable before publishing its
 consumers. Partial failure is recoverable by continuing only missing versions
-whose prepared digests still match; otherwise make a new coherent release.
+whose prepared digests still match, after comparing already-published registry
+bytes with the approved digests (§6). Missing candidate bytes or mismatching
+remote bytes require a new candidate and approval, not a blind upload retry.
 
 Add `package.metadata.binstall` to the CLI package with a versioned release URL,
 `pkg-fmt = txz`, and the archive's actual `hennery-<target>/hennery` binary path.
@@ -443,23 +465,52 @@ adapter payloads, not just absent `node_modules` names.
    checks and image smoke tests. Require a current advisory/licence review, not
    just the flake's pinned RustSec snapshot. Preserve security failures rather
    than weakening gates. For the first release and every pin/platform change,
-   run signature/file checks
-   and logged-in agent acceptance on every claimed host platform, including
+   run signature/file checks and logged-in agent acceptance on every claimed
+   host platform, including
    start/prompt/tool/permission/resume/MCP and the pinned Codex delete contract.
+   The checks must have succeeded for the **exact source SHA** being released,
+   from the expected trusted workflows: missing, pending, failed or cancelled
+   checks refuse publication. A green PR merge ref or another commit does not
+   qualify the tag. Current `ci.yml` runs on PRs and main, not release tags;
+   the release orchestrator must verify the exact SHA's completed checks or
+   explicitly run the required qualification workflow at that SHA and wait.
 3. **Authorize candidate creation.** Maintainer approves version, source SHA,
    channel list and target list, then creates/protects the annotated `v<version>`
    tag. Recommend signing it with the maintainer's personal release identity;
    verify the chosen signing fingerprint if used. Tag signatures and workflow
-   artifact signatures serve different purposes. Never move a published tag.
+   artifact signatures serve different purposes. Restrict creation, updating
+   and deletion of release tags to the authorized release path; disable bypass
+   of those restrictions. Never move a published tag. Publishers re-resolve the
+   tag and refuse a deleted tag or one no longer naming the approved SHA.
 4. **Build and stage.** A tag identifies a candidate; it is not permission to
    publish. Fresh jobs at that SHA rebuild all release inputs, without restored
    Actions caches. Separate unprivileged build jobs from publishing credentials.
    Assemble notices, SBOMs, source and digest inventory, run channel acceptance,
-   and retain the exact candidate outputs. Staging is within the authorized
-   release workflow, never promotion of PR/main build artifacts.
-5. **Approve publication.** A protected release environment binds the maintainer's
-   approval to the candidate digest inventory and enabled channels. Only then
-   obtain OIDC/write credentials and create public attestations or publish.
+   and retain the exact candidate outputs until every approved channel completes.
+   The seven-day retention in `build.yml` is not sufficient as this policy:
+   release staging needs durable, immutable storage and retention that covers
+   delayed approvals/retries. Staging is within the authorized release workflow,
+   never promotion of PR/main build artifacts.
+5. **Approve publication.** Every publishing **and signing** job must reference
+   the protected release environment, including reusable workflow jobs and
+   retries. Disable administrator bypass explicitly; do not rely on its default.
+   An environment gates jobs but does not bind approval to artifact digests.
+   Add an authenticated approval record containing the immutable inventory
+   SHA-256, source SHA/tag, enabled channels/targets, candidate build run ID and
+   attempt, and publishing run ID and attempt. The inventory covers every
+   payload digest. Display that tuple to the maintainer for approval; retain
+   the approver identity and decision with it in an append-only audit record.
+   A protected manual publish dispatch with explicit inventory/run inputs,
+   correlated with that run's environment approval, is the recommended binding
+   mechanism. Authenticate the approver from trusted workflow/platform records,
+   never from an actor name supplied by a build artifact.
+   Each publisher and signer must revalidate the record, inventory hash, actual
+   bytes, channel/target set, run attempt, tag/SHA and exact-SHA check results
+   before receiving credentials and again before signing/uploading. Changed
+   bytes, channels or targets invalidate approval; a new publishing run attempt
+   also requires renewed approval, even when reusing identical candidate bytes.
+   Only after these gates obtain OIDC/write credentials and create public
+   attestations or publish.
    Use minimal job permissions: `contents: write` for releases, `id-token: write`
    and `attestations: write` for provenance, `packages: write` for GHCR; no
    secrets or write authority in untrusted PR execution. Fork runs require
@@ -467,14 +518,47 @@ adapter payloads, not just absent `node_modules` names.
 6. **Publish in dependency order.** Release archives/verification assets first;
    crates dependencies then CLI once registry-ready; tap/AUR metadata only once
    URLs exist; GHCR index only after all image checks. Channel failure is recorded
-   explicitly: this is not a transaction across registries. Retry the same
-   verified bytes without overwriting existing versions; hold announcements and
-   moving aliases until the enabled channel set is healthy.
+   explicitly: this is not a transaction across registries. Before a retry,
+   reconcile every already-published artifact against the approved digest,
+   including uploads whose response was lost or timed out. Use registry content
+   digests or fetch/hash the remote bytes; an existing filename/version or a
+   successful earlier log line is insufficient. Matching remote bytes count as
+   completed; upload only missing artifacts from the retained candidate after
+   renewed run-attempt approval. Missing candidate bytes, mismatching remote
+   bytes, or an unverifiable remote upload stop recovery. Require a new candidate
+   and approval; use a new version where immutable published versions prevent
+   correction. Never rebuild missing bytes under an old approval, overwrite
+   remote content or infer success from an ambiguous upload. Hold announcements
+   and moving aliases until the enabled channel set is healthy.
 7. **Verify the public path.** In scratch homes, download and verify signatures,
    install through each enabled channel, load the real UI and run doctor and
    a disposable session. Record OS/architecture, source SHA, digests and results.
    Only now update installation docs from “no published releases” and announce
    the release. Pin examples to an actual existing release; test README commands.
+
+**Negative release acceptance (R1, extended by each channel):** demonstrate a
+refusal for each gate, using non-publishing fixtures or an isolated test setup:
+
+- A publishing/signing job omits the protected environment; environment or tag
+  rule bypass is enabled; or an unauthorized actor tries to create, update or
+  delete a release tag. Check configuration as well as attempted execution.
+- The approved tag disappears or points elsewhere; the required checks are
+  missing, pending, failed, cancelled, from an unexpected workflow or green
+  only on another SHA. None may acquire publication credentials.
+- Approval is absent, from an unauthorized actor, or names another inventory
+  digest, candidate run/attempt or publishing run/attempt. A rerun must not reuse
+  the earlier run attempt's approval.
+- A candidate byte, channel or target changes after approval, including between
+  initial validation and the signing/upload boundary. Require renewed approval.
+- A candidate expires or loses an artifact; a remote upload returns ambiguously;
+  or already-published bytes differ from the inventory. Recovery must stop
+  unless the remote bytes can be verified as identical and the complete local
+  candidate remains available under a newly approved publishing attempt.
+
+Each refusal gets its own test/probe; one generic “approval failed” test does not
+prove these independent gates. Publication remains disabled if the chosen
+platform/settings cannot enforce them. Candidate retention is separate from
+long-term release and corresponding-source retention.
 
 For crates.io, prefer trusted publishing for subsequent releases. Its documented
 bootstrap requires a first manual publication, then configuration of the trusted
@@ -511,9 +595,9 @@ acceptance work; shared infrastructure and external review can increase them.
 
 | Order / proposed plan | Size | Deliverable / exit gate | Dependencies and value |
 |---|---|---|---|
-| R1 — publishable release foundation | L, 5 tasks, likely 2 PRs | Version/build identity; notices/SBOM/source; pinned cache-free candidate workflow; attestation/manual approval; tested installer and tagged flake, adding Linux arm64 acceptance. First authorized release installed from a clean machine | Reuses 7a/7b/7c/7d/7e. Highest value; Q1/Q2 determine first publication. No new platform promise |
+| R1 — publishable release foundation | L, 5 tasks, likely 2 PRs | Version/build identity; notices/SBOM/source; pinned cache-free candidate workflow; enforceable approval binding and negative gate tests; retained-candidate recovery/digest reconciliation; tested installer and tagged flake, adding Linux arm64 acceptance. First authorized release installed from a clean machine | Reuses 7a/7b/7c/7d/7e. Highest value; Q1/Q2 determine first publication. No new platform promise |
 | R2 — Homebrew tap | S, 2 tasks | Actual formula install/upgrade/remove, then gated tap publication and service-path guidance | R1 and maintainer tap setup; low-cost Mac adoption |
-| R3 — crates.io and binstall | L, 5 tasks, likely 2 PRs | Seven-crate metadata/versions; package-local UI/manifest; feature/MSRV checks; temporary-registry install; controlled publish/binstall acceptance | R1; useful familiar channel but larger engineering cost. Bare Cargo install only promised after non-prerelease publication |
+| R3 — crates.io and binstall | L, 5 tasks, likely 2 PRs | Seven-crate metadata/versions; package-local UI/manifest; every tarball's licence text, kernel frontend notices and immutable corresponding-source link verified; feature/MSRV checks; temporary-registry install; controlled publish/binstall acceptance | R1; useful familiar channel but larger engineering cost. Bare Cargo install only promised after non-prerelease publication |
 | R4 — GHCR | M, 3 tasks | Notices/labels/SBOM; native images and index; gated push, digest verification and volume/upgrade docs | R1; remote collectors without a build toolchain |
 | R5 — Intel macOS qualification | M–L, 4–5 tasks | Native archive + runtime manifest/generator/pin checks + doctor/services + flake/formula + live acceptance; declared OS floor | R1, Q3, and Q5 disposition. Add to all enabled channels only after qualification |
 | R6 — resume 7e-ii-a | L, existing 5 tasks plus re-anchoring | Nix adapters, doctor system-unit interpretation, NixOS/Home Manager modules and VM/native checks, current spec write-back | Existing paused plan, current 7e-ii-b and R1; substantial NixOS user value. No new licence/cache permission implied |
@@ -536,7 +620,7 @@ working download. Existing source-build instructions remain supported.
 
 | Account / surface | One-time step or secret | Ongoing owner action |
 |---|---|---|
-| Release identity and repository | Choose first version/channel scope; protect main and release tags; configure the release environment/allowed refs and manual reviewer; choose tag-signing identity and verify fingerprint. Enable required checks and fork-workflow approval | Explicit approval of each candidate SHA/digest inventory; designate who may release. If environment review cannot enforce a sole maintainer's intended flow, use a documented explicit manual publish step rather than silently omitting approval |
+| Release identity and repository | Choose first version/channel scope; protect main and restrict release-tag creation/update/deletion; disable tag-rule and environment administrator bypass; require the protected environment on every publishing/signing job; configure allowed refs/reviewer and exact-SHA checks; choose tag-signing identity/fingerprint. Enable fork-workflow approval and durable candidate retention | Approve the authenticated inventory-digest/run-attempt record and channel set; renew approval after changes or a new publishing attempt. Verify gate configuration and negative tests; keep publishing disabled if the required controls cannot be enforced |
 | GitHub artifact signing | Approve public transparency-log disclosure; enable narrowly scoped workflow OIDC/attestation permissions | Review pinned signing actions and verification identity. No long-lived Sigstore private key is needed |
 | crates.io | Personal account and verified email; recheck seven names; approve first real publication of all seven crates; bootstrap token with only needed publish rights; configure trusted publisher per crate, workflow and environment afterwards; revoke bootstrap token | Ownership/recovery contacts, release approval and emergency yanks. No name reservation or upload by this design lane |
 | Homebrew tap | Create/approve `marcinwadon/homebrew-tap`; scoped GitHub App token or fine-grained token limited to tap contents, stored only in protected publishing environment | Rotate credential and maintain/review formula updates; verify generated workflow supports the chosen credential method |
@@ -547,12 +631,13 @@ working download. Existing source-build instructions remain supported.
 | Native package repositories, conditional | Q6 approval; hosting/domain/storage choice; APT signing key and RPM signing credentials with public-key distribution, expiry/rotation/revocation and recovery procedure | Publish signed metadata, retain versions, monitor availability; no repo keys needed for the initial design-only work |
 | AUR / upstream submissions, conditional | AUR account and scoped SSH key, confirm package names and ownership; nominate nixpkgs/Homebrew/distro maintainers and authorize submissions | Respond to downstream breakage/reviews and releases; publication remains maintainer-controlled |
 | Nix cache, optional | Explicit binary-cache approval, service account/token and cache-signing trust setup; allowlist free binary/UI closure only | Audit uploads, retention and key rotation; no Claude CLI, downloaded tarball or unrestricted whole-store cache |
-| Licence/source review | Approve generated notices, corresponding source delivery and any unresolved third-party licence findings | Repeat for changed dependency sets and keep source material available with releases |
+| Licence/source review | Approve generated notices, corresponding source delivery and any unresolved third-party licence findings; inspect licence texts in all seven tarballs, frontend notices in kernel and its immutable source link | Repeat for changed dependency sets; keep corresponding source available independently of candidate/workflow artifact expiry |
 
 Parent review should concentrate on publication trust boundaries, crate tarball
 completeness, platform claims versus actual runtime support, licence/source
 coverage, the paused modules' preserved decisions, and recovery after a partial
-multi-channel release. No independent review or implementation validation is
-claimed by this design document.
+multi-channel release. The review recorded above does not validate an
+implementation; these amendments need scoped re-confirmation, and implementation
+acceptance remains future work.
 
 Generated with Claude AI — please review before distribution.
