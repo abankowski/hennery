@@ -22,6 +22,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
      transcript fold rules, cards, PWA.
    - [Distribution](specs/2026-09-26-distribution-design.md) — binary,
      managed runtime and adapter manifest, release pipeline, services, doctor.
+   - [Remote hosts over WSS](specs/2026-10-14-wss-design.md) — proposed verified TLS, private-CA trust, tunnel migration, reconnect/doctor parity and reverse-proxy rate limits; two M plans, pending review.
 3. Evidence:
    - [Spike: per-session MCP over ACP](spikes/2026-09-25-per-session-mcp.md)
      and its [harness](../spikes/2026-09-25-mcp-per-session/).
