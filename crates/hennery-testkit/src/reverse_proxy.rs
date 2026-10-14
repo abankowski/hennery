@@ -1,5 +1,6 @@
 //! The shipped Caddy/nginx recipes, with fixture-only placeholder substitution.
 use crate::tls::TestCa;
+use std::os::unix::process::CommandExt;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -22,8 +23,21 @@ fn free_port() -> u16 {
         .port()
 }
 impl RecipeProxy {
+    fn write_certificates(root: &Path, ca: &TestCa) {
+        let (cert, key) = ca.server_pem();
+        for (name, pem) in [("cert.pem", cert), ("key.pem", key)] {
+            // nginx can inherit the old SSL object when inode+mtime match.
+            // Rename a complete new file, including within one timestamp tick.
+            let staged = root.join(format!("{name}.next"));
+            std::fs::write(&staged, pem).unwrap();
+            std::fs::rename(staged, root.join(name)).unwrap();
+        }
+    }
     fn command(kind: &str, root: &Path) -> Command {
         let mut command = Command::new(kind);
+        if kind == "nginx" {
+            command.arg("-e").arg(root.join("nginx-error.log"));
+        }
         command
             .env("HOME", root.join("home"))
             .env("XDG_CONFIG_HOME", root.join("config"))
@@ -51,9 +65,7 @@ impl RecipeProxy {
         );
         let port = free_port();
         let admin = free_port();
-        let (cert, key) = ca.server_pem();
-        std::fs::write(root.join("cert.pem"), cert).unwrap();
-        std::fs::write(root.join("key.pem"), key).unwrap();
+        Self::write_certificates(&root, ca);
         let recipe = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../packaging/proxy")
             .join(if kind == "caddy" { "Caddyfile" } else { "nginx.conf" });
@@ -81,20 +93,7 @@ impl RecipeProxy {
         }
         let out = validate.output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        let mut command = Self::command(kind, &root);
-        if kind == "caddy" {
-            command.args(["run", "--config"]).arg(&file);
-        } else {
-            command
-                .arg("-p")
-                .arg(&root)
-                .arg("-c")
-                .arg(&file)
-                .args(["-g", "daemon off;"]);
-        }
-        let log = std::fs::File::create(root.join("process.log")).unwrap();
-        command.stdout(log.try_clone().unwrap()).stderr(log);
-        let child = command.spawn().unwrap();
+        let child = Self::spawn(kind, &root);
         let mut proxy = Self {
             kind: kind.into(),
             root,
@@ -117,6 +116,64 @@ impl RecipeProxy {
         }
         proxy
     }
+    fn spawn(kind: &str, root: &Path) -> Child {
+        let file = root.join(if kind == "caddy" { "Caddyfile" } else { "nginx.conf" });
+        let mut command = Self::command(kind, root);
+        if kind == "caddy" {
+            command.args(["run", "--config"]).arg(&file);
+        } else {
+            command
+                .arg("-p")
+                .arg(root)
+                .arg("-c")
+                .arg(&file)
+                .args(["-g", "daemon off;"]);
+        }
+        let log = std::fs::File::create(root.join("process.log")).unwrap();
+        command.stdout(log.try_clone().unwrap()).stderr(log);
+        command.process_group(0).spawn().unwrap()
+    }
+    pub fn pause(&mut self) {
+        if self.child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        // SAFETY: this fixture created and owns the entire process group.
+        unsafe { libc::kill(-(self.child.id() as i32), libc::SIGTERM) };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while self.child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if self.child.try_wait().unwrap().is_none() {
+            // SAFETY: only this fixture's still-running, unreaped group.
+            unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) };
+        }
+        let _ = self.child.wait();
+    }
+    pub async fn resume(&mut self, ca: &TestCa) {
+        assert!(self.child.try_wait().unwrap().is_some(), "pause before resume");
+        Self::write_certificates(&self.root, ca);
+        self.child = Self::spawn(&self.kind, &self.root);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            assert!(
+                self.child.try_wait().unwrap().is_none(),
+                "proxy exited: {}",
+                self.logs()
+            );
+            if tokio::net::TcpStream::connect(("127.0.0.1", self.port)).await.is_ok() {
+                break;
+            }
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    /// Abrupt transport loss, with no graceful wait that could become a timeout.
+    pub fn cut(&mut self) {
+        assert!(self.child.try_wait().unwrap().is_none());
+        // SAFETY: this fixture created and owns the unreaped process group.
+        assert_eq!(unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) }, 0);
+        self.child.wait().unwrap();
+    }
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -131,9 +188,7 @@ impl RecipeProxy {
     }
     pub async fn renew_and_reload(&mut self, ca: &TestCa) {
         let old = self.leaf(ca).await;
-        let (cert, key) = ca.server_pem();
-        std::fs::write(self.root.join("cert.pem"), cert).unwrap();
-        std::fs::write(self.root.join("key.pem"), key).unwrap();
+        Self::write_certificates(&self.root, ca);
         if self.kind == "caddy" {
             let out = Self::command("caddy", &self.root)
                 .args(["reload", "--force", "--address"])
@@ -180,17 +235,29 @@ impl RecipeProxy {
 }
 impl Drop for RecipeProxy {
     fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_some() {
-            return;
+        self.pause();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+    #[test]
+    fn certificate_updates_replace_files_instead_of_reusing_inodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let ca = TestCa::new();
+        RecipeProxy::write_certificates(dir.path(), &ca);
+        let before: Vec<_> = ["cert.pem", "key.pem"]
+            .map(|name| std::fs::metadata(dir.path().join(name)).unwrap().ino())
+            .into();
+        RecipeProxy::write_certificates(dir.path(), &ca);
+        for (name, inode) in ["cert.pem", "key.pem"].into_iter().zip(before) {
+            assert_ne!(
+                std::fs::metadata(dir.path().join(name)).unwrap().ino(),
+                inode,
+                "nginx may inherit an unchanged inode+mtime across reloads"
+            );
         }
-        // Terminate gracefully first, so nginx's workers do not outlive master.
-        // SAFETY: this fixture owns the still-unreaped child PID.
-        unsafe { libc::kill(self.child.id() as i32, libc::SIGTERM) };
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while self.child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }

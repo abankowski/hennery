@@ -26,9 +26,14 @@ All replacements are explicit placeholders, never changes to security rules:
 Supply certificates for the actual public DNS name through your deployment's
 certificate management. This Caddy template uses explicit PEM files and turns
 ACME off; the test does not contact certificate services. Renew the leaf under
-the same CA, then reload: `caddy reload --force --config <rendered-Caddyfile>`
+the same CA, atomically replacing each complete PEM file, then reload:
+`caddy reload --force --config <rendered-Caddyfile>`
 (with its configured local admin address) or send SIGHUP to your nginx master.
-The fixture runs the reload operation and reconnects over the same trust.
+nginx can inherit cached certificates when both file inode and modification time
+are unchanged; replacing files avoids that same-timestamp renewal trap. See
+[nginx SSL object inheritance](https://nginx.org/en/docs/ngx_core_module.html#ssl_object_cache_inheritable).
+The fixture replaces the files, runs reload and observes a new leaf over the
+same trust.
 
 Before setup, use the README's `up-public` block with your public HTTPS origin.
 Already set up? Use the existing admin public-URL reset: changing the flag alone

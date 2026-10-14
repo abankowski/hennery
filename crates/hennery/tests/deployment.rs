@@ -86,53 +86,69 @@ async fn lost_committed_responses(kind: &str) {
         let state = state();
         let posts = Arc::new(AtomicUsize::new(0));
         let count = posts.clone();
-        let router = hennery_sessions::router(state.clone()).layer(middleware::from_fn(
-            move |request: axum::extract::Request, next: axum::middleware::Next| {
-                let count = count.clone();
-                async move {
-                    let enroll = request.uri().path() == "/api/hosts/enroll";
-                    let response = next.run(request).await;
-                    if enroll && response.status() == 201 {
-                        count.fetch_add(1, Ordering::SeqCst);
-                        match fault {
-                            "502" | "504" => (
-                                axum::http::StatusCode::from_u16(fault.parse().unwrap()).unwrap(),
-                                "upstream lost reply",
-                            )
-                                .into_response(),
-                            "malformed" => (axum::http::StatusCode::CREATED, "{broken").into_response(),
-                            "truncated" => axum::http::Response::builder()
-                                .status(201)
-                                .header("content-length", "200")
-                                .body(axum::body::Body::from_stream(futures::stream::iter([
-                                    Ok::<_, std::io::Error>(vec![b'{']),
-                                    Err(std::io::Error::new(
-                                        std::io::ErrorKind::UnexpectedEof,
-                                        "fixture truncated",
-                                    )),
-                                ])))
-                                .unwrap(),
-                            "reset" => axum::http::Response::builder()
-                                .status(201)
-                                .body(axum::body::Body::from_stream(futures::stream::iter([
-                                    Err::<Vec<u8>, _>(std::io::Error::new(
-                                        std::io::ErrorKind::ConnectionReset,
-                                        "lost committed reply",
-                                    )),
-                                ])))
-                                .unwrap(),
-                            _ => unreachable!(),
+        let router = hennery_sessions::router(state.clone())
+            .route("/fixture/fault", get(move || async move { lost_response(fault) }))
+            .layer(middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let count = count.clone();
+                    async move {
+                        let enroll = request.uri().path() == "/api/hosts/enroll";
+                        if enroll {
+                            count.fetch_add(1, Ordering::SeqCst);
                         }
-                    } else {
-                        response
+                        let response = next.run(request).await;
+                        if enroll && response.status() == 201 {
+                            if fault == "reset" {
+                                std::future::pending::<axum::response::Response>().await
+                            } else {
+                                lost_response(fault)
+                            }
+                        } else {
+                            response
+                        }
                     }
-                }
-            },
-        ));
+                },
+            ));
         let (addr, task) = server(router).await;
         let ca = TestCa::new();
-        let proxy = RecipeProxy::start(kind, addr, &ca, root.path()).await;
+        let mut proxy = RecipeProxy::start(kind, addr, &ca, root.path()).await;
         let origin = proxy.origin();
+        if fault != "reset" {
+            // Observe the exact response class through the real proxy before using
+            // the same fault builder after a committed enrollment. A reset must not
+            // masquerade as the required truncated-success coverage.
+            let witness = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(std::time::Duration::from_secs(10))
+                .tls_built_in_root_certs(false)
+                .add_root_certificate(reqwest::Certificate::from_pem(ca.pem.as_bytes()).unwrap())
+                .build()
+                .unwrap()
+                .get(format!("{origin}/fixture/fault"))
+                .send()
+                .await;
+
+            let response = witness.unwrap();
+            assert_eq!(
+                response.status().as_u16(),
+                if matches!(fault, "502" | "504") {
+                    fault.parse().unwrap()
+                } else {
+                    201
+                },
+                "{kind}/{fault}"
+            );
+            match fault {
+                "truncated" => assert!(response.bytes().await.is_err(), "success must be incomplete"),
+                "malformed" => {
+                    assert!(serde_json::from_slice::<serde_json::Value>(&response.bytes().await.unwrap()).is_err())
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(posts.load(Ordering::SeqCst), 0);
+
         let host = root.path().join("host");
         let key = HostKey::from_seed([19; 32]);
         let prior = state
@@ -163,7 +179,25 @@ async fn lost_committed_responses(kind: &str) {
         let mut join = command(root.path());
         join.args(["host", "join", &origin, &code, "--no-runtime", "--data-dir"])
             .arg(&host);
-        let text = failed(output(join).await);
+        let text = if fault == "reset" {
+            let pending = tokio::spawn(output(join));
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+            while state.hosts.list().unwrap().len() != 2 {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "enrollment must commit before cutting the proxy"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            // Cut the real proxy with the committed response still pending.
+            assert!(!pending.is_finished(), "the committed response must still be pending");
+            proxy.cut();
+            let text = failed(pending.await.unwrap());
+            proxy.resume(&ca).await;
+            text
+        } else {
+            failed(output(join).await)
+        };
         assert!(text.contains("uncertain"), "{kind}/{fault}: {text}");
         assert_eq!(
             state.hosts.list().unwrap().len(),
@@ -373,5 +407,42 @@ async fn deployment_recovery_reads_visible_settings_and_retries_after_post_renam
             hennery_host::connection::Standing::Accepted
         );
         task.abort();
+    }
+}
+
+fn lost_response(fault: &str) -> axum::response::Response {
+    match fault {
+        "502" | "504" => (
+            axum::http::StatusCode::from_u16(fault.parse().unwrap()).unwrap(),
+            "upstream lost reply",
+        )
+            .into_response(),
+        "malformed" => (axum::http::StatusCode::CREATED, "{broken").into_response(),
+        "truncated" => axum::http::Response::builder()
+            .status(201)
+            .header("content-length", "200")
+            .body(axum::body::Body::from_stream(futures::stream::unfold(
+                0,
+                |state| async move {
+                    match state {
+                        0 => Some((Ok::<_, std::io::Error>(vec![b'{']), 1)),
+                        1 => {
+                            // Yield long enough for the proxy to flush the success
+                            // headers and first byte before the upstream fails.
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            Some((
+                                Err(std::io::Error::new(
+                                    std::io::ErrorKind::UnexpectedEof,
+                                    "fixture truncated",
+                                )),
+                                2,
+                            ))
+                        }
+                        _ => None,
+                    }
+                },
+            )))
+            .unwrap(),
+        _ => unreachable!(),
     }
 }

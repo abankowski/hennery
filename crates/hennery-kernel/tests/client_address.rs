@@ -154,7 +154,7 @@ fn forwarding_decoders_cannot_compete_with_the_fixed_header() {
 
 #[test]
 fn proxy_configuration_is_bounded_exact_and_canonical() {
-    assert!(ProxyPolicy::new(vec![ip("127.0.0.1"); 9]).is_err());
+    assert!(ProxyPolicy::new((1..=9).map(|n| ip(&format!("192.0.2.{n}"))).collect()).is_err());
     assert!(ProxyPolicy::new(vec![ip("127.0.0.1"), ip("::ffff:127.0.0.1")]).is_err());
     for peer in ["0.0.0.0", "::", "224.0.0.1", "ff02::1"] {
         assert!(ProxyPolicy::new(vec![ip(peer)]).is_err());

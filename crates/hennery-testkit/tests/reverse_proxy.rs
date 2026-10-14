@@ -44,13 +44,19 @@ async fn recipes_overwrite_all_spoofs_and_preserve_host_origin_and_nonce() {
         let root = tempfile::tempdir().unwrap();
         let captured = Arc::new(Mutex::new(Vec::new()));
         let seen = captured.clone();
-        let router = Router::new().route(
-            "/capture",
-            post(move |headers: axum::http::HeaderMap| {
-                seen.lock().unwrap().push(headers.clone());
-                async move { "ok" }
-            }),
-        );
+        let router = Router::new()
+            .route(
+                "/capture",
+                post(move |headers: axum::http::HeaderMap| {
+                    seen.lock().unwrap().push(headers.clone());
+                    async move { "ok" }
+                }),
+            )
+            .route(
+                "/upload",
+                post(|body: axum::body::Bytes| async move { body.len().to_string() })
+                    .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024)),
+            );
         let (addr, task) = backend(router).await;
         let ca = TestCa::new();
         let proxy = RecipeProxy::start(kind, addr, &ca, root.path()).await;
@@ -71,6 +77,14 @@ async fn recipes_overwrite_all_spoofs_and_preserve_host_origin_and_nonce() {
         assert_eq!(headers["hennery-client-ip"], "127.0.0.1");
         assert_eq!(headers["origin"], PUBLIC_URL);
         assert_eq!(headers["host"], format!("localhost:{}", proxy.port()));
+        let response = client(&ca)
+            .post(format!("{}/upload", proxy.origin()))
+            .body(vec![42; 32 * 1024 * 1024])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "proxy must preserve route-specific body limits");
+        assert_eq!(response.text().await.unwrap(), (32 * 1024 * 1024).to_string());
         task.abort();
     }
 }
@@ -335,4 +349,153 @@ async fn caddy_nonce_large_frames_idle_streams_renewal_and_reload() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn nginx_nonce_large_frames_idle_streams_renewal_and_reload() {
     streaming_and_reload("nginx").await;
+}
+
+/// Pin configuration obligations that can be observationally identical for a
+/// small stream (nginx may flush it with buffering on too). Runtime progress
+/// tests alone cannot establish that buffering/retries/logging are disabled.
+/// Pin the production request rate and burst separately from the slower refill
+/// used by the deterministic request-cap behavior test below.
+#[test]
+fn recipe_policy_disables_buffering_post_retries_and_access_logging() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/proxy");
+    let nginx = std::fs::read_to_string(root.join("nginx.conf")).unwrap();
+    let directives: Vec<_> = nginx.lines().map(str::trim).collect();
+    for required in [
+        "proxy_buffering off;",
+        "proxy_request_buffering off;",
+        "proxy_cache off;",
+        "proxy_next_upstream off;",
+        "access_log off;",
+        "gzip off;",
+        "limit_req_zone $binary_remote_addr zone=requests:10m rate=100r/s;",
+        "limit_req zone=requests burst=200 nodelay;",
+    ] {
+        assert_eq!(
+            directives.iter().filter(|line| **line == required).count(),
+            1,
+            "missing/duplicate policy: {required}"
+        );
+    }
+    let caddy = std::fs::read_to_string(root.join("Caddyfile")).unwrap();
+    let directives: Vec<_> = caddy.lines().map(str::trim).collect();
+    for required in ["flush_interval -1", "lb_retries 0", "versions 1.1"] {
+        assert_eq!(
+            directives.iter().filter(|line| **line == required).count(),
+            1,
+            "missing/duplicate policy: {required}"
+        );
+    }
+    assert!(!directives.iter().any(|line| line.starts_with("request_buffers ")
+        || line.starts_with("response_buffers ")
+        || line.starts_with("stream_timeout ")
+        || line.starts_with("encode ")
+        || *line == "log"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn nginx_request_cap_rejects_before_the_collector() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let root = tempfile::tempdir().unwrap();
+    let received = Arc::new(AtomicUsize::new(0));
+    let counted = received.clone();
+    let router = Router::new().route(
+        "/fixture/request-cap",
+        get(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async { axum::http::StatusCode::NO_CONTENT }
+        }),
+    );
+    let (addr, task) = backend(router).await;
+    let ca = TestCa::new();
+    let mut proxy = RecipeProxy::start("nginx", addr, &ca, root.path()).await;
+    proxy.pause();
+    let path = root.path().join("nginx/nginx.conf");
+    let config = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(config.matches("rate=100r/s;").count(), 1);
+    // Keep the shipped burst and all other directives. A stricter refill avoids
+    // racing a 100r/s clock on busy CI; the audit above pins the production rate.
+    std::fs::write(path, config.replace("rate=100r/s;", "rate=1r/m;")).unwrap();
+    proxy.resume(&ca).await;
+    let http = client(&ca);
+    let mut accepted = 0;
+    let mut rejected = 0;
+    // One fully drained request at a time cannot reach the 20-connection cap.
+    // Even at the per-request timeout, 256 arrivals outpace a 1/minute refill
+    // enough to fill the unchanged 200-request burst.
+    for _ in 0..256 {
+        let response = http
+            .get(format!("{}/fixture/request-cap", proxy.origin()))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        response.bytes().await.unwrap();
+        match status {
+            204 => accepted += 1,
+            503 => rejected += 1,
+            other => panic!("unexpected request-cap status {other}: {}", proxy.logs()),
+        }
+    }
+    assert!(accepted > 0, "the backend must be reachable");
+    assert!(rejected > 0, "request cap did not reject excess requests");
+    assert_eq!(received.load(Ordering::SeqCst), accepted);
+    let logs = proxy.logs();
+    assert!(logs.contains("limiting requests"), "{logs}");
+    assert!(!logs.contains("limiting connections"), "{logs}");
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn nginx_caps_unauthenticated_upgrades_before_the_collector() {
+    let root = tempfile::tempdir().unwrap();
+    let router = Router::new().route(
+        "/api/hosts/ws",
+        get(|upgrade: axum::extract::ws::WebSocketUpgrade| async {
+            let mut response = upgrade
+                .on_upgrade(|mut ws| async move { while ws.recv().await.is_some() {} })
+                .into_response();
+            response.headers_mut().insert(
+                "hennery-hello-nonce",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .parse()
+                    .unwrap(),
+            );
+            response
+        }),
+    );
+    let (addr, task) = backend(router).await;
+    let ca = TestCa::new();
+    let proxy = RecipeProxy::start("nginx", addr, &ca, root.path()).await;
+    let transport = hennery_host::transport::CollectorTransport::new(
+        hennery_host::transport::CollectorEndpoint::public(&proxy.origin()).unwrap(),
+        hennery_host::transport::CollectorTrust::CaBundle { pem: ca.pem.clone() },
+    )
+    .unwrap();
+    let mut sockets = Vec::new();
+    for _ in 0..20 {
+        sockets.push(
+            transport
+                .websocket(tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default())
+                .await
+                .unwrap()
+                .0,
+        );
+    }
+    let error = transport
+        .websocket(tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<hennery_host::transport::TransportFailure>(),
+            Some(hennery_host::transport::TransportFailure(
+                hennery_host::transport::Stage::Upgrade { status: Some(503), .. }
+            ))
+        ),
+        "{error:#}"
+    );
+    drop(sockets);
+    task.abort();
 }

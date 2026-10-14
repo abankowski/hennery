@@ -1004,10 +1004,9 @@ fn public_pairing_script(script: &str, readme: &str, port: u16, code: &str) -> S
         assert!(readme.contains(&format!("{placeholder} is a public-join placeholder")));
     }
     assert_eq!(script, "hennery host join https://hennery.example:443 ABCD-EFGH\n");
-    let substituted = script
+    script
         .replace("hennery.example:443", &format!("localhost:{port}"))
-        .replace("ABCD-EFGH", code);
-    substituted
+        .replace("ABCD-EFGH", code)
 }
 #[test]
 fn public_pairing_placeholders_cannot_hide_protocol_or_unmarked_changes() {
