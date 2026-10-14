@@ -4366,6 +4366,10 @@ fn a_secure_loopback_pairing_rejects_join_run_and_up_plaintext_overrides() {
         assert!(status.is_some(), "downgrade refusal must happen before startup");
         assert!(!output.status.success());
         assert!(
+            !root.path().join("collector").exists(),
+            "up must refuse its derived downgrade before spawning a collector"
+        );
+        assert!(
             String::from_utf8_lossy(&output.stderr).contains("before hello"),
             "{}",
             String::from_utf8_lossy(&output.stderr)

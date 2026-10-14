@@ -11,6 +11,7 @@ struct Fixture {
     url: String,
     pem: String,
     seen: Arc<AtomicUsize>,
+    verdict: Arc<AtomicUsize>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Fixture {
@@ -45,10 +46,13 @@ async fn fixture(names: Vec<String>, nonce: &'static str) -> Fixture {
     let url = format!("https://localhost:{}", listener.local_addr().unwrap().port());
     let seen = Arc::new(AtomicUsize::new(0));
     let capture = seen.clone();
+    let verdict = Arc::new(AtomicUsize::new(0));
+    let reply = verdict.clone();
     let task = tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             let acceptor = acceptor.clone();
             let capture = capture.clone();
+            let reply = reply.clone();
             tokio::spawn(async move {
                 if let Ok(tls) = acceptor.accept(stream).await {
                     let ws = tokio_tungstenite::accept_hdr_async(tls, NonceCallback { capture, nonce }).await;
@@ -57,7 +61,11 @@ async fn fixture(names: Vec<String>, nonce: &'static str) -> Fixture {
                             if msg.is_close() {
                                 break;
                             }
-                            ws.send(Message::Text("{\"type\":\"hello_ack\",\"protocol_version\":\"1.0\",\"collector_version\":\"fixture\",\"committed\":{}}".into())).await.ok();
+                            let reply = match reply.load(Ordering::SeqCst) {
+                                0 => "{\"type\":\"hello_ack\",\"protocol_version\":\"1.0\",\"collector_version\":\"fixture\",\"committed\":{}}".to_string(),
+                                n => format!("{{\"type\":\"hello_error\",\"code\":\"{}\",\"message\":\"fixture\"}}", match n {1=>"already_connected",2=>"revoked",_=>"bad_proof"}),
+                            };
+                            ws.send(Message::Text(reply.into())).await.ok();
                         }
                     }
                 }
@@ -68,6 +76,7 @@ async fn fixture(names: Vec<String>, nonce: &'static str) -> Fixture {
         url,
         pem: ca.pem(),
         seen,
+        verdict,
         task,
     }
 }
@@ -185,6 +194,25 @@ async fn transport_move_preserves_identity_outbox_and_configuration_and_reports_
     let trust = CollectorTrust::CaBundle {
         pem: fixture.pem.clone(),
     };
+    for verdict in [2, 3] {
+        fixture.verdict.store(verdict, Ordering::SeqCst);
+        assert!(
+            set_transport(dir.path(), &fixture.url, Some(trust.clone()))
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+    fixture.verdict.store(1, Ordering::SeqCst);
+    assert_eq!(
+        set_transport(dir.path(), &fixture.url, Some(trust.clone()))
+            .await
+            .unwrap(),
+        hennery_host::connection::Standing::Connected
+    );
+    assert_eq!(std::fs::read(dir.path().join("host.key")).unwrap(), key);
+    std::fs::write(&path, &original).unwrap();
+    fixture.verdict.store(0, Ordering::SeqCst);
     storage_hooks::fail_once(path.clone(), "before_rename");
     assert!(
         set_transport(dir.path(), &fixture.url, Some(trust.clone()))

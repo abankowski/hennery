@@ -565,8 +565,11 @@ mod tests {
             let endpoint = CollectorEndpoint::public(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut bytes = [0; 4096];
-                socket.read(&mut bytes).await.unwrap();
+                let mut bytes = Vec::new();
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    assert!(bytes.len() < 4096, "bounded fixture request head");
+                    bytes.push(socket.read_u8().await.unwrap());
+                }
                 socket
                     .write_all(
                         format!(

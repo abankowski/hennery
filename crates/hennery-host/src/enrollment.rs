@@ -407,6 +407,14 @@ mod tests {
         assert!(archive(dir.path(), &a.attempt_id).is_err());
         assert!(inspect(dir.path()).is_err());
         assert!(crate::identity::Paired::load(dir.path()).is_err());
+        // The existing marker skips its write on this pass: this failure is
+        // after active artifact removal and the marker's visible removal.
+        crate::identity::storage_hooks::fail_once(dir.path().join(RECOVERY), "directory_sync");
+        assert!(archive(dir.path(), &a.attempt_id).is_err());
+        assert!(dir.path().join(RECOVERY).exists());
+        assert!(!dir.path().join(JOURNAL).exists());
+        assert!(!dir.path().join("host.key.pending").exists());
+        assert!(inspect(dir.path()).is_err());
         archive(dir.path(), &a.attempt_id).unwrap();
         assert_eq!(inspect(dir.path()).unwrap(), EnrollmentState::Clear);
     }

@@ -749,6 +749,82 @@ async fn health_success_never_hides_broken_upgrade_nonce_or_redirects() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn confirmed_enrollment_with_a_failed_followup_reports_paired_and_keeps_the_identity() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery"));
+    let root = tempfile::tempdir().unwrap();
+    let db = root.path().join("collector.db");
+    let state = AppState::new(
+        Store::open(&db).unwrap(),
+        Hosts::open(&db).unwrap(),
+        Operator::open(&db).unwrap(),
+    );
+    let committed = Arc::new(AtomicUsize::new(0));
+    let gate = committed.clone();
+    let router = hennery_sessions::router(state.clone()).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let gate = gate.clone();
+            async move {
+                if request.uri().path() == "/api/hosts/ws" && gate.load(Ordering::SeqCst) > 0 {
+                    return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+                let enrollment = request.uri().path() == "/api/hosts/enroll";
+                let response = next.run(request).await;
+                if enrollment && response.status() == 201 {
+                    gate.fetch_add(1, Ordering::SeqCst);
+                }
+                response
+            }
+        },
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let code = code(&state, addr).await;
+    let ca = TestCa::new();
+    let proxy = Proxy::start(addr, ca.server(vec!["localhost".into()], "valid")).await;
+    let roots = root.path().join("ca.pem");
+    std::fs::write(&roots, &ca.pem).unwrap();
+    let host = root.path().join("host");
+    let mut join = command(root.path());
+    join.args(["host", "join", &proxy.origin(), &code, "--no-runtime", "--ca-cert"])
+        .arg(&roots)
+        .arg("--data-dir")
+        .arg(&host);
+    let message = assert_failed(output(join).await);
+    assert!(
+        message.contains("paired as") && message.contains("connection failed") && message.contains("identity retained"),
+        "{message}"
+    );
+    let paired = Paired::read(&host).unwrap().unwrap();
+    assert_eq!(state.hosts.list().unwrap()[0].id, paired.host_id);
+    assert_eq!(paired.trust, CollectorTrust::CaBundle { pem: ca.pem });
+    assert!(!host.join(hennery_host::enrollment::JOURNAL).exists());
+    let before = std::fs::read(host.join("host.key")).unwrap();
+    let mut retry = command(root.path());
+    retry
+        .args([
+            "host",
+            "join",
+            &proxy.origin(),
+            "FRESH-CODE",
+            "--no-runtime",
+            "--data-dir",
+        ])
+        .arg(&host);
+    assert_failed(output(retry).await);
+    assert_eq!(std::fs::read(host.join("host.key")).unwrap(), before);
+    assert_eq!(committed.load(Ordering::SeqCst), 1);
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn collector_only_ca_health_option_never_overrides_saved_host_trust() {
     let root = tempfile::tempdir().unwrap();
     let (state, addr, task) = collector(root.path()).await;
