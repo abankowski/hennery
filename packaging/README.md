@@ -134,14 +134,20 @@ promised after non-prerelease publication; the first alpha is GitHub-only.
 
 ### R1 integration and maintainer-only setup
 
-The publish job has no dispatch/tag/version trigger, no bootstrap secret and
-no auth action yet. It is disabled while R3_PUBLISH_ENABLED is unset. Its fixed
+The publish job has no dispatch/tag/version trigger or bootstrap secret.
+It is disabled while R3_PUBLISH_ENABLED is unset. Its fixed
 `packaging/release-gate` dependency is deliberately absent: enabling the variable
-alone still refuses. R1 must provide that trusted adapter, protected environment
-`release` (or reconcile the name), and a pinned crates.io OIDC auth action after
-initial revalidation. Never replace it with an artifact-supplied executable.
+alone still refuses. R1 must provide that trusted adapter and protected environment
+`release` (or reconcile the name). The official OIDC action is commit-pinned and
+runs only after preflight validates frozen bytes, public corresponding source and
+approval. Its output alone reaches the upload step, and its post step revokes it.
+Never replace the gate with an artifact-supplied executable.
 The authenticated approval must bind the root inventory and R3 subinventory,
 source/tag, channel/target sets, candidate run/attempt and publishing run/attempt.
+The workflow carries separate `inventory_sha256` (R1 root approval) and
+`crates_inventory_sha256` (R3 manifest) inputs. The gate's `verify` call receives
+both `--inventory-sha256` and `--channel-inventory-sha256`; it must authenticate
+their relationship rather than approve the subinventory in isolation.
 Revalidation covers environment/tag bypass settings, exact-SHA trusted checks,
 retained bytes and every upload/signing boundary. Set R3_PUBLISH_ENABLED only
 after independent integration review and negative acceptance. This is a merge

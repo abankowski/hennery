@@ -9,6 +9,9 @@ on:
       inventory_sha256:
         required: true
         type: string
+      crates_inventory_sha256:
+        required: true
+        type: string
       source_sha:
         required: true
         type: string
@@ -39,6 +42,7 @@ jobs:
       R1_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
       R1_CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
       R1_INVENTORY_SHA256: ${{ inputs.inventory_sha256 }}
+      R3_INVENTORY_SHA256: ${{ inputs.crates_inventory_sha256 }}
       R1_SOURCE_SHA: ${{ inputs.source_sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -55,8 +59,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
-      # R1 INTEGRATION: insert the pinned rust-lang/crates-io-auth-action only
-      # AFTER the gate above, then expose its ephemeral token to the next step.
-      # No long-lived/bootstrap token is accepted by this workflow.
+      - name: Revalidate frozen crates and public corresponding source before credentials
+        run: node packaging/publish-crates.mjs --verify "$RUNNER_TEMP/crates-candidate" "$R3_INVENTORY_SHA256"
+      - name: Obtain a temporary token after preflight; revoke it in the action post step
+        id: cratesio
+        uses: rust-lang/crates-io-auth-action@9c067fc5d5c254b33978fed918cb50c032549d0e # main @ 2026-10-15
       - name: Upload frozen bytes in dependency order, revalidating at every boundary
-        run: node packaging/publish-crates.mjs "$RUNNER_TEMP/crates-candidate" "$R1_INVENTORY_SHA256"
+        run: node packaging/publish-crates.mjs "$RUNNER_TEMP/crates-candidate" "$R3_INVENTORY_SHA256"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.cratesio.outputs.token }}

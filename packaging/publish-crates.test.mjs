@@ -88,3 +88,29 @@ test('same-size retained crate tampering stops before credentials',async()=>{
  const f=fixture(),n=network(f);fs.writeFileSync(join(f.dir,f.crates[0].file),'x'.repeat(f.crates[0].size));let acquired=false;
  await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>{acquired=true;return 'ephemeral';}}));assert.equal(acquired,false);assert.equal(n.uploads.length,0);
 });
+test('OIDC acquisition follows frozen-byte preflight and only its ephemeral output reaches upload',()=>{
+ const yaml=fs.readFileSync('.github/workflows/publish-crates.yml','utf8');
+ const preflight=yaml.indexOf('publish-crates.mjs --verify'),auth=yaml.indexOf('uses: rust-lang/crates-io-auth-action@');
+ assert.ok(preflight>=0 && auth>preflight,'credentials acquired before preflight');
+ assert.match(yaml,/CARGO_REGISTRY_TOKEN: \$\{\{ steps\.cratesio\.outputs\.token \}\}/);
+});
+test('global approval inventory and the crates subinventory are explicit separate bindings',()=>{
+ const yaml=fs.readFileSync('.github/workflows/publish-crates.yml','utf8');
+ assert.match(yaml,/crates_inventory_sha256:/);assert.match(yaml,/R3_INVENTORY_SHA256: \$\{\{ inputs\.crates_inventory_sha256 \}\}/);
+});
+import { preflight } from './publish-crates.mjs';
+test('precredential preflight validates source and approval without any upload',async()=>{
+ const f=fixture(),n=network(f);let gates=0;
+ const result=await preflight({...f,...n,gate:async()=>{gates++;}});
+ assert.equal(result.inventory.version,'0.1.0-alpha.1');assert.equal(gates,2);assert.equal(n.uploads.length,0);
+});
+test('R1 adapter refuses a missing root binding and receives both approved inventory digests',()=>{
+ const root=fs.mkdtempSync(join(tmpdir(),'r3-gate-')),prior=process.cwd(),old=process.env.R1_INVENTORY_SHA256,capture=join(root,'args.json');fs.mkdirSync(join(root,'packaging'));
+ fs.writeFileSync(join(root,'packaging/release-gate'),'#!/usr/bin/env node\nrequire("node:fs").writeFileSync('+JSON.stringify(capture)+',JSON.stringify(process.argv.slice(2)));\n',{mode:0o755});
+ const args={channel:'crates-io',digest:'b'.repeat(64),source_sha:'a'.repeat(40),version:'0.1.0-alpha.1'};
+ try{
+  process.chdir(root);process.env.R1_INVENTORY_SHA256='';assert.throws(()=>r1Gate(args),/global approval inventory digest missing/);assert.equal(fs.existsSync(capture),false);
+  process.env.R1_INVENTORY_SHA256='c'.repeat(64);r1Gate(args);
+  assert.deepEqual(JSON.parse(fs.readFileSync(capture)),['verify','--channel','crates-io','--inventory-sha256','c'.repeat(64),'--channel-inventory-sha256','b'.repeat(64),'--source-sha','a'.repeat(40),'--version','0.1.0-alpha.1']);
+ }finally{process.chdir(prior);if(old===undefined)delete process.env.R1_INVENTORY_SHA256;else process.env.R1_INVENTORY_SHA256=old;}
+});

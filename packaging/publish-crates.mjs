@@ -6,7 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { sha256, readJSON, requireThat, verifyCandidate, validateSource, publishBody } from './crate-release.mjs';
 import { indexPath } from './crate-registry.mjs';
-export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,pause=delay}) {
+export async function preflight({dir,digest,gate,fetcher=fetch}) {
   const inventoryFile=join(dir,'crates-inventory.json');
   function validate() {
     requireThat(sha256(fs.readFileSync(inventoryFile))===digest,'inventory changed after approval');
@@ -17,6 +17,10 @@ export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,p
   await authorize();
   await validateSource(inventory.source,fetcher);
   await authorize();
+  return {inventory,authorize};
+}
+export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,pause=delay}) {
+  const {inventory,authorize}=await preflight({dir,digest,gate,fetcher});
   const token=await credentials();requireThat(typeof token==='string' && token.length>0,'publication credential missing');
   const completed=[];
   for(const c of inventory.crates) {
@@ -60,9 +64,15 @@ export function r1Gate(args) {
   // materialize only retained bytes and reconcile channel completion. No artifact-supplied code.
   const executable=resolve('packaging/release-gate');
   requireThat(fs.existsSync(executable),'R1 integration missing: packaging/release-gate (publication disabled)');
-  execFileSync(executable,['verify','--channel',args.channel,'--inventory-sha256',args.digest,'--source-sha',args.source_sha,'--version',args.version],{stdio:'inherit'});
+  const rootDigest=process.env.R1_INVENTORY_SHA256;
+  requireThat(/^[a-f0-9]{64}$/.test(rootDigest||''),'R1 global approval inventory digest missing');
+  execFileSync(executable,['verify','--channel',args.channel,'--inventory-sha256',rootDigest,'--channel-inventory-sha256',args.digest,'--source-sha',args.source_sha,'--version',args.version],{stdio:'inherit'});
 }
 if(import.meta.url===pathToFileURL(process.argv[1]||'').href) {
   requireThat(process.env.GITHUB_ACTIONS==='true','real publisher only runs through the protected R1 workflow');
-  await publishFrozen({dir:resolve(process.argv[2]),digest:process.argv[3],gate:r1Gate,credentials:async()=>process.env.CARGO_REGISTRY_TOKEN});
+  if(process.argv[2]==='--verify') {
+    await preflight({dir:resolve(process.argv[3]),digest:process.argv[4],gate:r1Gate});
+  } else {
+    await publishFrozen({dir:resolve(process.argv[2]),digest:process.argv[3],gate:r1Gate,credentials:async()=>process.env.CARGO_REGISTRY_TOKEN});
+  }
 }
