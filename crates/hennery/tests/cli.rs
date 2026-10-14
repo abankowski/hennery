@@ -4343,6 +4343,15 @@ fn a_secure_loopback_pairing_rejects_join_run_and_up_plaintext_overrides() {
             host.to_str().unwrap(),
         ],
         vec![
+            "host",
+            "transport",
+            "set",
+            &origin,
+            "--system-roots",
+            "--data-dir",
+            host.to_str().unwrap(),
+        ],
+        vec![
             "up",
             "--listen",
             "127.0.0.1:0",

@@ -377,6 +377,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(inspect(dir.path()).unwrap(), EnrollmentState::Confirmed(a.clone()));
+        assert!(archive(dir.path(), &a.attempt_id).is_err());
         assert!(crate::identity::Paired::read(dir.path()).is_err());
         let loaded = crate::identity::Paired::load(dir.path()).unwrap().unwrap();
         assert_eq!(loaded.key.public_key_hex(), a.public_key);
@@ -398,6 +399,34 @@ mod tests {
         assert_eq!(std::fs::read(saved.join("host.key.pending")).unwrap(), before);
         assert!(saved.join(JOURNAL).exists());
         assert_eq!(inspect(dir.path()).unwrap(), EnrollmentState::Clear);
+    }
+    #[test]
+    fn a_receipt_must_match_each_binding_field_independently() {
+        for field in ["collector", "public_key", "host_id", "collector_tls"] {
+            let dir = tempfile::tempdir().unwrap();
+            let a = attempt(dir.path());
+            let key = HostKey::load(&dir.path().join("host.key.pending")).unwrap();
+            let path = dir.path().join("host.toml.pending");
+            crate::identity::write_config_to(&path, "wss://c.example/api/hosts/ws", "host-0123456789abcdef", &key)
+                .unwrap();
+            assert_eq!(inspect(dir.path()).unwrap(), EnrollmentState::Confirmed(a));
+            let mut table: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let value = match field {
+                "collector" => toml::Value::String("wss://other.example/api/hosts/ws".into()),
+                "public_key" => toml::Value::String(HostKey::from_seed([31; 32]).public_key_hex()),
+                "host_id" => toml::Value::String("invalid".into()),
+                _ => toml::Value::try_from(CollectorTrust::CaBundle {
+                    pem: "different trust".into(),
+                })
+                .unwrap(),
+            };
+            table.insert(field.into(), value);
+            std::fs::write(&path, toml::to_string(&table).unwrap()).unwrap();
+            assert!(inspect(dir.path()).is_err(), "{field}");
+            assert!(crate::identity::Paired::load(dir.path()).is_err(), "{field}");
+            assert!(path.exists());
+            assert!(dir.path().join(JOURNAL).exists());
+        }
     }
     #[test]
     fn interrupted_archive_remains_blocking_and_resumes_explicitly() {
