@@ -18,9 +18,8 @@ use crate::schema::{COMPONENT, MIGRATIONS};
 use crate::tokens::{is_session_token, token_hash};
 use anyhow::{Context, Result, anyhow};
 use hennery_kernel::db;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{OptionalExtension, params};
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
 
 /// How stale `last_used_at` may get before a request writes it again, in
 /// seconds (plan 8d decision 12): one write a minute per session at most,
@@ -114,7 +113,7 @@ impl std::fmt::Debug for ScopedConnection {
 /// own: session tokens resolved, connections in scope, and what live
 /// traffic says of a connection's status (gateway spec §7).
 pub struct ProxyStore {
-    conn: Mutex<Connection>,
+    conn: hennery_kernel::db::CoordinatedConnection,
     owner: String,
 }
 
@@ -126,12 +125,12 @@ impl ProxyStore {
         let owner = db::kernel_owner(&mut conn)?;
         db::migrate_component(&mut conn, COMPONENT, MIGRATIONS)?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: hennery_kernel::db::CoordinatedConnection::new(conn),
             owner,
         })
     }
 
-    fn conn(&self) -> MutexGuard<'_, Connection> {
+    fn conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
         self.conn.lock().expect("proxy store lock")
     }
 

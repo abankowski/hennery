@@ -596,6 +596,8 @@ pub enum ResumeRequest {
 /// The outcome of `Store::reassign_hat` (ACP core §4.9).
 #[derive(Debug, PartialEq)]
 pub enum Reassign {
+    /// Delivered plug-in context cannot be recalled. Start a clean session.
+    PluginExposure,
     /// Its `hat_reassigned` event.
     Done(EventDto),
     /// It is in that hat already: nothing written.
@@ -688,7 +690,8 @@ pub struct Reconciliation {
 }
 
 pub struct Store {
-    conn: Mutex<Connection>,
+    plugins: Arc<hennery_gateway::plugin::Control>,
+    conn: hennery_kernel::db::CoordinatedConnection,
     /// The database's owner (`hennery_kernel::db::kernel_owner`), whom
     /// every query names.
     owner: String,
@@ -1834,9 +1837,14 @@ impl Store {
     /// The kernel's tables first: they hold the owner, which this store's
     /// rows name and its last migration fills in. So the store and the
     /// kernel agree on the owner whichever opens the database first.
-    fn init(mut conn: Connection, attachments: Option<PathBuf>, path: Option<PathBuf>) -> Result<Self> {
+    fn init(
+        mut conn: hennery_kernel::db::OwnedConnection,
+        attachments: Option<PathBuf>,
+        path: Option<PathBuf>,
+    ) -> Result<Self> {
         let owner = hennery_kernel::db::kernel_owner(&mut conn)?;
         hennery_kernel::db::migrate(&mut conn, MIGRATIONS)?;
+        let plugins = hennery_gateway::plugin::Control::for_core(path.as_deref(), &owner, conn.coordination());
         let checkpoints = path.map(|path| {
             Arc::new(Checkpoints {
                 path,
@@ -1851,7 +1859,8 @@ impl Store {
             checkpoints.run();
         }
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: hennery_kernel::db::CoordinatedConnection::new(conn),
+            plugins,
             owner,
             attachments,
             checkpoints,
@@ -1873,8 +1882,35 @@ impl Store {
 
     /// The gateway's part of a hat's purge (lane L6): through the gateway
     /// this store was given, so a store without one has none to purge.
-    pub fn purge_gateway_hat(&self, hat_id: &str) -> Result<()> {
-        self.mcp().purge_hat(hat_id)
+    pub async fn purge_gateway_hat(&self, hat_id: &str) -> Result<()> {
+        let anchored: bool = self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE owner_id = ?1 AND key LIKE 'plugin_epoch:%')",
+            [&self.owner],
+            |r| r.get(0),
+        )?;
+        if !self.has_session_mcp() && (anchored || self.plugins.configured()?) {
+            let mut conn = self.conn();
+            let tx = conn.transaction()?;
+            hennery_gateway::tokens::revoke_hat_in(&tx, &self.owner, hat_id, hennery_kernel::secret::unix_now())?;
+            tx.commit()?;
+            self.plugins.cut_all();
+            anyhow::bail!("plug-in lifecycle runtime unavailable");
+        }
+        self.mcp().purge_hat(hat_id).await
+    }
+
+    pub fn finish_plugin_purge(&self, hat: &str) -> Result<()> {
+        if !self.plugins.configured()? {
+            return Ok(());
+        }
+        let mut conn = self.conn();
+        let anchors = conn.transaction()?;
+        self.plugins.clear_purged_anchors_in(&anchors, hat)?;
+        anchors.commit()?;
+        let cleanup = conn.transaction()?;
+        self.plugins.finish_hat_purge_in(&cleanup, hat)?;
+        cleanup.commit()?;
+        Ok(())
     }
 
     /// A revoked host's tokens, and what is open on them, at once (plan 8e,
@@ -1906,11 +1942,15 @@ impl Store {
         }
     }
 
-    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+    pub(crate) fn conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
         self.conn.lock().expect("store lock")
     }
 
     /// The owner whose sessions these are.
+    pub fn plugins(&self) -> Arc<hennery_gateway::plugin::Control> {
+        self.plugins.clone()
+    }
+
     pub fn owner_id(&self) -> &str {
         &self.owner
     }
@@ -2501,6 +2541,22 @@ impl Store {
         self.open_turn_with(session_id, turn_id, content, &[])
     }
 
+    /// C1's typed production boundary. Delegation producers are not enabled
+    /// until D3; accepting their wire types here would manufacture authority.
+    pub fn open_turn_with_origin(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        content: &[Value],
+        origin: &hennery_proto::plugin::InputOrigin,
+    ) -> Result<bool> {
+        anyhow::ensure!(
+            matches!(origin, hennery_proto::plugin::InputOrigin::Operator {}),
+            "unsupported input origin"
+        );
+        self.open_turn(session_id, turn_id, content)
+    }
+
     /// Open a turn for a checked prompt (plan 6a): the turn holds the
     /// stored blocks and its links to the images (plan 9a decision 6), and
     /// each image gets the owner's row, if it has none yet. Its file must
@@ -2907,6 +2963,9 @@ impl Store {
         // a parked or failed session's is revoked already, a no-op then.
         let cut = cut.and(mcp.revoke_in(&tx, session_id)?);
         commit_then_cut(tx, mcp.as_ref(), cut)?;
+        let cleanup = conn.transaction()?;
+        self.plugins.remove_binding_in(&cleanup, session_id)?;
+        cleanup.commit()?;
         self.remove_files(&conn, &dropped);
         Ok(Deletion::Done {
             event,
@@ -3210,6 +3269,9 @@ impl Store {
         }
         if from == hat_id {
             return Ok(Reassign::Unchanged);
+        }
+        if self.plugins.bound_in(&tx, session_id)? {
+            return Ok(Reassign::PluginExposure);
         }
         let changed = tx.execute(
             "UPDATE sessions SET hat_id = ?2, hat_rule_id = NULL
@@ -3639,7 +3701,11 @@ impl Store {
                         )
                         .optional()?;
                     if let Some(content) = content {
-                        let body = json!({ "turn_id": turn_id, "content": serde_json::from_str::<Value>(&content)? });
+                        // Only the authenticated operator producer exists in
+                        // C1. This event is collector-written, never copied
+                        // from an ACP payload or inferred from prompt text.
+                        let body = json!({ "turn_id": turn_id, "content": serde_json::from_str::<Value>(&content)?,
+                            "origin": hennery_proto::plugin::InputOrigin::Operator {} });
                         let user_turn = collector_event(&tx, &self.owner, session_id, "user_turn", body, &ts)?;
                         link_attachments(&tx, &self.owner, user_turn.event_id, &user_turn.body["content"])?;
                         created.push(user_turn);
@@ -4250,7 +4316,7 @@ impl Store {
     }
 
     /// The connection, for one of the view's reads.
-    fn view_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+    fn view_conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
         self.view_reads.fetch_add(1, Ordering::Relaxed);
         self.conn()
     }

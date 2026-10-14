@@ -6,6 +6,7 @@
 
 pub mod frames;
 pub mod paths;
+pub mod plugin;
 pub mod rest;
 
 /// Version of the host<->collector protocol, `MAJOR.MINOR`. Sent only in
@@ -39,3 +40,4 @@ pub fn hello_proof_message(nonce: &[u8], host_id: &str, protocol_version: &str) 
     out
 }
 pub mod codegen;
+pub mod plugin_management;

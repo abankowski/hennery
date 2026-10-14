@@ -563,7 +563,7 @@ async fn a_purge_that_stopped_after_the_freeze_completes_when_posted_again() {
         c.state.hosts.begin_purge(&third, NOW).unwrap(),
         PurgeStart::Frozen { .. }
     ));
-    let err = c.state.on_hat_purged(&third).unwrap_err();
+    let err = c.state.on_hat_purged(&third).await.unwrap_err();
     assert_eq!(
         err.downcast_ref::<SessionsRunning>(),
         Some(&SessionsRunning(vec!["t-running".into()]))
@@ -586,7 +586,7 @@ async fn a_purge_that_stopped_after_the_freeze_completes_when_posted_again() {
     assert_eq!(c.state.hosts.hat(&third).unwrap(), None);
     assert_eq!(c.lifecycle("t-parked"), None);
     // Idempotent: run again on a hat done, the hook deletes nothing.
-    c.state.on_hat_purged(&third).unwrap();
+    c.state.on_hat_purged(&third).await.unwrap();
     assert!(c.state.hosts.hat(&other).unwrap().is_some());
 }
 
@@ -808,7 +808,7 @@ async fn a_purge_takes_the_hats_gateway_rows_and_leaves_another_hats() {
         );
     }
     assert_eq!(c.state.hosts.hat(&acme).unwrap(), None);
-    c.state.on_hat_purged(&acme).unwrap();
+    c.state.on_hat_purged(&acme).await.unwrap();
     assert_eq!(gateway_rows_of(&c, &other), 3);
 }
 
@@ -841,8 +841,8 @@ impl hennery_gateway::session::SessionMcp for FailingPurge {
         hennery_gateway::session::NoSessionMcp.revoke_host_in(tx, id)
     }
     fn cut(&self, _: hennery_gateway::revocation::Cut) {}
-    fn purge_hat(&self, _: &str) -> anyhow::Result<()> {
-        anyhow::bail!("the gateway's part failed")
+    fn purge_hat<'a>(&'a self, _: &'a str) -> hennery_kernel::lifecycle::Purge<'a> {
+        Box::pin(async { anyhow::bail!("the gateway's part failed") })
     }
 }
 
@@ -866,9 +866,11 @@ impl hennery_gateway::session::SessionMcp for RecordingPurge {
         hennery_gateway::session::NoSessionMcp.revoke_host_in(tx, id)
     }
     fn cut(&self, _: hennery_gateway::revocation::Cut) {}
-    fn purge_hat(&self, _: &str) -> anyhow::Result<()> {
-        self.owed.lock().unwrap().push(self.owed_marker.exists());
-        Ok(())
+    fn purge_hat<'a>(&'a self, _: &'a str) -> hennery_kernel::lifecycle::Purge<'a> {
+        Box::pin(async move {
+            self.owed.lock().unwrap().push(self.owed_marker.exists());
+            Ok(())
+        })
     }
 }
 
@@ -884,7 +886,7 @@ async fn a_failed_gateway_part_stops_a_purge_before_its_sessions() {
     assert_eq!((status, code.as_str()), (500, "internal"));
     assert_eq!(c.lifecycle("a1").as_deref(), Some("parked"));
     assert!(c.state.hosts.hat(&acme).unwrap().unwrap().purging);
-    assert!(c.state.on_hat_purged(&acme).is_err());
+    assert!(c.state.on_hat_purged(&acme).await.is_err());
     assert_eq!(c.lifecycle("a1").as_deref(), Some("parked"));
     c.state
         .store
@@ -913,6 +915,6 @@ async fn the_purges_checkpoint_is_owed_before_the_gateways_part() {
         c.state.hosts.begin_purge(&other, NOW).unwrap(),
         PurgeStart::Frozen { .. }
     ));
-    c.state.on_hat_purged(&other).unwrap();
+    c.state.on_hat_purged(&other).await.unwrap();
     assert_eq!(*owed.lock().unwrap(), [true, true], "route, then hook");
 }

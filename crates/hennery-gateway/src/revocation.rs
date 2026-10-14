@@ -91,6 +91,13 @@ impl Revocations {
     pub fn watched(&self) -> usize {
         self.open.lock().expect("revocations lock").len()
     }
+
+    pub fn cut_all(&self) {
+        let mut open = self.open.lock().expect("revocations lock");
+        for (_, entry) in open.drain() {
+            entry.cancel.cancel();
+        }
+    }
 }
 
 /// One request's watch on its token.

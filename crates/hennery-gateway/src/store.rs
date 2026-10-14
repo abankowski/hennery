@@ -31,7 +31,7 @@ use anyhow::{Context, Result, anyhow};
 use hennery_kernel::db;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use zeroize::Zeroizing;
 
 /// A connection's columns, then whether it has a credential, then its OAuth
@@ -56,7 +56,8 @@ const SELECT_MOUNTS: &str = "SELECT m.connection_id, m.host_id
      ORDER BY m.connection_id, m.host_id";
 
 pub struct GatewayStore {
-    conn: Mutex<Connection>,
+    conn: hennery_kernel::db::CoordinatedConnection,
+    plugins: Arc<crate::plugin::Control>,
     /// The database's owner (`db::kernel_owner`), whom every query names.
     owner: String,
     refresh_caches: Mutex<Vec<Weak<crate::refresh::Attempts>>>,
@@ -66,18 +67,20 @@ impl GatewayStore {
     /// Open the gateway's tables in `hennery.db`, migrating the kernel's
     /// first (the gateway's reference them) and then its own.
     pub fn open(path: &Path) -> Result<Self> {
-        Self::init(db::open(path)?)
+        Self::init(db::open(path)?, Some(path))
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        Self::init(db::open_in_memory()?)
+        Self::init(db::open_in_memory()?, None)
     }
 
-    fn init(mut conn: Connection) -> Result<Self> {
+    fn init(mut conn: hennery_kernel::db::OwnedConnection, path: Option<&Path>) -> Result<Self> {
         let owner = db::kernel_owner(&mut conn)?;
         db::migrate_component(&mut conn, COMPONENT, MIGRATIONS)?;
+        let plugins = crate::plugin::Control::for_core(path, &owner, conn.coordination());
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: hennery_kernel::db::CoordinatedConnection::new(conn),
+            plugins,
             owner,
             refresh_caches: Mutex::default(),
         })
@@ -108,13 +111,53 @@ impl GatewayStore {
 
     /// The store's connection: `stdio.rs` and `session.rs` hold their
     /// statements on it, which the owner audit reads too.
-    pub(crate) fn conn(&self) -> MutexGuard<'_, Connection> {
+    pub(crate) fn conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
         self.conn.lock().expect("gateway store lock")
     }
 
     /// The owner whose connections these are.
     pub fn owner_id(&self) -> &str {
         &self.owner
+    }
+
+    pub fn plugins(&self) -> Arc<crate::plugin::Control> {
+        self.plugins.clone()
+    }
+
+    pub fn admit_proxy(
+        &self,
+        token: &str,
+        principal: &crate::scope::Principal,
+        connection: &crate::scope::ScopedConnection,
+    ) -> Result<crate::revocation::Watch> {
+        let crate::scope::PrincipalKind::Session { session_id, host_id } = &principal.kind;
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let live:bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM gw_session_tokens t JOIN hosts h ON h.id = t.host_id AND h.owner_id = ?1
+            JOIN gw_connections c ON c.id = ?6 AND c.owner_id = ?1 AND c.hat_id = t.hat_id
+            WHERE t.owner_id = ?1 AND t.token_hash = ?2 AND t.session_id = ?3 AND t.host_id = ?4 AND t.hat_id = ?5
+            AND t.revoked_at IS NULL AND h.revoked_at IS NULL
+            AND EXISTS(SELECT 1 FROM gw_mounts m WHERE m.owner_id = ?1 AND m.connection_id = c.id AND m.host_id = t.host_id))",
+            params![self.owner,crate::tokens::token_hash(token),session_id,host_id,principal.hat_id,connection.id], |r|r.get(0))?;
+        anyhow::ensure!(live, "gateway scope changed before plug-in admission");
+        let current = read(&tx, &self.owner, Some(&connection.id))?
+            .pop()
+            .context("gateway connection disappeared before admission")?;
+        // Policy resolution and watch installation share the owner gate. A
+        // registration cut cannot miss an admission using an earlier policy.
+        anyhow::ensure!(
+            current.slug == connection.slug
+                && current.url == connection.url
+                && current.cred_kind == connection.cred_kind
+                && current.internal_network == connection.internal_network
+                && current.tool_allowlist == connection.tool_allowlist,
+            "gateway policy changed before admission"
+        );
+        let watch = self
+            .plugins
+            .admit_in(&tx, &connection.id, session_id, &principal.hat_id)?;
+        tx.commit()?;
+        Ok(watch)
     }
 
     /// Every connection, oldest first.
@@ -213,6 +256,7 @@ impl GatewayStore {
     pub fn update(&self, id: &str, patch: &ConnectionPatch, now: i64) -> Result<Change> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let old_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
         let Some(current) = read(&tx, &self.owner, Some(id))?.pop() else {
             return Ok(Change::NotFound);
         };
@@ -283,7 +327,19 @@ impl GatewayStore {
             ],
         )?;
         let updated = read(&tx, &self.owner, Some(id))?.pop();
+        let result_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        self.plugins.authorize_mutation_in(
+            &tx,
+            id,
+            &old_fingerprint,
+            &format!("update:{}", result_fingerprint),
+            &result_fingerprint,
+            hennery_kernel::secret::unix_now(),
+        )?;
         tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
         if credential_changed {
             self.evict_refresh(id);
         }
@@ -295,6 +351,7 @@ impl GatewayStore {
     pub fn delete(&self, id: &str) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let old_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
         tx.execute(
             "DELETE FROM gw_credentials WHERE connection_id = ?1 AND owner_id = ?2",
             [id, &self.owner],
@@ -311,7 +368,19 @@ impl GatewayStore {
             "DELETE FROM gw_connections WHERE id = ?1 AND owner_id = ?2",
             [id, &self.owner],
         )?;
+        let result_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        self.plugins.authorize_mutation_in(
+            &tx,
+            id,
+            &old_fingerprint,
+            &format!("delete:{}", result_fingerprint),
+            &result_fingerprint,
+            hennery_kernel::secret::unix_now(),
+        )?;
         tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
         self.evict_refresh(id);
         Ok(deleted == 1)
     }
@@ -331,9 +400,10 @@ impl GatewayStore {
         }
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        if read(&tx, &self.owner, Some(id))?.is_empty() {
+        let old_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        let Some(before) = read(&tx, &self.owner, Some(id))?.pop() else {
             return Ok(Change::NotFound);
-        }
+        };
         let mut hosts: Vec<&String> = host_ids.iter().collect();
         hosts.sort();
         hosts.dedup();
@@ -360,7 +430,23 @@ impl GatewayStore {
             )?;
         }
         let mounted = read(&tx, &self.owner, Some(id))?.pop();
+        if before.mounts.iter().any(|host| !host_ids.contains(host)) {
+            let result_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+            self.plugins.authorize_mutation_in(
+                &tx,
+                id,
+                &old_fingerprint,
+                &format!("replace_mounts:{}", result_fingerprint),
+                &result_fingerprint,
+                hennery_kernel::secret::unix_now(),
+            )?;
+        } else {
+            self.plugins.mount_added_in(&tx, id, &old_fingerprint)?;
+        }
         tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
         Ok(mounted.map_or(Change::NotFound, |record| Change::Done(Box::new(record))))
     }
 
@@ -369,6 +455,8 @@ impl GatewayStore {
     pub fn set_static_credential(&self, id: &str, token: &str, key: &MasterKey, now: i64) -> Result<CredentialChange> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let old_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        let plugin_intent = crate::plugin::secret_intent(key, id, "set_static_credential", token.as_bytes());
         let kind: Option<String> = tx
             .query_row(
                 "SELECT cred_kind FROM gw_connections WHERE id = ?1 AND owner_id = ?2",
@@ -395,7 +483,13 @@ impl GatewayStore {
                  WHERE gw_credentials.owner_id = excluded.owner_id",
             params![id, self.owner, key.version(), sealed, now],
         )?;
+        let result_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        self.plugins
+            .authorize_mutation_in(&tx, id, &old_fingerprint, &plugin_intent, &result_fingerprint, now)?;
         tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
         self.evict_refresh(id);
         Ok(CredentialChange::Done)
     }
@@ -473,6 +567,13 @@ impl GatewayStore {
     ) -> Result<ClientChange> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let old_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        let plugin_intent = crate::plugin::secret_intent(
+            key,
+            id,
+            "set_oauth_client",
+            serde_json::to_string(&(client_id, secret.intent_value()))?.as_bytes(),
+        );
         let kind: Option<String> = tx
             .query_row(
                 "SELECT cred_kind FROM gw_connections WHERE id = ?1 AND owner_id = ?2",
@@ -572,7 +673,13 @@ impl GatewayStore {
             )?;
         }
         let record = read(&tx, &self.owner, Some(id))?.pop();
+        let result_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        self.plugins
+            .authorize_mutation_in(&tx, id, &old_fingerprint, &plugin_intent, &result_fingerprint, now)?;
         tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
         Ok(record.map_or(ClientChange::NotFound, |record| ClientChange::Done(Box::new(record))))
     }
 
@@ -700,10 +807,23 @@ impl GatewayStore {
                  WHERE connection_id = ?1 AND owner_id = ?2 AND pending_client_id = ?3 AND pending_issuer IS NULL"
             }
         };
-        Ok(self
-            .conn()
-            .execute(sql, params![id, self.owner, client_id, issuer, token_endpoint])?
-            == 1)
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let old = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        let changed = tx.execute(sql, params![id, self.owner, client_id, issuer, token_endpoint])?;
+        if changed == 1 {
+            let result = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+            let intent = hennery_kernel::secret::sha256_hex(
+                serde_json::to_string(&("pin_client", client_id, issuer, token_endpoint))?.as_bytes(),
+            );
+            self.plugins
+                .authorize_mutation_in(&tx, id, &old, &intent, &result, hennery_kernel::secret::unix_now())?;
+        }
+        tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
+        Ok(changed == 1)
     }
 
     /// Security review F2: an unlocked pre-exchange check. This is only
@@ -850,6 +970,8 @@ impl GatewayStore {
         let sealed = crypto::seal(key, id, OAUTH_TOKENS, &tokens.to_sealable());
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let old_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        let plugin_intent = crate::plugin::secret_intent(key, id, "store_refreshed_observed", &tokens.to_sealable());
         let changed = tx.execute(
             "UPDATE gw_credentials SET key_version = ?3, ciphertext = ?4, expires_at = ?5, updated_at = ?6
              WHERE connection_id = ?1 AND owner_id = ?2 AND ciphertext = ?7",
@@ -861,7 +983,15 @@ impl GatewayStore {
                 params![id, self.owner, resource_param_accepted],
             )?;
         }
+        if changed == 1 {
+            let result_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+            self.plugins
+                .authorize_mutation_in(&tx, id, &old_fingerprint, &plugin_intent, &result_fingerprint, now)?;
+        }
         tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
         if changed == 1 {
             self.evict_refresh(id);
         }
@@ -881,6 +1011,8 @@ impl GatewayStore {
         let id = grant.connection_id;
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let old_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        let plugin_intent = crate::plugin::secret_intent(key, id, "store_grant", &grant.tokens.to_sealable());
         type Row = (String, String, bool, String, String, String);
         let current: Option<Row> = tx
             .query_row(
@@ -954,7 +1086,13 @@ impl GatewayStore {
              WHERE id = ?1 AND owner_id = ?2",
             params![id, self.owner, now],
         )?;
+        let result_fingerprint = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        self.plugins
+            .authorize_mutation_in(&tx, id, &old_fingerprint, &plugin_intent, &result_fingerprint, now)?;
         tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
         self.evict_refresh(id);
         let from = Status::parse(&status).ok_or_else(|| anyhow!("a stored status"))?;
         Ok(GrantStored::Stored(StatusChange {
@@ -994,11 +1132,27 @@ impl GatewayStore {
     /// The operator accepted `resource` for the connection at `url`
     /// (api-8e-8f F3): kept until the URL changes.
     pub fn accept_resource(&self, id: &str, url: &str, resource: &str) -> Result<bool> {
-        Ok(self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let old = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+        let changed = tx.execute(
             "UPDATE gw_connections SET accepted_resource = ?4, resource_mismatch = NULL
              WHERE id = ?1 AND owner_id = ?2 AND url = ?3",
             params![id, self.owner, url, resource],
-        )? == 1)
+        )?;
+        if changed == 1 {
+            let result = crate::plugin::fingerprint(&tx, &self.owner, id)?;
+            let intent = hennery_kernel::secret::sha256_hex(
+                serde_json::to_string(&("accept_resource", url, resource))?.as_bytes(),
+            );
+            self.plugins
+                .authorize_mutation_in(&tx, id, &old, &intent, &result, hennery_kernel::secret::unix_now())?;
+        }
+        tx.commit()?;
+        let completion = conn.transaction()?;
+        self.plugins.complete_in(&completion, id)?;
+        completion.commit()?;
+        Ok(changed == 1)
     }
 
     /// Whether any credential is stored: then a missing master key is an
@@ -1111,6 +1265,7 @@ impl GatewayStore {
     pub fn purge_hat(&self, hat_id: &str) -> Result<Cut> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        self.plugins.guard_purge_in(&tx, hat_id)?;
         let ids: Vec<_> = read(&tx, &self.owner, None)?
             .into_iter()
             .filter(|connection| connection.hat_id == hat_id)
@@ -1142,6 +1297,11 @@ impl GatewayStore {
             [hat_id, &self.owner],
         )?;
         tx.commit()?;
+        let completion = conn.transaction()?;
+        for id in &ids {
+            self.plugins.complete_in(&completion, id)?;
+        }
+        completion.commit()?;
         for id in ids {
             self.evict_refresh(&id);
         }
@@ -1150,6 +1310,7 @@ impl GatewayStore {
 }
 
 /// What a `PUT …/oauth-client` does with the secret (api-8e-8f B2).
+#[derive(Clone)]
 pub enum SecretInput {
     /// Absent: keep the stored one, for the same client id only.
     Keep,
@@ -1400,6 +1561,16 @@ fn read(conn: &Connection, owner: &str, id: Option<&str>) -> Result<Vec<Connecti
         }
     }
     Ok(out)
+}
+
+impl SecretInput {
+    fn intent_value(&self) -> (&'static str, Option<&str>) {
+        match self {
+            Self::Keep => ("keep", None),
+            Self::Clear => ("clear", None),
+            Self::Set(value) => ("set", Some(value)),
+        }
+    }
 }
 
 #[cfg(test)]

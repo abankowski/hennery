@@ -616,8 +616,8 @@ fn a_delete_revokes_a_token_left_live_on_a_closed_session() {
 
 /// The kernel's purge hook (`LifecycleHooks::on_hat_purged`, lane L6):
 /// the gateway's part, then the sessions', so the hat's row can go.
-#[test]
-fn the_purge_hook_runs_the_gateways_part_too() {
+#[tokio::test]
+async fn the_purge_hook_runs_the_gateways_part_too() {
     use hennery_kernel::lifecycle::LifecycleHooks;
     let w = World::new();
     w.active("s1");
@@ -641,7 +641,7 @@ fn the_purge_hook_runs_the_gateways_part_too() {
     ));
     let state = hennery_sessions::AppState::new(Store::open(&w.db).unwrap(), hosts, Operator::open(&w.db).unwrap());
     state.store.set_session_mcp(Arc::new(GatewayMcp::new(&w.state)));
-    state.on_hat_purged(&w.work).unwrap();
+    state.on_hat_purged(&w.work).await.unwrap();
     assert_eq!(w.token_rows("s2"), 0, "the hat's tokens went");
     assert!(!w.live(&token(&given)));
     let left: i64 = rusqlite::Connection::open(&w.db)
@@ -658,19 +658,19 @@ fn the_purge_hook_runs_the_gateways_part_too() {
 
 /// Lane L6: the gateway's part of a hat's purge deletes the hat's tokens
 /// and cuts them; another hat's are left.
-#[test]
-fn a_hat_purge_takes_and_cuts_its_tokens() {
+#[tokio::test]
+async fn a_hat_purge_takes_and_cuts_its_tokens() {
     let w = World::new();
     let theirs = token(&w.start("s1", &w.work.clone(), CLAUDE));
     let mine = token(&w.start("s2", &w.hat.clone(), CLAUDE));
     let (watch_theirs, watch_mine) = (w.watch(&theirs), w.watch(&mine));
-    w.store.purge_gateway_hat(&w.work).unwrap();
+    w.store.purge_gateway_hat(&w.work).await.unwrap();
     assert!(!w.live(&theirs));
     assert_eq!(w.token_rows("s1"), 0);
     assert!(watch_theirs.token().is_cancelled());
     w.assert_live(&mine, &watch_mine, "another hat's purge");
     // Idempotent.
-    w.store.purge_gateway_hat(&w.work).unwrap();
+    w.store.purge_gateway_hat(&w.work).await.unwrap();
 }
 
 // What does not revoke.

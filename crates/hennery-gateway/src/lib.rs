@@ -14,6 +14,8 @@ pub mod model;
 pub mod notify;
 pub mod oauth;
 mod oauth_api;
+pub mod plugin;
+pub mod plugin_api;
 pub mod probe;
 pub mod proxy;
 pub mod refresh;

@@ -360,8 +360,8 @@ fn revoke_host_in_cuts_every_live_token_of_the_host() {
     assert!(!w.token_revoked(&token_of(&b)));
 }
 
-#[test]
-fn a_hat_purge_cuts_its_tokens() {
+#[tokio::test]
+async fn a_hat_purge_cuts_its_tokens() {
     let w = world();
     w.host("host-a", 1);
     let hat = w.hat();
@@ -379,7 +379,7 @@ fn a_hat_purge_cuts_its_tokens() {
     let watch = w
         .revocations
         .watch(&hennery_kernel::secret::sha256_hex(token.as_bytes()));
-    mcp.purge_hat(&work).unwrap();
+    mcp.purge_hat(&work).await.unwrap();
     assert!(watch.token().is_cancelled());
     assert!(w.proxy_store_resolve(&token).is_none());
     // The default hat is not touched.

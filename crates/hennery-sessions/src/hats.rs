@@ -458,6 +458,7 @@ pub fn purge_sessions(state: &AppState, hat_id: &str) -> anyhow::Result<PurgedSe
         }
         delete_as_read(state, session, &mut purged)?;
     }
+    state.store.finish_plugin_purge(hat_id)?;
     Ok(purged)
 }
 
@@ -528,6 +529,8 @@ async fn purge_preview(State(state): State<AppState>, Path(id): Path<String>) ->
         let (unassigned, unassigned_count) = state.store.unassigned(UNASSIGNED_SHOWN)?;
         Ok(PurgePreview {
             hat_id: id.clone(),
+            plugin_registrations: state.store.plugin_purge_preview(&id)?,
+            plugin_receipts: state.store.plugin_purge_receipts(&id)?,
             purging: hat.purging,
             sessions: sessions.len() as u64,
             running: running_ids(&state, &sessions),
@@ -587,6 +590,7 @@ async fn purge_hat(State(state): State<AppState>, Path(id): Path<String>) -> Res
     let purged = state
         .store
         .purge_gateway_hat(&id)
+        .await
         .and_then(|()| purge_sessions(&state, &id))
         .and_then(|purged| {
             // `false`: a purge alongside got there first; it is done either way.

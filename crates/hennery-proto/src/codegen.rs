@@ -1,7 +1,8 @@
 //! Renders the generated artefacts. The `gen` binary writes them to disk or,
 //! with `--check`, fails if the checked-in copies differ.
 
-use crate::{frames, rest};
+use crate::plugin_management;
+use crate::{frames, plugin, rest};
 use schemars::generate::SchemaSettings;
 use ts_rs::{Config, TS};
 
@@ -32,6 +33,19 @@ pub fn render_schema() -> String {
         )*};
     }
     add!(
+        plugin_management::RegisterPluginRequest,
+        plugin_management::PluginRecoveryConfirmation,
+        plugin_management::PluginGrantResponse,
+        plugin_management::PluginRegistration,
+        plugin_management::RotatePluginRequest,
+        plugin_management::RotatePluginResponse,
+        plugin_management::PluginLease,
+        plugin_management::PluginDeletionReceipt,
+        plugin::PluginActivityPage,
+        plugin::PluginSourceInventoryPage,
+        plugin::PluginContext,
+        plugin::PluginCapabilities,
+        plugin::ForgetReceipt,
         frames::HostFrame,
         frames::CollectorFrame,
         rest::StartSessionRequest,
@@ -183,6 +197,29 @@ pub fn render_ts() -> String {
         )*};
     }
     add!(
+        plugin_management::RegisterPluginRequest,
+        plugin_management::PluginRecoveryConfirmation,
+        plugin_management::PluginGrantResponse,
+        plugin_management::PluginRegistration,
+        plugin_management::RotationAction,
+        plugin_management::RotatePluginRequest,
+        plugin_management::RotatePluginResponse,
+        plugin_management::PluginLease,
+        plugin_management::PluginDeletionReceipt,
+        plugin::InputOrigin,
+        plugin::SourceRef,
+        plugin::Provenance,
+        plugin::ContextEntry,
+        plugin::PluginContext,
+        plugin::TextRole,
+        plugin::Excerpt,
+        plugin::PluginActivityItem,
+        plugin::ActivityBody,
+        plugin::PluginActivityPage,
+        plugin::PluginSourceInventoryPage,
+        plugin::PluginCapabilities,
+        plugin::ForgetStatus,
+        plugin::ForgetReceipt,
         frames::ConfigValue,
         frames::SessionConfig,
         frames::Capability,
@@ -308,5 +345,7 @@ pub fn render_ts() -> String {
         rest::McpAuthorizeRequest,
         rest::McpAuthorizeResponse,
     );
-    out
+    let mut clean = out.lines().map(str::trim_end).collect::<Vec<_>>().join("\n");
+    clean.push('\n');
+    clean
 }

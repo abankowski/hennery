@@ -15,92 +15,22 @@
 //! agent sent them; the token stops working at the session's next park.
 
 use anyhow::{Context, Result};
+#[cfg(test)]
 use hennery_gateway::tokens::SESSION_TOKEN_PREFIX;
 use hennery_proto::frames::SessionBody;
+#[cfg(test)]
 use serde_json::Value;
-
-/// What a redacted token reads as.
-pub const REDACTED: &str = "hnry_session_<redacted>";
-
-/// The fewest hexadecimal digits after the prefix that count as a token.
+#[cfg(test)]
 const MIN_DIGITS: usize = 8;
 
-/// `text` with every token-shaped run replaced by `REDACTED`; `None` if it
-/// has none.
-pub fn text(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let prefix = SESSION_TOKEN_PREFIX.as_bytes();
-    let mut out: Option<String> = None;
-    let mut copied = 0;
-    let mut i = 0;
-    while i + prefix.len() <= bytes.len() {
-        if bytes[i..i + prefix.len()].eq_ignore_ascii_case(prefix) {
-            let digits = bytes[i + prefix.len()..]
-                .iter()
-                .take_while(|b| b.is_ascii_hexdigit())
-                .count();
-            if digits >= MIN_DIGITS {
-                let end = i + prefix.len() + digits;
-                let buffer = out.get_or_insert_with(|| String::with_capacity(text.len()));
-                // Both ends are on ASCII bytes: character boundaries.
-                buffer.push_str(&text[copied..i]);
-                buffer.push_str(REDACTED);
-                copied = end;
-                i = end;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    out.map(|mut buffer| {
-        buffer.push_str(&text[copied..]);
-        buffer
-    })
-}
+#[cfg(test)]
+pub use hennery_kernel::redact::REDACTED;
+pub use hennery_kernel::redact::{text, value};
 
-/// `text` as it may be shown: logged, or answered to the operator.
 pub fn shown(text: &str) -> std::borrow::Cow<'_, str> {
     match self::text(text) {
         Some(redacted) => std::borrow::Cow::Owned(redacted),
         None => std::borrow::Cow::Borrowed(text),
-    }
-}
-
-/// Redact every string of `value`, object keys too. True if any changed.
-pub fn value(value: &mut Value) -> bool {
-    match value {
-        Value::String(s) => match text(s) {
-            Some(redacted) => {
-                *s = redacted;
-                true
-            }
-            None => false,
-        },
-        // Every item, never stopping at the first: `any` would leave the
-        // rest unredacted.
-        Value::Array(items) => {
-            let mut changed = false;
-            for item in items {
-                changed |= self::value(item);
-            }
-            changed
-        }
-        Value::Object(map) => {
-            let mut changed = false;
-            let keys: Vec<String> = map.keys().filter(|key| text(key).is_some()).cloned().collect();
-            for key in keys {
-                if let Some(mut entry) = map.remove(&key) {
-                    self::value(&mut entry);
-                    map.insert(text(&key).unwrap_or(key), entry);
-                    changed = true;
-                }
-            }
-            for entry in map.values_mut() {
-                changed |= self::value(entry);
-            }
-            changed
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) => false,
     }
 }
 

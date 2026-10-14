@@ -2493,7 +2493,7 @@ async fn a_hat_purge_drops_its_oauth_flows() {
         runtime: h.runtime.clone(),
         operator: h.operator.clone(),
     };
-    GatewayMcp::new(&gateway).purge_hat(&h.world.hat()).unwrap();
+    GatewayMcp::new(&gateway).purge_hat(&h.world.hat()).await.unwrap();
     assert_eq!(h.runtime.flows.live("", unix_now()), 1);
     assert!(h.world.store.connection(&id).unwrap().is_none());
     assert!(h.world.store.connection(&other).unwrap().is_some());

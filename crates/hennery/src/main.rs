@@ -513,7 +513,7 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
     // credentials are stored, or that does not open them, stops the start
     // (plan 8a decision 8; `KeyUnavailable` tells that case apart).
     let keys = hennery_gateway::key::KeySource::from_env(&data_dir)?;
-    let (gateway, proxy) = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY)?;
+    let (gateway, proxy) = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY).await?;
     state.offline_threshold = std::time::Duration::from_secs(args.host_offline_secs);
     hennery_sessions::offline::after_startup(&state);
     hennery_sessions::sweep::after_startup(&state);
@@ -1311,7 +1311,7 @@ async fn run_up(args: UpArgs) -> Result<std::process::ExitCode> {
 /// - a problem already there is announced once (gateway spec §7); from
 ///   here on, only transitions;
 /// - the probe of OAuth connections runs every `every` until shutdown.
-fn start_gateway(
+async fn start_gateway(
     db: &std::path::Path,
     keys: &hennery_gateway::key::KeySource,
     state: &AppState,
@@ -1328,6 +1328,8 @@ fn start_gateway(
     state
         .store
         .set_session_mcp(std::sync::Arc::new(hennery_gateway::session::GatewayMcp::new(&gateway)));
+    gateway.runtime.recover_plugins().await?;
+    gateway.runtime.ensure_plugin_worker();
     gateway.runtime.announce_startup()?;
     let proxy = hennery_gateway::proxy::ProxyState::for_sessions(
         gateway.runtime.clone(),
@@ -1368,7 +1370,9 @@ mod tests {
         assert!(!state.store.has_session_mcp());
         let keys = hennery_gateway::key::KeySource::from_vars(dir.path(), Some("07".repeat(32).into()), None).unwrap();
         let egress = hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap();
-        let _routes = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY).unwrap();
+        let _routes = start_gateway(&db, &keys, &state, &egress, hennery_gateway::probe::EVERY)
+            .await
+            .unwrap();
         assert!(state.store.has_session_mcp());
     }
 
@@ -1394,7 +1398,9 @@ mod tests {
         // a grant whose upstream is a listener here.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/mcp", listener.local_addr().unwrap());
-        let (first, _) = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_secs(3600)).unwrap();
+        let (first, _) = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_secs(3600))
+            .await
+            .unwrap();
         let runtime = first.runtime.clone();
         let hennery_gateway::model::Change::Done(record) = runtime
             .store
@@ -1454,7 +1460,9 @@ mod tests {
         while notices.try_recv().is_some() {}
         drop((first, runtime));
         // The start this test is about.
-        let started = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_millis(20)).unwrap();
+        let started = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_millis(20))
+            .await
+            .unwrap();
         // One runtime for the API and the proxy: one refresh lock per
         // connection (plan 8f decision 3).
         assert!(std::sync::Arc::ptr_eq(&started.0.runtime, &started.1.runtime));
@@ -1467,6 +1475,152 @@ mod tests {
         let accepted = tokio::time::timeout(std::time::Duration::from_secs(10), listener.accept()).await;
         assert!(accepted.is_ok(), "the probe never ran");
         state.shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn a_configured_start_recovers_later_store_transitions_without_an_http_retry() {
+        use hennery_gateway::{
+            model::{Change, CredKind, NewConnection},
+            plugin::RegistrationInput,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = AppState::new(
+            Store::open(&db).unwrap(),
+            Hosts::open(&db).unwrap(),
+            Operator::open(&db).unwrap(),
+        );
+        state
+            .hosts
+            .register(
+                "plugin-host",
+                &hennery_kernel::hosts::Enrollment {
+                    public_key: hennery_host::identity::HostKey::from_seed([7; 32]).public_key_hex(),
+                    name: "Test".into(),
+                    host_version: "0.0.0".into(),
+                    platform: "test".into(),
+                },
+                1,
+            )
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let (sent, mut seen) = tokio::sync::mpsc::unbounded_channel();
+        let app = axum::Router::new().route(
+            "/mcp",
+            axum::routing::post(
+                move |hennery_kernel::json::ApiJson(body): hennery_kernel::json::ApiJson<serde_json::Value>| {
+                    let sent = sent.clone();
+                    async move {
+                        sent.send(body.clone()).unwrap();
+                        axum::Json(serde_json::json!({"jsonrpc":"2.0","id":body["id"],"result":{
+                    "request_id":body["id"],"status":"confirmed","remaining_kinds":[]}}))
+                    }
+                },
+            ),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let keys = hennery_gateway::key::KeySource::from_vars(dir.path(), None, None).unwrap();
+        let egress = hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap();
+        // Configure durable state without invoking the HTTP registration route,
+        // which would start its own optional worker.
+        let first = hennery_gateway::open(
+            &db,
+            &keys,
+            state.operator.clone(),
+            egress.clone(),
+            std::sync::Arc::new(hennery_gateway::notify::Silent),
+        )
+        .unwrap();
+        let Change::Done(connection) = first
+            .runtime
+            .store
+            .create(
+                &NewConnection {
+                    slug: "plugin".into(),
+                    label: "Test plug-in".into(),
+                    url,
+                    hat_id: state.hosts.default_hat_for_new_hosts().unwrap(),
+                    cred_kind: CredKind::Static,
+                    static_header: None,
+                    static_prefix: None,
+                    tool_allowlist: Some(vec!["search".into()]),
+                    internal_network: true,
+                },
+                1,
+            )
+            .unwrap()
+        else {
+            panic!("connection")
+        };
+        first
+            .runtime
+            .store
+            .replace_mounts(&connection.id, &["plugin-host".into()])
+            .unwrap();
+        first
+            .runtime
+            .store
+            .set_static_credential(&connection.id, "namespace", &first.runtime.key, 1)
+            .unwrap();
+        let fingerprint = first.runtime.store.plugin_fingerprint(&connection.id).unwrap();
+        first
+            .runtime
+            .store
+            .register_plugin(
+                RegistrationInput {
+                    connection_id: &connection.id,
+                    lifecycle_credential: "separate-lifecycle",
+                    activity: false,
+                    startup: false,
+                    capabilities: serde_json::from_value(
+                        serde_json::json!({"version":1,"activity_v1":true,"forget_v1":true,"startup_context_v1":false}),
+                    )
+                    .unwrap(),
+                },
+                &first.runtime.key,
+                &fingerprint,
+                1,
+            )
+            .unwrap();
+        drop(first);
+        let started = start_gateway(&db, &keys, &state, &egress, std::time::Duration::from_secs(3600))
+            .await
+            .unwrap();
+        let error = started
+            .0
+            .runtime
+            .store
+            .update(
+                &connection.id,
+                &hennery_gateway::model::ConnectionPatch {
+                    label: Some("Changed".into()),
+                    ..Default::default()
+                },
+                hennery_kernel::secret::unix_now(),
+            )
+            .unwrap_err();
+        assert!(error.is::<hennery_gateway::plugin::PendingMutation>());
+        let body = tokio::time::timeout(std::time::Duration::from_secs(3), seen.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(body["method"], "hennery_plugin_forget");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if !started.0.runtime.store.plugin_deletion_receipts().unwrap().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        state.shutdown.cancel();
+        server.abort();
+        let _ = server.await;
     }
 
     /// Plan 10b-ii: the collector's notices reach delivery, and delivery is

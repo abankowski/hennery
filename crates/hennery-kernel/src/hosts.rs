@@ -15,7 +15,6 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use hennery_proto::frames::{AgentIsolation, Capabilities};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
-use std::sync::Mutex;
 
 /// A pairing code is valid this long (kernel spec §4.1).
 pub const PAIRING_CODE_TTL_SECS: i64 = 10 * 60;
@@ -253,7 +252,7 @@ pub fn verify_proof(public_key: &str, nonce: &[u8], host_id: &str, protocol_vers
 }
 
 pub struct Hosts {
-    conn: Mutex<Connection>,
+    conn: crate::db::CoordinatedConnection,
     /// The database's owner (`db::kernel_owner`), whom every query names.
     owner: String,
 }
@@ -269,15 +268,15 @@ impl Hosts {
         Self::init(db::open_in_memory()?)
     }
 
-    fn init(mut conn: Connection) -> Result<Self> {
+    fn init(mut conn: crate::db::OwnedConnection) -> Result<Self> {
         let owner = db::kernel_owner(&mut conn)?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: crate::db::CoordinatedConnection::new(conn),
             owner,
         })
     }
 
-    pub(crate) fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+    pub(crate) fn conn(&self) -> crate::db::ConnectionGuard<'_> {
         self.conn.lock().expect("hosts lock")
     }
 
