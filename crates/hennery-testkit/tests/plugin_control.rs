@@ -2132,3 +2132,116 @@ async fn frozen_hat_restart_revokes_before_forget_even_when_obligation_persisten
         );
     }
 }
+
+#[test]
+fn proxy_admission_rechecks_revocation_and_principal_binding_after_identity_resolution() {
+    use hennery_gateway::scope::ClientIdentity;
+    for spoof in [false, true] {
+        let w = registered_world();
+        let token = w.core(|tx| {
+            hennery_gateway::tokens::mint_in(tx, w.sessions.owner_id(), "running", "host", &w.hat, 5).unwrap()
+        });
+        let scope = hennery_gateway::scope::ProxyStore::open(&w.path).unwrap();
+        let mut principal = scope.resolve(token.expose(), 6).unwrap().unwrap();
+        if spoof {
+            w.sessions
+                .create_session("different-session", "host", "fake", "/scratch", &w.hat, None)
+                .unwrap();
+            principal.kind = hennery_gateway::scope::PrincipalKind::Session {
+                session_id: "different-session".into(),
+                host_id: "host".into(),
+            };
+        } else {
+            w.core(|tx| {
+                hennery_gateway::tokens::revoke_in(tx, w.sessions.owner_id(), "running", 6).unwrap();
+            });
+        }
+        use hennery_gateway::scope::MountPolicy;
+        let resolved = scope.connection(&principal, "test-plugin").unwrap().unwrap();
+        assert!(
+            w.gateway.admit_proxy(token.expose(), &principal, &resolved).is_err(),
+            "admission must recheck the exact current bearer identity under the lifecycle gate"
+        );
+    }
+}
+
+#[test]
+fn proxy_admission_rejects_each_stale_security_policy_field() {
+    use hennery_gateway::scope::{ClientIdentity, MountPolicy};
+    let w = registered_world();
+    let token =
+        w.core(|tx| hennery_gateway::tokens::mint_in(tx, w.sessions.owner_id(), "running", "host", &w.hat, 5).unwrap());
+    let scope = hennery_gateway::scope::ProxyStore::open(&w.path).unwrap();
+    let principal = scope.resolve(token.expose(), 6).unwrap().unwrap();
+    let current = scope.connection(&principal, "test-plugin").unwrap().unwrap();
+    for field in ["slug", "url", "kind", "network", "allowlist"] {
+        let mut stale = current.clone();
+        match field {
+            "slug" => stale.slug = "obsolete-slug".into(),
+            "url" => stale.url = "https://obsolete.invalid/mcp".into(),
+            "kind" => stale.cred_kind = CredKind::None,
+            "network" => stale.internal_network = !stale.internal_network,
+            "allowlist" => stale.tool_allowlist = None,
+            _ => unreachable!(),
+        }
+        assert!(
+            w.gateway.admit_proxy(token.expose(), &principal, &stale).is_err(),
+            "stale {field} policy must deny admission"
+        );
+    }
+    assert!(
+        !w.gateway
+            .admit_proxy(token.expose(), &principal, &current)
+            .unwrap()
+            .token()
+            .is_cancelled()
+    );
+}
+
+#[tokio::test]
+async fn first_registered_http_proxy_request_binds_before_upstream_observes_it() {
+    let mut upstream = Upstream::start_mode(Some("json")).await;
+    let w = registered_at(&upstream.url, true);
+    w.sessions
+        .create_session("late-http", "host", "fake", "/scratch", &w.hat, None)
+        .unwrap();
+    let token = w.core(|tx| {
+        hennery_gateway::tokens::mint_in(tx, w.sessions.owner_id(), "late-http", "host", &w.hat, 5).unwrap()
+    });
+    assert!(!w.core(|tx| w.gateway.plugins().bound_in(tx, "late-http").unwrap()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp/test-plugin", listener.local_addr().unwrap());
+    let app = hennery_gateway::proxy::router(hennery_gateway::proxy::ProxyState::for_sessions(
+        w.runtime(),
+        Default::default(),
+    ));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let bearer = token.expose().to_string();
+    let request = tokio::spawn(async move {
+        reqwest::Client::new()
+            .post(url)
+            .bearer_auth(bearer)
+            .header("accept", "application/json, text/event-stream")
+            .json(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"ping"}))
+            .send()
+            .await
+    });
+    upstream.entered().await;
+    assert!(
+        w.core(|tx| w.gateway.plugins().bound_in(tx, "late-http").unwrap()),
+        "the first upstream request must see an already durable exposure binding"
+    );
+    assert!(mutate(&w, "edit").is_err());
+    let response = tokio::time::timeout(std::time::Duration::from_secs(2), request)
+        .await
+        .unwrap()
+        .unwrap();
+    match response {
+        Ok(response) => assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND),
+        Err(error) => assert!(error.is_request() || error.is_body()),
+    }
+    server.abort();
+    let _ = server.await;
+}
