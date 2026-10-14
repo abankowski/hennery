@@ -31,11 +31,20 @@ pub struct FileConfig {
     /// Where browsers reach the collector, until setup stores its own
     /// (kernel spec §3.1): the setup link names it.
     pub public_url: Option<String>,
+    /// Exact peers allowed to assert the fixed address-only proxy header.
+    #[serde(default)]
+    pub proxy_client_ip_peers: Vec<std::net::IpAddr>,
 }
 
 impl FileConfig {
     pub fn parse(text: &str) -> Result<Self> {
-        Ok(toml::from_str(text)?)
+        let config: Self = toml::from_str(text)?;
+        config.proxy_policy()?;
+        Ok(config)
+    }
+
+    pub fn proxy_policy(&self) -> Result<hennery_kernel::client_address::ProxyPolicy> {
+        hennery_kernel::client_address::ProxyPolicy::new(self.proxy_client_ip_peers.clone())
     }
 
     /// `dir/config.toml`, or the defaults when there is none. Reading it
@@ -93,17 +102,26 @@ mod tests {
 
     #[test]
     fn proxy_peers_are_machine_only_exact_bounded_and_not_mistyped() {
-        for text in ["", "proxy_client_ip_peers = []", "proxy_client_ip_peers = ['127.0.0.1', '::1']"] {
+        for text in [
+            "",
+            "proxy_client_ip_peers = []",
+            "proxy_client_ip_peers = ['127.0.0.1', '::1']",
+        ] {
             assert!(FileConfig::parse(text).is_ok(), "{text}");
         }
         for text in [
-            "proxy_client_ip_peers = ['localhost']", "proxy_client_ip_peers = ['127.0.0.0/8']",
-            "proxy_client_ip_peers = ['127.0.0.1:7117']", "proxy_client_ip_peers = ['0.0.0.0']",
-            "proxy_client_ip_peers = ['::']", "proxy_client_ip_peers = ['224.0.0.1']",
+            "proxy_client_ip_peers = ['localhost']",
+            "proxy_client_ip_peers = ['127.0.0.0/8']",
+            "proxy_client_ip_peers = ['127.0.0.1:7117']",
+            "proxy_client_ip_peers = ['0.0.0.0']",
+            "proxy_client_ip_peers = ['::']",
+            "proxy_client_ip_peers = ['224.0.0.1']",
             "proxy_client_ip_peers = ['127.0.0.1', '::ffff:127.0.0.1']",
             "proxy_client_ip_peers = ['127.0.0.1', '127.0.0.2', '127.0.0.3', '127.0.0.4', '127.0.0.5', '127.0.0.6', '127.0.0.7', '127.0.0.8', '127.0.0.9']",
             "proxy_client_ip_peer = ['127.0.0.1']",
-        ] { assert!(FileConfig::parse(text).is_err(), "{text}"); }
+        ] {
+            assert!(FileConfig::parse(text).is_err(), "{text}");
+        }
     }
 
     #[test]
@@ -117,6 +135,7 @@ mod tests {
             FileConfig {
                 listen: Some(vec!["127.0.0.1:7117".into(), "[::1]:7117".into()]),
                 public_url: Some("https://hennery.example".into()),
+                ..Default::default()
             }
         );
         assert_eq!(FileConfig::parse("").unwrap(), FileConfig::default());
@@ -153,6 +172,7 @@ mod tests {
         let file = FileConfig {
             listen: Some(vec!["127.0.0.1:1".into()]),
             public_url: Some("https://file.example".into()),
+            ..Default::default()
         };
         assert_eq!(file.listen(&[]).unwrap(), ["127.0.0.1:1"]);
         assert_eq!(file.listen(&["127.0.0.1:2".into()]).unwrap(), ["127.0.0.1:2"]);
@@ -171,6 +191,7 @@ mod tests {
         let empty_list = FileConfig {
             listen: Some(vec![]),
             public_url: None,
+            ..Default::default()
         };
         let err = empty_list.listen(&[]).unwrap_err();
         assert!(format!("{err:#}").contains("listen in config.toml is empty"), "{err:#}");

@@ -5,7 +5,7 @@ use crate::json::ApiJson;
 use crate::operator::{Authenticated, Operator, PublicUrl, SetupOutcome, cleared_cookie, session_cookie};
 use crate::passkeys::{PasskeyRecord, Refused, Start};
 use crate::secret::{rfc3339, unix_now};
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Extension, Path, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
@@ -14,7 +14,6 @@ use hennery_proto::rest::{
     ApiError, AuthSessionItem, LoginRequest, PasskeyCeremony, PasskeyFinishRequest, PasskeyItem,
     PasskeyRegisterRequest, SetupRequest, SetupResponse, StepUpRequest,
 };
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -206,11 +205,11 @@ async fn setup(
 /// wrong, so the answer takes as long either way (kernel spec §3.2).
 async fn login(
     State(operator): State<Arc<Operator>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    address: crate::client_address::ClientAddress,
     headers: HeaderMap,
     ApiJson(req): ApiJson<LoginRequest>,
 ) -> Response {
-    if let Err(retry_after) = operator.login_limiter.attempt(peer.ip(), Instant::now()) {
+    if let Err(retry_after) = operator.login_limiter.attempt(address.effective, Instant::now()) {
         return rate_limited(
             retry_after,
             "too many wrong passwords from this address; try again later",
@@ -221,7 +220,7 @@ async fn login(
         Ok(None) => return error(StatusCode::UNAUTHORIZED, "invalid_password", "wrong password"),
         Err(err) => return internal(err),
     };
-    operator.login_limiter.succeeded(peer.ip());
+    operator.login_limiter.succeeded(address.effective);
     // Bound to the password just checked: a reset since then wins.
     match operator.open_session(&user_agent(&headers), &phc, unix_now()) {
         Ok(Some(token)) => with_cookie(
@@ -256,11 +255,11 @@ async fn logout(State(operator): State<Arc<Operator>>, headers: HeaderMap) -> Re
 /// own (3b decision 10).
 async fn step_up(
     State(operator): State<Arc<Operator>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    address: crate::client_address::ClientAddress,
     Extension(session): Extension<Authenticated>,
     ApiJson(req): ApiJson<StepUpRequest>,
 ) -> Response {
-    if let Err(retry_after) = operator.step_up_limiter.attempt(peer.ip(), Instant::now()) {
+    if let Err(retry_after) = operator.step_up_limiter.attempt(address.effective, Instant::now()) {
         return rate_limited(
             retry_after,
             "too many wrong passwords from this address; try again later",
@@ -271,7 +270,7 @@ async fn step_up(
         Ok(None) => return error(StatusCode::UNAUTHORIZED, "invalid_password", "wrong password"),
         Err(err) => return internal(err),
     }
-    operator.step_up_limiter.succeeded(peer.ip());
+    operator.step_up_limiter.succeeded(address.effective);
     match operator.step_up(&session.session_id, unix_now()) {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => error(StatusCode::UNAUTHORIZED, "unauthenticated", "sign in first"),
@@ -393,9 +392,9 @@ fn passkey_item(record: PasskeyRecord) -> PasskeyItem {
 /// the passkey budget until a login succeeds (plan 3c decision 8).
 async fn passkey_login_start(
     State(operator): State<Arc<Operator>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    address: crate::client_address::ClientAddress,
 ) -> Response {
-    if let Err(retry_after) = operator.passkey_limiter.attempt(peer.ip(), Instant::now()) {
+    if let Err(retry_after) = operator.passkey_limiter.attempt(address.effective, Instant::now()) {
         return rate_limited(
             retry_after,
             "too many passkey logins begun from this address; try again later",
@@ -408,13 +407,13 @@ async fn passkey_login_start(
 /// the session stepped up, as a password login's is.
 async fn passkey_login_finish(
     State(operator): State<Arc<Operator>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    address: crate::client_address::ClientAddress,
     headers: HeaderMap,
     ApiJson(req): ApiJson<PasskeyFinishRequest>,
 ) -> Response {
     match operator.finish_passkey_login(&req.ceremony_id, &req.credential, &user_agent(&headers), unix_now()) {
         Ok(Ok(token)) => {
-            operator.passkey_limiter.succeeded(peer.ip());
+            operator.passkey_limiter.succeeded(address.effective);
             with_cookie(
                 StatusCode::NO_CONTENT.into_response(),
                 &session_cookie(&token, secure_cookies(&operator)),

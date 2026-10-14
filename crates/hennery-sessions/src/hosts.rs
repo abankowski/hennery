@@ -5,7 +5,7 @@
 
 use crate::AppState;
 use crate::api::{error, internal};
-use axum::extract::{ConnectInfo, Path, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
@@ -19,7 +19,6 @@ use hennery_proto::frames::Capability;
 use hennery_proto::rest::{
     EnrollRequest, EnrollResponse, HostItem, McpAgentDelivery, PairingCodeResponse, UpdateHostRequest,
 };
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 /// How long a revoke waits for the host's socket task to let go.
@@ -73,11 +72,11 @@ async fn mint_pairing_code(State(state): State<AppState>) -> Response {
 /// looked at.
 async fn enroll(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    address: hennery_kernel::client_address::ClientAddress,
     ApiJson(req): ApiJson<EnrollRequest>,
 ) -> Response {
     let now = Instant::now();
-    if let Err(retry_after) = state.enroll_limiter.attempt(peer.ip(), now) {
+    if let Err(retry_after) = state.enroll_limiter.attempt(address.effective, now) {
         let mut response = error(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
@@ -97,7 +96,7 @@ async fn enroll(
     };
     match state.hosts.enroll(&req.code, &enrollment, unix_now()) {
         Ok(EnrollOutcome::Enrolled { host_id }) => {
-            state.enroll_limiter.succeeded(peer.ip());
+            state.enroll_limiter.succeeded(address.effective);
             tracing::info!(%host_id, name = %enrollment.name, "host paired");
             (StatusCode::CREATED, Json(EnrollResponse { host_id })).into_response()
         }

@@ -2847,15 +2847,31 @@ fn proxy_attribution_diagnostics_never_claim_health_proves_the_deployment() {
     let dirs = Dirs::by_contents(collector.clone(), Found::Given);
     for (policy, expected) in [
         ("", "proxy-address attribution is unconfigured"),
-        ("proxy_client_ip_peers = ['127.0.0.1']", "proxy-address attribution is configured"),
+        (
+            "proxy_client_ip_peers = ['127.0.0.1']",
+            "proxy-address attribution is configured",
+        ),
     ] {
-        std::fs::write(collector.join("config.toml"),format!("listen = ['{addr}']\n{policy}\n")).unwrap();
-        let check = line(&checked(&cx,dirs.clone(),&nothing,&collector),16).clone();
-        assert_eq!(check.status,Status::Warn,"{check:?}");
-        assert!(check.summary.contains(expected),"{check:?}");
-        assert!(check.summary.contains("health success cannot prove header stripping or separate limiter budgets"),"{check:?}");
-        assert!(check.summary.contains("missing header uses the TCP peer"),"{check:?}");
+        std::fs::write(
+            collector.join("config.toml"),
+            format!("listen = ['{addr}']\n{policy}\n"),
+        )
+        .unwrap();
+        let check = line(&checked(&cx, dirs.clone(), &nothing, &collector), 16).clone();
+        assert_eq!(
+            check.status,
+            if policy.is_empty() { Status::Ok } else { Status::Warn },
+            "{check:?}"
+        );
+        assert!(check.summary.contains(expected), "{check:?}");
+        assert!(
+            check
+                .summary
+                .contains("health success cannot prove header stripping or separate limiter budgets"),
+            "{check:?}"
+        );
+        assert!(check.summary.contains("missing header uses the TCP peer"), "{check:?}");
     }
-    std::fs::write(collector.join("config.toml"),"proxy_client_ip_peers = ['0.0.0.0']").unwrap();
-    assert_eq!(line(&checked(&cx,dirs,&nothing,&collector),16).status,Status::Fail);
+    std::fs::write(collector.join("config.toml"), "proxy_client_ip_peers = ['0.0.0.0']").unwrap();
+    assert_eq!(line(&checked(&cx, dirs, &nothing, &collector), 16).status, Status::Fail);
 }
