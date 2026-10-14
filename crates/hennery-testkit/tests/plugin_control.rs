@@ -2587,3 +2587,70 @@ fn explicit_repair_cannot_abandon_a_frozen_hat_namespace() {
         "failed repair preserves pending purge evidence"
     );
 }
+
+#[tokio::test]
+async fn late_duplicate_forget_result_cannot_erase_a_replacement_epoch_inventory_or_rotation() {
+    let mut upstream = Upstream::start().await;
+    let w = registered_at(&upstream.url, true);
+    w.sessions
+        .ingest(
+            "running",
+            1,
+            &hennery_proto::frames::SessionBody::session_started("request", "agent"),
+        )
+        .unwrap();
+    let patch = hennery_gateway::model::ConnectionPatch {
+        label: Some("Replacement label".into()),
+        ..Default::default()
+    };
+    let apply = || w.gateway.update(&w.id, &patch, hennery_kernel::secret::unix_now());
+    assert!(apply().is_err());
+    let runtime = w.runtime();
+    let runtime1 = runtime.clone();
+    let id1 = w.id.clone();
+    let mut first = tokio::spawn(async move { runtime1.settle_plugin(&id1).await });
+    upstream.entered().await;
+    let runtime2 = runtime.clone();
+    let id2 = w.id.clone();
+    let mut second = tokio::spawn(async move { runtime2.settle_plugin(&id2).await });
+    upstream.entered().await;
+    // Two real old-epoch RPCs are now in flight outside the owner gate.
+    upstream.release.add_permits(1);
+    let first_won = tokio::select! {
+        result=&mut first=>{result.unwrap().unwrap();true},
+        result=&mut second=>{result.unwrap().unwrap();false},
+    };
+    apply().unwrap();
+    let replacement = issue_again(&w);
+    let rotated = w.gateway.rotate_plugin(&w.id, None).unwrap().token.unwrap();
+    w.sessions.source_inventory(&replacement.token, None, 1).unwrap();
+    let raw = rusqlite::Connection::open(w.path.parent().unwrap().join("plugin-control.db")).unwrap();
+    for table in ["plugin_rotations", "plugin_inventory", "plugin_inventory_sources"] {
+        assert_eq!(
+            raw.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1,
+            "replacement seeded {table}"
+        );
+    }
+    upstream.release.add_permits(1);
+    if first_won {
+        second.await.unwrap().unwrap();
+    } else {
+        first.await.unwrap().unwrap();
+    }
+    for table in ["plugin_rotations", "plugin_inventory", "plugin_inventory_sources"] {
+        assert_eq!(
+            raw.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1,
+            "late old-epoch result cannot erase new {table}"
+        );
+    }
+    w.core(|tx| {
+        assert!(
+            w.gateway.plugins().authenticate_in(tx, &rotated, 7).unwrap().is_some(),
+            "replacement handover token remains valid"
+        )
+    });
+}
