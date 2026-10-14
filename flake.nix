@@ -42,6 +42,15 @@
         checks = hennery.checks;
         # Building the web UI only (CI's Rust and release jobs): no browsers.
         devShells.web = pkgs.mkShell { packages = webTools; };
+        # Offline release-policy tests and Object Lock staging tools, pinned
+        # by flake.lock. Publication credentials are never supplied here.
+        devShells.release = pkgs.mkShell {
+          packages = [
+            (pkgs.python3.withPackages (ps: [ ps.pyyaml ]))
+            pkgs.actionlint
+            pkgs.awscli2
+          ];
+        };
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             cargo

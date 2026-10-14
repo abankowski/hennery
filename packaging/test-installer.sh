@@ -151,3 +151,57 @@ unknown=$(copy unknown-download)
 sed 's/^\([[:space:]]*_checksum_style=\)"sha256"$/\1"md5"/' "$installer" >"$unknown/hennery-installer.sh"
 refused unknown "$unknown" "$UNCHECKED"
 echo "ok: an unknown checksum style aborts"
+
+# Existing installs are explicit operator choices. Never replace any of them.
+mkdir -p "$scratch/existing" "$scratch/link" "$scratch/dangling" "$scratch/directory/hennery"
+printf 'owned by another package manager\n' > "$scratch/existing/hennery"
+cp "$scratch/existing/hennery" "$scratch/sentinel"
+ln -s "$scratch/sentinel" "$scratch/link/hennery"
+ln -s "$scratch/absent-target" "$scratch/dangling/hennery"
+for kind in existing link dangling directory; do
+    if run_installer "$dist" "$scratch/$kind" "$scratch/$kind.log"; then
+        fail "$kind: replaced an existing installation"
+    fi
+    grep -q 'refusing to overwrite' "$scratch/$kind.log" || fail "$kind: wrong refusal"
+done
+cmp "$scratch/existing/hennery" "$scratch/sentinel" || fail 'existing install changed'
+[ -L "$scratch/link/hennery" ] || fail 'package-manager symlink changed'
+[ -L "$scratch/dangling/hennery" ] || fail 'dangling symlink changed'
+[ -d "$scratch/directory/hennery" ] || fail 'directory changed'
+echo 'ok: existing files, symlinks and directories survive'
+
+# Missing download: no destination is published.
+missing=$(copy missing-download)
+for archive in "$missing"/*.tar.xz; do
+    rm "$archive"
+done
+if run_installer "$missing" "$scratch/missing" "$scratch/missing.log"; then
+    fail 'missing download installed'
+fi
+[ ! -e "$scratch/missing/hennery" ] || fail 'missing download left a binary'
+echo 'ok: failed download leaves no binary'
+
+# Known non-SHA256 algorithms and malformed values must not enter skip paths.
+sha512=$(copy sha512-download)
+sed 's/^\([[:space:]]*_checksum_style=\)"sha256"$/\1"sha512"/' "$installer" > "$sha512/hennery-installer.sh"
+refused sha512 "$sha512" "$UNCHECKED"
+malformed=$(copy malformed-download)
+sed 's/^\([[:space:]]*_checksum_value=\)".*"$/\1"not-a-digest"/' "$installer" > "$malformed/hennery-installer.sh"
+refused malformed "$malformed" "$UNCHECKED"
+echo 'ok: non-SHA256 and malformed digest abort'
+
+# Copy and chmod fail before the executable becomes visible. The installer
+# uses a private sibling directory, then an exclusive hard link into install dir.
+for command in cp chmod ln; do
+    tool_dir="$scratch/failing-$command-tools"
+    tools "$tool_dir" "$command"
+    cat > "$tool_dir/$command" <<'TOOL'
+#!/bin/sh
+exit 1
+TOOL
+    chmod +x "$tool_dir/$command"
+    (PATH="$tool_dir" && ! run_installer "$dist" "$scratch/failing-$command" "$scratch/failing-$command.log") ||
+        fail "$command failure installed"
+    [ ! -e "$scratch/failing-$command/hennery" ] || fail "$command failure published an executable"
+done
+echo 'ok: copy, chmod and publication failures leave no executable'

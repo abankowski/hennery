@@ -23,6 +23,38 @@ REFUSE_UNCHECKED = (
 
 REPLACEMENTS = [
     (
+        '    case "$_checksum_style" in\n        sha256)',
+        '    [ "$_checksum_style" = sha256 ] || ' + REFUSE_UNCHECKED + '\n'
+        '    [ "${#_checksum_value}" = 64 ] || ' + REFUSE_UNCHECKED + '\n'
+        '    case "$_checksum_value" in *[!0-9a-f]*) ' + REFUSE_UNCHECKED + ' ;; esac\n'
+        '    case "$_checksum_style" in\n        sha256)',
+    ),
+    (
+        '''        ensure mv "$_bin" "$_install_dir"
+        # unzip seems to need this chmod
+        ensure chmod +x "$_install_dir/$_bin_name"''',
+        '''        # Refuse existing package-manager files, directories and dangling links.
+        if [ -e "$_install_dir/$_bin_name" ] || [ -L "$_install_dir/$_bin_name" ]; then
+            err "refusing to overwrite an existing installation; choose an empty user directory"
+        fi
+        local _stage
+        _stage=$(mktemp -d "$_install_dir/.hennery-install.XXXXXX") || err "cannot stage installation"
+        if ! cp "$_bin" "$_stage/$_bin_name" || ! chmod 0755 "$_stage/$_bin_name"; then
+            rm -f "$_stage/$_bin_name"
+            rmdir "$_stage"
+            err "cannot prepare installation"
+        fi
+        # Target is the directory operand: link(2) atomically creates its
+        # basename, refusing EEXIST, including a concurrently created link.
+        if ! ln "$_stage/$_bin_name" "$_install_dir/"; then
+            rm -f "$_stage/$_bin_name"
+            rmdir "$_stage"
+            err "refusing to overwrite an existing installation"
+        fi
+        rm -f "$_stage/$_bin_name"
+        rmdir "$_stage"''',
+    ),
+    (
         # No `sha256sum`: `shasum`, else no SHA-256 tool at all.
         '''            if ! check_cmd sha256sum; then
                 say "skipping sha256 checksum verification (it requires the 'sha256sum' command)"
