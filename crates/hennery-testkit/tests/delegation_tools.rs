@@ -18,6 +18,59 @@ use std::{
 
 const HOST: &str = "delegation-host";
 const BOUND: Duration = Duration::from_secs(30);
+
+struct LiveSse {
+    response: reqwest::Response,
+    buffered: Vec<u8>,
+}
+impl LiveSse {
+    async fn open(h: &Harness, path: &str, after: Option<i64>) -> Self {
+        let mut request = h.client.get(format!("{}{path}", h.url));
+        if let Some(after) = after {
+            request = request.header("last-event-id", after.to_string());
+        }
+        let response = request.send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        Self {
+            response,
+            buffered: Vec::new(),
+        }
+    }
+    async fn next(&mut self) -> (String, Value) {
+        tokio::time::timeout(BOUND, async {
+            loop {
+                while let Some(end) = self.buffered.windows(2).position(|bytes| bytes == b"\n\n") {
+                    let block: Vec<_> = self.buffered.drain(..end + 2).collect();
+                    let block = std::str::from_utf8(&block).unwrap();
+                    let name = block
+                        .lines()
+                        .find_map(|line| line.strip_prefix("event:"))
+                        .map(str::trim);
+                    let data = block.lines().find_map(|line| line.strip_prefix("data:")).map(str::trim);
+                    if let (Some(name), Some(data)) = (name, data) {
+                        return (name.to_owned(), serde_json::from_str(data).unwrap());
+                    }
+                }
+                self.buffered
+                    .extend_from_slice(&self.response.chunk().await.unwrap().expect("live SSE ended"));
+            }
+        })
+        .await
+        .expect("live SSE message before deadline")
+    }
+    async fn matching(&mut self, name: &str, predicate: impl Fn(&Value) -> bool) -> Value {
+        tokio::time::timeout(BOUND, async {
+            loop {
+                let (kind, data) = self.next().await;
+                if kind == name && predicate(&data) {
+                    return data;
+                }
+            }
+        })
+        .await
+        .expect("matching live SSE message before deadline")
+    }
+}
 struct Harness {
     _dir: tempfile::TempDir,
     state: AppState,
@@ -774,6 +827,102 @@ async fn permission_questions_remain_operator_only_and_elicitation_has_one_answe
     })
     .await;
     h.done(child, "questions").await;
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn delegated_parked_close_is_attributed_and_reaches_existing_dashboard_stream() {
+    let h = Harness::with_worker(script(), None, false).await;
+    let receipt = h.spawn("park-close", json!({})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    eventually("completed child before parking", async || {
+        hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+        (h.status(child).await["last_outcome"] == "completed").then_some(())
+    })
+    .await;
+    let (status, body) = h.post(&format!("/api/sessions/{child}/park"), json!({})).await;
+    assert!(status.is_success(), "{body}");
+    eventually("idle genuinely parked child", async || {
+        let session = h.state.store.find_session(child).unwrap().unwrap();
+        (session.lifecycle == "parked" && !session.presumed_parked && session.open_turn_id.is_none()).then_some(())
+    })
+    .await;
+    let page: Value = h
+        .client
+        .get(format!("{}/api/view/sessions", h.url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let mut dashboard = LiveSse::open(
+        &h,
+        &format!(
+            "/api/stream/sessions?after={}:{}",
+            page["epoch"].as_str().unwrap(),
+            page["revision"].as_i64().unwrap()
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(dashboard.next().await.0, "waiting_changed");
+    let before = h.state.store.max_event_id().unwrap();
+    let arguments = json!({"operation_key":"close-parked","child_id":child});
+    let closed = h.ok("session_close", arguments.clone()).await;
+    let events = h.state.store.events(child, before, 100).unwrap();
+    let close: Vec<_> = events.iter().filter(|event| event.kind == "operator_closed").collect();
+    assert_eq!(close.len(), 1, "one durable close marker for an idle parked child");
+    assert_eq!(
+        close[0].body["origin"],
+        json!({"kind":"parent","session_id":h.parent,"operation_id":closed["operation_id"]})
+    );
+    let summary = dashboard
+        .matching("session_upsert", |summary| {
+            summary["id"] == child && summary["lifecycle"] == "closed"
+        })
+        .await;
+    assert_eq!(summary["close_requested"], false);
+    h.ok("session_close", arguments).await;
+    assert_eq!(h.state.store.events(child, before, 100).unwrap().len(), events.len());
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn queued_parent_answer_reaches_existing_session_stream_before_dispatch() {
+    let mut worker = script();
+    worker.asks = vec![FakeAsk::Elicitation];
+    let h = Harness::with_worker(worker, None, false).await;
+    let receipt = h.spawn("answer-stream", json!({})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    let pending = eventually("ordinary child question", async || {
+        hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+        h.state.store.open_pending(child).unwrap().into_iter().next()
+    })
+    .await;
+    let last = h.state.store.events(child, 0, 100).unwrap().last().unwrap().event_id;
+    let mut stream = LiveSse::open(&h, &format!("/api/stream/sessions/{child}"), Some(last - 1)).await;
+    stream.matching("event", |event| event["event_id"] == last).await;
+    let mut published = h.state.hub.subscribe();
+    let arguments = json!({"operation_key":"answer-live","child_id":child,"pending_id":pending.pending_id,"action":"accept","content":{"name":"parent"}});
+    let accepted = h.ok("session_answer", arguments.clone()).await;
+    let event = stream
+        .matching("event", |event| event["kind"] == "answer_submitted")
+        .await;
+    assert_eq!(
+        event["body"]["origin"],
+        json!({"kind":"parent","session_id":h.parent,"operation_id":accepted["operation_id"]})
+    );
+    let changed = stream
+        .matching("pending_changed", |item| item["pending_id"] == pending.pending_id)
+        .await;
+    assert_eq!(changed["answered"], true);
+    assert!(changed["delivered"].is_null(), "publication precedes host handoff");
+    let committed = h.state.store.events(child, last, 100).unwrap();
+    assert_eq!(committed.len(), 1);
+    assert_eq!(published.try_recv().unwrap(), committed[0]);
+    h.ok("session_answer", arguments).await;
+    assert!(published.try_recv().is_err(), "retry must not republish the answer");
     h.finish().await;
 }
 

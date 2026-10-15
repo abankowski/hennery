@@ -267,6 +267,47 @@ fn answer() -> AnswerRequest {
 }
 
 #[test]
+fn delegated_unattached_close_records_parent_intent_and_publishes_all_committed_events() {
+    let (w, p) = pair();
+    pending(&w, "child", 2, "closing-question", PendingKind::Elicitation);
+    let hub = Hub::new();
+    let mut live = hub.subscribe();
+    let before = w.store.max_event_id().unwrap();
+    let accepted = w
+        .store
+        .queue_child_close(&p, 1, "close-events", "digest", "child", &hub)
+        .unwrap();
+    assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "closed");
+    let events = w.store.events("child", before, 100).unwrap();
+    let close = events
+        .iter()
+        .find(|event| event.kind == "operator_closed")
+        .expect("durable close intent");
+    assert_eq!(close.host_seq, None);
+    assert_eq!(
+        close.body["origin"],
+        json!(InputOrigin::Parent {
+            session_id: "parent".into(),
+            operation_id: accepted.operation_id.clone()
+        })
+    );
+    assert!(events.iter().any(|event| event.kind == "pending_cancelled"));
+    let published: Vec<_> = std::iter::from_fn(|| live.try_recv().ok()).collect();
+    assert_eq!(
+        published, events,
+        "every committed close change must wake existing subscribers"
+    );
+    assert_eq!(
+        w.store
+            .queue_child_close(&p, 1, "close-events", "digest", "child", &hub)
+            .unwrap()
+            .operation_id,
+        accepted.operation_id
+    );
+    assert!(live.try_recv().is_err(), "idempotent retry publishes nothing");
+}
+
+#[test]
 fn close_intent_at_either_endpoint_cancels_before_prompt_handoff() {
     for endpoint in ["parent", "child"] {
         let (w, p) = pair();
