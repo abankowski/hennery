@@ -8,7 +8,7 @@
 
 ## Execution status (2026-10-15)
 
-Built first in `plan/deleg-d3` on D2 **89d74bf2**. Initial behavioral tests were observed RED: seven missing-table failures, missing reverse-dispatch APIs, ordinary-parent missing evidence, answer acceptance not obsoleting a question, missing collector failure notices and duplicate late start failure. The plan below embeds the resulting exact source changes. Fresh replay, copy probes, load and final command results are recorded below after execution. Independent security/whole-branch review and Linux/macOS CI remain parent-owned; no review approval is claimed.
+Built first in `plan/deleg-d3` on D2 **89d74bf2**. Initial behavioral tests were observed RED: seven missing-table failures, missing reverse-dispatch APIs, ordinary-parent missing evidence, answer acceptance not obsoleting a question, missing collector failure notices and duplicate late start failure. The plan below embeds the resulting exact source changes. The fresh replay, copy probes, 4×3 load runs and final gates are complete; evidence follows below. Rebased without conflicts onto merged D2 at **a58479c7**, whose tree is identical to the pinned replay base. Independent security/whole-branch review and Linux/macOS CI remain parent-owned; no review approval is claimed.
 
 ## Scope
 
@@ -1967,15 +1967,17 @@ index e65fad27..40c8903f 100644
 
 ### Task 1, step 3: verification and independent review
 
-- [ ] Run all six Rust checks and nix flake check -L. No web gate is required because web/ is untouched.
-- [ ] Revert-probe source recording, scope/close/config/pending guards, budget accounting, turn/association persistence, factual acknowledgement, loss obsolescence/coalescing, terminal cleanup, C1 references and the scheduler in a scratch COPY. Record each detected mutation and any equivalent/uncovered mutation honestly.
-- [ ] Run timing-sensitive store/host/HTTP tests with four binaries concurrently, three rounds.
-- [ ] Replay both nonempty blocks in a FRESH directory on the pinned base; verify expected RED/GREEN exits, positive file count and exact final implementation bytes.
+- [x] Run all six Rust checks and nix flake check -L. No web gate is required because web/ is untouched.
+- [x] Revert-probe source recording, scope/close/config/pending guards, budget accounting, turn/association persistence, factual acknowledgement, loss obsolescence/coalescing, terminal cleanup, C1 references and the scheduler in a scratch COPY. Record each detected mutation and any equivalent/uncovered mutation honestly.
+- [x] Run timing-sensitive store/host/HTTP tests with four binaries concurrently, three rounds.
+- [x] Replay both nonempty blocks in a FRESH directory on the pinned base; verify expected RED/GREEN exits, positive file count and exact final implementation bytes.
 - [ ] Check staged bytes contain no probe mutations, author identity and repository rules; commit and push plan/deleg-d3. Ask the parent for independent security and whole-branch review with the SHA range and races above. The parent opens the PR and reports complete status.
 
 ### Task 2: record execution
 
 - [ ] Add actual command exits, test counts, copy-probe/load and replay evidence below; update docs/README.md. Commit as docs(plan): record D3a delivery execution and push.
+
+The implementation and execution record are preserved in local commits. Push is blocked: `git push origin plan/deleg-d3` exited 128 because the SSH agent refused signing and the remote rejected authentication. No alternative publishing route was attempted; the parent must restore personal SSH authentication before these two tasks can be marked complete.
 
 ## After this plan
 
@@ -1987,6 +1989,150 @@ C2 must retain the ordinary generation-zero evidence line and the applied Sessio
 
 ## Verification record
 
-Pending final command, probe, load and replay outputs. No green claim is made by this placeholder.
+All six Rust gates completed with exit **0**. Logs are retained in the lane ledger and under the following temporary prefixes; the trailing EXIT marker is written after the foreground command exits.
+
+| Command (inside nix develop) | Exit | Evidence |
+|---|---:|---|
+| cargo fmt --all --check | 0 | /tmp/deleg-d3-complete-fmt.log |
+| cargo clippy --workspace --all-targets --locked -- -D warnings | 0 | /tmp/deleg-d3-complete-clippy.log |
+| cargo clippy -p hennery --locked -- -D warnings | 0 | /tmp/deleg-d3-complete-binary-clippy.log |
+| cargo test --workspace --locked | 0 | /tmp/deleg-d3-complete-tests.log: **2,364 passed across 155 suites** |
+| cargo run -p hennery-proto --bin gen --locked -- --check | 0 | /tmp/deleg-d3-complete-proto.log |
+| cargo run -p hennery-view --bin gen-view --locked -- --check | 0 | /tmp/deleg-d3-complete-view.log |
+| nix flake check -L | 0 | /tmp/deleg-d3-flake-complete.log; native macOS checks only |
+
+The separately archived, unmodified D2 baseline passed **2,339 tests across 155 suites** (exit 0, /tmp/deleg-d3-clean-baseline.log): **25 added tests**. Targeted final suites passed: delegation_d2 95, store 104, delegation_host 16, delegation_tools 13 (one pre-existing ignored pinned external-adapter test), host_session 81, owner_filter 3 and the C1 provenance unit test 1. Web files are untouched, so no separate web gate was required. Linux remains parent-owned CI; native Nix omitted incompatible Linux systems explicitly.
+
+The actual automatic HTTP/WebSocket/fake-ACP question→parent→MCP answer→child→completion-report loop passes. A separate real collector test parks the parent and verifies automatic resume and report delivery. The existing scheduler injects prompts; agents need not poll. Operator attention and push are still D3b work; delegation stays preview-gated.
+
+### Copy probes
+
+All mutations ran only in **probe-copy-1**, restoring each source before the next mutation. The first pass detected 40/44 mutations. Three missed assertions were strengthened (collector withdrawal obsolescence, present-but-partial/stale evidence, and explicit detached-family routing). Nine refinement mutations were then detected, including the combined read-bound mutation and five extra effects: **49 effective detected mutations**. Successful baselines and each expected test failure are in probe-initial-results.json, probe-refinement-results.json and their referenced logs.
+
+The individual source-turn-id removal retains the source-event upper bound, and the individual upper-bound removal retains the source-turn-id filter. Those individual mutations were not detected. Removing both was detected. Equivalence of the individual removals is a **parent review request**, not an approval claimed here. No guard was removed to accommodate a probe.
+
+The ownership mutation was separately rechecked after the audit's correct nine production-statement minimum was established (the tenth INSERT is a cfg(test) fixture, intentionally excluded by the existing scanner). Exact owner audit command: cargo test -p hennery-testkit --test owner_filter --locked. Positive baseline exit 0 (3 tests), owner predicate removal exit 101 with the specific missing-owner assertion. See owner-recheck.json. Existing source minima and audit rules were unchanged.
+
+| Mutation | Test command | Detected exit |
+|---|---|---:|
+| applied-host-source | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_question_is_transactional` | 101 |
+| collector-source | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_collector_reconciliation` | 101 |
+| loss-obsolescence | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_loss_obsoletes` | 101 |
+| answer-obsolescence | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_operator_answer` | 101 |
+| loss-coalescing | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_idle_adapter_loss` | 101 |
+| failure-coalescing | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_late_factual` | 101 |
+| source-reference-merge | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_idle_adapter_loss` | 101 |
+| permission-disposition | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_permission` | 101 |
+| unavailable-parent-disposition | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_permission` | 101 |
+| queue-cap | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_queue_overflow` | 101 |
+| notice-insertion | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_question_is_transactional` | 101 |
+| failure-source | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_collector_start_failure` | 101 |
+| busy-admission | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_reverse_delivery_checks` | 101 |
+| wake-cap | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_wake_budget` | 101 |
+| operator-only-epoch | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_wake_budget` | 101 |
+| wake-reservation | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_wake_budget` | 101 |
+| turn-reservation | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_reverse_delivery_reserves` | 101 |
+| turn-insertion | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_reverse_delivery_reserves` | 101 |
+| typed-report-origin | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_reverse_delivery_reserves` | 101 |
+| delivery-association | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_reverse_delivery_reserves` | 101 |
+| factual-settlement | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_reverse_delivery_reserves` | 101 |
+| late-acknowledgement | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_restart_keeps` | 101 |
+| rejection-disposition | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_restart_keeps` | 101 |
+| unsent-turn-cleanup | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_unsent_handoff` | 101 |
+| unsent-slot-release | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_unsent_handoff` | 101 |
+| unsent-association-release | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_unsent_handoff` | 101 |
+| wake-refund | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_unsent_handoff` | 101 |
+| automatic-resume-generation | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_automatic_parent_resume` | 101 |
+| ordinary-parent-evidence | `cargo test -p hennery-testkit --test delegation_host --locked ordinary_parent_attach` | 101 |
+| ordinary-parent-seed | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_ordinary_parent_start` | 101 |
+| provenance-child | `cargo test -p hennery-sessions --lib --locked child_report_provenance` | 101 |
+| provenance-parent | `cargo test -p hennery-sessions --lib --locked child_report_provenance` | 101 |
+| provenance-turn | `cargo test -p hennery-sessions --lib --locked child_report_provenance` | 101 |
+| provenance-source | `cargo test -p hennery-sessions --lib --locked child_report_provenance` | 101 |
+| provenance-delivery | `cargo test -p hennery-sessions --lib --locked child_report_provenance` | 101 |
+| provenance-owner | `cargo test -p hennery-testkit --test owner_filter --locked every_query` | 101 |
+| report-tail | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_report_uses_exact` | 101 |
+| endpoint-cleanup | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_delete_scrubs` | 101 |
+| scheduler-dispatch | `cargo test -p hennery-testkit --test delegation_tools --locked durable_question_answer_and_report` | 101 |
+| scheduler-resume | `cargo test -p hennery-testkit --test delegation_tools --locked child_completion_resumes` | 101 |
+| withdrawal-obsolescence | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_collector_close` | 101 |
+| configuration-proof | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_reverse_delivery_checks` | 101 |
+| family-routing-cut | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_reverse_delivery_checks` | 101 |
+| source-upper-bound | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_report_uses_exact` | 101 |
+| root-budget-deletion | `cargo test -p hennery-sessions --test store --locked a_deleted_session_leaves_only` | 101 |
+| starting-failure-source | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_collector_start_failure` | 101 |
+| reconciliation-settlement | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_restart_keeps` | 101 |
+| delivered-answer-is-not-cancellation | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_operator_answer` | 101 |
+| delivered-loss-is-not-requeued | `cargo test -p hennery-sessions --test delegation_d2 --locked d3_idle_adapter_loss` | 101 |
+
+### Timing load
+
+Four copies concurrently, three rounds for each of four groups: D3 store tests, delegation host tests, automatic question/answer/report HTTP loop, and automatic parked-parent resume loop. **48 binaries, 468 passed test executions, all exit 0**. The store run also includes the two-workers/operator same-slot race. Individual logs and exits are in load-results.json. All copies use isolated test data and scratch homes; no target directory is shared between trees.
+
+### Fresh replay
+
+**replay-7** extracted **2 nonempty diff blocks affecting 17 files**, applied them in order on archived **89d74bf2**, and observed expected exits **101, 101, 101, 0, 0, 0**. It compared the entire tracked inventory and **781 files byte-for-byte**, excluding only this plan and the README execution index: exact match. The test-only state produced the missing reverse API, missing ordinary evidence and missing automatic delivery failures; the implementation state passed all listed checks. Evidence is replay-result.json and replay-7-*.log.
+
+Earlier replay attempts are retained honestly: unsupported copy option; unscoped global hub-publication assertion exposed by concurrent parent events (fixed to assert every exact child event); corrupted context whitespace caused by trimming embedded diffs; an intermediate draft; ownership fixture counted as production (corrected after inspecting the existing scanner); and omitted tracked-but-ignored .envrc in replay initialization (fixed with git add --force). These are not final successful replays. Exact diff context spaces in this plan must be preserved.
+
+The following is the exact executed replay harness. Save it as .superpowers/sdd/deleg-d3/replay.mjs and run it with nix develop -c node .superpowers/sdd/deleg-d3/replay.mjs replay-N, selecting a **fresh** N. The ledger's tool-home/cargo/registry is a scratch copy of the available Cargo cache, used to keep replay tool writes out of the operator home. Every replay uses its own target and home.
+
+```javascript
+import fs from 'node:fs';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+const root=process.cwd();
+const ledger=path.join(root,'.superpowers/sdd/deleg-d3');
+const destination=path.join(ledger,process.argv[2]??'replay-1');
+if(fs.existsSync(destination))throw Error('fresh directory required');
+fs.mkdirSync(destination,{recursive:true});
+const run=(args,cwd=destination,options={})=>{
+  const result=spawnSync(args[0],args.slice(1),{cwd,encoding:'utf8',maxBuffer:16*1024*1024,...options});
+  if(result.status!==0)throw Error(`${args[0]} exited ${result.status}: ${result.stderr}`);
+  return result.stdout;
+};
+const archive=spawnSync('git',['archive','89d74bf2'],{cwd:root,maxBuffer:32*1024*1024});
+if(archive.status!==0)throw Error('archive failed');
+run(['tar','-x'],destination,{input:archive.stdout});
+run(['git','init','-q']);run(['git','add','--force','.']);
+run(['git','-c','user.name=Marcin Wadoń','-c','user.email=marcin.wadon@gmail.com','-c','commit.gpgsign=false','commit','-qm','test(delegation): pin D3 replay base']);
+const home=path.join(destination,'.superpowers/tool-home');fs.mkdirSync(path.join(home,'cargo'),{recursive:true});
+fs.cpSync(path.join(ledger,'tool-home/cargo/registry'),path.join(home,'cargo/registry'),{recursive:true,mode:fs.constants.COPYFILE_FICLONE});
+const source=fs.readFileSync(path.join(root,'docs/plans/2026-10-31-delegation-delivery.md'),'utf8');
+const blocks=[...source.matchAll(/<!-- replay (.+?) -->\n```diff\n([\s\S]*?)\n```/g)];
+if(blocks.length!==2)throw Error(`expected 2 blocks, found ${blocks.length}`);
+const files=new Set();const checks=[];
+for(const [index,block]of blocks.entries()) {
+  const meta=JSON.parse(block[1]);const patch=block[2]+'\n';
+  for(const match of patch.matchAll(/^diff --git a\/(.+) b\/(.+)$/gm)){if(match[1]!==match[2])throw Error('rename unsupported');files.add(match[2]);}
+  run(['git','apply','--index','-'],destination,{input:patch});
+  for(const [command,expected]of meta.checks) {
+    const log=path.join(ledger,`${path.basename(destination)}-${index}-${checks.length}.log`);
+    const fd=fs.openSync(log,'w');
+    const result=spawnSync('nix',['develop','-c','bash','-c',command],{cwd:destination,env:{...process.env,HOME:home,CARGO_HOME:path.join(home,'cargo'),XDG_CONFIG_HOME:path.join(home,'config'),XDG_DATA_HOME:path.join(home,'data'),XDG_CACHE_HOME:path.join(home,'cache')},stdio:['ignore',fd,fd]});
+    fs.closeSync(fd);fs.appendFileSync(log,`\nEXIT=${result.status}\n`);
+    checks.push({command,expected,exit:result.status,log});
+    fs.writeFileSync(path.join(ledger,'replay-progress.json'),JSON.stringify({destination,files:files.size,checks},null,2));
+    if(result.status!==expected)throw Error(`${command}: ${result.status}, expected ${expected}; ${log}`);
+  }
+}
+if(files.size===0)throw Error('zero extracted files');
+const excluded=new Set(['docs/plans/2026-10-31-delegation-delivery.md','docs/README.md']);
+const inventory=cwd=>run(['git','ls-files','-z'],cwd).split('\0').filter(f=>f&&!excluded.has(f)).sort();
+const actual=inventory(root),replayed=inventory(destination);
+if(JSON.stringify(actual)!==JSON.stringify(replayed))throw Error('complete tracked inventory mismatch');
+for(const file of actual){if(!fs.readFileSync(path.join(destination,file)).equals(fs.readFileSync(path.join(root,file))))throw Error(`tree mismatch: ${file}`);}
+const summary={destination,blocks:blocks.length,files:files.size,compared:actual.length,checks,exact:true};
+fs.writeFileSync(path.join(ledger,'replay-result.json'),JSON.stringify(summary,null,2));
+process.stdout.write(JSON.stringify(summary,null,2)+'\n');
+```
+
+Scratch directories retained for parent cleanup: baseline-1, probe-copy-1 and replay-1 through replay-7, all under .superpowers/sdd/deleg-d3/. No scratch tree was deleted or used as a live mutation target. The superseded baseline attempted in the changing worktree is not the clean baseline result above.
+
+### Review and coordination
+
+Independent security and whole-branch review is requested for the final a58479c7..HEAD range, focusing on the six Review Focus items above, synchronous gated reservation as the claim implementation, and read-bound equivalence. C2's minimal shared seam includes the host generation-zero line, the applied SessionStarted seed, and four host_session assertions now requiring exact typed Partial evidence while preserving every unknown-field assertion. C2 must compose startup/prompt reservations with the common owner/config/close fences. Its startup/API/connection/wire implementation was untouched.
+
+PR creation, checks, reviewDecision, mergeStateStatus and unresolved review threads (including bots) are parent-owned. This execution record claims no external review or CI result. D3b and D4 remain release blockers.
 
 Generated with Claude AI — please review before distribution.
