@@ -6,6 +6,8 @@ import { runInNewContext } from 'node:vm'
 import { webcrypto } from 'node:crypto'
 import type { PushRecord } from '../src/pwa/journal'
 import { testLocks } from '../src/test-locks'
+import type { AppWindow, Windows } from '../src/pwa/navigation'
+import { MessageChannel as WorkerMessageChannel } from 'node:worker_threads'
 
 export async function mockPush(context: BrowserContext) {
   await context.addInitScript(() => {
@@ -37,8 +39,8 @@ export async function mockPush(context: BrowserContext) {
   })
 }
 
-export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void } = {}) {
-  type Event = { data?: { text(): string }; oldSubscription?: PushSubscription | null; newSubscription?: PushSubscription | null; request?: Request; respondWith?(promise: Promise<Response>): void; waitUntil(promise: Promise<unknown>): void }
+export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { origin?: string; clients?: Windows; pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void } = {}) {
+  type Event = { notification?: { data: { url: unknown }; close(): void }; data?: { text(): string }; oldSubscription?: PushSubscription | null; newSubscription?: PushSubscription | null; request?: Request; respondWith?(promise: Promise<Response>): void; waitUntil(promise: Promise<unknown>): void }
   const handlers = new Map<string, (event: Event) => void>()
   const notifications: { title: string; options: unknown }[] = [], fetches: string[] = []
   const attempts: RequestInit[] = []
@@ -61,9 +63,10 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
     return request
   } }
   runInNewContext(code, { self: { addEventListener: (name: string, handler: typeof handlers extends Map<string, infer V> ? V : never) => handlers.set(name, handler),
+    clients: dependencies.clients ?? { matchAll: async () => [], openWindow: async () => null },
     registration: { pushManager: dependencies.pushManager, showNotification: async (title: string, options: unknown) => { notifications.push({ title, options }) } } },
     navigator: { locks: dependencies.locks ?? testLocks() },
-    location: { origin: 'https://app.example' }, URL, Response, Request, crypto: webcrypto, AbortController, setTimeout, clearTimeout, indexedDB, structuredClone, caches: { keys: async () => [] },
+    location: { origin: dependencies.origin ?? 'https://app.example' }, URL, Response, Request, TextEncoder, MessageChannel: WorkerMessageChannel, crypto: webcrypto, AbortController, setTimeout, clearTimeout, indexedDB, structuredClone, caches: { keys: async () => [] },
     fetch: async (url: string, init: RequestInit) => { fetches.push(url); attempts.push(init); return dependencies.fetch ? dependencies.fetch(url, init) : new Response(JSON.stringify({ id: persistence.row.id })) },
   })
   const dispatch = async (name: string, event: Omit<Event, 'waitUntil'>) => {
@@ -73,6 +76,7 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
     await work
   }
   return { notifications, fetches, attempts,
+    click: (url: unknown, close = () => {}) => dispatch('notificationclick', { notification: { data: { url }, close } }),
     push: (text: string | null) => dispatch('push', text === null ? {} : { data: { text: () => text } }),
     change: (oldSubscription: PushSubscription | null, newSubscription: PushSubscription | null) => dispatch('pushsubscriptionchange', { oldSubscription, newSubscription }),
     handles(request: Request) {
@@ -80,5 +84,51 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
       handlers.get('fetch')!({ request, waitUntil() {}, respondWith: (promise) => { handled = true; void promise.catch(() => {}) } })
       return handled
     },
+  }
+}
+
+/** OS event harness ↔ real documents. The browser gets the production
+ * listener and lease, using its real active worker as the trusted source.
+ * Only this test bridge synthesizes the event; no injection ships. */
+export function browserWindows(context: BrowserContext, origin: string): Windows {
+  let sequence = 0
+  const ids = new WeakMap<object, string>()
+  const make = (page: ReturnType<BrowserContext['pages']>[number]): AppWindow => {
+    if (!ids.has(page)) ids.set(page, `window-${++sequence}`)
+    return {
+      id: ids.get(page)!, url: page.url(), visibilityState: 'visible',
+      focus: () => page.bringToFront(),
+      navigate: async target => { await page.goto(origin + target); return make(page) },
+      postMessage: (message, transfer) => {
+        const port = transfer?.[0] as MessagePort | undefined
+        if (port) port.onmessage = event => { void page.evaluate(data => {
+          const ports = (window as unknown as { __notificationPorts?: Map<string, MessagePort> }).__notificationPorts
+          const m = data as { id: string; kind: string }, channel = ports?.get(m.id)
+          if (!channel) return null
+          if (m.kind === 'navigation_start') return new Promise<unknown>(resolve => {
+            channel.onmessage = event => resolve(event.data)
+            channel.postMessage(data)
+          })
+          channel.postMessage(data)
+          if (m.kind === 'navigation_release') { ports?.delete(m.id); channel.close() }
+          return null
+        }, event.data).then(reply => { if (reply) port.postMessage(reply) }).catch(() => {}) }
+        void page.evaluate(async ({ message, hasPort }) => {
+          const registration = await navigator.serviceWorker.ready
+          const m = message as { id: string }
+          if (!hasPort) { navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: message, source: registration.active })); return null }
+          const channel = new MessageChannel()
+          const holder = window as unknown as { __notificationPorts?: Map<string, MessagePort> }
+          ;(holder.__notificationPorts ??= new Map()).set(m.id, channel.port1)
+          const reply = new Promise<unknown>(resolve => { channel.port1.onmessage = e => resolve(e.data) })
+          navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: message, source: registration.active, ports: [channel.port2] }))
+          return reply
+        }, { message, hasPort: !!port }).then(reply => { if (port) port.postMessage(reply) }).catch(() => {})
+      },
+    }
+  }
+  return {
+    matchAll: async () => context.pages().filter(page => page.url().startsWith(origin + '/')).map(make),
+    openWindow: async target => { const page = await context.newPage(); await page.goto(origin + target); return make(page) },
   }
 }

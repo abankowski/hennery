@@ -6,7 +6,9 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import './index.css'
 import { registerWorker } from './pwa/lifecycle'
+import { watchNavigationEdits } from './pwa/navigation'
 
+watchNavigationEdits()
 void registerWorker()
 
 createRoot(document.getElementById('root')!).render(

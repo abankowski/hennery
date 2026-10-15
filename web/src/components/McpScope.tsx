@@ -22,6 +22,7 @@ export default function McpScope({ children, active }: { children: ReactNode; ac
   const waits = useRef(new Set<string>())
   const epoch = useRef(0)
   const dirty = useRef(false)
+  const pushDirty = useRef(false)
   const pending = useRef<Promise<McpConnectionItem[]> | null>(null)
   const controller = useRef(new AbortController())
   const refresh = useCallback((): Promise<McpConnectionItem[]> => {
@@ -29,16 +30,22 @@ export default function McpScope({ children, active }: { children: ReactNode; ac
     const signal = controller.current.signal
     const task = (async () => {
       let rows: McpConnectionItem[] = []
-      do {
-        dirty.current = false
-        const observed = epoch.current
-        rows = await connections(client, signal)
-        if (!signal.aborted && observed === epoch.current) { setData(rows); setError(null) }
-      } while (dirty.current && !signal.aborted)
-      return rows
+      try {
+        do {
+          dirty.current = false
+          const observed = epoch.current
+          try {
+            rows = await connections(client, signal)
+            if (!signal.aborted && observed === epoch.current) { setData(rows); setError(null) }
+          } catch (err) {
+            if (err instanceof Unauthenticated || !dirty.current || signal.aborted) throw err
+          }
+        } while (dirty.current && !signal.aborted)
+        return rows
+      } finally { if (controller.current.signal === signal) pending.current = null }
     })()
     pending.current = task
-    void task.catch(err => { if (!signal.aborted && !(err instanceof Unauthenticated)) setError(messageOf(err)) }).finally(() => { if (pending.current === task) pending.current = null })
+    void task.catch(err => { if (!signal.aborted && !(err instanceof Unauthenticated)) setError(messageOf(err)) })
     return task
   }, [client])
   const publish: Scope['set'] = useCallback(value => {
@@ -55,12 +62,27 @@ export default function McpScope({ children, active }: { children: ReactNode; ac
     return () => { controller.current.abort(); epoch.current++ }
   }, [refresh])
   useEffect(() => {
-    const read = () => { void refresh().catch(() => {}) }
+    const read = () => {
+      // A pending GET may have captured the state before this invalidation.
+      // Retain one follow-up and keep that older result from being published.
+      epoch.current++; dirty.current = true; pushDirty.current = false
+      void refresh().catch(() => {})
+    }
     const visible = () => { if (document.visibilityState === 'visible') read() }
+    let live = true
+    const relay = async (event: MessageEvent<unknown>) => {
+      const m = event.data as Record<string, unknown> | null
+      if (!m || m.version !== 1 || m.kind !== 'mcp_invalidated' || Object.keys(m).length !== 2) return
+      const registration = await navigator.serviceWorker.getRegistration('/').catch(() => undefined)
+      if (!live || !registration?.active || event.source !== registration.active) return
+      if (document.visibilityState === 'hidden') { pushDirty.current = true; return }
+      read()
+    }
+    if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', relay)
     window.addEventListener('focus', read); document.addEventListener('visibilitychange', visible)
     // Event reads remain enabled during consent; only timer reads pause.
     const timer = setInterval(() => { if (!paused && document.visibilityState === 'visible') read() }, active ? 60000 : 300000)
-    return () => { clearInterval(timer); window.removeEventListener('focus', read); document.removeEventListener('visibilitychange', visible) }
+    return () => { live = false; clearInterval(timer); window.removeEventListener('focus', read); document.removeEventListener('visibilitychange', visible); if ('serviceWorker' in navigator) navigator.serviceWorker.removeEventListener('message', relay) }
   }, [active, paused, refresh])
   useEffect(() => { if (active) void refresh().catch(() => {}) }, [active, refresh])
   return <Context.Provider value={{ data, error, set: publish, refresh, waiting }}>{children}</Context.Provider>

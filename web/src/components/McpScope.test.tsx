@@ -5,8 +5,62 @@ import { ClientContext } from '../app-client'
 import { connection } from '../test-fixtures'
 import { json } from '../test-server'
 import McpScope, { McpBadge, useMcpScope } from './McpScope'
+import { deferred } from '../test-locks'
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+it.each(['succeeds', 'fails'])('retains push invalidation during consent when an older deferred GET %s, with one follow-up', async outcome => {
+  vi.useFakeTimers()
+  const service = new EventTarget(), active = {} as ServiceWorker
+  Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: Object.assign(service, { getRegistration: async () => ({ active }) }) })
+  const old = deferred<Response>(), current = deferred<Response>()
+  const fetch = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise)
+  const client = new Client({ fetch, navigate: vi.fn(), stepUp: vi.fn(), here: () => ({ pathname: '/mcp', search: '' }) })
+  const view = render(<ClientContext.Provider value={client}><McpScope active><Control /><McpBadge /></McpScope></ClientContext.Provider>)
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      for (let i = 0; i < 3; i++) service.dispatchEvent(new MessageEvent('message', { source: active, data: { version: 1, kind: 'mcp_invalidated' } }))
+    })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await act(async () => old.resolve(outcome === 'succeeds' ? json(200, [connection({ label: 'Stale ok', status: 'ok' })]) : json(500, { code: 'unavailable', message: 'old read failed' })))
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('status')).toHaveTextContent('No report')
+    await act(async () => current.resolve(json(200, [connection({ label: 'Current auth', status: 'needs_auth' })])))
+    expect(screen.getByText('Current auth', { exact: true })).toBeVisible()
+    expect(screen.getByText('1 need attention', { exact: true })).toBeVisible()
+    await act(async () => { await vi.advanceTimersByTimeAsync(120000) })
+    expect(fetch).toHaveBeenCalledTimes(2)
+  } finally {
+    old.resolve(json(200, [])); current.resolve(json(200, [])); view.unmount()
+    // @ts-expect-error restore missing browser API
+    delete navigator.serviceWorker
+  }
+})
+it('active-worker relay reads through the shared reader during consent, coalesces, and defers while hidden', async () => {
+  const service = new EventTarget(), active = {} as ServiceWorker
+  Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: Object.assign(service, { getRegistration: async () => ({ active }) }) })
+  const fetch = vi.fn(async () => json(200, [connection({ label: 'Current' })]))
+  const client = new Client({ fetch, navigate: vi.fn(), stepUp: vi.fn(), here: () => ({ pathname: '/mcp', search: '' }) })
+  const view = render(<ClientContext.Provider value={client}><McpScope active><Control /></McpScope></ClientContext.Provider>)
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+  fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+  const hint = (source = active, data: unknown = { version: 1, kind: 'mcp_invalidated' }) => service.dispatchEvent(new MessageEvent('message', { source, data }))
+  await act(async () => { hint({} as ServiceWorker); hint(active, { version: 2, kind: 'mcp_invalidated' }); hint(active, { version: 1, kind: 'answer' }) })
+  expect(fetch).toHaveBeenCalledTimes(1)
+  await act(async () => { hint() })
+  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(screen.getByText('Current', { exact: true })).toBeVisible()
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+  await act(async () => { hint(); hint() })
+  expect(fetch).toHaveBeenCalledTimes(2)
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+  expect(fetch).toHaveBeenCalledTimes(3)
+  view.unmount()
+  // @ts-expect-error restore missing browser API
+  delete navigator.serviceWorker
+})
 it('counts only the last fetched needs_auth and error reports', async () => {
   const fetch = vi.fn(async () => json(200, [connection({ status: 'needs_auth' }), connection({ id: 'other', status: 'error' }), connection({ id: 'working', status: 'ok' })]))
   const client = new Client({ fetch: fetch as typeof globalThis.fetch, navigate: vi.fn(), stepUp: vi.fn(), here: () => ({ pathname: '/mcp', search: '' }) })

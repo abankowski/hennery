@@ -3,6 +3,7 @@ import { pushJournal } from './src/pwa/journal'
 import { decodePush } from './src/pwa/notification'
 import { subscriptionBody } from './src/pwa/subscription'
 import { withPushOwnership } from './src/pwa/ownership'
+import { clickNotification } from './src/pwa/navigation'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(installShell(caches, fetch, __PRECACHE__, __BUILD_ID__, crypto.randomUUID()))
@@ -35,6 +36,14 @@ self.addEventListener('push', (event) => {
       body: payload.body, tag: payload.tag, icon: '/icon-192.png', badge: '/icon-192.png',
       data: { url: payload.url, tag: payload.tag },
     })
+    if (payload.url === '/mcp') {
+      for (const client of await self.clients.matchAll({ type: 'window', includeUncontrolled: false })) {
+        try {
+          const url = new URL(client.url)
+          if (url.origin === location.origin && appRoute(url.pathname)) client.postMessage({ version: 1, kind: 'mcp_invalidated' })
+        } catch { /* A closed or foreign document supplies no authority. */ }
+      }
+    }
   })())
 })
 self.addEventListener('pushsubscriptionchange', (event) => {
@@ -69,4 +78,8 @@ self.addEventListener('pushsubscriptionchange', (event) => {
       } finally { await journal.release(owned) }
     })
   })())
+})
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  event.waitUntil(clickNotification(event.notification.data?.url, self.clients, location.origin))
 })
