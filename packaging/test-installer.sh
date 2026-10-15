@@ -115,7 +115,7 @@ for archive in $arms; do
     jq --arg name "$archive" --arg sha "$want" '. + [{name: $name, sha256: $sha}]' "$scratch/artifacts.json" > "$scratch/next.json"
     mv "$scratch/next.json" "$scratch/artifacts.json"
 done
-jq --arg tag "v$fixture_version" '{tag: $tag, artifacts: .}' "$scratch/artifacts.json" > "$scratch/inventory.json"
+jq --arg tag "v$fixture_version" '{schema: 1, repository: "marcinwadon/hennery", tag: $tag, artifacts: .}' "$scratch/artifacts.json" > "$scratch/inventory.json"
 cp "$scratch/inventory.json" "$scratch/inventory.json.asc"
 
 # run_installer <download dir> <install dir> <log>: the installer's exit status.

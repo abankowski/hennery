@@ -46,7 +46,7 @@ MAINTAINER_VERIFICATION = r'''    # The maintainer's touch-approved digest set i
     ' || err "release signature is not from the pinned maintainer signing key"
     local _approved_sha _actual_sha
     _approved_sha=$(jq -er --arg tag "v$APP_VERSION" --arg archive "$_artifact_name" '
-        if .tag != $tag then error("release tag mismatch") else
+        if .schema != 1 or .repository != "marcinwadon/hennery" or .tag != $tag then error("release schema/repository/tag mismatch") else
             [.artifacts[] | select(.name == $archive)] |
             if length != 1 then error("archive missing or duplicated") else .[0].sha256 end |
             if type == "string" and test("^[0-9a-f]{64}$") then . else error("invalid archive digest") end

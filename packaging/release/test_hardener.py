@@ -19,7 +19,7 @@ class Hardener(unittest.TestCase):
             root = Path(tmp)
             archive = root / 'archive'
             archive.write_bytes(b'archive fixture')
-            inventory = {'tag': 'v1.2.3', 'artifacts': [{'name': 'hennery-test.tar.xz', 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}]}
+            inventory = {'schema': 1, 'repository': 'marcinwadon/hennery', 'tag': 'v1.2.3', 'artifacts': [{'name': 'hennery-test.tar.xz', 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}]}
             raw = json.dumps(inventory).encode()
             (root / 'inventory').write_bytes(raw)
             (root / 'signature').write_bytes(raw)
@@ -64,7 +64,7 @@ APP_VERSION=1.2.3
             env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'], TEST_ROOT=str(root),
                        HENNERY_ATTESTATION_BUNDLE=str(root / 'bundle'), HENNERY_RELEASE_INVENTORY=str(root / 'inventory'),
                        HENNERY_RELEASE_SIGNATURE=str(root / 'signature'))
-            for case in ['valid', 'unsigned', 'malformed', 'wrong-key', 'revoked', 'expired', 'duplicate', 'no-status', 'failed-valid', 'import-failed', 'different-inventory', 'missing', 'empty-signature', 'missing-inventory', 'wrong-archive', 'wrong-tag', 'duplicate-archive', 'missing-gpg', 'missing-jq']:
+            for case in ['valid', 'unsigned', 'malformed', 'wrong-key', 'revoked', 'expired', 'duplicate', 'no-status', 'failed-valid', 'import-failed', 'different-inventory', 'missing', 'empty-signature', 'missing-inventory', 'wrong-archive', 'wrong-tag', 'duplicate-archive', 'missing-gpg', 'missing-jq', 'wrong-repository', 'wrong-schema']:
                 with self.subTest(case=case):
                     (root / case).mkdir()
                     (root / 'inventory').write_bytes(raw)
@@ -79,12 +79,16 @@ APP_VERSION=1.2.3
                         (root / 'inventory').unlink()
                     elif case == 'empty-signature':
                         (root / 'signature').write_bytes(b'')
-                    elif case in ('wrong-archive', 'wrong-tag', 'duplicate-archive'):
+                    elif case in ('wrong-archive', 'wrong-tag', 'duplicate-archive', 'wrong-repository', 'wrong-schema'):
                         changed = json.loads(raw)
                         if case == 'wrong-archive':
                             changed['artifacts'][0]['sha256'] = '0' * 64
                         elif case == 'wrong-tag':
                             changed['tag'] = 'v9.9.9'
+                        elif case == 'wrong-repository':
+                            changed['repository'] = 'another/repository'
+                        elif case == 'wrong-schema':
+                            changed['schema'] = 2
                         else:
                             changed['artifacts'].append(changed['artifacts'][0].copy())
                         data = json.dumps(changed).encode()
