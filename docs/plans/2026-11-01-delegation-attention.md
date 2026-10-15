@@ -8,6 +8,8 @@
 
 ## Execution status (2026-10-15)
 
+**Current C2 integration:** rebased onto **1888d687 /main 7fe43fbe**. Both runtime patches are preserved, 316 targeted tests and the single combined full gate set passed (**2,436 Rust tests**); native Nix passed. See [C2 rebase and combined verification](#c2-rebase-and-combined-verification-2026-10-15). Prior replay/load evidence below is historical.
+
 Built first on D3a, paused at a committed WIP boundary for review amendments, then rebased onto **79304d58**. Every initial regression was run RED before the corresponding implementation: missing attention/guard APIs and HTTP 404, followed by behavioral failures for old operator epochs, canonical answer queues, revoked hosts, missing question detail, repeated notification runs, orphan facts after parent deletion, automatic report completion push routing, and suppressed pushes incorrectly changing device errors. Exact resulting tests and implementation are embedded below. Both fresh replays, COPY probes, 4×3 load and the final six Rust/native Nix gates passed as recorded below. The implementation is committed at **6ce346de**. Parent-run independent review and CI remain required; no approval is claimed.
 
 ## Scope
@@ -2087,5 +2089,48 @@ Retain replay-1, replay-2, probe-copy-1 and probe-copy-2 for parent cleanup. D3a
 ## After the plan
 
 D3b completes durable delivery and operator fallback. D4 still owns family UI/attention presentation and the pinned live inference acceptance matrix. Keep delegation preview-gated until those acceptance criteria and independent reviews pass. Rebase C2 through the minimal shared AppState/store seams without touching its dedicated implementation.
+
+## C2 rebase and combined verification (2026-10-15)
+
+Rebased onto D3a **1888d687**, itself based on merged C2 main **7fe43fbe**. The unsigned --onto rebase maps checkpoint 8365e4f4 → **e5ed4872**, implementation 6ce346de → **e4f3ce73**, and execution record d546a526 → **eb9d9e51**. Range-diff shows both runtime commits patch-identical; the sole D3b conflict was README documentation, resolved preserving C2/D3a integration and D3b records. This record commit changes documentation only; the compiled source remains exactly the verified eb9d9e51 tree.
+
+D3a's original review fix maps 79304d58 → **d91aa92d**. Its additional compatibility amendment **1888d687** makes factual ChildReport input visible while retaining C2's Parent-display regression and PluginContext denial. That new regression was seen RED in the D3a worktree, fixed, and covered by four detected guard probes in one COPY with target cloned using cp -c -R. D3a standalone targeted tests passed **370**, with one pre-existing ignored test; see its rebase record. Its review-fix range is **9ea880dc..1888d687**. D3b's review range starts at **1888d687** and ends at this branch's published tip.
+
+The shared seams compose explicitly:
+
+- C2 startup_dispatch and startup prompt reservations coexist with D3b's private collector-wide delegation_run identity.
+- C2's final websocket startup-context guard remains; D3b's durable push routing and internal Edge.source_event_id remain. The latter is not a wire field.
+- C2 added no sessions migration. D3 delivery/attention remain **19/20**. A programmatic comparison verifies the merged migration prefix is unchanged; no merged migration was edited.
+- All **27** owner-audit entries survive at the stricter minimum from either side, including C2 context/startup sources, gateway minimum 42 and D3b delivery minimum 11/attention minimum 15.
+- Four shared source files compose C2 changes (lib, store, ws and owner_filter); the other **14** D3b implementation files are byte-identical to the prior D3b tip.
+- Retired verified_child_report_in and conflict markers are absent from source. C2's Hub::notify remains with its mutable-frame signature; constructors compile with plugin_context, and both startup and delegated prompt fences pass.
+
+Both generators ran to regenerate their outputs, rather than hand-merging. All four generated schema/TypeScript files match merged C2 **7fe43fbe** exactly. No D3 generated-type change requires the conditional web gate.
+
+Targeted combined-head commands all exited **0**:
+
+| Command | Passed |
+|---|---|
+| cargo test -p hennery-sessions --test delegation_d2 --test store --locked | **125 +104** |
+| cargo test -p hennery-testkit --test delegation_host --test delegation_tools --test plugin_feed --test owner_filter --test plugin_startup --test plugin_startup_host --locked | **16 +14 +23 +3 +26 +2**, one pre-existing ignored |
+| cargo test -p hennery-view --test plugin_origin --locked | **3** |
+
+The full set ran **once**, on the final combined runtime head, as required for a conflicting hotspot rebase. All commands ran inside the dev shell with the existing isolated tool home; logs are .superpowers/sdd/deleg-d3b/rebase-c2/.
+
+| Command | Exit | Output |
+|---|---|---|
+| cargo fmt --all --check | 0 | clean |
+| cargo clippy --workspace --all-targets --locked -- -D warnings | 0 | finished |
+| cargo clippy -p hennery --locked -- -D warnings | 0 | finished |
+| cargo test --workspace --locked | 0 | **2,436 passed**, 160 suites, one pre-existing ignored |
+| cargo run -p hennery-proto --bin gen --locked -- --check | 0 | current |
+| cargo run -p hennery-view --bin gen-view --locked -- --check | 0 | current |
+| nix flake check -L | 0 | native aarch64-darwin package/Clippy/embedded UI checks |
+
+The previous D3b baseline had 2,400 passing tests; merged C2 adds 35 and the compatibility regression adds 1, giving **2,436**. No full replay was run, and no load repetition was needed because the new regression is synchronous display logic. Existing spawn, deadline, socket and race suites ran normally. D3b-only tests require D3b implementation, so they run here; the D3a shared suites and C2 integration tests also passed on its standalone head. Linux CI remains parent-owned.
+
+The runtime/source snapshot covers **344** tracked files and matches the tree after verification. Source and staged-byte audits, personal gmail authors and the specified old remote leases are checked before pushing the rebased branches. Historical embedded patches, replay/load/probe results and old SHAs above remain evidence for their original pinned bases, not instructions to repeat full verification under the new budget. The only new scratch copy is D3a's rebase-c2/probe-copy-1; retain it for parent cleanup.
+
+Review **9ea880dc..1888d687** for D3a fixes and **1888d687..HEAD** for D3b. Examine ChildReport/Parent display versus PluginContext authority denial, retained origin evidence after deletion, C2 context exclusion from delegated prompts, close/configuration/socket fences, deadline/fallback and push admission after deletion/reassignment. Delegation remains preview-gated pending D4; no family UI, memory service or publication is added. Parent owns PR checks, reviewDecision, mergeStateStatus and unresolved threads, bots included.
 
 Generated with Claude AI — please review before distribution.
