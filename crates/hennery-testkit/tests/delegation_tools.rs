@@ -310,6 +310,137 @@ impl Harness {
 }
 
 #[tokio::test]
+async fn execution_policy_routes_require_operator_origin_and_step_up_and_preserve_strict_shape() {
+    use reqwest::StatusCode;
+    let h = Harness::with_worker(script(), None, false).await;
+    let hat = h.state.store.find_session(&h.parent).unwrap().unwrap().hat_id;
+    let endpoint = format!("{}/api/hats/{hat}/delegation-policy", h.url);
+    let allowed = json!({"worker":{"mode":["default","plan"]}});
+    let request = json!({"allowed":allowed});
+    // Both reads and writes are covered by this route's own operator wrapper.
+    assert_eq!(
+        h.raw.get(&endpoint).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        h.raw
+            .patch(&endpoint)
+            .header("origin", &h.url)
+            .json(&request)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        h.raw
+            .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+            .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let phc = h
+        .state
+        .operator
+        .verify_password(hennery_testkit::OWNER_PASSWORD)
+        .unwrap()
+        .unwrap();
+    let now = hennery_kernel::secret::unix_now();
+    let stale = h
+        .state
+        .operator
+        .open_session("policy-stale", &phc, now - 600)
+        .unwrap()
+        .unwrap();
+    let fresh = h
+        .state
+        .operator
+        .open_session("policy-fresh", &phc, now)
+        .unwrap()
+        .unwrap();
+    for (session, origin, code) in [
+        (&stale, Some(h.url.as_str()), "step_up_required"),
+        (&fresh, None, "origin_mismatch"),
+        (&fresh, Some("https://foreign.example"), "origin_mismatch"),
+    ] {
+        let mut r = h
+            .raw
+            .patch(&endpoint)
+            .header("cookie", format!("hennery_session={session}"))
+            .json(&request);
+        if let Some(origin) = origin {
+            r = r.header("origin", origin);
+        }
+        let response = r.send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{code}");
+        assert_eq!(response.json::<Value>().await.unwrap()["code"], code);
+    }
+    let bad_origin = h
+        .raw
+        .get(&endpoint)
+        .header("cookie", format!("hennery_session={fresh}"))
+        .header("origin", "https://foreign.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_origin.status(), StatusCode::FORBIDDEN);
+    // Same-origin GET needs neither a recent step-up nor an Origin header.
+    let initial = h
+        .raw
+        .get(&endpoint)
+        .header("cookie", format!("hennery_session={stale}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(initial.status(), StatusCode::OK);
+    assert_eq!(
+        initial.json::<Value>().await.unwrap(),
+        json!({"revision":0,"allowed":{}})
+    );
+    for body in [
+        r#"{"allowed":{},"owner_id":"foreign"}"#,
+        r#"{"allowed":{},"revision":999}"#,
+        r#"{"allowed":[]}"#,
+        "[]",
+        "null",
+        "{broken",
+    ] {
+        let response = h
+            .client
+            .patch(&endpoint)
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+    }
+    for revision in 1..=2 {
+        let changed = h.client.patch(&endpoint).json(&request).send().await.unwrap();
+        assert_eq!(changed.status(), StatusCode::OK);
+        let expected = json!({"revision":revision,"allowed":allowed});
+        assert_eq!(changed.json::<Value>().await.unwrap(), expected);
+        let read = h.client.get(&endpoint).send().await.unwrap();
+        assert_eq!(read.status(), StatusCode::OK);
+        assert_eq!(read.json::<Value>().await.unwrap(), expected);
+    }
+    let absent = format!("{}/api/hats/absent-hat/delegation-policy", h.url);
+    assert_eq!(
+        h.client.get(&absent).send().await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        h.client.patch(&absent).json(&request).send().await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn seven_handlers_share_launcher_catalog_and_choose_runtime_and_model_without_substitute() {
     let h = Harness::new(script()).await;
     let tools = h.rpc("tools/list", json!({})).await;
