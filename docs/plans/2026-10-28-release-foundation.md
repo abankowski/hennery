@@ -1,81 +1,86 @@
 # R1 — release foundation implementation plan
 
 - **Date:** 2026-10-15; filename assigned by the distribution brief.
-- **Base:** `14a754b6d9649502fcc30aae2d1f6c1c7d9def04` (approved distribution design), on main `6f686151`.
+- **Base:** `dd7c0066c643ee417f29f4c1559d36a49b7eac00`, the merged distribution design. Its tracked tree equals original base `14a754b6` (verified).
 - **Branch:** `plan/dist-r1`.
-- **Design:** [distribution and releases](../specs/2026-10-15-distribution-release-design.md), approved/re-confirmed by the parent in the binding brief.
-- **Process:** built first, tests observed RED, exact implementation embedded below, fresh replay and guard-removal probes. No self-review approval is claimed.
+- **Design:** [distribution and releases](../specs/2026-10-15-distribution-release-design.md), with the binding parent ruling below.
+- **Process:** built first, RED regressions, fixes, COPY-only guard probes, exact embedded files, fresh replay and recorded command output. Independent approval belongs to the parent.
 
 ## Execution status
 
-Built on the named worktree and pushed as `87f25199`, `15ae79dc`, `faa012aa`, `23319b8b`, `6ce8a889` and `cc94e36d`; stopped for the parent's independent security/whole-branch review. Publication, external environment/storage setup and tag creation were not performed. The configured safe tag policy freezes creation/update/deletion with no bypass; an authorized creation path needs the parent ruling below. These are implementation/review artifacts, not authorization to publish.
+The maintainer-delegated review (Codex gpt-6-astra) of `14a754b6..7e8bc055` was **REJECT**. This execution addresses that review and requests re-review; it does not claim approval. The original `7e8bc055` is now `e36487d9` after the requested conflict-free rebase onto `dd7c0066`. The fix range is `e36487d9..HEAD`; implementation through `5273097c` contains the fixes, with this plan/index record following. Rebased implementation `38942a5c` equals pre-rebase `2b8ab1ef`; `5273097c` then strengthens only Python audit fixtures. Rust source and its six checks are unchanged.
 
-- Rust: fmt, both Clippy modes, full workspace tests and both generators passed. The workspace log records **2147 passed, 0 failed, 0 ignored** across 142 result lines. The CLI identity regression was seen RED (1 failed), then GREEN (1 passed).
-- Some Nix/Cargo/tool setup used default user caches, including late gate checks; the full Rust/material checks and final replay use scratch HOME/CARGO_HOME/XDG paths. This isolation lapse is a process deviation. No real Hennery data/service directories were used. Parent follow-up: enforce scratch cache homes at fleet bootstrap.
-- Initial Clippy attempts failed on copied registry `.cargo-ok` extraction markers; both retries passed without weakening code/checks. An exploratory identity-name filter ran 0 tests and is not evidence; the CLI regression above is the evidence.
-- Release tests: **48 tests passed**, including independent negative subcases, workflow authority/order, archive contents/binary digests, approval identity/attempts, held storage, reconciliation, checksum cycles and signature verification refusal.
-- Guard-removal probes: **49 removed barriers made tests fail** (26 core, 9 additional, 3 final, 1 all-workflow selection, 1 immutable-candidate receipt boundary, 9 credential-authority/channel-adapter barriers). The final-source rerun passed all six probe harnesses (49 killed barriers). This is offline refusal/configuration evidence, not live GitHub policy proof.
-- Installer: cargo-dist 0.30.4's real generated script, hardened, with tiny shell executable fixtures: **14 acceptance groups passed**, including copy/chmod/link failure, unsupported OS/CPU, existing file/link/directory, staged visibility and a concurrent destination. The old hardener was RED on replacing an existing file. These fixtures do not qualify native binary compatibility.
-- The real cargo-dist post-notice manifest/global/formula/installer round-trip also passed (exit 0): all three formula/archive digests and all 14 installer groups. Its first final-tree launch failed because the release-tools shell intentionally has no Cargo; rerunning through the default build shell plus one-off Python passed. The failed output is retained as replay-4 `target/distrib-failed-1`; it is never a candidate.
-- `actionlint` passed the three release workflows plus native Nix CI. Locked UI install/build passed; no tracked web files changed. Native archive/service/live-agent acceptance remains the maintainer's and native CI's.
-- `nix flake check -L` passed on native aarch64-darwin, including package, audit, fmt/Clippy and real UI/reference guards. Linux systems were explicitly omitted as incompatible locally; the matrix now includes native x86_64-linux and aarch64-linux.
-- Real locked Cargo/pnpm material generation succeeded. Target-filtered dependency closure plus immutable upstream licence supplements has no missing licence-text findings. The SPDX includes separately named OpenSSL/SQLite; source/runtime/UI/manifest digests are generated. Licence/asset/corresponding-source clearance still needs the maintainer.
-- **Replay:** fresh `dist-r1-replay-5` extracted **60 blocks** and matched **692 tracked files**, bytes and modes, with task-ordered tests and all 48 final tests passing. All 49 guard-removal probes were also rerun against final source and made tests fail. Earlier replay trees 1–4 are retained for the parent to clean up. The final plan preserves exact upstream licence whitespace through explicit base64 encoding; Rust source files are embedded in full. The final execution record was copied to the replay, and the full tracked tree compared again: 692 matching files and 60 blocks, exit 0.
+- Release suite: **78 passed**, exit 0. `actionlint` passed candidate/publish/refusal/Nix workflows, exit 0.
+- Six Rust checks: fmt, workspace/all-target and CLI Clippy with warnings denied, locked workspace tests and both locked generators all exited 0. Workspace counts: **2147 passed, 0 failed, 0 ignored** across 142 result lines. Logs: `/tmp/dist-r1-review-rust-{0..5}.log`, summary `/tmp/dist-r1-review-rust-summary.log`.
+- Real pinned cargo-dist post-notice plan/global/formula/installer round-trip passed, exit 0: three executable archives plus four real source tarballs, three formula hashes and **16 installer groups**, including branch signer and missing-verifier refusals. The verifier is an explicit offline double; no public signature/registry qualification is implied. Log: `/tmp/dist-r1-review-installer-roundtrip.log`.
+- Final COPY harness: **60 mutations killed by actual assertions**, with no `ERROR:` or `KeyError` accepted. Log: `/tmp/dist-r1-review-probes-final-2.log`. The previous claim of 49 useful probes is withdrawn: the reviewer identified two error-only fixtures. Their symlink and phase fixtures now exercise real refusal assertions; all final counted probes are listed below. Partial/invalid earlier harness attempts are not counted.
+- Reconcile then upload safely reuses a verified existing bundle; tests were RED on FileExistsError, then GREEN. Mixed installer acceptance was RED (3 offered versus 7 built); source bundles no longer inflate executable counts. Manifest tests cover old/new/identical-dual layouts and reject missing/conflicting copies; real Nix preBuild verified five layouts and flake evaluation exited 0 in the isolated helper tree.
+- Tag tests require the history-pinned signing subkey. The minimal checked-in public key independently verified signed commit `3b7b5f2d2af8821f4617afb08ba1dc766c5b9f14` in an isolated keyring, exit 0. An initial public-key import tried an unnecessary agent in a long socket path; import now uses no-autostart, with a RED regression and successful native public verification. No private key was exported or signing attempted.
+- A first COPY signer probe reached unmocked `gh`, which refused unauthenticated (exit 4), before any repository API result. It is excluded. The fixture now explicitly stubs every transport and an unexpected call is an invalid probe. Earlier construction/helper bootstrap also had scratch-home lapses; these are process deviations, not claims of isolation. Current review checks use scratch HOME/XDG/CARGO_HOME; no real Hennery data/services were used.
+- Earlier native aarch64-darwin Nix build/UI-reference checks and locked UI install/build passed during construction. Review fix 10 has focused helper/Nix-hook verification; final native Linux/macOS CI and public paths remain the parent's/maintainer's. No tracked web files changed, so a full web gate was not required.
+- **Fresh replay:** `dist-r1-replay-7` started clean at `dd7c0066`, extracted **71 code blocks**, passed the task checks (including all **78** release tests), and matched **703 tracked files** byte-for-byte and mode-for-mode, exit 0. Log: `/tmp/dist-r1-review-replay-7.log`. The execution-only record is copied back and compared once more before commit.
 
-The ledger and logs are in `.superpowers/sdd/release-foundation/` and `/tmp/dist-r1-*.log`. Scratch probes/materials are not publication candidates and must never be promoted. No GitHub API, PR, release, registry login, tag push or public attestation was performed by this session.
+The ledger, harnesses and per-probe logs live in `.superpowers/sdd/release-foundation/`. Historical replay trees 1–6, final replay-7, and isolated `dist-r1-mixed`/`dist-r1-manifest` helper trees are retained for parent cleanup. Scratch archives are never publication candidates. No release, registry login, tag push, public signature or external settings change was performed.
 
 ## Scope
 
-Five tasks implement R1: (1) protected gate/approval/retention interface; (2) source, notices, SPDX, identity and freeze; (3) cargo-dist installer hardening; (4) pinned native candidate, signing/publication orchestration and immutable flake identity; (5) process docs, exact plan replay and execution record. R3 owns version/exact-crate metadata in parallel and R4 owns OCI packaging. Their final bytes enter this inventory before freeze. No publishing, Homebrew tap, new platform, native package repository, notarization, public cache or R6 module enablement is in scope.
+R1 provides the protected platform boundary and auditable in-job gates, held candidate/recovery semantics, exact file/installer/image signer policy, notices/SPDX/source/build identity, hardened installer and tagged-flake support, native workflow definitions and release-process docs. R3 supplies versioned crates/metadata and R4 final OCI payloads and protected jobs. Their integration must satisfy the common contract before enablement. First alpha stays GitHub-only. Homebrew publication, Intel macOS/GNU archives/native repositories/notarization/public caches/R6 modules retain their design gates.
 
-## Decisions this plan makes where the spec is silent
+## Decisions
 
-These implementation choices await the parent's independent review; none substitutes for a maintainer publication decision.
-
-1. **One canonical approval tuple.** Sorted compact ASCII JSON plus newline is hashed with SHA-256. It binds repository, source SHA/tag, every payload through inventory digest, exact channels/targets, candidate run/attempt and publishing run/attempt. An authenticated `release` environment review comment must equal `approve-release-v1:<tuple-hash>`. Actor/decision come only from platform review history. A run with a rejected environment review requires a fresh dispatch; ordering is not guessed.
-2. **A gate runs in each protected job. Receipt paths are resolved and required to be outside the candidate, so preflight cannot itself introduce an unapproved candidate byte.** The canonical executable is `packaging/release-gate <github|crates|ghcr|homebrew>`; a composite action wraps the same script, with `preflight` before credentials and `boundary` immediately before signing/upload. A dependency job's boolean is insufficient. The uploader revalidates for every public write. The v1 outer caller is `.github/workflows/release-publish.yml`, manual from `main`; R3/R4 add protected final jobs there. Unreviewed reusable job indirection is refused by the static authority check. The checker scans every workflow filename for write authority, including a generated release.yml, rather than trusting a release-name prefix.
-3. **No writer authority before current-attempt preflight.** A protected read-only `authorize` job runs the live gate, then outputs the approved inventory digest and current run attempt. Every writer directly depends on it and checks both outputs in its job condition before GitHub issues job-level credentials. Rerun-failed cannot reuse authorization from an earlier attempt. Conditional/ignored gates and ignored job failures are refused. The same rule covers protected secret-based registry jobs. The GitHub upload job has a read-only ordinary token; only after preflight does the narrowly scoped App action mint a short-lived write token. Signing obtains OIDC only in the attestation action after the two validations. A separate read-only policy reader may be needed to expose complete bypass settings; hidden settings refuse.
-4. **Tag creation is an explicit unresolved design/platform issue.** GitHub's restrict-creations rule authorizes creators through a bypass list. The design says no bypass. The safe implementation denies all `v*` creation/update/deletion, with explicit negative configuration tests, until the parent chooses an enforceable authorized creation path (for example a creation-only App exception in a separate ruleset while update/deletion stay frozen) and writes back that amendment. R1 never silently toggles rules to create a tag.
-5. **Object Lock rather than expiring Actions artifacts.** Candidate and audit storage uses versioned S3, COMPLIANCE retention and legal hold ON, conditional creation, exact-version reads, and restricted CI principals. Holds remain until every approved channel/public path completes. Actions' 90-day copy is convenience only. No code removes holds, deletes candidates or provisions paid resources. Storage setup is maintainer-only.
-6. **Build from exact approved source.** Native fixed runner labels, pinned Rust 1.98.1, cargo-dist 0.30.4's fixed archive digests, action commit SHAs and locked Nix web tools; no restored Actions cache. Build the UI once, record SDK/tool versions, add notices before archive hashes, and independently verify combined checksums. Current Rust/frontend audits stop a candidate on findings.
-7. **Material is broader than Cargo.lock.** SPDX covers the target-resolved Rust graph (build/dev conservatively), bundled OpenSSL/SQLite and frontend packages; source tarballs preserve the actual package sources. Exact-version omitted root licences are supplied verbatim from immutable upstream revisions/digests, with no moving fetch in candidate builds. Assets/fonts, redistribution and corresponding-source clearance remain a maintainer review. Runtime Node/agent downloads are separately inventoried and never redistributed.
-8. **No installer overwrite.** Keep cargo-dist, fail closed on unchecked/malformed/unsupported digests and failed downloads, stage/copy/chmod inside the destination filesystem, then atomically create the final basename using an exclusive hard link to the directory operand. Existing files, symlinks and directories (including races) survive. An explicit removal or a new empty user directory is needed for an upgrade; no sudo, service start or runtime install.
-9. **Immutable flake source identity.** The package retains the separately built UI and reference guards. A clean flake revision is compiled into `--version`, alongside the same UI tree and adapter-manifest hashes as release metadata. Dirty sources say unrecorded; native Linux arm64 joins CI. No public cache or unmerged module/adapters are claimed.
-10. **Registry recovery is not a transaction.** Complete held local bytes are mandatory, every remote byte/digest is reconciled, an ambiguous response is a stop, matching bytes count as complete, only verified missing artifacts upload, and mismatches never overwrite. Existing valid Sigstore bundles may be reused on retry. A new attempt needs new approval; missing/expired candidates require new candidates/versions as immutability dictates.
+1. **Platform boundary — parent on the maintainer's behalf, 2026-10-15.** A repository writer can rewrite workflow code and request ordinary write GITHUB_TOKEN/OIDC. Static checking is defense in depth only. Environment `release` requires the maintainer and permits only protected `v*` tags; every long-lived publishing credential is an environment secret there, never a repository secret. crates.io must require both `release` and exact workflow filename. GHCR package Actions access is READ and writes use a separate protected credential. GitHub releases are immutable. Every consumer pins the exact tag workflow identity and rejects branch signers.
+2. **Tag policy — same parent ruling/date.** Two active `v*` rulesets: owner-only **User** creation bypass in one; update/deletion denied with no bypass in the other. No fictitious personal-repository Maintain role. Annotated tag signatures must verify against subkey `F26C7F594DFE84D131703AFC23E5A318AE8D2861`, derived from signed history; tags directly identify the exact candidate commit. Verify before candidate storage credentials and at every publication boundary. Local settings auditing independently verifies the tag before using owner settings authentication.
+3. **Policy inspection — same parent ruling/date.** Bypass lists need ruleset write access. Publishers never receive administration tokens or inspect those private settings. A maintainer-local CLI uses the owner's gh authentication and explicitly confirmed UI observations for settings without an API. Its result digest is ratified by the authenticated environment review. The report must postdate candidate completion, be at most 24 hours old and bind the exact global inventory/source/tag/channels/targets/candidate run/attempt. A changed report or publishing attempt requires a new approval.
+4. **Approval tuple and retry.** Sorted compact ASCII JSON plus newline is hashed. The tuple includes repository, source/tag, inventory and audit digests, channel/target set, candidate run/attempt and publishing run/attempt. The maintainer's platform review comment is `approve-release-v1:<tuple hash>`. Actor/decision come from live review history; rejection requires a new dispatch. Protected read-only authorize and current-attempt conditions supplement the platform boundary. Every writer still runs its own preflight and immediate boundary gate, and rechecks each write.
+5. **Registry capabilities, conservative fail-closed integration.** Native cargo-binstall documents minisign-only support, so invented Sigstore metadata is not enforcement. Until a reviewed bridge exists, final crate metadata disables all native binstall strategies and pins the exact identity for the common external verifier in its own namespace; freeze/live gates inspect the actual final CLI crate. R3 must adapt. GitHub's current registry docs describe PAT (classic), not App/fine-grained registry authentication. GHCR stays disabled until the maintainer qualifies a dedicated protected credential and confirms the permitted kind. Neither limitation is hidden by an unsupported feature claim.
+6. **Immutable GitHub lifecycle.** Upload only to a draft, verify every asset, then publish and require immutability. Reuse a cryptographically verified existing bundle across reconciliation/upload without replacing conflicting bytes. A published immutable release cannot be repaired by adding/replacing assets; use a new version. Ambiguous responses stop; only authoritative absence permits upload.
+7. **Retention and material.** Held versioned S3 objects use COMPLIANCE retention and legal hold ON, conditional creation and exact-version reads. No CI hold removal/deletion/overwrite. Actions copies expire and are not authority. SPDX/notices/corresponding source include target-resolved Rust, bundled OpenSSL/SQLite and frontend; omitted upstream licence texts are immutable exact copies. Runtime downloads are separately inventoried. Maintainer licence/advisory/asset/source clearance and native qualification remain explicit.
+8. **Installer and flake.** Require SHA-256 and exact tag Sigstore identity before extracting archives. Bootstrap must authenticate the installer from trusted verifier source; a downloaded script cannot authenticate itself before running. The installer requires real gh, uses a private sibling stage and an exclusive hard link, never overwrites existing/raced files and starts no services/runtime downloads. Executable archive counts ignore source bundles. The flake records revision/UI/adapter identity and keeps UI reference guards; one helper resolves either adapter-manifest layout and rejects conflicting bytes.
 
 ## Global constraints
 
-- Never publish, obtain tokens, log into registries, create/push release tags, call the repository's GitHub API/CLI, or modify external settings while executing this plan. The parent opens/reviews PRs and runs external qualification.
-- Use the named worktree and plain `nix develop -c`; Python/release tools are the locked `.#release` shell. Never share a Cargo target directory. Scratch homes/configs/cache/store stay under `.superpowers/`; never use real operator data.
-- Pinned actions, timeouts and least privilege. No credentials in PR jobs. Every signer/publisher uses `release`; storage-only candidate staging uses `release-staging`. Default switches stay unset.
-- Keep the personal git identity, unsigned commit commands and SSH branch pushes; inspect staged diff/author addresses and forbidden client data before each push. No main pushes or GitHub account actions.
-- Retain scratch/replay trees for parent cleanup; do not delete them. No writes to global/project memory; parent files lessons.
+- Never publish, log into registries, mint tokens, push release tags or change external settings in this child. The parent owns GitHub/PR/check/review actions. The settings audit and negative push are future maintainer-only tools, never run here with real credentials.
+- Plain `nix develop -c` from the named worktree; release Python/tools use `.#release`, and Rust plus Python probes use the build shell plus one-off Python. Scratch HOME/XDG/config/cache/CARGO_HOME; no shared Cargo target and no real operator data.
+- Pinned actions, timeouts, no restored candidate caches; least ordinary token permissions. All publishing credentials remain platform-protected environment secrets. No broad administration policy reader in CI.
+- Personal git identity, unsigned Conventional Commits, staged-byte checks and diff hygiene. Push only the owned branch with the parent's exact lease on original `7e8bc0556704952a04845d2e90008d7628177ef1`.
+- Retain scratch trees; no global/project memory writes. The parent files cross-project lessons and cleans up.
 
 ## Review focus
 
-The parent must review the full base-to-head range, especially live REST field/permission assumptions (`can_admins_bypass`, bypass actors, review history/attempts), configured-user identity, protected main/caller restrictions, no-bypass tag enforcement and the unresolved creator path, token minting order, OIDC/attestation identity versus application source SHA, every mutation at boundaries, S3 IAM/Object Lock/retention/audit semantics, registry ambiguity, signature recovery, source/licence completeness and the exclusive installer publication operation. Run native Linux/macOS CI; do not infer live GitHub enforcement or registry correctness from offline fixtures. The maintainer-only steps are in `docs/release-process.md`.
+Re-review the original finding's platform threat model, actual maintainer setup and acceptance proof, OIDC/certificate tag identity and bootstrap, pinned-key tag verification, audit digest/freshness/owner confirmation versus UI-only observations, no administration authority in publishers, two personal-repository rulesets, immutable draft/publication/recovery lifecycle, final crate metadata enforcement, GHCR package permission and credential capability, held S3/audit/IAM semantics, source/licences and installer atomicity. Offline fixtures prove code refusal, not live platform enforcement. The complete maintainer-only checklist is in [release process](../release-process.md).
 
-## File structure
+## File structure and extraction
 
-Exact final files follow. `r1:file` blocks replace a file byte-for-byte and set its explicit mode. Source/code is embedded verbatim; the one upstream licence with original trailing whitespace uses explicit base64 encoding, preserving its exact bytes without Markdown whitespace errors. Every block has a payload SHA-256 and byte length (preserving upstream licence files without a final newline); extraction count must be nonzero. The plan itself is the replay input; its final execution record is copied with the final docs-index record after the code replay.
+Exact final source follows. Each `r1:file` block gives task, path, decoded SHA-256, byte length, file mode and encoding. Executable/source code is verbatim UTF-8; the one upstream licence with original trailing whitespace is base64 so its bytes remain exact without weakening whitespace checks. The plan itself is replay input, not recursively embedded. Count extracted blocks, run task tests, and compare every tracked byte/mode. After adding only the execution record, copy the plan and compare again.
 
 - Task 1: `.github/actions/release-gate/action.yml`
 - Task 1: `.github/release-branch-policy.json`
 - Task 1: `.github/release-environment.example.json`
+- Task 1: `.github/release-tag-creation.json`
 - Task 1: `.github/release-tag-ruleset.json`
 - Task 1: `.gitignore`
 - Task 1: `packaging/release-gate`
 - Task 1: `packaging/release/.gitignore`
 - Task 1: `packaging/release/README.md`
 - Task 1: `packaging/release/gate.py`
+- Task 1: `packaging/release/maintainer.asc`
+- Task 1: `packaging/release/post_setup.py`
 - Task 1: `packaging/release/retention.py`
+- Task 1: `packaging/release/settings_audit.py`
+- Task 1: `packaging/release/tag_signature.py`
 - Task 1: `packaging/release/test_adapter.py`
 - Task 1: `packaging/release/test_gate.py`
 - Task 1: `packaging/release/test_platform.py`
+- Task 1: `packaging/release/test_post_setup.py`
 - Task 1: `packaging/release/test_retention.py`
+- Task 1: `packaging/release/test_settings.py`
+- Task 1: `packaging/release/test_tag_signature.py`
+- Task 1: `packaging/release/test_verify.py`
+- Task 1: `packaging/release/verify.py`
 - Task 2: `crates/hennery/src/build_identity.rs`
 - Task 2: `crates/hennery/src/main.rs`
 - Task 2: `crates/hennery/tests/cli.rs`
+- Task 2: `packaging/release/adapter_manifest.py`
 - Task 2: `packaging/release/licences/0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e.txt`
 - Task 2: `packaging/release/licences/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt`
 - Task 2: `packaging/release/licences/2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50.txt`
@@ -92,12 +97,14 @@ Exact final files follow. `r1:file` blocks replace a file byte-for-byte and set 
 - Task 2: `packaging/release/licences/f250d08cee4549b22b3b4aaaf3a743473336fd280316df5d0340717e5127a221.txt`
 - Task 2: `packaging/release/licences/manifest.json`
 - Task 2: `packaging/release/supply.py`
+- Task 2: `packaging/release/test_adapter_manifest.py`
 - Task 2: `packaging/release/test_supply.py`
 - Task 3: `packaging/check-archive.sh`
 - Task 3: `packaging/harden-installer.py`
 - Task 3: `packaging/release/make_installer_fixture.py`
 - Task 3: `packaging/release/test_archives.py`
 - Task 3: `packaging/release/test_hardener.py`
+- Task 3: `packaging/release/test_installer_archives.py`
 - Task 3: `packaging/test-installer.sh`
 - Task 4: `.github/workflows/nix.yml`
 - Task 4: `.github/workflows/release-candidate.yml`
@@ -111,20 +118,18 @@ Exact final files follow. `r1:file` blocks replace a file byte-for-byte and set 
 - Task 4: `packaging/release/publish.py`
 - Task 4: `packaging/release/refresh_manifest.py`
 - Task 4: `packaging/release/test_publish.py`
-- Task 4: `packaging/release/test_verify.py`
 - Task 4: `packaging/release/test_workflows.py`
-- Task 4: `packaging/release/verify.py`
 - Task 4: `packaging/release/workflow_policy.py`
 - Task 4: `rust-toolchain.toml`
 - Task 5: `docs/README.md`
 - Task 5: `docs/release-process.md`
 - Task 5: `packaging/README.md`
 
-## Task 1: Protected gate, authenticated approval and held recovery
+## Task 1: Platform policy, signed tags, authenticated approval and retention
 
 ### Step 1: RED / contract
 
-Install the three test files first and run their commands: imports/guards must fail before gate.py/retention.py exist. The build observed RED at module import, then GREEN with the implementation.
+Run the new policy/tag/verification regressions against the previous implementation first: missing modules and accepted branch signatures were RED. The old runtime policy reader also fails the new private-settings prohibition. Preserve those logs; fixtures mock every transport and never use real registry credentials.
 
 ### Step 2: Exact implementation
 
@@ -169,9 +174,9 @@ runs:
 
 ### File `.github/release-branch-policy.json`
 
-<!-- r1:file task=1 path=.github/release-branch-policy.json sha256=34679cb780db937dfd017b68c9f193375b833cc9b2b9e046d99d622b7f506c72 bytes=32 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=.github/release-branch-policy.json sha256=a087420ecc21ca792b65e09651d509601849a7276455657e6dbb988a985b57d2 bytes=27 mode=644 encoding=utf8 -->
 ````json
-{"name":"main","type":"branch"}
+{"name":"v*","type":"tag"}
 ````
 
 ### File `.github/release-environment.example.json`
@@ -186,18 +191,18 @@ runs:
 }
 ````
 
+### File `.github/release-tag-creation.json`
+
+<!-- r1:file task=1 path=.github/release-tag-creation.json sha256=a01e8c1e12402ecba2719f42b7d6c1e8a4830027c79c802c4bbba96ed2dd98d3 bytes=244 mode=644 encoding=utf8 -->
+````json
+{"bypass_actors":[{"actor_id":0,"actor_type":"User","bypass_mode":"always"}],"conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v*"]}},"enforcement":"active","name":"release-tag-creation","rules":[{"type":"creation"}],"target":"tag"}
+````
+
 ### File `.github/release-tag-ruleset.json`
 
-<!-- r1:file task=1 path=.github/release-tag-ruleset.json sha256=5f45bcc202010837e92ca98f865d1952ab9f0dd4957b14d8f0a0d575f635c115 bytes=253 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=.github/release-tag-ruleset.json sha256=8d1c1133d3782dfc89d43982bd083d0c0e674fc3e6db6e511481864695cc2300 bytes=207 mode=644 encoding=utf8 -->
 ````json
-{
-  "name": "release-tags-frozen",
-  "target": "tag",
-  "enforcement": "active",
-  "bypass_actors": [],
-  "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
-  "rules": [{"type":"creation"},{"type":"update"},{"type":"deletion"}]
-}
+{"bypass_actors":[],"conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v*"]}},"enforcement":"active","name":"release-tags-immutable","rules":[{"type":"update"},{"type":"deletion"}],"target":"tag"}
 ````
 
 ### File `.gitignore`
@@ -244,152 +249,134 @@ __pycache__/
 
 ### File `packaging/release/README.md`
 
-<!-- r1:file task=1 path=packaging/release/README.md sha256=5854933aa2250968e1a146e8c018e7f5cae03ab80dec9315f206f47ec8dbd5c2 bytes=9748 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/README.md sha256=86cc9c730ea3363e8cedbe8b4e38492dc658094eed93dc9dd8228ccb48bcc14b bytes=7877 mode=644 encoding=utf8 -->
 ````markdown
-# R1 gate interface v1
+# R1 gate contract
 
-Publication is disabled. Implementation and merge do not authorize a channel.
-The parent must review the gate and configure the maintainer-only settings in
-`docs/release-process.md` before enabling any publication workflow.
+The public adapter is `packaging/release-gate <channel>`; every writer/signing job
+uses the protected environment `release`. Publication stays disabled until the
+maintainer completes the platform setup and approves each channel. The static
+workflow checker is defense in depth. A repository writer can rewrite a workflow
+and request an ordinary write `GITHUB_TOKEN` or OIDC token; lint cannot prevent
+GitHub issuing those tokens.
 
-R3 and R4 contribute their **final** payloads before `supply.py freeze`. The
-inventory binds one complete channel/target set and every byte; adding a crate,
-image descriptor, SBOM or target means a new inventory and approval. OCI image
-payloads use OCI layout blobs plus a descriptor containing the registry digest;
-R4 must verify both remote platform manifests and index by content digest.
-The flat contribution names are `ghcr-oci-layout.tar` (packed OCI layout) and
-`ghcr-index.json`; crate contributions are `<crate>-<version>.crate` for all
-seven production crates. The signed inventory's `binaries[target]` gives the
-executable's SHA-256, size, archive name and member path; R4 verifies its image
-binary against that digest. The gate recomputes it from the archive. Missing
-enabled-channel payloads refuse freeze and
-the live CLI gate.
-The first alpha enables GitHub only. Later channels require their own approval.
+The security boundary is platform configuration: maintainer review and deployment
+restricted to protected `v*` tags; publishing credentials only in `release`;
+crates.io trusted publishing bound to `release` and `release-publish.yml`; GHCR
+Actions access READ with a separate protected credential; immutable GitHub
+releases; owner-only tag creation and no bypass for tag updates/deletion. Every
+consumer rejects signatures from branch workflows. A writer can disrupt builds
+or ordinary repository content; that must not yield an accepted release identity.
 
-The outer publishing workflow in v1 is `.github/workflows/release-publish.yml`,
-manual dispatch from `main`. R3/R4 add their final protected jobs there and call
-this script/composite interface; a separate arbitrary publisher workflow is
-refused. Reusable job wrappers must not obscure the callee's authority; the
-current static policy refuses unreviewed reusable job indirection.
+## Inputs and outputs
 
-Before any writer job starts, protected read-only `authorize` validates the
-held candidate and authenticated review, then publishes trusted outputs
-`run_attempt` and `inventory_sha256`. Every writer (including a read-only job
-using protected publication secrets) must directly `needs: authorize` and use
-`workflow_policy.CREDENTIAL_CONDITION`, optionally followed by the exact channel
-switch. A rerun cannot reuse an earlier attempt's successful authorization.
-This controls job-level token/secret issuance, including GHCR; it never replaces
-the writer's own two gates. No conditional or failure-ignoring gate is accepted.
+Run in the locked release shell:
 
-Inside each publishing or signing job:
+```sh
+nix develop .#release -c packaging/release-gate github --candidate candidate \
+  --inventory-sha256 "$INVENTORY" --phase preflight --receipt preflight-1.json
+```
 
-1. Use `environment: release`, run from trusted `main`, and download the exact
-   retained candidate. No build step or package install may mutate its bytes.
-2. Read the manual dispatch inputs: `inventory_sha256` (64 lowercase hex),
-   `source_sha` (40 lowercase hex), `tag`, `channels` (sorted JSON array),
-   `targets` (sorted JSON array), `candidate` (JSON object with integer `run_id`
-   and `run_attempt`). The publishing IDs come from the platform, never input.
-3. Run the local composite action `.github/actions/release-gate` with
-   `candidate`, `inventory-sha256`, `channel`, `phase: preflight` and a fresh
-   `receipt` pathname outside the candidate directory. Supply a read-only
-   platform token as `GH_TOKEN`. It performs live GETs, not artifact evidence.
-   The release shell supplies the pinned tools. `RELEASE_AUDIT_BUCKET` and a
-   storage-only AWS principal must permit conditional held audit writes; an
-   audit failure stops before signing/uploading.
-4. Only after success obtain channel credentials/OIDC. Run the same action with
-   `phase: boundary` immediately before each signing/upload operation, using a
-   new receipt path. The action must run **in this job**; a `needs:` dependency
-   or a reusable workflow's boolean output cannot authorize another job.
-5. Reconcile existing remote bytes using channel-specific authenticated digest
-   reads or download/hash. Only an authoritative 404 means missing. An ambiguous
-   response or a mismatch stops the run; never overwrite. Upload only missing
-   payloads, then fetch/hash them. Retry from held bytes with renewed approval.
-6. Retain both gate receipts and channel reconciliation records under immutable
-   run/attempt keys in the audit store. Keep candidate legal holds until every
-   enabled channel and public-path acceptance has completed. No automatic code
-   releases holds or deletes old candidates.
+Channels are `github`, `crates`, `ghcr`, `homebrew`. Phase is `preflight` before
+credentials and `boundary` immediately before each signing/upload/publication
+operation. A fresh receipt basename outside the candidate is mandatory each
+time, including repeated crate/image operations. Exit 0 means live validation
+and a held audit write succeeded; stdout is the exact approval challenge. The
+local receipt includes the binding, authenticated approver, phase and channel.
+Every nonzero exit stops the job. A previous receipt is never cached authority.
 
-The one public adapter is `packaging/release-gate CHANNEL --candidate DIR
---inventory-sha256 HEX --phase preflight --receipt FILE`, run inside
-`nix develop .#release -c`. The composite delegates to this same executable.
-`phase` is `preflight` or `boundary`; channel is `github`, `crates`, `ghcr` or
-`homebrew`. Exit 0 means the live validation **and immutable audit write** passed;
-stdout is the approval challenge. The new local receipt records the canonical
-binding, authenticated approver, decision, phase and channel. Every invocation
-needs a unique receipt basename, including repeated per-crate/image boundaries.
-Missing/malformed evidence, network/audit failure or refusal exits nonzero and
-must stop the job. There is no success/approval token to cache. The adapter never
-accepts offline evidence. Unit tests call the pure validator with fixtures.
+The complete retained flat root and its global inventory digest are required;
+channel-only Actions artifacts are insufficient. Materialize once per job with
+the exact-version retention fetch in `release-publish.yml`. Extract working OCI
+layouts and create receipts outside that immutable directory.
 
-Inputs supplied by the job are the full retained candidate path, root inventory
-digest, channel, phase and receipt path. Platform variables
-`GITHUB_REPOSITORY`, `GITHUB_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`,
-`GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` must retain their platform values. The
-event file supplies the exact manual dispatch fields above. `GH_TOKEN` can only
-read live policy/check/review records; `RELEASE_AUDIT_BUCKET` and the storage-only
-AWS principal permit held receipt writes. Artifact/env approval IDs, source
-claims and publisher IDs are never authority. Missing protected settings fail
-closed; a policy reader may need additional read-only administration access.
+The outer workflow is manual `release-publish.yml`, dispatched at the **same
+signed release tag**, never a branch. Platform `GITHUB_REF` must be
+`refs/tags/<tag>` and `GITHUB_SHA` the exact qualified source commit. The event's
+inputs are `inventory_sha256`, `source_sha`, `tag`, sorted JSON `channels` and
+`targets`, JSON `candidate` containing integer `run_id`/`run_attempt`, the held
+`retention_receipt_version`, canonical `settings_audit` JSON and its SHA-256
+`settings_audit_sha256`. Publishing IDs come from the platform. Do not fabricate
+or replace platform variables. `GH_TOKEN` needs ordinary contents/Actions read;
+publishers never inspect private ruleset bypass settings or hold administration
+credentials. `RELEASE_AUDIT_BUCKET` and a storage-only AWS principal permit
+conditional held audit writes.
 
-Materialize once per job using the exact-version retention fetch in
-`release-publish.yml`: read `candidates/<root-digest>/retention-receipt.json`
-at the explicitly dispatched S3 version, then run `retention.py fetch`. The
-adapter validates the complete, unchanged flat root directory each time;
-channel-only Actions artifacts and an extracted OCI working tree are not that
-directory. Keep extraction/work products and receipts outside it.
+The approval tuple includes all these candidate bindings, the settings audit
+digest and publishing run/attempt. The maintainer's authenticated environment
+review comment must equal `approve-release-v1:<canonical-tuple-sha256>`. The audit
+must postdate candidate completion, be at most 24 hours old, identify this exact
+inventory/run/attempt/channel/target set, and match the approved digest. It is a
+maintainer-local settings inspection ratified by that review, not an artifact's
+claim to be an authorized actor. Every rejection requires a fresh dispatch.
 
-### Migration of the parallel R3/R4 integration points
+`settings_audit.py` runs locally with the maintainer's own authenticated `gh`
+account and explicitly confirmed UI observations where no settings API exists.
+It inspects the protected environment, both tag rulesets, repository/environment
+secret names and immutable-release setting. It checks GHCR Actions READ plus the
+post-setup negative push result, and each crate's exact workflow/environment.
+Publishers verify the ratified report, current exact-SHA checks, current review
+history and a freshly fetched tag's actual pinned-key signature at every gate.
 
-These branches were inspected with `git show origin/plan/dist-r3` and
-`git show origin/plan/dist-r4` before fixing this interface. They stay disabled
-until the parent reviews their final integration into the common orchestrator.
+## Channel integration
 
-| Consumer | Required adaptation |
+R3 and R4 integration points were read from `origin/plan/dist-r3` and
+`origin/plan/dist-r4`. Both move their final jobs into the common manual tagged
+orchestrator, use `release`, direct `needs: authorize`, the exact current
+inventory/attempt condition in `workflow_policy.CREDENTIAL_CONDITION`, and
+`RELEASE_CRATES_ENABLED`/`RELEASE_GHCR_ENABLED`. Keep in-job preflight and boundary
+calls as well as the protected read-only authorization job. These local ordering
+checks supplement the platform boundary; a branch-editable boolean is not it.
+
+| Consumer | Adapter and retained payload contract |
 | --- | --- |
-| R3 `publish-crates.yml` and `publish-crates.mjs` | Replace `materialize`/`verify --channel crates-io` calls with the held fetch above and `packaging/release-gate crates` using the full retained root, root digest, explicit phase and fresh receipt. Carry `crates-inventory.json` inside the global frozen inventory; the R3 verifier checks its own approved channel digest and crate/source/version contracts on every boundary. The root digest is never the crates-only digest. |
-| R4 `ghcr-gate.sh` and `ghcr-publish.yml` | Replace `packaging/r1-ghcr-gate upload\|sign` with `packaging/release-gate ghcr`: `preflight` before credentials and `boundary` before every upload/sign. `upload` and `sign` are operations, not adapter phases. Materialize the full held root; extract the inventory-bound OCI tar outside it and independently verify the platform/index/binary digests before each operation. |
+| R3 | Replace `materialize`/`verify --channel crates-io` with exact held fetch and `packaging/release-gate crates`. Use the global digest, complete root, explicit phase and unique receipt. Freeze all seven `<crate>-<version>.crate` files and `crates-inventory.json`; independently recheck its channel digest, version, corresponding source and dependency order. Trusted publishing must require **both** `release` and `release-publish.yml`. |
+| R4 | Replace `packaging/r1-ghcr-gate upload/sign` with `packaging/release-gate ghcr`, `preflight` before dedicated credentials and `boundary` before each upload/sign. Freeze `ghcr-oci-layout.tar`, `ghcr-index.json` and SBOM/acceptance material. Extract outside the root; recheck both platform/index digests and executable hashes from signed `inventory.binaries[target]`. Ordinary `GITHUB_TOKEN` is READ only at the package; registry authentication uses a separate `release` environment secret. |
 
-There is no `packaging/r1-ghcr-gate` alias or alternate approval-ID protocol.
-Map the old `R1_*`/`INVENTORY_SHA256` bindings to the trusted common dispatch;
-the gate authenticates it rather than trusting these duplicate environment
-claims. R3/R4 final jobs use environment `release`, direct `needs: authorize`,
-the exact current inventory/attempt condition above and channel switches
-`RELEASE_CRATES_ENABLED`/`RELEASE_GHCR_ENABLED`. Existing separate reusable
-publish wrappers are integration sketches: move the final jobs into the common
-manual orchestrator, with the same gates inside every protected writer/signing
-job. The channel's own remote reconciliation and image/crate checks remain
-mandatory. Any proposed reusable-job expansion needs explicit authority-graph
-review before the policy accepts it.
+There is no alternate `r1-ghcr-gate`, approval-ID protocol or branch signer.
+All file, installer and image verification pins the certificate identity to
+`https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<exact-version-tag>`
+with the GitHub OIDC issuer and exact source ref. `verify.py` supplies the shared
+file/OCI verifier. R4 must use it for each platform/index provenance and relevant
+SPDX predicate. The hardened installer applies the same identity before archive
+extraction. Checksums alone do not authenticate an author.
 
-The maintainer approves the canonical binding tuple printed in the run summary.
-The environment review comment must be exactly `approve-release-v1:<hash>`, where
-`hash` is SHA-256 of the canonical tuple (sorted compact ASCII JSON plus newline).
-The tuple contains repository, source SHA/tag, inventory digest, sorted channels
-and targets, candidate run/attempt and publishing run/attempt. Reviewer identity
-and decision come from GitHub's review history. Previous-attempt comments fail.
-A rejection supersedes an approval. Do not remove the comment requirement.
+Native cargo-binstall currently supports minisign rather than this Sigstore
+identity. It must not be advertised as an authenticated path or enabled without
+a reviewed bridge. Freeze and every gate inspect the final CLI `.crate` metadata:
+R3 must disable all native binstall strategies and retain the exact identity for
+the external verified path. The required metadata for each concrete version is:
 
-The environment has explicit user reviewers and administrator bypass disabled;
-deployment policies permit only `main`. Every `v*` tag is protected against
-creation, updates and deletion with no bypass. GitHub's restricted creation
-mechanism needs a parent ruling before it can be enabled for a dedicated path;
-the implementation defaults to frozen tags and refuses incomplete policy.
-Only completed successful `push`/manual runs for the exact SHA from `ci.yml`,
-`build.yml`, `nix.yml` and `release-tests.yml` qualify. Skipped jobs refuse.
+```toml
+[package.metadata.binstall]
+disabled-strategies = ["crate-meta-data", "quick-install", "compile"]
 
-Candidate retention uses S3 Object Lock COMPLIANCE plus legal hold ON, exact
-object versions and conditional creation. Actions artifacts are a convenience
-copy, never the durable authority. `retention.py stage` writes held objects;
-`fetch` verifies lock metadata, versions, complete inventory and every digest.
-Provision the bucket and separate read/staging credentials before dispatch.
-No production storage is provisioned by this repository's tests.
+[package.metadata.hennery-release]
+verification = "external-sigstore"
+signer-identity = "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0"
+```
+
+Use that crate's actual version tag. The `hennery-release` namespace describes
+the common external verifier; native binstall does not consume it. The parent's
+capability ruling and R3's metadata integration remain prerequisites to a
+supported native bridge. No unsupported
+Sigstore metadata key is presented as native binstall enforcement.
+
+Only fully verified missing remote artifacts may upload. An authoritative
+absence differs from failed authentication/network or mismatched bytes; ambiguous
+results stop. GitHub uploads all assets to a draft, verifies them, then publishes
+and requires immutability. Published assets are never changed. A retry reuses a
+verified existing bundle and held bytes with a fresh approval; missing/expired
+candidates or conflicting remote bytes need a new candidate/version. Hold
+candidate and audit objects until every approved channel/public path completes.
+Actions artifacts are convenience copies, never the retention authority.
 
 Generated with Claude AI — please review before distribution.
 ````
 
 ### File `packaging/release/gate.py`
 
-<!-- r1:file task=1 path=packaging/release/gate.py sha256=2e17f3ea348dea71872408d26196d17cfbe82e7cb76a84c64f338c4d5b9cb26e bytes=16101 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/gate.py sha256=94854fa410734fcb7bef06ae0915ce76c8a6983fb4e4ac3ff841bdfa5674695a bytes=15954 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """R1 v1 gate. Read-only platform checks; no signing or publication credentials.
@@ -445,34 +432,28 @@ def strict_json(raw):
         raise Refused(f'invalid JSON: {error}') from error
 
 
-def binding(inventory, inventory_sha256, run_id, run_attempt):
+def binding(inventory, inventory_sha256, run_id, run_attempt, settings_audit_sha256=None):
     return {key: inventory[key] for key in ('repository', 'source_sha', 'tag', 'channels', 'targets', 'candidate')} | {
-        'inventory_sha256': inventory_sha256, 'publishing': {'run_id': int(run_id), 'run_attempt': int(run_attempt)}}
+        'inventory_sha256': inventory_sha256, 'settings_audit_sha256': settings_audit_sha256,
+        'publishing': {'run_id': int(run_id), 'run_attempt': int(run_attempt)}}
 
 
 def challenge(context):
     return 'approve-release-v1:' + digest(canonical(context))
 
 
-def frozen_tag_ruleset():
-    # Safe default: no actor can mutate v* tags. Creation path pending parent ruling.
-    return {'name': 'release-tags-frozen', 'target': 'tag', 'enforcement': 'active', 'bypass_actors': [],
-            'conditions': {'ref_name': {'include': ['refs/tags/v*'], 'exclude': []}},
-            'rules': [{'type': op} for op in ('creation', 'update', 'deletion')]}
-
-
-def check_tag_rules(rulesets):
-    protected = set()
+def check_tag_rules(rulesets, owner_id):
+    creation, immutable = False, False
     for rule in rulesets:
         if rule.get('target') != 'tag' or rule.get('enforcement') != 'active':
             continue
         refs = rule.get('conditions', {}).get('ref_name', {})
         if refs != {'include': ['refs/tags/v*'], 'exclude': []}:
             continue
-        if rule.get('bypass_actors') != []:
-            continue
-        protected.update(r['type'] for r in rule.get('rules', []))
-    require({'creation', 'update', 'deletion'} <= protected, 'release tag creation/update/deletion must have no bypass')
+        operations = {r['type'] for r in rule.get('rules', [])}
+        creation |= operations == {'creation'} and rule.get('bypass_actors') == [{'actor_type': 'User', 'actor_id': owner_id, 'bypass_mode': 'always'}]
+        immutable |= {'update', 'deletion'} <= operations and rule.get('bypass_actors') == []
+    require(creation and immutable, 'release tags require owner-only creation and separately immutable update/deletion with no bypass')
 
 
 def verify_files(inventory, root):
@@ -517,27 +498,25 @@ def trusted_run(run, source_sha, path):
 def validate(inventory, expected_digest, root, context, snapshot):
     require(digest(canonical(inventory)) == expected_digest, 'inventory digest mismatch')
     verify_files(inventory, root)
-    expected = binding(inventory, expected_digest, context['publishing']['run_id'], context['publishing']['run_attempt'])
+    expected = binding(inventory, expected_digest, context['publishing']['run_id'], context['publishing']['run_attempt'], context.get('settings_audit_sha256'))
     require(context == expected, 'approval tuple differs from inventory')
-    env = snapshot.get('environment') or {}
-    require(env.get('name') == 'release' and env.get('can_admins_bypass') is False, 'release environment missing or bypass not explicitly disabled')
-    reviewers = {r['reviewer']['id'] for rule in env.get('protection_rules', []) if rule.get('type') == 'required_reviewers'
-                 for r in rule.get('reviewers', []) if r.get('type') == 'User'}
-    require(reviewers, 'release environment needs explicit authorized user reviewers')
-    require(env.get('deployment_branch_policy') == {'protected_branches': False, 'custom_branch_policies': True}, 'release environment branch restrictions missing')
-    require(snapshot.get('branch_policies') == [{'name': 'main', 'type': 'branch'}], 'release jobs must run from protected main only')
-    check_tag_rules(snapshot.get('rulesets', []))
+    import settings_audit
+    settings = settings_audit.validate_report(snapshot['settings_audit'], context.get('settings_audit_sha256'), inventory, expected_digest, snapshot['candidate_run']['updated_at'])
+    env = settings['environment']
+    reviewers = {settings['owner']['id']}
     tag = snapshot.get('tag') or {}
     require(tag.get('object', {}).get('type') == 'tag', 'release tag missing or not annotated')
     obj = snapshot.get('tag_object') or {}
     require(obj.get('tag') == inventory['tag'] and obj.get('object', {}).get('type') == 'commit' and obj.get('object', {}).get('sha') == inventory['source_sha'], 'release tag moved/deleted or wrong SHA')
+    import tag_signature
+    require(snapshot.get('tag_signature') == {'object_sha': tag['object']['sha'], 'commit_sha': inventory['source_sha'], 'tag': inventory['tag'], 'fingerprint': tag_signature.FINGERPRINT}, 'release tag lacks a verified pinned-maintainer signature')
     candidate = snapshot.get('candidate_run', {})
     require(candidate.get('id') == inventory['candidate']['run_id'] and candidate.get('run_attempt') == inventory['candidate']['run_attempt'], 'candidate run attempt changed')
     trusted_run(candidate, inventory['source_sha'], '.github/workflows/release-candidate.yml')
     publisher = snapshot.get('publisher_run', {})
     require(publisher.get('id') == context['publishing']['run_id'] and publisher.get('run_attempt') == context['publishing']['run_attempt'], 'publishing run attempt changed: renew approval')
     require(publisher.get('repository', {}).get('full_name') == REPOSITORY and publisher.get('event') == 'workflow_dispatch'
-            and publisher.get('head_branch') == 'main' and path_of(publisher) == '.github/workflows/release-publish.yml', 'unexpected publisher workflow/ref/event')
+            and publisher.get('head_branch') == inventory['tag'] and publisher.get('head_sha') == inventory['source_sha'] and path_of(publisher) == '.github/workflows/release-publish.yml', 'unexpected publisher workflow/ref/event')
     reviews = [r for r in snapshot.get('reviews', []) if any(e.get('id') == env.get('id') and e.get('name') == 'release' for e in r.get('environments', []))]
     require(reviews, 'environment approval absent')
     require(all(r.get('state') == 'approved' for r in reviews), 'environment review includes a rejection: start a fresh dispatch')
@@ -598,11 +577,14 @@ class GitHub:
                 return out
         raise Refused('platform pagination limit: incomplete evidence')
 
-    def evidence(self, inventory, context):
+    def verify_tag(self, inventory, object_sha):
+        import tag_signature
+        return tag_signature.verify(inventory['tag'], inventory['source_sha'], object_sha)
+
+    def evidence(self, inventory, context, settings_audit):
         tag = self.get('/git/ref/tags/' + urllib.parse.quote(inventory['tag'], safe=''))
         obj = self.get('/git/tags/' + tag['object']['sha']) if tag.get('object', {}).get('type') == 'tag' else None
-        rules = [self.get('/rulesets/' + str(r['id'])) for r in self.pages('/rulesets')]
-        branch = self.pages('/environments/release/deployment-branch-policies', 'branch_policies')
+        signature = self.verify_tag(inventory, tag['object']['sha'])
         checks = self.pages('/actions/runs?head_sha=' + inventory['source_sha'], 'workflow_runs')
         # Workflow success alone can hide skipped acceptance jobs. All jobs in
         # each latest qualifying workflow must have succeeded, never skipped.
@@ -615,9 +597,7 @@ class GitHub:
         candidate_run = self.get(f"/actions/runs/{inventory['candidate']['run_id']}")
         candidate_jobs = self.pages(f"/actions/runs/{candidate_run['id']}/attempts/{candidate_run['run_attempt']}/jobs", 'jobs')
         require(candidate_jobs and all(j.get('status') == 'completed' and j.get('conclusion') == 'success' for j in candidate_jobs), 'candidate has skipped/missing/unsuccessful acceptance or retention jobs')
-        return {'tag': tag, 'tag_object': obj, 'rulesets': rules,
-                'environment': self.get('/environments/release'),
-                'branch_policies': [{k: p[k] for k in ('name', 'type')} for p in branch],
+        return {'tag': tag, 'tag_object': obj, 'tag_signature': signature, 'settings_audit': settings_audit,
                 'candidate_run': candidate_run,
                 'publisher_run': self.get(f"/actions/runs/{context['publishing']['run_id']}"),
                 'reviews': self.get(f"/actions/runs/{context['publishing']['run_id']}/approvals"), 'checks': checks}
@@ -639,11 +619,11 @@ def main():
     raw = (args.candidate / 'release-inventory.json').read_bytes()
     inventory = strict_json(raw)
     require(raw == canonical(inventory), 'noncanonical inventory')
-    require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_REF') == 'refs/heads/main'
-            and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'gate must execute in trusted manual main workflow')
+    require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_REF') == 'refs/tags/' + inventory['tag'] and os.environ.get('GITHUB_SHA') == inventory['source_sha']
+            and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'gate must execute in the trusted manual signed-tag workflow')
     event = strict_json(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())
     inputs = event.get('inputs', {})
-    context = binding(inventory, args.inventory_sha256, int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
+    context = binding(inventory, args.inventory_sha256, int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']), inputs['settings_audit_sha256'])
     for key in ('source_sha', 'tag', 'channels', 'targets', 'candidate'):
         supplied = strict_json(inputs[key]) if key in ('channels', 'targets', 'candidate') else inputs[key]
         require(supplied == inventory[key], f'dispatch {key} changed')
@@ -652,7 +632,7 @@ def main():
     import supply
     supply.require_contract(args.candidate, inventory['channels'], inventory['targets'], inventory['tag'])
     supply.verify_binary_inventory(inventory, args.candidate)
-    snapshot = GitHub(os.environ['GH_TOKEN']).evidence(inventory, context)
+    snapshot = GitHub(os.environ['GH_TOKEN']).evidence(inventory, context, strict_json(inputs['settings_audit']))
     receipt = validate(inventory, args.inventory_sha256, args.candidate, context, snapshot)
     receipt['phase'] = args.phase
     receipt['channel'] = args.channel
@@ -669,6 +649,189 @@ if __name__ == '__main__':
         main()
     except (Refused, KeyError, OSError, TypeError, ValueError) as error:
         raise SystemExit(f'release refused: {error}') from error
+````
+
+### File `packaging/release/maintainer.asc`
+
+<!-- r1:file task=1 path=packaging/release/maintainer.asc sha256=cdcd5f120ed4dc5c5907b7fddc3ddf33f17aed4b5c84050d6a37810ac60a7f7f bytes=6884 mode=644 encoding=utf8 -->
+````text
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mQINBGJEwM4BEADjRUEJExVptcWTwiD7R002sRLyeMBmVRMgkPXCEVCDZPxNPvrE
+Cyh6X3i4ihzXj1+dw8c0Vp9u9t1hnzXoeqVhxLsYoz2VYAvr0gVEYhKKONO0+BLm
+bp2CwsL2kWCyzGR3Aoh6MlWBG1vziVk6KrFK76dV/Mgu3AqmzSSBv3OlBy/Lvdnj
+bdC08yHgCt2mXlBV8DRmBrHxOHl4qcALwn0BiJZsyylyiA57XZK1+DhB5Socnq4e
+62CslyhxmlSZ9EBFckONVlecdVeO+1G42LvjXdP3/Tb48tsILTjxuW+yI7gijbsd
+g/1/LrqjxqWmN9sQqSCYec1z+eQ8Wy9T1nAR3dZHfAdZM5+uNwXtjCS1yqzwCznS
+J+CMXA78FCiLYvNKh6N6uhlJNq47A8Nm5Cou9J7hKRrCqfpwVy9Ya1Rkq8PhzZb6
+bmYnmwG2EJ/5bNk4Eut33d81h5WGVR9MiMYpJyOrIDwNQSvr/YW3bC5KutPT07Jy
+i3VAIv+5Ksm3xdwYDP0N0c+j6T9ZzPBgie56XP+AamsSAM4aC+t5JEd8fDlsUg4N
+uwPU2fDhl/+/5HFvfwrjqn20XiXvk6A0BZPzj1tYrEQ9eEuSyrgUmn5KTBggZg7q
+l6G2tyg0SyOOJgDPJiOXg+Xsyk4Fs20FzFAbdMlfHQWLorG5iAzmuW9qmwARAQAB
+tCVXYWRvbiBNYXJjaW4gPG1hcmNpbi53YWRvbkBnbWFpbC5jb20+iQJVBBMBCAA/
+AhsBBQsJCAcCAyICAQYVCgkICwIEFgIDAQIeBwIXgBYhBBzitzVPxu1dneEt9mTB
+be2AzOq6BQJiRMHDAhkBAAoJEGTBbe2AzOq6BT0QAMg97guyAEH6MxnyV5ELWmQJ
+EIp0AQRnffBBjs0p5Ay5vULuKVZ8SAIzCObL0y+cebU74tJPEO1qwa/4Ba/Npj+5
+G4bPkMvXYff8UL8Bc1sXH7bZ5rDiKR534KqchMIu555VoK456CZFuYpzhBlBgeJL
+oo+DQqqxQF5sQ524lF+aP+049ykL99y8eso6GP9Uh3AhZIy/werGODby2r2n1S0q
+YGyWeGxWbZVaXFYqTQlJnX7hiEpAinwfXqnDn5gJ+0+OJ0dMz60v/dFhRLRTIoE3
+2Sf3ZhOXfRMugE9sRYvmBfYsw6unClW1k+bLelWaxSraqtYn6fTz98MEYeehs+0g
+oYCh16bR+h+PQ9MPOOBH+lCBfvPaLXZ4I1sDwFnXzm/nOounHvscQ77fDisNz+4G
+L23aGESIrqyDzoC0c84rd19OiC/He0hjXsjm2YEuYEzTX9eYsZ6LTUfFsdydvNFs
+QXzkuZMlcCM85IAgXiwsFr2VlhY/AtIK8sAIT1wcw98oDZJwq8I0C+BQ8V0besQn
+GFFyMtlA+KxhgM0nHouN8YOBk9vFVtt4Xf/hh05+ULLamjL88wwZmKyMpSMikhJ+
+f+MkzZw1cEOyfmdCGzJuqymhTPt4DxAj6MQ4xnR7avc+1rAqPvNTGWW9sXr2ZPTJ
+JOd+DDO9GFFwbd/tUQLmuQINBGJEwU4BEADuv40fdWOq9h6axo3x4KXJMxvukVFb
+wUzb+5fvZ2GWKTDjamDOChNx1PF+MfGP30ooxyT+//Ep3vjNDpNbFEqMwCwxb7eh
+tg76PYtNMc1Ic4xiOfcKiDTl2+ljZxo5IbNgvMc2lZh1mH3uz9lLynRBwLOJjnfV
+QJmDIqkFgbmxEv30gEZBTEIvSgBup5FnIH23ZSrSEOvNc9+w595SxSI7jCmPafe+
+U0Uazy4mnA0gVKUjlz3KlXuLfapEyrHhyzqirqgVsk+QRCZUnxHZAxT4mTqGlFRv
+4HsHoW1nIzq+NV7nnCPQ5HqwbzsrPb0LYwY2oWPzAvn5Fy+ZXmjzUMul327ePcki
+/c/PoVsvrywSO9t/1ePPs+gb294q5Qu4gUR7fGdpwsFUBWhEdibt/n7OgSau8OGD
+ah/IdhZPuWGmqphOvYrXzb3f4PTJJbpAPKeknsZAWGUaYKNIWnqyeZREDxVyDqrh
+TBq1xuUlNfFg9AsoU0Jc6w2bjj7pLMIiIZaAmO9kczZaQTFgF6ai3t6OsZ20hvZz
+rZ4cwRAOWV/Zusv76SiqUwoQdij2awT71ppQPqh9W3RguV+fQgNZuFW0DmqvLs9N
+gkg8XjETE1M9fu7O+5dBMuxzDqFB2TWvfE2UkxSXV9PNcqzYwhuCH9/x8V1RjLoR
+ocmN9GwZA9GWCQARAQABiQI2BBgBCAAgFiEEHOK3NU/G7V2d4S32ZMFt7YDM6roF
+AmJEwU4CGyAACgkQZMFt7YDM6rqYBA/9FuBTpH4YALgdVL1N4OqtgxdnW+HfYGm0
+qlZB21JTIB3J/WWLS8qP1rXnDVpLR264GHRVkjPvdFICxhXWm4I7oFNgOOWUPmSX
+2LlbvjdJW2go5cxWh6m2b0iGGd5a2tEivr+AlmrVNwqbROnurFFYFPC9XCA4U4s7
+Z45xUlGPu5w8VucWo6i7w+8p5197E0mgwE8PjMCf6DqtcbL/GFmYjfkHzcFlYeOR
+Fiq/huGYjHb/+icYs4qOhlys61GAU+d1GyB5mWHxI0L7OkTcbpnus39/q/ZKShjW
+nkZT5U5njbd5eVAa7w5gFY6LdBCTDxdtKwjVwdbejNEPHUMlrU+ZJB2MutuQdO9R
+qnRQx6Y/j8hMpplXe0fG5ckKXxnrbEDARdvwq6L1Rhg7jHyao5uUnl56pLO/jLQ3
+X/sYhmSbEGiSqNAsxlr8KfShXnouly/fMBay7Cu3l7K8Ii8/nOiA34+8IwqDfAT2
+lGRIB9kVJIumK1Tyml/dHnRieNjpqz2JDWo70xDRMLlbde3a4GyvMJYyXA9pcmaY
+QQklpbpmS6gDLLySRYeZSnHyK7W4IaNsFVdvCB/l2guUaP87iLAyfIoY8GxW8QSd
+4bMfigPDgTjgMkkavy6LQQfXfunK6RLzZhdSYMQobaMgLkzUNLPJfKHYw4wA+lMh
+s4MKyqjmRw+5Ag0EYkTBOAEQAKNUQZL7VlqJxlBSQ+c8tk/8CfqmAAx2M12xm9ug
+W4yRqlE9Iul4jbN+kVYNj7x0ARPp4ENS7sDhI74PqDtv9p8Cx3MkouMuk0z09sTk
+mKhO1WY32jjMYI5pQmtbzNLdK96eGtbhkybtY9KGkQTevm7EgB65MnDhaJr9RpW6
+HNgAfiuOlv/1FEKRLBWeqQYrd7tAPnWtiIyOn9k1y+fK74jKizKScxRsd6yl1O2D
+KQgdn0dtZJwWY1yQquN2qPEd/0W1Sofup+tVHcWQPSBLaM57SeQ5ufuJE0hkmwWd
+1SjOP1fe4odLiBeGI3PcVfnD92/6UMsW3IG8b1yB011/LxZjBnKQlUj3P+rI4MrR
+stNREPv2rls+LSh58CPn4hrcr0eZLB03TQM/OKEERSmUQFleZ0HhRP2YfmZ+vl0D
+v9jDSORBlWmUotrVWcsPzydDbh2gAXVVu6DChpNF+8KbYuU31rNRuTsoZqKnsi12
+2F+buYtuDSWEFT27qy9lU9LOcp19Ds0q7f23UWF3ylrI0gXQPJybxZGRdc+lVAoj
+JTltNRna+mlNQWbM9EGAcPOggx7zi6+S7otZI1Bjk0/eHwggc0lukuoCPVOzLu8i
+AbSPBQl9GT70QvWEujR4rbOqnGBjQeXHC2dmMRV/mtuhUHZGvgkh/zukDi3vd6k+
+u0GnABEBAAGJAjYEGAEIACAWIQQc4rc1T8btXZ3hLfZkwW3tgMzqugUCYkTBOAIb
+DAAKCRBkwW3tgMzqusvDD/9CIctIQe9jn7s3zKwqQRk80HCiV4Ozl4E3jKXiJieG
+Y7U+n13NPYQ03PsrSTxwom06K3J/hvX9yR91Kacb/FCMqkJgIFrfJhFzkwJ2Gj1e
+44HokpriGG3RKNfDjMzuVYkEKqeQcpZKfHGr1eWBXQV7jESlZhbvNJ3DJMjDDe4x
+hqq5g4jZE6zP52aDqWBUDfCrYbzi85ONRdxqe9nmCak+Fv8dqRr9pJJLW4Ce/ZNJ
+7kd/BwBgzfAgEm8YzrP95TtqUUtqSholxNu4UyocrbE96SNuGYXGuiuOny26CkcZ
+8Zw7XwDFwfCYxXYk4tyjL8IIS9FU8tKCBnkdCK3ZSBvFH7VSui4XFftRpmdiLGfI
+xBjLu4av12CsYqMIsfFYX3X71zqCfPY+Y4TLnqiHMjq6Kr2eMRuIvjliJbnbftYN
+mmutdpT7bDLQ81G05ZLg0Bxl9q6W5aTcAZLdSHhtItBhDEVnuKjfB0vnxA23CMpx
+209X9a6Zy5R7YHJNS0JYl45QXvO6VV5BcIWztPhn/IWl8V5POVOfPrAetvpbdbA8
+r1+4RO1JLL4ZoXJdHxIZiWW6dJtgBgE/0hU4YFPz8YhKrLwdr/9Jj1x1KFHI8pLb
+LuaaGpvh1gWdUCeIcEGoTmxn3mnCv07/iS49Ntq4ctjh7mPPjE3A9F6Pi+Xm8WZ7
+ybkCDQRiRMEdARAAvmvHlRly4ktT8D+9+N/nXtd0Cj88IEqeVblAQXzgyTm5rUIg
+whFPYS44yDg0IOXqcTf1szknxBTwksY7E6plbsiMtJCYnAf1MVjtGL1CxrAmQgHQ
+vvrfWOZ1qOwMfbLcNOSx+QHISwxtSWmfmXy4cJRAflYWeBzcJvrsALRvXxiMaQcC
+LJlmHVzh7AnCOG2VKKNLRqVVIPHaqrABZ10+p75R+YO1oLzwa+BFj+JSF0MGg8tR
+h0QYPZMza3cNS2Ahkbo6h6zD0xD2H8TTdh29g5+3ucF0quT5igXk4NXZGl4kWIVQ
+dLDDitO3hkxMwxmeuiJnglcYBQ0HeL29FoMI4oyZbzr78Adx7u1NoByC9Iq3Cwt0
+Rc9Q8jfR+0y+O5ydu2q7vDPKkHvs7h863tTD+G7btP3tRwY+nMMwG4WWpXT9LEnx
+97puhEqLAlXeGSTWcOmE8KeNWeJLR/Zk5fmLIg8BbqaFVXzeHQj9AfJI79Vw4SG/
+pEzZNUenEyF1Ps1raM8TzKGl6RjfBBzcMKm6Oig23M0qjgc0P9Ls8rDZI79RLgUk
+xPKzqFjb6QzADxjKiT+wDPLdNyY/EZUxtJYqfFoUkqOgiRHAP6vuzfwrbauljrdY
+0mBYN2QZhRESmxySOtmZh05gH0SmflcTnp6W3u/qkUvz5OaD4fKRswTYijEAEQEA
+AYkEbAQYAQgAIBYhBBzitzVPxu1dneEt9mTBbe2AzOq6BQJiRMEdAhsCAkAJEGTB
+be2AzOq6wXQgBBkBCAAdFiEE8mx/WU3+hNExcDr8I+WjGK6NKGEFAmJEwR0ACgkQ
+I+WjGK6NKGEA3hAAqfAI1ZgFi/A5sKPbaX6rli3AzWA/ZAvR6Jqs9icBEp6LpXmi
+eH+KuLzQDQzbg509qLip5REWvn2TzY5rov3pY922J+31kMJo+3CTo6KxICpVGgKu
+14cRssB7XlDs/vQAH9dw/+2HYj7jApPomkQuAtrf/pd1RdTimQfd/zKzp1VMNioQ
+2O6RYx0Vn1qNPTr3eYwjSDpbtox86WRFiu0vsfBCTrcp3ZdBygPkujISE2PeKFBN
+T9oPExo4msgmWzi99sof3ZT6ysqujBVq8uH856KW4E/wbFObRJ9+D4piahgowZKk
+WtAL8lXlvIHPbp5N+c/erCqmZbn8xYSBgrw6k0dTDJ/huL6qVO/HXw5xL/pyrWp3
+4t0sxvOJkyQ4KpGQHhshnYAOiJB5+NS13GloTR2sIZZAthYZom9oGNITkG+BZHVp
+h0ScAiLgQEWlyVjWYTj7tjLv7zjJH1tPzpMAiyPJGCdqTLW6KRBA8uNYhYXIPRZH
+9ZKJ9sJZPk9Cfc3HQ4YxovKaeKxsApOHlEjEhAygMl3KES6Tn1N7tyroV4Uo4xPN
+NVsaa/M98ffOg4pU8Q9bIx+hEJwoxAmyrnfoOQjxr1jJJ2zseT8it0+688jlTykh
+qdgNnt9fxffNXN8Qdf14veHJ3F+SoG7r7Q0O6q2mJMf0KMeo85ZzTSOMJDa25BAA
+i+QA0giytkeVAJ9u6YHhYvcEAgRN33JrWrTAC0YLCh/gpGpUi4yNFvYTp/WHgR5R
+PuxAS2pvi+DmbnQbW3mn0YTS7xmNGHYu1Mx3SB7h2vo8Jno5lcghW+LsffYqUDy4
+KDmTyWNbiegM7SLXqVo6W8ptMxOE9/xXJrMjnQBIPSMFgYzPFQABWLTT0ultdgaB
+ToZjClZGct70xRFqEYGUTBm2d/Kim4kniEKxGKXz9GCJ/WnpFTIopNIgNSok0+bt
+31nLTAJQzqiJlYxhV4NA7B7ZJDGANt6T2Tf6QHss6rEASQ6veyQG8U7OWCQ1+rsB
+VdgllC+uBZ7AkUJ/9j0uChdejXYDOPVAPPAUY5iTx1asGqywac7zABQCf3ZfEJgX
+uhO4Y4UwkzdwnqS2ZIGbAou/7Wcjil2KEUuMYF5R5fbAGh+m0LsrNlfwdg3JHZgT
+uqChTdzITHeAUY0DLny69hhruUxUUJ0jvURuzty4hG/LQFMI0W0slZjRoAgP+MhK
+oxQYYelHgnr4EYG6YuwOo2uyNpb3MLsqM43LoanS8vXssF9/MPjSgN229k/VgFXW
+3ZXytEqQUKLrVA/E9BASxobdti1Y0vVic3TZhYVDddB7w3++EYodbea5OsMevnUw
+kUiLPNDGtOQrJcj5QdZdrJRaltlm6Z+fUox8YG7XYXs=
+=HIg0
+-----END PGP PUBLIC KEY BLOCK-----
+````
+
+### File `packaging/release/post_setup.py`
+
+<!-- r1:file task=1 path=packaging/release/post_setup.py sha256=ab9ba6ebb0e3b16776532d00f56b54ec5cfee1e9092f9268bb15778697db4501 bytes=3635 mode=644 encoding=utf8 -->
+````python
+#!/usr/bin/env python3
+"""Maintainer-only post-setup negative push acceptance; NEVER run by unit tests.
+
+Run in an explicitly authorized disposable branch job with packages:write,
+GITHUB_TOKEN, no environment and no dedicated publishing credential. If setup
+is wrong this can create a canary index: stop and repair access before release.
+"""
+import argparse
+import base64
+import os
+import re
+import urllib.error
+import urllib.request
+
+import gate
+
+
+def assert_ghcr_denied(transport, expected_digest):
+    status, data = transport('read')
+    gate.require(status == 200 and gate.digest(data) == expected_digest, 'negative push check needs working verified read access')
+    status, _ = transport('push')
+    gate.require(status == 403, 'GITHUB_TOKEN push was not authoritatively refused; stop publication and repair package access')
+    return {'read_status': 200, 'push_status': 403, 'credential': 'GITHUB_TOKEN'}
+
+
+def request(url, headers, method='GET', data=None):
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+    try:
+        with urllib.request.build_opener(NoRedirect).open(urllib.request.Request(url, headers=headers, method=method, data=data), timeout=30) as response:
+            return response.status, response.read(1024*1024)
+    except urllib.error.HTTPError as error:
+        return error.code, error.read(1024*1024)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--expected-digest', required=True, help='SHA256 of a known existing package manifest/index, without prefix')
+    args = parser.parse_args()
+    gate.require(re.fullmatch('[0-9a-f]{64}', args.expected_digest), 'invalid known image digest')
+    gate.require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_REPOSITORY') == gate.REPOSITORY and os.environ.get('GITHUB_REF', '').startswith('refs/heads/'), 'acceptance must use a branch Actions job')
+    gate.require(not os.environ.get('GHCR_PUBLISH_TOKEN') and not os.environ.get('RELEASE_PUBLISH_APP_KEY'), 'negative acceptance must never receive dedicated release credentials')
+    basic = base64.b64encode((os.environ['GITHUB_ACTOR']+':'+os.environ['GITHUB_TOKEN']).encode()).decode()
+    token_url = 'https://ghcr.io/token?service=ghcr.io&scope=repository:marcinwadon/hennery:'
+    status, data = request(token_url+'pull', {'Authorization':'Basic '+basic})
+    gate.require(status == 200, 'read authentication failed; not a valid negative push test')
+    read_token = gate.strict_json(data)['token']
+    def transport(operation):
+        if operation == 'read':
+            return request('https://ghcr.io/v2/marcinwadon/hennery/manifests/sha256:'+args.expected_digest, {'Authorization':'Bearer '+read_token,'Accept':'application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json'})
+        status, data = request(token_url+'pull,push', {'Authorization':'Basic '+basic})
+        if status != 200:
+            return status, data
+        push_token = gate.strict_json(data)['token']
+        canary = 'r1-negative-' + str(int(os.environ['GITHUB_RUN_ID'])) + '-' + str(int(os.environ['GITHUB_RUN_ATTEMPT']))
+        return request('https://ghcr.io/v2/marcinwadon/hennery/manifests/'+canary, {'Authorization':'Bearer '+push_token,'Content-Type':'application/vnd.oci.image.index.v1+json'}, 'PUT', gate.canonical({'schemaVersion':2,'mediaType':'application/vnd.oci.image.index.v1+json','manifests':[]}))
+    print(gate.canonical(assert_ghcr_denied(transport,args.expected_digest)).decode())
+
+
+if __name__ == '__main__':
+    main()
 ````
 
 ### File `packaging/release/retention.py`
@@ -796,6 +959,193 @@ if __name__ == '__main__':
         raise SystemExit(f'candidate retention refused: {error}') from error
 ````
 
+### File `packaging/release/settings_audit.py`
+
+<!-- r1:file task=1 path=packaging/release/settings_audit.py sha256=ef0d461f7725c6303d18fad7dab3aef80e2668204ee7527ad270089929ded8e6 bytes=8746 mode=644 encoding=utf8 -->
+````python
+#!/usr/bin/env python3
+"""Maintainer-local platform settings audit; publishers only validate its digest.
+
+No runtime publisher needs ruleset administration. UI-only registry settings are
+observations explicitly confirmed by the authenticated owner, then bound into the
+platform review comment. This tool is never invoked by a publishing job.
+"""
+import argparse
+from datetime import datetime, timedelta, timezone
+import os
+from pathlib import Path
+import subprocess
+
+import gate
+
+CRATES = ('hennery-proto', 'hennery-view', 'hennery-gateway', 'hennery-sessions', 'hennery-host', 'hennery-kernel', 'hennery')
+MAX_AGE = timedelta(hours=24)
+
+
+def tag_rulesets(owner_id):
+    common = {'target': 'tag', 'enforcement': 'active', 'conditions': {'ref_name': {'include': ['refs/tags/v*'], 'exclude': []}}}
+    return [common | {'name': 'release-tag-creation', 'bypass_actors': [{'actor_type': 'User', 'actor_id': owner_id, 'bypass_mode': 'always'}], 'rules': [{'type': 'creation'}]},
+            common | {'name': 'release-tags-immutable', 'bypass_actors': [], 'rules': [{'type': 'update'}, {'type': 'deletion'}]}]
+
+
+def validate_settings(settings, channels):
+    owner = settings['owner']
+    gate.require(owner.get('login') == gate.REPOSITORY.split('/')[0] and owner.get('type') == 'User' and type(owner.get('id')) is int and owner['id'] > 0, 'settings audit requires the personal repository owner')
+    env = settings['environment']
+    gate.require(env.get('name') == 'release' and env.get('can_admins_bypass') is False, 'release environment missing or bypass not explicitly disabled')
+    reviewers = [r for rule in env.get('protection_rules', []) if rule.get('type') == 'required_reviewers' for r in rule.get('reviewers', [])]
+    gate.require(len(reviewers) == 1 and reviewers[0].get('type') == 'User' and reviewers[0].get('reviewer', {}).get('id') == owner['id'], 'release reviewer must be exactly the maintainer')
+    gate.require(env.get('deployment_branch_policy') == {'protected_branches': False, 'custom_branch_policies': True}, 'release environment deployment restrictions missing')
+    gate.require(settings.get('deployment_policies') == [{'name': 'v*', 'type': 'tag'}], 'release deployment must permit protected v* tags only')
+    gate.check_tag_rules(settings.get('rulesets', []), owner['id'])
+    gate.require(settings.get('repository_secrets') == [], 'repository secrets must be empty; publishing credentials belong only in release')
+    gate.require(settings.get('immutable_releases') is True, 'immutable GitHub releases must be enabled')
+    secrets = settings.get('release_secrets', [])
+    if 'github' in channels:
+        gate.require('RELEASE_PUBLISH_APP_KEY' in secrets, 'GitHub publishing credential must exist only in release')
+    if 'ghcr' in channels:
+        ghcr = settings.get('ghcr', {})
+        gate.require(ghcr.get('repository') == gate.REPOSITORY and ghcr.get('actions_access') == 'read', 'GHCR Actions access must be READ')
+        gate.require(ghcr.get('dedicated_credential') == 'GHCR_PUBLISH_TOKEN' and 'GHCR_PUBLISH_TOKEN' in secrets, 'GHCR requires its dedicated release environment credential')
+        denial = ghcr.get('negative_push', {})
+        gate.require(denial.get('credential') == 'GITHUB_TOKEN' and denial.get('read_status') == 200 and denial.get('push_status') == 403, 'post-setup GITHUB_TOKEN push denial must be observed with working read access')
+    if 'crates' in channels:
+        configs = settings.get('crates', [])
+        gate.require(len(configs) == len(CRATES) and {c.get('crate') for c in configs} == set(CRATES), 'trusted publisher configuration missing for production crate closure')
+        gate.require(all(c.get('repository') == gate.REPOSITORY and c.get('workflow') == 'release-publish.yml' and c.get('environment') == 'release' for c in configs), 'crates.io trusted publishing must require exact workflow and release environment')
+
+
+def report(inventory, inventory_sha256, settings, now=None):
+    now = now or datetime.now(timezone.utc)
+    validate_settings(settings, inventory['channels'])
+    return {'schema': 1, **{k: inventory[k] for k in ('repository', 'source_sha', 'tag', 'channels', 'targets', 'candidate')},
+            'inventory_sha256': inventory_sha256, 'issued_at': now.isoformat(), 'auditor': settings['owner'], 'settings': settings}
+
+
+def validate_report(value, expected_digest, inventory, inventory_sha256, candidate_completed_at, now=None):
+    now = now or datetime.now(timezone.utc)
+    gate.require(gate.digest(gate.canonical(value)) == expected_digest, 'settings audit digest differs from approval')
+    gate.require(value.get('schema') == 1 and all(value.get(k) == inventory[k] for k in ('repository', 'source_sha', 'tag', 'channels', 'targets', 'candidate')) and value.get('inventory_sha256') == inventory_sha256, 'settings audit belongs to another candidate')
+    issued = datetime.fromisoformat(value['issued_at'].replace('Z', '+00:00'))
+    if isinstance(candidate_completed_at, str):
+        candidate_completed_at = datetime.fromisoformat(candidate_completed_at.replace('Z', '+00:00'))
+    gate.require(issued.tzinfo is not None and candidate_completed_at.tzinfo is not None and timedelta(0) <= now-issued <= MAX_AGE and issued >= candidate_completed_at, 'settings audit is stale, future-dated or precedes candidate completion')
+    validate_settings(value['settings'], inventory['channels'])
+    gate.require(value.get('auditor') == value['settings']['owner'], 'settings auditor is not the maintainer')
+    return value['settings']
+
+
+def gh(path):
+    # Deliberately local-only. Use the maintainer's own gh login, never a CI
+    # administration token or a branch-supplied evidence collector.
+    gate.require(os.environ.get('GITHUB_ACTIONS') != 'true', 'settings audit must run locally by the maintainer')
+    return gate.strict_json(subprocess.run(['gh', 'api', '--hostname', 'github.com', path], check=True, capture_output=True).stdout)
+
+
+def pages(path, key=None):
+    values = []
+    for page in range(1, 101):
+        result = gh(path + ('&' if '?' in path else '?') + f'per_page=100&page={page}')
+        batch = result[key] if key else result
+        gate.require(isinstance(batch, list), 'incomplete settings audit page')
+        values.extend(batch)
+        if len(batch) < 100:
+            return values
+    raise gate.Refused('incomplete settings audit pagination')
+
+
+def collect(observations):
+    user = gh('/user')
+    repo = gh('/repos/' + gate.REPOSITORY)
+    owner = {k: repo['owner'][k] for k in ('login', 'id', 'type')}
+    gate.require(user['id'] == owner['id'] and user['login'] == owner['login'], 'local gh account must be the personal repository owner')
+    prefix = '/repos/' + gate.REPOSITORY
+    environment = gh(prefix + '/environments/release')
+    rulesets = [gh(prefix + '/rulesets/' + str(r['id'])) for r in pages(prefix + '/rulesets')]
+    return {'owner': owner, 'environment': environment,
+            'deployment_policies': [{k: p[k] for k in ('name', 'type')} for p in pages(prefix + '/environments/release/deployment-branch-policies', 'branch_policies')],
+            'rulesets': rulesets, 'repository_secrets': [s['name'] for s in pages(prefix + '/actions/secrets', 'secrets')],
+            'release_secrets': [s['name'] for s in pages(prefix + '/environments/release/secrets', 'secrets')],
+            'immutable_releases': gh(prefix + '/immutable-releases')['enabled'],
+            'ghcr': observations.get('ghcr'), 'crates': observations.get('crates')}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--candidate', required=True, type=Path)
+    parser.add_argument('--observations', required=True, type=Path, help='maintainer UI inspection: GHCR Actions READ + negative push result, crates.io exact trusted publishers')
+    parser.add_argument('--output', required=True, type=Path)
+    args = parser.parse_args()
+    raw = (args.candidate / 'release-inventory.json').read_bytes(); inventory = gate.strict_json(raw)
+    gate.verify_files(inventory, args.candidate)
+    import tag_signature
+    signed_tag = tag_signature.verify(inventory['tag'], inventory['source_sha'])
+    value = report(inventory, gate.digest(raw), collect(gate.strict_json(args.observations.read_bytes()))) | {'signed_tag': signed_tag}
+    print(gate.canonical(value).decode())
+    gate.require(input('Confirm the displayed API settings AND personally checked registry observations by typing ' + gate.REPOSITORY + ': ') == gate.REPOSITORY, 'maintainer settings confirmation absent')
+    with args.output.open('xb') as output:
+        output.write(gate.canonical(value))
+    print('settings_audit_sha256=' + gate.digest(gate.canonical(value)))
+
+
+if __name__ == '__main__':
+    main()
+````
+
+### File `packaging/release/tag_signature.py`
+
+<!-- r1:file task=1 path=packaging/release/tag_signature.py sha256=eff8b576ac6892785218f1973079ac7d4b9486bdfc05127bb044ba265da1a66f bytes=3142 mode=644 encoding=utf8 -->
+````python
+#!/usr/bin/env python3
+"""Verify the fetched annotated tag with the history-pinned maintainer key."""
+import argparse
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+import gate
+
+# Issuer fingerprint in signed commit 3b7b5f2d2af8821f4617afb08ba1dc766c5b9f14.
+# The committed public key also verifies that historical commit. This is not
+# GitHub's shared web-flow signing key B5690EEEBB952194.
+FINGERPRINT = 'F26C7F594DFE84D131703AFC23E5A318AE8D2861'
+
+
+def check_status(returncode, status):
+    records = [line.split()[1:] for line in status.splitlines() if line.startswith('[GNUPG:] ')]
+    valid = [r for r in records if r[0] == 'VALIDSIG']
+    gate.require(returncode == 0 and len(valid) == 1 and valid[0][1] == FINGERPRINT and not any(r[0] in {'BADSIG', 'ERRSIG', 'REVKEYSIG', 'EXPKEYSIG', 'EXPSIG', 'KEYEXPIRED', 'SIGEXPIRED'} for r in records), 'release tag signature is missing, invalid, expired or not from the pinned maintainer key')
+
+
+def verify(tag, source_sha, object_sha=None):
+    gate.require(re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', tag) and re.fullmatch('[0-9a-f]{40}', source_sha), 'invalid signed-tag binding')
+    subprocess.run(['git', 'fetch', '--no-tags', 'origin', 'refs/tags/' + tag], check=True, capture_output=True, text=True)
+    fetched = subprocess.run(['git', 'rev-parse', 'FETCH_HEAD'], check=True, capture_output=True, text=True).stdout.strip()
+    gate.require(re.fullmatch('[0-9a-f]{40}', fetched) and (object_sha is None or fetched == object_sha), 'fetched release tag object changed')
+    raw = subprocess.run(['git', 'cat-file', 'tag', fetched], check=True, capture_output=True, text=True).stdout
+    header = dict(line.split(' ', 1) for line in raw.split('\n\n', 1)[0].splitlines())
+    gate.require(header.get('object') == source_sha and header.get('type') == 'commit' and header.get('tag') == tag, 'signed tag must directly identify the exact candidate commit')
+    with tempfile.TemporaryDirectory(prefix='hennery-release-gpg-') as temporary:
+        environment = dict(os.environ, GNUPGHOME=temporary)
+        # Public verification never needs an agent (nor a secret key/PIN).
+        # Disable autostart, including on hosts with short Unix-socket limits.
+        Path(temporary, 'gpg.conf').write_text('no-autostart\nno-auto-key-retrieve\n')
+        subprocess.run(['gpg', '--batch', '--no-autostart', '--import', str(Path(__file__).with_name('maintainer.asc'))], env=environment, check=True, capture_output=True, text=True)
+        result = subprocess.run(['git', '-c', 'gpg.format=openpgp', '-c', 'gpg.program=gpg', 'verify-tag', '--raw', fetched], env=environment, capture_output=True, text=True)
+        check_status(result.returncode, result.stderr)
+    return {'object_sha': fetched, 'commit_sha': source_sha, 'tag': tag, 'fingerprint': FINGERPRINT}
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--tag', required=True)
+    parser.add_argument('--source-sha', required=True)
+    args = parser.parse_args()
+    print(gate.canonical(verify(args.tag, args.source_sha)).decode())
+````
+
 ### File `packaging/release/test_adapter.py`
 
 <!-- r1:file task=1 path=packaging/release/test_adapter.py sha256=c586c640c8ed67f3d84e02d7d16175c9dd89f4be32f408cc49ca43ac73a0dd84 bytes=1730 mode=644 encoding=utf8 -->
@@ -840,7 +1190,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/test_gate.py`
 
-<!-- r1:file task=1 path=packaging/release/test_gate.py sha256=d53ef7e6e5ad380d9714feb0307e10fcc44146c70ae536aa24df3cb9ee2a5a8f bytes=11262 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/test_gate.py sha256=bea77513cac3664bf5c487eff21ed334447a8ea5030c37c37e3e7615dc45f8a6 bytes=12730 mode=644 encoding=utf8 -->
 ````python
 """Offline acceptance. No test contacts GitHub or any registry."""
 import copy
@@ -851,6 +1201,9 @@ import tempfile
 import unittest
 
 import gate
+import settings_audit
+import tag_signature
+from datetime import datetime, timedelta, timezone
 
 
 class Gates(unittest.TestCase):
@@ -871,13 +1224,13 @@ class Gates(unittest.TestCase):
             'environment': {'id': 7, 'name': 'release', 'can_admins_bypass': False,
                             'protection_rules': [{'type': 'required_reviewers', 'reviewers': [{'type': 'User', 'reviewer': {'id': 123}}]}],
                             'deployment_branch_policy': {'protected_branches': False, 'custom_branch_policies': True}},
-            'branch_policies': [{'name': 'main', 'type': 'branch'}],
-            'rulesets': [gate.frozen_tag_ruleset()],
+            'branch_policies': [{'name': 'v*', 'type': 'tag'}],
+            'rulesets': settings_audit.tag_rulesets(123),
             'tag': {'object': {'type': 'tag', 'sha': 'b' * 40}},
             'tag_object': {'tag': self.inventory['tag'], 'object': {'type': 'commit', 'sha': 'a' * 40, 'url': 'https://api.github.com/repos/marcinwadon/hennery/git/commits/' + 'a' * 40}},
             'candidate_run': {'id': 10, 'run_attempt': 1, 'head_sha': 'a' * 40, 'head_repository': {'full_name': 'marcinwadon/hennery'},
                               'event': 'push', 'path': '.github/workflows/release-candidate.yml', 'status': 'completed', 'conclusion': 'success'},
-            'publisher_run': {'id': 20, 'run_attempt': 1, 'head_sha': 'c' * 40, 'head_branch': 'main', 'event': 'workflow_dispatch',
+            'publisher_run': {'id': 20, 'run_attempt': 1, 'head_sha': 'a' * 40, 'head_branch': self.inventory['tag'], 'event': 'workflow_dispatch',
                               'path': '.github/workflows/release-publish.yml', 'repository': {'full_name': 'marcinwadon/hennery'}},
             'reviews': [{'state': 'approved', 'user': {'id': 123, 'login': 'maintainer'}, 'environments': [{'id': 7, 'name': 'release'}],
                          'comment': gate.challenge(self.context)}],
@@ -886,6 +1239,13 @@ class Gates(unittest.TestCase):
         for path in gate.REQUIRED_WORKFLOWS:
             self.snapshot['checks'].append({'path': path, 'head_sha': 'a' * 40, 'event': 'push', 'head_repository': {'full_name': 'marcinwadon/hennery'},
                                             'status': 'completed', 'conclusion': 'success', 'id': len(self.snapshot['checks']) + 1})
+
+        from test_settings import settings
+        self.snapshot['candidate_run']['updated_at'] = (datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat()
+        self.snapshot['tag_signature'] = {'object_sha': 'b' * 40, 'commit_sha': self.inventory['source_sha'], 'tag': self.inventory['tag'], 'fingerprint': tag_signature.FINGERPRINT}
+        self.snapshot['settings_audit'] = settings_audit.report(self.inventory, self.digest, settings())
+        self.context = gate.binding(self.inventory, self.digest, 20, 1, gate.digest(gate.canonical(self.snapshot['settings_audit'])))
+        self.snapshot['reviews'][0]['comment'] = gate.challenge(self.context)
 
     def validate(self):
         return gate.validate(self.inventory, self.digest, self.root, self.context, self.snapshot)
@@ -896,15 +1256,17 @@ class Gates(unittest.TestCase):
     def test_independent_refusals(self):
         # Every case changes exactly one otherwise passing input.
         cases = {
-            'environment absent': lambda s: s.pop('environment'),
-            'admin bypass': lambda s: s['environment'].update(can_admins_bypass=True),
-            'reviewers absent': lambda s: s['environment'].update(protection_rules=[]),
-            'broad deployment branches': lambda s: s['branch_policies'].append({'name': '*', 'type': 'branch'}),
-            'unrestricted environment': lambda s: s['environment'].update(deployment_branch_policy=None),
-            'no tag rules': lambda s: s.update(rulesets=[]),
-            'tag bypass': lambda s: s['rulesets'][0].update(bypass_actors=[{'actor_type': 'RepositoryRole', 'actor_id': 5}]),
-            'tag rule inactive': lambda s: s['rulesets'][0].update(enforcement='disabled'),
-            'tag rule exclude': lambda s: s['rulesets'][0]['conditions']['ref_name'].update(exclude=['refs/tags/v*']),
+            'environment absent': lambda s: s['settings_audit']['settings'].pop('environment'),
+            'admin bypass': lambda s: s['settings_audit']['settings']['environment'].update(can_admins_bypass=True),
+            'reviewers absent': lambda s: s['settings_audit']['settings']['environment'].update(protection_rules=[]),
+            'broad deployment branches': lambda s: s['settings_audit']['settings']['deployment_policies'].append({'name': '*', 'type': 'branch'}),
+            'unrestricted environment': lambda s: s['settings_audit']['settings']['environment'].update(deployment_branch_policy=None),
+            'no tag rules': lambda s: s['settings_audit']['settings'].update(rulesets=[]),
+            'tag bypass': lambda s: s['settings_audit']['settings']['rulesets'][0].update(bypass_actors=[{'actor_type': 'RepositoryRole', 'actor_id': 5}]),
+            'tag rule inactive': lambda s: s['settings_audit']['settings']['rulesets'][0].update(enforcement='disabled'),
+            'tag rule exclude': lambda s: s['settings_audit']['settings']['rulesets'][0]['conditions']['ref_name'].update(exclude=['refs/tags/v*']),
+            'tag signature absent': lambda s: s.pop('tag_signature'),
+            'tag fingerprint differs': lambda s: s['tag_signature'].update(fingerprint='f' * 40),
             'tag deleted': lambda s: s.update(tag=None),
             'tag moved': lambda s: s['tag_object']['object'].update(sha='d' * 40),
             'lightweight tag': lambda s: s['tag']['object'].update(type='commit'),
@@ -930,20 +1292,24 @@ class Gates(unittest.TestCase):
             'checks PR merge ref': lambda s: s['checks'][0].update(event='pull_request'),
             'checks fork': lambda s: s['checks'][0].update(head_repository={'full_name': 'fork/hennery'}),
         }
+        baseline = self.snapshot
         for name, mutate in cases.items():
             with self.subTest(name=name):
-                original = self.snapshot
-                self.snapshot = copy.deepcopy(original)
+                # Every subcase starts fresh even when an assertion fails in
+                # a COPY mutation probe and unittest continues to the next.
+                self.snapshot = copy.deepcopy(baseline)
                 mutate(self.snapshot)
                 with self.assertRaises(gate.Refused):
                     self.validate()
-                self.snapshot = original
+        self.snapshot = baseline
 
     def test_each_tag_operation_refused_without_rule(self):
         for operation in ('creation', 'update', 'deletion'):
             with self.subTest(operation=operation):
                 s = copy.deepcopy(self.snapshot)
-                s['rulesets'][0]['rules'] = [r for r in s['rulesets'][0]['rules'] if r['type'] != operation]
+                rules = s['settings_audit']['settings']['rulesets']
+                for rule in rules:
+                    rule['rules'] = [r for r in rule['rules'] if r['type'] != operation]
                 with self.assertRaises(gate.Refused):
                     gate.validate(self.inventory, self.digest, self.root, self.context, s)
 
@@ -963,7 +1329,7 @@ class Gates(unittest.TestCase):
             self.validate()
 
     def test_binding_each_field(self):
-        for field, value in [('inventory_sha256', 'f' * 64), ('source_sha', 'f' * 40), ('tag', 'v0.1.0'),
+        for field, value in [('settings_audit_sha256', 'f' * 64), ('inventory_sha256', 'f' * 64), ('source_sha', 'f' * 40), ('tag', 'v0.1.0'),
                              ('channels', ['crates']), ('targets', ['x86_64-unknown-linux-musl']),
                              ('candidate', {'run_id': 11, 'run_attempt': 1}),
                              ('publishing', {'run_id': 21, 'run_attempt': 1}),
@@ -1040,13 +1406,14 @@ if __name__ == '__main__':
 
 ### File `packaging/release/test_platform.py`
 
-<!-- r1:file task=1 path=packaging/release/test_platform.py sha256=13b94e0d6304bf2db0643fdd832e9772007d0d365550eb9014157ddf0b7385ea bytes=3482 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/test_platform.py sha256=9d8d02f0a525739b36c601229a3bbf4dde7101cbe780652985d5d20edd08be7e bytes=4004 mode=644 encoding=utf8 -->
 ````python
 import copy
 import unittest
 
 import gate
 import test_gate
+import settings_audit
 
 
 class Platform(unittest.TestCase):
@@ -1059,15 +1426,18 @@ class Platform(unittest.TestCase):
     def test_skipped_jobs_cannot_hide_in_successful_workflow(self):
         fixture = self.fixture()
         class Fake(gate.GitHub):
+            def verify_tag(self, inventory, object_sha):
+                return fixture.snapshot['tag_signature']
+
             def get(self, path):
                 if path.startswith('/git/ref/'):
                     return fixture.snapshot['tag']
                 if path.startswith('/git/tags/'):
                     return fixture.snapshot['tag_object']
                 if path.startswith('/rulesets/'):
-                    return gate.frozen_tag_ruleset()
+                    raise AssertionError('publishers must not read private ruleset settings')
                 if path == '/environments/release':
-                    return fixture.snapshot['environment']
+                    raise AssertionError('publishers must not read private environment settings')
                 if path == '/actions/runs/10':
                     return fixture.snapshot['candidate_run']
                 if path == '/actions/runs/20':
@@ -1078,9 +1448,9 @@ class Platform(unittest.TestCase):
 
             def pages(self, path, key=None):
                 if path == '/rulesets':
-                    return [{'id': 99}]
+                    raise AssertionError('publishers must not inspect ruleset bypass actors')
                 if path.endswith('/deployment-branch-policies'):
-                    return fixture.snapshot['branch_policies']
+                    raise AssertionError('publishers must use the approved settings audit')
                 if path.startswith('/actions/runs?'):
                     return [dict(r, run_attempt=1) for r in fixture.snapshot['checks']]
                 if path.endswith('/jobs'):
@@ -1089,35 +1459,62 @@ class Platform(unittest.TestCase):
 
         client = Fake('offline-fixture')
         client.jobs = [{'status': 'completed', 'conclusion': 'success'}]
-        snapshot = client.evidence(fixture.inventory, fixture.context)
+        snapshot = client.evidence(fixture.inventory, fixture.context, fixture.snapshot['settings_audit'])
         gate.validate(fixture.inventory, fixture.digest, fixture.root, fixture.context, snapshot)
         for jobs in ([], [{'status': 'completed', 'conclusion': 'skipped'}], [{'status': 'queued', 'conclusion': None}],
                      [{'status': 'completed', 'conclusion': 'cancelled'}]):
             client.jobs = jobs
             with self.subTest(jobs=jobs), self.assertRaises(gate.Refused):
-                client.evidence(fixture.inventory, fixture.context)
+                client.evidence(fixture.inventory, fixture.context, fixture.snapshot['settings_audit'])
 
     def test_checked_in_settings_match_the_validated_policy(self):
         from pathlib import Path
         root = Path(__file__).resolve().parents[2]
         rules = gate.strict_json((root / '.github/release-tag-ruleset.json').read_bytes())
-        self.assertEqual(rules, gate.frozen_tag_ruleset())
-        gate.check_tag_rules([rules])
+        creation = gate.strict_json((root / '.github/release-tag-creation.json').read_bytes())
+        self.assertEqual([creation, rules], settings_audit.tag_rulesets(0))
+        gate.check_tag_rules([creation, rules], 0)
         environment = gate.strict_json((root / '.github/release-environment.example.json').read_bytes())
         self.assertIs(environment['can_admins_bypass'], False)
         self.assertEqual(environment['reviewers'], [{'type': 'User', 'id': 0}])
-        self.assertEqual(gate.strict_json((root / '.github/release-branch-policy.json').read_bytes()), {'name': 'main', 'type': 'branch'})
+        self.assertEqual(gate.strict_json((root / '.github/release-branch-policy.json').read_bytes()), {'name': 'v*', 'type': 'tag'})
 
     def test_environment_bypass_must_be_explicit_false(self):
         fixture = self.fixture()
         for value in (None, True, 'false'):
-            fixture.snapshot['environment']['can_admins_bypass'] = value
+            fixture.snapshot['settings_audit']['settings']['environment']['can_admins_bypass'] = value
             with self.subTest(value=value), self.assertRaises(gate.Refused):
                 fixture.validate()
 
 
 if __name__ == '__main__':
     unittest.main()
+````
+
+### File `packaging/release/test_post_setup.py`
+
+<!-- r1:file task=1 path=packaging/release/test_post_setup.py sha256=4c21caef531d4507ddf09d94567f6ed6d58673606a7e8feb5c60ab0826a82a1d bytes=1116 mode=644 encoding=utf8 -->
+````python
+import unittest
+import gate
+import post_setup
+
+class PlatformAcceptance(unittest.TestCase):
+    def test_real_push_operation_is_refused_after_working_read(self):
+        calls=[]
+        def transport(operation):
+            calls.append(operation)
+            return (200,b'known') if operation=='read' else (403,b'denied')
+        record=post_setup.assert_ghcr_denied(transport,gate.digest(b'known'))
+        self.assertEqual(calls,['read','push'])
+        self.assertEqual(record,{'read_status':200,'push_status':403,'credential':'GITHUB_TOKEN'})
+
+    def test_success_ambiguous_errors_and_bad_reads_never_qualify(self):
+        for read,push in [(200,201),(200,202),(200,500),(401,403),(404,403)]:
+            with self.subTest(read=read,push=push),self.assertRaises(gate.Refused):
+                post_setup.assert_ghcr_denied(lambda operation:(read,b'known') if operation=='read' else (push,b'result'),gate.digest(b'known'))
+        with self.assertRaises(gate.Refused):
+            post_setup.assert_ghcr_denied(lambda operation:(200,b'wrong') if operation=='read' else (403,b'denied'),gate.digest(b'known'))
 ````
 
 ### File `packaging/release/test_retention.py`
@@ -1187,25 +1584,358 @@ if __name__ == '__main__':
     unittest.main()
 ````
 
+### File `packaging/release/test_settings.py`
+
+<!-- r1:file task=1 path=packaging/release/test_settings.py sha256=5495184255029b4faf9584157731c744b8eb9fb206587584aba17ec60438ce93 bytes=6513 mode=644 encoding=utf8 -->
+````python
+import copy
+from datetime import datetime, timedelta, timezone
+import unittest
+
+import gate
+import settings_audit
+
+
+def settings():
+    return {
+        'owner': {'login': 'marcinwadon', 'id': 123, 'type': 'User'},
+        'environment': {'id': 7, 'name': 'release', 'can_admins_bypass': False,
+                        'protection_rules': [{'type': 'required_reviewers', 'reviewers': [{'type': 'User', 'reviewer': {'id': 123}}]}],
+                        'deployment_branch_policy': {'protected_branches': False, 'custom_branch_policies': True}},
+        'deployment_policies': [{'name': 'v*', 'type': 'tag'}],
+        'rulesets': settings_audit.tag_rulesets(123),
+        'repository_secrets': [], 'release_secrets': ['RELEASE_PUBLISH_APP_KEY', 'GHCR_PUBLISH_TOKEN'],
+        'immutable_releases': True,
+        'ghcr': {'repository': gate.REPOSITORY, 'actions_access': 'read', 'dedicated_credential': 'GHCR_PUBLISH_TOKEN',
+                 'negative_push': {'read_status': 200, 'push_status': 403, 'credential': 'GITHUB_TOKEN'}},
+        'crates': [{'crate': name, 'repository': gate.REPOSITORY, 'workflow': 'release-publish.yml', 'environment': 'release'} for name in settings_audit.CRATES],
+    }
+
+
+class Settings(unittest.TestCase):
+    def test_platform_settings_and_each_independent_refusal(self):
+        valid = settings(); settings_audit.validate_settings(valid, ['crates', 'ghcr', 'github'])
+        mutations = [
+            lambda s: s['owner'].update(login='untrusted'),
+            lambda s: s.update(deployment_policies=[{'name': 'main', 'type': 'branch'}]),
+            lambda s: s['environment'].update(can_admins_bypass=True),
+            lambda s: s['environment'].update(name='other'),
+            lambda s: s['environment'].update(deployment_branch_policy=None),
+            lambda s: s.update(release_secrets=['GHCR_PUBLISH_TOKEN']),
+            lambda s: s['ghcr'].update(dedicated_credential='GITHUB_TOKEN'),
+            lambda s: s['crates'].pop(),
+            lambda s: s['environment']['protection_rules'][0]['reviewers'][0]['reviewer'].update(id=999),
+            lambda s: s['environment']['protection_rules'][0]['reviewers'][0].update(type='Team'),
+            lambda s: s['rulesets'][0].update(bypass_actors=[{'actor_type': 'RepositoryRole', 'actor_id': 4, 'bypass_mode': 'always'}]),
+            lambda s: s['rulesets'][1].update(bypass_actors=[{'actor_type': 'User', 'actor_id': 123, 'bypass_mode': 'always'}]),
+            lambda s: s['rulesets'][1].update(rules=[{'type': 'update'}]),
+            lambda s: s['rulesets'][0].update(enforcement='disabled'),
+            lambda s: s['rulesets'][1].update(enforcement='disabled'),
+            lambda s: s['rulesets'][1].update(target='branch'),
+            lambda s: s['rulesets'][0]['conditions']['ref_name'].update(exclude=['refs/tags/v*']),
+            lambda s: s.update(repository_secrets=['PUBLISH_TOKEN']),
+            lambda s: s.update(immutable_releases=False),
+            lambda s: s['ghcr'].update(actions_access='write'),
+            lambda s: s['ghcr']['negative_push'].update(push_status=201),
+            lambda s: s['ghcr']['negative_push'].update(read_status=401),
+            lambda s: s['ghcr']['negative_push'].update(credential='dedicated-publisher'),
+            lambda s: s['crates'][0].update(environment=None),
+            lambda s: s['crates'][0].update(workflow='branch.yml'),
+        ]
+        for mutate in mutations:
+            bad = copy.deepcopy(valid); mutate(bad)
+            with self.subTest(settings=bad), self.assertRaises(gate.Refused):
+                settings_audit.validate_settings(bad, ['crates', 'ghcr', 'github'])
+
+    def test_digest_candidate_and_freshness_are_independently_bound(self):
+        from test_gate import Gates
+        fixture = Gates(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        now = datetime.now(timezone.utc)
+        report = settings_audit.report(fixture.inventory, fixture.digest, settings(), now)
+        settings_audit.validate_report(report, gate.digest(gate.canonical(report)), fixture.inventory, fixture.digest, now-timedelta(minutes=1), now)
+        for kind in ['digest', 'candidate', 'old', 'before-candidate', 'future', 'auditor']:
+            changed = copy.deepcopy(report); expected = gate.digest(gate.canonical(report)); completed = now-timedelta(minutes=1)
+            if kind == 'digest': expected = 'f' * 64
+            elif kind == 'candidate': changed['candidate']['run_attempt'] += 1
+            elif kind == 'old': changed['issued_at'] = (now-timedelta(days=2)).isoformat()
+            elif kind == 'before-candidate': completed = now+timedelta(seconds=1)
+            elif kind == 'auditor': changed['auditor'] = dict(changed['auditor'], id=999)
+            else: changed['issued_at'] = (now+timedelta(hours=1)).isoformat()
+            if kind != 'digest': expected = gate.digest(gate.canonical(changed))
+            with self.subTest(kind=kind), self.assertRaises(gate.Refused):
+                settings_audit.validate_report(changed, expected, fixture.inventory, fixture.digest, completed, now)
+
+    def test_runtime_policy_reader_never_requests_private_settings(self):
+        import inspect
+        code = inspect.getsource(gate.GitHub.evidence)
+        for forbidden in ['/rulesets', '/environments/release']:
+            self.assertNotIn(forbidden, code)
+
+    def test_local_audit_checks_signed_tag_before_using_owner_settings_auth(self):
+        import contextlib,io,sys,tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from test_gate import Gates
+        fixture=Gates();fixture.setUp();self.addCleanup(fixture.tmp.cleanup)
+        (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        with tempfile.TemporaryDirectory() as tmp:
+            observations=Path(tmp)/'observations.json';observations.write_text('{}')
+            argv=['settings_audit.py','--candidate',str(fixture.root),'--observations',str(observations),'--output',str(Path(tmp)/'audit.json')]
+            with patch.object(sys,'argv',argv),patch('tag_signature.verify',side_effect=gate.Refused('local signed tag refused')),patch.object(settings_audit,'collect',return_value=settings()) as collect,patch('builtins.input',return_value=gate.REPOSITORY),contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(gate.Refused,'local signed tag refused'):
+                    settings_audit.main()
+                collect.assert_not_called()
+````
+
+### File `packaging/release/test_tag_signature.py`
+
+<!-- r1:file task=1 path=packaging/release/test_tag_signature.py sha256=cc5970f8bbd97a2fa50048e63dea19fbf381193c8389cc8bc1e8b5668aea71a9 bytes=1938 mode=644 encoding=utf8 -->
+````python
+import subprocess
+import unittest
+from unittest.mock import patch
+
+import gate
+import tag_signature
+
+
+class TagSignature(unittest.TestCase):
+    def test_only_pinned_nonexpired_valid_signature_is_accepted(self):
+        good = '[GNUPG:] VALIDSIG ' + tag_signature.FINGERPRINT + ' 2026-10-15 123 0 4 0 1 10 00\n'
+        tag_signature.check_status(0, good)
+        for code, status in [(1, good), (0, good.replace(tag_signature.FINGERPRINT, 'a' * 40)), (0, ''), (0, good + '[GNUPG:] EXPKEYSIG old\n'), (0, good + '[GNUPG:] REVKEYSIG old\n')]:
+            with self.subTest(code=code, status=status), self.assertRaises(gate.Refused):
+                tag_signature.check_status(code, status)
+
+    def test_live_fetched_tag_object_signature_and_exact_commit_are_bound(self):
+        def backend(args, **kwargs):
+            if 'fetch' in args:
+                out = ''
+            elif 'rev-parse' in args:
+                out = 'b' * 40 + '\n'
+            elif 'cat-file' in args:
+                out = 'object ' + 'a' * 40 + '\ntype commit\ntag v0.1.0\ntagger Maintainer\n\nmessage\n'
+            elif 'verify-tag' in args:
+                return subprocess.CompletedProcess(args, 0, '', '[GNUPG:] VALIDSIG ' + tag_signature.FINGERPRINT + ' 2026 1 0\n')
+            else:
+                self.assertIn('--no-autostart', args)
+                out = ''
+            return subprocess.CompletedProcess(args, 0, out, '')
+        with patch.object(tag_signature.subprocess, 'run', side_effect=backend):
+            proof = tag_signature.verify('v0.1.0', 'a' * 40, 'b' * 40)
+            self.assertEqual(proof['fingerprint'], tag_signature.FINGERPRINT)
+            for tag, commit, obj in [('v0.1.0', 'c' * 40, 'b' * 40), ('v9.0.0', 'a' * 40, 'b' * 40), ('v0.1.0', 'a' * 40, 'c' * 40)]:
+                with self.subTest(tag=tag, commit=commit, obj=obj), self.assertRaises(gate.Refused):
+                    tag_signature.verify(tag, commit, obj)
+````
+
+### File `packaging/release/test_verify.py`
+
+<!-- r1:file task=1 path=packaging/release/test_verify.py sha256=027b382b58c349a3d6201003e491ef377b0af09aa4d52610fb0f35d4216c177e bytes=5571 mode=644 encoding=utf8 -->
+````python
+import hashlib
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import gate
+import verify
+import test_gate
+
+
+class Verification(unittest.TestCase):
+    def test_authentication_failure_stops_before_installer(self):
+        with patch.object(verify.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'verifier')):
+            with self.assertRaises(subprocess.CalledProcessError):
+                verify.verify(Path('/unused'), Path('/unused-bundle'), 'a' * 40, 'v0.1.0')
+
+    def test_source_and_tag_bound_inside_signed_inventory(self):
+        fixture = test_gate.Gates()
+        fixture.setUp()
+        self.addCleanup(fixture.tmp.cleanup)
+        (fixture.root / 'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        with patch.object(verify.subprocess, 'run') as call:
+            for source, tag in [('b' * 40, fixture.inventory['tag']), ('a' * 40, 'v0.1.0')]:
+                with self.assertRaises(gate.Refused):
+                    verify.verify(fixture.root, Path('bundle'), source, tag)
+            args = call.call_args.args[0]
+            self.assertIn('--signer-workflow', args)
+            self.assertIn('--source-ref', args)
+            self.assertIn('--deny-self-hosted-runners', args)
+
+
+
+class SignerIdentity(unittest.TestCase):
+    def setUp(self):
+        # A removed refusal guard must never escape to a real CLI/network call.
+        # RuntimeError deliberately makes such a probe invalid, not a counted
+        # authorization assertion failure.
+        transport = patch.object(verify.subprocess, 'run', side_effect=RuntimeError('signer tests must explicitly stub every transport'))
+        transport.start()
+        self.addCleanup(transport.stop)
+
+    def test_branch_and_other_tag_signatures_are_rejected_for_files_and_images(self):
+        fixture = test_gate.Gates(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        (fixture.root / 'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        expected = 'https://github.com/' + gate.REPOSITORY + '/.github/workflows/release-publish.yml@refs/tags/' + fixture.inventory['tag']
+        for actual in [expected.replace('@refs/tags/', '@refs/heads/'), expected.replace('@refs/tags/' + fixture.inventory['tag'], '@refs/heads/main'), expected.replace(fixture.inventory['tag'], 'v9.9.9')]:
+            def crypto(command, **kwargs):
+                identity = command[command.index('--cert-identity') + 1] if '--cert-identity' in command else None
+                if identity is not None and identity != actual:
+                    raise subprocess.CalledProcessError(1, command)
+            with self.subTest(identity=actual), patch.object(verify.subprocess, 'run', side_effect=crypto), patch.object(verify.supply, 'verify_checksums'), patch.object(verify.supply, 'verify_binary_inventory'):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    verify.verify(fixture.root, Path('bundle'), fixture.inventory['source_sha'], fixture.inventory['tag'])
+
+    def test_exact_tag_identity_is_required_for_oci_too(self):
+        command = verify.attestation_command('oci://ghcr.io/marcinwadon/hennery@sha256:' + 'a' * 64, 'v0.1.0', None)
+        self.assertEqual(command[command.index('--cert-identity') + 1], 'https://github.com/' + gate.REPOSITORY + '/.github/workflows/release-publish.yml@refs/tags/v0.1.0')
+        self.assertEqual(command[command.index('--source-ref') + 1], 'refs/tags/v0.1.0')
+        self.assertNotIn('refs/heads/main', command)
+
+    def test_oci_refuses_branch_signature_and_mutable_image_reference(self):
+        expected = 'https://github.com/' + gate.REPOSITORY + '/.github/workflows/release-publish.yml@refs/tags/v0.1.0'
+        def crypto(command, **kwargs):
+            if '--cert-identity' in command and command[command.index('--cert-identity') + 1] == expected:
+                raise subprocess.CalledProcessError(1, command)
+        with patch.object(verify.subprocess, 'run', side_effect=crypto), self.assertRaises(subprocess.CalledProcessError):
+            verify.verify_image('ghcr.io/marcinwadon/hennery@sha256:' + 'a' * 64, 'v0.1.0')
+        with patch.object(verify.subprocess, 'run'), self.assertRaisesRegex(gate.Refused, 'immutable image'):
+            verify.verify_image('ghcr.io/marcinwadon/hennery:latest', 'v0.1.0')
+
+class BinstallMetadata(unittest.TestCase):
+    def test_metadata_cannot_advertise_an_unverified_or_branch_signed_path(self):
+        import copy
+        good={'binstall':{'disabled-strategies':['crate-meta-data','quick-install','compile']},'hennery-release':{'verification':'external-sigstore','signer-identity':'https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0'}}
+        verify.require_binstall_metadata(good,'v0.1.0')
+        for kind in ('native','branch','wrong-tag','no-verifier'):
+            bad=copy.deepcopy(good)
+            if kind=='native':bad['binstall']['disabled-strategies'].remove('crate-meta-data')
+            elif kind=='branch':bad['hennery-release']['signer-identity']=bad['hennery-release']['signer-identity'].replace('@refs/tags/v0.1.0','@refs/heads/main')
+            elif kind=='wrong-tag':bad['hennery-release']['signer-identity']+='-other'
+            else:bad['hennery-release']['verification']='checksum-only'
+            with self.subTest(kind=kind),self.assertRaises(gate.Refused):
+                verify.require_binstall_metadata(bad,'v0.1.0')
+
+
+if __name__ == '__main__':
+    unittest.main()
+````
+
+### File `packaging/release/verify.py`
+
+<!-- r1:file task=1 path=packaging/release/verify.py sha256=5cec5a8b4ffbf370d77c3985265cf4e8fbe398f42b53de2027c0285c1bbc2112 bytes=4354 mode=644 encoding=utf8 -->
+````python
+#!/usr/bin/env python3
+"""Verify downloaded final bytes before executing the cargo-dist installer."""
+import argparse
+from pathlib import Path
+import re
+import subprocess
+
+import gate
+import supply
+
+
+def attestation_command(subject, tag, bundle=None):
+    gate.require(re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', tag), 'invalid signer release tag')
+    workflow = gate.REPOSITORY + '/.github/workflows/release-publish.yml'
+    command = ['gh', 'attestation', 'verify', str(subject), '--repo', gate.REPOSITORY,
+               '--signer-workflow', workflow, '--cert-identity', 'https://github.com/' + workflow + '@refs/tags/' + tag,
+               '--source-ref', 'refs/tags/' + tag, '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com',
+               '--deny-self-hosted-runners']
+    if bundle is not None:
+        command += ['--bundle', str(bundle)]
+    return command
+
+
+def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/provenance/v1'):
+    gate.require(re.fullmatch(r'ghcr\.io/marcinwadon/hennery@sha256:[0-9a-f]{64}', image), 'verification requires an immutable image digest')
+    gate.require(predicate_type in ('https://slsa.dev/provenance/v1', 'https://spdx.dev/Document'), 'unexpected attestation predicate')
+    command = attestation_command('oci://' + image, tag, bundle) + ['--predicate-type', predicate_type]
+    if bundle is None:
+        command += ['--bundle-from-oci']
+    subprocess.run(command, check=True)
+
+
+def require_binstall_metadata(metadata, tag):
+    # Upstream binstall has no Sigstore identity verifier. Disable its native
+    # strategies until a reviewed bridge exists; this custom namespace describes
+    # the external verifier, never pretends to enable native Sigstore support.
+    disabled = metadata.get('binstall', {}).get('disabled-strategies')
+    gate.require(isinstance(disabled, list) and sorted(disabled) == ['compile', 'crate-meta-data', 'quick-install'], 'native binstall strategies must remain disabled without an identity-verifying bridge')
+    policy = metadata.get('hennery-release', {})
+    command = attestation_command('unused', tag)
+    gate.require(policy.get('verification') == 'external-sigstore' and policy.get('signer-identity') == command[command.index('--cert-identity') + 1], 'binstall external verification metadata must pin the exact release-tag identity')
+
+
+def verify(candidate, bundle, source_sha, tag, signer_sha=None):
+    candidate, bundle = Path(candidate), Path(bundle)
+    inventory_path = candidate / 'release-inventory.json'
+    # Verify the inventory signature first: hashes beside bytes alone do not
+    # authenticate an author. The signer is the protected publication workflow.
+    command = attestation_command(inventory_path, tag, bundle)
+    if signer_sha:
+        command += ['--signer-digest', signer_sha]
+    subprocess.run(command, check=True)
+    inventory = gate.strict_json(inventory_path.read_bytes())
+    gate.require(inventory['source_sha'] == source_sha and inventory['tag'] == tag, 'attested release source/tag mismatch')
+    gate.verify_files(inventory, candidate)
+    supply.verify_checksums(candidate)
+    supply.verify_binary_inventory(inventory, candidate)
+    # Every final payload has provenance too, including SBOMs and installer.
+    for artifact in inventory['artifacts']:
+        per_file = list(command)
+        per_file[3] = str(candidate / artifact['name'])
+        subprocess.run(per_file, check=True)
+    return inventory
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    subject = parser.add_mutually_exclusive_group(required=True)
+    subject.add_argument('--candidate', type=Path)
+    subject.add_argument('--image')
+    parser.add_argument('--bundle', type=Path)
+    parser.add_argument('--source-sha')
+    parser.add_argument('--tag', required=True)
+    parser.add_argument('--signer-sha')
+    parser.add_argument('--predicate-type', default='https://slsa.dev/provenance/v1')
+    args = parser.parse_args()
+    if args.image:
+        verify_image(args.image, args.tag, args.bundle, args.predicate_type)
+    else:
+        if args.bundle is None or args.source_sha is None:
+            parser.error('file verification requires --bundle and --source-sha')
+        verify(args.candidate, args.bundle, args.source_sha, args.tag, args.signer_sha)
+````
+
 ### Step 3: GREEN / verification
 
+Set scratch tool homes first, then run:
+
 ```sh
-nix shell nixpkgs#python3 -c python3 -m unittest discover -s packaging/release -p test_gate.py
-nix shell nixpkgs#python3 -c python3 -m unittest discover -s packaging/release -p test_retention.py
-nix shell nixpkgs#python3 -c python3 -m unittest discover -s packaging/release -p test_platform.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_gate.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_settings.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_tag_signature.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_retention.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_platform.py
 nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_adapter.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_post_setup.py
 ```
 
-### Step 4: Commit / handoff
+### Step 4: COPY probe / staged bytes / commit
 
-Inspect `git diff --check` and the staged stat, commit with `git -c commit.gpgsign=false commit`, verify `git log --format='%ae' origin/main..HEAD`, and push only `plan/dist-r1` over SSH. Report the review request to the parent; no self-approval and no GitHub actions.
+Use the copied-tree harness below; every counted mutation must fail an actual assertion, without ERROR/KeyError. Compare staged blobs to the tested working bytes and inspect the stat/diff before an unsigned Conventional Commit. No external publication/settings action. The final push uses the exact parent-authorized lease.
 
 
-## Task 2: SBOM, notices, source, diagnostic identity and final inventory
+## Task 2: Notices/SPDX/source/build identity and final crate metadata
 
 ### Step 1: RED / contract
 
-Install test_supply.py and the CLI regression patch first. The new supply module was absent (RED); the old binary lacked source/UI/manifest diagnostics (1 failed). Then add the implementation and require GREEN.
+Run layout tests against the old helper: moved manifests are missing and differing copies are incorrectly accepted (RED). The old verifier lacks final binstall metadata enforcement (RED). Install the helper/metadata checks, then require both layouts and exact raw-byte hashes; wrong signer refs/native unverified strategies refuse.
 
 ### Step 2: Exact implementation
 
@@ -7450,6 +8180,48 @@ fn a_secure_loopback_pairing_rejects_join_run_and_up_plaintext_overrides() {
 }
 ````
 
+### File `packaging/release/adapter_manifest.py`
+
+<!-- r1:file task=2 path=packaging/release/adapter_manifest.py sha256=17a482c8feda5aadd75919dd0e3b747c6c473f132b233adf47d82c1a2e6ae537 bytes=1257 mode=644 encoding=utf8 -->
+````python
+#!/usr/bin/env python3
+"""Resolve the adapter manifest across the R3 source-layout transition.
+
+Hash the original bytes, never a reserialized JSON document. A temporary tree
+containing both layouts is accepted only when both files are byte-identical.
+"""
+import argparse
+import hashlib
+from pathlib import Path
+
+
+def read_manifest(root=Path('.')):
+    root = Path(root)
+    paths = [root / name for name in ('adapters/manifest.json', 'crates/hennery-host/manifest.json')]
+    present = [path for path in paths if path.is_file()]
+    if not present:
+        raise ValueError('adapter manifest missing in both supported locations')
+    raw = present[0].read_bytes()
+    if any(path.read_bytes() != raw for path in present[1:]):
+        raise ValueError('adapter manifest locations disagree')
+    return raw
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--sha256', action='store_true', required=True)
+    parser.add_argument('root', type=Path)
+    args = parser.parse_args()
+    print(hashlib.sha256(read_manifest(args.root)).hexdigest())
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, OSError) as error:
+        raise SystemExit(f'adapter manifest refused: {error}') from error
+````
+
 ### File `packaging/release/licences/0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e.txt`
 
 <!-- r1:file task=2 path=packaging/release/licences/0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e.txt sha256=0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e bytes=3011 mode=644 encoding=utf8 -->
@@ -9222,7 +9994,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### File `packaging/release/supply.py`
 
-<!-- r1:file task=2 path=packaging/release/supply.py sha256=77c0b4b9ebd74fb8e40034c6f3666ee9038311b57a1f14e6af7d1d4fe92dbbf8 bytes=16489 mode=644 encoding=utf8 -->
+<!-- r1:file task=2 path=packaging/release/supply.py sha256=65045c966e490897093efb9c0729102305ea4b9af5f14436be368f2e154bce95 bytes=17162 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """Generate notices, source material, SPDX and final inventories before signing.
@@ -9242,6 +10014,7 @@ import uuid
 import urllib.parse
 
 import gate
+from adapter_manifest import read_manifest
 
 
 def tree_digest(files):
@@ -9440,6 +10213,16 @@ def require_contract(root, channels, targets, tag):
     gate.require(set(channels) <= gate.CHANNELS and set(targets) <= gate.TARGETS, 'unqualified release channel/target')
     gate.require('-' not in tag or channels == ['github'], 'prerelease channels are GitHub only')
     gate.require(required_payloads(channels, targets, tag) <= {p.name for p in Path(root).iterdir()}, 'required release/channel payload missing')
+    if 'crates' in channels:
+        import tomllib
+        import verify
+        base = 'hennery-' + tag.removeprefix('v')
+        with tarfile.open(Path(root) / (base + '.crate'), 'r:gz') as archive:
+            entries = [m for m in archive.getmembers() if m.name == base + '/Cargo.toml']
+            gate.require(len(entries) == 1 and entries[0].isfile() and entries[0].size <= 1024*1024, 'crate metadata must be one bounded regular file')
+            with archive.extractfile(entries[0]) as metadata:
+                package = tomllib.loads(metadata.read().decode())['package']
+        verify.require_binstall_metadata(package.get('metadata', {}), tag)
 
 
 def main():
@@ -9465,7 +10248,7 @@ def main():
         (args.output / f'hennery-{args.target}.spdx.json').write_bytes(gate.canonical(spdx(packages, args.source_sha, args.target)))
         (args.output / 'licence-findings.json').write_bytes(gate.canonical({'findings': findings, 'scope': 'Rust and frontend including build/dev; assets and corresponding source still require maintainer review'}))
         dependency_sources(cargo, frontend, args.output / 'third-party-source.tar.xz')
-        manifest = Path('adapters/manifest.json').read_bytes()
+        manifest = read_manifest()
         (args.output / 'runtime-inventory.json').write_bytes(gate.canonical({'adapter_manifest_sha256': gate.digest(manifest),
                                                                           'redistributed': False, 'manifest': gate.strict_json(manifest)}))
         ui = {str(p.relative_to('web/dist')): p.read_bytes() for p in Path('web/dist').rglob('*') if p.is_file()}
@@ -9504,9 +10287,61 @@ if __name__ == '__main__':
         raise SystemExit(f'release materials refused: {error}') from error
 ````
 
+### File `packaging/release/test_adapter_manifest.py`
+
+<!-- r1:file task=2 path=packaging/release/test_adapter_manifest.py sha256=3b671ce899e2a6866bddb53d5bb39a0ac6da6bff08f27ec2e4aa593c9da2f42e bytes=2111 mode=644 encoding=utf8 -->
+````python
+from pathlib import Path
+import hashlib
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+class AdapterManifest(unittest.TestCase):
+    def invoke(self, root):
+        return subprocess.run([sys.executable, str(Path(__file__).with_name('adapter_manifest.py')),
+                               '--sha256', str(root)], capture_output=True, text=True, check=False)
+
+    def test_build_cli_hashes_exact_bytes_in_each_layout(self):
+        raw = b'{"schema": 1}\n'
+        locations = ['adapters/manifest.json', 'crates/hennery-host/manifest.json']
+        for present in [locations[:1], locations[1:], locations]:
+            with self.subTest(present=present), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for location in present:
+                    path = root / location
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(raw)
+                result = self.invoke(root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, hashlib.sha256(raw).hexdigest() + '\n')
+
+    def test_build_cli_refuses_conflicting_layouts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for location, raw in [('adapters/manifest.json', b'{"schema":1}\n'),
+                                  ('crates/hennery-host/manifest.json', b'{"schema": 1}\n')]:
+                path = root / location
+                path.parent.mkdir(parents=True)
+                path.write_bytes(raw)
+            result = self.invoke(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('adapter manifest locations disagree', result.stderr)
+            self.assertEqual(result.stdout, '')
+
+    def test_build_cli_refuses_missing_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.invoke(tmp)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('adapter manifest missing', result.stderr)
+            self.assertEqual(result.stdout, '')
+````
+
 ### File `packaging/release/test_supply.py`
 
-<!-- r1:file task=2 path=packaging/release/test_supply.py sha256=e64305c0613b6adaa5976a53ad85ac527f2daead3b977f55073d3158f8c28d92 bytes=7216 mode=644 encoding=utf8 -->
+<!-- r1:file task=2 path=packaging/release/test_supply.py sha256=34cae556e4c0d83becc1146f92f3d3f9b06b3ecef1d53b192f737de9dc624861 bytes=12834 mode=644 encoding=utf8 -->
 ````python
 from pathlib import Path
 import tempfile
@@ -9521,6 +10356,53 @@ import supply
 
 
 class Supply(unittest.TestCase):
+    def test_materials_manifest_location_is_independent_of_merge_order(self):
+        manifest = b'{"schema":1,"node":{"version":"24.21.0"}}\n'
+        locations = ['adapters/manifest.json', 'crates/hennery-host/manifest.json']
+        for present in [locations[:1], locations[1:], locations]:
+            with self.subTest(present=present), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for location in present:
+                    path = root / location
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(manifest)
+                self.materials(root)
+                runtime = gate.strict_json((root / 'out/runtime-inventory.json').read_bytes())
+                identity = gate.strict_json((root / 'out/build-identity.json').read_bytes())
+                self.assertEqual(runtime['manifest'], gate.strict_json(manifest))
+                self.assertEqual(runtime['adapter_manifest_sha256'], gate.digest(manifest))
+                self.assertEqual(identity['adapter_manifest_sha256'], gate.digest(manifest))
+
+    def test_materials_refuses_disagreeing_adapter_manifest_locations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for location, raw in [('adapters/manifest.json', b'{"schema":1}\n'),
+                                  ('crates/hennery-host/manifest.json', b'{"schema":2}\n')]:
+                path = root / location
+                path.parent.mkdir(parents=True)
+                path.write_bytes(raw)
+            with self.assertRaisesRegex(ValueError, 'adapter manifest locations disagree'):
+                self.materials(root)
+
+    def test_materials_refuses_missing_adapter_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, 'adapter manifest missing'):
+                self.materials(Path(tmp))
+
+    @staticmethod
+    def materials(root):
+        (root / 'metadata.json').write_text('{"packages":[],"workspace_members":[]}')
+        (root / 'frontend.json').write_text('{}')
+        (root / 'Cargo.lock').write_text('cargo lock fixture')
+        (root / 'web/dist').mkdir(parents=True)
+        (root / 'web/dist/index.html').write_text('UI fixture')
+        (root / 'web/pnpm-lock.yaml').write_text('web lock fixture')
+        argv = ['supply.py', 'materials', '--output', 'out', '--source-sha', 'a' * 40,
+                '--target', 'aarch64-apple-darwin', '--cargo-metadata', 'metadata.json',
+                '--frontend-licences', 'frontend.json']
+        with contextlib.chdir(root), patch('sys.argv', argv):
+            supply.main()
+
     def test_components_include_frontend_and_bundled_sources(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -9556,18 +10438,37 @@ class Supply(unittest.TestCase):
                 targets = ['aarch64-apple-darwin']
                 for name in supply.required_payloads(channels, targets, tag):
                     (root / name).write_bytes(b'fixture')
+                if 'crates' in channels:
+                    self.write_cli_crate(root, tag)
                 supply.require_contract(root, channels, targets, tag)
                 for path in root.iterdir():
+                    original = path.read_bytes()
                     path.unlink()
                     with self.subTest(channel=channels, missing=path.name), self.assertRaises(gate.Refused):
                         supply.require_contract(root, channels, targets, tag)
-                    path.write_bytes(b'fixture')
+                    path.write_bytes(original)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for name in supply.required_payloads(['crates'], targets, 'v0.1.0-alpha.1'):
                 (root / name).write_bytes(b'fixture')
             with self.assertRaises(gate.Refused):
                 supply.require_contract(root, ['crates'], targets, 'v0.1.0-alpha.1')
+
+    @staticmethod
+    def write_cli_crate(root, tag, identity_ref=None):
+        base='hennery-'+tag.removeprefix('v')
+        identity_ref=identity_ref or 'refs/tags/'+tag
+        text='[package]\nname="hennery"\nversion="'+tag.removeprefix('v')+'"\n[package.metadata.binstall]\ndisabled-strategies=["crate-meta-data","quick-install","compile"]\n[package.metadata.hennery-release]\nverification="external-sigstore"\nsigner-identity="https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@'+identity_ref+'"\n'
+        with tarfile.open(root/(base+'.crate'),'w:gz') as archive:
+            data=text.encode();entry=tarfile.TarInfo(base+'/Cargo.toml');entry.size=len(data);archive.addfile(entry,io.BytesIO(data))
+
+    def test_crates_contract_rejects_branch_identity_in_frozen_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);channels=['crates','github'];targets=['aarch64-apple-darwin'];tag='v0.1.0'
+            for name in supply.required_payloads(channels,targets,tag):(root/name).write_bytes(b'fixture')
+            self.write_cli_crate(root,tag,'refs/heads/main')
+            with self.assertRaisesRegex(gate.Refused,'exact release-tag identity'):
+                supply.require_contract(root,channels,targets,tag)
 
     def test_freeze_checks_licences_and_freezes_complete_final_bytes_once(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -9638,27 +10539,52 @@ class Supply(unittest.TestCase):
                 supply.verify_checksums(root)
 
 
+
+    def test_crate_metadata_is_bounded_regular_and_unambiguous(self):
+        for kind in ('duplicate','symlink','oversize'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);channels=['crates','github'];targets=['aarch64-apple-darwin'];tag='v0.1.0';base='hennery-0.1.0'
+                for name in supply.required_payloads(channels,targets,tag):(root/name).write_bytes(b'fixture')
+                self.write_cli_crate(root,tag)
+                with tarfile.open(root/(base+'.crate'),'r:gz') as archive:data=archive.extractfile(base+'/Cargo.toml').read()
+                if kind=='oversize':data+=b'\n#'+b'x'*(1024*1024)
+                with tarfile.open(root/(base+'.crate'),'w:gz') as archive:
+                    entry=tarfile.TarInfo(base+'/Cargo.toml')
+                    if kind=='symlink':
+                        entry.type=tarfile.SYMTYPE;entry.linkname='Cargo.toml.orig';archive.addfile(entry)
+                        entry=tarfile.TarInfo(base+'/Cargo.toml.orig')
+                    entry.size=len(data);archive.addfile(entry,io.BytesIO(data))
+                    if kind=='duplicate':archive.addfile(entry,io.BytesIO(data))
+                with tarfile.open(root/(base+'.crate'),'r:gz') as archive:
+                    self.assertEqual(archive.extractfile(base+'/Cargo.toml').read(),data)
+                with self.assertRaisesRegex(gate.Refused,'bounded regular file'):
+                    supply.require_contract(root,channels,targets,tag)
+
+
 if __name__ == '__main__':
     unittest.main()
 ````
 
 ### Step 3: GREEN / verification
 
+Set scratch tool homes first, then run:
+
 ```sh
-nix shell nixpkgs#python3 -c python3 -m unittest discover -s packaging/release -p test_supply.py
-nix develop -c cargo test -p hennery --test cli long_version_records_release_identity --locked
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_supply.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_verify.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_adapter_manifest.py
 ```
 
-### Step 4: Commit / handoff
+### Step 4: COPY probe / staged bytes / commit
 
-Inspect `git diff --check` and the staged stat, commit with `git -c commit.gpgsign=false commit`, verify `git log --format='%ae' origin/main..HEAD`, and push only `plan/dist-r1` over SSH. Report the review request to the parent; no self-approval and no GitHub actions.
+Use the copied-tree harness below; every counted mutation must fail an actual assertion, without ERROR/KeyError. Compare staged blobs to the tested working bytes and inspect the stat/diff before an unsigned Conventional Commit. No external publication/settings action. The final push uses the exact parent-authorized lease.
 
 
-## Task 3: Harden the actual cargo-dist installer
+## Task 3: Verified atomic installer and mixed candidate acceptance
 
 ### Step 1: RED / contract
 
-Extend test-installer.sh first. Generate cargo-dist globals with the pinned installer, build tiny archives using make_installer_fixture.py, and run the old hardener against them: the overwrite test must fail. Then harden and rerun all 14 groups; guard-removal probes must fail tests.
+Run the old installer acceptance against three executable plus four real source archives: 3 offered/7 built is RED. The signature-pin regression is also RED before hardening. Fix only the cause, then require the real pinned cargo-dist template with mocked signing transport, all 16 groups and three formula hashes. The symlink fixture must resolve before removing its regular-file guard.
 
 ### Step 2: Exact implementation
 
@@ -9696,7 +10622,7 @@ echo "ok: $archive holds the binary, its licence and its README alone"
 
 ### File `packaging/harden-installer.py`
 
-<!-- r1:file task=3 path=packaging/harden-installer.py sha256=b41b3debb91d61118feb33f0081c7450d61422a3f37929fb2bf52c0ba9d6c15a bytes=4752 mode=755 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/harden-installer.py sha256=b98b9e88ef5b279288382d7191c4bf5a251309a1306ccf0028afc92d7aca2b47 bytes=5825 mode=755 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """Make cargo-dist's shell installer refuse to install what it cannot check.
@@ -9722,6 +10648,22 @@ REFUSE_UNCHECKED = (
 )
 
 REPLACEMENTS = [
+    (
+        '    # ...and then the updater, if it exists',
+        '''    # Authenticate the downloaded archive before extraction or execution.
+    check_cmd gh || err "GitHub CLI is required for release signature verification"
+    local _bundle="${HENNERY_ATTESTATION_BUNDLE:-$_dir/release.sigstore.jsonl}"
+    if [ -z "${HENNERY_ATTESTATION_BUNDLE:-}" ]; then
+        downloader "$ARTIFACT_DOWNLOAD_URL/release.sigstore.jsonl" "$_bundle" || err "cannot download release attestation bundle"
+    fi
+    gh attestation verify "$_file" --bundle "$_bundle" --repo marcinwadon/hennery \\
+        --signer-workflow marcinwadon/hennery/.github/workflows/release-publish.yml \\
+        --cert-identity "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v$APP_VERSION" \\
+        --source-ref "refs/tags/v$APP_VERSION" --cert-oidc-issuer https://token.actions.githubusercontent.com \\
+        --deny-self-hosted-runners || err "refusing an archive without valid release-tag provenance"
+
+    # ...and then the updater, if it exists''',
+    ),
     (
         '    case "$_checksum_style" in\n        sha256)',
         '    [ "$_checksum_style" = sha256 ] || ' + REFUSE_UNCHECKED + '\n'
@@ -9837,7 +10779,7 @@ if __name__ == "__main__":
 
 ### File `packaging/release/make_installer_fixture.py`
 
-<!-- r1:file task=3 path=packaging/release/make_installer_fixture.py sha256=287513a295d833c6afd7abde7d1bd4768733086ffc3ccd1482727f751f4f0229 bytes=1692 mode=644 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/release/make_installer_fixture.py sha256=aac6b55cefd094e83ac4127a0192481d13af8212e8987c17fb6a3e74e1bbcc7e bytes=2200 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """Use cargo-dist's real installer with tiny executable fixtures (no cross build).
@@ -9873,6 +10815,14 @@ def make(pristine, output):
         gate.require(text.count(anchor) == 1, 'cargo-dist archive arm changed')
         text = text.replace(anchor, anchor + '\n            _checksum_style="sha256"\n            _checksum_value="' + sha + '"')
     (output / 'hennery-installer.sh').write_text(text)
+    # A retained candidate also carries application and dependency sources.
+    # These are genuine tarballs, but the installer must never offer them.
+    for name in ['hennery-source', *[target + '-third-party-source' for target in sorted(gate.TARGETS)]]:
+        with tarfile.open(output / (name + '.tar.xz'), 'w:xz') as tar:
+            data = b'source fixture\n'
+            entry = tarfile.TarInfo(name + '/README.md')
+            entry.size = len(data)
+            tar.addfile(entry, io.BytesIO(data))
 
 
 if __name__ == '__main__':
@@ -9885,7 +10835,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/test_archives.py`
 
-<!-- r1:file task=3 path=packaging/release/test_archives.py sha256=76255fe9815669dc6dd81fbd0de9a2339d278233ddce2b9f7b71c486d33df9f9 bytes=3852 mode=644 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/release/test_archives.py sha256=adb04f2d914c13ccf06c9df87de8b198ad5602b5794a25a5e7273c4e70987e7f bytes=4181 mode=644 encoding=utf8 -->
 ````python
 import io
 from pathlib import Path
@@ -9949,12 +10899,17 @@ class ArchivePolicy(unittest.TestCase):
                     for name in names:
                         entry = tarfile.TarInfo(base + '/' + name)
                         if symlink and name == 'hennery':
-                            entry.type, entry.linkname = tarfile.SYMTYPE, base + '/README.md'
+                            entry.type, entry.linkname = tarfile.SYMTYPE, 'README.md'
                             tar.addfile(entry)
                         else:
                             entry.size = 1
                             tar.addfile(entry, io.BytesIO(b'x'))
                 (Path(tmp) / (archive.name + '.sha256')).write_text(gate.digest(archive.read_bytes()) + '  ' + archive.name + '\n')
+                if symlink:
+                    # The link must resolve: removing the regular-file guard
+                    # should fail our refusal assertion, not tarfile's lookup.
+                    with tarfile.open(archive, 'r:xz') as tar:
+                        self.assertEqual(tar.extractfile(base + '/hennery').read(), b'x')
                 with self.assertRaises(gate.Refused):
                     supply.binary_inventory(Path(tmp), ['aarch64-apple-darwin'])
 
@@ -9965,7 +10920,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/test_hardener.py`
 
-<!-- r1:file task=3 path=packaging/release/test_hardener.py sha256=dfcc016fc8be1829d9209ed37e1195ccf0aacda3f9b6292eba690c2919902386 bytes=975 mode=644 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/release/test_hardener.py sha256=48bb5ee18ab5d8264a6d2b91473c95bed883bd2901d334fb98cad31f0c882251 bytes=1464 mode=644 encoding=utf8 -->
 ````python
 import importlib.util
 from pathlib import Path
@@ -9977,6 +10932,12 @@ spec.loader.exec_module(hardener)
 
 
 class Hardener(unittest.TestCase):
+    def test_signature_identity_is_exact_tag_and_verification_precedes_extraction(self):
+        result = hardener.harden('\n'.join(old for old, _ in hardener.REPLACEMENTS))
+        self.assertIn('--cert-identity "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v$APP_VERSION"', result)
+        self.assertIn('--source-ref "refs/tags/v$APP_VERSION"', result)
+        self.assertIn('refusing an archive without valid release-tag provenance', result)
+
     def test_all_anchors_are_required_once(self):
         pristine = '\n'.join(old for old, _ in hardener.REPLACEMENTS)
         result = hardener.harden(pristine)
@@ -9994,14 +10955,70 @@ if __name__ == '__main__':
     unittest.main()
 ````
 
+### File `packaging/release/test_installer_archives.py`
+
+<!-- r1:file task=3 path=packaging/release/test_installer_archives.py sha256=4b098a015063ef13a8138a9070a9fe9b65d79e65e32146fa547a5670a05eb028 bytes=1918 mode=644 encoding=utf8 -->
+````python
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+import gate
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class InstallerArchives(unittest.TestCase):
+    def candidate(self, root, *, missing=False, extra=False):
+        name = 'hennery-aarch64-apple-darwin.tar.xz'
+        data = b'archive fixture'
+        if not missing:
+            (root / name).write_bytes(data)
+        (root / (name + '.sha256')).write_text(gate.digest(data) + '  ' + name + '\n')
+        (root / 'hennery-installer.sh').write_text(
+            '#!/bin/sh\ncase "$unused" in\n"' + name + '")\n'
+            '    _checksum_style="sha256"\n'
+            '    _checksum_value="' + gate.digest(data) + '"\n'
+            '    ;;\nesac\nexit 99\n')
+        if extra:
+            (root / 'hennery-x86_64-unknown-linux-musl.tar.xz').write_bytes(data)
+        return name
+
+    def check(self, root):
+        return subprocess.run(['sh', str(ROOT / 'packaging/test-installer.sh'), str(root)],
+                              capture_output=True, text=True)
+
+    def test_offered_executable_archive_must_exist_even_with_sidecar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            name = self.candidate(root, missing=True)
+            result = self.check(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('this build has no ' + name + '\n', result.stderr)
+
+    def test_executable_archive_must_be_offered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.candidate(root, extra=True)
+            result = self.check(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('the installer does not offer hennery-x86_64-unknown-linux-musl.tar.xz', result.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main()
+````
+
 ### File `packaging/test-installer.sh`
 
-<!-- r1:file task=3 path=packaging/test-installer.sh sha256=7a1004b69aa3f78133d5f70f2a11d14199709b96b3e0df96967229f590fe93bb bytes=10216 mode=755 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/test-installer.sh sha256=f1613a32232d0c643cb88eba287ee6cb3dfb63deb5d4badcaa6c433cdb8fbbb4 bytes=12374 mode=755 encoding=utf8 -->
 ````sh
 #!/bin/sh
 # The hardened shell installer (distribution spec §2, §9), run against the
 # archives of this build, served from a directory (`file://`):
-#   - each archive of the build is offered, with its SHA-256 embedded;
+#   - each executable archive is offered, with its SHA-256 embedded;
+#     application and third-party source bundles are separate release assets;
 #   - it installs a binary that runs, with `sha256sum` or with `shasum`;
 #   - a checksum mismatch aborts, and installs nothing;
 #   - no SHA-256 tool, an empty checksum, no checksum at all, or a checksum
@@ -10021,6 +11038,34 @@ installer="$dist/hennery-installer.sh"
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
+# The candidate has not been signed yet. This offline verifier double checks
+# every real CLI identity argument; public installation uses the real gh CLI.
+fixture_version=$(sed -n 's/^APP_VERSION="\([^"]*\)"$/\1/p' "$installer")
+mkdir "$scratch/verifier-tools"
+printf 'offline verification fixture\n' > "$scratch/bundle.jsonl"
+cat > "$scratch/verifier-tools/gh" <<TOOL
+#!/bin/sh
+set -eu
+[ "\$1" = attestation ] && [ "\$2" = verify ] || exit 1
+shift 3
+identity=0
+source=0
+while [ "\$#" -gt 0 ]; do
+    case "\$1" in
+        --cert-identity)
+            [ "\$2" = "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@\${HENNERY_TEST_SIGNER_REF:-refs/tags/v$fixture_version}" ] || exit 1
+            identity=1; shift 2 ;;
+        --source-ref)
+            [ "\$2" = 'refs/tags/v$fixture_version' ] || exit 1
+            source=1; shift 2 ;;
+        *) shift ;;
+    esac
+done
+[ "\$identity" = 1 ] && [ "\$source" = 1 ] || exit 1
+printf verified > '$scratch/signature-verified'
+TOOL
+chmod +x "$scratch/verifier-tools/gh"
+
 fail() {
     echo "FAIL: $*" >&2
     exit 1
@@ -10032,6 +11077,7 @@ arms=$(sed -n 's/^[[:space:]]*"\(hennery-.*\.tar\.xz\)")$/\1/p' "$installer")
 [ -n "$arms" ] || fail "the installer offers no archive"
 count=0
 for archive in $arms; do
+    [ -f "$dist/$archive" ] || fail "the installer offers $archive, and this build has no $archive"
     sum="$dist/$archive.sha256"
     [ -f "$sum" ] || fail "the installer offers $archive, and this build has no $archive.sha256"
     want=$(cut -d ' ' -f 1 "$sum")
@@ -10049,6 +11095,13 @@ for archive in $arms; do
 done
 built=0
 for archive in "$dist"/*.tar.xz; do
+    [ -f "$archive" ] || continue
+    case "${archive##*/}" in
+        hennery-*-unknown-linux-musl.tar.xz | hennery-*-apple-darwin.tar.xz) ;;
+        *) continue ;;
+    esac
+    printf '%s\n' "$arms" | grep -Fxq "${archive##*/}" ||
+        fail "the installer does not offer ${archive##*/}"
     built=$((built + 1))
 done
 [ "$count" = "$built" ] || fail "the installer offers $count archives, this build made $built"
@@ -10058,7 +11111,9 @@ echo "ok: the installer embeds each of its $count archives' SHA-256"
 run_installer() {
     mkdir -p "$scratch/home"
     status=0
-    HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/.config" \
+    PATH="${VERIFIER_TOOLS:-$scratch/verifier-tools}:$PATH" \
+        HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/.config" \
+        HENNERY_ATTESTATION_BUNDLE="$scratch/bundle.jsonl" \
         HENNERY_DOWNLOAD_URL="file://$1" HENNERY_UNMANAGED_INSTALL="$2" \
         sh "$1/hennery-installer.sh" >"$3" 2>&1 || status=$?
     return "$status"
@@ -10109,6 +11164,7 @@ run_installer "$dist" "$scratch/good" "$scratch/good.log" || {
     fail "the installer failed on its own archives"
 }
 "$scratch/good/hennery" --version || fail "the installed binary does not run"
+[ -f "$scratch/signature-verified" ] || fail 'installer never authenticated release provenance'
 echo "ok: installs a binary that runs"
 
 # With `shasum` and no `sha256sum`.
@@ -10248,27 +11304,34 @@ chmod +x "$scratch/raced-tools/ln"
 (PATH="$scratch/raced-tools" && ! run_installer "$dist" "$scratch/raced" "$scratch/raced.log") || fail 'concurrent destination was replaced'
 [ "$(cat "$scratch/raced/hennery")" = raced ] || fail 'concurrent destination changed'
 echo 'ok: staging is invisible and concurrent destinations survive'
+
+(export HENNERY_TEST_SIGNER_REF=refs/heads/main; refused branch-signer "$dist" 'refusing an archive without valid release-tag provenance')
+echo 'ok: branch signer identity cannot authorize installation'
+tools "$scratch/no-gh-tools" gh
+(PATH="$scratch/no-gh-tools" VERIFIER_TOOLS="$scratch/no-gh-tools" && refused missing-verifier "$dist" 'GitHub CLI is required')
+echo 'ok: missing signature verifier refuses installation'
 ````
 
 ### Step 3: GREEN / verification
 
+Set scratch tool homes first, then run:
+
 ```sh
-nix shell nixpkgs#python3 -c python3 -m unittest discover -s packaging/release -p test_hardener.py
-nix shell nixpkgs#python3 -c python3 -m unittest discover -s packaging/release -p test_archives.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_hardener.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_archives.py
+nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_installer_archives.py
 ```
 
-The installer fixture commands are exactly the `cargo-dist's actual installer with tiny shell executables` step in release-tests.yml (Task 4). It uses fresh output directories. Run those before committing installer changes. Actual native archives are tested in the candidate workflow, not fabricated by the fixtures.
+### Step 4: COPY probe / staged bytes / commit
 
-### Step 4: Commit / handoff
-
-Inspect `git diff --check` and the staged stat, commit with `git -c commit.gpgsign=false commit`, verify `git log --format='%ae' origin/main..HEAD`, and push only `plan/dist-r1` over SSH. Report the review request to the parent; no self-approval and no GitHub actions.
+Use the copied-tree harness below; every counted mutation must fail an actual assertion, without ERROR/KeyError. Compare staged blobs to the tested working bytes and inspect the stat/diff before an unsigned Conventional Commit. No external publication/settings action. The final push uses the exact parent-authorized lease.
 
 
-## Task 4: Pinned candidate, publication boundaries and immutable flake
+## Task 4: Native candidate, protected tagged publication and immutable recovery
 
 ### Step 1: RED / contract
 
-Install workflow tests before workflow_policy.py/workflows. The build saw the missing module RED. Then require all offline tests and actionlint GREEN, without executing the publishing workflow.
+The old publisher is RED on reconcile then upload (FileExistsError) and on publishing before assets are attached. Require verified bundle reuse, draft-only upload and immutable publication. Workflow regressions reject branch publication/admin policy tokens and require tag verification before storage. Static lint supplements platform enforcement only.
 
 ### Step 2: Exact implementation
 
@@ -10332,7 +11395,7 @@ jobs:
 
 ### File `.github/workflows/release-candidate.yml`
 
-<!-- r1:file task=4 path=.github/workflows/release-candidate.yml sha256=ecffb8ddfd69ef0963cd4cb14ef905b5f1f5540fd612054e858c33c042277b2e bytes=12238 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=.github/workflows/release-candidate.yml sha256=9528a9a1750f8d8acdcbb30c7c7e287f5b023c2e5b1a150a611519153234e69b bytes=12928 mode=644 encoding=utf8 -->
 ````yaml
 name: release-candidate
 on:
@@ -10355,7 +11418,21 @@ concurrency:
   group: release-candidate-${{ github.event.inputs.tag || github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
 jobs:
+  tag-signature:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Verify pinned maintainer signature and exact candidate SHA before storage credentials
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: nix develop .#release -c python3 packaging/release/tag_signature.py --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
   web-ui:
+    needs: tag-signature
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -10546,7 +11623,7 @@ jobs:
       - name: Native installer positives and refusals
         run: sh packaging/test-installer.sh candidate
   retain:
-    needs: [assemble, installer]
+    needs: [assemble, installer, tag-signature]
     if: vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true'
     environment: release-staging
     runs-on: ubuntu-24.04
@@ -10584,7 +11661,7 @@ jobs:
 
 ### File `.github/workflows/release-publish.yml`
 
-<!-- r1:file task=4 path=.github/workflows/release-publish.yml sha256=d569470496091086487dd4c442d2c980aefae2892f06ae47d13e238f935f9005 bytes=12457 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=.github/workflows/release-publish.yml sha256=eb1dbff63af4cccd8101aa6095915e3cfe71b42ea262e2bb8eea1cd61f1f381a bytes=12543 mode=644 encoding=utf8 -->
 ````yaml
 name: release-publish
 run-name: Release inventory ${{ inputs.inventory_sha256 }} from ${{ inputs.tag }}
@@ -10593,6 +11670,14 @@ on:
     inputs:
       inventory_sha256:
         description: Frozen candidate inventory SHA-256
+        required: true
+        type: string
+      settings_audit_sha256:
+        description: SHA-256 of the maintainer local settings audit
+        required: true
+        type: string
+      settings_audit:
+        description: Canonical maintainer audit JSON, fresh for this completed candidate
         required: true
         type: string
       source_sha:
@@ -10638,7 +11723,7 @@ jobs:
         run: python3 packaging/release/approval_summary.py
   authorize:
     needs: approval-tuple
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag)
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -10676,7 +11761,7 @@ jobs:
           nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}
@@ -10692,7 +11777,7 @@ jobs:
           echo "inventory_sha256=$INVENTORY" >> "$GITHUB_OUTPUT"
   sign:
     needs: authorize
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256
     environment:
       name: release
       url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -10731,7 +11816,7 @@ jobs:
           nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}
@@ -10740,7 +11825,7 @@ jobs:
           receipt: sign-preflight.json
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}
@@ -10772,7 +11857,7 @@ jobs:
           path: signatures/
   github:
     needs: [sign, authorize]
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GITHUB_ENABLED == 'true'
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GITHUB_ENABLED == 'true'
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -10809,7 +11894,7 @@ jobs:
           path: signatures
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}
@@ -10818,7 +11903,7 @@ jobs:
           receipt: publish-preflight.json
       - name: Reconcile every existing remote byte before any upload
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: nix develop .#release -c python3 packaging/release/publish.py reconcile --candidate candidate --signatures signatures --output reconciliation.json
       - name: Obtain short-lived publication authority after preflight
         id: publication-token
@@ -10830,10 +11915,9 @@ jobs:
           repositories: hennery
           permission-contents: write
           permission-actions: read
-          permission-administration: read
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}
@@ -10934,7 +12018,7 @@ github-attestations = true
 
 ### File `flake.nix`
 
-<!-- r1:file task=4 path=flake.nix sha256=47fd30b55a7c756c1533ee35cfdddf760058e212c14a9a101befcee625e554d9 bytes=3291 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=flake.nix sha256=db8e8fd3048427a471c45a0fda963feb7fdb3893ab7e0676fb34fc3902e589d2 bytes=3335 mode=644 encoding=utf8 -->
 ````nix
 {
   description = "hennery: self-hosted cockpit for ACP coding agents";
@@ -10992,6 +12076,8 @@ github-attestations = true
             pkgs.cargo-audit
             pkgs.awscli2
             pkgs.gh
+            pkgs.git
+            pkgs.gnupg
           ];
         };
         devShells.default = pkgs.mkShell {
@@ -11022,7 +12108,7 @@ github-attestations = true
 
 ### File `nix/package.nix`
 
-<!-- r1:file task=4 path=nix/package.nix sha256=2ab9c37a32197a25ab632e9c8333291dd6b3b423055844f5e7f00caa2353e52e bytes=4100 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=nix/package.nix sha256=6f57fac09b692c1bc94bfc2e89952d4c6ac83210a7baefd51036406736bf898d bytes=4251 mode=644 encoding=utf8 -->
 ````nix
 # The `hennery` package and its flake checks (plan 7e-i, distribution spec
 # §4.3), built with crane on nixpkgs' own Rust toolchain: the one the dev
@@ -11036,13 +12122,14 @@ let
   workspace = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).workspace.package;
   # Only what cargo reads: the crates, the manifests and the lock, and the
   # files a crate compiles in with `include_str!`. The adapter manifest
-  # (`adapters/manifest.json`, distribution spec §3.1) is named once it
-  # exists, so the build does not depend on which plan lands first.
+  # is included at either layout across the R3 crate-packaging transition.
+  # The shared release helper rejects differing bytes when both are present.
   src = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.unions [
       (craneLib.fileset.commonCargoSources ../.)
       (lib.fileset.maybeMissing ../adapters/manifest.json)
+      (lib.fileset.maybeMissing ../crates/hennery-host/manifest.json)
     ];
   };
   common = {
@@ -11080,7 +12167,8 @@ let
         print(hashlib.sha256(raw).hexdigest())
         PY
         )"
-        export HENNERY_BUILD_MANIFEST_SHA256="$(sha256sum ${src}/adapters/manifest.json | cut -d' ' -f1)"
+        HENNERY_BUILD_MANIFEST_SHA256="$(${pkgs.python3}/bin/python3 ${../packaging/release/adapter_manifest.py} --sha256 ${src})"
+        export HENNERY_BUILD_MANIFEST_SHA256
       '';
       # The UI is in the binary, so the package never needs it at run time.
       disallowedReferences = [ webUi ];
@@ -11122,7 +12210,7 @@ in
 
 ### File `packaging/release/approval_summary.py`
 
-<!-- r1:file task=4 path=packaging/release/approval_summary.py sha256=7d7de418763bca8460ee6a148423f546a496ad437d636436dae9e029b4c1d193 bytes=877 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=packaging/release/approval_summary.py sha256=2df835c78b391d808016e64bb1f00426267e38a16f9c7d10a59a6af60fc80b43 bytes=902 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """Print the immutable dispatch tuple before the environment reviewer decides."""
@@ -11133,7 +12221,7 @@ from pathlib import Path
 import gate
 
 inputs = gate.strict_json(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())['inputs']
-context = {key: inputs[key] for key in ('source_sha', 'tag', 'inventory_sha256')}
+context = {key: inputs[key] for key in ('source_sha', 'tag', 'inventory_sha256', 'settings_audit_sha256')}
 context.update({key: gate.strict_json(inputs[key]) for key in ('channels', 'targets', 'candidate')})
 context.update(repository=gate.REPOSITORY, publishing={'run_id': int(os.environ['GITHUB_RUN_ID']), 'run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT'])})
 with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
@@ -11191,7 +12279,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/publish.py`
 
-<!-- r1:file task=4 path=packaging/release/publish.py sha256=007e236eae70ed28a0b3dd58e2b0591b7178371882a4f5d7d7ac495eb1aba4c9 bytes=9737 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=packaging/release/publish.py sha256=993fefc826ebd819ef009034ded14d1cd49322fe96e97b966f6f89c315ba1205 bytes=10824 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """GitHub channel reconciliation/upload. Never overwrites or rebuilds payloads.
@@ -11266,14 +12354,14 @@ def validate_live(candidate, phase):
     raw = (candidate / 'release-inventory.json').read_bytes()
     inventory = gate.strict_json(raw)
     gate.require(gate.digest(raw) == event['inventory_sha256'], 'candidate inventory changed at upload boundary')
-    gate.require(os.environ.get('GITHUB_REPOSITORY') == gate.REPOSITORY and os.environ.get('GITHUB_REF') == 'refs/heads/main'
+    gate.require(os.environ.get('GITHUB_REPOSITORY') == gate.REPOSITORY and os.environ.get('GITHUB_REF') == 'refs/tags/' + inventory['tag'] and os.environ.get('GITHUB_SHA') == inventory['source_sha']
                  and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'untrusted publication context')
-    context = gate.binding(inventory, event['inventory_sha256'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
+    context = gate.binding(inventory, event['inventory_sha256'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']), event['settings_audit_sha256'])
     for key in ('source_sha', 'tag', 'channels', 'targets', 'candidate'):
         value = gate.strict_json(event[key]) if key in ('channels', 'targets', 'candidate') else event[key]
         gate.require(value == inventory[key], 'dispatch approval changed')
     gate.require('github' in inventory['channels'], 'GitHub channel not enabled')
-    receipt = gate.validate(inventory, event['inventory_sha256'], candidate, context, gate.GitHub(os.environ['GH_TOKEN']).evidence(inventory, context))
+    receipt = gate.validate(inventory, event['inventory_sha256'], candidate, context, gate.GitHub(os.environ['GH_TOKEN']).evidence(inventory, context, gate.strict_json(event['settings_audit'])))
     receipt['phase'] = phase
     audit = Path('audit')
     audit.mkdir(exist_ok=True)
@@ -11299,6 +12387,15 @@ def release_assets(release):
     raise gate.Refused('incomplete release asset pagination')
 
 
+def recover_bundle(path, data):
+    if path.exists() or path.is_symlink():
+        gate.require(path.is_file() and not path.is_symlink() and path.read_bytes() == data, 'recovered bundle differs from verified remote bytes')
+    else:
+        with path.open('xb') as output:
+            output.write(data)
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation', choices=['reconcile', 'upload'])
@@ -11315,6 +12412,7 @@ def main():
     release = api(tag_path)
     if release is not None:
         gate.require(release.get('tag_name') == inventory['tag'], 'remote release tag differs')
+        gate.require(release.get('draft') is True or release.get('immutable') is True, 'published release must be immutable')
     assets = release_assets(release)
     import verify
     prior = [a for a in assets if a['name'] == 'release.sigstore.jsonl']
@@ -11324,10 +12422,7 @@ def main():
         # than overwriting it with this attempt's different signing bytes.
         data = asset_bytes(prior[0])
         gate.require(data is not None, 'existing signature is unverifiable')
-        recovered = args.signatures / 'recovered-release.sigstore.jsonl'
-        with recovered.open('xb') as output:
-            output.write(data)
-        bundle = recovered
+        bundle = recover_bundle(args.signatures / 'recovered-release.sigstore.jsonl', data)
         verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'])
     else:
         verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], os.environ['GITHUB_SHA'])
@@ -11337,11 +12432,12 @@ def main():
     reconciliation = plan(expected, release_assets(release))
     if args.operation == 'upload':
         require_enabled()
+        gate.require(release is None or release.get('draft') is True or not reconciliation['missing'], 'immutable published release is incomplete; use a new version')
         if release is None:
             validate_live(args.candidate, 'create-release')
             release = api('/repos/' + gate.REPOSITORY + '/releases', method='POST', data=gate.canonical({
                 'tag_name': inventory['tag'], 'target_commitish': inventory['source_sha'], 'name': inventory['tag'],
-                'draft': False, 'prerelease': '-' in inventory['tag'], 'make_latest': 'false',
+                'draft': True, 'prerelease': '-' in inventory['tag'], 'make_latest': 'false',
                 'body': (args.candidate / 'release-notes.md').read_text() + '\n\nSource: https://github.com/' + gate.REPOSITORY + '/tree/' + inventory['source_sha'] + '\nInventory SHA-256: ' + gate.digest((args.candidate / 'release-inventory.json').read_bytes()) + '\n\nGenerated with Claude AI — please review before distribution.'}))
         for index, name in enumerate(reconciliation['missing']):
             # Revalidate both the platform and all retained bytes for EACH write.
@@ -11354,6 +12450,10 @@ def main():
             gate.require(name in verified['complete'], 'upload acknowledgement did not produce matching remote bytes')
         reconciliation = plan(expected, release_assets(release))
         gate.require(not reconciliation['missing'], 'release incomplete; moving aliases and announcements remain held')
+        if release.get('draft') is True:
+            validate_live(args.candidate, 'publish-release')
+            release = api(f'/repos/{gate.REPOSITORY}/releases/{release["id"]}', method='PATCH', data=gate.canonical({'draft': False, 'make_latest': 'false'}))
+            gate.require(release.get('draft') is False and release.get('immutable') is True, 'release publication did not establish immutability')
     with args.output.open('xb') as output:
         output.write(gate.canonical(reconciliation))
 
@@ -11393,7 +12493,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/test_publish.py`
 
-<!-- r1:file task=4 path=packaging/release/test_publish.py sha256=805f4734f32743f1bdb55cdbdf75f1d179636e0ce6339115c6e45829249be554 bytes=1306 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=packaging/release/test_publish.py sha256=40f2008ebb0ae50434310ba4c5cd5b44e94e9d57e7d9049d958f551786071fb4 bytes=7524 mode=644 encoding=utf8 -->
 ````python
 from pathlib import Path
 import tempfile
@@ -11424,45 +12524,92 @@ class Publication(unittest.TestCase):
             publish.require_enabled()
 
 
-if __name__ == '__main__':
-    unittest.main()
-````
 
-### File `packaging/release/test_verify.py`
-
-<!-- r1:file task=4 path=packaging/release/test_verify.py sha256=699eeeac4bb492794390d53d313b255ad27bedf2e67529c896b4c85781ab2345 bytes=1349 mode=644 encoding=utf8 -->
-````python
-import hashlib
-from pathlib import Path
-import subprocess
-import tempfile
-import unittest
-from unittest.mock import patch
-
-import gate
-import verify
-import test_gate
-
-
-class Verification(unittest.TestCase):
-    def test_authentication_failure_stops_before_installer(self):
-        with patch.object(verify.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'verifier')):
-            with self.assertRaises(subprocess.CalledProcessError):
-                verify.verify(Path('/unused'), Path('/unused-bundle'), 'a' * 40, 'v0.1.0')
-
-    def test_source_and_tag_bound_inside_signed_inventory(self):
-        fixture = test_gate.Gates()
-        fixture.setUp()
-        self.addCleanup(fixture.tmp.cleanup)
+class Recovery(unittest.TestCase):
+    def test_reconcile_then_upload_reuses_the_verified_existing_bundle(self):
+        import sys
+        import test_gate
+        fixture = test_gate.Gates(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
         (fixture.root / 'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
-        with patch.object(verify.subprocess, 'run') as call:
-            for source, tag in [('b' * 40, fixture.inventory['tag']), ('a' * 40, 'v0.1.0')]:
-                with self.assertRaises(gate.Refused):
-                    verify.verify(fixture.root, Path('bundle'), source, tag)
-            args = call.call_args.args[0]
-            self.assertIn('--signer-workflow', args)
-            self.assertIn('--source-ref', args)
-            self.assertIn('--deny-self-hosted-runners', args)
+        signatures = fixture.root.parent / (fixture.root.name + '-signatures'); signatures.mkdir()
+        self.addCleanup(lambda: __import__('shutil').rmtree(signatures))
+        (signatures / 'release.sigstore.jsonl').write_bytes(b'new attempt bundle')
+        remote = {p.name: p.read_bytes() for p in fixture.root.iterdir()} | {'release.sigstore.jsonl': b'previous verified bundle'}
+        assets = [{'name': n, 'url': n} for n in remote]
+        release = {'id': 42, 'tag_name': fixture.inventory['tag'], 'draft': False, 'immutable': True}
+        def api(path, method='GET', **kwargs):
+            self.assertEqual(method, 'GET')
+            return assets if '/assets?' in path else release
+        with patch.object(publish, 'api', side_effect=api), patch.object(publish, 'asset_bytes', side_effect=lambda a: remote[a['name']]), patch('verify.verify') as verified, patch.dict('os.environ', {'RELEASE_PUBLICATION_ENABLED': 'true', 'GITHUB_SHA': 'a' * 40}):
+            for operation in ('reconcile', 'upload'):
+                with patch.object(sys, 'argv', ['publish.py', operation, '--candidate', str(fixture.root), '--signatures', str(signatures), '--output', str(signatures / (operation + '.json'))]):
+                    try:
+                        publish.main()
+                    except FileExistsError as error:
+                        self.fail(f'a verified retained bundle must survive reconcile then upload: {error}')
+            self.assertEqual(verified.call_count, 2)
+            self.assertEqual((signatures / 'recovered-release.sigstore.jsonl').read_bytes(), remote['release.sigstore.jsonl'])
+
+    def test_existing_recovery_file_cannot_be_replaced(self):
+        # A stale local sidecar must never silently become the recovered one.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'bundle'
+            path.write_bytes(b'wrong')
+            with self.assertRaisesRegex(gate.Refused, 'recovered bundle differs'):
+                publish.recover_bundle(path, b'approved')
+            self.assertEqual(path.read_bytes(), b'wrong')
+
+class ImmutablePublication(unittest.TestCase):
+    def scenario(self, seal):
+        import json,sys,urllib.parse
+        import test_gate
+        fixture=test_gate.Gates();fixture.setUp();self.addCleanup(fixture.tmp.cleanup)
+        notes=b'release notes\n';(fixture.root/'release-notes.md').write_bytes(notes)
+        fixture.inventory['artifacts'].append({'name':'release-notes.md','sha256':gate.digest(notes),'size':len(notes)})
+        (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        with tempfile.TemporaryDirectory() as tmp:
+            signatures=Path(tmp);(signatures/'release.sigstore.jsonl').write_bytes(b'verified bundle')
+            remote={};release=None;writes=[]
+            expected={p.name for p in fixture.root.iterdir()}|{'release.sigstore.jsonl'}
+            def api(path,method='GET',data=None,**kwargs):
+                nonlocal release
+                if method=='GET':
+                    return [{'name':n,'url':n} for n in remote] if '/assets?' in path else release
+                writes.append(method)
+                if method=='POST' and path.endswith('/releases'):
+                    self.assertIs(json.loads(data)['draft'],True,'assets must be uploaded before immutable publication')
+                    release={'id':42,'tag_name':fixture.inventory['tag'],'draft':True,'immutable':False};return release
+                if method=='POST':
+                    self.assertTrue(release['draft'])
+                    remote[urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)['name'][0]]=data;return {}
+                self.assertEqual(method,'PATCH')
+                self.assertEqual(set(remote),expected,'sealing must follow complete verified upload')
+                release=dict(release,draft=False,immutable=seal);return release
+            with patch.object(publish,'api',side_effect=api),patch.object(publish,'asset_bytes',side_effect=lambda a:remote[a['name']]),patch.object(publish,'validate_live'),patch('verify.verify'),patch.dict('os.environ',{'RELEASE_PUBLICATION_ENABLED':'true','GITHUB_SHA':'a'*40}),patch.object(sys,'argv',['publish.py','upload','--candidate',str(fixture.root),'--signatures',str(signatures),'--output',str(signatures/'result.json')]):
+                if not seal:
+                    with self.assertRaisesRegex(gate.Refused, 'did not establish immutability'):
+                        publish.main()
+                    return
+                publish.main()
+                self.assertIs(release['immutable'],True)
+                self.assertEqual(writes[-1],'PATCH')
+
+    def test_uploads_only_to_draft_then_seals_complete_release(self):
+        self.scenario(True)
+
+    def test_publication_must_actually_establish_immutability(self):
+        self.scenario(False)
+
+    def test_existing_published_release_must_already_be_immutable(self):
+        import sys
+        import test_gate
+        fixture=test_gate.Gates();fixture.setUp();self.addCleanup(fixture.tmp.cleanup)
+        (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        with tempfile.TemporaryDirectory() as tmp:
+            signatures=Path(tmp);(signatures/'release.sigstore.jsonl').write_bytes(b'bundle')
+            release={'id':42,'tag_name':fixture.inventory['tag'],'draft':False,'immutable':False}
+            with patch.dict('os.environ',{'GITHUB_SHA':'a'*40}),patch.object(publish,'api',return_value=release),patch.object(publish,'release_assets',return_value=[]),patch('verify.verify'),patch.object(sys,'argv',['publish.py','reconcile','--candidate',str(fixture.root),'--signatures',str(signatures),'--output',str(signatures/'result.json')]),self.assertRaisesRegex(gate.Refused,'published release must be immutable'):
+                publish.main()
 
 
 if __name__ == '__main__':
@@ -11471,7 +12618,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/test_workflows.py`
 
-<!-- r1:file task=4 path=packaging/release/test_workflows.py sha256=856213b554f2042fe26c169be5b86defae2e905cdb17b8eb30f01ed1ff4c85e3 bytes=7036 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=packaging/release/test_workflows.py sha256=0c0c2a668b425b3cae7954b4d4270cb7a653e40889b4c8c41272e8efe4c9e85e bytes=8534 mode=644 encoding=utf8 -->
 ````python
 """Workflow structure is part of the gate; every privileged job is checked."""
 import copy
@@ -11570,7 +12717,10 @@ class Workflows(unittest.TestCase):
         data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
         for phase in ('preflight', 'boundary'):
             changed = copy.deepcopy(data)
-            steps = changed['jobs']['github']['steps']
+            # Isolate phase completeness from the independent credential-order
+            # guards. Removing this guard must fail our assertion, not a later
+            # gates['phase'] lookup with KeyError.
+            steps = [s for s in changed['jobs']['github']['steps'] if s.get('uses') == './.github/actions/release-gate']
             changed['jobs']['github']['steps'] = [s for s in steps if s.get('with', {}).get('phase') != phase]
             with self.assertRaises(ValueError):
                 workflow_policy.check(changed, 'release-publish.yml')
@@ -11599,65 +12749,40 @@ class Workflows(unittest.TestCase):
                 workflow_policy.check(changed, 'release-candidate.yml')
 
 
+
+class PlatformBoundary(unittest.TestCase):
+    def test_release_jobs_run_on_the_release_tag_without_admin_policy_tokens(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for name in ('authorize', 'sign', 'github'):
+            job = data['jobs'][name]
+            self.assertNotIn('refs/heads/', job.get('if', ''))
+            self.assertIn('refs/tags/', job.get('if', ''))
+        text = (ROOT / '.github/workflows/release-publish.yml').read_text()
+        self.assertNotIn('RELEASE_POLICY_READ_TOKEN', text)
+        self.assertNotIn('permission-administration', text)
+        self.assertIn('settings_audit_sha256:', text)
+        self.assertIn('settings_audit:', text)
+
+    def test_candidate_retention_requires_prior_tag_signature_validation(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-candidate.yml').read_text())
+        self.assertIn('tag-signature', data['jobs'])
+        job = data['jobs']['tag-signature']
+        self.assertIn('tag_signature.py', str(job))
+        for name, job in data['jobs'].items():
+            if job.get('environment') == 'release-staging':
+                self.assertIn('tag-signature', job['needs'])
+
+
 if __name__ == '__main__':
     unittest.main()
 ````
 
-### File `packaging/release/verify.py`
-
-<!-- r1:file task=4 path=packaging/release/verify.py sha256=130970a410be1c4e4cda51a362ca06c280d89511ce9961e4829a0bab405c1d6a bytes=2003 mode=644 encoding=utf8 -->
-````python
-#!/usr/bin/env python3
-"""Verify downloaded final bytes before executing the cargo-dist installer."""
-import argparse
-from pathlib import Path
-import subprocess
-
-import gate
-import supply
-
-
-def verify(candidate, bundle, source_sha, tag, signer_sha=None):
-    candidate, bundle = Path(candidate), Path(bundle)
-    inventory_path = candidate / 'release-inventory.json'
-    # Verify the inventory signature first: hashes beside bytes alone do not
-    # authenticate an author. The signer is the protected publication workflow.
-    command = ['gh', 'attestation', 'verify', str(inventory_path), '--bundle', str(bundle), '--repo', gate.REPOSITORY,
-               '--signer-workflow', gate.REPOSITORY + '/.github/workflows/release-publish.yml',
-               '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners']
-    if signer_sha:
-        command += ['--signer-digest', signer_sha]
-    subprocess.run(command, check=True)
-    inventory = gate.strict_json(inventory_path.read_bytes())
-    gate.require(inventory['source_sha'] == source_sha and inventory['tag'] == tag, 'attested release source/tag mismatch')
-    gate.verify_files(inventory, candidate)
-    supply.verify_checksums(candidate)
-    supply.verify_binary_inventory(inventory, candidate)
-    # Every final payload has provenance too, including SBOMs and installer.
-    for artifact in inventory['artifacts']:
-        per_file = list(command)
-        per_file[3] = str(candidate / artifact['name'])
-        subprocess.run(per_file, check=True)
-    return inventory
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--candidate', required=True, type=Path)
-    parser.add_argument('--bundle', required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
-    parser.add_argument('--tag', required=True)
-    parser.add_argument('--signer-sha')
-    args = parser.parse_args()
-    verify(args.candidate, args.bundle, args.source_sha, args.tag, args.signer_sha)
-````
-
 ### File `packaging/release/workflow_policy.py`
 
-<!-- r1:file task=4 path=packaging/release/workflow_policy.py sha256=ce1be069a6c78a59634d8c193ac4593eab45876a5734d895f8e8979f77d3600e bytes=6806 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=packaging/release/workflow_policy.py sha256=4973c8352274308b0b1ad5e7c6eb194f47b4b99d00cf0b88c383ca4e074d63d9 bytes=6830 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
-"""Lint the release authority graph, including jobs inside reusable workflows."""
+"""Defense-in-depth lint only; platform environment/registry policy is the boundary."""
 from pathlib import Path
 import re
 import sys
@@ -11665,7 +12790,7 @@ import sys
 import yaml
 
 
-CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
+CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
 
 
 def privileged(job):
@@ -11781,29 +12906,29 @@ components = ["clippy", "rustfmt"]
 
 ### Step 3: GREEN / verification
 
+Set scratch tool homes first, then run:
+
 ```sh
-git add flake.nix .github packaging/release rust-toolchain.toml nix/package.nix
 nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py'
 nix develop .#release -c actionlint .github/workflows/release-candidate.yml .github/workflows/release-publish.yml .github/workflows/release-tests.yml .github/workflows/nix.yml
-nix flake check -L
 ```
 
-### Step 4: Commit / handoff
+### Step 4: COPY probe / staged bytes / commit
 
-Inspect `git diff --check` and the staged stat, commit with `git -c commit.gpgsign=false commit`, verify `git log --format='%ae' origin/main..HEAD`, and push only `plan/dist-r1` over SSH. Report the review request to the parent; no self-approval and no GitHub actions.
+Use the copied-tree harness below; every counted mutation must fail an actual assertion, without ERROR/KeyError. Compare staged blobs to the tested working bytes and inspect the stat/diff before an unsigned Conventional Commit. No external publication/settings action. The final push uses the exact parent-authorized lease.
 
 
-## Task 5: Process docs, fresh replay and execution record
+## Task 5: Process documentation and exact execution record
 
 ### Step 1: RED / contract
 
-Read the completed verification logs, extract every code block into a fresh replay, apply in task order, run targeted offline suites, and compare tracked bytes with the constructed implementation. A zero-block replay or unequal tree fails. Record only observed exits/counts.
+Read actual logs, run the six Rust checks, actionlint, release suite and real mixed round-trip, rebase to the requested main, extract into a FRESH exact-base tree, test task order and compare every tracked byte/mode. Record nonzero extraction count; then copy only the final record and compare again.
 
 ### Step 2: Exact implementation
 
 ### File `docs/README.md`
 
-<!-- r1:file task=5 path=docs/README.md sha256=5ab87d0a20895bf11572c269e96c9912da4d1bb57bd6a96777c9ce70d20ded23 bytes=50759 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=docs/README.md sha256=9e52f4d189164dfc2a8c74e7184af1170b98d52ccd4ca6fd17e56d71f4d96035 bytes=50818 mode=644 encoding=utf8 -->
 ````markdown
 # hennery design documents
 
@@ -11921,7 +13046,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
 
    - [WSS transport and diagnostics (W1)](plans/2026-10-26-wss-transport.md) — built and replayed on `8bb29904`; the maintainer-delegated review returned APPROVE AFTER AMENDMENTS, all three implemented and folded into their tasks. Draft PR #139 awaits scoped re-review, Linux/macOS CI and real-adapter/MCP acceptance; W2 remains deferred.
 
-   - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — built with digest/run-attempt approval, protected publication boundaries, retained-candidate recovery, SPDX/notices/source, the hardened installer and immutable flake identity. Built-first verification and replay are recorded in the plan; parent review, the authorized tag-creation ruling and native Linux CI remain pending. No publication is enabled.
+   - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — review REJECT addressed with the parent’s platform-boundary ruling: protected signed-tag publication, exact signer identities, fresh settings-audit approval binding, immutable releases, corrected mixed installer/recovery/manifest integration and assertion-only probes. Rebased onto `dd7c0066`; fresh replay and checks recorded in the plan. Re-review and maintainer-only setup remain; publication is disabled.
 
 ## Maintainer decisions (2026-09-27)
 
@@ -11948,227 +13073,232 @@ _Generated with Claude AI — please review before distribution._
 
 ### File `docs/release-process.md`
 
-<!-- r1:file task=5 path=docs/release-process.md sha256=00685922b60af43c548b2909cf826e3b8df0131c879e9f2d507490630d87036d bytes=14827 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=docs/release-process.md sha256=7720ab239ba99174e6d13834214cdb5ceb3297e33b1fc49ed797038e1629722b bytes=15482 mode=644 encoding=utf8 -->
 ````markdown
 # Release process
 
-R1 implements the release foundation. No version, channel or external service is
-authorized to publish by merging it. There are no published releases yet. The
-first approved version is `0.1.0-alpha.1`, GitHub only; `0.1.0` follows after the
-normal channel acceptance gates. crates.io and GHCR are built in parallel and
-need separate maintainer go-ahead. Homebrew, Intel macOS, GNU archives, native
-packages, repositories, notarization and public caches retain their design gates.
+R1 implements a disabled release foundation. Merging it authorizes neither a
+channel nor publication. First release is `0.1.0-alpha.1`, GitHub only; stable
+`0.1.0` and further channels require their own maintainer go-ahead. R3 owns crate
+packaging/version metadata and R4 image packaging. No publication or external
+settings change was performed while building this foundation.
 
-## Maintainer setup before any release
+## Boundary and maintainer-only setup
 
-1. Review R1 and the enabled channel implementations, then prepare a release PR
-   with one workspace version, exact internal crate edges, matching web metadata
-   and a tracked `CHANGELOG.md` (copied verbatim to the release notes). R3 owns the version/metadata edits while it runs in parallel.
-   Record platform floors actually tested, runtime pins, security changes,
-   migrations/config changes, backup/restart needs and known early-testing limits.
-2. Create the protected `release` environment. Use
-   `.github/release-environment.example.json` with the actual maintainer's numeric
-   user ID replacing 0; explicitly set `can_admins_bypass: false`. This is a
-   sole-maintainer project, so self-review is allowed, but only configured user
-   reviewers can authorize. Apply the exact `main` branch policy from
-   `.github/release-branch-policy.json`. Every signing/publishing job, including
-   reusable callers and retries, must use this environment. A gate job elsewhere
-   cannot lend approval to another job.
-3. Review and apply release-tag rules. `.github/release-tag-ruleset.json` is the
-   safe frozen state: `v*` creation, update and deletion are denied with no bypass,
-   including administrators. **The authorized tag-creation path needs a parent
-   ruling:** GitHub's restrict-creations rule permits creators through a bypass
-   list. R1 does not silently introduce that exception. Keep publication disabled
-   until the design and enforceable creation policy agree. Never move a published
-   tag, disable a rule to get around it, or retag a version. Annotated tags only;
-   if a personal signing key is chosen, verify its approved fingerprint as well.
-4. Provision private versioned S3 candidate and audit buckets with Object Lock.
-   Enforce COMPLIANCE retention (at least a year) **and legal hold ON**, deny
-   deletion, versions without retention, hold removal by the CI principals and
-   unconditional/overwriting writes. Keep holds until every enabled channel and
-   public-path acceptance is complete. Source/release retention is a separate,
-   longer-term obligation. No automatic cleanup releases holds.
-5. Create `release-staging`, limited to approved `v*` tags, with storage-only
-   credentials. Configure `RELEASE_CANDIDATE_BUCKET`, `RELEASE_CANDIDATE_REGION`,
-   `RELEASE_CANDIDATE_STAGE_KEY_ID/KEY` and the separate
-   `RELEASE_CANDIDATE_READ_KEY_ID/KEY`. The staging principal may conditionally
-   create and inspect held candidate objects, never overwrite/delete; the reader
-   may get exact versions and inspect their retention/legal holds. Enable
-   `RELEASE_CANDIDATE_STORAGE_ENABLED` only after the bucket policy is reviewed.
-6. Configure `RELEASE_AUDIT_BUCKET` and `RELEASE_AUDIT_WRITE_KEY_ID/KEY`, restricted
-   to conditional held writes under `audit/<run>/<attempt>/`. Approval receipts
-   are persisted there before signing or each public write. If ordinary Actions
-   read access cannot see complete ruleset bypass settings, configure the separate
-   `RELEASE_POLICY_READ_TOKEN` with read-only Actions/administration access. Missing
-   or hidden policy fields refuse; never assume bypass is disabled.
-7. For GitHub uploads, install a narrowly scoped release App on this repository.
-   Set `RELEASE_PUBLISH_APP_ID/KEY` only in `release`, granting contents write and
-   Actions/administration read. Its short-lived token is obtained **after** the
-   in-job preflight; the job's ordinary token remains read-only. R3/R4 obtain their
-   own credentials only after their preflight and revalidate before every write.
-   Keep `RELEASE_PUBLICATION_ENABLED` and every channel switch unset until the
-   maintainer separately authorizes that channel. No registry login, release,
-   tag creation or storage provisioning is performed by this implementation.
+**Parent ruling on the maintainer's behalf, 2026-10-15:** enforce the boundary on
+the platform, not in branch-editable workflow code. A repository writer, including
+an agent pushing with the maintainer's key, can run arbitrary code and request
+ordinary `GITHUB_TOKEN` write permissions or OIDC. Static lint and job conditions
+cannot stop issuance. Such a branch must neither obtain dedicated publishing
+credentials nor produce a signature accepted by consumers. All signing identities
+must be the exact release workflow at a protected release tag; branch identities
+are rejected. Repository disruption/denial of service is outside that guarantee.
 
-GitHub references: [environment protection](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
-[tag rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets),
-[workflow review history](https://docs.github.com/en/rest/actions/workflow-runs#get-the-review-history-for-a-workflow-run),
-[artifact verification](https://cli.github.com/manual/gh_attestation_verify).
+Before enabling any switch, the maintainer must configure and audit:
+
+1. **Environment `release`:** required reviewer is exactly the maintainer's User
+   ID; administrator bypass explicitly disabled. Deployments allow only `v*`
+   tags, with no branch policy. Use `.github/release-environment.example.json`
+   and `.github/release-branch-policy.json` (the latter describes a tag policy).
+   Sole-maintainer self-review is allowed. Every long-lived publishing credential
+   is an environment secret here, never a repository secret. The initial audit
+   requires repository secrets empty, preventing opaque publishing credentials
+   under unexpected names. Storage-only credentials use their restricted staging
+   or audit environments; they cannot publish.
+2. **Two active tag rulesets:** `.github/release-tag-creation.json` restricts
+   creation of `v*`, with only the repository owner's **User** ID as an always
+   bypass actor. Replace placeholder 0 with the actual owner ID; this personal
+   repository has no Maintain role. `.github/release-tag-ruleset.json` separately
+   restricts update/deletion with **no** bypass actors. The owner's creation
+   exception cannot bypass the second ruleset. `GITHUB_TOKEN` is not a creation
+   bypass actor. Never disable a rule, move a tag or reuse a version.
+3. **Signed annotated tags:** use the pinned signing subkey fingerprint
+   `F26C7F594DFE84D131703AFC23E5A318AE8D2861`, found with `git log --show-signature`
+   in commit `3b7b5f2d2af8821f4617afb08ba1dc766c5b9f14`. The checked-in public key
+   verifies that historical commit; only its personal UID was exported. It is
+   distinct from GitHub's shared web-signing key. `tag_signature.py` freshly
+   fetches the tag, verifies its actual signature with an isolated keyring, and
+   requires its annotated object to directly point at the exact candidate commit.
+   Candidate storage credentials wait for this check, and every publication gate
+   repeats it. GitHub's signed-commit rule does not verify tag signatures.
+4. **Immutable GitHub releases:** enable the repository setting before the first
+   release. The publisher creates a draft, adds/verifies every asset and then
+   publishes it, requiring the returned immutable state. After publication,
+   asset changes must be refused by GitHub. Never try to repair an immutable
+   release by replacing assets; use a new version. Tag rules also block ordinary
+   workflows from manufacturing new `v*` tags.
+5. **GitHub upload App:** narrowly scoped contents write and Actions read, installed
+   only on this repository. `RELEASE_PUBLISH_APP_KEY` exists only in `release`;
+   `RELEASE_PUBLISH_APP_ID` is its environment variable. No administration access
+   is granted to publishers. Mint its short-lived token after preflight.
+6. **crates.io trusted publishing:** every production crate must require owner/repo
+   `marcinwadon/hennery`, exact workflow filename `release-publish.yml` and
+   environment **`release`**. A workflow match without the environment is
+   insufficient. A branch job cannot enter `release`; its environment-less OIDC
+   token must be refused by crates.io. Bootstrap claiming and token handling remain
+   R3's separate reviewed process, confined to the same environment. Do not enable
+   this channel until every crate's actual settings and source delivery qualify.
+7. **GHCR:** configure this repository's package **Manage Actions access** to
+   **READ**, disabling inherited write/admin access. An arbitrary branch job's
+   `packages: write` must still be unable to push. R4 uses a dedicated publishing
+   credential under `GHCR_PUBLISH_TOKEN`, only in `release`; it must not use
+   `github.token` to authenticate writes or signing pushes. Qualify the permitted
+   dedicated credential with the maintainer before enabling GHCR. Current GitHub
+   documentation describes PAT (classic) authentication, not App/fine-grained
+   registry authentication; the parent's credential-kind ruling is required
+   rather than assuming unsupported authentication works.
+8. **Held storage:** private versioned S3 candidate/audit buckets, Object Lock
+   COMPLIANCE for at least a year plus legal hold ON; no CI delete, overwrite or
+   hold removal. `release-staging` allows only approved `v*` tags and holds only
+   storage credentials. Configure candidate bucket/region, separate conditional
+   stage and exact-version read principals, and an audit principal restricted to
+   held append-only `audit/<run>/<attempt>/` writes. Enable storage only after
+   IAM/retention review. Keep holds until all channels and public acceptance
+   complete; source/rollback retention is a longer obligation.
+9. **Negative platform acceptance:** after setup, explicitly authorize a disposable
+   branch Actions job with `packages: write`, its ordinary `GITHUB_TOKEN`, **no
+   environment** and no dedicated credential. Run `post_setup.py` against a known
+   existing package digest. It proves read access then attempts the registry push
+   authorization/write boundary and requires 403. Unexpected success or ambiguous
+   errors stop qualification; a misconfigured package may receive a canary index,
+   so inspect it and repair access. Record the actual result for the local audit.
+   The offline tests use transport doubles; no live negative push ran here.
+   Separately verify a branch OIDC token cannot satisfy crates.io's required
+   environment and branch attestations fail the exact-tag consumer policy.
+
+Official references: [environment protection](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
+[ruleset bypass visibility](https://docs.github.com/en/rest/repos/rules),
+[immutable release lifecycle](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases),
+[GHCR authentication and access](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
+[crates.io trusted publisher identity](https://github.com/rust-lang/rfcs/blob/master/text/3691-trusted-publishing-cratesio.md).
 
 ## Candidate and qualification
 
-The maintainer approves the version, exact source SHA, enabled channels and
-qualified targets before creating the protected annotated tag. A tag authorizes
-candidate creation, not signing or publication. `release-candidate.yml` builds
-fresh at that source, pins Rust 1.98.1, cargo-dist 0.30.4 and every action SHA,
-uses the locked Nix Node/pnpm tools and restores no Actions cache. The UI is built
-once. Native Linux x86_64/arm64 musl and macOS arm64 archives carry notices before
-hashes are frozen. Each target records runner/SDK/toolchain identity and has an
-SPDX 2.3 JSON SBOM, native dependencies (OpenSSL/SQLite), third-party source and
-current Rust/frontend advisory reports. Missing licence text or audit findings
-stop the candidate. Supplemental texts are pinned by exact upstream revision and
-digest, never fetched from a moving branch during a build.
+Prepare a reviewed release PR with one workspace version, exact internal crate
+edges, matching web metadata and a tracked `CHANGELOG.md`. Record tested platform
+floors, runtime pins, security/migration/config changes, backups/restarts and early
+tester limits. Build from the approved signed tag and exact commit. Candidate
+creation is not publication approval.
 
-The source bundle preserves this checkout, both lockfiles, licences, test fixtures
-and build instructions. Dependency source bundles contain the target's resolved
-Rust build/dev graph and frontend package sources, including bundled native
-source. The separate runtime inventory describes pinned Node/npm downloads and
-binds the adapter-manifest digest; those payloads are not redistributed. Review
-fonts/assets, notices, copyright and copyleft corresponding-source obligations
-before approving publication. This report is material for that review, not a
-legal clearance. A static OpenSSL/SQLite security fix needs a new application
-release; updating the host's system libraries does not repair existing archives.
+`release-candidate.yml` verifies the pinned tag signature before storage
+credentials, builds fresh with fixed native runners and pinned Rust/cargo-dist/
+actions/locked web tools, and restores no Actions caches. Build the UI once.
+Linux x86_64/arm64 musl and macOS arm64 archives carry notices before final hashes.
+Each target records runner/SDK/toolchain identity, SPDX 2.3 Rust/native/frontend
+components, corresponding third-party source, and current Rust/frontend audit
+reports. Missing licence text/findings stop freeze. Supplemental licences retain
+exact upstream bytes; fonts/assets/redistribution/AGPL corresponding-source and
+static OpenSSL support still need maintainer clearance. Runtime Node/agent
+payloads are inventoried separately and not redistributed.
 
-The global job regenerates cargo-dist's installer/formula after final archive
-hashes are known. It independently verifies the checksum inventory, checks the
-formula, and tests the hardened installer on all three native platforms. The
-inventory binds every final payload, the source/tag, channel/target sets and the
-candidate build run/attempt. `sha256.sum` covers payloads without hashing itself
-or the inventory; the signed inventory covers the checksum file. Signature
-sidecars are separate so there is no digest cycle. A complete native dist manifest
-is augmented with an acyclic inventory of added release material. See the
-[R3/R4 gate interface](../packaging/release/README.md) for contribution names.
+The common manifest resolver accepts either the original adapter path or R3's
+host-crate path, hashes the original bytes, and rejects conflicting dual copies.
+Source archives preserve checkout/lockfiles/licences/build instructions. Mixed
+candidates contain executable and source tarballs; installer acceptance counts
+only executable archives and still requires each intended archive to be offered.
+It verifies hashes, provenance invocation, refusal paths and atomic installation
+on every native target. Fixture signatures are mocked before candidate signing;
+that is not public signature qualification.
 
-Only this candidate workflow stages objects in the held store, after native
-installer acceptance. Its immutable Actions artifacts last 90 days as a
-convenience copy. They are not the durable authority. Retention receipts name
-exact held object versions and the inventory digest. Failed/incomplete staging,
-expired retention, missing bytes or a changed run attempt cannot be promoted.
+Freeze one complete channel/target set and every final payload. The inventory
+includes exact executable hashes, source/tag and candidate run/attempt; checksum
+and signature sidecars avoid cycles. No rebuild or byte addition under an old
+inventory. Held receipts identify exact object versions. Expiring Actions copies
+are convenience only. Require completed successful exact-source push/manual runs
+of `ci.yml`, `build.yml`, `nix.yml` and `release-tests.yml`; missing, skipped,
+pending, failed, cancelled, fork/PR-merge or wrong-SHA evidence refuses.
 
-Before publication, require completed successful exact-SHA runs from `ci.yml`,
-`build.yml`, `nix.yml` (now native Linux arm64 too) and `release-tests.yml`. PR
-merge refs and other SHAs do not qualify. Missing, pending, cancelled, failed,
-skipped jobs or an unexpected workflow/event/repository refuse. Do the first
-release's logged-in agent/platform acceptance on disposable homes: real UI,
-doctor, install/restart/upgrade/uninstall, start/prompt/tool/permission/resume/MCP
-and the pinned Codex delete contract. Record actual platform floors. Containers
-and the local shell fixtures do not qualify native services or older OS versions.
-Do not claim Intel, Alpine managed hosts or notarization from these checks.
+Before the first release, qualify real logged-in agent/UI/doctor/session/MCP,
+service install/restart/upgrade/uninstall and platform floors using disposable
+homes. Containers/shell fixtures do not qualify native services, Intel macOS,
+older OS versions, managed Alpine hosts or notarization. GNU/native package
+repositories, Apple notarization, public caches and R6 modules retain their gates.
 
-## Publication approval and boundaries
+## Settings audit and publication approval
 
-Dispatch `release-publish.yml` from trusted `main` with the exact inventory
-SHA-256, source SHA, tag, sorted JSON channels/targets, candidate run ID/attempt
-and held retention-receipt version. The summary prints this tuple plus the
-publishing run ID/attempt and its challenge. The environment reviewer must use
-exactly `approve-release-v1:<tuple-hash>` as the review comment. Identity and
-decision come from the platform's authenticated review history, never a name in
-an artifact. Every rerun needs a new challenge/approval; rerun all jobs or make a
-new dispatch so the summary reflects the current attempt. After any rejected review, make a
-fresh dispatch; R1 conservatively refuses a run whose environment review history
-contains a rejection, without guessing ordering or silently ignoring withdrawal.
+Run the reviewed `settings_audit.py` locally with the maintainer's own `gh`
+authentication, after the candidate run completes. It independently verifies the pinned tag signature before using owner settings
+authentication, then checks the actual owner, environment, both rulesets including bypass actors, secret locations and immutable
+release setting. Publishers cannot read private bypass lists and never receive an
+administration token. Where no settings API exists, the maintainer personally
+checks GHCR package Actions access/negative-push result and crates.io publisher
+records, supplies the observations JSON and explicitly confirms the displayed
+result. It is an authenticated maintainer inspection ratified by the review,
+not an artifact-supplied authorization or automatic UI verification.
 
-The protected read-only `authorize` job first fetches held bytes and validates
-this record with no publication/OIDC authority. Writer jobs may start only when
-its inventory and attempt outputs match this dispatch and current attempt. This
-precedes GitHub's job-level write-token/secret issuance; retrying only a writer
-with a stale authorization skips it before credentials. Use rerun-all or a new
-dispatch to authorize the new attempt. The in-job gates are still mandatory.
+Retain the canonical report and its SHA-256. Its candidate/source/tag/channels/
+targets/global inventory/run attempt must match, it must postdate candidate
+completion and be at most 24 hours old. Dispatch `release-publish.yml` at that
+**same signed tag**, supplying the complete event inputs documented in the
+[gate contract](../packaging/release/README.md), including the report and digest.
+The run summary prints the approval tuple and publishing run/attempt. Approve
+only with the exact `approve-release-v1:<tuple-hash>` review comment. The tuple
+includes the audit digest; changing the audit or retry attempt needs new approval.
+Any rejection requires a fresh dispatch. A stale audit requires a new local audit
+and newly approved dispatch, even for unchanged held bytes.
 
-All channels use the executable `packaging/release-gate <channel>` and protected
-environment `release`; its full inputs, outputs and R3/R4 migration are in the
-[gate contract](../packaging/release/README.md). The root inventory digest binds
-channel metadata as well as payloads. A channel-specific digest or approval ID
-alone cannot authorize publication.
+Protected read-only `authorize` fetches held bytes and validates before writer
+jobs, whose local conditions match the current digest/attempt. Every writer still
+uses `release`, fetches exact held versions, runs in-job preflight, obtains only
+its dedicated authority, then revalidates at each sign/upload/final-publication
+boundary. Runtime evidence is limited to ordinary readable runs/jobs/reviews/tag
+objects plus cryptographic signed-tag verification. Hold every gate receipt before
+writing; storage failure stops. Channel reconciliation must verify actual remote
+bytes/digests and upload only authoritatively missing artifacts. Only after all
+enabled channels and public-path acceptance succeed may moving aliases or
+announcements advance.
 
-Each protected writer job fetches exact held versions, checks the actual bytes and
-revalidates live tag, environment/rules, exact-SHA checks and approval. Only after
-preflight does it obtain publication credentials. It repeats validation at the
-signing/upload boundary; the uploader revalidates for **each** public write.
-Approval receipts go to held append-only audit keys. The signer attests all final
-payloads and the inventory and retains a downloadable Sigstore bundle. Its
-provenance identifies the protected publishing workflow on `main`; the signed
-inventory binds the separately qualified release source/tag. Do not mistake the
-publisher workflow's source SHA for the released application's SHA.
+## Consumer verification and recovery
 
-The GitHub channel creates the release without advancing `latest`, uploads only
-verified missing bytes, and fetches/hashes each result. R3 publishes its dependency
-closure before the CLI, and R4 verifies both platforms before its OCI index. Keep
-announcements and moving aliases held until the entire approved channel set and
-public install path are healthy. Enabled channels are not a cross-registry
-transaction. A job's success log alone does not establish remote publication.
+Every accepted signature must have certificate identity
+`https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<exact-release-tag>`,
+GitHub OIDC issuer and matching source ref. `verify.py` checks the inventory's
+attestation first, then source/tag, every payload/checksum/binary digest and each
+payload attestation. It also supports immutable OCI digests and relevant SLSA/
+SPDX predicates; R4 applies the same policy to platforms and final index. A
+branch's valid cryptographic signature is rejected. Do not trust an unsigned
+checksum or execute a downloaded installer before authenticating it through a
+trusted copy of this verifier. The verifier itself must come from reviewed,
+trusted source, not arbitrary branch code or an unverified artifact.
 
-## Recovery, verification and withdrawal
+The hardened installer requires the real GitHub CLI and verifies the downloaded
+archive with the exact tag identity before extraction/execution, in addition to
+SHA-256. A caller may supply a durable local Sigstore bundle; it is still fully
+verified. No missing verifier/hash/signature fallback is accepted. It stages in a
+private sibling directory and atomically creates the destination without
+replacing files, links, directories or races. It uses no sudo and starts no
+services/runtime downloads. Upgrade by stopping services and explicitly removing
+the previous chosen user binary or choosing an empty directory, then run doctor.
 
-Never rebuild missing bytes under an old approval. Recover the exact held object
-versions, verify legal holds, inventory completeness and all digests, then obtain
-approval for the new publishing attempt. Reconcile **every** remote artifact,
-including an upload whose response was lost. Fetch/hash remote bytes or use the
-registry's authenticated content digest. Only a verified missing object may be
-uploaded. A mismatch, expired/missing candidate or unverifiable remote response
-stops recovery; use a new candidate and a new version where immutability demands
-it. GitHub retries reuse an existing cryptographically verified Sigstore bundle
-rather than overwrite it with a new attempt's different signature bytes.
+Native cargo-binstall documents minisign-only support. It cannot enforce this
+Sigstore workflow identity through invented metadata. Freeze and live gates read the final CLI crate metadata, disable all native
+binstall strategies and require the exact tag identity for the external verifier.
+Keep native acceptance disabled pending the parent's capability ruling and a reviewed
+R3 bridge; do not claim it is an authenticated install path. The common external
+verifier enforces the exact tag identity. See [upstream signing support](https://github.com/cargo-bins/cargo-binstall/blob/main/SIGNING.md).
 
-The convenient installer checks embedded archive hashes but trusts the installer
-script that was downloaded. The verified path first checks the inventory and
-installer attestations against this repository's exact publishing workflow, then
-checks the approved release source/tag and every payload digest before executing
-the same cargo-dist installer. `packaging/release/verify.py` implements this path
-with the pinned GitHub CLI and downloaded Sigstore bundle. It can additionally
-pin the signer workflow SHA. A checksum downloaded beside a binary alone does
-not authenticate its author. No public verification was run while building R1.
+Retries recover held exact versions, recheck holds/digests and renew audit/attempt
+approval. Reconcile every remote artifact, including lost upload responses. Reuse
+an existing cryptographically verified bundle safely across reconcile then upload;
+never replace a differing local/remote bundle. Only verified absence permits an
+upload; ambiguous auth/network responses or mismatches stop. Published GitHub
+assets are immutable; incomplete/conflicting releases require a new version.
 
-The installer uses a private sibling directory and an atomic exclusive hard link,
-requires SHA-256, and refuses unsupported platforms, failed downloads, malformed
-or missing hashes, mismatches and existing files/directories/symlinks. It installs
-without sudo and starts no services or runtime downloads. For an upgrade, stop
-services and explicitly remove the previously chosen user binary or select a
-new empty directory; it never silently replaces another package manager's file.
-Run doctor afterwards to find PATH conflicts and services needing restart.
-
-For Nix, use an immutable release tag or its full commit in the flake reference
-(`github:marcinwadon/hennery/v<version>#default` or
-`github:marcinwadon/hennery/<full-source-sha>#default`) with `nix build`,
-`nix run` or `nix profile install`. These are future templates until the first
-authorized tag exists. The package embeds the real UI, records the source/UI/
-manifest identity and retains the no-UI-store-reference guards. No public binary
-cache is assumed. CI builds all three exported systems; NixOS managed hosts
-still need nix-ld. NixOS/Home Manager modules and Nix adapters remain R6, not an
-R1 claim.
-
-Public-path acceptance belongs to the maintainer after authorized publication:
-verify signatures in scratch homes, install each enabled channel, load the UI,
-run doctor and a disposable session, and record OS/architecture/source/digests.
-Only then update the main README's no-release statement and announce.
-
-Before a rollback, stop services and preserve a complete stopped-service copy of
-the data directory, databases, attachments, configuration and secret keys. Check
-the release compatibility record; an older binary may not read a migrated DB.
-Restore a matching backup or ship a forward fix when downgrade is unsafe.
-Runtime adapter rollback/hold is separate from application/schema rollback.
-Withdraw a bad release with remediation, retain source and working rollback
-artifacts, remove moving aliases, and publish a new patch. Never replace assets,
-checksums, tags or immutable crate/image versions. Yank crates only as documented
-by that channel; it does not uninstall copies or rewrite lockfiles. Security
-response also revokes affected credentials and records affected digests.
+Nix uses an immutable tag/full commit flake reference, builds the real UI and
+retains reference guards and source/UI/adapter identity. Native Linux arm64 is in
+CI; no public cache or unqualified platform is implied. Public-path acceptance
+belongs to the maintainer after authorized publication. Before rollback, stop
+services, back up the complete data/config/keys, and check schema compatibility;
+restore a matching backup or ship a forward fix if downgrade is unsafe. Withdraw
+bad versions with remediation and retained corresponding source; never rewrite
+assets/tags/crate/image versions. Revoke affected credentials where appropriate.
 
 Generated with Claude AI — please review before distribution.
 ````
 
 ### File `packaging/README.md`
 
-<!-- r1:file task=5 path=packaging/README.md sha256=799144c3037e4ad5dd57a145d8dde54f11ccd521ce2ee7e0f77ec9d8a1df26f1 bytes=7564 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=packaging/README.md sha256=d1ef8a3ec29e6eeb8b3bb31ffb489933e04812ac9716d7443aec60616562803f bytes=7946 mode=644 encoding=utf8 -->
 ````markdown
 # Release builds
 
@@ -12275,14 +13405,18 @@ These need the operator's decision, credentials, or both. None is set up:
 
   The `build` workflow's artifacts are never promoted to a release: a pull
   request's are built from code nobody has reviewed yet.
-- **Artifact attestations** (`github-attestations = true`): they need
-  `id-token: write` and `attestations: write`, and they write to the public
-  Sigstore log. The README's "verified install" (`gh attestation verify
-  hennery-installer.sh --repo marcinwadon/hennery`) is documented with the
-  first release.
+- **Artifact attestations** (`github-attestations = true`): protected release-tag
+  jobs need OIDC/attestation authority and write to the public Sigstore log.
+  Repository-only verification is insufficient. The common
+  [verifier](release/verify.py) pins the exact certificate identity to
+  `marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<release-tag>`
+  and rejects branch signers. Authenticate the installer before executing it;
+  its archive verifier also requires this identity. Native binstall signature
+  support needs a reviewed bridge; no unverified strategy is an accepted path.
 - **The Homebrew tap** (`marcinwadon/homebrew-tap`): the repository and a
   token allowed to push to it.
-- **The image on GHCR:** `packages: write`, one multi-arch manifest from
+- **The image on GHCR:** a dedicated credential held only in `release`, with
+  this repository's package Actions access READ, one multi-arch manifest from
   the per-architecture images, and its provenance attestation. Its docs
   should say: publish the port on loopback behind a TLS proxy
   (`-p 127.0.0.1:8080:8080`); read the setup link with
@@ -12311,6 +13445,8 @@ _Generated with Claude AI — please review before distribution._
 
 ### Step 3: GREEN / verification
 
+Set scratch tool homes first, then run:
+
 ```sh
 nix develop -c cargo fmt --all --check
 nix develop -c cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -12320,15 +13456,19 @@ nix develop -c cargo run -p hennery-proto --bin gen --locked -- --check
 nix develop -c cargo run -p hennery-view --bin gen-view --locked -- --check
 ```
 
-### Step 4: Commit / handoff
+### Step 4: COPY probe / staged bytes / commit
 
-Inspect `git diff --check` and the staged stat, commit with `git -c commit.gpgsign=false commit`, verify `git log --format='%ae' origin/main..HEAD`, and push only `plan/dist-r1` over SSH. Report the review request to the parent; no self-approval and no GitHub actions.
+Use the copied-tree harness below; every counted mutation must fail an actual assertion, without ERROR/KeyError. Compare staged blobs to the tested working bytes and inspect the stat/diff before an unsigned Conventional Commit. No external publication/settings action. The final push uses the exact parent-authorized lease.
 
-## Replay and probe record / exact harnesses
+## Gate interface for R3 and R4
 
-Historical fresh construction replays extracted 57 blocks/690 tracked files (replay-1), 58/690 (replay-2), and 58/690 (replay-3). The fourth replay verified the final shared adapter and read-only credential authorizer (60 blocks/692 files). The final Markdown serialization uses fresh `dist-r1-replay-5`, with full Rust files and a byte-preserving encoded licence; all earlier trees remain. The harness executes targeted offline suites after each task, checks every block's SHA-256/byte length and explicit file mode, then compares all tracked bytes and modes including the plan. The six Rust checks and native Nix check ran on the constructed implementation; replay never shares or rebuilds its Cargo target directory.
+The normative embedded `packaging/release/README.md` documents **one** executable: `packaging/release-gate <channel>` and environment **`release`**. It specifies candidate/global inventory digest, preflight/boundary, unique outside receipt, platform event fields, settings audit JSON/digest, read-only GH token and storage-only audit credentials. Zero means live validation and held audit success; stdout is the approval challenge and the receipt records binding/approver/phase/channel. No cached boolean or artifact actor authorizes another boundary.
 
-Save this harness under `.superpowers/sdd/release-foundation/replay.py`; run through the locked release shell with `--source "$PWD" --destination <fresh-worktree>`. The house `new-worktree.sh` creates the clean tree at the exact base in the header. After recording counts, copy only the plan execution record to the replay and compare tracked bytes/modes again. The docs record is intentionally separate from code construction. Set scratch HOME/CARGO_HOME/XDG paths before all tool commands.
+Both existing branches were read. R3 replaces materialize/verify/crates-io calls with held fetch plus channel `crates`, contributes the seven frozen crates/channel inventory and adapts its final metadata to the explicitly disabled native binstall/external exact-tag verifier contract. R4 replaces r1-ghcr-gate upload/sign with channel `ghcr` and the two explicit phases, contributes OCI tar/index/SBOM material and independently verifies every platform/index/binary digest. Both move final jobs into the common manual **tagged** orchestrator, with release environment, direct current-attempt authorize dependency and in-job gates. crates.io configuration requires both environment and exact filename. GHCR uses a dedicated release-only credential and package Actions READ, never ordinary GITHUB_TOKEN for writes. Consumer integration stays disabled until reviewed.
+
+## Replay and final COPY evidence
+
+The next harness is the exact final fresh replay. Save it in ignored scratch and run through the locked release shell with source/destination arguments. Create the destination with the house worktree helper at the exact base above; it must be fresh. After recording results, copy the final plan record and compare tracked bytes/modes again. Earlier construction replays are historical evidence only.
 
 ### replay.py
 
@@ -12349,7 +13489,7 @@ parser.add_argument('--source',type=Path,required=True)
 parser.add_argument('--destination',type=Path,required=True)
 args=parser.parse_args()
 source=args.source.resolve();destination=args.destination.resolve()
-base='14a754b6d9649502fcc30aae2d1f6c1c7d9def04'
+base='dd7c0066c643ee417f29f4c1559d36a49b7eac00'
 plan=Path('docs/plans/2026-10-28-release-foundation.md')
 assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=destination,text=True).strip()==base
 assert not subprocess.check_output(['git','status','--porcelain'],cwd=destination,text=True).strip(), 'replay worktree must be fresh'
@@ -12358,7 +13498,7 @@ blocks=list(re.finditer(rb'<!-- r1:(file|patch) task=(\d+) path=(\S+) sha256=([0
 assert blocks, 'zero extracted blocks is not a replay'
 (destination/plan).write_bytes(raw)
 paths=[];task=0
-patterns={1:['test_gate.py','test_retention.py','test_platform.py','test_adapter.py'],2:['test_supply.py'],3:['test_hardener.py','test_archives.py'],4:['test_*.py'],5:[]}
+patterns={1:['test_gate.py','test_retention.py','test_platform.py','test_adapter.py','test_settings.py','test_tag_signature.py','test_post_setup.py'],2:['test_supply.py','test_verify.py','test_adapter_manifest.py'],3:['test_hardener.py','test_archives.py','test_installer_archives.py'],4:['test_*.py'],5:[]}
 def verify(number):
     for pattern in patterns[number]:
         result=subprocess.run([sys.executable,'-m','unittest','discover','-s','packaging/release','-p',pattern],cwd=destination,capture_output=True,text=True)
@@ -12396,282 +13536,85 @@ for name in sorted(expected):
 print(f'extracted blocks={len(blocks)}; exact tracked tree match={len(expected)} files',flush=True)
 ```
 
-These are the exact guard-removal harnesses. Each uses separate fresh copies, runs the tests and requires a nonzero result. They never change the implementation or call a registry/platform. Each original root is retained; for a repeat choose fresh roots (the final rerun inserts `final-verification/` into each root). Start with a passing unmodified suite. Logs remain alongside every probe. The 49 barriers comprise 26 core, 9 additional, 3 final, workflow selection, immutable receipt location, and 9 credential/channel barriers.
+### review-probes.py
 
-### probes.py
+The complete final harness selects 51 require guards plus nine integration mutations, with fresh COPY directories, real assertion failures only and all external transports mocked. Choose a new scratch root when repeating; do not overwrite retained evidence.
 
 ```python
-"""Mutation probes in fresh directories; never edits the working implementation."""
+"""Every counted mutation must fail an assertion, never an error/KeyError.
+
+Only copied files are changed. External calls in selected tests are mocked.
+"""
 import ast
 from pathlib import Path
-import shutil
-import subprocess
-import sys
+import shutil,subprocess,sys
+root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/review-probes-final-2';base.mkdir(exist_ok=False)
+G='test_gate.Gates.';S='test_settings.Settings.';T='test_tag_signature.TagSignature.';P='test_publish.';W='test_workflows.Workflows.'
+cases=[]
+def guard(file,message,test):cases.append((file,message,test))
+for message in ['inventory digest mismatch','candidate digest changed:','candidate contains unapproved/missing files','release tag moved/deleted','checks are not on exact source SHA','untrusted check repository','untrusted check workflow/event','missing, pending or unsuccessful checks','candidate run attempt changed','publishing run attempt changed','unexpected publisher workflow/ref/event','approval absent/rejected or unauthorized actor','release tag lacks a verified pinned-maintainer signature']:
+ guard('gate.py',message,G+('test_candidate_digest_cannot_be_rewritten_under_old_approval' if message=='inventory digest mismatch' else 'test_independent_refusals') if message not in ['candidate digest changed:','candidate contains unapproved/missing files'] else G+('test_byte_change_between_boundaries' if message=='candidate digest changed:' else 'test_extra_candidate'))
+guard('gate.py','remote upload ambiguous or differs',G+'test_reconciliation')
+guard('gate.py','gate receipt must be outside',G+'test_receipt_cannot_mutate_the_candidate_after_preflight')
+guard('gate.py','environment review includes a rejection',G+'test_withdrawal_is_not_hidden_by_an_unbound_review_comment')
+guard('gate.py','release tags require owner-only',S+'test_platform_settings_and_each_independent_refusal')
+for message in ['settings audit requires the personal repository owner','release environment missing or bypass','release reviewer must','release environment deployment restrictions','release deployment must permit','repository secrets must be empty','immutable GitHub releases must be enabled','GitHub publishing credential','GHCR Actions access must be READ','GHCR requires its dedicated','post-setup GITHUB_TOKEN push denial','trusted publisher configuration missing','crates.io trusted publishing must require']:
+ guard('settings_audit.py',message,S+'test_platform_settings_and_each_independent_refusal')
+for message in ['settings audit digest differs','settings audit belongs to another','settings audit is stale','settings auditor is not']:
+ guard('settings_audit.py',message,S+'test_digest_candidate_and_freshness_are_independently_bound')
+for message in ['release tag signature is missing','fetched release tag object changed','signed tag must directly identify']:
+ guard('tag_signature.py',message,T+('test_only_pinned_nonexpired_valid_signature_is_accepted' if message=='release tag signature is missing' else 'test_live_fetched_tag_object_signature_and_exact_commit_are_bound'))
+for message in ['negative push check needs','GITHUB_TOKEN push was not authoritatively']:
+ guard('post_setup.py',message,'test_post_setup.PlatformAcceptance.test_success_ambiguous_errors_and_bad_reads_never_qualify')
+for message in ['candidate storage is not versioned','candidate storage must use compliance','candidate legal hold missing','candidate retention expired']:
+ guard('retention.py',message,'test_retention.Retention.test_requires_compliance_legal_hold_and_version')
+guard('publish.py','published release must be immutable',P+'ImmutablePublication.test_existing_published_release_must_already_be_immutable')
+guard('publish.py','release publication did not establish',P+'ImmutablePublication.test_publication_must_actually_establish_immutability')
+guard('publish.py','recovered bundle differs',P+'Recovery.test_existing_recovery_file_cannot_be_replaced')
+guard('publish.py','publication is disabled',P+'Publication.test_publication_switch_cannot_be_omitted')
+guard('supply.py','release archive contains nonregular payload','test_archives.ArchivePolicy.test_nonregular_and_duplicate_archive_members_refuse')
 
-root=Path.cwd()
-base=root/'.superpowers/sdd/release-foundation/probes'
-base.mkdir(exist_ok=True)
-# Select each independent safety barrier by its stable refusal text. Removing
-# diagnostics alone can still fail closed at a later barrier; those are not
-# claimed as security-effect probes.
-cases=[
- ('inventory-digest','gate.py','inventory digest mismatch'),
- ('candidate-bytes','gate.py','candidate digest changed:'),
- ('candidate-completeness','gate.py','candidate contains unapproved/missing files'),
- ('environment-no-bypass','gate.py','release environment missing or bypass'),
- ('environment-branch-policy','gate.py','release environment branch restrictions missing'),
- ('environment-exact-main','gate.py','release jobs must run from protected main only'),
- ('frozen-tag-operations','gate.py','release tag creation/update/deletion'),
- ('annotated-tag','gate.py','release tag missing or not annotated'),
- ('tag-exact-sha','gate.py','release tag moved/deleted'),
- ('exact-source-checks','gate.py','checks are not on exact source SHA'),
- ('trusted-check-repository','gate.py','untrusted check repository'),
- ('trusted-workflow-event','gate.py','untrusted check workflow/event'),
- ('successful-checks','gate.py','missing, pending or unsuccessful checks'),
- ('candidate-attempt','gate.py','candidate run attempt changed'),
- ('publishing-attempt','gate.py','publishing run attempt changed'),
- ('publishing-main-dispatch','gate.py','unexpected publisher workflow/ref/event'),
- ('authenticated-approver','gate.py','approval absent/rejected or unauthorized actor'),
- ('remote-reconciliation','gate.py','remote upload ambiguous or differs'),
- ('retention-version','retention.py','candidate storage is not versioned'),
- ('retention-compliance','retention.py','candidate storage must use compliance retention'),
- ('retention-hold','retention.py','candidate legal hold missing'),
- ('retention-expiry','retention.py','candidate retention expired'),
- ('publication-switch','publish.py','publication is disabled'),
- ('remote-byte-check','publish.py','remote artifact mismatch/unverifiable'),
- ('payload-contract','supply.py','required release/channel payload missing'),
- ('prerelease-channels','supply.py','prerelease channels are GitHub only'),
+guard('verify.py','native binstall strategies must remain disabled','test_verify.BinstallMetadata.test_metadata_cannot_advertise_an_unverified_or_branch_signed_path')
+guard('verify.py','binstall external verification metadata','test_verify.BinstallMetadata.test_metadata_cannot_advertise_an_unverified_or_branch_signed_path')
+guard('supply.py','crate metadata must be one bounded','test_supply.Supply.test_crate_metadata_is_bounded_regular_and_unambiguous')
+
+# Each tuple selects a single actual guard by its diagnostic; missing test
+# coverage is reported as a survivor, never silently counted.
+for number,(file,message,test) in enumerate(cases,1):
+ d=base/f'{number:02}-{file[:-3]}';shutil.copytree(root/'packaging',d/'packaging',ignore=shutil.ignore_patterns('__pycache__'));shutil.copytree(root/'.github',d/'.github')
+ p=d/'packaging/release'/file;s=p.read_text();tree=ast.parse(s)
+ calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and ((isinstance(n.func,ast.Name) and n.func.id=='require') or (isinstance(n.func,ast.Attribute) and n.func.attr=='require')) and len(n.args)>1 and message in ast.get_source_segment(s,n.args[1])]
+ assert len(calls)==1,(file,message,len(calls));calls[0].args[0]=ast.Constant(True);p.write_text(ast.unparse(tree)+'\n')
+ r=subprocess.run([sys.executable,'-m','unittest',test],cwd=d/'packaging/release',capture_output=True,text=True);log=r.stdout+r.stderr;(d/'probe.log').write_text(log)
+ if r.returncode and 'FAIL:' in log and 'ERROR:' not in log and 'KeyError' not in log:
+  print(f'killed {number}: {file}: {message}',flush=True)
+ else:
+  print(f'INVALID/SURVIVED {number}: {file}: {message}\n{log}',flush=True);raise SystemExit(1)
+print(f'{len(cases)} assertion-only guard mutations killed',flush=True)
+
+manual=[
+ ('rules-active-target','packaging/release/gate.py',"if rule.get('target') != 'tag' or rule.get('enforcement') != 'active':",'if False:','test_settings.Settings.test_platform_settings_and_each_independent_refusal'),
+ ('rules-no-exclusions','packaging/release/gate.py',"if refs != {'include': ['refs/tags/v*'], 'exclude': []}:",'if False:','test_settings.Settings.test_platform_settings_and_each_independent_refusal'),
+ ('local-audit-signature','packaging/release/settings_audit.py',"signed_tag = tag_signature.verify(inventory['tag'], inventory['source_sha'])",'signed_tag = {}','test_settings.Settings.test_local_audit_checks_signed_tag_before_using_owner_settings_auth'),
+ ('phase-completeness','packaging/release/workflow_policy.py',"if phases != ['preflight', 'boundary']:",'if False:','test_workflows.Workflows.test_remove_either_boundary_refuses'),
+ ('certificate-identity','packaging/release/verify.py',"'--cert-identity', 'https://github.com/' + workflow + '@refs/tags/' + tag,",'', 'test_verify.SignerIdentity.test_branch_and_other_tag_signatures_are_rejected_for_files_and_images'),
+ ('crate-policy-integration','packaging/release/supply.py',"verify.require_binstall_metadata(package.get('metadata', {}), tag)",'pass','test_supply.Supply.test_crates_contract_rejects_branch_identity_in_frozen_metadata'),
+ ('bundle-resume','packaging/release/publish.py','if path.exists() or path.is_symlink():','if False:','test_publish.Recovery.test_reconcile_then_upload_reuses_the_verified_existing_bundle'),
+ ('manifest-conflict','packaging/release/adapter_manifest.py','if any(path.read_bytes() != raw for path in present[1:]):','if False:','test_adapter_manifest.AdapterManifest.test_build_cli_refuses_conflicting_layouts'),
+ ('installer-signer','packaging/harden-installer.py','@refs/tags/v$APP_VERSION','@refs/heads/v$APP_VERSION','test_hardener.Hardener.test_signature_identity_is_exact_tag_and_verification_precedes_extraction'),
 ]
-for index,(name,filename,message) in enumerate(cases):
- directory=base/f'{index+1:02}-{name}'
- directory.mkdir(exist_ok=False)
- shutil.copytree(root/'packaging',directory/'packaging',ignore=shutil.ignore_patterns('__pycache__'))
- shutil.copytree(root/'.github',directory/'.github')
- path=directory/'packaging/release'/filename
- text=path.read_text();lines=text.splitlines(keepends=True)
- tree=ast.parse(text)
- matches=[node for node in ast.walk(tree) if isinstance(node,ast.Expr) and isinstance(node.value,ast.Call)
-          and ((isinstance(node.value.func,ast.Name) and node.value.func.id=='require') or
-               (isinstance(node.value.func,ast.Attribute) and node.value.func.attr=='require'))
-          and message in ast.get_source_segment(text,node)]
- if len(matches)!=1:raise SystemExit(f'{name}: expected exactly one guard, got {len(matches)}')
- node=matches[0]
- lines[node.lineno-1:node.end_lineno]=[' '*node.col_offset+'pass  # removed by mutation probe\n']
- path.write_text(''.join(lines))
- output=subprocess.run([sys.executable,'-m','unittest','discover','-s','packaging/release','-p','test_*.py'],cwd=directory,capture_output=True,text=True)
- (directory/'result.log').write_text(output.stdout+output.stderr)
- if output.returncode==0:raise SystemExit(f'SURVIVED: {name}')
- print(f'killed: {name}',flush=True)
-print(f'{len(cases)} independent guard probes killed',flush=True)
+for name,file,old,new,test in manual:
+ d=base/name;shutil.copytree(root/'packaging',d/'packaging',ignore=shutil.ignore_patterns('__pycache__'));shutil.copytree(root/'.github',d/'.github')
+ p=d/file;s=p.read_text();assert s.count(old)==1,(name,s.count(old));p.write_text(s.replace(old,new))
+ r=subprocess.run([sys.executable,'-m','unittest',test],cwd=d/'packaging/release',capture_output=True,text=True);log=r.stdout+r.stderr;(d/'probe.log').write_text(log)
+ assert r.returncode and 'FAIL:' in log and 'ERROR:' not in log and 'KeyError' not in log,log
+ print('killed manual: '+name,flush=True)
+print(f'FINAL {len(cases)+len(manual)} assertion-only mutations killed',flush=True)
 ```
-
-### extra-probes.py
-
-```python
-import ast
-from pathlib import Path
-import shutil,subprocess,sys
-root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/probes-extra';base.mkdir(exist_ok=False)
-
-def run(name,file,mutate):
- d=base/name;d.mkdir()
- shutil.copytree(root/'packaging',d/'packaging',ignore=shutil.ignore_patterns('__pycache__'))
- shutil.copytree(root/'.github',d/'.github')
- p=d/'packaging/release'/file;p.write_text(mutate(p.read_text()))
- r=subprocess.run([sys.executable,'-m','unittest','discover','-s','packaging/release','-p','test_*.py'],cwd=d,capture_output=True,text=True)
- (d/'result.log').write_text(r.stdout+r.stderr)
- if r.returncode==0:raise SystemExit('SURVIVED: '+name)
- print('killed: '+name,flush=True)
-
-def remove_require(message):
- def mutate(text):
-  tree=ast.parse(text)
-  matches=[n for n in ast.walk(tree) if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and message in ast.get_source_segment(text,n)]
-  if len(matches)!=1:raise ValueError((message,len(matches)))
-  n=matches[0];lines=text.splitlines(keepends=True);lines[n.lineno-1:n.end_lineno]=[' '*n.col_offset+'pass\n'];return ''.join(lines)
- return mutate
-
-def disable_if(message):
- def mutate(text):
-  tree=ast.parse(text)
-  matches=[n for n in ast.walk(tree) if isinstance(n,ast.If) and len(n.body)==1 and isinstance(n.body[0],ast.Raise) and message in ast.get_source_segment(text,n.body[0])]
-  if len(matches)!=1:raise ValueError((message,len(matches)))
-  matches[0].test=ast.Constant(value=False);return ast.unparse(tree)+'\n'
- return mutate
-
-run('bound-authenticated-review','gate.py',lambda s:s.replace("r.get('comment') == challenge(context)",'True').replace("review.get('comment') == challenge(context)",'True'))
-run('licence-freeze','supply.py',remove_require('unresolved licence findings'))
-run('archive-byte-map','supply.py',remove_require('approved binary inventory differs'))
-run('archive-sidecar','supply.py',remove_require('per-archive checksum sidecar differs'))
-run('archive-payload-set','supply.py',remove_require('release archive content inventory differs'))
-run('protected-privileged-job','workflow_policy.py',disable_if('protected release environment required'))
-run('both-in-job-gates','workflow_policy.py',disable_if('live preflight and boundary gates required'))
-run('post-gate-credential-acquisition','workflow_policy.py',disable_if('publication credentials must be acquired after preflight'))
-run('signing-upload-boundary','workflow_policy.py',disable_if('signing/upload must follow boundary revalidation'))
-print('9 additional guard probes killed',flush=True)
-```
-
-### final-probes.py
-
-```python
-import ast
-from pathlib import Path
-import shutil,subprocess,sys
-root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/probes-final';base.mkdir(exist_ok=False)
-
-def run(name,file,mutate):
- d=base/name;d.mkdir()
- shutil.copytree(root/'packaging',d/'packaging',ignore=shutil.ignore_patterns('__pycache__'))
- shutil.copytree(root/'.github',d/'.github')
- p=d/'packaging/release'/file;p.write_text(mutate(p.read_text()))
- r=subprocess.run([sys.executable,'-m','unittest','discover','-s','packaging/release','-p','test_*.py'],cwd=d,capture_output=True,text=True)
- (d/'result.log').write_text(r.stdout+r.stderr)
- if r.returncode==0:raise SystemExit('SURVIVED: '+name)
- print('killed: '+name,flush=True)
-
-def remove_require(message):
- def mutate(text):
-  tree=ast.parse(text)
-  matches=[n for n in ast.walk(tree) if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and message in ast.get_source_segment(text,n)]
-  if len(matches)!=1:raise ValueError((message,len(matches)))
-  n=matches[0];lines=text.splitlines(keepends=True);lines[n.lineno-1:n.end_lineno]=[' '*n.col_offset+'pass\n'];return ''.join(lines)
- return mutate
-
-def disable_if(message):
- def mutate(text):
-  tree=ast.parse(text)
-  matches=[n for n in ast.walk(tree) if isinstance(n,ast.If) and len(n.body)==1 and isinstance(n.body[0],ast.Raise) and message in ast.get_source_segment(text,n.body[0])]
-  if len(matches)!=1:raise ValueError((message,len(matches)))
-  matches[0].test=ast.Constant(value=False);return ast.unparse(tree)+'\n'
- return mutate
-
-run('withdrawn-approval','gate.py',remove_require('environment review includes a rejection'))
-run('immutable-licence-text','supply.py',remove_require('supplemental licence text changed'))
-run('regular-archive-members','supply.py',remove_require('release archive contains nonregular payload'))
-print('3 final guard probes killed',flush=True)
-```
-
-### workflow-name-probe.py
-
-```python
-import ast
-from pathlib import Path
-import shutil,subprocess,sys
-root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/probes-workflow-names';base.mkdir(exist_ok=False)
-
-def run(name,file,mutate):
- d=base/name;d.mkdir()
- shutil.copytree(root/'packaging',d/'packaging',ignore=shutil.ignore_patterns('__pycache__'))
- shutil.copytree(root/'.github',d/'.github')
- p=d/'packaging/release'/file;p.write_text(mutate(p.read_text()))
- r=subprocess.run([sys.executable,'-m','unittest','discover','-s','packaging/release','-p','test_*.py'],cwd=d,capture_output=True,text=True)
- (d/'result.log').write_text(r.stdout+r.stderr)
- if r.returncode==0:raise SystemExit('SURVIVED: '+name)
- print('killed: '+name,flush=True)
-
-def remove_require(message):
- def mutate(text):
-  tree=ast.parse(text)
-  matches=[n for n in ast.walk(tree) if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and message in ast.get_source_segment(text,n)]
-  if len(matches)!=1:raise ValueError((message,len(matches)))
-  n=matches[0];lines=text.splitlines(keepends=True);lines[n.lineno-1:n.end_lineno]=[' '*n.col_offset+'pass\n'];return ''.join(lines)
- return mutate
-
-def disable_if(message):
- def mutate(text):
-  tree=ast.parse(text)
-  matches=[n for n in ast.walk(tree) if isinstance(n,ast.If) and len(n.body)==1 and isinstance(n.body[0],ast.Raise) and message in ast.get_source_segment(text,n.body[0])]
-  if len(matches)!=1:raise ValueError((message,len(matches)))
-  matches[0].test=ast.Constant(value=False);return ast.unparse(tree)+'\n'
- return mutate
-
-run('all-workflow-write-authority','workflow_policy.py',lambda s:s.replace("if path.name.startswith('release-') or authority:","if path.name.startswith('release-'):"))
-print('1 workflow-selection guard probe killed',flush=True)
-```
-
-### receipt-probe.py
-
-```python
-import ast
-from pathlib import Path
-import shutil,subprocess,sys
-root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/probes-receipt-boundary';base.mkdir(exist_ok=False)
-
-def run(name,file,mutate):
- d=base/name;d.mkdir()
- shutil.copytree(root/'packaging',d/'packaging',ignore=shutil.ignore_patterns('__pycache__'))
- shutil.copytree(root/'.github',d/'.github')
- p=d/'packaging/release'/file;p.write_text(mutate(p.read_text()))
- r=subprocess.run([sys.executable,'-m','unittest','discover','-s','packaging/release','-p','test_*.py'],cwd=d,capture_output=True,text=True)
- (d/'result.log').write_text(r.stdout+r.stderr)
- if r.returncode==0:raise SystemExit('SURVIVED: '+name)
- print('killed: '+name,flush=True)
-
-def remove_require(message):
- def mutate(text):
-  tree=ast.parse(text)
-  matches=[n for n in ast.walk(tree) if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and message in ast.get_source_segment(text,n)]
-  if len(matches)!=1:raise ValueError((message,len(matches)))
-  n=matches[0];lines=text.splitlines(keepends=True);lines[n.lineno-1:n.end_lineno]=[' '*n.col_offset+'pass\n'];return ''.join(lines)
- return mutate
-
-def disable_if(message):
- def mutate(text):
-  tree=ast.parse(text)
-  matches=[n for n in ast.walk(tree) if isinstance(n,ast.If) and len(n.body)==1 and isinstance(n.body[0],ast.Raise) and message in ast.get_source_segment(text,n.body[0])]
-  if len(matches)!=1:raise ValueError((message,len(matches)))
-  matches[0].test=ast.Constant(value=False);return ast.unparse(tree)+'\n'
- return mutate
-
-run('immutable-candidate-receipt-boundary','gate.py',remove_require('gate receipt must be outside the immutable candidate'))
-print('1 receipt-boundary guard probe killed',flush=True)
-```
-
-### auth-probes.py
-
-```python
-import ast
-from pathlib import Path
-import shutil,subprocess,sys
-root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/probes-authorization';base.mkdir(exist_ok=False)
-
-def run(name,file,mutate):
- d=base/name;d.mkdir()
- shutil.copytree(root/'packaging',d/'packaging',ignore=shutil.ignore_patterns('__pycache__'))
- shutil.copytree(root/'.github',d/'.github')
- p=d/file;p.write_text(mutate(p.read_text()))
- r=subprocess.run([sys.executable,'-m','unittest','discover','-s','packaging/release','-p','test_*.py'],cwd=d,capture_output=True,text=True)
- (d/'result.log').write_text(r.stdout+r.stderr)
- if r.returncode==0:raise SystemExit('SURVIVED: '+name)
- print('killed: '+name,flush=True)
-
-def disable_if(message):
- def mutate(text):
-  tree=ast.parse(text)
-  matches=[n for n in ast.walk(tree) if isinstance(n,ast.If) and len(n.body)==1 and isinstance(n.body[0],ast.Raise) and message in ast.get_source_segment(text,n.body[0])]
-  if len(matches)!=1:raise ValueError((message,len(matches)))
-  matches[0].test=ast.Constant(value=False);return ast.unparse(tree)+'\n'
- return mutate
-
-for name,message in [
- ('protected-read-only-authorizer','a protected read-only authorization job'),
- ('authorizer-live-preflight','credential authorization must run'),
- ('direct-authorizer-dependency','writer must depend'),
- ('current-inventory-attempt','credential issuance must match'),
- ('job-failure-stops','release jobs cannot ignore'),
- ('unconditional-gate','release gates must run unconditionally')]:
- run(name,'packaging/release/workflow_policy.py',disable_if(message))
-run('protected-secret-jobs','packaging/release/workflow_policy.py',lambda t:t.replace("return privileged(job) or (environment_name(job) == 'release' and name != 'authorize')","return privileged(job)"))
-run('adapter-channel-override','packaging/release-gate',lambda t:t.replace('--channel|--channel=*)','--never-channel-match)'))
-run('adapter-channel-abbreviation','packaging/release/gate.py',lambda t:t.replace('allow_abbrev=False','allow_abbrev=True'))
-print('9 authorization/adapter barriers killed',flush=True)
-```
-
-The installer uses cargo-dist's real generated script with tiny shell executables. The CI recipe in release-tests.yml runs the pinned dist tool, generates globals, builds fixture archives, hardens, then runs all 14 installer acceptance groups. The old hardener failed on overwriting an existing install; the new one preserves existing/raced entries. Anchor changes refuse. Actual native binary acceptance remains the candidate workflow's responsibility.
-
-The following additional nonpublishing round-trip exercises real `dist plan`, the post-notice manifest refresh, `dist build --artifacts=global`, the formula checker and all 14 installer groups. Run it only in a fresh disposable replay tree whose `target/distrib` does not exist, with `--dist` pointing at the pinned tool installed by packaging/install-dist.sh. Use the default build shell plus one-off Python (`nix develop -c nix shell nixpkgs#python3 -c ...`); the release-tools shell alone deliberately has no Cargo. It creates tiny archives for all three targets; it does not qualify native binaries or publish anything.
 
 ### dist-roundtrip.py
+
+Run only in disposable output whose target/distrib does not exist, using the default build shell plus one-off Python and the pinned dist binary. This makes real mixed tarballs and generated manifests, checks three formula digests and runs all 16 installer groups with an explicit verifier double. No native compatibility or live signature/publishing claim.
 
 ```python
 """Nonpublishing cargo-dist manifest/installer round-trip with tiny archives."""
@@ -12692,6 +13635,10 @@ for target in sorted(gate.TARGETS):
  manifest=json.loads(subprocess.check_output([str(binary),'plan','--target',target,'--output-format=json'],text=True))
  manifest=refresh_manifest.refresh(manifest,archive)
  (out/(target+'-dist-manifest.json')).write_text(json.dumps(manifest)+'\n')
+# Real mixed candidate: source bundles are not executable installer assets.
+for name in ['hennery-source', *[target+'-third-party-source' for target in sorted(gate.TARGETS)]]:
+ with tarfile.open(out/(name+'.tar.xz'),'w:xz') as tar:
+  data=b'corresponding source fixture\n';entry=tarfile.TarInfo(name+'/README.md');entry.size=len(data);tar.addfile(entry,io.BytesIO(data))
 subprocess.run([str(binary),'build','--artifacts=global'],check=True)
 subprocess.run([sys.executable,'packaging/harden-installer.py',str(out/'hennery-installer.sh')],check=True)
 subprocess.run(['sh','packaging/check-formula.sh',str(out)],check=True)
@@ -12699,26 +13646,12 @@ subprocess.run(['sh','packaging/test-installer.sh',str(out)],check=True)
 print('cargo-dist post-notice manifest / formula / installer round-trip passed; no publication',flush=True)
 ```
 
-Clean Nix execution also produced `source: 23319b8ba69340aeda275edd649dcd9ff2419c7b`, UI digest `b66896142f5f1a591d376217be09df573bafb0299434f91e490da9259686ebc5` and adapter-manifest digest `4ddafe6541f44f31090aabb32b1d94bb16278e83a5b779941923e21f39ff041c`. Later gate/workflow/docs changes did not change Rust/UI/adapter-manifest bytes. This proves immutable revision identity locally; it does not create or qualify a public release tag.
-
-## Gate interface for R3 and R4
-
-The one adapter is `packaging/release-gate CHANNEL --candidate DIR --inventory-sha256 HEX --phase preflight|boundary --receipt NEWFILE`, in the locked release shell, with environment `release`. Channels are `github`, `crates`, `ghcr`, `homebrew`; no `r1-ghcr-gate` alias or `crates-io` spelling. The embedded `packaging/release/README.md` defines all inputs/outputs and the migration table after reading both parallel branches' real integration points (`publish-crates.yml`, `publish-crates.mjs`, `ghcr-publish.yml`, `ghcr-gate.sh`, `ghcr-publish.sh`).
-
-The full held flat root directory and its global digest are mandatory. Materialization uses the exact S3 retention-receipt version and `retention.py fetch`, as in the common orchestrator; channel-only Actions artifacts are insufficient. Explicit channel/phase/receipt are invocation inputs; platform event and run variables supply inventory/source/tag, sorted channels/targets and candidate run/attempt, with publisher identity/attempt authenticated from GitHub. `GH_TOKEN` is the read-only evidence reader; `RELEASE_AUDIT_BUCKET` and storage-only AWS credentials permit held audit writes. Exit 0 means live validation and immutable audit succeeded; stdout is the tuple challenge, and the fresh receipt records binding/approver/decision/phase/channel. Any nonzero stops. Receipts have unique basenames outside the candidate; no cached approval output authorizes another boundary.
-
-Only the protected manual `release-publish.yml` outer caller is accepted. Move R3/R4 final protected jobs into it, directly depend on protected read-only `authorize`, and use the exact current inventory/attempt condition plus `RELEASE_CRATES_ENABLED`/`RELEASE_GHCR_ENABLED`. Then run in-job preflight before acquiring credentials and boundary validation before each write/sign. Old `approval_record`/`APPROVAL_ID` inputs never establish authority. Reusable-job authority expansion requires a separate reviewed policy change.
-
-R3 contributes all seven `<crate>-<version>.crate` files plus its channel inventory before freeze; its verifier still enforces channel inventory digest, source/version and dependency order. R4 contributes `ghcr-oci-layout.tar` plus `ghcr-index.json` and acceptance/SBOM material; extract working layouts outside the frozen root. `inventory.binaries[target]` gives exact executable digest/size/archive/member and is recomputed by the gate. R4 independently checks platform/index/binary digests at each boundary. Both reconcile remote bytes and retain candidates until all enabled channels/public acceptance complete. Changing any byte/channel/target needs a new inventory and approval. First alpha remains GitHub-only.
-
 ## After this plan
 
-- Parent independent gate/security/whole-branch review, review findings addressed, and native Linux/macOS CI. No local fixture proves live platform settings or remote registries.
-- Parent ruling/spec write-back for an authorized tag-creation path consistent with no-bypass intent. No tag can currently be created through the safe frozen policy.
-- R3/R4 final payload and publication-job integration into the common orchestrator; the parent sequences merges. Version/exact-dependency/web/changelog release PR precedes the first candidate.
-- Maintainer provisions/reviews protected environments, user IDs, fork approval, tag rules, restricted App/storage/policy principals, COMPLIANCE/legal holds and audit retention. None was provisioned here.
-- Maintainer current advisory/licence/asset/corresponding-source and static OpenSSL support review; native real-agent/service/platform-floor qualification on disposable homes; per-channel go-ahead. Public-path install/doctor/UI/session acceptance only after authorized publication.
-- Keep announcements/moving aliases held until the full approved set is healthy, keep corresponding source and rollback artifacts, and apply compatibility/backup rules before downgrade. Other distribution lanes retain their scope gates.
-- Rebase onto design-merged main only when the parent instructs, preserving this exact-base replay as historical evidence and rerunning hotspot checks when required.
+- Parent independent re-review of platform/security/whole branch; collect complete PR checks, reviewDecision, mergeStateStatus and unresolved threads. No self-approval.
+- Maintainer-only setup: actual reviewer ID, tag deployment policy, the two owner/immutable rulesets, immutable releases, environment-only App/token secrets, GHCR package Actions READ and real negative push, crates.io exact workflow+environment, held bucket/IAM/retention/audit principals. None was configured here.
+- R3/R4 migration to the shared tagged interface and final metadata/payload contract. Confirm the binstall external-only bridge default and permitted dedicated GHCR credential kind; upstream capability gaps remain explicit and channels stay off until qualified.
+- Native Linux/macOS CI and logged-in agent/service/platform floors, current advisory/licence/asset/corresponding-source/static OpenSSL review, then explicit per-channel publication approval and public install acceptance.
+- No announcements or moving aliases before the whole approved set is healthy; preserve source/rollback artifacts and compatibility/backup obligations. Parent cleans historical replay/helper/scratch trees; no memory narratives were written.
 
 Generated with Claude AI — please review before distribution.
