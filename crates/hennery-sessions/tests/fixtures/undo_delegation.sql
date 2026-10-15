@@ -1,5 +1,10 @@
 -- Test-only rollback of migration 18 before reconstructing a historical schema.
 -- Production migrations remain append-only.
+DROP TRIGGER notice_endpoint_end;
+DROP TRIGGER notice_family_end;
+DROP TRIGGER notice_grant_end;
+DROP TABLE delegation_notices;
+DROP TABLE delegation_budgets;
 DROP TRIGGER delegation_child_identity;
 DROP TRIGGER delegation_child_immutable;
 DROP TRIGGER delegation_endpoint_end;

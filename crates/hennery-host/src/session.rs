@@ -385,7 +385,9 @@ pub fn resume(
 /// Spawn a session actor for `launch`: `session/new` or `session/load`,
 /// then its config. Otherwise like [`spawn`].
 pub fn launch(uplink: Uplink, launch: Launch, options: SessionOptions) -> SessionHandle {
-    launch_inner(uplink, launch, options, None, None)
+    // Ordinary attachments use generation zero; automatic delegation resumes
+    // allocate positive generations and still require fresh read-back.
+    launch_inner(uplink, launch, options, Some(0), None)
 }
 
 pub fn launch_delegated(

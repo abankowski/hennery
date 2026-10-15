@@ -1,11 +1,11 @@
-//! D2 drains parent commands only. D3 will produce durable child notices and
-//! operator attention, then reuse these same transfer/config/close gates.
+//! Bounded fair draining of accepted parent commands and child notices.
 use crate::{AppState, delegation_runtime::checked_cwd};
 use std::time::Duration;
 #[derive(Default)]
 struct Cursors {
     prompts: String,
     answers: String,
+    notices: String,
 }
 pub fn after_startup(state: &AppState) {
     let state = state.clone();
@@ -28,8 +28,13 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
         .store
         .dispatch_delegation_answers_after(&state.hub, &cursors.answers)?
         .unwrap_or_default();
-    let targets = state.store.delegation_targets_after(&cursors.prompts)?;
+    let mut targets = state.store.delegation_targets_after(&cursors.prompts)?;
     cursors.prompts = targets.last().cloned().unwrap_or_default();
+    let parents = state.store.notice_parents_after(&cursors.notices)?;
+    cursors.notices = parents.last().cloned().unwrap_or_default();
+    targets.extend(parents);
+    targets.sort();
+    targets.dedup();
     for target in targets {
         let Some(session) = state.store.find_session(&target)? else {
             continue;
@@ -50,9 +55,11 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
             if session.lifecycle == "active" {
                 let catalog = state.store.attached_delegation_catalog(&target, &catalog)?;
                 state.store.dispatch_delegated(&target, &catalog, &state.hub)?;
+                state.store.dispatch_child_notice(&target, &catalog, &state.hub)?;
             } else {
                 let mcp = crate::api::mcp_context(state, &session.host_id, &session.agent)?;
                 state.store.attach_delegated(&target, mcp, &catalog, &state.hub)?;
+                state.store.attach_notice_parent(&target, mcp, &catalog, &state.hub)?;
             }
             Ok::<_, anyhow::Error>(())
         };

@@ -7,6 +7,8 @@ pub mod content;
 pub mod delegation;
 pub mod delegation_api;
 pub mod delegation_control;
+pub mod delegation_delivery;
+pub mod delegation_delivery_dispatch;
 pub mod delegation_dispatch;
 pub mod delegation_queue;
 pub mod delegation_runtime;

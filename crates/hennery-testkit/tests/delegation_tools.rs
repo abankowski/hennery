@@ -546,6 +546,117 @@ async fn seven_handlers_share_launcher_catalog_and_choose_runtime_and_model_with
 }
 
 #[tokio::test]
+async fn durable_question_answer_and_report_complete_the_automatic_parent_child_loop() {
+    let mut worker = script();
+    worker.asks = vec![FakeAsk::Elicitation];
+    let h = Harness::new(worker).await;
+    let receipt = h.spawn("delivery-loop", json!({"model":"large"})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    let question = eventually(
+        "ordinary child question automatically delivered to parent",
+        async || {
+            h.state.store.events(&h.parent, 0, 100).unwrap().into_iter().find(|e| {
+                e.kind == "user_turn"
+                    && e.body["origin"]["kind"] == "child_report"
+                    && e.body["content"][0]["text"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("\"kind\":\"question\""))
+            })
+        },
+    )
+    .await;
+    assert_eq!(question.body["origin"]["child_id"], child);
+    let pending = h.state.store.open_pending(child).unwrap().pop().unwrap();
+    h.ok("session_answer",json!({"operation_key":"loop-answer","child_id":child,"pending_id":pending.pending_id,"action":"accept","content":{"name":"parent"}})).await;
+    h.done(child, "delivery-loop").await;
+    let report = eventually("child completion automatically delivered to parent", async || {
+        h.state.store.events(&h.parent, 0, 100).unwrap().into_iter().find(|e| {
+            e.kind == "user_turn"
+                && e.body["origin"]["kind"] == "child_report"
+                && e.body["content"][0]["text"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("\"kind\":\"turn_ended\""))
+        })
+    })
+    .await;
+    assert!(
+        report.body["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("child-result")
+    );
+    assert_ne!(
+        question.body["origin"]["delivery_id"],
+        report.body["origin"]["delivery_id"]
+    );
+    assert_eq!(
+        h.state
+            .store
+            .pending_item(&pending.pending_id)
+            .unwrap()
+            .unwrap()
+            .delivered,
+        Some(true)
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn child_completion_resumes_a_genuinely_parked_parent_and_delivers_its_report() {
+    let mut worker = script();
+    worker.asks = vec![FakeAsk::Elicitation];
+    let h = Harness::new(worker).await;
+    let receipt = h.spawn("resume-report", json!({"model":"large"})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    let pending = eventually("child asks", async || h.state.store.open_pending(child).unwrap().pop()).await;
+    eventually("parent handled its question notice", async || {
+        let s = h.state.store.find_session(&h.parent).unwrap().unwrap();
+        let received = h
+            .state
+            .store
+            .events(&h.parent, 0, 100)
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "user_turn" && e.body["origin"]["kind"] == "child_report");
+        (received && s.open_turn_id.is_none()).then_some(())
+    })
+    .await;
+    let (status, body) = h.post(&format!("/api/sessions/{}/park", h.parent), json!({})).await;
+    assert!(status.is_success(), "{body}");
+    eventually("parent genuinely parked", async || {
+        h.state
+            .store
+            .find_session(&h.parent)
+            .unwrap()
+            .filter(|s| s.lifecycle == "parked" && !s.presumed_parked)
+    })
+    .await;
+    let (status, body) = h
+        .post(
+            &format!("/api/sessions/{child}/pending/{}/answer", pending.pending_id),
+            json!({"action":"accept","content":{"name":"operator"}}),
+        )
+        .await;
+    assert_eq!(status, reqwest::StatusCode::ACCEPTED, "{body}");
+    eventually("completion resumes parent and delivers report", async || {
+        h.state.store.events(&h.parent, 0, 100).unwrap().into_iter().find(|e| {
+            e.kind == "user_turn"
+                && e.body["origin"]["kind"] == "child_report"
+                && e.body["content"][0]["text"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("\"kind\":\"turn_ended\""))
+        })
+    })
+    .await;
+    let log = std::fs::read_to_string(h.cwd.join("claude-sessions.jsonl")).unwrap();
+    assert!(
+        log.lines()
+            .any(|line| serde_json::from_str::<Value>(line).unwrap()["method"] == "session/load")
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn initial_brief_waits_for_new_child_configuration_readback() {
     let mut s = script();
     s.sticky_options = vec!["model".into()];
@@ -920,9 +1031,18 @@ async fn queued_parent_answer_reaches_existing_session_stream_before_dispatch() 
     assert!(changed["delivered"].is_null(), "publication precedes host handoff");
     let committed = h.state.store.events(child, last, 100).unwrap();
     assert_eq!(committed.len(), 1);
-    assert_eq!(published.try_recv().unwrap(), committed[0]);
+    let child_events: Vec<_> = std::iter::from_fn(|| published.try_recv().ok())
+        .filter(|event| event.session_id == child)
+        .collect();
+    assert_eq!(
+        child_events, committed,
+        "the child publishes exactly its committed answer; parent reports have their own stream"
+    );
     h.ok("session_answer", arguments).await;
-    assert!(published.try_recv().is_err(), "retry must not republish the answer");
+    assert!(
+        !std::iter::from_fn(|| published.try_recv().ok()).any(|event| event.session_id == child),
+        "retry must not republish the child's answer"
+    );
     h.finish().await;
 }
 

@@ -286,12 +286,19 @@ impl Store {
             _ => None,
         };
         if let Some(evidence) = indexed.and_then(|i| i.config_evidence.as_ref()) {
+            if matches!(body, SessionBody::SessionStarted { .. }) && evidence.attach_generation == 0 {
+                tx.execute("INSERT INTO session_attach_evidence(owner_id,session_id,attach_generation,requested_config,launch_sent)
+                    VALUES (?1,?2,0,?3,1) ON CONFLICT(owner_id,session_id) DO UPDATE SET attach_generation = 0,
+                    config_revision = 0,evidence = NULL,requested_config = excluded.requested_config,launch_sent = 1
+                    WHERE session_attach_evidence.owner_id = ?1",params![self.owner_id(),session,serde_json::to_string(&evidence.actual)?])?;
+            }
             tx.execute("UPDATE session_attach_evidence SET config_revision = ?4,evidence = ?5 WHERE owner_id = ?1 AND session_id = ?2 AND attach_generation = ?3 AND config_revision < ?4
                 AND EXISTS (SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = ?2 AND lifecycle = 'active' AND close_requested = 0 AND presumed_parked = 0)",params![self.owner_id(),session,i64::try_from(evidence.attach_generation)?,i64::try_from(evidence.config_revision)?,serde_json::to_string(evidence)?])?;
         }
         self.settle_delegation_in(tx)
     }
     pub(crate) fn settle_delegation_in(&self, tx: &Transaction<'_>) -> Result<()> {
+        self.settle_notices_in(tx)?;
         tx.execute("UPDATE session_operations SET state = 'completed' WHERE owner_id = ?1 AND tool = 'session_close' AND state = 'awaiting_reconciliation' AND EXISTS (SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = session_operations.child_id AND lifecycle = 'closed')",[self.owner_id()])?;
         tx.execute("UPDATE session_operations SET state = CASE
             WHEN EXISTS (SELECT 1 FROM turns t WHERE t.owner_id = ?1 AND t.turn_id = session_operations.turn_id AND t.state = 'ended') THEN 'completed'
@@ -310,6 +317,9 @@ impl Store {
     /// A host rejection is proof of non-admission. Match the current host and
     /// request association; a late or foreign rejection cannot undo a new turn.
     pub fn reject_delegation(&self, host: &str, request: &str) -> Result<bool> {
+        if self.reject_child_notice(host, request)? {
+            return Ok(true);
+        }
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let target:Option<String>=tx.query_row("SELECT e.session_id FROM session_attach_evidence e JOIN sessions s ON s.owner_id = ?1 AND s.id = e.session_id
