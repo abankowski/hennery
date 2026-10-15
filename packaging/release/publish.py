@@ -104,6 +104,15 @@ def release_assets(release):
     raise gate.Refused('incomplete release asset pagination')
 
 
+def recover_bundle(path, data):
+    if path.exists() or path.is_symlink():
+        gate.require(path.is_file() and not path.is_symlink() and path.read_bytes() == data, 'recovered bundle differs from verified remote bytes')
+    else:
+        with path.open('xb') as output:
+            output.write(data)
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation', choices=['reconcile', 'upload'])
@@ -129,10 +138,7 @@ def main():
         # than overwriting it with this attempt's different signing bytes.
         data = asset_bytes(prior[0])
         gate.require(data is not None, 'existing signature is unverifiable')
-        recovered = args.signatures / 'recovered-release.sigstore.jsonl'
-        with recovered.open('xb') as output:
-            output.write(data)
-        bundle = recovered
+        bundle = recover_bundle(args.signatures / 'recovered-release.sigstore.jsonl', data)
         verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'])
     else:
         verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], os.environ['GITHUB_SHA'])
