@@ -11,6 +11,168 @@ use hennery_sessions::store::Store;
 use rusqlite::params;
 use serde_json::json;
 
+fn inventory_begin(w: &World, now: i64, ids: Vec<String>) -> String {
+    w.core(|core| {
+        let control = w.gateway.plugins();
+        let grant = control.authenticate_in(core, &w.token, now).unwrap().unwrap();
+        control
+            .begin_inventory_in(core, &grant, 0, ids.into_iter().map(Ok), now)
+            .unwrap()
+    })
+}
+fn inventory_slice(
+    w: &World,
+    cursor: &str,
+    limit: usize,
+    now: i64,
+) -> anyhow::Result<hennery_gateway::plugin::feed::InventorySlice> {
+    w.core(|core| {
+        let control = w.gateway.plugins();
+        let grant = control.authenticate_in(core, &w.token, now)?.unwrap();
+        control.inventory_slice_in(core, &grant, cursor, limit, now)
+    })
+}
+
+#[test]
+fn inventory_pages_renew_idle_expiry_without_changing_watermark() {
+    let w = World::new(true);
+    let cursor = inventory_begin(&w, 1000, vec!["source".into()]);
+    let first = inventory_slice(&w, &cursor, 1, 1059).unwrap();
+    assert_eq!(first.expires, 1119);
+    let second = inventory_slice(&w, &cursor, 1, 1118).unwrap();
+    assert_eq!(second.expires, 1178);
+    assert_eq!(first.resume_cursor, second.resume_cursor);
+    assert_eq!(first.watermark, second.watermark);
+}
+
+#[test]
+fn inventory_idle_and_twenty_minute_absolute_expiry_are_strict() {
+    let w = World::new(true);
+    let idle = inventory_begin(&w, 1000, vec!["source".into()]);
+    assert_eq!(
+        inventory_slice(&w, &idle, 1, 1060).err().unwrap().to_string(),
+        "reset_required"
+    );
+    let cursor = inventory_begin(&w, 1000, vec!["source".into()]);
+    for now in (1050..2200).step_by(50) {
+        let page = inventory_slice(&w, &cursor, 1, now).unwrap();
+        assert_eq!(page.expires, (now + 60).min(2200));
+    }
+    assert_eq!(inventory_slice(&w, &cursor, 1, 2199).unwrap().expires, 2200);
+    assert_eq!(
+        inventory_slice(&w, &cursor, 1, 2200).err().unwrap().to_string(),
+        "reset_required"
+    );
+}
+
+#[test]
+fn inventory_snapshot_identity_and_each_expiry_guard_fail_closed() {
+    for (column, value) in [
+        ("owner_id", "foreign"),
+        ("hat_id", "foreign"),
+        ("connection_id", "foreign"),
+        ("epoch", "foreign"),
+        ("snapshot", "foreign"),
+        ("expires", "0"),
+        ("deadline", "0"),
+    ] {
+        let w = World::new(true);
+        let cursor = inventory_begin(&w, 1000, vec!["source".into()]);
+        let raw = rusqlite::Connection::open(w._dir.path().join("plugin-control.db")).unwrap();
+        // On v1 there is no absolute deadline; this case intentionally shows
+        // the missing guard as successful access rather than a fixture error.
+        let has_column = raw
+            .prepare("PRAGMA table_info(plugin_inventory)")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+            .iter()
+            .any(|c| c == column);
+        if has_column {
+            raw.execute(&format!("UPDATE plugin_inventory SET {column}=?1"), [value])
+                .unwrap();
+        }
+        assert_eq!(
+            inventory_slice(&w, &cursor, 1, 1001).err().unwrap().to_string(),
+            "reset_required",
+            "{column}"
+        );
+    }
+}
+
+#[test]
+fn inventory_legacy_snapshot_expires_conservatively_on_upgrade() {
+    let w = World::new(true);
+    let cursor = inventory_begin(&w, 1000, vec!["source".into()]);
+    let raw = rusqlite::Connection::open(w._dir.path().join("plugin-control.db")).unwrap();
+    let columns = raw
+        .prepare("PRAGMA table_info(plugin_inventory)")
+        .unwrap()
+        .query_map([], |r| r.get::<_, String>(1))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    if columns.iter().any(|c| c == "deadline") {
+        raw.execute_batch("ALTER TABLE plugin_inventory DROP COLUMN deadline")
+            .unwrap();
+    }
+    raw.execute(
+        "UPDATE schema_versions SET version=1 WHERE component='plugin_inventory'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        inventory_slice(&w, &cursor, 1, 1001).err().unwrap().to_string(),
+        "reset_required"
+    );
+}
+
+#[test]
+fn inventory_count_and_escaped_byte_limits_never_skip_sources() {
+    let w = World::new(true);
+    let expected = (0..700)
+        .map(|i| format!("{i:04}{}", "\0".repeat(64)))
+        .collect::<Vec<_>>();
+    let mut cursor = Some(inventory_begin(&w, 1000, expected.clone()));
+    let mut found = Vec::new();
+    let mut pages = 0;
+    while let Some(after) = cursor {
+        let slice = inventory_slice(&w, &after, 500, 1001).unwrap();
+        let page = hennery_proto::plugin::PluginSourceInventoryPage {
+            version: 1,
+            source_ids: slice.source_ids,
+            next_cursor: slice.next_cursor,
+            resume_cursor: slice.resume_cursor.clone(),
+            watermark: slice.resume_cursor,
+            lease_until: slice.expires,
+        };
+        assert!(page.source_ids.len() < 500, "escaped bytes must bind before count");
+        assert!(serde_json::to_vec(&page).unwrap().len() <= 128 * 1024);
+        assert!(!page.source_ids.is_empty());
+        found.extend(page.source_ids);
+        cursor = page.next_cursor;
+        pages += 1;
+        assert!(pages <= 4);
+    }
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn inventory_slice_rejects_zero_oversized_and_unrepresentable_pages() {
+    let w = World::new(true);
+    let cursor = inventory_begin(&w, 1000, vec!["source".into()]);
+    for limit in [0, 501, usize::MAX] {
+        assert!(inventory_slice(&w, &cursor, limit, 1001).is_err(), "{limit}");
+    }
+    let cursor = inventory_begin(&w, 1000, vec!["x".repeat(128 * 1024)]);
+    assert_eq!(
+        inventory_slice(&w, &cursor, 500, 1001).err().unwrap().to_string(),
+        "reset_required"
+    );
+}
+
 struct World {
     _dir: tempfile::TempDir,
     path: std::path::PathBuf,
