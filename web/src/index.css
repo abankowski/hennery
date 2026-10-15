@@ -681,3 +681,6 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
   .family-panel a, .sess-family a { display: inline-flex; align-items: center; }
   .family-panel { padding-inline: .75rem; }
 }
+.family-attention { margin-block: .65rem; padding-block: .5rem; border-bottom: 1px solid var(--border); }
+.family-attention h2 { font-weight: 600; }
+.family-attention p { margin-block: .35rem; overflow-wrap: anywhere; }

@@ -22,11 +22,16 @@ function summary(id: string): SessionSummary {
   }
 }
 
-async function fixture(context: BrowserContext) {
+async function fixture(context: BrowserContext, statusOnly = false) {
+  let statusOutstanding = statusOnly, attentionReads = 0
   let detached = false, familyReads = 0, itemReads = 0, answers = 0
   const listStreams: Route[] = [], itemStreams: Route[] = [], unmatched: string[] = [], held: Route[] = []
   const current = (id: string) => {
     const s = summary(id)
+    if (statusOnly) {
+      s.family!.attention = statusOutstanding ? 1 : 0
+      if (id === 'child') { s.lifecycle = 'failed'; s.activity = undefined; s.question_waits = false; s.operator_attention = statusOutstanding ? 1 : 0; s.parent_handled_questions = 0 }
+    }
     if (detached && id === 'child') { s.operator_attention = 1; s.parent_handled_questions = 0 }
     return s
   }
@@ -47,8 +52,18 @@ async function fixture(context: BrowserContext) {
     if (path === '/api/capabilities') return json(route, { mode: 'full', features: [] })
     if (path === '/api/hosts') return json(route, [{ host_id: 'host1', name: 'worker host', connected: true, capabilities: [] }])
     if (path === '/api/hats') return json(route, [])
-    if (path === '/api/view/sessions') return json(route, { sessions: [current('parent'), current('child')], epoch: 'list1', revision: 1, waiting: detached ? 1 : 0 })
+    if (path === '/api/view/sessions') return json(route, { sessions: [current('parent'), current('child')], epoch: 'list1', revision: 1, waiting: statusOutstanding || detached ? 1 : 0 })
     if (path === '/api/stream/sessions') { listStreams.push(route); held.push(route); return }
+    if (path === '/api/delegation/attention') {
+      attentionReads++
+      return json(route, statusOutstanding ? [{ id: 'attention1', child_id: 'child', hat_id: 'hat1', reason: 'child_failed', pending_id: null }] : detached ? [{ id: 'question-attention', child_id: 'child', hat_id: 'hat1', reason: 'operator_takeover', pending_id: 'question1' }] : [])
+    }
+    if (path === '/api/delegation/attention/attention1/acknowledge') {
+      expect(route.request().method()).toBe('POST'); statusOutstanding = false
+      const stream = listStreams.pop()
+      if (stream) await stream.fulfill({ contentType: 'text/event-stream', body: `event: session_upsert\ndata: ${JSON.stringify(current('parent'))}\nid: list1:2\n\nevent: session_upsert\ndata: ${JSON.stringify(current('child'))}\nid: list1:3\n\nevent: waiting_changed\ndata: {"count":0}\nid: list1:4\n\n` })
+      return route.fulfill({ status: 204 })
+    }
     const match = /^\/api\/(?:view\/)?sessions\/(parent|child|child2)(.*)$/.exec(path)
     if (match) {
       const [, id, suffix] = match
@@ -71,7 +86,7 @@ async function fixture(context: BrowserContext) {
     if (path === '/api/push/vapid') return json(route, { public_key: '' })
     unmatched.push(path); return json(route, { code: 'not_found', message: 'unhandled fixture route' }, 404)
   })
-  return { unmatched, familyReads: () => familyReads, itemReads: () => itemReads, answers: () => answers,
+  return { unmatched, attentionReads: () => attentionReads, familyReads: () => familyReads, itemReads: () => itemReads, answers: () => answers,
     resync: async () => { const stream = itemStreams.pop(); expect(stream).toBeDefined(); await stream!.fulfill({ contentType: 'text/event-stream', body: 'event: resync_required\ndata: {}\n\n' }) },
     release: async () => { for (const route of held) await route.abort().catch(() => {}) },
   }
@@ -96,7 +111,7 @@ for (const width of [1280, 390]) test(`family navigation, takeover, attention an
     const card = page.getByRole('region', { name: 'Question from Codex', exact: true })
     await expect(card.getByText('Parent is handling', { exact: true })).toBeVisible()
     await expect(card.getByRole('button', { name: 'Decline', exact: true })).toBeEnabled()
-    await expect(page.getByRole('status', { name: '1 waiting on a question', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('status', { name: '1 waiting on you', exact: true })).toHaveCount(0)
     await family.locator('summary').click()
     const take = family.getByRole('button', { name: 'Take over', exact: true })
     if (width === 390) expect((await take.boundingBox())!.height).toBeGreaterThanOrEqual(44)
@@ -104,7 +119,7 @@ for (const width of [1280, 390]) test(`family navigation, takeover, attention an
     await expect(card.getByText('Operator answer required', { exact: true })).toBeVisible()
     await expect(card.getByText('operator_takeover', { exact: true })).toBeVisible()
     await expect(page.locator('.session-head .badge')).toHaveText('Waiting on you')
-    await expect(page.getByRole('status', { name: '1 waiting on a question', exact: true }).first()).toBeVisible()
+    await expect(page.getByRole('status', { name: '1 waiting on you', exact: true }).first()).toBeVisible()
     const before = f.familyReads()
     await f.resync()
     await expect.poll(f.familyReads).toBeGreaterThan(before)
@@ -138,6 +153,31 @@ test('phone notification opens the child card and never sends a lock-screen answ
     await expect(card.getByText('Which parser?', { exact: true })).toBeVisible()
     await expect(card.getByText('Parent is handling', { exact: true })).toBeVisible()
     await expect(card.getByRole('textbox', { name: 'Parser', exact: true })).toBeInViewport()
+    expect(f.answers()).toBe(0)
+    expect(f.unmatched).toEqual([])
+  } finally { await f.release(); await context.close() }
+})
+
+
+test('phone status-only child attention can be acknowledged without an answer card', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  const f = await fixture(context, true)
+  try {
+    const page = await context.newPage(); await page.goto(`${collector.origin}/sessions/parent`)
+    const family = page.getByRole('region', { name: 'Session family', exact: true })
+    await family.locator('summary').click()
+    const attention = page.getByRole('region', { name: 'Delegation attention', exact: true })
+    await expect(attention.getByText('child_failed', { exact: true })).toBeVisible()
+    await expect(attention.getByRole('link', { name: 'Parser worker', exact: true })).toHaveAttribute('href', '/sessions/child')
+    await expect(page.getByRole('status', { name: '1 waiting on you', exact: true }).first()).toBeVisible()
+    const before = f.familyReads()
+    const acknowledge = attention.getByRole('button', { name: 'Acknowledge child_failed for Parser worker', exact: true })
+    expect((await acknowledge.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await acknowledge.click()
+    await expect(attention.getByText('child_failed', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('status', { name: '1 waiting on you', exact: true })).toHaveCount(0)
+    await expect.poll(f.familyReads).toBeGreaterThan(before)
+    expect(f.attentionReads()).toBeGreaterThan(0)
     expect(f.answers()).toBe(0)
     expect(f.unmatched).toEqual([])
   } finally { await f.release(); await context.close() }

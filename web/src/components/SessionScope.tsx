@@ -4,7 +4,7 @@
 // session view's header all read it through `useSessionScope()`.
 //
 // It also owns what the list decides on its own:
-// - the tab title `(N) hennery`, N = the hat's sessions waiting on a question;
+// - the tab title `(N) hennery`, N = the hat's sessions waiting on you;
 // - selection (F-11): the route's id is the selection, honoured even
 //   outside the hat; a hat switch clears it; on a desktop, `/sessions` with no id opens the newest VISIBLE row.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -174,12 +174,12 @@ export default function SessionScope({ route, desktop, children }: { route: Rout
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>
 }
 
-/** The rail's and the top bar's count of sessions waiting on a question. */
+/** The rail's and the top bar's count of sessions waiting on you. */
 export function WaitingBadge() {
   const scope = useSessionScope()
   const n = scope?.list.counts.waiting ?? 0
   if (n === 0) return null
-  const text = `${n} waiting on a question`
+  const text = `${n} waiting on you`
   return (
     <span className="badge badge-attn" role="status" aria-label={text} title={text}>
       {n}

@@ -44,7 +44,7 @@ export interface ListState {
   /** The ids removed since this query's first page: a further page read
    *  before a removal never puts one back. A first page starts it over. */
   removed: ReadonlySet<string>
-  /** The server's count of the hat's sessions waiting on a question,
+  /** The server's count of the hat's sessions needing operator attention,
    *  whatever the query: the first page's, then each `waiting_changed`'s.
    *  Absent when the first page had none: the loaded rows are counted. */
   waiting?: number

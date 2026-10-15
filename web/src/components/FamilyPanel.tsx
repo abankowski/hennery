@@ -8,6 +8,7 @@ import type { FamilyChild, FamilyPage, SessionSummary } from '../generated/view'
 import { agentLabel } from '../lib/agent'
 import { Link } from '../router'
 import { sessionPath } from './SessionRow'
+import StatusAttention from './StatusAttention'
 
 interface Props {
   id: string
@@ -77,11 +78,13 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
   }
 
   const family = summary ? summary.family : page?.summary.family
-  if (summary && !summary.family) return null
-  if (!family?.parent && !family?.child_counts.total && !error) return null
+  const selected = summary ?? page?.summary
+  const hasAttention = (selected?.operator_attention ?? 0) > 0 || (selected?.family?.attention ?? 0) > 0 || (page?.summary.operator_attention ?? 0) > 0 || (page?.summary.family?.attention ?? 0) > 0
+  if (!family?.parent && !family?.child_counts.total && !error && !hasAttention) return null
   return <section className="family-panel" aria-label="Session family">
     <details>
-      <summary>Family{family?.child_counts.total ? ` · ${family.child_counts.total} children` : ''}</summary>
+      <summary>{family?.parent || family?.child_counts.total ? 'Family' : 'Attention'}{family?.child_counts.total ? ` · ${family.child_counts.total} children` : ''}</summary>
+      {selected && <StatusAttention session={selected} children={page?.children.map(child => child.summary) ?? []} enabled={hasAttention && page !== null} refreshKey={`${familyKey}:${resync}:${refresh}`} onAcknowledged={() => setRefresh(n => n + 1)} />}
       {family?.parent && <p>Parent: <Link to={sessionPath(family.parent.session_id)}><bdi>{family.parent.title || agentLabel(family.parent.agent)}</bdi></Link></p>}
       {page?.routing && <p>Routing: {page.routing}{page.reason && <> · <bdi>{page.reason}</bdi></>}</p>}
       {family?.parent && page?.routing === 'active' && <button type="button" className="btn btn-ghost btn-sm" disabled={taking !== null} onClick={() => void takeover({ summary: page.summary })}>{taking === id ? 'Taking over…' : 'Take over'}</button>}
