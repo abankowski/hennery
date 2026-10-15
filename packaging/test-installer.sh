@@ -49,6 +49,20 @@ done
 printf verified > '$scratch/signature-verified'
 TOOL
 chmod +x "$scratch/verifier-tools/gh"
+# No real signing operation occurs in this offline acceptance test. The gpg
+# double models a detached signature over exact bytes and pinned signer status.
+cat > "$scratch/verifier-tools/gpg" <<'TOOL'
+#!/bin/sh
+set -eu
+for argument in "$@"; do [ "$argument" != --import ] || exit 0; done
+case "${HENNERY_TEST_MAINTAINER_SIGNATURE:-valid}" in
+    unsigned|malformed) exit 1 ;;
+    wrong-key) echo '[GNUPG:] VALIDSIG 0000000000000000000000000000000000000000'; exit 0 ;;
+esac
+cmp "$HENNERY_RELEASE_SIGNATURE" "$HENNERY_RELEASE_INVENTORY" || exit 1
+echo '[GNUPG:] VALIDSIG F26C7F594DFE84D131703AFC23E5A318AE8D2861'
+TOOL
+chmod +x "$scratch/verifier-tools/gpg"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -91,6 +105,19 @@ done
 [ "$count" = "$built" ] || fail "the installer offers $count archives, this build made $built"
 echo "ok: the installer embeds each of its $count archives' SHA-256"
 
+# Model the maintainer-approved inventory independently of the installer's
+# embedded checksum, including source archives that must never be installed.
+command -v jq >/dev/null || fail 'jq is required for inventory fixtures'
+ln -s "$(command -v jq)" "$scratch/verifier-tools/jq"
+printf '[]' > "$scratch/artifacts.json"
+for archive in $arms; do
+    want=$(cut -d ' ' -f 1 "$dist/$archive.sha256")
+    jq --arg name "$archive" --arg sha "$want" '. + [{name: $name, sha256: $sha}]' "$scratch/artifacts.json" > "$scratch/next.json"
+    mv "$scratch/next.json" "$scratch/artifacts.json"
+done
+jq --arg tag "v$fixture_version" '{tag: $tag, artifacts: .}' "$scratch/artifacts.json" > "$scratch/inventory.json"
+cp "$scratch/inventory.json" "$scratch/inventory.json.asc"
+
 # run_installer <download dir> <install dir> <log>: the installer's exit status.
 run_installer() {
     mkdir -p "$scratch/home"
@@ -98,6 +125,8 @@ run_installer() {
     PATH="${VERIFIER_TOOLS:-$scratch/verifier-tools}:$PATH" \
         HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/.config" \
         HENNERY_ATTESTATION_BUNDLE="$scratch/bundle.jsonl" \
+        HENNERY_RELEASE_INVENTORY="${TEST_INVENTORY:-$scratch/inventory.json}" \
+        HENNERY_RELEASE_SIGNATURE="${TEST_SIGNATURE:-$scratch/inventory.json.asc}" \
         HENNERY_DOWNLOAD_URL="file://$1" HENNERY_UNMANAGED_INSTALL="$2" \
         sh "$1/hennery-installer.sh" >"$3" 2>&1 || status=$?
     return "$status"
@@ -118,6 +147,17 @@ refused() {
 }
 
 # tools <dir> <excluded>...: every command of /usr/bin and /bin but these.
+link_tool() {
+    _link_source=$1
+    _link_destination=$2
+    if [ -e "$_link_destination" ] || [ -L "$_link_destination" ]; then
+        [ -L "$_link_destination" ] && [ "$_link_destination" -ef "$_link_source" ] ||
+            fail "conflicting tool link: $_link_destination"
+    else
+        ln -s "$_link_source" "$_link_destination" || fail "cannot link tool: $_link_destination"
+    fi
+}
+
 tools() {
     dir=$1
     shift
@@ -128,7 +168,7 @@ tools() {
             for excluded in "$@"; do
                 [ "$name" = "$excluded" ] && continue 2
             done
-            [ -e "$dir/$name" ] || ln -s "$tool" "$dir/$name"
+            link_tool "$tool" "$dir/$name"
         done
     done
 }
@@ -289,8 +329,26 @@ chmod +x "$scratch/raced-tools/ln"
 [ "$(cat "$scratch/raced/hennery")" = raced ] || fail 'concurrent destination changed'
 echo 'ok: staging is invisible and concurrent destinations survive'
 
+# Even a successful exact-tag attestation cannot replace the touch-approved
+# inventory signature. Test-only signer doubles never touch a real GPG key.
+for kind in unsigned malformed wrong-key; do
+    (export HENNERY_TEST_MAINTAINER_SIGNATURE="$kind"; refused "maintainer-$kind" "$dist" 'maintainer')
+done
+echo 'ok: unsigned tag, malformed signature and another signing key abort'
+(TEST_SIGNATURE="$scratch/missing.asc"; export TEST_SIGNATURE; refused maintainer-missing "$dist" 'missing maintainer')
+echo 'ok: missing maintainer signature aborts'
+printf ' ' >> "$scratch/inventory.json"
+refused maintainer-other-inventory "$dist" 'invalid maintainer release signature'
+cp "$scratch/inventory.json.asc" "$scratch/inventory.json"
+echo 'ok: signature over another inventory aborts'
+jq '.artifacts |= map(.sha256 = ("0" * 64))' "$scratch/inventory.json" > "$scratch/other-inventory.json"
+(TEST_INVENTORY="$scratch/other-inventory.json"; TEST_SIGNATURE="$scratch/other-inventory.json"; export TEST_INVENTORY TEST_SIGNATURE; refused maintainer-other-digest "$dist" 'archive differs from maintainer-approved inventory')
+echo 'ok: signed inventory must approve the exact archive bytes'
+
 (export HENNERY_TEST_SIGNER_REF=refs/heads/main; refused branch-signer "$dist" 'refusing an archive without valid release-tag provenance')
 echo 'ok: branch signer identity cannot authorize installation'
-tools "$scratch/no-gh-tools" gh
+tools "$scratch/no-gh-tools" gh gpg jq
+link_tool "$scratch/verifier-tools/gpg" "$scratch/no-gh-tools/gpg"
+link_tool "$scratch/verifier-tools/jq" "$scratch/no-gh-tools/jq"
 (PATH="$scratch/no-gh-tools" VERIFIER_TOOLS="$scratch/no-gh-tools" && refused missing-verifier "$dist" 'GitHub CLI is required')
 echo 'ok: missing signature verifier refuses installation'
