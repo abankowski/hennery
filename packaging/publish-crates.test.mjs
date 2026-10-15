@@ -45,11 +45,20 @@ test('matching remote bytes reconcile without reupload',async()=>{const f=fixtur
 for(const [name,flags]of Object.entries({mismatch:{existing:true,mismatch:true},ambiguous:{ambiguous:true},index:{indexBad:true},remote:{unavailable:true},source:{sourceBad:true}}))test(`refuses ${name} and never uploads consumers`,async()=>{const f=fixture(),n=network(f,flags);await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>'ephemeral'}));assert.ok(n.uploads.length<=1);});
 test('approval failure refuses before obtaining credentials',async()=>{const f=fixture(),n=network(f);let acquired=false;await assert.rejects(publishFrozen({...f,...n,gate:async()=>{throw Error('refused');},credentials:async()=>{acquired=true;}}));assert.equal(acquired,false);});
 for(const changed of ['inventory','crate','missing'])test(`refuses ${changed} after approval`,async()=>{const f=fixture(),n=network(f);let count=0;await assert.rejects(publishFrozen({...f,...n,credentials:async()=>'ephemeral',gate:async()=>{if(++count===3){const p=join(f.dir,changed==='inventory'?'crates-inventory.json':f.crates[0].file);if(changed==='missing')fs.rmSync(p);else fs.appendFileSync(p,'bad');}}}));assert.equal(n.uploads.length,0);});
-test('R1 adapter is absent and fails closed',()=>assert.throws(()=>r1Gate({channel:'crates-io',digest:'a'.repeat(64)}),/R1 integration missing/));
-test('publishing job is protected, pinned, timeout bounded, tokenless and disabled pending R1',()=>{
- const yaml=fs.readFileSync('.github/workflows/publish-crates.yml','utf8');
- assert.match(yaml,/environment: release/);assert.match(yaml,/if: \$\{\{ vars\.R3_PUBLISH_ENABLED == 'true' \}\}/);assert.match(yaml,/timeout-minutes: 60/);assert.doesNotMatch(yaml,/secrets\.|workflow_dispatch:|tags:/);
- for(const [,action]of yaml.matchAll(/uses: ([^\s]+)/g))assert.match(action,/@[a-f0-9]{40}$/);
+test('R1 adapter missing from trusted checkout fails closed',()=>{
+ const cwd=process.cwd(),root=fs.mkdtempSync(join(tmpdir(),'r3-no-gate-'));
+ try{process.chdir(root);assert.throws(()=>r1Gate({channel:'crates',digest:'a'.repeat(64)}),/gate.*missing/);}finally{process.chdir(cwd);}
+});
+test('crate publication uses the real protected manual orchestrator and current authorization',()=>{
+ assert.equal(fs.existsSync('.github/workflows/publish-crates.yml'),false);
+ const yaml=fs.readFileSync('.github/workflows/release-publish.yml','utf8'),job=yaml.slice(yaml.indexOf('  crates:\n'));
+ assert.ok(yaml.includes('  crates:\n'));assert.match(job,/environment: release/);
+ assert.match(job,/needs: \[github, authorize\]/);assert.match(job,/vars\.RELEASE_CRATES_ENABLED == 'true'/);
+ assert.match(job,/needs\.authorize\.outputs\.run_attempt == github\.run_attempt/);
+ assert.match(job,/needs\.authorize\.outputs\.inventory_sha256 == inputs\.inventory_sha256/);
+ assert.match(job,/channel: crates/);assert.match(job,/phase: preflight/);assert.match(job,/phase: boundary/);
+ assert.doesNotMatch(job,/secrets\..*(?:CARGO|CRATES)|R3_PUBLISH_ENABLED/);
+ for(const [,action]of job.matchAll(/uses: ([^\s]+)/g))if(!action.startsWith('./'))assert.match(action,/@[a-f0-9]{40}$/);
 });
 test('approval invalidated during source verification refuses credentials',async()=>{
  const f=fixture(),n=network(f);let invalid=false,acquired=false;
@@ -89,28 +98,28 @@ test('same-size retained crate tampering stops before credentials',async()=>{
  await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>{acquired=true;return 'ephemeral';}}));assert.equal(acquired,false);assert.equal(n.uploads.length,0);
 });
 test('OIDC acquisition follows frozen-byte preflight and only its ephemeral output reaches upload',()=>{
- const yaml=fs.readFileSync('.github/workflows/publish-crates.yml','utf8');
+ const yaml=fs.readFileSync('.github/workflows/release-publish.yml','utf8');
  const preflight=yaml.indexOf('publish-crates.mjs --verify'),auth=yaml.indexOf('uses: rust-lang/crates-io-auth-action@');
  assert.ok(preflight>=0 && auth>preflight,'credentials acquired before preflight');
  assert.match(yaml,/CARGO_REGISTRY_TOKEN: \$\{\{ steps\.cratesio\.outputs\.token \}\}/);
 });
-test('global approval inventory and the crates subinventory are explicit separate bindings',()=>{
- const yaml=fs.readFileSync('.github/workflows/publish-crates.yml','utf8');
- assert.match(yaml,/crates_inventory_sha256:/);assert.match(yaml,/R3_INVENTORY_SHA256: \$\{\{ inputs\.crates_inventory_sha256 \}\}/);
+test('maintainer and exact Sigstore verification precede crate OIDC in the common orchestrator',()=>{
+ const yaml=fs.readFileSync('.github/workflows/release-publish.yml','utf8'),job=yaml.slice(yaml.indexOf('  crates:\n'));
+ const verify=job.indexOf('packaging/release/verify.py'),preflight=job.indexOf('publish-crates.mjs --verify'),oidc=job.indexOf('uses: rust-lang/crates-io-auth-action@');
+ assert.ok(verify>=0 && verify<oidc && preflight>=0 && preflight<oidc);
+ assert.match(job,/--approval-signature signatures\/release-inventory\.json\.asc/);
+ assert.match(job,/INVENTORY: \$\{\{ inputs\.inventory_sha256 \}\}/);
+});
+test('candidate freezes qualified crates alongside native payloads using its single UI build',()=>{
+ const yaml=fs.readFileSync('.github/workflows/release-candidate.yml','utf8');
+ assert.match(yaml,/  crates:\n/);assert.match(yaml,/prepare-crates\.mjs .*\$PWD\/web\/dist/);
+ assert.match(yaml,/ci-crates\.sh/);assert.match(yaml,/name: release-crates/);
+ const stage=yaml.indexOf('prepare-crates.mjs --stage'),freeze=yaml.indexOf('supply.py freeze');
+ assert.ok(stage>=0 && freeze>stage);
 });
 import { preflight } from './publish-crates.mjs';
 test('precredential preflight validates source and approval without any upload',async()=>{
  const f=fixture(),n=network(f);let gates=0;
  const result=await preflight({...f,...n,gate:async()=>{gates++;}});
  assert.equal(result.inventory.version,'0.1.0-alpha.1');assert.equal(gates,2);assert.equal(n.uploads.length,0);
-});
-test('R1 adapter refuses a missing root binding and receives both approved inventory digests',()=>{
- const root=fs.mkdtempSync(join(tmpdir(),'r3-gate-')),prior=process.cwd(),old=process.env.R1_INVENTORY_SHA256,capture=join(root,'args.json');fs.mkdirSync(join(root,'packaging'));
- fs.writeFileSync(join(root,'packaging/release-gate'),'#!/usr/bin/env node\nrequire("node:fs").writeFileSync('+JSON.stringify(capture)+',JSON.stringify(process.argv.slice(2)));\n',{mode:0o755});
- const args={channel:'crates-io',digest:'b'.repeat(64),source_sha:'a'.repeat(40),version:'0.1.0-alpha.1'};
- try{
-  process.chdir(root);process.env.R1_INVENTORY_SHA256='';assert.throws(()=>r1Gate(args),/global approval inventory digest missing/);assert.equal(fs.existsSync(capture),false);
-  process.env.R1_INVENTORY_SHA256='c'.repeat(64);r1Gate(args);
-  assert.deepEqual(JSON.parse(fs.readFileSync(capture)),['verify','--channel','crates-io','--inventory-sha256','c'.repeat(64),'--channel-inventory-sha256','b'.repeat(64),'--source-sha','a'.repeat(40),'--version','0.1.0-alpha.1']);
- }finally{process.chdir(prior);if(old===undefined)delete process.env.R1_INVENTORY_SHA256;else process.env.R1_INVENTORY_SHA256=old;}
 });

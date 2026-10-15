@@ -122,37 +122,49 @@ Rust 1.88 toolchain builds the extracted CLI's complete dependency graph.
 Source installs need Rust, a C compiler, make and Perl (macOS: Xcode Command
 Line Tools); default vendored OpenSSL removes the system OpenSSL prerequisite.
 
-Binstall 1.24.0 is pinned by the flake and checked against real loopback txz
-archives. Metadata uses versioned upstream release URLs and the actual
-`hennery-<target>/hennery` path. GNU x86_64/arm64 explicitly select the musl
-archives. Intel macOS is not qualified. After an approved version exists, the
-upstream-only recipe uses `cargo binstall hennery@<approved-version> --strategies
-crate-meta-data --disable-telemetry --no-discover-github-token`. QuickInstall
-and source fallback are disabled in metadata too. This path does not verify
-GitHub attestations: the fixture suite proves unsigned `--only-signed` refuses.
-No new binstall signature scheme is claimed. Bare Cargo installation is only
-promised after non-prerelease publication; the first alpha is GitHub-only.
+Native cargo-binstall is disabled. Pinned 1.24.0 refusal tests offer real loopback
+archives, but all seven attempts must refuse without fetching or installing an
+archive. All native strategies (`crate-meta-data`, `quick-install`, `compile`)
+are disabled in the final CLI metadata. Native binstall cannot enforce the
+required OpenPGP and Sigstore policy. The `hennery-release` metadata namespace
+records the maintainer fingerprint and concrete version's exact tagged workflow
+identity for an external verifier. A native bridge needs separate review;
+archive URL mappings remain dormant data for that future integration.
+
+Before running any release-contained installer or verifier, follow the reviewed
+[verify-then-run bootstrap](../README.md#verify-a-release-installer-before-running-it).
+Use installed GnuPG and independently corroborate the full signing fingerprint;
+authenticate the exact inventory and installer digest before execution. Then
+use a clean source checkout at that authenticated inventory's full source SHA
+and the [common verifier](release/verify.py), requiring both
+`release-inventory.json.asc` and the exact tagged Sigstore identity. Bare Cargo
+installation waits for non-prerelease publication and separate public-path
+qualification. The first alpha remains GitHub-only.
 
 ### R1 integration and maintainer-only setup
 
-The publish job has no dispatch/tag/version trigger or bootstrap secret.
-It is disabled while R3_PUBLISH_ENABLED is unset. Its fixed
-`packaging/release-gate` dependency is deliberately absent: enabling the variable
-alone still refuses. R1 must provide that trusted adapter and protected environment
-`release` (or reconcile the name). The official OIDC action is commit-pinned and
-runs only after preflight validates frozen bytes, public corresponding source and
-approval. Its output alone reaches the upload step, and its post step revokes it.
-Never replace the gate with an artifact-supplied executable.
-The authenticated approval must bind the root inventory and R3 subinventory,
-source/tag, channel/target sets, candidate run/attempt and publishing run/attempt.
-The workflow carries separate `inventory_sha256` (R1 root approval) and
-`crates_inventory_sha256` (R3 manifest) inputs. The gate's `verify` call receives
-both `--inventory-sha256` and `--channel-inventory-sha256`; it must authenticate
-their relationship rather than approve the subinventory in isolation.
-Revalidation covers environment/tag bypass settings, exact-SHA trusted checks,
-retained bytes and every upload/signing boundary. Set R3_PUBLISH_ENABLED only
-after independent integration review and negative acceptance. This is a merge
-integration point, not an already connected authorization system.
+The crate writer lives in R1's manual tagged `release-publish.yml`, in environment
+`release`, with direct `needs: [github, authorize]` and the exact authorized
+inventory/current-attempt condition. `RELEASE_PUBLICATION_ENABLED` and
+`RELEASE_CRATES_ENABLED` remain unset/disabled. The complete candidate comes
+from exact held object versions. Preparation qualifies all seven packages using
+R1's single retained UI build and exports only final crates, their channel
+inventory and immutable source into R1's flat candidate before freeze.
+Publication never rebuilds those bytes.
+
+The shared `packaging/release-gate crates` receives the complete root, approved
+global digest, explicit preflight/boundary phase and a fresh receipt outside the
+candidate. Each call verifies approval, inventory digest, maintainer signature,
+signed tag and current exact-SHA evidence, then retains its audit. The publisher
+also binds and rechecks channel inventory, source/version and all crate/source
+bytes against that global inventory before and after each call. It renews the
+boundary gate before every upload and index-readiness operation.
+
+The workflow verifies both the detached maintainer signature and exact tagged
+Sigstore provenance before the official pinned OIDC action, then repeats the
+frozen-byte/public-source preflight immediately before OIDC. Only the action's
+short-lived output reaches upload; its post step revokes it. Every publishing
+credential belongs only in protected environment `release`.
 
 R1 must retain all seven .crate files, crates-inventory.json and
 `hennery-source-<sha>.tar.gz` unchanged. Publish and verify the source archive
@@ -175,10 +187,12 @@ Maintainer steps, never performed by a builder:
    closure and application assets/fonts; no licence permission is inferred for
    third-party agent binaries. No real publication is authorized by CI green.
 2. For the first versions, arrange a one-off R1-gated bootstrap using a narrowly
-   scoped, short-lived crates.io token. The same approval tuple and exact-byte
+   scoped, short-lived crates.io token held only in environment `release`.
+   The same approval tuple and exact-byte
    uploader apply. Do not add a standing all-crates token to this workflow.
 3. After each of the seven crates exists, configure its trusted publisher for
-   the exact repository, publishing workflow and protected environment. Check
+   repository `marcinwadon/hennery`, exact workflow filename `release-publish.yml`
+   and environment `release` together. Check
    current crates.io support/settings and pin the official auth action. Test
    the OIDC identity in the gated workflow; no local registry login substitutes.
 4. Revoke the bootstrap token immediately after successful bootstrap/trusted

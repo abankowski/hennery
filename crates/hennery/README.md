@@ -15,4 +15,10 @@ Before the first non-prerelease publication, bare `cargo install hennery` is not
 a supported installation path. Use an explicitly published version and `--locked`
 once publication is approved. No packages have been published by this plan.
 
+Native cargo-binstall stays disabled pending a reviewed verification bridge.
+Release consumers first authenticate the exact inventory with the independently
+confirmed maintainer OpenPGP fingerprint, then verify the exact tagged Sigstore
+identity using trusted source. Follow the repository's reviewed verify-then-run
+bootstrap before executing an installer or release-contained verifier.
+
 Generated with Claude AI — please review before distribution.

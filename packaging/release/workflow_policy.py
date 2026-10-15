@@ -12,7 +12,7 @@ CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref
 
 def privileged(job):
     return any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
-        s.get('uses', '').startswith('actions/create-github-app-token@') or 'publish.py upload' in s.get('run', '')
+        s.get('uses', '').startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) or 'publish.py upload' in s.get('run', '')
         for s in job.get('steps', []))
 
 
@@ -69,7 +69,7 @@ def check(data, name):
             gates = {s['with']['phase']: i for i, s in enumerate(steps) if s.get('uses') == './.github/actions/release-gate'}
             for i, step in enumerate(steps):
                 uses, run = step.get('uses', ''), step.get('run', '')
-                if uses.startswith('actions/create-github-app-token@') and not gates['preflight'] < i < gates['boundary']:
+                if uses.startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) and not gates['preflight'] < i < gates['boundary']:
                     raise ValueError('publication credentials must be acquired after preflight and before revalidation')
                 if (uses.startswith('actions/attest') or 'publish.py upload' in run) and not gates['boundary'] < i:
                     raise ValueError('signing/upload must follow boundary revalidation')

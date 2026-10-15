@@ -1,9 +1,10 @@
-// Exact-byte uploader. The reusable job stays disabled until R1's authenticated gate is integrated.
+// Exact-byte uploader inside R1's protected, manually approved tagged orchestrator.
 import fs from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+import { tmpdir } from 'node:os';
 import { sha256, readJSON, requireThat, verifyCandidate, validateSource, publishBody } from './crate-release.mjs';
 import { indexPath } from './crate-registry.mjs';
 export async function preflight({dir,digest,gate,fetcher=fetch}) {
@@ -13,10 +14,10 @@ export async function preflight({dir,digest,gate,fetcher=fetch}) {
     const inventory=readJSON(inventoryFile);verifyCandidate(dir,inventory);return inventory;
   }
   const inventory=validate();
-  const authorize=async()=>{validate();await gate({channel:'crates-io',digest,source_sha:inventory.source.sha,version:inventory.version});validate();};
-  await authorize();
+  const authorize=async(phase='boundary')=>{validate();await gate({channel:'crates',dir,digest,source_sha:inventory.source.sha,version:inventory.version,phase});validate();};
+  await authorize('preflight');
   await validateSource(inventory.source,fetcher);
-  await authorize();
+  await authorize('preflight');
   return {inventory,authorize};
 }
 export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,pause=delay}) {
@@ -58,21 +59,42 @@ export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,p
   }
   return completed;
 }
+export function signedCratesDigest(dir,rootDigest) {
+  requireThat(/^[a-f0-9]{64}$/.test(rootDigest||''),'R1 global inventory digest missing');
+  const path=join(dir,'release-inventory.json');
+  requireThat(fs.lstatSync(path).isFile(),'R1 global inventory must be regular');
+  const raw=fs.readFileSync(path);requireThat(sha256(raw)===rootDigest,'R1 global inventory digest changed');
+  const root=JSON.parse(raw),inventory=readJSON(join(dir,'crates-inventory.json'));
+  requireThat(root.channels?.includes('crates') && root.source_sha===inventory.source.sha && root.tag===`v${inventory.version}`,'R1 global inventory source/version/channel differs');
+  requireThat(inventory.source.url===`https://github.com/marcinwadon/hennery/releases/download/${root.tag}/hennery-source-${root.source_sha}.tar.gz`,'R1 global inventory source URL differs');
+  const names=['crates-inventory.json',`hennery-source-${inventory.source.sha}.tar.gz`,...inventory.crates.map(c=>c.file)];
+  for(const name of names) {
+    const entries=root.artifacts?.filter(a=>a.name===name);
+    requireThat(entries?.length===1,'R1 global inventory lacks unique '+name);
+    const file=join(dir,name);requireThat(fs.lstatSync(file).isFile(),'R1 global inventory payload must be regular');
+    const bytes=fs.readFileSync(file);
+    requireThat(entries[0].size===bytes.length && entries[0].sha256===sha256(bytes),'R1 global inventory payload differs: '+name);
+  }
+  return root.artifacts.find(a=>a.name==='crates-inventory.json').sha256;
+}
 export function r1Gate(args) {
-  // INTEGRATION POINT R1: this trusted executable must authenticate platform approval,
-  // tag/checks/settings, inventory+channels+targets and BOTH run IDs/attempts. It must
-  // materialize only retained bytes and reconcile channel completion. No artifact-supplied code.
+  // Resolve only trusted checkout code; never execute anything from the candidate.
   const executable=resolve('packaging/release-gate');
-  requireThat(fs.existsSync(executable),'R1 integration missing: packaging/release-gate (publication disabled)');
-  const rootDigest=process.env.R1_INVENTORY_SHA256;
-  requireThat(/^[a-f0-9]{64}$/.test(rootDigest||''),'R1 global approval inventory digest missing');
-  execFileSync(executable,['verify','--channel',args.channel,'--inventory-sha256',rootDigest,'--channel-inventory-sha256',args.digest,'--source-sha',args.source_sha,'--version',args.version],{stdio:'inherit'});
+  requireThat(fs.existsSync(executable),'R1 gate missing: packaging/release-gate (publication disabled)');
+  requireThat(args.channel==='crates' && ['preflight','boundary'].includes(args.phase),'R1 channel/phase differs');
+  const validate=()=>requireThat(signedCratesDigest(args.dir,args.rootDigest)===args.digest,'R1 global inventory channel digest differs');
+  validate();
+  const receipt=join(fs.mkdtempSync(join(tmpdir(),'hennery-r3-gate-')),'receipt.json');
+  execFileSync(executable,['crates','--candidate',resolve(args.dir),'--inventory-sha256',args.rootDigest,'--phase',args.phase,'--receipt',receipt],{encoding:'utf8'});
+  validate();
 }
 if(import.meta.url===pathToFileURL(process.argv[1]||'').href) {
   requireThat(process.env.GITHUB_ACTIONS==='true','real publisher only runs through the protected R1 workflow');
-  if(process.argv[2]==='--verify') {
-    await preflight({dir:resolve(process.argv[3]),digest:process.argv[4],gate:r1Gate});
+  const verify=process.argv[2]==='--verify',dir=resolve(process.argv[verify?3:2]),rootDigest=process.argv[verify?4:3];
+  const digest=signedCratesDigest(dir,rootDigest),gate=args=>r1Gate({...args,rootDigest});
+  if(verify) {
+    await preflight({dir,digest,gate});
   } else {
-    await publishFrozen({dir:resolve(process.argv[2]),digest:process.argv[3],gate:r1Gate,credentials:async()=>process.env.CARGO_REGISTRY_TOKEN});
+    await publishFrozen({dir,digest,gate,credentials:async()=>process.env.CARGO_REGISTRY_TOKEN});
   }
 }

@@ -57,6 +57,7 @@
             pkgs.git
             pkgs.gnupg
             pkgs.jq
+            web.nodejs_24
           ];
         };
         devShells.default = pkgs.mkShell {

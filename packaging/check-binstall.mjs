@@ -1,15 +1,14 @@
-// Pinned real binstall, loopback archives; no registry credentials or public uploads.
+// Native binstall must refuse even available archives until a dual-verification bridge is reviewed.
 import fs from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-import { execFileSync } from 'node:child_process';
-import { run } from './prepare-crates.mjs';
+import { execFileSync, spawn } from 'node:child_process';
 import { requireThat } from './crate-release.mjs';
 const version=execFileSync('cargo-binstall',['-V'],{encoding:'utf8'}).trim();
 requireThat(version==='1.24.0','binstall acceptance pin changed: '+version);
 const metadata=JSON.parse(execFileSync('cargo',['metadata','--no-deps','--format-version','1'],{encoding:'utf8'})).packages.find(p=>p.name==='hennery').metadata.binstall;
-requireThat(metadata['pkg-fmt']==='txz' && metadata['disabled-strategies'].join()==='quick-install,compile','binstall metadata strategy/format changed');
+requireThat(metadata['pkg-fmt']==='txz' && metadata['disabled-strategies'].toSorted().join()==='compile,crate-meta-data,quick-install','native binstall must stay disabled');
 const root=fs.mkdtempSync(join(tmpdir(),'hennery-r3-binstall-')), archives=new Map(),requests=[];
 const qualified=['aarch64-apple-darwin','x86_64-unknown-linux-musl','aarch64-unknown-linux-musl'];
 for(const target of qualified){
@@ -32,19 +31,22 @@ for(const [target,override]of Object.entries(metadata.overrides)){
 }
 const path=join(root,'Cargo.toml');fs.writeFileSync(path,manifest);fs.writeFileSync(join(root,'main.rs'),'fn main(){}');
 const env={...process.env};delete env.GITHUB_TOKEN;delete env.GH_TOKEN;
-const args=['hennery','--manifest-path',path,'--version','0.1.0-alpha.1','--strategies','crate-meta-data','--disable-telemetry','--no-discover-github-token','--allow-insecure-http','--no-confirm','--no-track'];
+const args=['hennery','--manifest-path',path,'--version','0.1.0-alpha.1','--disable-telemetry','--no-discover-github-token','--allow-insecure-http','--no-confirm','--no-track'];
+async function refuse(target,extra=[]){
+ const install=join(root,`install-${target}-${extra.length}`);
+ const result=await new Promise((yes,no)=>{
+  const child=spawn('cargo-binstall',[...args,'--targets',target,'--install-path',install,...extra],{env});let output='';
+  child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>output+=c);
+  child.on('error',no);child.on('close',code=>yes({code,output}));
+ });
+ requireThat(result.code!==0 && /disabled|No viable strategy/i.test(result.output),'native binstall refusal missing: '+result.output);
+ requireThat(!fs.existsSync(join(install,'hennery')),'native binstall installed without dual verification');
+}
 try {
  for(const target of [...qualified,'x86_64-unknown-linux-gnu','aarch64-unknown-linux-gnu']){
-  const install=join(root,'install-'+target),start=requests.length;
-  await run('cargo-binstall',[...args,'--targets',target,'--install-path',install],{env});
-  requireThat(fs.readFileSync(join(install,'hennery'),'utf8').includes('hennery-fixture'),'binary extracted at wrong path');
-  const selected=target.replace('-gnu','-musl');
-  requireThat(requests.slice(start).some(p=>p===`/hennery-${selected}.tar.xz`),'wrong upstream target archive');
-  requireThat(!requests.slice(start).some(p=>p.includes('-gnu.')),'advertised a missing GNU artifact');
+  await refuse(target);
  }
- for(const [name,extra]of [['unsupported',['--targets','x86_64-apple-darwin']],['unsigned',['--targets',qualified[0],'--only-signed']]]){
-  let refused=false;try{await run('cargo-binstall',[...args,...extra,'--install-path',join(root,name)],{env});}catch{refused=true;}
-  requireThat(refused,'binstall did not refuse '+name);
- }
- console.log('binstall 1.24.0: five mappings pass; unsupported/unsigned refuse; scratch:',root);
+ await refuse('x86_64-apple-darwin');await refuse(qualified[0],['--only-signed']);
+ requireThat(!requests.some(p=>p.endsWith('.tar.xz')),'native binstall fetched an archive');
+ console.log('binstall 1.24.0: all seven native attempts refused, no archive fetched or installed; scratch:',root);
 }finally{await new Promise(r=>server.close(r));}

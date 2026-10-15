@@ -58,7 +58,13 @@ features = ["vendored-openssl"]
 pkg-url = "{ repo }/releases/download/v{ version }/hennery-{ target }.tar.xz"
 bin-dir = "hennery-{ target }/{ bin }{ binary-ext }"
 pkg-fmt = "txz"
-disabled-strategies = ["quick-install", "compile"]
+disabled-strategies = ["crate-meta-data", "quick-install", "compile"]
+
+# Native binstall cannot enforce this dual-verifier policy. A bridge needs review.
+[package.metadata.hennery-release]
+verification = "external-openpgp-sigstore"
+maintainer-fingerprint = "F26C7F594DFE84D131703AFC23E5A318AE8D2861"
+signer-identity = "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0-alpha.1"
 
 [package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
 pkg-url = "{ repo }/releases/download/v{ version }/hennery-x86_64-unknown-linux-musl.tar.xz"
