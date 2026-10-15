@@ -8,9 +8,9 @@
 
 ## Execution status (2026-10-15)
 
-Built first on **plan/deleg-d2**, rebased onto merged P1 at 256691fe before replay. Codex gpt-6-astra reviewed **256691fe..2443592e** on the maintainer's behalf: **APPROVE AFTER AMENDMENTS**, no Critical findings, 126 focused tests passed. The reviewer confirmed the redundant owner UPSERT predicate mutation is **EQUIVALENT**; the predicate stays. Tasks 5–6 below address the two Important findings test-first: committed close/answer event publication and answer pagination with wraparound. The verification record distinguishes original evidence from amendment checks, copy probes, load and a fresh complete replay. The parent subsequently reported scoped re-confirmation **CONFIRMED** and PR **149** ready for review. The branch is now rebased onto R1. A later Nix source-closure defect is corrected; its cause, exact fix and verification are recorded below. Linux/macOS CI status remains parent-owned.
+Built first on **plan/deleg-d2**, rebased onto merged P1 at 256691fe before replay. Codex gpt-6-astra reviewed **256691fe..2443592e** on the maintainer's behalf: **APPROVE AFTER AMENDMENTS**, no Critical findings, 126 focused tests passed. The reviewer confirmed the redundant owner UPSERT predicate mutation is **EQUIVALENT**; the predicate stays. Tasks 5–6 below address the two Important findings test-first: committed close/answer event publication and answer pagination with wraparound. The verification record distinguishes original evidence from amendment checks, copy probes, load and a fresh complete replay. The parent subsequently reported scoped re-confirmation **CONFIRMED** and PR **149** ready for review. The approved Nix source-closure fix is retained. The branch is now rebased onto P2; both implementations, the complete owner audit and the post-rebase verification are recorded below. Linux/macOS CI status remains parent-owned.
 
-Current branch base: **191aa71b7ac044d708c1849e491e9813fc47f53c** (merged R1). Verified source head: **49f102a2185aa35b717061c5d86e9c9327a0cddb**.
+Current branch base: **cdcd0cb82399bf21a2d40b27077675a27213679b** (merged P2). Verified source head: **89e4987861148c35f34135955fd292f51746c60a**.
 
 Historical replay — Implementation base: **256691feb9cba161f0c29b14016bc857a4da86e5**. Embedded implementation head: **395fa1401a6c046c0ed7afae27f6248f74e8bde4**.
 
@@ -11051,6 +11051,28 @@ D4 consumes the catalog and policy routes plus family/status metadata for the op
 The parent runs independent task, security and whole-branch reviews on the embedded code, opens the PR, checks **checks, reviewDecision, mergeStateStatus and all unresolved review threads**, and obtains Linux/macOS CI evidence. No merge or PR status is claimed by this child.
 
 ## Verification record
+
+### P2 rebase and hotspot verification
+
+The parent approved the Nix fileset fix. Rebased **46** commits without conflicts onto **cdcd0cb82399bf21a2d40b27077675a27213679b** (P2, PR **148**), producing verified source **89e4987861148c35f34135955fd292f51746c60a**. SSH fetch succeeded; the HTTPS fallback was available but unnecessary. The rebase used `-c commit.gpgsign=false`; no conflict resolution or `--continue` was needed.
+
+Both P2's deferred question snapshot (including its concurrent-writer regression) and D2's queue, answer, close, provenance and Nix source-input behavior remain present. The owner audit retains the complete union of both sides: **24** source cases (**24 D2**, **20 P2**), all **3** audit tests and every per-source minimum. P2's store minimum **156** is preserved over the earlier D2 minimum 153. All P2/D2 documentation index entries remain intact.
+
+Removed-declaration scanning covered both deltas' Rust/TypeScript/JavaScript sources. P2 removed no declarations. D2's one removed name, `starting_discovery_stateless_protocol_and_no_enabled_tools`, is the old test renamed to `starting_discovery_stateless_protocol_and_seven_control_tools`. An explicit `rg` across `crates` and `web` found no stale occurrence (exit **1**, expected no matches); remaining documentation occurrences are intentionally historical patch text. P2's snapshot methods and both P2 view call sites were also grepped after the rebase. The scan/union details are in `p2-rebase-audit.json` and its removed-symbol logs.
+
+All requested checks ran inside the dev shell with scratch HOME/XDG/tool configuration on the rebased tree:
+
+| Command | Exit | Passed Rust tests |
+|---|---:|---:|
+| `cargo fmt --all --check` | 0 | 0 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | 0 | 0 |
+| `cargo clippy -p hennery --locked -- -D warnings` | 0 | 0 |
+| `cargo test --workspace --locked` | 0 | 2339 |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | 0 | 0 |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | 0 | 0 |
+| `nix flake check -L` (native aarch64-darwin) | 0 | 0; build/check derivations, no Rust tests executed |
+
+The native Nix run includes package, Clippy, fmt, audit and embedded-UI verification. Linux execution remains CI-owned. Logs are retained under `.superpowers/sdd/deleg-d2/checks-p2-rebase/` and `/tmp/deleg-d2-p2-rebase-{checks,nix}.log`. Earlier replay and probe results below retain their original bases and are not relabelled as new runs. No implementation, type, test, filter or rule was weakened for this rebase. Author verification and the requested lease on **8cd70823** precede the push; PR **149** status remains parent-owned.
 
 ### R1 rebase and Nix source-closure correction
 
