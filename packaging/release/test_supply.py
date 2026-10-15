@@ -11,6 +11,53 @@ import supply
 
 
 class Supply(unittest.TestCase):
+    def test_materials_manifest_location_is_independent_of_merge_order(self):
+        manifest = b'{"schema":1,"node":{"version":"24.21.0"}}\n'
+        locations = ['adapters/manifest.json', 'crates/hennery-host/manifest.json']
+        for present in [locations[:1], locations[1:], locations]:
+            with self.subTest(present=present), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for location in present:
+                    path = root / location
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(manifest)
+                self.materials(root)
+                runtime = gate.strict_json((root / 'out/runtime-inventory.json').read_bytes())
+                identity = gate.strict_json((root / 'out/build-identity.json').read_bytes())
+                self.assertEqual(runtime['manifest'], gate.strict_json(manifest))
+                self.assertEqual(runtime['adapter_manifest_sha256'], gate.digest(manifest))
+                self.assertEqual(identity['adapter_manifest_sha256'], gate.digest(manifest))
+
+    def test_materials_refuses_disagreeing_adapter_manifest_locations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for location, raw in [('adapters/manifest.json', b'{"schema":1}\n'),
+                                  ('crates/hennery-host/manifest.json', b'{"schema":2}\n')]:
+                path = root / location
+                path.parent.mkdir(parents=True)
+                path.write_bytes(raw)
+            with self.assertRaisesRegex(ValueError, 'adapter manifest locations disagree'):
+                self.materials(root)
+
+    def test_materials_refuses_missing_adapter_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, 'adapter manifest missing'):
+                self.materials(Path(tmp))
+
+    @staticmethod
+    def materials(root):
+        (root / 'metadata.json').write_text('{"packages":[],"workspace_members":[]}')
+        (root / 'frontend.json').write_text('{}')
+        (root / 'Cargo.lock').write_text('cargo lock fixture')
+        (root / 'web/dist').mkdir(parents=True)
+        (root / 'web/dist/index.html').write_text('UI fixture')
+        (root / 'web/pnpm-lock.yaml').write_text('web lock fixture')
+        argv = ['supply.py', 'materials', '--output', 'out', '--source-sha', 'a' * 40,
+                '--target', 'aarch64-apple-darwin', '--cargo-metadata', 'metadata.json',
+                '--frontend-licences', 'frontend.json']
+        with contextlib.chdir(root), patch('sys.argv', argv):
+            supply.main()
+
     def test_components_include_frontend_and_bundled_sources(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

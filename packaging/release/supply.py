@@ -16,6 +16,7 @@ import uuid
 import urllib.parse
 
 import gate
+from adapter_manifest import read_manifest
 
 
 def tree_digest(files):
@@ -239,7 +240,7 @@ def main():
         (args.output / f'hennery-{args.target}.spdx.json').write_bytes(gate.canonical(spdx(packages, args.source_sha, args.target)))
         (args.output / 'licence-findings.json').write_bytes(gate.canonical({'findings': findings, 'scope': 'Rust and frontend including build/dev; assets and corresponding source still require maintainer review'}))
         dependency_sources(cargo, frontend, args.output / 'third-party-source.tar.xz')
-        manifest = Path('adapters/manifest.json').read_bytes()
+        manifest = read_manifest()
         (args.output / 'runtime-inventory.json').write_bytes(gate.canonical({'adapter_manifest_sha256': gate.digest(manifest),
                                                                           'redistributed': False, 'manifest': gate.strict_json(manifest)}))
         ui = {str(p.relative_to('web/dist')): p.read_bytes() for p in Path('web/dist').rglob('*') if p.is_file()}

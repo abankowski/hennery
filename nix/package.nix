@@ -10,13 +10,14 @@ let
   workspace = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).workspace.package;
   # Only what cargo reads: the crates, the manifests and the lock, and the
   # files a crate compiles in with `include_str!`. The adapter manifest
-  # (`adapters/manifest.json`, distribution spec §3.1) is named once it
-  # exists, so the build does not depend on which plan lands first.
+  # is included at either layout across the R3 crate-packaging transition.
+  # The shared release helper rejects differing bytes when both are present.
   src = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.unions [
       (craneLib.fileset.commonCargoSources ../.)
       (lib.fileset.maybeMissing ../adapters/manifest.json)
+      (lib.fileset.maybeMissing ../crates/hennery-host/manifest.json)
     ];
   };
   common = {
@@ -54,7 +55,8 @@ let
         print(hashlib.sha256(raw).hexdigest())
         PY
         )"
-        export HENNERY_BUILD_MANIFEST_SHA256="$(sha256sum ${src}/adapters/manifest.json | cut -d' ' -f1)"
+        HENNERY_BUILD_MANIFEST_SHA256="$(${pkgs.python3}/bin/python3 ${../packaging/release/adapter_manifest.py} --sha256 ${src})"
+        export HENNERY_BUILD_MANIFEST_SHA256
       '';
       # The UI is in the binary, so the package never needs it at run time.
       disallowedReferences = [ webUi ];
