@@ -86,10 +86,10 @@ impl Store {
         ensure!(self.owned_child_in(&tx, &caller, child, true)?, "not_found");
         let routing:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM session_families WHERE owner_id = ?1 AND parent_id = ?2 AND child_id = ?3 AND detached = 0)",params![self.owner_id(),caller.session_id(),child],|r|r.get(0))?;
         ensure!(routing, "not_found");
-        let (host, lifecycle): (String, String) = tx.query_row(
-            "SELECT host_id,lifecycle FROM sessions WHERE owner_id = ?1 AND id = ?2",
+        let (host, lifecycle, presumed): (String, String, bool) = tx.query_row(
+            "SELECT host_id,lifecycle,presumed_parked FROM sessions WHERE owner_id = ?1 AND id = ?2",
             params![self.owner_id(), child],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         let operation = uuid::Uuid::now_v7().to_string();
         tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,request_id,state)
@@ -106,7 +106,13 @@ impl Store {
         );
         drop(conn);
         if !handed || !matches!(lifecycle.as_str(), "active" | "starting") {
-            self.close_now(child)?;
+            self.close_delegated_unattached(
+                child,
+                &crate::store::Unattached {
+                    lifecycle: lifecycle.clone(),
+                    presumed_parked: presumed,
+                },
+            )?;
         }
         Ok(receipt)
     }
