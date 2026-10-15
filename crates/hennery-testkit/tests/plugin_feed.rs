@@ -173,6 +173,32 @@ fn inventory_slice_rejects_zero_oversized_and_unrepresentable_pages() {
     );
 }
 
+#[test]
+fn inventory_oversized_cursor_and_envelope_fail_without_renewing_the_snapshot() {
+    let w = World::new(true);
+    let cursor = inventory_begin(&w, 1000, vec!["x".repeat(1400), "z".into()]);
+    assert_eq!(
+        inventory_slice(&w, &cursor, 1, 1059).err().unwrap().to_string(),
+        "reset_required"
+    );
+    let raw = rusqlite::Connection::open(w._dir.path().join("plugin-control.db")).unwrap();
+    let expires: i64 = raw
+        .query_row("SELECT expires FROM plugin_inventory", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(expires, 1060, "a refused cursor must not renew idle expiry");
+    let cursor = inventory_begin(&w, 1000, vec!["source".into()]);
+    raw.execute("UPDATE plugin_inventory SET resume_cursor=?1", ["x".repeat(128 * 1024)])
+        .unwrap();
+    assert_eq!(
+        inventory_slice(&w, &cursor, 1, 1059).err().unwrap().to_string(),
+        "reset_required"
+    );
+    let expires: i64 = raw
+        .query_row("SELECT expires FROM plugin_inventory", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(expires, 1060, "a refused envelope must not renew idle expiry");
+}
+
 struct World {
     _dir: tempfile::TempDir,
     path: std::path::PathBuf,

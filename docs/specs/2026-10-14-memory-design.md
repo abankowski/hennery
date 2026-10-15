@@ -282,7 +282,9 @@ The existing registration-wide 60-request/minute and 8-MiB budgets still
 apply. Expired snapshots, including snapshots created before this lifetime
 contract, return `reset_required`; consumers discard partial inventories and
 restart without applying a partial reconciliation. The absolute cap bounds
-retained snapshot state even when a client keeps paging or replays a cursor.
+snapshot usability even when a client keeps paging or replays a cursor.
+Expired source-id rows are removed on snapshot replacement or lifecycle
+cleanup; expiry alone does not promise physical erasure.
 These inventory-only bounds were confirmed by the parent on the maintainer's
 behalf, 2026-10-15 (C1b).
 
