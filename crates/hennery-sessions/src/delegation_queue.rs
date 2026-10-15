@@ -302,12 +302,19 @@ impl Store {
         ensure!(live < MAX_CHILDREN, "child_limit");
         let epoch:i64=tx.query_row("SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1 AND session_id = ?2
             AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'",params![self.owner_id(),caller.session_id()],|r|r.get(0))?;
-        let starts:i64=tx.query_row("SELECT COALESCE((SELECT starts FROM delegation_start_budgets
-            WHERE owner_id = ?1 AND caller_id = ?2 AND epoch = ?3),0)",params![self.owner_id(),caller.session_id(),epoch],|r|r.get(0))?;
+        let starts: i64 = tx.query_row(
+            "SELECT COALESCE((SELECT starts FROM delegation_start_budgets
+            WHERE owner_id = ?1 AND caller_id = ?2 AND epoch = ?3),0)",
+            params![self.owner_id(), caller.session_id(), epoch],
+            |r| r.get(0),
+        )?;
         ensure!(starts < MAX_STARTS, "start_budget");
-        tx.execute("INSERT INTO delegation_start_budgets(owner_id,caller_id,epoch,starts) VALUES (?1,?2,?3,1)
+        tx.execute(
+            "INSERT INTO delegation_start_budgets(owner_id,caller_id,epoch,starts) VALUES (?1,?2,?3,1)
             ON CONFLICT(owner_id,caller_id,epoch) DO UPDATE SET starts = starts + 1
-            WHERE delegation_start_budgets.owner_id = ?1",params![self.owner_id(),caller.session_id(),epoch])?;
+            WHERE delegation_start_budgets.owner_id = ?1",
+            params![self.owner_id(), caller.session_id(), epoch],
+        )?;
         let child = uuid();
         let ts = now();
         tx.execute(
