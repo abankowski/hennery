@@ -12,9 +12,10 @@ import { useClient } from '../app-client'
 interface Props {
   onDone: () => void
   onCancel: () => void
+  returnTo?: HTMLElement | null
 }
 
-export default function StepUpDialog({ onDone, onCancel }: Props) {
+export default function StepUpDialog({ onDone, onCancel, returnTo }: Props) {
   const client = useClient()
   const [ceremony, setCeremony] = useState<PasskeyCeremony | null>(null)
   const [password, setPassword] = useState('')
@@ -39,10 +40,10 @@ export default function StepUpDialog({ onDone, onCancel }: Props) {
 
   // Focus moves into the dialog and back where it was when it closes.
   useEffect(() => {
-    const before = document.activeElement as HTMLElement | null
+    const before = returnTo ?? document.activeElement as HTMLElement | null
     dialog.current?.querySelector<HTMLElement>('button, input')?.focus()
     return () => before?.focus?.()
-  }, [])
+  }, [returnTo])
 
   const withPasskey = async () => {
     if (!ceremony) return

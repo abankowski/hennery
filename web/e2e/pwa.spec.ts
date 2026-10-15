@@ -1,6 +1,7 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { startCollector, type Collector } from './collector'
-import { mockPush, workerHarness } from './push-fixture'
+import { browserWindows, mockPush, workerHarness } from './push-fixture'
+import type { HostItem, SessionDetail, StartSessionResponse } from '../src/generated/protocol'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { deployProxy } from './pwa-proxy'
@@ -15,7 +16,7 @@ test.beforeAll(async ({ browser }) => {
   const token = new URL(collector.setupLink).hash.slice(1)
   const response = await context.request.post(`${collector.origin}/api/setup`, { headers: { Origin: collector.origin }, data: { token, password: PASSWORD, public_url: collector.origin, default_hat_name: 'Personal' } })
   expect(response.ok()).toBe(true)
-  host = testHost(fakeAgent('claude', { asks: [], chunks: ['PWA acceptance agent'], chunk_delay_ms: 0 }))
+  host = testHost(fakeAgent('claude', { asks: ['permission'], chunks: ['PWA acceptance agent'], chunk_delay_ms: 0 }))
   const pairing = await context.request.post(`${collector.origin}/api/hosts/pairing-codes`, { headers: { Origin: collector.origin } })
   expect(pairing.ok()).toBe(true)
   expect(await host.join(`hennery host join ${collector.origin} ${(await pairing.json()).code}`, ['--name', 'pwa fake host', '--no-runtime'])).toBe(0)
@@ -163,6 +164,124 @@ test('mixed digest install fails, preserving the old offline shell; a complete n
     await expect.poll(() => next.evaluate(async () => (await caches.keys()).length)).toBe(1)
     expect(await next.evaluate(async () => (await fetch('/index.html')).text())).toContain('pwa test build B')
   } finally { await context.close(); await proxy.stop(); await a.stop(); await b.stop() }
+})
+
+for (const width of [1280, 390]) test(`notification click reaches the live card and preserves busy input at ${width}px`, async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width, height: 844 }, serviceWorkers: 'allow' })
+  try {
+    await login(context); await mockPush(context)
+    const page = await context.newPage(); await controlled(page)
+    const headers = { Origin: collector.origin }
+    const hosts = async () => (await (await context.request.get(`${collector.origin}/api/hosts`)).json()) as HostItem[]
+    await expect.poll(async () => (await hosts()).some(h => h.connected)).toBe(true)
+    const hostId = (await hosts()).find(h => h.connected)!.host_id
+    const started = await context.request.post(`${collector.origin}/api/sessions`, { headers, data: { host_id: hostId, agent: 'claude', cwd: host.dir } })
+    expect(started.ok()).toBe(true)
+    const { session_id: id } = await started.json() as StartSessionResponse
+    expect((await context.request.post(`${collector.origin}/api/sessions/${id}/prompt`, { headers, data: { content: [{ type: 'text', text: 'Ask before writing.' }] } })).status()).toBe(202)
+    const detail = async () => (await (await context.request.get(`${collector.origin}/api/sessions/${id}`)).json()) as SessionDetail
+    await expect.poll(async () => (await detail()).pending.length).toBe(1)
+    const pending = (await detail()).pending[0].pending_id
+    const target = `/sessions/${id}?pending=${encodeURIComponent(pending)}`
+    const code = await (await context.request.get(`${collector.origin}/sw.js`)).text()
+    const harness = workerHarness(code, undefined, { origin: collector.origin, clients: browserWindows(context, collector.origin) })
+    await harness.push(JSON.stringify({ title: 'Needs your answer', body: 'Open current state', tag: id, url: target }))
+    expect(harness.notifications).toHaveLength(1)
+    await harness.click(target)
+    await expect(page).toHaveURL(collector.origin + target)
+    const card = page.getByRole('region', { name: 'Question from Claude', exact: true })
+    await expect(card.getByText('Write notes.txt', { exact: true })).toBeVisible()
+    const draft = page.getByLabel('Prompt', { exact: true })
+    await draft.fill('Keep this unsent text')
+    await page.evaluate(() => { (window as unknown as { __documentSentinel: string }).__documentSentinel = 'same-document' })
+    await harness.click(target)
+    expect(await page.evaluate(() => (window as unknown as { __documentSentinel: string }).__documentSentinel)).toBe('same-document')
+    await expect(draft).toHaveValue('Keep this unsent text')
+    await harness.click('/sessions/another?pending=other')
+    await expect.poll(() => context.pages().length).toBe(2)
+    await expect(page).toHaveURL(collector.origin + target)
+    await expect(draft).toHaveValue('Keep this unsent text')
+    expect(context.pages()).toHaveLength(2)
+    await context.pages().find(other => other !== page)!.close()
+    await page.evaluate(() => Object.defineProperty(navigator, 'standalone', { configurable: true, value: true }))
+    await harness.click('/sessions/third?pending=next')
+    await expect(page.getByRole('link', { name: 'Open notification', exact: true })).toBeVisible()
+    expect(await page.getByRole('link', { name: 'Open notification', exact: true }).evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
+    expect(context.pages()).toHaveLength(1)
+    await expect(draft).toHaveValue('Keep this unsent text')
+    const openedHint = context.waitForEvent('page')
+    await page.getByRole('link', { name: 'Open notification', exact: true }).click()
+    const hinted = await openedHint
+    await expect(hinted).toHaveURL(collector.origin + '/sessions/third?pending=next')
+    await expect(page).toHaveURL(collector.origin + target)
+    await expect(draft).toHaveValue('Keep this unsent text')
+    await hinted.close()
+    expect(await card.getByRole('button', { name: 'Allow', exact: true }).evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(width < 768 ? 44 : 28)
+    const desktop = await browser.newContext({ viewport: { width: 1280, height: 844 }, serviceWorkers: 'allow' })
+    let releaseHeldPhone = () => {}
+    try {
+      await login(desktop)
+      const desktopPage = await desktop.newPage(); await desktopPage.goto(collector.origin + target)
+      const desktopCard = desktopPage.getByRole('region', { name: 'Question from Claude', exact: true })
+      await expect(desktopCard.getByRole('button', { name: 'Allow', exact: true })).toBeVisible()
+      let intercepted!: () => void, release!: () => void
+      const held = new Promise<void>(resolve => { intercepted = resolve })
+      const allowed = new Promise<void>(resolve => { release = resolve })
+      releaseHeldPhone = release
+      let phonePosts = 0
+      const answerPath = `/api/sessions/${id}/pending/${encodeURIComponent(pending)}/answer`
+      await page.route(`**${answerPath}`, async route => { phonePosts++; intercepted(); await allowed; await route.continue() })
+      const lateResponse = page.waitForResponse(response => new URL(response.url()).pathname === answerPath)
+      const clicking = card.getByRole('button', { name: 'Allow', exact: true }).click()
+      await held
+      await desktopCard.getByRole('button', { name: 'Allow', exact: true }).click()
+      await expect(desktopCard.getByText('Answered', { exact: true })).toBeVisible()
+      release(); await clicking
+      expect((await lateResponse).status()).toBe(409)
+      expect(phonePosts).toBe(1)
+      await page.unroute(`**${answerPath}`)
+    } finally { releaseHeldPhone(); await desktop.close() }
+    await expect(card.getByText('Answered', { exact: true })).toBeVisible()
+    await expect(draft).toHaveValue('Keep this unsent text')
+    await page.screenshot({ path: `test-results/phone-p2-${width}.png`, fullPage: true })
+  } finally { await context.close() }
+})
+
+test('gateway worker relay alone refreshes the shared reader with focus and timers suppressed', async ({ browser }) => {
+  const context = await browser.newContext({ serviceWorkers: 'allow' })
+  try {
+    await login(context); await mockPush(context)
+    await context.addInitScript(() => {
+      const add = window.addEventListener.bind(window)
+      window.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => { if (type !== 'focus') add(type, listener, options) }) as typeof window.addEventListener
+      const docAdd = document.addEventListener.bind(document)
+      document.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => { if (type !== 'visibilitychange') docAdd(type, listener, options) }) as typeof document.addEventListener
+      const observed = { started: 0, settled: 0, succeeded: 0 }
+      ;(window as unknown as { __mcpReads: typeof observed }).__mcpReads = observed
+      const fetcher = window.fetch.bind(window)
+      window.fetch = async (...args) => {
+        const url = new URL(String(args[0]), location.href)
+        const connectionRead = url.pathname === '/api/mcp/connections' && (args[1]?.method ?? 'GET') === 'GET'
+        if (connectionRead) observed.started++
+        try { const response = await fetcher(...args); if (connectionRead && response.ok) observed.succeeded++; return response }
+        finally { if (connectionRead) observed.settled++ }
+      }
+    })
+    const page = await context.newPage()
+    await page.clock.install({ time: new Date('2026-10-15T12:00:00Z') })
+    await page.clock.pauseAt(new Date('2026-10-15T12:00:00Z'))
+    let reads = 0
+    page.on('request', request => { if (new URL(request.url()).pathname === '/api/mcp/connections' && request.method() === 'GET') reads++ })
+    await controlled(page)
+    await expect.poll(() => reads).toBeGreaterThan(0)
+    await expect.poll(() => page.evaluate(() => { const r = (window as unknown as { __mcpReads: { started: number; settled: number; succeeded: number } }).__mcpReads; return r.succeeded > 0 && r.started === r.settled })).toBe(true)
+    const baseline = reads
+    const harness = workerHarness(await (await context.request.get(`${collector.origin}/sw.js`)).text(), undefined, { origin: collector.origin, clients: browserWindows(context, collector.origin) })
+    await harness.push(JSON.stringify({ title: 'A fabricated recovered status', body: 'never trusted', tag: 'arbitrary', url: '/mcp' }))
+    await expect.poll(() => reads).toBe(baseline + 1)
+    expect(await page.getByText('A fabricated recovered status', { exact: true }).count()).toBe(0)
+    expect(harness.notifications).toHaveLength(1)
+  } finally { await context.close() }
 })
 
 test('permission denial stays off without another permission loop', async ({ browser }) => {

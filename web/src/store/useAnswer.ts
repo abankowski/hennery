@@ -17,6 +17,8 @@
 //   without taking the focus.
 import { useLayoutEffect, useMemo, useSyncExternalStore } from 'react'
 import { answerQuestion } from '../api/answer'
+import { questionCard } from '../api/view'
+import { navigationGate } from '../pwa/navigation'
 import type { Client } from '../api/client'
 import { ApiFailure, messageOf } from '../api/errors'
 import { useClient } from '../app-client'
@@ -47,6 +49,7 @@ export class AnswerBook {
   constructor(
     private readonly client: Client,
     readonly sessionId: string,
+    private readonly onQuestion?: (item: Item) => void,
   ) {}
 
   subscribe = (listener: () => void): (() => void) => {
@@ -78,6 +81,7 @@ export class AnswerBook {
 
   /** Change the draft of the question `id`, from the one held now. */
   updateDraft(id: string, next: (draft: Draft) => Draft) {
+    if (!navigationGate.edit()) return
     const held = this.draftOf(id)
     const draft = next(held)
     if (draft === held) return
@@ -102,7 +106,8 @@ export class AnswerBook {
 
   /** Send `body` as the answer to `item`, unless one is in flight already. */
   async answer(item: Question, body: AnswerRequest): Promise<void> {
-    if (this.inFlight.has(item.id)) return
+    if (this.inFlight.has(item.id) || this.localOf(item.id)?.phase === 'uncertain' || navigationGate.blocked()) return
+    const finish = navigationGate.mutation()
     this.inFlight.add(item.id)
     const version = item.version
     this.set(item.id, { phase: 'sending', version })
@@ -110,9 +115,26 @@ export class AnswerBook {
       await answerQuestion(this.client, this.sessionId, item.pending_id, body)
       this.set(item.id, { phase: 'sent', version })
     } catch (err) {
-      this.set(item.id, outcomeOf(err, version))
+      if (!(err instanceof ApiFailure) || err.status >= 500) {
+        await this.checkAnswer(item, messageOf(err))
+      } else this.set(item.id, outcomeOf(err, version))
     } finally {
       this.inFlight.delete(item.id)
+      finish()
+    }
+  }
+
+  /** Read only: an ambiguous POST never causes an automatic replay. */
+  async checkAnswer(item: Question, error = 'Check the current question before retrying.'): Promise<void> {
+    this.set(item.id, { phase: 'checking', version: item.version })
+    try {
+      const current = await questionCard(this.client, this.sessionId, item.pending_id)
+      if (current.kind !== 'question' || current.pending_id !== item.pending_id || current.version < item.version) throw new Error('Invalid question response.')
+      this.onQuestion?.(current)
+      if (current.delivered === true || current.state !== 'open') { this.local.delete(item.id); this.emit() }
+      else this.set(item.id, current.answered ? { phase: 'sent', version: current.version } : { phase: 'failed', version: current.version, message: error })
+    } catch (err) {
+      this.set(item.id, err instanceof ApiFailure && err.status === 404 ? { phase: 'gone', version: item.version } : { phase: 'uncertain', version: item.version })
     }
   }
 
@@ -201,9 +223,10 @@ export function useAnswering(
   loading: boolean,
   loads: number,
   connected: boolean | undefined,
+  onQuestion?: (item: Item) => void,
 ): AnswerBook {
   const client = useClient()
-  const book = useMemo(() => new AnswerBook(client, sessionId), [client, sessionId])
+  const book = useMemo(() => new AnswerBook(client, sessionId, onQuestion), [client, sessionId, onQuestion])
   // Before the cards' effects (a layout effect runs first): a fresh card
   // finds itself fresh when it mounts.
   useLayoutEffect(() => {

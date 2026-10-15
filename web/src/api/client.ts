@@ -16,6 +16,7 @@
 // `Referrer-Policy: no-referrer`.
 import { ApiFailure, Unauthenticated, retryAfterSeconds } from './errors'
 import { loginHref } from './next'
+import { navigationGate } from '../pwa/navigation'
 
 export interface ClientDeps {
   fetch: typeof fetch
@@ -53,12 +54,15 @@ export class Client {
 
   /** A fresh confirmation without resending a request (OAuth needs a new click). */
   async confirm(): Promise<void> {
-    await this.stepUpOnce()
+    const finish = navigationGate.mutation()
+    try { await this.stepUpOnce() } finally { finish() }
   }
 
   /** `method path` with a JSON body, answered as JSON (`undefined` for an
    *  empty answer). */
   async request<T>(method: string, path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
+    const finish = method === 'GET' || method === 'HEAD' ? () => {} : navigationGate.mutation()
+    try {
     const first = await this.networkAttempt<{ retry: true } | { retry: false; value: T }>(method, path, body, options, async (response) => {
       if (options.stepUp !== false && await isStepUpRequired(response)) return { retry: true }
       options.onResponse?.(response)
@@ -66,10 +70,11 @@ export class Client {
     })
     if (!first.retry) return first.value
     await this.stepUpOnce()
-    return this.networkAttempt(method, path, body, options, async (response) => {
+    return await this.networkAttempt(method, path, body, options, async (response) => {
       options.onResponse?.(response)
       return this.answer<T>(response)
     })
+    } finally { finish() }
   }
 
   private async networkAttempt<T>(method: string, path: string, body: unknown, options: RequestOptions, read: (response: Response) => Promise<T>): Promise<T> {

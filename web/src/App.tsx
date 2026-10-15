@@ -10,6 +10,7 @@ import Login from './screens/Login'
 import Setup from './screens/Setup'
 import PwaStatus from './components/PwaStatus'
 import { completeLogout } from './pwa/logout'
+import NotificationNavigation from './components/NotificationNavigation'
 
 interface Waiting {
   resolve: () => void
@@ -18,8 +19,13 @@ interface Waiting {
 
 export default function App({ fetchImpl }: { fetchImpl?: typeof fetch }) {
   const [waiting, setWaiting] = useState<Waiting | null>(null)
+  const focusBeforeStepUp = useRef<HTMLElement | null>(null)
   const open = useRef<() => Promise<void>>(() => Promise.reject(new StepUpCancelled()))
-  open.current = () => new Promise<void>((resolve, reject) => setWaiting({ resolve, reject }))
+  open.current = () => new Promise<void>((resolve, reject) => {
+    // Capture before `inert` blurs the underlying control in real browsers.
+    focusBeforeStepUp.current = document.activeElement as HTMLElement | null
+    setWaiting({ resolve, reject })
+  })
   const client = useMemo(() => browserClient(() => open.current(), fetchImpl), [fetchImpl])
   const { pathname } = useLocation()
   const route = match(pathname)
@@ -48,12 +54,13 @@ export default function App({ fetchImpl }: { fetchImpl?: typeof fetch }) {
     <ClientContext.Provider value={client}>
       <div className="application-root">
       <PwaStatus />
+      <NotificationNavigation />
       {/* While the step-up dialog is open, nothing under it can be focused
           or clicked. */}
       <div className="page" inert={waiting !== null} style={{ display: 'contents' }}>
         {route.name === 'setup' ? <Setup /> : route.name === 'login' ? <Login /> : <Shell route={route} />}
       </div>
-      {waiting && <StepUpDialog onDone={() => close('done')} onCancel={() => close('cancelled')} />}
+      {waiting && <StepUpDialog returnTo={focusBeforeStepUp.current} onDone={() => close('done')} onCancel={() => close('cancelled')} />}
       </div>
     </ClientContext.Provider>
   )

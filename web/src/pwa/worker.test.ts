@@ -10,6 +10,29 @@ import { Client } from '../api/client'
 beforeAll(async () => { await build() })
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
+it('the emitted click handler closes the notice and focuses an exact target without reloading', async () => {
+  const client = { id: 'app', url: 'https://app.example/sessions/s?pending=p', focus: vi.fn(async () => {}), navigate: vi.fn(), postMessage: vi.fn() }
+  const close = vi.fn()
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() } })
+  await harness.click('/sessions/s?pending=p', close)
+  expect(close).toHaveBeenCalledOnce()
+  expect(client.focus).toHaveBeenCalledOnce()
+  expect(client.navigate).not.toHaveBeenCalled()
+})
+
+it('gateway display relays only a validated target, and never copies a status claim', async () => {
+  const app = { id: 'app', url: 'https://app.example/mcp', focus: vi.fn(), navigate: vi.fn(), postMessage: vi.fn() }
+  const foreign = { ...app, id: 'foreign', url: 'https://foreign.example/mcp', postMessage: vi.fn() }
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [app, foreign], openWindow: vi.fn() } })
+  await harness.push(JSON.stringify({ title: 'Recovery', body: 'not a health certificate', url: '/mcp', tag: 'anything' }))
+  expect(app.postMessage).toHaveBeenCalledExactlyOnceWith({ version: 1, kind: 'mcp_invalidated' })
+  expect(foreign.postMessage).not.toHaveBeenCalled()
+  app.postMessage.mockClear()
+  await harness.push(JSON.stringify({ title: 'MCP', body: 'recovered', url: '/sessions/s', tag: 'mcp-123' }))
+  expect(app.postMessage).not.toHaveBeenCalled()
+  expect(harness.notifications).toHaveLength(2)
+})
+
 function renewalSetup() {
   const persistence = { row: { generation: 1, enabled: true, id: 'id', endpoint: 'https://push.example/a', key: 'key' } as PushRecord }
   const store: PushStore = { async transact(fn) { return fn(persistence.row) } }

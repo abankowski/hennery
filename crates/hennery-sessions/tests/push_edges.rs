@@ -340,6 +340,34 @@ fn session(store: &Store) -> EdgeSession {
 }
 
 #[test]
+fn question_urls_encode_both_ids_and_completion_keeps_the_legacy_target() {
+    let store = Store::open_in_memory().unwrap();
+    running(&store);
+    let mut s = session(&store);
+    s.id = "session space".into();
+    for edge in [
+        PushEdge::Blocked {
+            pending_id: "ż one'".into(),
+            title: None,
+        },
+        PushEdge::QuestionOutsideTurn {
+            pending_id: "ż one'".into(),
+            title: None,
+        },
+    ] {
+        let notice = notice_for(&edge, &s).unwrap();
+        assert_eq!(notice.url, "/sessions/session%20space?pending=%C5%BC%20one%27");
+        assert_eq!(notice.tag, "session space");
+    }
+    assert_eq!(
+        notice_for(&PushEdge::TurnEnded(TurnOutcome::Completed), &s)
+            .unwrap()
+            .url,
+        "/sessions/session%20space"
+    );
+}
+
+#[test]
 fn only_blocked_finished_and_failed_notify() {
     let store = Store::open_in_memory().unwrap();
     running(&store);
@@ -360,7 +388,7 @@ fn only_blocked_finished_and_failed_notify() {
     assert_eq!(blocked.detail.as_deref(), Some("Run cargo test"));
     assert_eq!(
         (blocked.url.as_str(), blocked.tag.as_str(), blocked.hat_id.as_str()),
-        ("/sessions/s1", "s1", "hat-1")
+        ("/sessions/s1?pending=p1", "s1", "hat-1")
     );
 
     let finished = notice_for(&PushEdge::TurnEnded(TurnOutcome::Completed), &s).unwrap();

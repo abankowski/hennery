@@ -47,12 +47,12 @@ use axum::routing::get;
 use axum::{Json, Router};
 use futures::StreamExt;
 use hennery_kernel::operator::Authenticated;
-use hennery_proto::rest::{EventDto, PendingState, SessionItem};
+use hennery_proto::rest::{EventDto, SessionItem};
 use hennery_view::api::{
     SessionRemoved, SessionSummary, SummaryPage, TurnContent, WaitingChanged, anchor, parse_anchor,
 };
 use hennery_view::cap::{GROUP_MAX_QUESTIONS, ID_MAX_BYTES};
-use hennery_view::{Body, Fold, Item, Question, group_key, question_id};
+use hennery_view::{Body, Fold, Item, group_key, question_id};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
@@ -109,6 +109,7 @@ pub fn router(state: AppState) -> Router {
     let routes = Router::new()
         .route("/api/view/sessions", get(summaries))
         .route("/api/view/sessions/{id}", get(page))
+        .route("/api/view/sessions/{id}/questions/{pending_id}", get(question_card))
         .route("/api/view/sessions/{id}/turns/{turn_id}", get(undelivered_turn))
         .route("/api/stream/view/sessions/{id}", get(item_stream))
         .route("/api/stream/sessions", get(list_stream));
@@ -129,6 +130,14 @@ pub fn epoch() -> &'static str {
 
 fn not_found() -> Response {
     error(StatusCode::NOT_FOUND, "not_found", "no such session")
+}
+
+async fn question_card(State(state): State<AppState>, Path((id, pending_id)): Path<(String, String)>) -> Response {
+    match stored_question(&state.store, &id, &pending_id) {
+        Ok(Some(item)) => Json(item).into_response(),
+        Ok(None) => not_found(),
+        Err(err) => internal(err),
+    }
 }
 
 /// `GET /api/view/sessions` (A7): the session list's page, each item a
@@ -377,19 +386,11 @@ fn unanswerable(_: &str) -> bool {
 /// holds, short of a delete racing the read) it stays as folded: not
 /// answerable.
 fn overlay(store: &Store, id: &str, item: &mut Item) -> Result<()> {
-    let Body::Question(question) = &mut item.body else {
+    let Body::Question(question) = &item.body else {
         return Ok(());
     };
-    let Some(record) = store.session_pending(id, &question.pending_id)? else {
-        return Ok(());
-    };
-    let before = question.clone();
-    question.absorb(record.state, record.reason, record.answered, record.delivered);
-    question.answerable = record.state == PendingState::Open && !record.answered;
-    if *question != before
-        && let Some(last) = store.pending_last_event(id, &question.pending_id)?
-    {
-        item.version = item.version.max(last);
+    if let Some(current) = store.question_snapshot(id, &question.pending_id)? {
+        *item = current;
     }
     Ok(())
 }
@@ -399,26 +400,7 @@ fn overlay(store: &Store, id: &str, item: &mut Item) -> Result<()> {
 /// that event's time, at the version of its last event. `None` without a
 /// record or that event, and for an id no fold would give an item.
 fn stored_question(store: &Store, id: &str, pending_id: &str) -> Result<Option<Item>> {
-    if !shown(pending_id) {
-        return Ok(None);
-    }
-    let Some(record) = store.session_pending(id, pending_id)? else {
-        return Ok(None);
-    };
-    let (Some((opened, ts)), Some(version)) = (
-        store.pending_opened_at(id, pending_id)?,
-        store.pending_last_event(id, pending_id)?,
-    ) else {
-        return Ok(None);
-    };
-    let (start, turn) = store.group_start_at(id, opened)?;
-    Ok(Some(Item {
-        id: question_id(pending_id),
-        version,
-        turn_id: (start > 0).then(|| group_key(start, turn.as_deref())),
-        ts,
-        body: Body::Question(Question::from_pending(&record)),
-    }))
+    store.question_snapshot(id, pending_id)
 }
 
 /// Whether a pending id is one the fold makes an item of: not empty, and

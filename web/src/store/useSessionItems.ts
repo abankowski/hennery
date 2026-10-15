@@ -19,7 +19,7 @@ import { useClient } from '../app-client'
 import type { Client } from '../api/client'
 import { ApiFailure, Unauthenticated, messageOf } from '../api/errors'
 import { openStream, type Stream, type StreamEvent, type StreamState } from '../api/sse'
-import { anchorOf, catalog as fetchCatalog, itemPage, itemStreamPath } from '../api/view'
+import { anchorOf, catalog as fetchCatalog, itemPage, itemStreamPath, questionCard } from '../api/view'
 import type { SessionCatalog } from '../generated/protocol'
 import type { Item } from '../generated/view'
 import { useMediaQuery } from '../hooks/useMediaQuery'
@@ -105,6 +105,7 @@ export interface SessionItemsSnapshot {
   /** First pages taken: bumped by the first load and by every resync (the
    *  items were replaced). */
   loads: number
+  questionError: string | null
 }
 
 const INITIAL: SessionItemsSnapshot = {
@@ -117,6 +118,7 @@ const INITIAL: SessionItemsSnapshot = {
   resynced: false,
   catalog: null,
   loads: 0,
+  questionError: null,
 }
 
 /** `JSON.parse`, or `undefined` for text that is not JSON. */
@@ -154,6 +156,7 @@ export class SessionItemsController {
   private readonly limit: () => number | undefined
   private readonly timing: Timing
   private readonly backoff: ResyncBackoff
+  private questionSeq = 0
 
   constructor(client: Client, id: string, limit: () => number | undefined, timing: Partial<Timing> = {}) {
     this.client = client
@@ -210,6 +213,27 @@ export class SessionItemsController {
 
   /** The session was deleted from here: as a `session_removed`. */
   markRemoved = (): void => this.gone()
+
+  mergeQuestion = (item: Item): void => {
+    if (!this.snapshot.removed && item.kind === 'question') this.apply({ type: 'pin', item })
+  }
+
+  /** Shares the stream's version fence and lifecycle generation. A late
+   * read cannot restore a removed session or overwrite a newer SSE card. */
+  loadQuestion = async (pending: string): Promise<void> => {
+    const run = this.run, seq = ++this.questionSeq
+    if (this.snapshot.removed) return
+    this.update({ questionError: null })
+    try {
+      const item = await questionCard(this.client, this.id, pending)
+      if (run !== this.run || seq !== this.questionSeq || this.snapshot.removed) return
+      if (!isItem(item) || item.kind !== 'question' || item.pending_id !== pending) throw new Error('Invalid question response.')
+      this.apply({ type: 'pin', item })
+    } catch (err) {
+      if (run !== this.run || seq !== this.questionSeq || this.snapshot.removed) return
+      this.update({ questionError: err instanceof ApiFailure && err.status === 404 ? 'Question no longer available' : messageOf(err) })
+    }
+  }
 
   /** A catalogue from a config answer (202) replaces the one held. */
   setCatalog = (catalog: SessionCatalog): void => {
@@ -351,11 +375,14 @@ export class SessionItemsController {
 
 export interface SessionItems extends Omit<SessionItemsSnapshot, 'store'> {
   items: Item[]
+  pinned: Item[]
   /** Groups exist before the first loaded one. */
   older: boolean
   loadOlder: () => Promise<void>
   setCatalog: (catalog: SessionCatalog) => void
   markRemoved: () => void
+  loadQuestion: (pending: string) => Promise<void>
+  mergeQuestion: (item: Item) => void
 }
 
 export function useSessionItems(id: string, timing?: Partial<Timing>): SessionItems {
@@ -376,5 +403,5 @@ export function useSessionItems(id: string, timing?: Partial<Timing>): SessionIt
   }, [controller])
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const { store, ...rest } = snapshot
-  return { ...rest, items: store.items, older: store.older, loadOlder: controller.loadOlder, setCatalog: controller.setCatalog, markRemoved: controller.markRemoved }
+  return { ...rest, items: store.items, pinned: store.pinned, older: store.older, mergeQuestion: controller.mergeQuestion, loadQuestion: controller.loadQuestion, loadOlder: controller.loadOlder, setCatalog: controller.setCatalog, markRemoved: controller.markRemoved }
 }

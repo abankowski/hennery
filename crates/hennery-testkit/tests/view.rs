@@ -611,6 +611,98 @@ fn question(collector: &Collector, session: &str, pending_id: &str, turn: &str) 
     event
 }
 
+#[tokio::test]
+async fn question_lookup_is_owned_bounded_and_matches_the_live_overlay() {
+    let c = Collector::start().await;
+    c.session(&c.owner(), "s");
+    c.session(&c.owner(), "elsewhere");
+    c.other_owner("foreign");
+    c.write(OTHER, "foreign", "pending_opened", &json!({"pending_id":"foreign-p"}));
+    c.conn()
+        .execute(
+            "INSERT INTO pending(pending_id,session_id,kind,option_ids,payload,state,opened_at,owner_id)
+        VALUES ('foreign-p','foreign','permission','[]','{}','open','t',?1)",
+            [OTHER],
+        )
+        .unwrap();
+    let opened = question(&c, "s", "p1", "outside");
+    // An event naming an id is not proof the pending row belongs here.
+    c.write(&c.owner(), "elsewhere", "pending_opened", &json!({"pending_id":"p1"}));
+    let path = "/api/view/sessions/s/questions/p1";
+    let response = c.client().get(c.url(path)).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let before: Item = response.json().await.unwrap();
+    assert_eq!(before.version, opened.event_id);
+    assert_eq!(before.turn_id, None);
+    let Body::Question(q) = &before.body else { panic!() };
+    assert!(q.answerable);
+    for path in [
+        "/api/view/sessions/elsewhere/questions/p1",
+        "/api/view/sessions/foreign/questions/p1",
+        "/api/view/sessions/foreign/questions/foreign-p",
+        "/api/view/sessions/unknown/questions/p1",
+        "/api/view/sessions/s/questions/unknown",
+    ] {
+        assert_eq!(
+            c.client().get(c.url(path)).send().await.unwrap().status(),
+            404,
+            "{path}"
+        );
+    }
+    assert_eq!(
+        c.client()
+            .post(c.url("/api/sessions/s/pending/p1/answer"))
+            .json(&json!({"option_id":"allow"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        202
+    );
+    let after: Item = c.client().get(c.url(path)).send().await.unwrap().json().await.unwrap();
+    assert!(after.version > before.version);
+    let Body::Question(q) = &after.body else { panic!() };
+    assert!(q.answered && !q.answerable);
+    assert_eq!(
+        c.page("s", "").await.items.iter().find(|i| i.id == after.id),
+        Some(&after)
+    );
+    c.conn()
+        .execute(
+            "UPDATE pending SET state='cancelled', reason='agent_withdrew' WHERE pending_id='p1'",
+            [],
+        )
+        .unwrap();
+    c.write(
+        &c.owner(),
+        "s",
+        "pending_cancelled",
+        &json!({"pending_id":"p1", "reason":"agent_withdrew"}),
+    );
+    let cancelled: Item = c.client().get(c.url(path)).send().await.unwrap().json().await.unwrap();
+    let Body::Question(q) = cancelled.body else { panic!() };
+    assert!(!q.answerable);
+    assert_eq!(q.state, hennery_proto::rest::PendingState::Cancelled);
+    let long = "p".repeat(hennery_view::cap::ID_MAX_BYTES + 1);
+    assert_eq!(
+        c.client()
+            .get(c.url(&format!("/api/view/sessions/s/questions/{long}")))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    c.conn()
+        .execute("UPDATE sessions SET lifecycle='closed' WHERE id='s'", [])
+        .unwrap();
+    assert!(matches!(
+        c.state.store.delete_session("s", None).unwrap(),
+        Deletion::Done { .. }
+    ));
+    assert_eq!(c.client().get(c.url(path)).send().await.unwrap().status(), 404);
+}
+
 /// A session with a turn, whose page has been read: the stream's anchor.
 async fn opened(collector: &Collector, session: &str) -> String {
     collector.session(&collector.owner(), session);
@@ -923,6 +1015,16 @@ async fn a_question_answered_after_the_next_prompt_is_sent_from_the_store() {
     let submitted = collector.state.store.revision("s").unwrap();
     let item = stream.message().await.item();
     assert_eq!((item.id.as_str(), item.turn_id.as_deref()), ("question:p1", Some("t1")));
+    let lookup: Item = collector
+        .client()
+        .get(collector.url("/api/view/sessions/s/questions/p1"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(lookup, item, "HTTP and SSE must agree at equal versions");
     assert_eq!(item.version, submitted);
     let Body::Question(q) = &item.body else { panic!() };
     assert!(q.answered && !q.answerable);
