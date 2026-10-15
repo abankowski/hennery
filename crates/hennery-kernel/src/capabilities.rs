@@ -29,6 +29,7 @@ pub fn features() -> Vec<String> {
         "mcp_connections".to_owned(),
         "mcp_stdio".to_owned(),
         "mcp_oauth".to_owned(),
+        "web_push".to_owned(),
     ]
 }
 
@@ -56,7 +57,7 @@ mod tests {
     fn the_collector_is_the_whole_cockpit_with_the_gateways_connections() {
         assert_eq!(
             serde_json::to_value(current()).unwrap(),
-            serde_json::json!({"mode": "full", "features": ["mcp_connections", "mcp_stdio", "mcp_oauth"]})
+            serde_json::json!({"mode": "full", "features": ["mcp_connections", "mcp_stdio", "mcp_oauth", "web_push"]})
         );
     }
 

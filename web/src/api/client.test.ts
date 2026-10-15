@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { deferred } from '../test-locks'
 import { Client, type ClientDeps } from './client'
 import { ApiFailure, StepUpCancelled, Unauthenticated } from './errors'
+
+afterEach(() => vi.useRealTimers())
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(body === undefined ? null : JSON.stringify(body), {
@@ -39,6 +42,40 @@ function stub(answers: Response[], deps: Partial<ClientDeps> = {}) {
 }
 
 describe('request', () => {
+  it('starts fetch synchronously when no ownership hook was requested', async () => {
+    const { client, fetch } = stub([json(200, { done: true })])
+    const work = client.request('GET', '/api/x')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await expect(work).resolves.toEqual({ done: true })
+  })
+  it.each([false, true])('per-attempt deadlines preserve caller abort, already aborted: %s', async (already) => {
+    vi.useFakeTimers()
+    const outer = new AbortController(), entered = deferred<AbortSignal>()
+    const { client } = stub([], { fetch: vi.fn((_path, init) => new Promise<Response>((_resolve, reject) => {
+      const signal = init!.signal!
+      entered.resolve(signal)
+      if (signal.aborted) reject(new Error('Caller abort'))
+      else signal.addEventListener('abort', () => reject(new Error('Caller abort')))
+    })) })
+    if (already) outer.abort()
+    const work = client.request('GET', '/api/x', undefined, { timeoutMs: 10000, signal: outer.signal }).catch((err: unknown) => err)
+    const signal = await entered.promise
+    if (!already) outer.abort()
+    expect(signal.aborted).toBe(true)
+    expect(await work).toMatchObject({ message: 'Caller abort' })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+  it('successful attempts detach caller cancellation and leave no deadline timer', async () => {
+    vi.useFakeTimers()
+    const outer = new AbortController(), signals: AbortSignal[] = []
+    const { client } = stub([], { fetch: vi.fn(async (_path, init) => {
+      signals.push(init!.signal!); return json(200, { done: true })
+    }) })
+    await client.request('GET', '/api/x', undefined, { timeoutMs: 10000, signal: outer.signal })
+    outer.abort()
+    expect(signals[0].aborted).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+  })
   it('sends JSON with the cookie, and reads JSON back', async () => {
     const { client, sent } = stub([json(200, { a: 1 })])
     await expect(client.request('POST', '/api/x', { b: 2 })).resolves.toEqual({ a: 1 })

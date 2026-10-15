@@ -29,8 +29,17 @@ async fn the_owner_learns_the_mode_and_the_features() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
         body,
-        serde_json::json!({"mode": "full", "features": ["mcp_connections", "mcp_stdio", "mcp_oauth"]})
+        serde_json::json!({"mode": "full", "features": ["mcp_connections", "mcp_stdio", "mcp_oauth", "web_push"]})
     );
     let typed: CapabilitiesResponse = serde_json::from_value(body).unwrap();
     assert_eq!(typed.mode, DeploymentMode::Full);
+    for path in [
+        "/api/push/vapid",
+        "/api/push/subscriptions",
+        "/api/push/policies",
+        "/api/settings",
+    ] {
+        let response = client.get(format!("http://{addr}{path}")).send().await.unwrap();
+        assert_eq!(response.status(), 200, "advertised web_push: {path}");
+    }
 }

@@ -9,13 +9,16 @@ use axum::response::Response;
 /// hash: the web UI's theme bootstrap is a file of its own (`/theme.js`).
 /// Everything else comes from this origin: scripts, styles, fonts, API
 /// calls and form targets (plan 4b).
-pub const POLICY: &str = "script-src 'self'; default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; \
+pub const POLICY: &str = "script-src 'self'; worker-src 'self'; manifest-src 'self'; default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; \
      object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 /// The policy of a hat's logo (plan 4d-B2; the security review's A9): it
 /// is served from this origin, so opened as a page it must still run
 /// nothing, load nothing and be framed nowhere, whatever it holds.
 pub const LOGO_POLICY: &str = "default-src 'none'; sandbox; frame-ancestors 'none'";
+
+/// The worker can execute and fetch only from its own origin.
+pub const WORKER_POLICY: &str = "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'";
 
 /// Set `POLICY` on a `text/html` response. Use as
 /// `axum::middleware::map_response(csp::on_html)`, outermost.

@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "typecheck": "tsc -b --noEmit && tsc -p tsconfig.node.json",
-    "e2e": "playwright test"
+    "e2e": "sh ../packaging/pwa-test-builds.sh && playwright test"
   },
   "dependencies": {
     "react": "19.3.0",

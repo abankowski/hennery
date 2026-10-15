@@ -60,6 +60,8 @@ input,textarea { font-family:inherit; }
    column shrink below its content's intrinsic width — without it a long
    unbreakable path keeps the track wider than the viewport. */
 .app { display:grid; grid-template-columns:300px minmax(0,1fr); grid-template-rows:100dvh; height:100dvh; overflow:hidden; }
+.application-root { height:100dvh; display:flex; flex-direction:column; }
+.application-root .app { flex:1; height:0; grid-template-rows:minmax(0,1fr); }
 .shell { display:flex; flex-direction:column; min-width:0; min-height:0; }
 
 /* Sidebar */

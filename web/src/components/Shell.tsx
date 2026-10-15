@@ -2,25 +2,28 @@
 // width (F-3). From 768 px a rail with the views beside the content; under
 // it a top bar and a bottom tab bar. Which views exist comes from
 // `GET /api/capabilities`, which also tells a signed-out browser to sign in.
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { capabilities } from '../api/auth'
 import { messageOf } from '../api/errors'
 import { useClient } from '../app-client'
 import type { CapabilitiesResponse } from '../generated/protocol'
 import { LABEL, PATH, tabsOf, viewOf, viewsOf, type View } from '../lib/views'
 import { Icon } from '../lib/ui'
-import { Link, type Route } from '../router'
+import { Link, navigate, type Route } from '../router'
 import Hats from '../screens/Hats'
 import Hosts from '../screens/Hosts'
 import NewSession from '../screens/NewSession'
 import Mcp from '../screens/Mcp'
 import Placeholder from '../screens/Placeholder'
+import PushForeground from './PushForeground'
 import SignOut from './SignOut'
 import SessionView from '../screens/Session'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import SessionList from './SessionList'
 import SessionScope, { WaitingBadge, useSessionScope } from './SessionScope'
 import McpScope, { McpBadge } from './McpScope'
+
+const Settings = lazy(() => import('../screens/Settings'))
 
 /** The rail's width and up (frontend spec §2). */
 export const DESKTOP = '(min-width: 768px)'
@@ -73,6 +76,14 @@ export default function Shell({ route }: { route: Route }) {
       live = false
     }
   }, [client, attempt])
+  useEffect(() => {
+    if (caps?.mode === 'gateway' && route.name === 'sessions') navigate('/mcp', { replace: true })
+  }, [caps?.mode, route.name])
+  useEffect(() => {
+    const online = () => { if (!caps) setAttempt((n) => n + 1) }
+    window.addEventListener('online', online)
+    return () => window.removeEventListener('online', online)
+  }, [caps])
 
   if (!caps) {
     return (
@@ -102,6 +113,7 @@ export default function Shell({ route }: { route: Route }) {
 
   const frame = (
     <div className="app">
+      {caps.features.includes('web_push') && <PushForeground />}
       <aside className="rail" aria-label="Views">
         <div className="rail-head">
           <span className="brand-name">hennery</span>
@@ -131,7 +143,7 @@ export default function Shell({ route }: { route: Route }) {
         </nav>
         <div className="rail-scroll">{desktop && <SessionList />}</div>
         <div className="rail-foot">
-          <SignOut />
+          {route.name !== 'settings' && <SignOut />}
         </div>
       </aside>
       <div className="shell">
@@ -152,6 +164,8 @@ export default function Shell({ route }: { route: Route }) {
             <Hosts />
           ) : route.name === 'hats' ? (
             <Hats />
+          ) : route.name === 'settings' ? (
+            <Suspense fallback={<p role="status">Loading Settings…</p>}><Settings push={caps.features.includes('web_push')} sessions={caps.mode === 'full'} /></Suspense>
           ) : route.name === 'sessions' && !desktop ? (
             <SessionList screen />
           ) : route.name === 'new' ? (

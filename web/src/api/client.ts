@@ -32,6 +32,10 @@ export interface RequestOptions {
   /** `false` on the step-up routes themselves: a 403 there is an error. */
   stepUp?: boolean
   signal?: AbortSignal
+  /** Each HTTP attempt gets its own deadline; human confirmation has none. */
+  timeoutMs?: number
+  /** Recheck operation ownership before the initial attempt and its retry. */
+  beforeSend?: () => Promise<void>
   /** Same-origin response metadata, separate from the JSON wire body. */
   onResponse?: (response: Response) => void
 }
@@ -55,13 +59,29 @@ export class Client {
   /** `method path` with a JSON body, answered as JSON (`undefined` for an
    *  empty answer). */
   async request<T>(method: string, path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
-    let response = await this.send(method, path, body, options.signal)
-    if (options.stepUp !== false && (await isStepUpRequired(response))) {
-      await this.stepUpOnce()
-      response = await this.send(method, path, body, options.signal)
-    }
-    options.onResponse?.(response)
-    return this.answer<T>(response)
+    const first = await this.networkAttempt<{ retry: true } | { retry: false; value: T }>(method, path, body, options, async (response) => {
+      if (options.stepUp !== false && await isStepUpRequired(response)) return { retry: true }
+      options.onResponse?.(response)
+      return { retry: false, value: await this.answer<T>(response) }
+    })
+    if (!first.retry) return first.value
+    await this.stepUpOnce()
+    return this.networkAttempt(method, path, body, options, async (response) => {
+      options.onResponse?.(response)
+      return this.answer<T>(response)
+    })
+  }
+
+  private async networkAttempt<T>(method: string, path: string, body: unknown, options: RequestOptions, read: (response: Response) => Promise<T>): Promise<T> {
+    if (options.beforeSend) await options.beforeSend()
+    if (options.timeoutMs === undefined) return read(await this.send(method, path, body, options.signal))
+    const controller = new AbortController()
+    const abort = () => controller.abort(options.signal?.reason)
+    if (options.signal?.aborted) abort()
+    else options.signal?.addEventListener('abort', abort, { once: true })
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs)
+    try { return await read(await this.send(method, path, body, controller.signal)) }
+    finally { clearTimeout(timer); options.signal?.removeEventListener('abort', abort) }
   }
 
   /** A `GET` whose answer the caller reads itself (the SSE helper): the 401

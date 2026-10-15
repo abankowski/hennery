@@ -14,4 +14,8 @@ export default defineConfig({
   // 10 s, not the default 5, on a 2-4 vCPU runner.
   expect: { timeout: 10_000 },
   use: { ...devices['Desktop Chrome'], headless: true },
+  projects: [
+    { name: 'chromium', testIgnore: '**/pwa.spec.ts', use: { serviceWorkers: 'block' } },
+    { name: 'pwa', testMatch: '**/pwa.spec.ts', use: { serviceWorkers: 'allow' } },
+  ],
 })
