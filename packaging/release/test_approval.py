@@ -46,9 +46,13 @@ class Approval(unittest.TestCase):
                     approval.verify(self.inventory, self.signature)
 
     def test_unsigned_tag_with_valid_looking_attestation_has_no_authority(self):
-        self.signature.unlink()
-        with patch.object(verify.subprocess, 'run') as attest, self.assertRaises(gate.Refused):
-            verify.verify(self.root, Path('valid-exact-tag-bundle'), 'a'*40, 'v0.1.0', approval_signature=self.signature)
+        import test_gate
+        fixture=test_gate.Gates();fixture.setUp();self.addCleanup(fixture.tmp.cleanup)
+        (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        # Keep the old API and every other candidate check valid so the old
+        # verifier demonstrably accepts this exact-tag attestation alone.
+        with patch.object(verify.subprocess, 'run') as attest, patch.object(verify.supply,'verify_checksums'), patch.object(verify.supply,'verify_binary_inventory'), self.assertRaises(gate.Refused):
+            verify.verify(fixture.root, Path('valid-exact-tag-bundle'), fixture.inventory['source_sha'], fixture.inventory['tag'])
         attest.assert_not_called()
 
     def test_signing_never_runs_in_ci_and_requires_explicit_touch_confirmation(self):

@@ -105,11 +105,15 @@ These need the operator's decision, credentials, or both. None is set up:
   request's are built from code nobody has reviewed yet.
 - **Artifact attestations** (`github-attestations = true`): protected release-tag
   jobs need OIDC/attestation authority and write to the public Sigstore log.
-  Repository-only verification is insufficient. The common
+  Neither repository-only nor exact-tag Sigstore verification authorizes a
+  release by itself. The common verifier first requires the detached
+  `release-inventory.json.asc` from the pinned hardware-backed maintainer key
+  over the exact inventory digest set. Its trusted public key comes from the
+  reviewed verifier, not a downloaded replacement. The common
   [verifier](release/verify.py) pins the exact certificate identity to
   `marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<release-tag>`
   and rejects branch signers. Authenticate the installer before executing it;
-  its archive verifier also requires this identity. Native binstall signature
+  its archive verifier requires both the maintainer-approved digest and this identity. Native binstall signature
   support needs a reviewed bridge; no unverified strategy is an accepted path.
 - **The Homebrew tap** (`marcinwadon/homebrew-tap`): the repository and a
   token allowed to push to it.

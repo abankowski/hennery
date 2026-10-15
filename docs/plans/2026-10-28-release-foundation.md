@@ -1,32 +1,32 @@
 # R1 — release foundation implementation plan
 
 - **Date:** 2026-10-15; filename assigned by the distribution brief.
-- **Base:** `dd7c0066c643ee417f29f4c1559d36a49b7eac00`, the merged distribution design. Its tracked tree equals original base `14a754b6` (verified).
+- **Base:** `256691feb9cba161f0c29b14016bc857a4da86e5`, requested current main; includes the merged distribution design and subsequent completed work.
 - **Branch:** `plan/dist-r1`.
 - **Design:** [distribution and releases](../specs/2026-10-15-distribution-release-design.md), with the binding parent ruling below.
 - **Process:** built first, RED regressions, fixes, COPY-only guard probes, exact embedded files, fresh replay and recorded command output. Independent approval belongs to the parent.
 
 ## Execution status
 
-The maintainer-delegated review (Codex gpt-6-astra) of `14a754b6..7e8bc055` was **REJECT**. This execution addresses that review and requests re-review; it does not claim approval. The original `7e8bc055` is now `e36487d9` after the requested conflict-free rebase onto `dd7c0066`. The fix range is `e36487d9..HEAD`; implementation through `5273097c` contains the fixes, with this plan/index record following. Rebased implementation `38942a5c` equals pre-rebase `2b8ab1ef`; `5273097c` then strengthens only Python audit fixtures. Rust source and its six checks are unchanged.
+The earlier REJECT fixes were pushed at `55e8f998`. Re-confirmation accepted requirements 1–4 and 6–11 and identified an unsigned-tag/exact-certificate bypass for an agent holding the maintainer's SSH key. Original `55e8f998` maps to `22180bc7` after rebasing onto `256691fe`; the amendment range is `22180bc7..HEAD`, with implementation through `9ac2d200` and this record/strengthened regression following. The **maintainer decision, 2026-10-15**, makes a hardware-backed inventory signature the root of release trust. This amendment implements it; independent re-review and maintainer-only setup remain. No approval or publication is claimed.
 
-- Release suite: **78 passed**, exit 0. `actionlint` passed candidate/publish/refusal/Nix workflows, exit 0.
-- Six Rust checks: fmt, workspace/all-target and CLI Clippy with warnings denied, locked workspace tests and both locked generators all exited 0. Workspace counts: **2147 passed, 0 failed, 0 ignored** across 142 result lines. Logs: `/tmp/dist-r1-review-rust-{0..5}.log`, summary `/tmp/dist-r1-review-rust-summary.log`.
-- Real pinned cargo-dist post-notice plan/global/formula/installer round-trip passed, exit 0: three executable archives plus four real source tarballs, three formula hashes and **16 installer groups**, including branch signer and missing-verifier refusals. The verifier is an explicit offline double; no public signature/registry qualification is implied. Log: `/tmp/dist-r1-review-installer-roundtrip.log`.
-- Final COPY harness: **60 mutations killed by actual assertions**, with no `ERROR:` or `KeyError` accepted. Log: `/tmp/dist-r1-review-probes-final-2.log`. The previous claim of 49 useful probes is withdrawn: the reviewer identified two error-only fixtures. Their symlink and phase fixtures now exercise real refusal assertions; all final counted probes are listed below. Partial/invalid earlier harness attempts are not counted.
-- Reconcile then upload safely reuses a verified existing bundle; tests were RED on FileExistsError, then GREEN. Mixed installer acceptance was RED (3 offered versus 7 built); source bundles no longer inflate executable counts. Manifest tests cover old/new/identical-dual layouts and reject missing/conflicting copies; real Nix preBuild verified five layouts and flake evaluation exited 0 in the isolated helper tree.
-- Tag tests require the history-pinned signing subkey. The minimal checked-in public key independently verified signed commit `3b7b5f2d2af8821f4617afb08ba1dc766c5b9f14` in an isolated keyring, exit 0. An initial public-key import tried an unnecessary agent in a long socket path; import now uses no-autostart, with a RED regression and successful native public verification. No private key was exported or signing attempted.
-- A first COPY signer probe reached unmocked `gh`, which refused unauthenticated (exit 4), before any repository API result. It is excluded. The fixture now explicitly stubs every transport and an unexpected call is an invalid probe. Earlier construction/helper bootstrap also had scratch-home lapses; these are process deviations, not claims of isolation. Current review checks use scratch HOME/XDG/CARGO_HOME; no real Hennery data/services were used.
-- Earlier native aarch64-darwin Nix build/UI-reference checks and locked UI install/build passed during construction. Review fix 10 has focused helper/Nix-hook verification; final native Linux/macOS CI and public paths remain the parent's/maintainer's. No tracked web files changed, so a full web gate was not required.
-- **Fresh replay:** `dist-r1-replay-7` started clean at `dd7c0066`, extracted **71 code blocks**, passed the task checks (including all **78** release tests), and matched **703 tracked files** byte-for-byte and mode-for-mode, exit 0. Log: `/tmp/dist-r1-review-replay-7.log`. The execution-only record is copied back and compared once more before commit.
+- Test-first RED: new approval tests failed against the missing implementation; the binstall wrong-maintainer metadata case failed a real assertion. Installer trust cases were RED on the old installer, followed by wrong-repository/schema RED tests. Fixes retain exact-tag provenance and signed-tag checks.
+- Final rebased release suite, including the strengthened original-bypass regression: **89 passed**, exit 0; candidate/publish/refusal/Nix `actionlint` exit 0. Log `/tmp/dist-r1-touch-final-proof.log`.
+- Six Rust checks after rebasing: **all six exit 0**, full workspace **2188 passed, 0 failed, 0 ignored** across 146 result rows. Logs `/tmp/dist-r1-touch-after-ui-rust-{0..5}.log`, summary `/tmp/dist-r1-touch-after-ui-rust-summary.log`. The first rebased run exited 101 at the PWA web test (404 instead of 200): ignored `web/dist` still held the previous base's UI. Locked `pnpm --dir web install --frozen-lockfile` and `pnpm --dir web build` exited 0, the targeted web test passed all 11, then all six Rust checks were rerun successfully. No source/test/rule was weakened. UI-refresh log `/tmp/dist-r1-touch-ui-refresh.log`; targeted regression `/tmp/dist-r1-touch-ui-regression.log`. A preliminary run before rebase also exited 0 for all six; its logs are `/tmp/dist-r1-touch-rust-{0..5}.log` and `/tmp/dist-r1-touch-rust-summary.log`.
+- Real mixed pinned cargo-dist round-trip: **20 installer groups and three formula digests passed**, exit 0, with three executable archives and four real source tarballs. Log `/tmp/dist-r1-touch-final-roundtrip.log`. Offline verifier doubles make no claim of public signature or hardware/platform qualification.
+- Final COPY probes: **84 distinct mutations killed through actual assertions**: 60 previous guards on the final tree, 11 hardware-root guards/integrations and 13 integrated installer guards. No ERROR/KeyError-only failure counted. Logs `/tmp/dist-r1-touch-previous-probes.log`, `/tmp/dist-r1-touch-final-proof.log`, `/tmp/dist-r1-touch-installer-probes.log` and each retained COPY result. The strengthened unsigned-tag/valid-looking-attestation regression was also RED against the actual original `55e8f998` verifier in a COPY: it accepted the otherwise valid candidate without hardware approval; `/tmp/dist-r1-touch-original-verifier-red.log`.
+- Actual OpenPGP verification is covered with a disposable software key: matching pin/bytes succeeds, another pin and changed inventory fail. This tests cryptography, never a hardware-touch claim. Historical commit `3b7b5f2d2af8821f4617afb08ba1dc766c5b9f14` was rechecked with `git log --show-signature` and raw verification in an isolated public-only keyring: signing fingerprint `F26C7F594DFE84D131703AFC23E5A318AE8D2861`, primary `1CE2B7354FC6ED5D9DE12DF664C16DED80CCEABA`, exit 0; `/tmp/dist-r1-touch-history.log`. No real private key or YubiKey was used.
+- **Fresh replay:** clean `dist-r1-replay-8` at `256691fe` extracted **74 code blocks**, passed every task check including **89** final release tests, and matched **744 tracked files** byte-for-byte and mode-for-mode, exit 0; `/tmp/dist-r1-touch-replay-8.log`. Replay actionlint also exited 0. The final execution-only record is copied back and all 744 files compared again before commit.
 
-The ledger, harnesses and per-probe logs live in `.superpowers/sdd/release-foundation/`. Historical replay trees 1–6, final replay-7, and isolated `dist-r1-mixed`/`dist-r1-manifest` helper trees are retained for parent cleanup. Scratch archives are never publication candidates. No release, registry login, tag push, public signature or external settings change was performed.
+Prior construction logs/probes and replay trees 1–7 remain historical evidence, including the explicitly withdrawn error-only original probe claims. The fresh replay is `dist-r1-replay-8`; helper `dist-r1-touch-installer` and all COPY roots remain for parent cleanup. Global/key settings, actual physical touch, registry pushes and public-path acceptance are maintainer-only and were not performed. All channel switches remain disabled.
 
 ## Scope
 
 R1 provides the protected platform boundary and auditable in-job gates, held candidate/recovery semantics, exact file/installer/image signer policy, notices/SPDX/source/build identity, hardened installer and tagged-flake support, native workflow definitions and release-process docs. R3 supplies versioned crates/metadata and R4 final OCI payloads and protected jobs. Their integration must satisfy the common contract before enablement. First alpha stays GitHub-only. Homebrew publication, Intel macOS/GNU archives/native repositories/notarization/public caches/R6 modules retain their design gates.
 
 ## Decisions
+
+0. **Hardware inventory approval — maintainer, 2026-10-15.** Anyone without the physical signing authority, including an agent using the maintainer's SSH push key, must be unable to authorize new accepted release bytes. At approval time the maintainer signs the exact canonical frozen `release-inventory.json` digest set with OpenPGP signing subkey `F26C7F594DFE84D131703AFC23E5A318AE8D2861` on the YubiKey. The public `.asc` is an external sidecar and release asset, not a payload in its own digest set. Local `packaging/hennery-release sign-approval` invokes `gpg --detach-sign` and refuses CI; it never exports private keys or supplies unattended PINs. Every verifier and publication gate requires the valid signature and exact digest binding in addition to Sigstore. Signed tags remain defense in depth. One-time `ykman openpgp keys set-touch sig on` requests each touch; `cached-fixed` permits a 15-second signing window and cannot be disabled without deleting the private key. Prefer `on`, protect/remove the hardware and ensure no accessible software copy undermines the boundary. The settings audit records explicit maintainer confirmation of policy/fingerprint, honestly not a remote hardware check. Trusted bootstrap must authenticate verifier/installer code independently. Native binstall remains disabled; external metadata requires both the pinned maintainer and exact Sigstore identity. OCI verification requires the signed global inventory and matching `ghcr-index.json` digest. Missing/malformed/other-key/different-inventory signatures refuse even under a valid exact-tag attestation. [Yubico policies](https://docs.yubico.com/software/yubikey/tools/ykman/OpenPGP_Commands.html).
 
 1. **Platform boundary — parent on the maintainer's behalf, 2026-10-15.** A repository writer can rewrite workflow code and request ordinary write GITHUB_TOKEN/OIDC. Static checking is defense in depth only. Environment `release` requires the maintainer and permits only protected `v*` tags; every long-lived publishing credential is an environment secret there, never a repository secret. crates.io must require both `release` and exact workflow filename. GHCR package Actions access is READ and writes use a separate protected credential. GitHub releases are immutable. Every consumer pins the exact tag workflow identity and rejects branch signers.
 2. **Tag policy — same parent ruling/date.** Two active `v*` rulesets: owner-only **User** creation bypass in one; update/deletion denied with no bypass in the other. No fictitious personal-repository Maintain role. Annotated tag signatures must verify against subkey `F26C7F594DFE84D131703AFC23E5A318AE8D2861`, derived from signed history; tags directly identify the exact candidate commit. Verify before candidate storage credentials and at every publication boundary. Local settings auditing independently verifies the tag before using owner settings authentication.
@@ -42,12 +42,12 @@ R1 provides the protected platform boundary and auditable in-job gates, held can
 - Never publish, log into registries, mint tokens, push release tags or change external settings in this child. The parent owns GitHub/PR/check/review actions. The settings audit and negative push are future maintainer-only tools, never run here with real credentials.
 - Plain `nix develop -c` from the named worktree; release Python/tools use `.#release`, and Rust plus Python probes use the build shell plus one-off Python. Scratch HOME/XDG/config/cache/CARGO_HOME; no shared Cargo target and no real operator data.
 - Pinned actions, timeouts, no restored candidate caches; least ordinary token permissions. All publishing credentials remain platform-protected environment secrets. No broad administration policy reader in CI.
-- Personal git identity, unsigned Conventional Commits, staged-byte checks and diff hygiene. Push only the owned branch with the parent's exact lease on original `7e8bc0556704952a04845d2e90008d7628177ef1`.
+- Personal git identity, unsigned Conventional Commits, staged-byte checks and diff hygiene. Push only the owned branch with the parent's exact lease on original `55e8f99834be1896ab8ace41df17f4db64de2f0d`.
 - Retain scratch trees; no global/project memory writes. The parent files cross-project lessons and cleans up.
 
 ## Review focus
 
-Re-review the original finding's platform threat model, actual maintainer setup and acceptance proof, OIDC/certificate tag identity and bootstrap, pinned-key tag verification, audit digest/freshness/owner confirmation versus UI-only observations, no administration authority in publishers, two personal-repository rulesets, immutable draft/publication/recovery lifecycle, final crate metadata enforcement, GHCR package permission and credential capability, held S3/audit/IAM semantics, source/licences and installer atomicity. Offline fixtures prove code refusal, not live platform enforcement. The complete maintainer-only checklist is in [release process](../release-process.md).
+Re-review hardware-root enforcement at every consumer/publication boundary, exact signed digest snapshots, trusted bootstrap, local-only signing and honest touch confirmation, plus the original platform threat model, actual maintainer setup and acceptance proof, OIDC/certificate tag identity and bootstrap, pinned-key tag verification, audit digest/freshness/owner confirmation versus UI-only observations, no administration authority in publishers, two personal-repository rulesets, immutable draft/publication/recovery lifecycle, final crate metadata enforcement, GHCR package permission and credential capability, held S3/audit/IAM semantics, source/licences and installer atomicity. Offline fixtures prove code refusal, not live platform enforcement. The complete maintainer-only checklist is in [release process](../release-process.md).
 
 ## File structure and extraction
 
@@ -59,9 +59,11 @@ Exact final source follows. Each `r1:file` block gives task, path, decoded SHA-2
 - Task 1: `.github/release-tag-creation.json`
 - Task 1: `.github/release-tag-ruleset.json`
 - Task 1: `.gitignore`
+- Task 1: `packaging/hennery-release`
 - Task 1: `packaging/release-gate`
 - Task 1: `packaging/release/.gitignore`
 - Task 1: `packaging/release/README.md`
+- Task 1: `packaging/release/approval.py`
 - Task 1: `packaging/release/gate.py`
 - Task 1: `packaging/release/maintainer.asc`
 - Task 1: `packaging/release/post_setup.py`
@@ -117,6 +119,7 @@ Exact final source follows. Each `r1:file` block gives task, path, decoded SHA-2
 - Task 4: `packaging/release/assemble.py`
 - Task 4: `packaging/release/publish.py`
 - Task 4: `packaging/release/refresh_manifest.py`
+- Task 4: `packaging/release/test_approval.py`
 - Task 4: `packaging/release/test_publish.py`
 - Task 4: `packaging/release/test_workflows.py`
 - Task 4: `packaging/release/workflow_policy.py`
@@ -221,6 +224,15 @@ node_modules/
 __pycache__/
 ````
 
+### File `packaging/hennery-release`
+
+<!-- r1:file task=1 path=packaging/hennery-release sha256=1b94ed5a72ca87b9126c8422d75e75cce5c0ae6741670ea61848214efb67d4a1 bytes=74 mode=755 encoding=utf8 -->
+````text
+#!/bin/sh
+set -eu
+exec python3 "$(dirname "$0")/release/approval.py" "$@"
+````
+
 ### File `packaging/release-gate`
 
 <!-- r1:file task=1 path=packaging/release-gate sha256=2b250a531e66d039074896a2bdb5ae90756b84bddbc1939c0c99e1e3a422ee31 bytes=583 mode=755 encoding=utf8 -->
@@ -249,7 +261,7 @@ __pycache__/
 
 ### File `packaging/release/README.md`
 
-<!-- r1:file task=1 path=packaging/release/README.md sha256=86cc9c730ea3363e8cedbe8b4e38492dc658094eed93dc9dd8228ccb48bcc14b bytes=7877 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/README.md sha256=544fce8f13f06cb4f25c55e5f22371152ea1db22095f21328b31cda71272324a bytes=9069 mode=644 encoding=utf8 -->
 ````markdown
 # R1 gate contract
 
@@ -260,7 +272,11 @@ workflow checker is defense in depth. A repository writer can rewrite a workflow
 and request an ordinary write `GITHUB_TOKEN` or OIDC token; lint cannot prevent
 GitHub issuing those tokens.
 
-The security boundary is platform configuration: maintainer review and deployment
+Release authority is the hardware-backed maintainer signature over the exact
+frozen inventory, required by every consumer and publisher alongside Sigstore.
+An owner SSH key can create an unsigned tag and run altered workflow code;
+an exact-tag certificate alone cannot authorize release bytes. Platform defenses
+still require maintainer review and deployment
 restricted to protected `v*` tags; publishing credentials only in `release`;
 crates.io trusted publishing bound to `release` and `release-publish.yml`; GHCR
 Actions access READ with a separate protected credential; immutable GitHub
@@ -296,7 +312,8 @@ signed release tag**, never a branch. Platform `GITHUB_REF` must be
 inputs are `inventory_sha256`, `source_sha`, `tag`, sorted JSON `channels` and
 `targets`, JSON `candidate` containing integer `run_id`/`run_attempt`, the held
 `retention_receipt_version`, canonical `settings_audit` JSON and its SHA-256
-`settings_audit_sha256`. Publishing IDs come from the platform. Do not fabricate
+`settings_audit_sha256`, plus the armored public detached `maintainer_signature`
+over the exact inventory bytes. Publishing IDs come from the platform. Do not fabricate
 or replace platform variables. `GH_TOKEN` needs ordinary contents/Actions read;
 publishers never inspect private ruleset bypass settings or hold administration
 credentials. `RELEASE_AUDIT_BUCKET` and a storage-only AWS principal permit
@@ -315,6 +332,8 @@ account and explicitly confirmed UI observations where no settings API exists.
 It inspects the protected environment, both tag rulesets, repository/environment
 secret names and immutable-release setting. It checks GHCR Actions READ plus the
 post-setup negative push result, and each crate's exact workflow/environment.
+It records the maintainer's explicit hardware-touch policy/fingerprint confirmation;
+remote code cannot verify physical touch configuration.
 Publishers verify the ratified report, current exact-SHA checks, current review
 history and a freshly fetched tag's actual pinned-key signature at every gate.
 
@@ -334,6 +353,8 @@ checks supplement the platform boundary; a branch-editable boolean is not it.
 | R4 | Replace `packaging/r1-ghcr-gate upload/sign` with `packaging/release-gate ghcr`, `preflight` before dedicated credentials and `boundary` before each upload/sign. Freeze `ghcr-oci-layout.tar`, `ghcr-index.json` and SBOM/acceptance material. Extract outside the root; recheck both platform/index digests and executable hashes from signed `inventory.binaries[target]`. Ordinary `GITHUB_TOKEN` is READ only at the package; registry authentication uses a separate `release` environment secret. |
 
 There is no alternate `r1-ghcr-gate`, approval-ID protocol or branch signer.
+Dispatch input `maintainer_signature` carries the detached armored OpenPGP signature over the exact frozen `release-inventory.json`. Every channel gate verifies it before credentials and at each write boundary. Publishers retain and upload `release-inventory.json.asc` as a sidecar outside the frozen candidate. The pinned hardware-backed maintainer signature is authority; tag checks and Sigstore remain additional defenses. Every file/OCI verifier requires both. `ghcr-index.json` must contain a `digest` matching the requested immutable image subject; its bytes are covered by the global signed inventory.
+
 All file, installer and image verification pins the certificate identity to
 `https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<exact-version-tag>`
 with the GitHub OIDC issuer and exact source ref. `verify.py` supplies the shared
@@ -352,7 +373,8 @@ the external verified path. The required metadata for each concrete version is:
 disabled-strategies = ["crate-meta-data", "quick-install", "compile"]
 
 [package.metadata.hennery-release]
-verification = "external-sigstore"
+verification = "external-openpgp-sigstore"
+maintainer-fingerprint = "F26C7F594DFE84D131703AFC23E5A318AE8D2861"
 signer-identity = "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0"
 ```
 
@@ -374,9 +396,85 @@ Actions artifacts are convenience copies, never the retention authority.
 Generated with Claude AI — please review before distribution.
 ````
 
+### File `packaging/release/approval.py`
+
+<!-- r1:file task=1 path=packaging/release/approval.py sha256=4f9d1efc038c2315daaf19908aed104328907d213a4e9b27efe20851a6036784 bytes=4702 mode=644 encoding=utf8 -->
+````python
+#!/usr/bin/env python3
+"""Offline maintainer inventory signature: the root of release authority."""
+import argparse
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+import gate
+from tag_signature import FINGERPRINT
+
+
+def verify(inventory, signature):
+    inventory, signature = Path(inventory), Path(signature)
+    gate.require(inventory.is_file() and not inventory.is_symlink(), 'maintainer inventory missing/nonregular')
+    gate.require(signature.is_file() and not signature.is_symlink() and 0 < signature.stat().st_size <= 16384, 'maintainer inventory signature missing/nonregular')
+    raw = inventory.read_bytes()
+    value = gate.strict_json(raw)
+    gate.require(raw == gate.canonical(value), 'maintainer signature requires canonical inventory bytes')
+    armored = signature.read_bytes()
+    gate.require(armored.startswith(b'-----BEGIN PGP SIGNATURE-----\n') and armored.rstrip().endswith(b'-----END PGP SIGNATURE-----'), 'malformed maintainer inventory signature')
+    with tempfile.TemporaryDirectory(prefix='hennery-approval-') as temporary:
+        environment = dict(os.environ, GNUPGHOME=temporary)
+        Path(temporary, 'gpg.conf').write_text('no-autostart\nno-auto-key-retrieve\n')
+        subprocess.run(['gpg', '--batch', '--no-autostart', '--import', str(Path(__file__).with_name('maintainer.asc'))], env=environment, check=True, capture_output=True, text=True)
+        frozen_inventory = Path(temporary) / 'inventory.json'
+        frozen_signature = Path(temporary) / 'inventory.json.asc'
+        frozen_inventory.write_bytes(raw); frozen_signature.write_bytes(armored)
+        result = subprocess.run(['gpg', '--batch', '--no-autostart', '--status-fd', '1', '--verify', str(frozen_signature), str(frozen_inventory)], env=environment, capture_output=True, text=True)
+        records = [line.split()[1:] for line in result.stdout.splitlines() if line.startswith('[GNUPG:] ')]
+        valid = [r for r in records if r and r[0] == 'VALIDSIG']
+        gate.require(result.returncode == 0 and len(valid) == 1 and len(valid[0]) > 1 and valid[0][1] == FINGERPRINT and not any(r and r[0] in {'BADSIG','ERRSIG','REVKEYSIG','EXPKEYSIG','EXPSIG','KEYEXPIRED','SIGEXPIRED','KEYREVOKED','NO_PUBKEY','NODATA','FAILURE','ERROR'} for r in records), 'maintainer inventory signature invalid or not from pinned key')
+    return {'inventory_sha256': gate.digest(raw), 'signature_sha256': gate.digest(armored), 'fingerprint': FINGERPRINT}
+
+
+def verify_dispatch(candidate, inputs):
+    """The dispatch carries public signature bytes, never a signing credential."""
+    signature = inputs.get('maintainer_signature')
+    gate.require(isinstance(signature, str) and len(signature) <= 16384, 'maintainer inventory signature input missing')
+    with tempfile.TemporaryDirectory(prefix='hennery-dispatch-approval-') as temporary:
+        path = Path(temporary) / 'release-inventory.json.asc'
+        path.write_text(signature)
+        return verify(Path(candidate) / 'release-inventory.json', path)
+
+
+def sign(inventory, output, touch_confirmed):
+    gate.require(not os.environ.get('CI') and not os.environ.get('GITHUB_ACTIONS') and not os.environ.get('GITHUB_RUN_ID'), 'maintainer signing must never run in CI')
+    gate.require(touch_confirmed is True, 'maintainer must confirm signing-subkey hardware touch is configured')
+    inventory, output = Path(inventory), Path(output)
+    gate.require(not output.exists() and not output.is_symlink(), 'refusing to overwrite maintainer signature')
+    raw = inventory.read_bytes()
+    gate.require(raw == gate.canonical(gate.strict_json(raw)), 'sign only canonical frozen inventory')
+    # GnuPG performs hardware/PIN/touch interaction locally. No passphrase,
+    # loopback pinentry, secret export or unattended fallback is provided.
+    subprocess.run(['gpg', '--armor', '--local-user', FINGERPRINT+'!', '--output', str(output), '--detach-sign', str(inventory)], check=True)
+    gate.require(inventory.read_bytes() == raw, 'inventory changed during maintainer signing')
+    return verify(inventory, output)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('operation', choices=['sign-approval','verify-approval'])
+    parser.add_argument('--inventory', required=True, type=Path)
+    parser.add_argument('--signature', required=True, type=Path)
+    parser.add_argument('--confirm-hardware-touch', action='store_true')
+    args = parser.parse_args()
+    result = sign(args.inventory,args.signature,args.confirm_hardware_touch) if args.operation == 'sign-approval' else verify(args.inventory,args.signature)
+    print(gate.canonical(result).decode(),end='')
+
+if __name__ == '__main__': main()
+````
+
 ### File `packaging/release/gate.py`
 
-<!-- r1:file task=1 path=packaging/release/gate.py sha256=94854fa410734fcb7bef06ae0915ce76c8a6983fb4e4ac3ff841bdfa5674695a bytes=15954 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/gate.py sha256=d5e89bc3a3c9c664f223f1a77f75ca7322175bb33a923f19704397995a752c87 bytes=16177 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """R1 v1 gate. Read-only platform checks; no signing or publication credentials.
@@ -629,6 +727,9 @@ def main():
         require(supplied == inventory[key], f'dispatch {key} changed')
     require(inputs.get('inventory_sha256') == args.inventory_sha256, 'dispatch inventory changed')
     require(args.channel in inventory['channels'], 'channel not approved')
+    import approval
+    proof = approval.verify_dispatch(args.candidate, inputs)
+    require(proof['inventory_sha256'] == args.inventory_sha256 == digest(raw), 'maintainer signature does not approve this inventory digest')
     import supply
     supply.require_contract(args.candidate, inventory['channels'], inventory['targets'], inventory['tag'])
     supply.verify_binary_inventory(inventory, args.candidate)
@@ -961,7 +1062,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/settings_audit.py`
 
-<!-- r1:file task=1 path=packaging/release/settings_audit.py sha256=ef0d461f7725c6303d18fad7dab3aef80e2668204ee7527ad270089929ded8e6 bytes=8746 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/settings_audit.py sha256=e8cfe80d1bfe62f88d2c67961b8d714509d5a6f719914034f3d49d166e3d40fc bytes=9132 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """Maintainer-local platform settings audit; publishers only validate its digest.
@@ -991,6 +1092,9 @@ def tag_rulesets(owner_id):
 def validate_settings(settings, channels):
     owner = settings['owner']
     gate.require(owner.get('login') == gate.REPOSITORY.split('/')[0] and owner.get('type') == 'User' and type(owner.get('id')) is int and owner['id'] > 0, 'settings audit requires the personal repository owner')
+    import tag_signature
+    touch = settings.get('maintainer_touch', {})
+    gate.require(touch.get('confirmed') is True and touch.get('fingerprint') == tag_signature.FINGERPRINT and touch.get('policy') in ('on', 'cached-fixed'), 'maintainer hardware touch confirmation missing; remote verification is impossible')
     env = settings['environment']
     gate.require(env.get('name') == 'release' and env.get('can_admins_bypass') is False, 'release environment missing or bypass not explicitly disabled')
     reviewers = [r for rule in env.get('protection_rules', []) if rule.get('type') == 'required_reviewers' for r in rule.get('reviewers', [])]
@@ -1067,6 +1171,7 @@ def collect(observations):
             'rulesets': rulesets, 'repository_secrets': [s['name'] for s in pages(prefix + '/actions/secrets', 'secrets')],
             'release_secrets': [s['name'] for s in pages(prefix + '/environments/release/secrets', 'secrets')],
             'immutable_releases': gh(prefix + '/immutable-releases')['enabled'],
+            'maintainer_touch': observations.get('maintainer_touch'),
             'ghcr': observations.get('ghcr'), 'crates': observations.get('crates')}
 
 
@@ -1586,7 +1691,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/test_settings.py`
 
-<!-- r1:file task=1 path=packaging/release/test_settings.py sha256=5495184255029b4faf9584157731c744b8eb9fb206587584aba17ec60438ce93 bytes=6513 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/test_settings.py sha256=aa2f26abeaabbf6d94574bcd71eb7273c43bef6a972c9c1ce6438c31b3b6dc2c bytes=6637 mode=644 encoding=utf8 -->
 ````python
 import copy
 from datetime import datetime, timedelta, timezone
@@ -1606,6 +1711,7 @@ def settings():
         'rulesets': settings_audit.tag_rulesets(123),
         'repository_secrets': [], 'release_secrets': ['RELEASE_PUBLISH_APP_KEY', 'GHCR_PUBLISH_TOKEN'],
         'immutable_releases': True,
+        'maintainer_touch': {'confirmed': True, 'fingerprint': 'F26C7F594DFE84D131703AFC23E5A318AE8D2861', 'policy': 'on'},
         'ghcr': {'repository': gate.REPOSITORY, 'actions_access': 'read', 'dedicated_credential': 'GHCR_PUBLISH_TOKEN',
                  'negative_push': {'read_status': 200, 'push_status': 403, 'credential': 'GITHUB_TOKEN'}},
         'crates': [{'crate': name, 'repository': gate.REPOSITORY, 'workflow': 'release-publish.yml', 'environment': 'release'} for name in settings_audit.CRATES],
@@ -1731,7 +1837,7 @@ class TagSignature(unittest.TestCase):
 
 ### File `packaging/release/test_verify.py`
 
-<!-- r1:file task=1 path=packaging/release/test_verify.py sha256=027b382b58c349a3d6201003e491ef377b0af09aa4d52610fb0f35d4216c177e bytes=5571 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/test_verify.py sha256=fd86286bc6cd3b81f20897589bcb682df561e3934c2c2e0484453ed0abd62a69 bytes=6609 mode=644 encoding=utf8 -->
 ````python
 import hashlib
 from pathlib import Path
@@ -1746,6 +1852,9 @@ import test_gate
 
 
 class Verification(unittest.TestCase):
+    def setUp(self):
+        mocked = patch('approval.verify', side_effect=lambda inventory, signature: {'inventory_sha256':gate.digest(inventory.read_bytes())} if inventory.is_file() else {}); mocked.start(); self.addCleanup(mocked.stop)
+
     def test_authentication_failure_stops_before_installer(self):
         with patch.object(verify.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'verifier')):
             with self.assertRaises(subprocess.CalledProcessError):
@@ -1772,6 +1881,7 @@ class SignerIdentity(unittest.TestCase):
         # A removed refusal guard must never escape to a real CLI/network call.
         # RuntimeError deliberately makes such a probe invalid, not a counted
         # authorization assertion failure.
+        mocked = patch('approval.verify', side_effect=lambda inventory, signature: {'inventory_sha256':gate.digest(inventory.read_bytes())} if inventory.is_file() else {}); mocked.start(); self.addCleanup(mocked.stop)
         transport = patch.object(verify.subprocess, 'run', side_effect=RuntimeError('signer tests must explicitly stub every transport'))
         transport.start()
         self.addCleanup(transport.stop)
@@ -1800,21 +1910,26 @@ class SignerIdentity(unittest.TestCase):
         def crypto(command, **kwargs):
             if '--cert-identity' in command and command[command.index('--cert-identity') + 1] == expected:
                 raise subprocess.CalledProcessError(1, command)
-        with patch.object(verify.subprocess, 'run', side_effect=crypto), self.assertRaises(subprocess.CalledProcessError):
-            verify.verify_image('ghcr.io/marcinwadon/hennery@sha256:' + 'a' * 64, 'v0.1.0')
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            (root/'release-inventory.json').write_bytes(gate.canonical({'tag':'v0.1.0','channels':['ghcr']}))
+            (root/'ghcr-index.json').write_bytes(gate.canonical({'digest':'sha256:'+'a'*64}))
+            with patch.object(verify.gate,'verify_files'), patch.object(verify.subprocess, 'run', side_effect=crypto), self.assertRaises(subprocess.CalledProcessError):
+                verify.verify_image('ghcr.io/marcinwadon/hennery@sha256:' + 'a' * 64, 'v0.1.0', candidate=root, approval_signature=root/'release-inventory.json.asc')
         with patch.object(verify.subprocess, 'run'), self.assertRaisesRegex(gate.Refused, 'immutable image'):
             verify.verify_image('ghcr.io/marcinwadon/hennery:latest', 'v0.1.0')
 
 class BinstallMetadata(unittest.TestCase):
     def test_metadata_cannot_advertise_an_unverified_or_branch_signed_path(self):
         import copy
-        good={'binstall':{'disabled-strategies':['crate-meta-data','quick-install','compile']},'hennery-release':{'verification':'external-sigstore','signer-identity':'https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0'}}
+        good={'binstall':{'disabled-strategies':['crate-meta-data','quick-install','compile']},'hennery-release':{'verification':'external-openpgp-sigstore','maintainer-fingerprint':verify.approval.FINGERPRINT,'signer-identity':'https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0'}}
         verify.require_binstall_metadata(good,'v0.1.0')
-        for kind in ('native','branch','wrong-tag','no-verifier'):
+        for kind in ('native','branch','wrong-tag','wrong-maintainer','no-verifier'):
             bad=copy.deepcopy(good)
             if kind=='native':bad['binstall']['disabled-strategies'].remove('crate-meta-data')
             elif kind=='branch':bad['hennery-release']['signer-identity']=bad['hennery-release']['signer-identity'].replace('@refs/tags/v0.1.0','@refs/heads/main')
             elif kind=='wrong-tag':bad['hennery-release']['signer-identity']+='-other'
+            elif kind=='wrong-maintainer':bad['hennery-release']['maintainer-fingerprint']='0'*40
             else:bad['hennery-release']['verification']='checksum-only'
             with self.subTest(kind=kind),self.assertRaises(gate.Refused):
                 verify.require_binstall_metadata(bad,'v0.1.0')
@@ -1826,7 +1941,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/verify.py`
 
-<!-- r1:file task=1 path=packaging/release/verify.py sha256=5cec5a8b4ffbf370d77c3985265cf4e8fbe398f42b53de2027c0285c1bbc2112 bytes=4354 mode=644 encoding=utf8 -->
+<!-- r1:file task=1 path=packaging/release/verify.py sha256=773f00720bd5f5c4fc6cae04f9f925016253ef2a517f7ffe389c7efaa40748f4 bytes=5765 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """Verify downloaded final bytes before executing the cargo-dist installer."""
@@ -1837,6 +1952,7 @@ import subprocess
 
 import gate
 import supply
+import approval
 
 
 def attestation_command(subject, tag, bundle=None):
@@ -1851,9 +1967,19 @@ def attestation_command(subject, tag, bundle=None):
     return command
 
 
-def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/provenance/v1'):
+def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/provenance/v1', candidate=None, approval_signature=None):
     gate.require(re.fullmatch(r'ghcr\.io/marcinwadon/hennery@sha256:[0-9a-f]{64}', image), 'verification requires an immutable image digest')
     gate.require(predicate_type in ('https://slsa.dev/provenance/v1', 'https://spdx.dev/Document'), 'unexpected attestation predicate')
+    gate.require(candidate is not None and approval_signature is not None, 'image requires maintainer-signed inventory')
+    candidate = Path(candidate)
+    proof = approval.verify(candidate / 'release-inventory.json', approval_signature)
+    raw = (candidate / 'release-inventory.json').read_bytes()
+    gate.require(gate.digest(raw) == proof['inventory_sha256'], 'signed image inventory changed during verification')
+    inventory = gate.strict_json(raw)
+    gate.verify_files(inventory, candidate)
+    gate.require(inventory['tag'] == tag and 'ghcr' in inventory['channels'], 'image inventory release/channel mismatch')
+    index = gate.strict_json((candidate / 'ghcr-index.json').read_bytes())
+    gate.require(index.get('digest') == image.split('@', 1)[1], 'image digest is not in maintainer-signed inventory')
     command = attestation_command('oci://' + image, tag, bundle) + ['--predicate-type', predicate_type]
     if bundle is None:
         command += ['--bundle-from-oci']
@@ -1868,19 +1994,22 @@ def require_binstall_metadata(metadata, tag):
     gate.require(isinstance(disabled, list) and sorted(disabled) == ['compile', 'crate-meta-data', 'quick-install'], 'native binstall strategies must remain disabled without an identity-verifying bridge')
     policy = metadata.get('hennery-release', {})
     command = attestation_command('unused', tag)
-    gate.require(policy.get('verification') == 'external-sigstore' and policy.get('signer-identity') == command[command.index('--cert-identity') + 1], 'binstall external verification metadata must pin the exact release-tag identity')
+    gate.require(policy.get('verification') == 'external-openpgp-sigstore' and policy.get('maintainer-fingerprint') == approval.FINGERPRINT and policy.get('signer-identity') == command[command.index('--cert-identity') + 1], 'binstall external verification metadata must pin the exact release-tag identity')
 
 
-def verify(candidate, bundle, source_sha, tag, signer_sha=None):
+def verify(candidate, bundle, source_sha, tag, signer_sha=None, approval_signature=None):
     candidate, bundle = Path(candidate), Path(bundle)
     inventory_path = candidate / 'release-inventory.json'
-    # Verify the inventory signature first: hashes beside bytes alone do not
-    # authenticate an author. The signer is the protected publication workflow.
+    proof = approval.verify(inventory_path, approval_signature or candidate.parent / 'release-inventory.json.asc')
+    # Verify Sigstore too: hashes beside bytes alone do not
+    # authenticate an author. Hardware approval is authority; workflow is provenance.
     command = attestation_command(inventory_path, tag, bundle)
     if signer_sha:
         command += ['--signer-digest', signer_sha]
     subprocess.run(command, check=True)
-    inventory = gate.strict_json(inventory_path.read_bytes())
+    raw = inventory_path.read_bytes()
+    gate.require(gate.digest(raw) == proof['inventory_sha256'], 'signed inventory changed during verification')
+    inventory = gate.strict_json(raw)
     gate.require(inventory['source_sha'] == source_sha and inventory['tag'] == tag, 'attested release source/tag mismatch')
     gate.verify_files(inventory, candidate)
     supply.verify_checksums(candidate)
@@ -1899,17 +2028,19 @@ if __name__ == '__main__':
     subject.add_argument('--candidate', type=Path)
     subject.add_argument('--image')
     parser.add_argument('--bundle', type=Path)
+    parser.add_argument('--approval-signature', required=True, type=Path)
+    parser.add_argument('--inventory-directory', type=Path)
     parser.add_argument('--source-sha')
     parser.add_argument('--tag', required=True)
     parser.add_argument('--signer-sha')
     parser.add_argument('--predicate-type', default='https://slsa.dev/provenance/v1')
     args = parser.parse_args()
     if args.image:
-        verify_image(args.image, args.tag, args.bundle, args.predicate_type)
+        verify_image(args.image, args.tag, args.bundle, args.predicate_type, args.inventory_directory, args.approval_signature)
     else:
         if args.bundle is None or args.source_sha is None:
             parser.error('file verification requires --bundle and --source-sha')
-        verify(args.candidate, args.bundle, args.source_sha, args.tag, args.signer_sha)
+        verify(args.candidate, args.bundle, args.source_sha, args.tag, args.signer_sha, args.approval_signature)
 ````
 
 ### Step 3: GREEN / verification
@@ -1974,7 +2105,7 @@ mod tests {
 
 ### File `crates/hennery/src/main.rs`
 
-<!-- r1:file task=2 path=crates/hennery/src/main.rs sha256=4552c8dcdfce588d9dd97bfa941a93ca80e3dbaaba9f5b1132f87ba0d552adc5 bytes=76345 mode=644 encoding=utf8 -->
+<!-- r1:file task=2 path=crates/hennery/src/main.rs sha256=86fe8cb49aabd03575926304d44a10a82a1c0b87dc36cad07d964f8e3438657b bytes=76438 mode=644 encoding=utf8 -->
 ````rust
 //! The `hennery` binary (distribution spec §1): collector, host (join and
 //! run) and an all-in-one mode. Hosts authenticate with the key they paired
@@ -2559,6 +2690,7 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
     let served = hennery_sessions::serve_all(
         listeners,
         hennery_sessions::router(state.clone())
+            .merge(hennery_sessions::builtin::router(state.clone(), gateway.clone()))
             .merge(hennery_gateway::api::router(gateway))
             .merge(hennery_gateway::proxy::router(proxy)),
         state.shutdown.clone(),
@@ -3304,9 +3436,9 @@ async fn start_gateway(
         egress.clone(),
         std::sync::Arc::new(state.push.clone()),
     )?;
-    state
-        .store
-        .set_session_mcp(std::sync::Arc::new(hennery_gateway::session::GatewayMcp::new(&gateway)));
+    state.store.set_session_mcp(std::sync::Arc::new(
+        hennery_gateway::session::GatewayMcp::for_collector(&gateway),
+    ));
     gateway.runtime.recover_plugins().await?;
     gateway.runtime.ensure_plugin_worker();
     gateway.runtime.announce_startup()?;
@@ -10341,7 +10473,7 @@ class AdapterManifest(unittest.TestCase):
 
 ### File `packaging/release/test_supply.py`
 
-<!-- r1:file task=2 path=packaging/release/test_supply.py sha256=34cae556e4c0d83becc1146f92f3d3f9b06b3ecef1d53b192f737de9dc624861 bytes=12834 mode=644 encoding=utf8 -->
+<!-- r1:file task=2 path=packaging/release/test_supply.py sha256=0dd6556d8118c958e164de9deff861eb1fa19d053c6858fa6102d69bd9200adf bytes=12909 mode=644 encoding=utf8 -->
 ````python
 from pathlib import Path
 import tempfile
@@ -10458,7 +10590,7 @@ class Supply(unittest.TestCase):
     def write_cli_crate(root, tag, identity_ref=None):
         base='hennery-'+tag.removeprefix('v')
         identity_ref=identity_ref or 'refs/tags/'+tag
-        text='[package]\nname="hennery"\nversion="'+tag.removeprefix('v')+'"\n[package.metadata.binstall]\ndisabled-strategies=["crate-meta-data","quick-install","compile"]\n[package.metadata.hennery-release]\nverification="external-sigstore"\nsigner-identity="https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@'+identity_ref+'"\n'
+        text='[package]\nname="hennery"\nversion="'+tag.removeprefix('v')+'"\n[package.metadata.binstall]\ndisabled-strategies=["crate-meta-data","quick-install","compile"]\n[package.metadata.hennery-release]\nverification="external-openpgp-sigstore"\nmaintainer-fingerprint="F26C7F594DFE84D131703AFC23E5A318AE8D2861"\nsigner-identity="https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@'+identity_ref+'"\n'
         with tarfile.open(root/(base+'.crate'),'w:gz') as archive:
             data=text.encode();entry=tarfile.TarInfo(base+'/Cargo.toml');entry.size=len(data);archive.addfile(entry,io.BytesIO(data))
 
@@ -10584,7 +10716,7 @@ Use the copied-tree harness below; every counted mutation must fail an actual as
 
 ### Step 1: RED / contract
 
-Run the old installer acceptance against three executable plus four real source archives: 3 offered/7 built is RED. The signature-pin regression is also RED before hardening. Fix only the cause, then require the real pinned cargo-dist template with mocked signing transport, all 16 groups and three formula hashes. The symlink fixture must resolve before removing its regular-file guard.
+Run the old installer acceptance against three executable plus four real source archives: 3 offered/7 built is RED. The signature-pin regression is also RED before hardening. Fix only the cause, then require the real pinned cargo-dist template with mocked signing transport, all 20 groups and three formula hashes. The symlink fixture must resolve before removing its regular-file guard.
 
 ### Step 2: Exact implementation
 
@@ -10622,7 +10754,7 @@ echo "ok: $archive holds the binary, its licence and its README alone"
 
 ### File `packaging/harden-installer.py`
 
-<!-- r1:file task=3 path=packaging/harden-installer.py sha256=b98b9e88ef5b279288382d7191c4bf5a251309a1306ccf0028afc92d7aca2b47 bytes=5825 mode=755 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/harden-installer.py sha256=b65243d319b85d0a81ea9d7e2ece23d2d35aeded6eabddbd7433490e23335b73 bytes=9019 mode=755 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """Make cargo-dist's shell installer refuse to install what it cannot check.
@@ -10641,6 +10773,52 @@ Usage: harden-installer.py <path to hennery-installer.sh>  (edited in place)
 """
 
 import sys
+from pathlib import Path
+
+MAINTAINER_KEY = (Path(__file__).parent / 'release/maintainer.asc').read_text()
+MAINTAINER_VERIFICATION = r'''    # The maintainer's touch-approved digest set is the root of trust.
+    check_cmd gpg || err "gpg is required for maintainer release signature verification"
+    check_cmd jq || err "jq is required for maintainer release inventory verification"
+    local _inventory="${HENNERY_RELEASE_INVENTORY:-$_dir/release-inventory.json}"
+    local _signature="${HENNERY_RELEASE_SIGNATURE:-$_dir/release-inventory.json.asc}"
+    if [ -z "${HENNERY_RELEASE_INVENTORY:-}" ]; then
+        downloader "$ARTIFACT_DOWNLOAD_URL/release-inventory.json" "$_inventory" || err "cannot download maintainer release inventory"
+    fi
+    if [ -z "${HENNERY_RELEASE_SIGNATURE:-}" ]; then
+        downloader "$ARTIFACT_DOWNLOAD_URL/release-inventory.json.asc" "$_signature" || err "cannot download maintainer release signature"
+    fi
+    [ -s "$_inventory" ] && [ -s "$_signature" ] || err "missing maintainer release signature or inventory"
+    local _keyring="$_dir/maintainer-keyring"
+    mkdir -m 0700 "$_keyring" || err "cannot isolate maintainer verification keyring"
+    cat > "$_keyring/key.asc" <<'HENNERY_MAINTAINER_KEY'
+''' + MAINTAINER_KEY + r'''HENNERY_MAINTAINER_KEY
+    gpg --batch --no-options --homedir "$_keyring" --no-autostart --no-auto-key-retrieve \
+        --import "$_keyring/key.asc" >/dev/null 2>&1 || err "cannot import pinned maintainer public key"
+    local _status
+    _status=$(gpg --batch --no-options --homedir "$_keyring" --no-autostart --no-auto-key-retrieve \
+        --status-fd 1 --verify "$_signature" "$_inventory" 2>/dev/null) || err "invalid maintainer release signature"
+    printf '%s\n' "$_status" | awk '
+        $1 == "[GNUPG:]" && $2 == "VALIDSIG" { count++; if ($3 != "F26C7F594DFE84D131703AFC23E5A318AE8D2861") bad=1 }
+        $1 == "[GNUPG:]" && $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYEXPIRED|SIGEXPIRED|KEYREVOKED|NO_PUBKEY|NODATA|FAILURE|ERROR)$/ { bad=1 }
+        END { exit !(count == 1 && !bad) }
+    ' || err "release signature is not from the pinned maintainer signing key"
+    local _approved_sha _actual_sha
+    _approved_sha=$(jq -er --arg tag "v$APP_VERSION" --arg archive "$_artifact_name" '
+        if .schema != 1 or .repository != "marcinwadon/hennery" or .tag != $tag then error("release schema/repository/tag mismatch") else
+            [.artifacts[] | select(.name == $archive)] |
+            if length != 1 then error("archive missing or duplicated") else .[0].sha256 end |
+            if type == "string" and test("^[0-9a-f]{64}$") then . else error("invalid archive digest") end
+        end' "$_inventory") || err "maintainer inventory does not authorize this archive and tag"
+    if check_cmd sha256sum; then
+        _actual_sha=$(sha256sum -b "$_file" | awk '{ print $1 }')
+    elif check_cmd shasum; then
+        _actual_sha=$(shasum -a 256 -b "$_file" | awk '{ print $1 }')
+    else
+        err "cannot check maintainer inventory without a SHA-256 tool"
+    fi
+    [ "$_actual_sha" = "$_approved_sha" ] || err "archive differs from maintainer-approved inventory"
+
+'''
 
 REFUSE_UNCHECKED = (
     'err "refusing to install an archive whose checksum cannot be checked; '
@@ -10650,7 +10828,7 @@ REFUSE_UNCHECKED = (
 REPLACEMENTS = [
     (
         '    # ...and then the updater, if it exists',
-        '''    # Authenticate the downloaded archive before extraction or execution.
+        MAINTAINER_VERIFICATION + '''    # Authenticate the downloaded archive before extraction or execution.
     check_cmd gh || err "GitHub CLI is required for release signature verification"
     local _bundle="${HENNERY_ATTESTATION_BUNDLE:-$_dir/release.sigstore.jsonl}"
     if [ -z "${HENNERY_ATTESTATION_BUNDLE:-}" ]; then
@@ -10920,11 +11098,16 @@ if __name__ == '__main__':
 
 ### File `packaging/release/test_hardener.py`
 
-<!-- r1:file task=3 path=packaging/release/test_hardener.py sha256=48bb5ee18ab5d8264a6d2b91473c95bed883bd2901d334fb98cad31f0c882251 bytes=1464 mode=644 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/release/test_hardener.py sha256=17cf1b2bbe2c58838543bf1cf87a0f046d761afe0599d03c2567d0474ba8c4dd bytes=7129 mode=644 encoding=utf8 -->
 ````python
 import importlib.util
 from pathlib import Path
 import unittest
+import hashlib
+import json
+import os
+import subprocess
+import tempfile
 
 spec = importlib.util.spec_from_file_location('hardener', Path(__file__).resolve().parents[1] / 'harden-installer.py')
 hardener = importlib.util.module_from_spec(spec)
@@ -10932,6 +11115,98 @@ spec.loader.exec_module(hardener)
 
 
 class Hardener(unittest.TestCase):
+    def test_maintainer_signature_is_required_even_with_valid_tag_attestation(self):
+        block = hardener.REPLACEMENTS[0][1]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / 'archive'
+            archive.write_bytes(b'archive fixture')
+            inventory = {'schema': 1, 'repository': 'marcinwadon/hennery', 'tag': 'v1.2.3', 'artifacts': [{'name': 'hennery-test.tar.xz', 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}]}
+            raw = json.dumps(inventory).encode()
+            (root / 'inventory').write_bytes(raw)
+            (root / 'signature').write_bytes(raw)
+            (root / 'bundle').write_text('valid-looking exact-tag attestation')
+            tools = root / 'tools'
+            tools.mkdir()
+            (tools / 'gh').write_text('#!/bin/sh\nexit 0\n')
+            (tools / 'gpg').write_text('''#!/bin/sh
+for arg in "$@"; do
+    if [ "$arg" = --import ]; then
+        [ "$HENNERY_TEST_SIGNATURE" != import-failed ] || exit 1
+        exit 0
+    fi
+done
+printf called > "$TEST_ROOT/gpg-called"
+case "$HENNERY_TEST_SIGNATURE" in
+  unsigned|malformed) exit 1 ;;
+  wrong-key) echo '[GNUPG:] VALIDSIG 0000000000000000000000000000000000000000'; exit 0 ;;
+  revoked) echo '[GNUPG:] REVKEYSIG bad'; echo '[GNUPG:] VALIDSIG F26C7F594DFE84D131703AFC23E5A318AE8D2861'; exit 0 ;;
+  failed-valid) echo '[GNUPG:] VALIDSIG F26C7F594DFE84D131703AFC23E5A318AE8D2861'; exit 1 ;;
+  expired) echo '[GNUPG:] KEYEXPIRED 123'; echo '[GNUPG:] VALIDSIG F26C7F594DFE84D131703AFC23E5A318AE8D2861'; exit 0 ;;
+  no-status) exit 0 ;;
+  duplicate) echo '[GNUPG:] VALIDSIG F26C7F594DFE84D131703AFC23E5A318AE8D2861' ;;
+esac
+cmp "$HENNERY_RELEASE_SIGNATURE" "$HENNERY_RELEASE_INVENTORY" || exit 1
+echo '[GNUPG:] VALIDSIG F26C7F594DFE84D131703AFC23E5A318AE8D2861'
+''')
+            for tool in tools.iterdir():
+                tool.chmod(0o755)
+            script = root / 'check.sh'
+            script.write_text('''#!/bin/sh
+set -eu
+check_cmd() {
+case "$HENNERY_TEST_SIGNATURE:$1" in missing-gpg:gpg|missing-jq:jq) return 1 ;; esac
+command -v "$1" >/dev/null
+}
+err() { echo "$*" >&2; exit 1; }
+run() {
+local _dir="$TEST_ROOT/$HENNERY_TEST_SIGNATURE" _file="$TEST_ROOT/archive" _artifact_name=hennery-test.tar.xz
+APP_VERSION=1.2.3
+''' + block + '\nprintf authenticated > "$TEST_ROOT/authenticated"\n}\nrun\n')
+            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'], TEST_ROOT=str(root),
+                       HENNERY_ATTESTATION_BUNDLE=str(root / 'bundle'), HENNERY_RELEASE_INVENTORY=str(root / 'inventory'),
+                       HENNERY_RELEASE_SIGNATURE=str(root / 'signature'))
+            for case in ['valid', 'unsigned', 'malformed', 'wrong-key', 'revoked', 'expired', 'duplicate', 'no-status', 'failed-valid', 'import-failed', 'different-inventory', 'missing', 'empty-signature', 'missing-inventory', 'wrong-archive', 'wrong-tag', 'duplicate-archive', 'missing-gpg', 'missing-jq', 'wrong-repository', 'wrong-schema']:
+                with self.subTest(case=case):
+                    (root / case).mkdir()
+                    (root / 'inventory').write_bytes(raw)
+                    (root / 'signature').write_bytes(raw)
+                    (root / 'authenticated').unlink(missing_ok=True)
+                    (root / 'gpg-called').unlink(missing_ok=True)
+                    if case == 'different-inventory':
+                        (root / 'inventory').write_bytes(raw + b' ')
+                    elif case == 'missing':
+                        (root / 'signature').unlink()
+                    elif case == 'missing-inventory':
+                        (root / 'inventory').unlink()
+                    elif case == 'empty-signature':
+                        (root / 'signature').write_bytes(b'')
+                    elif case in ('wrong-archive', 'wrong-tag', 'duplicate-archive', 'wrong-repository', 'wrong-schema'):
+                        changed = json.loads(raw)
+                        if case == 'wrong-archive':
+                            changed['artifacts'][0]['sha256'] = '0' * 64
+                        elif case == 'wrong-tag':
+                            changed['tag'] = 'v9.9.9'
+                        elif case == 'wrong-repository':
+                            changed['repository'] = 'another/repository'
+                        elif case == 'wrong-schema':
+                            changed['schema'] = 2
+                        else:
+                            changed['artifacts'].append(changed['artifacts'][0].copy())
+                        data = json.dumps(changed).encode()
+                        (root / 'inventory').write_bytes(data)
+                        (root / 'signature').write_bytes(data)
+                    result = subprocess.run(['sh', str(script)], env=dict(env, HENNERY_TEST_SIGNATURE=case), capture_output=True, text=True)
+                    if case == 'valid':
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertTrue((root / 'authenticated').exists())
+                    else:
+                        self.assertNotEqual(result.returncode, 0, 'valid-looking tag attestation bypassed ' + case)
+                        self.assertFalse((root / 'authenticated').exists())
+                        self.assertIn('maintainer', result.stderr)
+                        if case in ('missing', 'empty-signature', 'missing-inventory'):
+                            self.assertFalse((root / 'gpg-called').exists(), 'missing input must be refused before invoking gpg')
+
     def test_signature_identity_is_exact_tag_and_verification_precedes_extraction(self):
         result = hardener.harden('\n'.join(old for old, _ in hardener.REPLACEMENTS))
         self.assertIn('--cert-identity "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v$APP_VERSION"', result)
@@ -11012,7 +11287,7 @@ if __name__ == '__main__':
 
 ### File `packaging/test-installer.sh`
 
-<!-- r1:file task=3 path=packaging/test-installer.sh sha256=f1613a32232d0c643cb88eba287ee6cb3dfb63deb5d4badcaa6c433cdb8fbbb4 bytes=12374 mode=755 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/test-installer.sh sha256=ac9c190e058a28449bba526ce6e8a0245e207e46cac1a5ab80d878502c7adca6 bytes=15358 mode=755 encoding=utf8 -->
 ````sh
 #!/bin/sh
 # The hardened shell installer (distribution spec §2, §9), run against the
@@ -11065,6 +11340,20 @@ done
 printf verified > '$scratch/signature-verified'
 TOOL
 chmod +x "$scratch/verifier-tools/gh"
+# No real signing operation occurs in this offline acceptance test. The gpg
+# double models a detached signature over exact bytes and pinned signer status.
+cat > "$scratch/verifier-tools/gpg" <<'TOOL'
+#!/bin/sh
+set -eu
+for argument in "$@"; do [ "$argument" != --import ] || exit 0; done
+case "${HENNERY_TEST_MAINTAINER_SIGNATURE:-valid}" in
+    unsigned|malformed) exit 1 ;;
+    wrong-key) echo '[GNUPG:] VALIDSIG 0000000000000000000000000000000000000000'; exit 0 ;;
+esac
+cmp "$HENNERY_RELEASE_SIGNATURE" "$HENNERY_RELEASE_INVENTORY" || exit 1
+echo '[GNUPG:] VALIDSIG F26C7F594DFE84D131703AFC23E5A318AE8D2861'
+TOOL
+chmod +x "$scratch/verifier-tools/gpg"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -11107,6 +11396,19 @@ done
 [ "$count" = "$built" ] || fail "the installer offers $count archives, this build made $built"
 echo "ok: the installer embeds each of its $count archives' SHA-256"
 
+# Model the maintainer-approved inventory independently of the installer's
+# embedded checksum, including source archives that must never be installed.
+command -v jq >/dev/null || fail 'jq is required for inventory fixtures'
+ln -s "$(command -v jq)" "$scratch/verifier-tools/jq"
+printf '[]' > "$scratch/artifacts.json"
+for archive in $arms; do
+    want=$(cut -d ' ' -f 1 "$dist/$archive.sha256")
+    jq --arg name "$archive" --arg sha "$want" '. + [{name: $name, sha256: $sha}]' "$scratch/artifacts.json" > "$scratch/next.json"
+    mv "$scratch/next.json" "$scratch/artifacts.json"
+done
+jq --arg tag "v$fixture_version" '{schema: 1, repository: "marcinwadon/hennery", tag: $tag, artifacts: .}' "$scratch/artifacts.json" > "$scratch/inventory.json"
+cp "$scratch/inventory.json" "$scratch/inventory.json.asc"
+
 # run_installer <download dir> <install dir> <log>: the installer's exit status.
 run_installer() {
     mkdir -p "$scratch/home"
@@ -11114,6 +11416,8 @@ run_installer() {
     PATH="${VERIFIER_TOOLS:-$scratch/verifier-tools}:$PATH" \
         HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/.config" \
         HENNERY_ATTESTATION_BUNDLE="$scratch/bundle.jsonl" \
+        HENNERY_RELEASE_INVENTORY="${TEST_INVENTORY:-$scratch/inventory.json}" \
+        HENNERY_RELEASE_SIGNATURE="${TEST_SIGNATURE:-$scratch/inventory.json.asc}" \
         HENNERY_DOWNLOAD_URL="file://$1" HENNERY_UNMANAGED_INSTALL="$2" \
         sh "$1/hennery-installer.sh" >"$3" 2>&1 || status=$?
     return "$status"
@@ -11305,9 +11609,29 @@ chmod +x "$scratch/raced-tools/ln"
 [ "$(cat "$scratch/raced/hennery")" = raced ] || fail 'concurrent destination changed'
 echo 'ok: staging is invisible and concurrent destinations survive'
 
+# Even a successful exact-tag attestation cannot replace the touch-approved
+# inventory signature. Test-only signer doubles never touch a real GPG key.
+for kind in unsigned malformed wrong-key; do
+    (export HENNERY_TEST_MAINTAINER_SIGNATURE="$kind"; refused "maintainer-$kind" "$dist" 'maintainer')
+done
+echo 'ok: unsigned tag, malformed signature and another signing key abort'
+(TEST_SIGNATURE="$scratch/missing.asc"; export TEST_SIGNATURE; refused maintainer-missing "$dist" 'missing maintainer')
+echo 'ok: missing maintainer signature aborts'
+printf ' ' >> "$scratch/inventory.json"
+refused maintainer-other-inventory "$dist" 'invalid maintainer release signature'
+cp "$scratch/inventory.json.asc" "$scratch/inventory.json"
+echo 'ok: signature over another inventory aborts'
+jq '.artifacts |= map(.sha256 = ("0" * 64))' "$scratch/inventory.json" > "$scratch/other-inventory.json"
+(TEST_INVENTORY="$scratch/other-inventory.json"; TEST_SIGNATURE="$scratch/other-inventory.json"; export TEST_INVENTORY TEST_SIGNATURE; refused maintainer-other-digest "$dist" 'archive differs from maintainer-approved inventory')
+echo 'ok: signed inventory must approve the exact archive bytes'
+
 (export HENNERY_TEST_SIGNER_REF=refs/heads/main; refused branch-signer "$dist" 'refusing an archive without valid release-tag provenance')
 echo 'ok: branch signer identity cannot authorize installation'
 tools "$scratch/no-gh-tools" gh
+ln -s "$scratch/verifier-tools/gpg" "$scratch/no-gh-tools/gpg"
+if [ ! -e "$scratch/no-gh-tools/jq" ]; then
+    ln -s "$scratch/verifier-tools/jq" "$scratch/no-gh-tools/jq"
+fi
 (PATH="$scratch/no-gh-tools" VERIFIER_TOOLS="$scratch/no-gh-tools" && refused missing-verifier "$dist" 'GitHub CLI is required')
 echo 'ok: missing signature verifier refuses installation'
 ````
@@ -11661,7 +11985,7 @@ jobs:
 
 ### File `.github/workflows/release-publish.yml`
 
-<!-- r1:file task=4 path=.github/workflows/release-publish.yml sha256=eb1dbff63af4cccd8101aa6095915e3cfe71b42ea262e2bb8eea1cd61f1f381a bytes=12543 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=.github/workflows/release-publish.yml sha256=6edc52bcb1588e4fe5dee45da61f7249718bdd884f53f298f38f917eed57b9ad bytes=13174 mode=644 encoding=utf8 -->
 ````yaml
 name: release-publish
 run-name: Release inventory ${{ inputs.inventory_sha256 }} from ${{ inputs.tag }}
@@ -11670,6 +11994,10 @@ on:
     inputs:
       inventory_sha256:
         description: Frozen candidate inventory SHA-256
+        required: true
+        type: string
+      maintainer_signature:
+        description: Armored hardware-backed detached signature over the exact frozen inventory
         required: true
         type: string
       settings_audit_sha256:
@@ -11840,6 +12168,11 @@ jobs:
       - name: Preserve downloadable Sigstore bundle and approval receipts
         run: |
           mkdir signatures
+          python3 - <<'PYAPPROVAL'
+          import json, os
+          from pathlib import Path
+          Path('signatures/release-inventory.json.asc').write_text(json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['inputs']['maintainer_signature'])
+          PYAPPROVAL
           cp '${{ steps.attest.outputs.bundle-path }}' signatures/release.sigstore.jsonl
           cp sign-preflight.json sign-boundary.json retention-receipt.json signatures/
           nix develop .#release -c python3 - <<'PY'
@@ -11847,6 +12180,7 @@ jobs:
           from pathlib import Path
           sys.path.insert(0,'packaging/release')
           import retention
+          retention.audit(Path('signatures/release-inventory.json.asc'), os.environ['RELEASE_AUDIT_BUCKET'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
           retention.audit(Path('signatures/release.sigstore.jsonl'), os.environ['RELEASE_AUDIT_BUCKET'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -12018,7 +12352,7 @@ github-attestations = true
 
 ### File `flake.nix`
 
-<!-- r1:file task=4 path=flake.nix sha256=db8e8fd3048427a471c45a0fda963feb7fdb3893ab7e0676fb34fc3902e589d2 bytes=3335 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=flake.nix sha256=cadb436432f0bbece5178aca36bc72aa9709ab80904c0e8e9bbdf02c411f4bcd bytes=3355 mode=644 encoding=utf8 -->
 ````nix
 {
   description = "hennery: self-hosted cockpit for ACP coding agents";
@@ -12078,6 +12412,7 @@ github-attestations = true
             pkgs.gh
             pkgs.git
             pkgs.gnupg
+            pkgs.jq
           ];
         };
         devShells.default = pkgs.mkShell {
@@ -12279,7 +12614,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/publish.py`
 
-<!-- r1:file task=4 path=packaging/release/publish.py sha256=993fefc826ebd819ef009034ded14d1cd49322fe96e97b966f6f89c315ba1205 bytes=10824 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=packaging/release/publish.py sha256=06666c7a4503cae873441b7ffcf653fb6e8bbb0da32ad794afa67b2a339e9382 bytes=11612 mode=644 encoding=utf8 -->
 ````python
 #!/usr/bin/env python3
 """GitHub channel reconciliation/upload. Never overwrites or rebuilds payloads.
@@ -12361,6 +12696,9 @@ def validate_live(candidate, phase):
         value = gate.strict_json(event[key]) if key in ('channels', 'targets', 'candidate') else event[key]
         gate.require(value == inventory[key], 'dispatch approval changed')
     gate.require('github' in inventory['channels'], 'GitHub channel not enabled')
+    import approval
+    proof = approval.verify_dispatch(candidate, event)
+    gate.require(proof['inventory_sha256'] == event['inventory_sha256'], 'maintainer signature differs at publication boundary')
     receipt = gate.validate(inventory, event['inventory_sha256'], candidate, context, gate.GitHub(os.environ['GH_TOKEN']).evidence(inventory, context, gate.strict_json(event['settings_audit'])))
     receipt['phase'] = phase
     audit = Path('audit')
@@ -12408,6 +12746,10 @@ def main():
     # Signatures are verification sidecars, not inventory payloads (no cycles).
     bundle = args.signatures / 'release.sigstore.jsonl'
     gate.require(bundle.is_file() and not bundle.is_symlink(), 'downloadable attestation bundle missing')
+    import approval
+    approval_signature = args.signatures / 'release-inventory.json.asc'
+    proof = approval.verify(args.candidate / 'release-inventory.json', approval_signature)
+    gate.require(proof['inventory_sha256'] == gate.digest(gate.canonical(inventory)), 'maintainer approval differs from publication inventory')
     tag_path = '/repos/' + gate.REPOSITORY + '/releases/tags/' + urllib.parse.quote(inventory['tag'], safe='')
     release = api(tag_path)
     if release is not None:
@@ -12423,12 +12765,14 @@ def main():
         data = asset_bytes(prior[0])
         gate.require(data is not None, 'existing signature is unverifiable')
         bundle = recover_bundle(args.signatures / 'recovered-release.sigstore.jsonl', data)
-        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'])
+        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], approval_signature=approval_signature)
     else:
-        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], os.environ['GITHUB_SHA'])
+        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], os.environ['GITHUB_SHA'], approval_signature)
     files = {p.name: p for p in args.candidate.iterdir()}
     files['release.sigstore.jsonl'] = bundle
+    files['release-inventory.json.asc'] = approval_signature
     expected = {name: gate.digest(path.read_bytes()) for name, path in files.items()}
+    gate.require(expected['release-inventory.json.asc'] == proof['signature_sha256'], 'maintainer signature changed before publication')
     reconciliation = plan(expected, release_assets(release))
     if args.operation == 'upload':
         require_enabled()
@@ -12491,9 +12835,174 @@ if __name__ == '__main__':
     path.write_text(json.dumps(refresh(json.loads(path.read_text()), archive), indent=2) + '\n')
 ````
 
+### File `packaging/release/test_approval.py`
+
+<!-- r1:file task=4 path=packaging/release/test_approval.py sha256=ed45ce2420216c49cc18da3b475f1dff70b0b4bb536b6f4285977b2d06f1a40a bytes=11427 mode=644 encoding=utf8 -->
+````python
+"""The detached, touched maintainer signature is the release trust root."""
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import gate
+import approval
+import verify
+
+
+class Approval(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.inventory = self.root / 'release-inventory.json'
+        self.inventory.write_bytes(gate.canonical({'repository': gate.REPOSITORY, 'tag': 'v0.1.0', 'source_sha': 'a'*40, 'artifacts': []}))
+        self.signature = self.root / 'release-inventory.json.asc'
+        self.signature.write_text('-----BEGIN PGP SIGNATURE-----\nfixture\n-----END PGP SIGNATURE-----\n')
+
+    def transport(self, command, **kwargs):
+        if '--verify' in command:
+            self.assertEqual(Path(command[-1]).read_bytes(), self.inventory.read_bytes())
+            return subprocess.CompletedProcess(command, 0, '[GNUPG:] VALIDSIG '+approval.FINGERPRINT+' 0 0 0 4 0 1 10 00\n', '')
+        return subprocess.CompletedProcess(command, 0, '', '')
+
+    def test_exact_inventory_verified_with_isolated_pinned_key(self):
+        with patch.object(approval.subprocess, 'run', side_effect=self.transport) as run:
+            self.assertEqual(approval.verify(self.inventory, self.signature)['inventory_sha256'], gate.digest(self.inventory.read_bytes()))
+        self.assertTrue(any('--no-autostart' in c.args[0] for c in run.call_args_list))
+
+    def test_missing_malformed_other_key_and_different_inventory_refused(self):
+        for kind in ('missing', 'malformed', 'other-key', 'different-inventory'):
+            with self.subTest(kind=kind):
+                self.signature.write_text('-----BEGIN PGP SIGNATURE-----\nfixture\n-----END PGP SIGNATURE-----\n')
+                if kind == 'missing': self.signature.unlink()
+                if kind == 'malformed': self.signature.write_text('not a detached signature')
+                def transport(command, **kwargs):
+                    if '--verify' in command:
+                        key = '0'*40 if kind == 'other-key' else approval.FINGERPRINT
+                        return subprocess.CompletedProcess(command, 1 if kind == 'different-inventory' else 0, '[GNUPG:] VALIDSIG '+key+' 0\n', '')
+                    return subprocess.CompletedProcess(command, 0, '', '')
+                with patch.object(approval.subprocess, 'run', side_effect=transport), self.assertRaises(gate.Refused):
+                    approval.verify(self.inventory, self.signature)
+
+    def test_unsigned_tag_with_valid_looking_attestation_has_no_authority(self):
+        import test_gate
+        fixture=test_gate.Gates();fixture.setUp();self.addCleanup(fixture.tmp.cleanup)
+        (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        # Keep the old API and every other candidate check valid so the old
+        # verifier demonstrably accepts this exact-tag attestation alone.
+        with patch.object(verify.subprocess, 'run') as attest, patch.object(verify.supply,'verify_checksums'), patch.object(verify.supply,'verify_binary_inventory'), self.assertRaises(gate.Refused):
+            verify.verify(fixture.root, Path('valid-exact-tag-bundle'), fixture.inventory['source_sha'], fixture.inventory['tag'])
+        attest.assert_not_called()
+
+    def test_signing_never_runs_in_ci_and_requires_explicit_touch_confirmation(self):
+        for environment, confirmation in [({'CI':'true'},True), ({'GITHUB_ACTIONS':'true'},True), ({},False)]:
+            with patch.dict(os.environ, environment, clear=True), patch.object(approval.subprocess, 'run') as run, self.assertRaises(gate.Refused):
+                approval.sign(self.inventory, self.signature.with_name('new.asc'), confirmation)
+            run.assert_not_called()
+
+    def test_sign_cli_pins_subkey_and_uses_detach_sign_without_overwrite(self):
+        output = self.signature.with_name('new.asc')
+        def run(command, **kwargs):
+            if '--detach-sign' in command: output.write_text(self.signature.read_text())
+            return self.transport(command, **kwargs)
+        with patch.dict(os.environ, {}, clear=True), patch.object(approval.subprocess,'run',side_effect=run) as call:
+            approval.sign(self.inventory, output, True)
+            command=next(c.args[0] for c in call.call_args_list if '--detach-sign' in c.args[0])
+            self.assertIn(approval.FINGERPRINT+'!',command)
+            self.assertNotIn('--pinentry-mode',command)
+            with self.assertRaises(gate.Refused): approval.sign(self.inventory,output,True)
+
+    def test_touch_confirmation_is_required_in_settings_audit(self):
+        import test_settings, settings_audit
+        for claim in ({}, {'confirmed':False}, {'confirmed':1,'fingerprint':approval.FINGERPRINT,'policy':'on'}, {'confirmed':True,'fingerprint':'0'*40,'policy':'on'}, {'confirmed':True,'fingerprint':approval.FINGERPRINT,'policy':'off'}):
+            settings=test_settings.settings();settings['maintainer_touch']=claim
+            with self.subTest(claim=claim),self.assertRaisesRegex(gate.Refused,'touch'):
+                settings_audit.validate_settings(settings,['github'])
+
+    def test_channel_gate_requires_hardware_approval_before_live_evidence(self):
+        import sys, json, test_gate, supply
+        fixture=test_gate.Gates();fixture.setUp();self.addCleanup(fixture.tmp.cleanup)
+        (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        inputs={key:fixture.inventory[key] for key in ('source_sha','tag','channels','targets','candidate')}
+        for key in ('channels','targets','candidate'): inputs[key]=json.dumps(inputs[key])
+        inputs.update(inventory_sha256=fixture.digest,settings_audit_sha256='b'*64,settings_audit='{}')
+        event=self.root/'event.json';event.write_text(json.dumps({'inputs':inputs}))
+        environment={'GITHUB_REPOSITORY':gate.REPOSITORY,'GITHUB_REF':'refs/tags/'+fixture.inventory['tag'],'GITHUB_SHA':fixture.inventory['source_sha'],'GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_EVENT_PATH':str(event),'GITHUB_RUN_ID':'20','GITHUB_RUN_ATTEMPT':'1','GH_TOKEN':'offline','RELEASE_AUDIT_BUCKET':'offline'}
+        args=['gate.py','--candidate',str(fixture.root),'--inventory-sha256',fixture.digest,'--channel','github','--phase','preflight','--receipt',str(self.root/'receipt.json')]
+        with patch.dict(os.environ,environment,clear=True),patch.object(sys,'argv',args),patch.object(supply,'require_contract'),patch.object(supply,'verify_binary_inventory'),patch.object(gate.GitHub,'evidence',return_value={}) as live,patch.object(gate,'validate',return_value={}),patch('retention.audit'),self.assertRaises(gate.Refused):
+            gate.main()
+        live.assert_not_called()
+
+    def test_actual_openpgp_checks_exact_bytes_and_pinned_key(self):
+        # Disposable software key tests cryptography only, never the maintainer
+        # key or hardware-touch claim. No private key leaves this temp keyring.
+        import json
+        with tempfile.TemporaryDirectory(prefix='r1-gpg-') as home:
+            env=dict(os.environ, GNUPGHOME=home)
+            def gpg(*args):
+                return subprocess.run(['gpg','--batch','--pinentry-mode','loopback','--passphrase','',*args],env=env,check=True,capture_output=True,text=True)
+            try:
+                gpg('--quick-generate-key','R1 disposable test','ed25519','sign','1d')
+                keys=gpg('--with-colons','--list-keys').stdout
+                fingerprint=next(line.split(':')[9] for line in keys.splitlines() if line.startswith('fpr:'))
+                public=self.root/'test-public.asc';public.write_text(gpg('--armor','--export',fingerprint).stdout)
+                self.signature.unlink()
+                gpg('--armor','--output',str(self.signature),'--detach-sign',str(self.inventory))
+                import shutil
+                actual_run=subprocess.run
+                def pinned_import(command, **kwargs):
+                    if '--import' in command: command=[*command[:-1],str(public)]
+                    return actual_run(command,**kwargs)
+                with patch.object(approval.subprocess,'run',side_effect=pinned_import):
+                    # Valid cryptography from another key must still refuse.
+                    with self.assertRaises(gate.Refused): approval.verify(self.inventory,self.signature)
+                    with patch.object(approval,'FINGERPRINT',fingerprint):
+                        approval.verify(self.inventory,self.signature)
+                        self.inventory.write_bytes(gate.canonical({'different':'inventory'}))
+                        with self.assertRaises(gate.Refused): approval.verify(self.inventory,self.signature)
+            finally:
+                subprocess.run(['gpgconf','--kill','gpg-agent'],env=env,check=True,capture_output=True)
+
+    def test_publisher_missing_root_signature_stops_before_remote_access(self):
+        import sys, publish, test_gate
+        fixture=test_gate.Gates();fixture.setUp();self.addCleanup(fixture.tmp.cleanup)
+        (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        (self.root/'release.sigstore.jsonl').write_bytes(b'valid-looking exact-tag attestation')
+        with patch.object(publish,'api') as remote, patch.object(sys,'argv',['publish.py','upload','--candidate',str(fixture.root),'--signatures',str(self.root),'--output',str(self.root/'result')]), self.assertRaises(gate.Refused):
+            publish.main()
+        remote.assert_not_called()
+
+    def test_image_requires_signature_and_signed_digest_set(self):
+        # A certificate identity alone, even on an unsigned exact tag, is no
+        # release authority. Then verify signed digest membership separately.
+        image='ghcr.io/marcinwadon/hennery@sha256:'+'b'*64
+        import test_gate
+        fixture=test_gate.Gates();fixture.setUp();self.addCleanup(fixture.tmp.cleanup)
+        index=gate.canonical({'digest':'sha256:'+'b'*64})
+        (fixture.root/'ghcr-index.json').write_bytes(index)
+        fixture.inventory['channels']=['ghcr']
+        fixture.inventory['artifacts'].append({'name':'ghcr-index.json','sha256':gate.digest(index),'size':len(index)})
+        (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
+        with patch.object(verify.subprocess,'run') as attest, self.assertRaises(gate.Refused):
+            verify.verify_image(image,fixture.inventory['tag'],candidate=fixture.root,approval_signature=self.root/'missing.asc')
+        attest.assert_not_called()
+        index=gate.canonical({'digest':'sha256:'+'a'*64})
+        (self.root/'ghcr-index.json').write_bytes(index)
+        inventory={'tag':'v0.1.0','channels':['ghcr']}
+        self.inventory.write_bytes(gate.canonical(inventory))
+        proof={'inventory_sha256':gate.digest(self.inventory.read_bytes())}
+        with patch.object(approval,'verify',return_value=proof) as checked, patch.object(gate,'verify_files'), patch.object(verify.subprocess,'run') as attest, self.assertRaisesRegex(gate.Refused,'image digest'):
+            verify.verify_image(image,'v0.1.0',candidate=self.root,approval_signature=self.signature)
+        checked.assert_called_once();attest.assert_not_called()
+
+if __name__ == '__main__': unittest.main()
+````
+
 ### File `packaging/release/test_publish.py`
 
-<!-- r1:file task=4 path=packaging/release/test_publish.py sha256=40f2008ebb0ae50434310ba4c5cd5b44e94e9d57e7d9049d958f551786071fb4 bytes=7524 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=packaging/release/test_publish.py sha256=a42f3c48612f0dc2a0f30b86ca8dfc99ee003845dd6639e2341f748e9cab6edd bytes=8424 mode=644 encoding=utf8 -->
 ````python
 from pathlib import Path
 import tempfile
@@ -12526,6 +13035,9 @@ class Publication(unittest.TestCase):
 
 
 class Recovery(unittest.TestCase):
+    def setUp(self):
+        mocked=patch('approval.verify',side_effect=lambda inventory,signature:{'inventory_sha256':gate.digest(inventory.read_bytes()),'signature_sha256':gate.digest(signature.read_bytes())}); mocked.start(); self.addCleanup(mocked.stop)
+
     def test_reconcile_then_upload_reuses_the_verified_existing_bundle(self):
         import sys
         import test_gate
@@ -12534,7 +13046,8 @@ class Recovery(unittest.TestCase):
         signatures = fixture.root.parent / (fixture.root.name + '-signatures'); signatures.mkdir()
         self.addCleanup(lambda: __import__('shutil').rmtree(signatures))
         (signatures / 'release.sigstore.jsonl').write_bytes(b'new attempt bundle')
-        remote = {p.name: p.read_bytes() for p in fixture.root.iterdir()} | {'release.sigstore.jsonl': b'previous verified bundle'}
+        (signatures / 'release-inventory.json.asc').write_bytes(b'verified hardware signature')
+        remote = {p.name: p.read_bytes() for p in fixture.root.iterdir()} | {'release.sigstore.jsonl': b'previous verified bundle', 'release-inventory.json.asc':b'verified hardware signature'}
         assets = [{'name': n, 'url': n} for n in remote]
         release = {'id': 42, 'tag_name': fixture.inventory['tag'], 'draft': False, 'immutable': True}
         def api(path, method='GET', **kwargs):
@@ -12560,6 +13073,9 @@ class Recovery(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b'wrong')
 
 class ImmutablePublication(unittest.TestCase):
+    def setUp(self):
+        mocked=patch('approval.verify',side_effect=lambda inventory,signature:{'inventory_sha256':gate.digest(inventory.read_bytes()),'signature_sha256':gate.digest(signature.read_bytes())}); mocked.start(); self.addCleanup(mocked.stop)
+
     def scenario(self, seal):
         import json,sys,urllib.parse
         import test_gate
@@ -12569,8 +13085,9 @@ class ImmutablePublication(unittest.TestCase):
         (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
         with tempfile.TemporaryDirectory() as tmp:
             signatures=Path(tmp);(signatures/'release.sigstore.jsonl').write_bytes(b'verified bundle')
+            (signatures/'release-inventory.json.asc').write_bytes(b'verified hardware signature')
             remote={};release=None;writes=[]
-            expected={p.name for p in fixture.root.iterdir()}|{'release.sigstore.jsonl'}
+            expected={p.name for p in fixture.root.iterdir()}|{'release.sigstore.jsonl','release-inventory.json.asc'}
             def api(path,method='GET',data=None,**kwargs):
                 nonlocal release
                 if method=='GET':
@@ -12607,6 +13124,7 @@ class ImmutablePublication(unittest.TestCase):
         (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
         with tempfile.TemporaryDirectory() as tmp:
             signatures=Path(tmp);(signatures/'release.sigstore.jsonl').write_bytes(b'bundle')
+            (signatures/'release-inventory.json.asc').write_bytes(b'verified hardware signature')
             release={'id':42,'tag_name':fixture.inventory['tag'],'draft':False,'immutable':False}
             with patch.dict('os.environ',{'GITHUB_SHA':'a'*40}),patch.object(publish,'api',return_value=release),patch.object(publish,'release_assets',return_value=[]),patch('verify.verify'),patch.object(sys,'argv',['publish.py','reconcile','--candidate',str(fixture.root),'--signatures',str(signatures),'--output',str(signatures/'result.json')]),self.assertRaisesRegex(gate.Refused,'published release must be immutable'):
                 publish.main()
@@ -12928,7 +13446,7 @@ Read actual logs, run the six Rust checks, actionlint, release suite and real mi
 
 ### File `docs/README.md`
 
-<!-- r1:file task=5 path=docs/README.md sha256=9e52f4d189164dfc2a8c74e7184af1170b98d52ccd4ca6fd17e56d71f4d96035 bytes=50818 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=docs/README.md sha256=e95bf30138765d6ed3748615ae9a3de09e61107e99b1a7dad8d338d17bb3a281 bytes=52060 mode=644 encoding=utf8 -->
 ````markdown
 # hennery design documents
 
@@ -12998,6 +13516,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [The web shell (4b)](plans/2026-10-16-web-shell.md) — part 4b of plan 4, the frontend (7 tasks): `web/` (React 19, strict TypeScript, Vite, Tailwind v4, Vitest) imported with the shell's look, icons and hooks; `GET /api/capabilities` (`{mode, features[]}`); a typed transport client (401 to sign-in with a same-origin `?next=`, one step-up and one retry, plain 409 messages, SSE over `fetch` with `Last-Event-ID`); the router, the rail and the mobile tab bar, setup with the token out of the address bar at once, passkey-first sign-in and step-up; the binary embedding the build by a build script (a placeholder without it, `HENNERY_WEB_REQUIRE=1` refusing that), served as the router's fallback but never for `/api` or `/mcp/…`, under the CSP, with no inline script; Playwright in Chromium against the binary; CI and the release archives checking the UI is embedded. The capabilities name `mcp_connections`, as plan 8a merged first. Amended after the security review of 2026-10-02 and its re-confirmation; executed 2026-10-02 (see its "Execution status").
    - [The session list and the read-only transcript (4c-i)](plans/2026-10-18-web-sessions.md) — part 4c-i of plan 4, the frontend (5 tasks), in `web/` only: a typed view client over 4a-ii's view API; the SSE helper's deferred fixes (a throwing handler never loses its event, one abort listener, `closed` at once, bodies cancelled); an item store per session (upsert by id and version, groups by opaque `turn_id`, older pages by `before_turn`, a resync that replaces the store and reopens, backed off when it repeats) and a list store fed by `session_upsert`, `session_removed` and `waiting_changed`, refetching on no event. The session list: day buckets across DST that move on with the clock, rows by lifecycle and activity, "Waiting on a question", the server's waiting count in the badge and the tab title (kept through a refused search), search on the server, Hide closed, the hat switch. The read-only session view: the header from the list or the detail, every item kind and all 18 markers, Markdown with raw HTML as text and no remote image, an error boundary per item, a tail window of 200 items measured in Chromium; a session's link (a push notification's) opens it beside the list. A guard on the tests' text locators. Amended after the security review of 2026-10-02, its re-confirmation of 2026-10-03, the task reviews and the whole-branch review; executed 2026-10-03 (see its "Execution status").
    - [The composer, cards, New Session and the session menu (4c-ii)](plans/2026-10-18-web-sessions.md) — part 4c-ii of plan 4, the frontend (Tasks 6–10 of the same plan), in `web/` only: a composer under each transcript (Ctrl/Cmd+Enter, images by paste, drop or pick with `[Image #N]` markers, a slash menu, the config bar taken back on a refusal, Cancel with the turn's real outcome, every prompt refusal in words, drafts per session and forgotten at sign-out, "Send again" refilling the draft); question cards (permissions by option kind, digits only from a focused card on a desktop and never stealing typing, forms with pairing, every delivery state, a verdict that never goes back, "Answer as a new message" as a draft); New Session (hosts, agents behind one function, the project picker, the hat preview, the first prompt as its own request); footers by lifecycle with every resume refusal in words and the header menu (park, close, delete behind a confirmation and step-up); "delivers when the host reconnects" following the host from what the view streams. Playwright starts a session on a host paired with the page's command, answers a permission, crashes the host and resumes, at two widths; CI builds the fake agent. Amended after its security review and re-confirmation of 2026-10-03, the task reviews, the whole-branch review and the review of its fixes; executed 2026-10-03 (see its "Execution status").
+   - [The PWA and device Settings (P1)](plans/2026-10-26-phone-pwa.md) — four tasks: manifest/icons, digest-verified static-only worker, natural updates, fenced push lifecycle and minimum device Settings/mobile sign-out. Five review fixes independently CONFIRMED; CI 15/15 at `88ac41e2`. Rebased onto D1 `37fc7488`: both generator checks and full web/browser gate exit 0 (1,784 web tests; PWA 5 passed; Chromium 86 passed / 11 existing skips). Fresh tree replay: 64 blocks/eight matching trees. Earlier full replay: 2,148 Rust tests and 144 BITE probes. Draft #142 remains parent-managed; new-head CI/status and deployment approval remain with the parent. P2 owns click/deep-link/mobile-answer/relay and live iOS/vendor acceptance.
    - [The management screens: hosts and hats (4d-i)](plans/2026-10-18-web-manage.md) — part 4d-i of plan 4, the frontend (4 tasks), in `web/` only: every server string shown escaped and bidi-isolated (`visible()`, `<Text>`); a confirmation that runs its action and stays open under the step-up dialog; the page `inert` behind that dialog; a failed sign-out that says the browser is still signed in. Hosts: the list with each host's state, pairing with a one-time code minted on the click behind step-up and kept in the page's state only, with the exact `hennery host join` command and a countdown; rename, default hat and revoke, confirmed then stepped up. Hats: create, rename, recolour, the default for new hosts, each host's path rules saved as a set with a live tester that asks the host, and purge from the server's preview. Playwright pairs a real host with the command the page shows, at two widths, with every binary in a scratch environment. Amended after the security review of 2026-10-02 and its re-confirmation; executed 2026-10-03 (see its "Execution status").
    - [The MCP connections screen (4e-i)](plans/2026-10-22-web-mcp.md) — part 4e-i of plan 4, the frontend (3 tasks), in `web/` only, over plan 8a's routes: `/mcp` (nothing under it, which the server reserves), shown only when `features` names `mcp_connections`; each connection with `hennery-<slug>`, its URL, hat, kind, whether a token is stored and its state in words (`needs_auth` "needs sign-in again", `error` "is failing", never a reconnect), the vendor's note escaped and cut at 300 characters; add (step-up; the hat starts at the default for new hosts), edit sending only the changed fields (a label edit needs no step-up; the token's loss confirmed first), delete (confirmed, then stepped up); the static token write-only, read once from an uncontrolled field kept from password managers and emptied before the request; the hosts ticked as a full set built from the connection's own mounts; a note that changes apply to new and resumed sessions, and how Codex, Claude on the operator's own CLI and any other agent command get them (without isolation, only both in the host's default hat; may change). Playwright creates one, sets its token and mounts it on a real paired host at two widths. Stdio servers, OAuth and the delivery indicator are 4e-ii's. Amended after the security review of 2026-10-03 and its re-confirmation. Executed 2026-10-03, with the whole-branch review fixes completed and rebased onto merged 8e (`d54c704c`) on 2026-10-12 (see its "Execution status").
    - [Web MCP delivery and local servers (4e-ii-a)](plans/2026-10-23-web-mcp-delivery.md) — six web-only tasks over merged 8e: last-start/resume mode/count, bounded metadata refresh, host/agent predictions, full-set local stdio configuration with write-only env values and step-up, isolation refusals, and security-review amendments. Executed 2026-10-13 on `7a8dab28`; opus review APPROVE AFTER AMENDMENTS and scoped re-confirmation CONFIRMED WITH NOTES (maintainer's behalf, 2026-10-13), all N1–N3 taken. Fresh v2 replay: 88 blocks / 33 files, twelve matching phase trees; 1465 Vitest / 84 files, prior full Playwright 58 passed / 11 skipped and changed spec 8/8; 171 historical/new caught probe records. Final-tip gate is logged in the ledger before push (see Execution status). OAuth Connect is 4e-ii-b after 8f.
@@ -13045,8 +13564,9 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [Generic plug-in contract (C1)](plans/2026-10-26-plugin-contract.md) — generic owner/hat registration, completed activity with typed provenance, exposure bindings and durable deletion lifecycle; built first and replayed on merged design main (40 blocks, exact tree match). The PR #140 flake investigation fixed writer-registry identity lifetime test-first and rebased onto W1 main `26cc3cca`; current verification and historical replay are distinguished in its execution record. Parent re-review and Linux/macOS CI remain pending.
 
    - [WSS transport and diagnostics (W1)](plans/2026-10-26-wss-transport.md) — built and replayed on `8bb29904`; the maintainer-delegated review returned APPROVE AFTER AMENDMENTS, all three implemented and folded into their tasks. Draft PR #139 awaits scoped re-review, Linux/macOS CI and real-adapter/MCP acceptance; W2 remains deferred.
+   - [Session-bound MCP and family identity (D1)](plans/2026-10-27-delegation-mcp.md) — collector-local opt-in MCP delivery, generation-bound grants, shared identity and immutable scoped family storage; built first, exact fresh replay and guard/load evidence recorded. Actual pinned Claude/Codex discovery passed. Maintainer-delegated review returned APPROVE; its one cycle-fixture Minor is corrected and independently probed. Linux/macOS CI remains parent-owned; tools, durable delivery and UI follow in D2–D4.
 
-   - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — review REJECT addressed with the parent’s platform-boundary ruling: protected signed-tag publication, exact signer identities, fresh settings-audit approval binding, immutable releases, corrected mixed installer/recovery/manifest integration and assertion-only probes. Rebased onto `dd7c0066`; fresh replay and checks recorded in the plan. Re-review and maintainer-only setup remain; publication is disabled.
+   - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — amended after re-confirmation with the maintainer's hardware-backed inventory approval as the trust root. All verifiers and publishers require the pinned detached signature plus exact-tag Sigstore provenance; signed tags remain defense in depth. Rebased onto `256691fe`; checks, COPY probes and fresh replay are recorded in the plan. Re-review and maintainer-only setup remain; publication is disabled.
 
 ## Maintainer decisions (2026-09-27)
 
@@ -13073,7 +13593,7 @@ _Generated with Claude AI — please review before distribution._
 
 ### File `docs/release-process.md`
 
-<!-- r1:file task=5 path=docs/release-process.md sha256=7720ab239ba99174e6d13834214cdb5ceb3297e33b1fc49ed797038e1629722b bytes=15482 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=docs/release-process.md sha256=73d3d649a0983d16d94f83944bb9d5983d73e06bc3d36931c7aa4456ce66ee9c bytes=19981 mode=644 encoding=utf8 -->
 ````markdown
 # Release process
 
@@ -13092,9 +13612,28 @@ ordinary `GITHUB_TOKEN` write permissions or OIDC. Static lint and job condition
 cannot stop issuance. Such a branch must neither obtain dedicated publishing
 credentials nor produce a signature accepted by consumers. All signing identities
 must be the exact release workflow at a protected release tag; branch identities
-are rejected. Repository disruption/denial of service is outside that guarantee.
+are rejected. The **maintainer decision, 2026-10-15**, adds the root of trust:
+the exact immutable inventory must carry a detached OpenPGP signature made with
+the maintainer's hardware-backed signing subkey. Someone without access to that
+physical signing authority cannot authorize different release bytes, including
+an agent with the maintainer's SSH push key that creates an unsigned tag and
+changes its workflow to mint an exact-tag attestation. Sigstore alone is insufficient.
+Consumers use a reviewed, independently trusted verifier and pinned public key.
+Repository disruption/denial of service is outside that guarantee. Signed-tag
+checks remain defense in depth; the inventory signature is release authority.
 
 Before enabling any switch, the maintainer must configure and audit:
+
+0. **Physical approval:** configure the signing slot on the YubiKey locally:
+   `ykman openpgp keys set-touch sig on`. This requests touch for each signature.
+   `cached-fixed` is an alternative with a 15-second reuse window after touch
+   and cannot be disabled without deleting the private key; another process
+   could sign within that window. Prefer `on` for release approval and remove
+   the key after use. Confirm that no accessible software copy of the signing
+   subkey defeats the hardware boundary. The audit records an explicit personal
+   confirmation, not a remotely verified hardware property:
+   `"maintainer_touch":{"confirmed":true,"fingerprint":"F26C7F594DFE84D131703AFC23E5A318AE8D2861","policy":"on"}`.
+   See [Yubico's touch policies](https://docs.yubico.com/software/yubikey/tools/ykman/OpenPGP_Commands.html).
 
 1. **Environment `release`:** required reviewer is exactly the maintainer's User
    ID; administrator bypass explicitly disabled. Deployments allow only `v*`
@@ -13216,6 +13755,25 @@ repositories, Apple notarization, public caches and R6 modules retain their gate
 
 ## Settings audit and publication approval
 
+Inspect the final digest set, source, channels and targets through trusted local
+tools. Enter the reviewed `nix develop .#release` shell. At approval time, sign
+the **exact held canonical inventory bytes** locally:
+
+```sh
+packaging/hennery-release sign-approval --inventory candidate/release-inventory.json \
+  --signature release-inventory.json.asc --confirm-hardware-touch
+```
+
+This invokes `gpg --detach-sign` with the full pinned signing fingerprint, using
+the local hardware/PIN/touch interaction. It refuses CI and existing output;
+never run signing in Actions or give CI a private key. The CLI cannot prove touch
+configuration; the explicit confirmation is the maintainer's assertion. The
+signature is a public sidecar, outside the frozen candidate, avoiding a digest
+cycle. Supply its complete armored bytes as dispatch input `maintainer_signature`.
+Gates require it before issuing publication credentials and at every boundary;
+publishers verify and upload it as `release-inventory.json.asc`, and retain it
+with approval evidence. A new inventory requires a new physical approval.
+
 Run the reviewed `settings_audit.py` locally with the maintainer's own `gh`
 authentication, after the candidate run completes. It independently verifies the pinned tag signature before using owner settings
 authentication, then checks the actual owner, environment, both rulesets including bypass actors, secret locations and immutable
@@ -13250,10 +13808,25 @@ announcements advance.
 
 ## Consumer verification and recovery
 
-Every accepted signature must have certificate identity
+Every consumer first requires the valid detached maintainer signature over the
+exact inventory, pinned to signing subkey
+`F26C7F594DFE84D131703AFC23E5A318AE8D2861` (primary key
+`1CE2B7354FC6ED5D9DE12DF664C16DED80CCEABA`). Missing, malformed, wrong-key and
+different-inventory signatures refuse even when Sigstore passes. Manual checking
+uses a trusted checkout and the same verifier:
+
+```sh
+packaging/hennery-release verify-approval --inventory candidate/release-inventory.json \
+  --signature release-inventory.json.asc
+python3 packaging/release/verify.py --candidate candidate --tag v0.1.0 \
+  --source-sha "$SOURCE_SHA" --bundle release.sigstore.jsonl \
+  --approval-signature release-inventory.json.asc
+```
+
+Both verifications are mandatory. Every accepted Sigstore signature must have certificate identity
 `https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<exact-release-tag>`,
 GitHub OIDC issuer and matching source ref. `verify.py` checks the inventory's
-attestation first, then source/tag, every payload/checksum/binary digest and each
+hardware approval first, then attestation, source/tag, every payload/checksum/binary digest and each
 payload attestation. It also supports immutable OCI digests and relevant SLSA/
 SPDX predicates; R4 applies the same policy to platforms and final index. A
 branch's valid cryptographic signature is rejected. Do not trust an unsigned
@@ -13261,9 +13834,11 @@ checksum or execute a downloaded installer before authenticating it through a
 trusted copy of this verifier. The verifier itself must come from reviewed,
 trusted source, not arbitrary branch code or an unverified artifact.
 
-The hardened installer requires the real GitHub CLI and verifies the downloaded
-archive with the exact tag identity before extraction/execution, in addition to
-SHA-256. A caller may supply a durable local Sigstore bundle; it is still fully
+The hardened installer requires GnuPG, jq and the real GitHub CLI. It verifies the
+inventory against its embedded pinned public key, binds the archive's SHA-256
+and release tag to that signed inventory, and requires the exact Sigstore tag
+identity before extraction/execution. A caller may supply durable local sidecars;
+they are still fully
 verified. No missing verifier/hash/signature fallback is accepted. It stages in a
 private sibling directory and atomically creates the destination without
 replacing files, links, directories or races. It uses no sudo and starts no
@@ -13275,7 +13850,15 @@ Sigstore workflow identity through invented metadata. Freeze and live gates read
 binstall strategies and require the exact tag identity for the external verifier.
 Keep native acceptance disabled pending the parent's capability ruling and a reviewed
 R3 bridge; do not claim it is an authenticated install path. The common external
-verifier enforces the exact tag identity. See [upstream signing support](https://github.com/cargo-bins/cargo-binstall/blob/main/SIGNING.md).
+verifier enforces both the hardware approval and exact tag identity. See [upstream signing support](https://github.com/cargo-bins/cargo-binstall/blob/main/SIGNING.md).
+
+OCI verification additionally requires the complete frozen inventory directory
+and detached signature: pass `--image ghcr.io/marcinwadon/hennery@sha256:...`,
+`--inventory-directory candidate`, `--approval-signature release-inventory.json.asc`
+and `--tag` to `verify.py`. The hashed `ghcr-index.json` must contain a `digest`
+matching the requested immutable image. R4 must normalize that index descriptor
+and apply this policy before accepting an OCI subject; an attestation alone or a
+mutable image tag is insufficient.
 
 Retries recover held exact versions, recheck holds/digests and renew audit/attempt
 approval. Reconcile every remote artifact, including lost upload responses. Reuse
@@ -13283,8 +13866,15 @@ an existing cryptographically verified bundle safely across reconcile then uploa
 never replace a differing local/remote bundle. Only verified absence permits an
 upload; ambiguous auth/network responses or mismatches stop. Published GitHub
 assets are immutable; incomplete/conflicting releases require a new version.
+Retain and reuse the identical approved `.asc` on retries; regenerating a
+different signature cannot replace an already published immutable sidecar.
 
-Nix uses an immutable tag/full commit flake reference, builds the real UI and
+Before evaluating a release flake, use the independently trusted verifier to
+authenticate the inventory and its source commit. Check the fetched source is
+that exact full commit SHA and verify the annotated tag as defense in depth;
+invoke Nix with the authenticated full SHA. A tag name or an unverified flake
+cannot authenticate its own code. This also applies to replacement verifier
+code downloaded from a tag. Nix builds the real UI and
 retains reference guards and source/UI/adapter identity. Native Linux arm64 is in
 CI; no public cache or unqualified platform is implied. Public-path acceptance
 belongs to the maintainer after authorized publication. Before rollback, stop
@@ -13298,7 +13888,7 @@ Generated with Claude AI — please review before distribution.
 
 ### File `packaging/README.md`
 
-<!-- r1:file task=5 path=packaging/README.md sha256=d1ef8a3ec29e6eeb8b3bb31ffb489933e04812ac9716d7443aec60616562803f bytes=7946 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=packaging/README.md sha256=8f003eceb279c5994a248d9ff0a787cfd630a229cace91b8208822bd2ecdcb6a bytes=8283 mode=644 encoding=utf8 -->
 ````markdown
 # Release builds
 
@@ -13407,11 +13997,15 @@ These need the operator's decision, credentials, or both. None is set up:
   request's are built from code nobody has reviewed yet.
 - **Artifact attestations** (`github-attestations = true`): protected release-tag
   jobs need OIDC/attestation authority and write to the public Sigstore log.
-  Repository-only verification is insufficient. The common
+  Neither repository-only nor exact-tag Sigstore verification authorizes a
+  release by itself. The common verifier first requires the detached
+  `release-inventory.json.asc` from the pinned hardware-backed maintainer key
+  over the exact inventory digest set. Its trusted public key comes from the
+  reviewed verifier, not a downloaded replacement. The common
   [verifier](release/verify.py) pins the exact certificate identity to
   `marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<release-tag>`
   and rejects branch signers. Authenticate the installer before executing it;
-  its archive verifier also requires this identity. Native binstall signature
+  its archive verifier requires both the maintainer-approved digest and this identity. Native binstall signature
   support needs a reviewed bridge; no unverified strategy is an accepted path.
 - **The Homebrew tap** (`marcinwadon/homebrew-tap`): the repository and a
   token allowed to push to it.
@@ -13462,7 +14056,7 @@ Use the copied-tree harness below; every counted mutation must fail an actual as
 
 ## Gate interface for R3 and R4
 
-The normative embedded `packaging/release/README.md` documents **one** executable: `packaging/release-gate <channel>` and environment **`release`**. It specifies candidate/global inventory digest, preflight/boundary, unique outside receipt, platform event fields, settings audit JSON/digest, read-only GH token and storage-only audit credentials. Zero means live validation and held audit success; stdout is the approval challenge and the receipt records binding/approver/phase/channel. No cached boolean or artifact actor authorizes another boundary.
+The normative embedded `packaging/release/README.md` documents **one** executable: `packaging/release-gate <channel>` and environment **`release`**. It specifies candidate/global inventory digest, preflight/boundary, unique outside receipt, platform event fields, armored hardware inventory signature, settings audit JSON/digest and touch confirmation, read-only GH token and storage-only audit credentials. Zero means live validation and held audit success; stdout is the approval challenge and the receipt records binding/approver/phase/channel. No cached boolean or artifact actor authorizes another boundary.
 
 Both existing branches were read. R3 replaces materialize/verify/crates-io calls with held fetch plus channel `crates`, contributes the seven frozen crates/channel inventory and adapts its final metadata to the explicitly disabled native binstall/external exact-tag verifier contract. R4 replaces r1-ghcr-gate upload/sign with channel `ghcr` and the two explicit phases, contributes OCI tar/index/SBOM material and independently verifies every platform/index/binary digest. Both move final jobs into the common manual **tagged** orchestrator, with release environment, direct current-attempt authorize dependency and in-job gates. crates.io configuration requires both environment and exact filename. GHCR uses a dedicated release-only credential and package Actions READ, never ordinary GITHUB_TOKEN for writes. Consumer integration stays disabled until reviewed.
 
@@ -13489,7 +14083,7 @@ parser.add_argument('--source',type=Path,required=True)
 parser.add_argument('--destination',type=Path,required=True)
 args=parser.parse_args()
 source=args.source.resolve();destination=args.destination.resolve()
-base='dd7c0066c643ee417f29f4c1559d36a49b7eac00'
+base='256691feb9cba161f0c29b14016bc857a4da86e5'
 plan=Path('docs/plans/2026-10-28-release-foundation.md')
 assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=destination,text=True).strip()==base
 assert not subprocess.check_output(['git','status','--porcelain'],cwd=destination,text=True).strip(), 'replay worktree must be fresh'
@@ -13548,7 +14142,7 @@ Only copied files are changed. External calls in selected tests are mocked.
 import ast
 from pathlib import Path
 import shutil,subprocess,sys
-root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/review-probes-final-2';base.mkdir(exist_ok=False)
+root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/review-probes-touch-final-1';base.mkdir(exist_ok=False)
 G='test_gate.Gates.';S='test_settings.Settings.';T='test_tag_signature.TagSignature.';P='test_publish.';W='test_workflows.Workflows.'
 cases=[]
 def guard(file,message,test):cases.append((file,message,test))
@@ -13614,7 +14208,7 @@ print(f'FINAL {len(cases)+len(manual)} assertion-only mutations killed',flush=Tr
 
 ### dist-roundtrip.py
 
-Run only in disposable output whose target/distrib does not exist, using the default build shell plus one-off Python and the pinned dist binary. This makes real mixed tarballs and generated manifests, checks three formula digests and runs all 16 installer groups with an explicit verifier double. No native compatibility or live signature/publishing claim.
+Run only in disposable output whose target/distrib does not exist, using the default build shell plus one-off Python and the pinned dist binary. This makes real mixed tarballs and generated manifests, checks three formula digests and runs all 20 installer groups with an explicit verifier double. No native compatibility or live signature/publishing claim.
 
 ```python
 """Nonpublishing cargo-dist manifest/installer round-trip with tiny archives."""
@@ -13646,10 +14240,97 @@ subprocess.run(['sh','packaging/test-installer.sh',str(out)],check=True)
 print('cargo-dist post-notice manifest / formula / installer round-trip passed; no publication',flush=True)
 ```
 
+### Hardware approval COPY probes
+
+Eleven additional mutations. All edits occur only in fresh COPIES; choose a fresh scratch root on repetition.
+
+```python
+"""Hardware approval guard-removal probes, only in fresh scratch COPIES."""
+import ast
+from pathlib import Path
+import shutil,subprocess,sys
+root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/touch-probes-final-2';base.mkdir(exist_ok=False)
+A='test_approval.Approval.'
+cases=[
+ ('approval.py','malformed maintainer',A+'test_missing_malformed_other_key_and_different_inventory_refused'),
+ ('approval.py','maintainer inventory signature invalid',A+'test_missing_malformed_other_key_and_different_inventory_refused'),
+ ('approval.py','must never run in CI',A+'test_signing_never_runs_in_ci_and_requires_explicit_touch_confirmation'),
+ ('approval.py','must confirm signing-subkey',A+'test_signing_never_runs_in_ci_and_requires_explicit_touch_confirmation'),
+ ('settings_audit.py','maintainer hardware touch',A+'test_touch_confirmation_is_required_in_settings_audit'),
+ ('verify.py','image digest is not',A+'test_image_requires_signature_and_signed_digest_set'),
+]
+manual=[
+ ('file-root','verify.py',"proof = approval.verify(inventory_path, approval_signature or candidate.parent / 'release-inventory.json.asc')", "proof = {'inventory_sha256':gate.digest(inventory_path.read_bytes())}",A+'test_unsigned_tag_with_valid_looking_attestation_has_no_authority'),
+ ('image-root','verify.py',"proof = approval.verify(candidate / 'release-inventory.json', approval_signature)","proof = {'inventory_sha256':gate.digest((candidate / 'release-inventory.json').read_bytes())}",A+'test_image_requires_signature_and_signed_digest_set'),
+ ('publisher-root','publish.py',"proof = approval.verify(args.candidate / 'release-inventory.json', approval_signature)","proof = {'inventory_sha256':gate.digest(gate.canonical(inventory)), 'signature_sha256':gate.digest(b'')}",A+'test_publisher_missing_root_signature_stops_before_remote_access'),
+ ('channel-root','gate.py',"    proof = approval.verify_dispatch(args.candidate, inputs)\n    require(proof['inventory_sha256'] == args.inventory_sha256 == digest(raw), 'maintainer signature does not approve this inventory digest')\n",'',A+'test_channel_gate_requires_hardware_approval_before_live_evidence'),
+ ('binstall-root','verify.py',"policy.get('maintainer-fingerprint') == approval.FINGERPRINT",'True','test_verify.BinstallMetadata.test_metadata_cannot_advertise_an_unverified_or_branch_signed_path'),
+]
+def copy(name):
+ d=base/name;shutil.copytree(root/'packaging',d/'packaging',ignore=shutil.ignore_patterns('__pycache__'));shutil.copytree(root/'.github',d/'.github');return d
+
+def run(d,test):
+ r=subprocess.run([sys.executable,'-m','unittest',test],cwd=d/'packaging/release',capture_output=True,text=True)
+ log=r.stdout+r.stderr;(d/'probe.log').write_text(log)
+ assert r.returncode and 'FAIL:' in log and 'ERROR:' not in log and 'KeyError' not in log,log
+ print('ASSERTION FAILURE: '+d.name,flush=True)
+for number,(file,message,test) in enumerate(cases,1):
+ d=copy(f'{number:02}');p=d/'packaging/release'/file;s=p.read_text();tree=ast.parse(s)
+ calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='require' and len(n.args)>1 and message in ast.get_source_segment(s,n.args[1])]
+ assert len(calls)==1,(file,message,len(calls));calls[0].args[0]=ast.Constant(True);p.write_text(ast.unparse(tree)+'\n');run(d,test)
+for name,file,old,new,test in manual:
+ d=copy(name);p=d/'packaging/release'/file;s=p.read_text();assert s.count(old)==1,name;p.write_text(s.replace(old,new));run(d,test)
+print(f'{len(cases)+len(manual)} hardware-root COPY mutations failed real assertions',flush=True)
+```
+
+### Installer hardware COPY probes
+
+Thirteen additional mutations against the integrated final hardener. External signing and attestation use explicit doubles; real jq checks the signed digest-set selection.
+
+```python
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+root = Path.cwd()
+base = root / '.superpowers/sdd/release-foundation/touch-installer-probes-1'
+base.mkdir()
+mutations = [
+    ('schema', '.schema != 1 or ', ''),
+    ('repository', '.repository != "marcinwadon/hennery" or ', ''),
+    ('missing-gpg', 'check_cmd gpg || err "gpg is required for maintainer release signature verification"', ':'),
+    ('missing-jq', 'check_cmd jq || err "jq is required for maintainer release inventory verification"', ':'),
+    ('nonempty-inputs', '[ -s "$_inventory" ] && [ -s "$_signature" ] || err "missing maintainer release signature or inventory"', ':'),
+    ('import-failure', '--import "$_keyring/key.asc" >/dev/null 2>&1 || err "cannot import pinned maintainer public key"', '--import "$_keyring/key.asc" >/dev/null 2>&1'),
+    ('verify-failure', '2>/dev/null) || err "invalid maintainer release signature"', '2>/dev/null) || :'),
+    ('pinned-fingerprint', 'if ($3 != "F26C7F594DFE84D131703AFC23E5A318AE8D2861") bad=1', 'if (0) bad=1'),
+    ('bad-status', ' { bad=1 }', ' { bad=0 }'),
+    ('one-status', 'count == 1 && !bad', 'count >= 0 && !bad'),
+    ('tag-binding', '.tag != $tag', 'false'),
+    ('one-artifact', 'if length != 1 then', 'if false then'),
+    ('exact-bytes', '[ "$_actual_sha" = "$_approved_sha" ] || err "archive differs from maintainer-approved inventory"', ':'),
+]
+for name, old, new in mutations:
+    probe = base / name
+    shutil.copytree(root / 'packaging', probe / 'packaging', ignore=shutil.ignore_patterns('__pycache__'))
+    path = probe / 'packaging/harden-installer.py'
+    text = path.read_text()
+    assert text.count(old) == 1, (name, text.count(old))
+    path.write_text(text.replace(old, new))
+    result = subprocess.run(['python3', '-m', 'unittest', 'discover', '-s', 'packaging/release', '-p', 'test_hardener.py'],
+                            cwd=probe, capture_output=True, text=True)
+    output = result.stdout + result.stderr
+    (probe / 'result.log').write_text(output)
+    assert result.returncode != 0 and 'FAIL:' in output and 'ERROR:' not in output and 'KeyError' not in output, (name, output)
+    print('ASSERTION FAILURE:', name, flush=True)
+print('13 COPY probes fail real assertions; production tree unmodified', flush=True)
+```
+
 ## After this plan
 
 - Parent independent re-review of platform/security/whole branch; collect complete PR checks, reviewDecision, mergeStateStatus and unresolved threads. No self-approval.
-- Maintainer-only setup: actual reviewer ID, tag deployment policy, the two owner/immutable rulesets, immutable releases, environment-only App/token secrets, GHCR package Actions READ and real negative push, crates.io exact workflow+environment, held bucket/IAM/retention/audit principals. None was configured here.
+- Maintainer-only setup: physical signing-subkey touch policy, no accessible software copy, local inventory signing/public sidecar, honest audit confirmation, actual reviewer ID, tag deployment policy, the two owner/immutable rulesets, immutable releases, environment-only App/token secrets, GHCR package Actions READ and real negative push, crates.io exact workflow+environment, held bucket/IAM/retention/audit principals. None was configured here.
 - R3/R4 migration to the shared tagged interface and final metadata/payload contract. Confirm the binstall external-only bridge default and permitted dedicated GHCR credential kind; upstream capability gaps remain explicit and channels stay off until qualified.
 - Native Linux/macOS CI and logged-in agent/service/platform floors, current advisory/licence/asset/corresponding-source/static OpenSSL review, then explicit per-channel publication approval and public install acceptance.
 - No announcements or moving aliases before the whole approved set is healthy; preserve source/rollback artifacts and compatibility/backup obligations. Parent cleans historical replay/helper/scratch trees; no memory narratives were written.

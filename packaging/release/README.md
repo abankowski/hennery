@@ -7,7 +7,11 @@ workflow checker is defense in depth. A repository writer can rewrite a workflow
 and request an ordinary write `GITHUB_TOKEN` or OIDC token; lint cannot prevent
 GitHub issuing those tokens.
 
-The security boundary is platform configuration: maintainer review and deployment
+Release authority is the hardware-backed maintainer signature over the exact
+frozen inventory, required by every consumer and publisher alongside Sigstore.
+An owner SSH key can create an unsigned tag and run altered workflow code;
+an exact-tag certificate alone cannot authorize release bytes. Platform defenses
+still require maintainer review and deployment
 restricted to protected `v*` tags; publishing credentials only in `release`;
 crates.io trusted publishing bound to `release` and `release-publish.yml`; GHCR
 Actions access READ with a separate protected credential; immutable GitHub
@@ -43,7 +47,8 @@ signed release tag**, never a branch. Platform `GITHUB_REF` must be
 inputs are `inventory_sha256`, `source_sha`, `tag`, sorted JSON `channels` and
 `targets`, JSON `candidate` containing integer `run_id`/`run_attempt`, the held
 `retention_receipt_version`, canonical `settings_audit` JSON and its SHA-256
-`settings_audit_sha256`. Publishing IDs come from the platform. Do not fabricate
+`settings_audit_sha256`, plus the armored public detached `maintainer_signature`
+over the exact inventory bytes. Publishing IDs come from the platform. Do not fabricate
 or replace platform variables. `GH_TOKEN` needs ordinary contents/Actions read;
 publishers never inspect private ruleset bypass settings or hold administration
 credentials. `RELEASE_AUDIT_BUCKET` and a storage-only AWS principal permit
@@ -62,6 +67,8 @@ account and explicitly confirmed UI observations where no settings API exists.
 It inspects the protected environment, both tag rulesets, repository/environment
 secret names and immutable-release setting. It checks GHCR Actions READ plus the
 post-setup negative push result, and each crate's exact workflow/environment.
+It records the maintainer's explicit hardware-touch policy/fingerprint confirmation;
+remote code cannot verify physical touch configuration.
 Publishers verify the ratified report, current exact-SHA checks, current review
 history and a freshly fetched tag's actual pinned-key signature at every gate.
 

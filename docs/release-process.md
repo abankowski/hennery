@@ -159,7 +159,8 @@ repositories, Apple notarization, public caches and R6 modules retain their gate
 ## Settings audit and publication approval
 
 Inspect the final digest set, source, channels and targets through trusted local
-tools. At approval time, sign the **exact held canonical inventory bytes** locally:
+tools. Enter the reviewed `nix develop .#release` shell. At approval time, sign
+the **exact held canonical inventory bytes** locally:
 
 ```sh
 packaging/hennery-release sign-approval --inventory candidate/release-inventory.json \
@@ -268,8 +269,15 @@ an existing cryptographically verified bundle safely across reconcile then uploa
 never replace a differing local/remote bundle. Only verified absence permits an
 upload; ambiguous auth/network responses or mismatches stop. Published GitHub
 assets are immutable; incomplete/conflicting releases require a new version.
+Retain and reuse the identical approved `.asc` on retries; regenerating a
+different signature cannot replace an already published immutable sidecar.
 
-Nix uses an immutable tag/full commit flake reference, builds the real UI and
+Before evaluating a release flake, use the independently trusted verifier to
+authenticate the inventory and its source commit. Check the fetched source is
+that exact full commit SHA and verify the annotated tag as defense in depth;
+invoke Nix with the authenticated full SHA. A tag name or an unverified flake
+cannot authenticate its own code. This also applies to replacement verifier
+code downloaded from a tag. Nix builds the real UI and
 retains reference guards and source/UI/adapter identity. Native Linux arm64 is in
 CI; no public cache or unqualified platform is implied. Public-path acceptance
 belongs to the maintainer after authorized publication. Before rollback, stop
