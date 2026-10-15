@@ -288,6 +288,7 @@ fn a_hello_announces_per_agent_isolation_read_leniently() {
 #[test]
 fn only_starts_and_resumes_carry_a_delivery() {
     let prompt = CollectorFrame::Prompt {
+        plugin_context: None,
         request_id: "r".into(),
         session_id: "s".into(),
         turn_id: "t".into(),

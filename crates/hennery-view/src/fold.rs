@@ -315,6 +315,17 @@ impl Fold {
         self.run = None;
         self.tools.clear();
         self.plan = None;
+        // Collector-written provenance is data, never inferred from display
+        // labels. Only the operator producer is supported on this path.
+        if event.body.get("origin").is_some_and(|value| {
+            !matches!(
+                serde_json::from_value::<hennery_proto::plugin::InputOrigin>(value.clone()),
+                Ok(hennery_proto::plugin::InputOrigin::Operator {})
+            )
+        }) {
+            self.unrecognised(event, "unsupported_input_origin");
+            return;
+        }
         let content = event.body.get("content").cloned().unwrap_or(Value::Null);
         match serde_json::from_value::<Vec<StoredBlock>>(content) {
             Ok(mut content) => {

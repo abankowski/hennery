@@ -297,6 +297,11 @@
       "description": "A feature a host implements, announced in `hello` (ACP core §3.3). The\ncollector never sends a frame that needs a capability to a host that\nlacks it.",
       "oneOf": [
         {
+          "const": "plugin_context",
+          "description": "Optional typed context in the same ACP prompt as user input.",
+          "type": "string"
+        },
+        {
           "const": "projects",
           "description": "Project enumeration and browsing.",
           "type": "string"
@@ -844,6 +849,16 @@
               "description": "ACP ContentBlocks, built by the frontend.",
               "items": true,
               "type": "array"
+            },
+            "plugin_context": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StartupContext"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "request_id": {
               "type": "string"
@@ -2546,6 +2561,23 @@
           },
           "required": [
             "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "plugin_context",
+              "type": "string"
+            },
+            "request_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "request_id"
           ],
           "type": "object"
         },
@@ -5815,6 +5847,71 @@
         "session_id"
       ],
       "type": "object"
+    },
+    "StartupContext": {
+      "additionalProperties": false,
+      "description": "Collector-written delivery envelope. Source claims inside `context` never\nchange this outer origin or the separately supplied operator input.",
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/PluginContext"
+        },
+        "namespace_epoch": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/InputOrigin"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "connection_id",
+        "namespace_epoch",
+        "origin",
+        "context"
+      ],
+      "type": "object"
+    },
+    "StartupRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "block": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StartupContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/StartupStatus"
+        }
+      },
+      "required": [
+        "request_id",
+        "status"
+      ],
+      "type": "object"
+    },
+    "StartupStatus": {
+      "enum": [
+        "delivered",
+        "unsupported",
+        "unavailable",
+        "timed_out",
+        "revoked"
+      ],
+      "type": "string"
     },
     "StatusArgs": {
       "additionalProperties": false,

@@ -21,6 +21,7 @@ pub mod logo;
 pub mod operator;
 pub mod origin;
 pub mod passkeys;
+pub mod plugin_context;
 pub mod push;
 pub mod ratelimit;
 pub mod recents;

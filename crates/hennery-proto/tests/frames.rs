@@ -92,6 +92,7 @@ fn every_collector_frame_round_trips() {
             mcp: Default::default(),
         },
         CollectorFrame::Prompt {
+            plugin_context: None,
             request_id: "r".into(),
             session_id: "s".into(),
             turn_id: "t".into(),

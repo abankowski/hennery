@@ -265,6 +265,7 @@ async fn a_host_error_answers_only_the_request_it_names() {
     let hub = collector.state.hub.clone();
     let waiter = tokio::spawn(async move {
         let frame = CollectorFrame::Prompt {
+            plugin_context: None,
             request_id: "w1".into(),
             session_id: "s1".into(),
             turn_id: "t1".into(),

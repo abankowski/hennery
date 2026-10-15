@@ -213,6 +213,7 @@ async fn the_sessions_secret_values_never_reach_what_it_reports() {
     let handle = session::launch(uplink.clone(), launch, SessionOptions::default());
     wait_for(&uplink, |body| matches!(body, SessionBody::SessionStarted { .. })).await;
     assert!(handle.send(SessionCmd::Prompt {
+        plugin_context: None,
         request_id: "r1".into(),
         turn_id: "t1".into(),
         content: vec![json!({"type": "text", "text": "hi"})],
@@ -274,6 +275,7 @@ async fn an_adapters_errors_quoting_its_secrets_are_redacted_in_every_answer_and
         .unwrap()
         .unwrap();
     assert!(handle.send(SessionCmd::Prompt {
+        plugin_context: None,
         request_id: "r2".into(),
         turn_id: "t1".into(),
         content: vec![json!({"type": "text", "text": "hi"})],

@@ -20,6 +20,8 @@ pub struct AttachedSession {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
+    /// Optional typed context in the same ACP prompt as user input.
+    PluginContext,
     /// Project enumeration and browsing.
     Projects,
     /// Image content blocks in prompts.
@@ -1087,6 +1089,9 @@ pub enum CollectorFrame {
         request_id: String,
         session_id: String,
         turn_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        plugin_context: Option<crate::plugin::StartupContext>,
         /// ACP ContentBlocks, built by the frontend.
         #[ts(type = "unknown[]")]
         content: Vec<Value>,

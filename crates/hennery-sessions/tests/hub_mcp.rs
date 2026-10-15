@@ -194,6 +194,7 @@ async fn a_frame_without_a_delivery_goes_out_on_any_connection() {
     let hub = Hub::new();
     let mut rx = connect(&hub, Capabilities::default());
     let prompt = CollectorFrame::Prompt {
+        plugin_context: None,
         request_id: "r1".into(),
         session_id: "s1".into(),
         turn_id: "t1".into(),

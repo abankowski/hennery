@@ -115,6 +115,13 @@ impl HostConn {
         {
             return false;
         }
+        if matches!(
+            frame,
+            CollectorFrame::Prompt { plugin_context: Some(_), .. }
+        ) && !self.capabilities.has(Capability::PluginContext)
+        {
+            return false;
+        }
         let Some(mcp) = frame.mcp_delivery() else {
             return true;
         };

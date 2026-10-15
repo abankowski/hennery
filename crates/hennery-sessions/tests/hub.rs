@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 
 fn prompt(request_id: &str) -> CollectorFrame {
     CollectorFrame::Prompt {
+        plugin_context: None,
         request_id: request_id.into(),
         session_id: "s1".into(),
         turn_id: format!("t-{request_id}"),

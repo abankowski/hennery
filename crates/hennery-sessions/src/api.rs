@@ -854,6 +854,7 @@ async fn prompt(
     }
     let request_id = uuid::Uuid::now_v7().to_string();
     let frame = CollectorFrame::Prompt {
+        plugin_context: None,
         request_id: request_id.clone(),
         session_id: id.clone(),
         turn_id: turn_id.clone(),
