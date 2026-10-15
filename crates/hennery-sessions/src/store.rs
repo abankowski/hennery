@@ -740,6 +740,7 @@ pub struct Reconciliation {
 }
 
 pub struct Store {
+    prompt_admissions: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     plugins: Arc<hennery_gateway::plugin::Control>,
     conn: hennery_kernel::db::CoordinatedConnection,
     /// The database's owner (`hennery_kernel::db::kernel_owner`), whom
@@ -1920,6 +1921,7 @@ impl Store {
             attachments,
             checkpoints,
             view_reads: AtomicU64::new(0),
+            prompt_admissions: Arc::default(),
             mcp: RwLock::new(None),
         })
     }
@@ -2642,19 +2644,56 @@ impl Store {
         self.open_turn_with(session_id, turn_id, &prompt.stored_json(), &prompt.images)
     }
 
+    pub fn reserve_prompt(&self, session: &str) -> Option<crate::startup::PromptReservation> {
+        crate::startup::reserve(&self.prompt_admissions, session)
+    }
+
+    pub fn open_prompt_with_startup(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        prompt: &Checked,
+        startup: &mut Option<hennery_proto::plugin::StartupRecord>,
+    ) -> Result<bool> {
+        self.open_turn_with_startup(session_id, turn_id, &prompt.stored_json(), &prompt.images, startup)
+    }
+
     fn open_turn_with(&self, session_id: &str, turn_id: &str, content: &[Value], images: &[Image]) -> Result<bool> {
+        self.open_turn_with_startup(session_id, turn_id, content, images, &mut None)
+    }
+
+    fn open_turn_with_startup(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        content: &[Value],
+        images: &[Image],
+        startup: &mut Option<hennery_proto::plugin::StartupRecord>,
+    ) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let changed = tx.execute(
             "UPDATE sessions SET open_turn_id = ?2
-             WHERE id = ?1 AND lifecycle = 'active' AND open_turn_id IS NULL AND owner_id = ?3",
+             WHERE id = ?1 AND lifecycle = 'active' AND open_turn_id IS NULL AND owner_id = ?3
+             AND close_requested = 0 AND NOT EXISTS(SELECT 1 FROM purged_hats p
+                WHERE p.owner_id = ?3 AND p.hat_id = sessions.hat_id)",
             params![session_id, turn_id, self.owner],
         )?;
         if changed == 1 {
+            crate::startup::prepare_in(self, &tx, session_id, turn_id, startup)?;
+            let mut content = content.to_vec();
+            if let Some(startup) = startup {
+                content.insert(
+                    0,
+                    serde_json::to_value(hennery_proto::rest::StoredBlock::PluginContext {
+                        startup: startup.clone(),
+                    })?,
+                );
+            }
             let ts = now();
             tx.execute(
                 "INSERT INTO turns(turn_id, session_id, content, created_at, owner_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![turn_id, session_id, serde_json::to_string(content)?, ts, self.owner],
+                params![turn_id, session_id, serde_json::to_string(&content)?, ts, self.owner],
             )?;
             for image in images {
                 // The row and its turn's link (`link_turn_attachments`) go in
@@ -2673,7 +2712,7 @@ impl Store {
                         .with_context(|| format!("store attachment {}", image.sha256))?;
                 }
             }
-            link_turn_attachments(&tx, &self.owner, turn_id, content)?;
+            link_turn_attachments(&tx, &self.owner, turn_id, &content)?;
         }
         tx.commit()?;
         Ok(changed == 1)

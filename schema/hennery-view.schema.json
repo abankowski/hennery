@@ -1,5 +1,31 @@
 {
   "$defs": {
+    "ContextEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          },
+          "type": "array"
+        },
+        "source_refs": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "source_refs",
+        "provenance"
+      ],
+      "type": "object"
+    },
     "Field": {
       "description": "One field of an elicitation's form.",
       "properties": {
@@ -77,9 +103,105 @@
       ],
       "type": "object"
     },
+    "InputOrigin": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "operator",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "plugin_context",
+              "type": "string"
+            },
+            "request_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "request_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "parent",
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "session_id",
+            "operation_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "child_id": {
+              "type": "string"
+            },
+            "delivery_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "child_report",
+              "type": "string"
+            },
+            "source_event_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "child_id",
+            "source_event_id",
+            "delivery_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Item": {
       "description": "One display item of a session. Its `id` is stable for the session's\nlife; `version` is the `event_id` of the last event that changed it, so\na client keeps the item with the higher version.",
       "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "plugin_context",
+              "type": "string"
+            },
+            "startup": {
+              "$ref": "#/$defs/StartupRecord"
+            }
+          },
+          "required": [
+            "kind",
+            "startup"
+          ],
+          "type": "object"
+        },
         {
           "description": "The operator's prompt, as the collector stored it: text, and images\nas attachments (`GET /api/attachments/{sha256}`).",
           "properties": {
@@ -563,6 +685,67 @@
       ],
       "type": "object"
     },
+    "PluginContext": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/ContextEntry"
+          },
+          "type": "array"
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entries",
+        "generated_at",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "Provenance": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "source",
+              "type": "string"
+            },
+            "origin": {
+              "$ref": "#/$defs/InputOrigin"
+            },
+            "source": {
+              "$ref": "#/$defs/SourceRef"
+            }
+          },
+          "required": [
+            "kind",
+            "origin",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "unverified",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Question": {
       "description": "A question the agent asked (ACP core §4.6), with where its answer\nstands. The state fields mirror `PendingItem`'s.",
       "properties": {
@@ -800,9 +983,114 @@
       ],
       "type": "object"
     },
+    "SourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "event_id"
+      ],
+      "type": "object"
+    },
+    "StartupContext": {
+      "additionalProperties": false,
+      "description": "Collector-written delivery envelope. Source claims inside `context` never\nchange this outer origin or the separately supplied operator input.",
+      "properties": {
+        "connection_id": {
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/PluginContext"
+        },
+        "namespace_epoch": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/InputOrigin"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "connection_id",
+        "namespace_epoch",
+        "origin",
+        "context"
+      ],
+      "type": "object"
+    },
+    "StartupRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "block": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StartupContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/StartupStatus"
+        }
+      },
+      "required": [
+        "request_id",
+        "status"
+      ],
+      "type": "object"
+    },
+    "StartupStatus": {
+      "enum": [
+        "delivered",
+        "unsupported",
+        "unavailable",
+        "timed_out",
+        "revoked"
+      ],
+      "type": "string"
+    },
     "StoredBlock": {
       "description": "One block of a prompt as the collector stores it (ACP core §7, plan 6a):\nin `turns.content` and in the `user_turn` event's `content`. Text as it\nwas sent; an image as the attachment it was stored as, never its bytes.\n`GET /api/attachments/{sha256}` serves the image.",
       "oneOf": [
+        {
+          "description": "Collector-generated reference data, separately typed from user input.",
+          "properties": {
+            "startup": {
+              "$ref": "#/$defs/StartupRecord"
+            },
+            "type": {
+              "const": "plugin_context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "startup"
+          ],
+          "type": "object"
+        },
         {
           "properties": {
             "text": {

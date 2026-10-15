@@ -616,7 +616,7 @@ export type PromptResponse = { turn_id: string, };
  * was sent; an image as the attachment it was stored as, never its bytes.
  * `GET /api/attachments/{sha256}` serves the image.
  */
-export type StoredBlock = { "type": "text", text: string, } | { "type": "image", mimeType: string,
+export type StoredBlock = { "type": "plugin_context", startup: StartupRecord, } | { "type": "text", text: string, } | { "type": "image", mimeType: string,
 /**
  * The SHA-256 of the image's bytes, 64 lowercase hex digits.
  */

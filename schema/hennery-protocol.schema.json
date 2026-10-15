@@ -5948,6 +5948,23 @@
       "description": "One block of a prompt as the collector stores it (ACP core §7, plan 6a):\nin `turns.content` and in the `user_turn` event's `content`. Text as it\nwas sent; an image as the attachment it was stored as, never its bytes.\n`GET /api/attachments/{sha256}` serves the image.",
       "oneOf": [
         {
+          "description": "Collector-generated reference data, separately typed from user input.",
+          "properties": {
+            "startup": {
+              "$ref": "#/$defs/StartupRecord"
+            },
+            "type": {
+              "const": "plugin_context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "startup"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "text": {
               "type": "string"

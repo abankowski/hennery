@@ -31,3 +31,24 @@ fn missing_evidence_becomes_explicitly_unverified() {
         vec![Provenance::Unverified {}]
     );
 }
+
+#[test]
+fn entry_count_and_serialized_budget_are_independent_and_never_clip_provenance() {
+    let context = |entries| {
+        serde_json::from_value::<PluginContext>(json!({"entries":entries,"generated_at":"now","truncated":false}))
+            .unwrap()
+    };
+    let small = json!({"text":"small","source_refs":[],"provenance":[{"kind":"unverified"}]});
+    let count = sanitize(context(vec![small; 40])).unwrap();
+    assert_eq!(count.entries.len(), 32);
+    assert!(count.truncated);
+    let large = json!({"text":"x".repeat(512),"source_refs":[],"provenance":[{"kind":"unverified"}]});
+    let bytes = sanitize(context(vec![large; 32])).unwrap();
+    assert!(serde_json::to_vec(&bytes).unwrap().len() <= 8192);
+    assert!(bytes.truncated);
+    assert!(!bytes.entries.is_empty());
+    let evidence = json!({"text":"keep all evidence or omit this entry","source_refs":[],"provenance":vec![json!({"kind":"unverified"});500]});
+    let omitted = sanitize(context(vec![evidence])).unwrap();
+    assert!(omitted.entries.is_empty());
+    assert!(omitted.truncated);
+}

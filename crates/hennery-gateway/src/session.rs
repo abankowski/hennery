@@ -49,6 +49,15 @@ pub struct Delivered {
 
 /// The gateway, as the sessions module sees it (umbrella §9, ACP core §1).
 pub trait SessionMcp: Send + Sync {
+    fn startup_context<'a>(
+        &'a self,
+        _session: &'a str,
+        _request: &'a str,
+        _supported: bool,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<hennery_proto::plugin::StartupRecord>> + Send + 'a>>
+    {
+        Box::pin(async { None })
+    }
     /// Shared authentication seam; provided only by full collector wiring.
     fn authenticator(&self) -> Option<Arc<GatewayStore>> {
         None
@@ -168,6 +177,15 @@ fn mounted_slugs_in(tx: &Transaction<'_>, owner: &str, host_id: &str, hat_id: &s
 }
 
 impl SessionMcp for GatewayMcp {
+    fn startup_context<'a>(
+        &'a self,
+        session: &'a str,
+        request: &'a str,
+        supported: bool,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<hennery_proto::plugin::StartupRecord>> + Send + 'a>>
+    {
+        Box::pin(self.runtime.startup_context(session, request, supported))
+    }
     fn authenticator(&self) -> Option<Arc<GatewayStore>> {
         self.builtin.then(|| self.store.clone())
     }

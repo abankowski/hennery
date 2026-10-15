@@ -380,6 +380,9 @@ fn unsupported_production_origins_and_differential_stored_origins_fail_closed() 
     let w = World::new(true);
     w.session("session", "host", &w.hat);
     for origin in [
+        InputOrigin::PluginContext {
+            request_id: "context".into(),
+        },
         InputOrigin::Parent {
             session_id: "parent".into(),
             operation_id: "op".into(),
