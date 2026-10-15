@@ -1931,6 +1931,61 @@ fn deleted_replacement_children_do_not_reset_starts_budget_and_caller_delete_rem
 }
 
 #[test]
+fn starts_budget_last_slot_is_atomic_for_four_workers_after_target_deletion() {
+    let (w, p) = pair();
+    for i in 0..31 {
+        let accepted = spawn(&w, &p, &format!("prefill-{i}")).unwrap();
+        delete_endpoint(&w, accepted.child_id.as_deref().unwrap());
+    }
+    let barrier = Arc::new(Barrier::new(4));
+    let accepted = std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..4)
+            .map(|i| {
+                let db = w.db.clone();
+                let identity = p.clone();
+                let barrier = barrier.clone();
+                scope.spawn(move || {
+                    let store = Store::open(&db).unwrap();
+                    barrier.wait();
+                    match store.queue_spawn(
+                        &identity,
+                        1,
+                        "digest",
+                        &hennery_sessions::delegation_queue::DelegatedLaunch {
+                            key: &format!("racing-{i}"),
+                            agent: "claude",
+                            cwd: "/project",
+                            brief: "brief",
+                            name: None,
+                            config: &SessionConfig::default(),
+                            mcp: McpContext::NONE,
+                        },
+                    ) {
+                        Ok(_) => 1,
+                        Err(error) => {
+                            assert_eq!(error.to_string(), "start_budget");
+                            0
+                        }
+                    }
+                })
+            })
+            .collect();
+        jobs.into_iter().map(|job| job.join().unwrap()).sum::<i32>()
+    });
+    assert_eq!(accepted, 1);
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT starts FROM delegation_start_budgets WHERE owner_id=?1 AND caller_id='parent' AND epoch=0",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        32
+    );
+}
+
+#[test]
 fn endpoint_deletion_preserves_unrelated_owner_commands_proof_and_budget() {
     for endpoint in ["parent", "child"] {
         let (w, p) = pair();
