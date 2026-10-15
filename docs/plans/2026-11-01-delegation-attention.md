@@ -8,7 +8,7 @@
 
 ## Execution status (2026-10-15)
 
-Built first on D3a, paused at a committed WIP boundary for review amendments, then rebased onto **79304d58**. Every initial regression was run RED before the corresponding implementation: missing attention/guard APIs and HTTP 404, followed by behavioral failures for old operator epochs, canonical answer queues, revoked hosts, missing question detail, repeated notification runs, orphan facts after parent deletion, automatic report completion push routing, and suppressed pushes incorrectly changing device errors. Exact resulting tests and implementation are embedded below. Fresh replay and execution evidence are recorded after the steps; parent-run independent review and CI remain required.
+Built first on D3a, paused at a committed WIP boundary for review amendments, then rebased onto **79304d58**. Every initial regression was run RED before the corresponding implementation: missing attention/guard APIs and HTTP 404, followed by behavioral failures for old operator epochs, canonical answer queues, revoked hosts, missing question detail, repeated notification runs, orphan facts after parent deletion, automatic report completion push routing, and suppressed pushes incorrectly changing device errors. Exact resulting tests and implementation are embedded below. Both fresh replays, COPY probes, 4×3 load and the final six Rust/native Nix gates passed as recorded below. The implementation is committed at **6ce346de**. Parent-run independent review and CI remain required; no approval is claimed.
 
 ## Scope
 
@@ -1079,8 +1079,8 @@ index 9d63ffac..17a47f09 100644
 ### Task 1, step 2: implement durable fallback and finish the loop
 
 - [x] Implement only the failing behavior, using existing coordination and push seams.
-- [ ] Replay in a fresh directory, run COPY probes, 4×3 load and all gates.
-- [ ] Review staged bytes and personal author identity; commit and attempt one SSH push.
+- [x] Replay in a fresh directory, run COPY probes, 4×3 load and all gates.
+- [x] Review staged bytes and personal author identity; commit and attempt one SSH push.
 
 <!-- replay {"checks":[["cargo test -p hennery-sessions --test delegation_d2 --test store --locked",0],["cargo test -p hennery-kernel --test delivery --locked",0],["cargo test -p hennery-testkit --test delegation_tools --test owner_filter --locked",0]]} -->
 ```diff
@@ -2046,12 +2046,43 @@ index 40c8903f..6a99d85a 100644
 
 ### Task 2: record verification and request independent review
 
-- [ ] Add the execution record and docs/README.md index entry with actual command output, test counts, probe results and replay file count.
-- [ ] Request parent-run review of this range, deletion/reassignment/admission races and shared C2 seams. Parent owns PR checks, reviewDecision, mergeStateStatus and unresolved threads, bots included.
+- [x] Add the execution record and docs/README.md index entry with actual command output, test counts, probe results and replay file count.
+- [x] Request parent-run review of this range, deletion/reassignment/admission races and shared C2 seams. Parent owns PR checks, reviewDecision, mergeStateStatus and unresolved threads, bots included.
 
 ## Execution record
 
-Pending final evidence. The ledger is .superpowers/sdd/deleg-d3b/; scratch replay/probe copies are retained for parent cleanup.
+The implementation and strengthened tests were built before embedding. Base **79304d58** contains D3a's review fixes awaiting re-review; implementation **6ce346de** follows the rebased WIP checkpoint **8365e4f4**. All logs and harnesses are under .superpowers/sdd/deleg-d3b/. The final summary records hashes for eighteen implementation files and exact equality against both the restored probe copy and final fresh replay.
+
+All commands below ran from this worktree in the flake dev shell, with isolated tool homes. Final logs are /tmp/deleg-d3b-final-*.log and retained under the ledger's final-gates/.
+
+| Command | Exit | Output |
+|---|---|---|
+| cargo fmt --all --check | 0 | clean |
+| cargo clippy --workspace --all-targets --locked -- -D warnings | 0 | finished |
+| cargo clippy -p hennery --locked -- -D warnings | 0 | finished |
+| cargo test --workspace --locked | 0 | **2,400 passed**, 155 suites, one pre-existing ignored test |
+| cargo run -p hennery-proto --bin gen --locked -- --check | 0 | current |
+| cargo run -p hennery-view --bin gen-view --locked -- --check | 0 | current |
+| nix flake check -L | 0 | native aarch64-darwin checks including package, Clippy and embedded UI |
+
+Tests increased **2,369 → 2,400**: 27 attention/race regressions, three push guard regressions and one actual worker/HTTP fallback loop. Targeted/replay suites passed 125 delegation tests, 104 storage tests, 16 push-delivery tests, 14 HTTP delegation tests (one pre-existing ignored) and three owner-filter tests. No web files changed, so the separate web gate was not run. Linux CI and independent review remain parent-owned. Existing ts-rs diagnostic text and the Nix warning about incompatible Linux systems do not change the recorded zero exits.
+
+**RED evidence:** initial missing attention/guard APIs and HTTP 404, plus behavioral failures for pre-fallback operator intent, answer-queue admission, revoked hosts, missing question details, repeated drain notification identity, automatic root completion push, orphan completion/loss/start failure, and subscription errors on suppression. The three final test-strengthening changes were first made in a COPY, observed failing with the corresponding behavior removed, restored GREEN, then copied into the worktree. Initial and final full gate logs are retained separately.
+
+**Probes:** 41 initial mutations produced 38 detected regressions and three coverage findings. The attention-only deletion command did not inspect physical retention; the existing schema-walk storage test detects that mutation. A strengthened receipt assertion detects omitted status acknowledgement. The answer-queue trigger was redundant because every accepted answer records answer_submitted and resolves attention in the same transaction; the duplicate trigger and its rollback-fixture entry were removed. A final probe disabling that canonical attention update now fails the orphan-answer regression. Six strengthening probes and five final probes all detect their mutations, each after a successful exact-command baseline and with restored GREEN checks: **49 detected mutations in total**, with all three initial findings resolved. The initial probe harness's exit 1 is retained honestly as the coverage-finding result; follow-up harnesses exit 0. One initial case injects an invalid SQL table; the additional source-insertion removal probe independently verifies the actual reservation side effect.
+
+The probes cover source reservation/rollback, deadline handling and reason classes, delivered-question/report distinction, fallback epoch snapshot/stability, parent deletion preservation/unlink/scrub, child physical scrub, reassignment, explicit rearm and question acknowledgement fences, stable tags/retries/detail/enqueue, collector run identity, ordinary versus automatic completion routing, orphan facts/start/loss/coalescing, purge and canonical answer admission, production/dynamic/startup kernel guard wiring, retry suppression/device health, route exposure, owner audit, page bounds and exact source-event identity. They ran only in probe-copy-1 and probe-copy-2; all eighteen final implementation files in probe-copy-2 were restored byte-for-byte.
+
+**Load:** final 4×3 runs for attention (27), kernel guard (3), actual HTTP fallback loop (1) and inherited actual-host crash regressions (3): **48 nonempty binary runs / 408 passing test executions**, all exit 0. The earlier targeted load run also passed. The final audit caught twelve zero-test HTTP invocations caused by selecting a different crate's same-named binary; those logs are retained as the pre-audit result and excluded from the valid totals. Only that spawn/timing group was corrected, with twelve actual HTTP test executions. The final audit now rejects every empty load group. Final logs are separately named load-final-*.
+
+**Replay:** replay-1 and final **replay-2** are separate fresh directories archived from 79304d58. Each extracted two nonempty blocks over **18 implementation files**, observed exits **101, 101, 101, 0, 0, 0**, and compared **784 tracked files** exactly against the built tree. Only this plan and its README execution index are excluded. replay-2 uses a private copy of build artifacts and a scratch registry cache; targets are never shared. No probe was applied to the worktree. All eighteen staged implementation files matched the tested tree and final replay before commit; the personal gmail author was audited before each push.
+
+**Verification budget change:** the operator's new budget arrived after the two full workspace runs and both replay runs had finished; no redundant run remained active. No further full run/replay was started. The only subsequent load was the missing HTTP spawn/timing group. Future copies use cp -c -R target cloning, probes stay batched, post-review amendments use targeted RED/guard/staged-byte verification, and further full runs are reserved for the rebases specified by AGENTS.md.
+
+**Review request:** review 79304d58..6ce346de, plus the following execution-record commit. Examine deadline/late acknowledgement ordering; actual host crash facts interleaved with parent deletion; detached surviving children and subsequent startup failures; parent/child deletion and reassignment versus enqueue/admission/retry; first-fallback Operator epoch and delivered/uncertain rearm association; status acknowledgement; queue-loss/restart reconciliation and automatic root completion suppression. Kernel admission cannot recall already admitted external requests. Review the minimal shared C2 seams (AppState's private run id, migration 20 and internal Edge source-event id). Parent owns draft/PR creation, independent security/whole-branch review, all checks/reviewDecision/mergeStateStatus/unresolved bot threads, and merge.
+
+Retain replay-1, replay-2, probe-copy-1 and probe-copy-2 for parent cleanup. D3a's amendment scratch copies remain in its separate ledger. No D3b implementation remainder is deferred; D4 family UI/attention presentation and pinned live acceptance still block ordinary release.
+
 
 ## After the plan
 
