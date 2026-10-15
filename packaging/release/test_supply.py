@@ -93,18 +93,37 @@ class Supply(unittest.TestCase):
                 targets = ['aarch64-apple-darwin']
                 for name in supply.required_payloads(channels, targets, tag):
                     (root / name).write_bytes(b'fixture')
+                if 'crates' in channels:
+                    self.write_cli_crate(root, tag)
                 supply.require_contract(root, channels, targets, tag)
                 for path in root.iterdir():
+                    original = path.read_bytes()
                     path.unlink()
                     with self.subTest(channel=channels, missing=path.name), self.assertRaises(gate.Refused):
                         supply.require_contract(root, channels, targets, tag)
-                    path.write_bytes(b'fixture')
+                    path.write_bytes(original)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for name in supply.required_payloads(['crates'], targets, 'v0.1.0-alpha.1'):
                 (root / name).write_bytes(b'fixture')
             with self.assertRaises(gate.Refused):
                 supply.require_contract(root, ['crates'], targets, 'v0.1.0-alpha.1')
+
+    @staticmethod
+    def write_cli_crate(root, tag, identity_ref=None):
+        base='hennery-'+tag.removeprefix('v')
+        identity_ref=identity_ref or 'refs/tags/'+tag
+        text='[package]\nname="hennery"\nversion="'+tag.removeprefix('v')+'"\n[package.metadata.binstall]\ndisabled-strategies=["crate-meta-data","quick-install","compile"]\n[package.metadata.hennery-release]\nverification="external-sigstore"\nsigner-identity="https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@'+identity_ref+'"\n'
+        with tarfile.open(root/(base+'.crate'),'w:gz') as archive:
+            data=text.encode();entry=tarfile.TarInfo(base+'/Cargo.toml');entry.size=len(data);archive.addfile(entry,io.BytesIO(data))
+
+    def test_crates_contract_rejects_branch_identity_in_frozen_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);channels=['crates','github'];targets=['aarch64-apple-darwin'];tag='v0.1.0'
+            for name in supply.required_payloads(channels,targets,tag):(root/name).write_bytes(b'fixture')
+            self.write_cli_crate(root,tag,'refs/heads/main')
+            with self.assertRaisesRegex(gate.Refused,'exact release-tag identity'):
+                supply.require_contract(root,channels,targets,tag)
 
     def test_freeze_checks_licences_and_freezes_complete_final_bytes_once(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -173,6 +192,28 @@ class Supply(unittest.TestCase):
             (root / 'payload').write_bytes(b'changed')
             with self.assertRaises(gate.Refused):
                 supply.verify_checksums(root)
+
+
+
+    def test_crate_metadata_is_bounded_regular_and_unambiguous(self):
+        for kind in ('duplicate','symlink','oversize'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);channels=['crates','github'];targets=['aarch64-apple-darwin'];tag='v0.1.0';base='hennery-0.1.0'
+                for name in supply.required_payloads(channels,targets,tag):(root/name).write_bytes(b'fixture')
+                self.write_cli_crate(root,tag)
+                with tarfile.open(root/(base+'.crate'),'r:gz') as archive:data=archive.extractfile(base+'/Cargo.toml').read()
+                if kind=='oversize':data+=b'\n#'+b'x'*(1024*1024)
+                with tarfile.open(root/(base+'.crate'),'w:gz') as archive:
+                    entry=tarfile.TarInfo(base+'/Cargo.toml')
+                    if kind=='symlink':
+                        entry.type=tarfile.SYMTYPE;entry.linkname='Cargo.toml.orig';archive.addfile(entry)
+                        entry=tarfile.TarInfo(base+'/Cargo.toml.orig')
+                    entry.size=len(data);archive.addfile(entry,io.BytesIO(data))
+                    if kind=='duplicate':archive.addfile(entry,io.BytesIO(data))
+                with tarfile.open(root/(base+'.crate'),'r:gz') as archive:
+                    self.assertEqual(archive.extractfile(base+'/Cargo.toml').read(),data)
+                with self.assertRaisesRegex(gate.Refused,'bounded regular file'):
+                    supply.require_contract(root,channels,targets,tag)
 
 
 if __name__ == '__main__':

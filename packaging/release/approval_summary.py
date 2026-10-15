@@ -7,7 +7,7 @@ from pathlib import Path
 import gate
 
 inputs = gate.strict_json(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())['inputs']
-context = {key: inputs[key] for key in ('source_sha', 'tag', 'inventory_sha256')}
+context = {key: inputs[key] for key in ('source_sha', 'tag', 'inventory_sha256', 'settings_audit_sha256')}
 context.update({key: gate.strict_json(inputs[key]) for key in ('channels', 'targets', 'candidate')})
 context.update(repository=gate.REPOSITORY, publishing={'run_id': int(os.environ['GITHUB_RUN_ID']), 'run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT'])})
 with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:

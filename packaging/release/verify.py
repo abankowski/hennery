@@ -30,6 +30,17 @@ def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/prove
     subprocess.run(command, check=True)
 
 
+def require_binstall_metadata(metadata, tag):
+    # Upstream binstall has no Sigstore identity verifier. Disable its native
+    # strategies until a reviewed bridge exists; this custom namespace describes
+    # the external verifier, never pretends to enable native Sigstore support.
+    disabled = metadata.get('binstall', {}).get('disabled-strategies')
+    gate.require(isinstance(disabled, list) and sorted(disabled) == ['compile', 'crate-meta-data', 'quick-install'], 'native binstall strategies must remain disabled without an identity-verifying bridge')
+    policy = metadata.get('hennery-release', {})
+    command = attestation_command('unused', tag)
+    gate.require(policy.get('verification') == 'external-sigstore' and policy.get('signer-identity') == command[command.index('--cert-identity') + 1], 'binstall external verification metadata must pin the exact release-tag identity')
+
+
 def verify(candidate, bundle, source_sha, tag, signer_sha=None):
     candidate, bundle = Path(candidate), Path(bundle)
     inventory_path = candidate / 'release-inventory.json'

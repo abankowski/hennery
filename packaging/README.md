@@ -103,14 +103,18 @@ These need the operator's decision, credentials, or both. None is set up:
 
   The `build` workflow's artifacts are never promoted to a release: a pull
   request's are built from code nobody has reviewed yet.
-- **Artifact attestations** (`github-attestations = true`): they need
-  `id-token: write` and `attestations: write`, and they write to the public
-  Sigstore log. The README's "verified install" (`gh attestation verify
-  hennery-installer.sh --repo marcinwadon/hennery`) is documented with the
-  first release.
+- **Artifact attestations** (`github-attestations = true`): protected release-tag
+  jobs need OIDC/attestation authority and write to the public Sigstore log.
+  Repository-only verification is insufficient. The common
+  [verifier](release/verify.py) pins the exact certificate identity to
+  `marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<release-tag>`
+  and rejects branch signers. Authenticate the installer before executing it;
+  its archive verifier also requires this identity. Native binstall signature
+  support needs a reviewed bridge; no unverified strategy is an accepted path.
 - **The Homebrew tap** (`marcinwadon/homebrew-tap`): the repository and a
   token allowed to push to it.
-- **The image on GHCR:** `packages: write`, one multi-arch manifest from
+- **The image on GHCR:** a dedicated credential held only in `release`, with
+  this repository's package Actions access READ, one multi-arch manifest from
   the per-architecture images, and its provenance attestation. Its docs
   should say: publish the port on loopback behind a TLS proxy
   (`-p 127.0.0.1:8080:8080`); read the setup link with

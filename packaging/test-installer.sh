@@ -22,6 +22,34 @@ installer="$dist/hennery-installer.sh"
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
+# The candidate has not been signed yet. This offline verifier double checks
+# every real CLI identity argument; public installation uses the real gh CLI.
+fixture_version=$(sed -n 's/^APP_VERSION="\([^"]*\)"$/\1/p' "$installer")
+mkdir "$scratch/verifier-tools"
+printf 'offline verification fixture\n' > "$scratch/bundle.jsonl"
+cat > "$scratch/verifier-tools/gh" <<TOOL
+#!/bin/sh
+set -eu
+[ "\$1" = attestation ] && [ "\$2" = verify ] || exit 1
+shift 3
+identity=0
+source=0
+while [ "\$#" -gt 0 ]; do
+    case "\$1" in
+        --cert-identity)
+            [ "\$2" = "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@\${HENNERY_TEST_SIGNER_REF:-refs/tags/v$fixture_version}" ] || exit 1
+            identity=1; shift 2 ;;
+        --source-ref)
+            [ "\$2" = 'refs/tags/v$fixture_version' ] || exit 1
+            source=1; shift 2 ;;
+        *) shift ;;
+    esac
+done
+[ "\$identity" = 1 ] && [ "\$source" = 1 ] || exit 1
+printf verified > '$scratch/signature-verified'
+TOOL
+chmod +x "$scratch/verifier-tools/gh"
+
 fail() {
     echo "FAIL: $*" >&2
     exit 1
@@ -67,7 +95,9 @@ echo "ok: the installer embeds each of its $count archives' SHA-256"
 run_installer() {
     mkdir -p "$scratch/home"
     status=0
-    HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/.config" \
+    PATH="${VERIFIER_TOOLS:-$scratch/verifier-tools}:$PATH" \
+        HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/.config" \
+        HENNERY_ATTESTATION_BUNDLE="$scratch/bundle.jsonl" \
         HENNERY_DOWNLOAD_URL="file://$1" HENNERY_UNMANAGED_INSTALL="$2" \
         sh "$1/hennery-installer.sh" >"$3" 2>&1 || status=$?
     return "$status"
@@ -118,6 +148,7 @@ run_installer "$dist" "$scratch/good" "$scratch/good.log" || {
     fail "the installer failed on its own archives"
 }
 "$scratch/good/hennery" --version || fail "the installed binary does not run"
+[ -f "$scratch/signature-verified" ] || fail 'installer never authenticated release provenance'
 echo "ok: installs a binary that runs"
 
 # With `shasum` and no `sha256sum`.
@@ -257,3 +288,9 @@ chmod +x "$scratch/raced-tools/ln"
 (PATH="$scratch/raced-tools" && ! run_installer "$dist" "$scratch/raced" "$scratch/raced.log") || fail 'concurrent destination was replaced'
 [ "$(cat "$scratch/raced/hennery")" = raced ] || fail 'concurrent destination changed'
 echo 'ok: staging is invisible and concurrent destinations survive'
+
+(export HENNERY_TEST_SIGNER_REF=refs/heads/main; refused branch-signer "$dist" 'refusing an archive without valid release-tag provenance')
+echo 'ok: branch signer identity cannot authorize installation'
+tools "$scratch/no-gh-tools" gh
+(PATH="$scratch/no-gh-tools" VERIFIER_TOOLS="$scratch/no-gh-tools" && refused missing-verifier "$dist" 'GitHub CLI is required')
+echo 'ok: missing signature verifier refuses installation'

@@ -52,34 +52,28 @@ def strict_json(raw):
         raise Refused(f'invalid JSON: {error}') from error
 
 
-def binding(inventory, inventory_sha256, run_id, run_attempt):
+def binding(inventory, inventory_sha256, run_id, run_attempt, settings_audit_sha256=None):
     return {key: inventory[key] for key in ('repository', 'source_sha', 'tag', 'channels', 'targets', 'candidate')} | {
-        'inventory_sha256': inventory_sha256, 'publishing': {'run_id': int(run_id), 'run_attempt': int(run_attempt)}}
+        'inventory_sha256': inventory_sha256, 'settings_audit_sha256': settings_audit_sha256,
+        'publishing': {'run_id': int(run_id), 'run_attempt': int(run_attempt)}}
 
 
 def challenge(context):
     return 'approve-release-v1:' + digest(canonical(context))
 
 
-def frozen_tag_ruleset():
-    # Safe default: no actor can mutate v* tags. Creation path pending parent ruling.
-    return {'name': 'release-tags-frozen', 'target': 'tag', 'enforcement': 'active', 'bypass_actors': [],
-            'conditions': {'ref_name': {'include': ['refs/tags/v*'], 'exclude': []}},
-            'rules': [{'type': op} for op in ('creation', 'update', 'deletion')]}
-
-
-def check_tag_rules(rulesets):
-    protected = set()
+def check_tag_rules(rulesets, owner_id):
+    creation, immutable = False, False
     for rule in rulesets:
         if rule.get('target') != 'tag' or rule.get('enforcement') != 'active':
             continue
         refs = rule.get('conditions', {}).get('ref_name', {})
         if refs != {'include': ['refs/tags/v*'], 'exclude': []}:
             continue
-        if rule.get('bypass_actors') != []:
-            continue
-        protected.update(r['type'] for r in rule.get('rules', []))
-    require({'creation', 'update', 'deletion'} <= protected, 'release tag creation/update/deletion must have no bypass')
+        operations = {r['type'] for r in rule.get('rules', [])}
+        creation |= operations == {'creation'} and rule.get('bypass_actors') == [{'actor_type': 'User', 'actor_id': owner_id, 'bypass_mode': 'always'}]
+        immutable |= {'update', 'deletion'} <= operations and rule.get('bypass_actors') == []
+    require(creation and immutable, 'release tags require owner-only creation and separately immutable update/deletion with no bypass')
 
 
 def verify_files(inventory, root):
@@ -124,27 +118,25 @@ def trusted_run(run, source_sha, path):
 def validate(inventory, expected_digest, root, context, snapshot):
     require(digest(canonical(inventory)) == expected_digest, 'inventory digest mismatch')
     verify_files(inventory, root)
-    expected = binding(inventory, expected_digest, context['publishing']['run_id'], context['publishing']['run_attempt'])
+    expected = binding(inventory, expected_digest, context['publishing']['run_id'], context['publishing']['run_attempt'], context.get('settings_audit_sha256'))
     require(context == expected, 'approval tuple differs from inventory')
-    env = snapshot.get('environment') or {}
-    require(env.get('name') == 'release' and env.get('can_admins_bypass') is False, 'release environment missing or bypass not explicitly disabled')
-    reviewers = {r['reviewer']['id'] for rule in env.get('protection_rules', []) if rule.get('type') == 'required_reviewers'
-                 for r in rule.get('reviewers', []) if r.get('type') == 'User'}
-    require(reviewers, 'release environment needs explicit authorized user reviewers')
-    require(env.get('deployment_branch_policy') == {'protected_branches': False, 'custom_branch_policies': True}, 'release environment branch restrictions missing')
-    require(snapshot.get('branch_policies') == [{'name': 'main', 'type': 'branch'}], 'release jobs must run from protected main only')
-    check_tag_rules(snapshot.get('rulesets', []))
+    import settings_audit
+    settings = settings_audit.validate_report(snapshot['settings_audit'], context.get('settings_audit_sha256'), inventory, expected_digest, snapshot['candidate_run']['updated_at'])
+    env = settings['environment']
+    reviewers = {settings['owner']['id']}
     tag = snapshot.get('tag') or {}
     require(tag.get('object', {}).get('type') == 'tag', 'release tag missing or not annotated')
     obj = snapshot.get('tag_object') or {}
     require(obj.get('tag') == inventory['tag'] and obj.get('object', {}).get('type') == 'commit' and obj.get('object', {}).get('sha') == inventory['source_sha'], 'release tag moved/deleted or wrong SHA')
+    import tag_signature
+    require(snapshot.get('tag_signature') == {'object_sha': tag['object']['sha'], 'commit_sha': inventory['source_sha'], 'tag': inventory['tag'], 'fingerprint': tag_signature.FINGERPRINT}, 'release tag lacks a verified pinned-maintainer signature')
     candidate = snapshot.get('candidate_run', {})
     require(candidate.get('id') == inventory['candidate']['run_id'] and candidate.get('run_attempt') == inventory['candidate']['run_attempt'], 'candidate run attempt changed')
     trusted_run(candidate, inventory['source_sha'], '.github/workflows/release-candidate.yml')
     publisher = snapshot.get('publisher_run', {})
     require(publisher.get('id') == context['publishing']['run_id'] and publisher.get('run_attempt') == context['publishing']['run_attempt'], 'publishing run attempt changed: renew approval')
     require(publisher.get('repository', {}).get('full_name') == REPOSITORY and publisher.get('event') == 'workflow_dispatch'
-            and publisher.get('head_branch') == 'main' and path_of(publisher) == '.github/workflows/release-publish.yml', 'unexpected publisher workflow/ref/event')
+            and publisher.get('head_branch') == inventory['tag'] and publisher.get('head_sha') == inventory['source_sha'] and path_of(publisher) == '.github/workflows/release-publish.yml', 'unexpected publisher workflow/ref/event')
     reviews = [r for r in snapshot.get('reviews', []) if any(e.get('id') == env.get('id') and e.get('name') == 'release' for e in r.get('environments', []))]
     require(reviews, 'environment approval absent')
     require(all(r.get('state') == 'approved' for r in reviews), 'environment review includes a rejection: start a fresh dispatch')
@@ -205,11 +197,14 @@ class GitHub:
                 return out
         raise Refused('platform pagination limit: incomplete evidence')
 
-    def evidence(self, inventory, context):
+    def verify_tag(self, inventory, object_sha):
+        import tag_signature
+        return tag_signature.verify(inventory['tag'], inventory['source_sha'], object_sha)
+
+    def evidence(self, inventory, context, settings_audit):
         tag = self.get('/git/ref/tags/' + urllib.parse.quote(inventory['tag'], safe=''))
         obj = self.get('/git/tags/' + tag['object']['sha']) if tag.get('object', {}).get('type') == 'tag' else None
-        rules = [self.get('/rulesets/' + str(r['id'])) for r in self.pages('/rulesets')]
-        branch = self.pages('/environments/release/deployment-branch-policies', 'branch_policies')
+        signature = self.verify_tag(inventory, tag['object']['sha'])
         checks = self.pages('/actions/runs?head_sha=' + inventory['source_sha'], 'workflow_runs')
         # Workflow success alone can hide skipped acceptance jobs. All jobs in
         # each latest qualifying workflow must have succeeded, never skipped.
@@ -222,9 +217,7 @@ class GitHub:
         candidate_run = self.get(f"/actions/runs/{inventory['candidate']['run_id']}")
         candidate_jobs = self.pages(f"/actions/runs/{candidate_run['id']}/attempts/{candidate_run['run_attempt']}/jobs", 'jobs')
         require(candidate_jobs and all(j.get('status') == 'completed' and j.get('conclusion') == 'success' for j in candidate_jobs), 'candidate has skipped/missing/unsuccessful acceptance or retention jobs')
-        return {'tag': tag, 'tag_object': obj, 'rulesets': rules,
-                'environment': self.get('/environments/release'),
-                'branch_policies': [{k: p[k] for k in ('name', 'type')} for p in branch],
+        return {'tag': tag, 'tag_object': obj, 'tag_signature': signature, 'settings_audit': settings_audit,
                 'candidate_run': candidate_run,
                 'publisher_run': self.get(f"/actions/runs/{context['publishing']['run_id']}"),
                 'reviews': self.get(f"/actions/runs/{context['publishing']['run_id']}/approvals"), 'checks': checks}
@@ -246,11 +239,11 @@ def main():
     raw = (args.candidate / 'release-inventory.json').read_bytes()
     inventory = strict_json(raw)
     require(raw == canonical(inventory), 'noncanonical inventory')
-    require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_REF') == 'refs/heads/main'
-            and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'gate must execute in trusted manual main workflow')
+    require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_REF') == 'refs/tags/' + inventory['tag'] and os.environ.get('GITHUB_SHA') == inventory['source_sha']
+            and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'gate must execute in the trusted manual signed-tag workflow')
     event = strict_json(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())
     inputs = event.get('inputs', {})
-    context = binding(inventory, args.inventory_sha256, int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
+    context = binding(inventory, args.inventory_sha256, int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']), inputs['settings_audit_sha256'])
     for key in ('source_sha', 'tag', 'channels', 'targets', 'candidate'):
         supplied = strict_json(inputs[key]) if key in ('channels', 'targets', 'candidate') else inputs[key]
         require(supplied == inventory[key], f'dispatch {key} changed')
@@ -259,7 +252,7 @@ def main():
     import supply
     supply.require_contract(args.candidate, inventory['channels'], inventory['targets'], inventory['tag'])
     supply.verify_binary_inventory(inventory, args.candidate)
-    snapshot = GitHub(os.environ['GH_TOKEN']).evidence(inventory, context)
+    snapshot = GitHub(os.environ['GH_TOKEN']).evidence(inventory, context, strict_json(inputs['settings_audit']))
     receipt = validate(inventory, args.inventory_sha256, args.candidate, context, snapshot)
     receipt['phase'] = args.phase
     receipt['channel'] = args.channel

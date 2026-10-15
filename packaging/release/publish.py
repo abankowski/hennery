@@ -71,14 +71,14 @@ def validate_live(candidate, phase):
     raw = (candidate / 'release-inventory.json').read_bytes()
     inventory = gate.strict_json(raw)
     gate.require(gate.digest(raw) == event['inventory_sha256'], 'candidate inventory changed at upload boundary')
-    gate.require(os.environ.get('GITHUB_REPOSITORY') == gate.REPOSITORY and os.environ.get('GITHUB_REF') == 'refs/heads/main'
+    gate.require(os.environ.get('GITHUB_REPOSITORY') == gate.REPOSITORY and os.environ.get('GITHUB_REF') == 'refs/tags/' + inventory['tag'] and os.environ.get('GITHUB_SHA') == inventory['source_sha']
                  and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'untrusted publication context')
-    context = gate.binding(inventory, event['inventory_sha256'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
+    context = gate.binding(inventory, event['inventory_sha256'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']), event['settings_audit_sha256'])
     for key in ('source_sha', 'tag', 'channels', 'targets', 'candidate'):
         value = gate.strict_json(event[key]) if key in ('channels', 'targets', 'candidate') else event[key]
         gate.require(value == inventory[key], 'dispatch approval changed')
     gate.require('github' in inventory['channels'], 'GitHub channel not enabled')
-    receipt = gate.validate(inventory, event['inventory_sha256'], candidate, context, gate.GitHub(os.environ['GH_TOKEN']).evidence(inventory, context))
+    receipt = gate.validate(inventory, event['inventory_sha256'], candidate, context, gate.GitHub(os.environ['GH_TOKEN']).evidence(inventory, context, gate.strict_json(event['settings_audit'])))
     receipt['phase'] = phase
     audit = Path('audit')
     audit.mkdir(exist_ok=True)
@@ -129,6 +129,7 @@ def main():
     release = api(tag_path)
     if release is not None:
         gate.require(release.get('tag_name') == inventory['tag'], 'remote release tag differs')
+        gate.require(release.get('draft') is True or release.get('immutable') is True, 'published release must be immutable')
     assets = release_assets(release)
     import verify
     prior = [a for a in assets if a['name'] == 'release.sigstore.jsonl']
@@ -148,11 +149,12 @@ def main():
     reconciliation = plan(expected, release_assets(release))
     if args.operation == 'upload':
         require_enabled()
+        gate.require(release is None or release.get('draft') is True or not reconciliation['missing'], 'immutable published release is incomplete; use a new version')
         if release is None:
             validate_live(args.candidate, 'create-release')
             release = api('/repos/' + gate.REPOSITORY + '/releases', method='POST', data=gate.canonical({
                 'tag_name': inventory['tag'], 'target_commitish': inventory['source_sha'], 'name': inventory['tag'],
-                'draft': False, 'prerelease': '-' in inventory['tag'], 'make_latest': 'false',
+                'draft': True, 'prerelease': '-' in inventory['tag'], 'make_latest': 'false',
                 'body': (args.candidate / 'release-notes.md').read_text() + '\n\nSource: https://github.com/' + gate.REPOSITORY + '/tree/' + inventory['source_sha'] + '\nInventory SHA-256: ' + gate.digest((args.candidate / 'release-inventory.json').read_bytes()) + '\n\nGenerated with Claude AI — please review before distribution.'}))
         for index, name in enumerate(reconciliation['missing']):
             # Revalidate both the platform and all retained bytes for EACH write.
@@ -165,6 +167,10 @@ def main():
             gate.require(name in verified['complete'], 'upload acknowledgement did not produce matching remote bytes')
         reconciliation = plan(expected, release_assets(release))
         gate.require(not reconciliation['missing'], 'release incomplete; moving aliases and announcements remain held')
+        if release.get('draft') is True:
+            validate_live(args.candidate, 'publish-release')
+            release = api(f'/repos/{gate.REPOSITORY}/releases/{release["id"]}', method='PATCH', data=gate.canonical({'draft': False, 'make_latest': 'false'}))
+            gate.require(release.get('draft') is False and release.get('immutable') is True, 'release publication did not establish immutability')
     with args.output.open('xb') as output:
         output.write(gate.canonical(reconciliation))
 

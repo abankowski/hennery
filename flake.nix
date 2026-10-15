@@ -54,6 +54,8 @@
             pkgs.cargo-audit
             pkgs.awscli2
             pkgs.gh
+            pkgs.git
+            pkgs.gnupg
           ];
         };
         devShells.default = pkgs.mkShell {

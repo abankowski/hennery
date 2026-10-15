@@ -23,6 +23,22 @@ REFUSE_UNCHECKED = (
 
 REPLACEMENTS = [
     (
+        '    # ...and then the updater, if it exists',
+        '''    # Authenticate the downloaded archive before extraction or execution.
+    check_cmd gh || err "GitHub CLI is required for release signature verification"
+    local _bundle="${HENNERY_ATTESTATION_BUNDLE:-$_dir/release.sigstore.jsonl}"
+    if [ -z "${HENNERY_ATTESTATION_BUNDLE:-}" ]; then
+        downloader "$ARTIFACT_DOWNLOAD_URL/release.sigstore.jsonl" "$_bundle" || err "cannot download release attestation bundle"
+    fi
+    gh attestation verify "$_file" --bundle "$_bundle" --repo marcinwadon/hennery \\
+        --signer-workflow marcinwadon/hennery/.github/workflows/release-publish.yml \\
+        --cert-identity "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v$APP_VERSION" \\
+        --source-ref "refs/tags/v$APP_VERSION" --cert-oidc-issuer https://token.actions.githubusercontent.com \\
+        --deny-self-hosted-runners || err "refusing an archive without valid release-tag provenance"
+
+    # ...and then the updater, if it exists''',
+    ),
+    (
         '    case "$_checksum_style" in\n        sha256)',
         '    [ "$_checksum_style" = sha256 ] || ' + REFUSE_UNCHECKED + '\n'
         '    [ "${#_checksum_value}" = 64 ] || ' + REFUSE_UNCHECKED + '\n'

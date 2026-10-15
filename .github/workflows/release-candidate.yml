@@ -19,7 +19,21 @@ concurrency:
   group: release-candidate-${{ github.event.inputs.tag || github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
 jobs:
+  tag-signature:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Verify pinned maintainer signature and exact candidate SHA before storage credentials
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: nix develop .#release -c python3 packaging/release/tag_signature.py --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
   web-ui:
+    needs: tag-signature
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -210,7 +224,7 @@ jobs:
       - name: Native installer positives and refusals
         run: sh packaging/test-installer.sh candidate
   retain:
-    needs: [assemble, installer]
+    needs: [assemble, installer, tag-signature]
     if: vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true'
     environment: release-staging
     runs-on: ubuntu-24.04

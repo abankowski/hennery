@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lint the release authority graph, including jobs inside reusable workflows."""
+"""Defense-in-depth lint only; platform environment/registry policy is the boundary."""
 from pathlib import Path
 import re
 import sys
@@ -7,7 +7,7 @@ import sys
 import yaml
 
 
-CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
+CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
 
 
 def privileged(job):

@@ -7,6 +7,9 @@ import tempfile
 import unittest
 
 import gate
+import settings_audit
+import tag_signature
+from datetime import datetime, timedelta, timezone
 
 
 class Gates(unittest.TestCase):
@@ -27,13 +30,13 @@ class Gates(unittest.TestCase):
             'environment': {'id': 7, 'name': 'release', 'can_admins_bypass': False,
                             'protection_rules': [{'type': 'required_reviewers', 'reviewers': [{'type': 'User', 'reviewer': {'id': 123}}]}],
                             'deployment_branch_policy': {'protected_branches': False, 'custom_branch_policies': True}},
-            'branch_policies': [{'name': 'main', 'type': 'branch'}],
-            'rulesets': [gate.frozen_tag_ruleset()],
+            'branch_policies': [{'name': 'v*', 'type': 'tag'}],
+            'rulesets': settings_audit.tag_rulesets(123),
             'tag': {'object': {'type': 'tag', 'sha': 'b' * 40}},
             'tag_object': {'tag': self.inventory['tag'], 'object': {'type': 'commit', 'sha': 'a' * 40, 'url': 'https://api.github.com/repos/marcinwadon/hennery/git/commits/' + 'a' * 40}},
             'candidate_run': {'id': 10, 'run_attempt': 1, 'head_sha': 'a' * 40, 'head_repository': {'full_name': 'marcinwadon/hennery'},
                               'event': 'push', 'path': '.github/workflows/release-candidate.yml', 'status': 'completed', 'conclusion': 'success'},
-            'publisher_run': {'id': 20, 'run_attempt': 1, 'head_sha': 'c' * 40, 'head_branch': 'main', 'event': 'workflow_dispatch',
+            'publisher_run': {'id': 20, 'run_attempt': 1, 'head_sha': 'a' * 40, 'head_branch': self.inventory['tag'], 'event': 'workflow_dispatch',
                               'path': '.github/workflows/release-publish.yml', 'repository': {'full_name': 'marcinwadon/hennery'}},
             'reviews': [{'state': 'approved', 'user': {'id': 123, 'login': 'maintainer'}, 'environments': [{'id': 7, 'name': 'release'}],
                          'comment': gate.challenge(self.context)}],
@@ -42,6 +45,13 @@ class Gates(unittest.TestCase):
         for path in gate.REQUIRED_WORKFLOWS:
             self.snapshot['checks'].append({'path': path, 'head_sha': 'a' * 40, 'event': 'push', 'head_repository': {'full_name': 'marcinwadon/hennery'},
                                             'status': 'completed', 'conclusion': 'success', 'id': len(self.snapshot['checks']) + 1})
+
+        from test_settings import settings
+        self.snapshot['candidate_run']['updated_at'] = (datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat()
+        self.snapshot['tag_signature'] = {'object_sha': 'b' * 40, 'commit_sha': self.inventory['source_sha'], 'tag': self.inventory['tag'], 'fingerprint': tag_signature.FINGERPRINT}
+        self.snapshot['settings_audit'] = settings_audit.report(self.inventory, self.digest, settings())
+        self.context = gate.binding(self.inventory, self.digest, 20, 1, gate.digest(gate.canonical(self.snapshot['settings_audit'])))
+        self.snapshot['reviews'][0]['comment'] = gate.challenge(self.context)
 
     def validate(self):
         return gate.validate(self.inventory, self.digest, self.root, self.context, self.snapshot)
@@ -52,15 +62,17 @@ class Gates(unittest.TestCase):
     def test_independent_refusals(self):
         # Every case changes exactly one otherwise passing input.
         cases = {
-            'environment absent': lambda s: s.pop('environment'),
-            'admin bypass': lambda s: s['environment'].update(can_admins_bypass=True),
-            'reviewers absent': lambda s: s['environment'].update(protection_rules=[]),
-            'broad deployment branches': lambda s: s['branch_policies'].append({'name': '*', 'type': 'branch'}),
-            'unrestricted environment': lambda s: s['environment'].update(deployment_branch_policy=None),
-            'no tag rules': lambda s: s.update(rulesets=[]),
-            'tag bypass': lambda s: s['rulesets'][0].update(bypass_actors=[{'actor_type': 'RepositoryRole', 'actor_id': 5}]),
-            'tag rule inactive': lambda s: s['rulesets'][0].update(enforcement='disabled'),
-            'tag rule exclude': lambda s: s['rulesets'][0]['conditions']['ref_name'].update(exclude=['refs/tags/v*']),
+            'environment absent': lambda s: s['settings_audit']['settings'].pop('environment'),
+            'admin bypass': lambda s: s['settings_audit']['settings']['environment'].update(can_admins_bypass=True),
+            'reviewers absent': lambda s: s['settings_audit']['settings']['environment'].update(protection_rules=[]),
+            'broad deployment branches': lambda s: s['settings_audit']['settings']['deployment_policies'].append({'name': '*', 'type': 'branch'}),
+            'unrestricted environment': lambda s: s['settings_audit']['settings']['environment'].update(deployment_branch_policy=None),
+            'no tag rules': lambda s: s['settings_audit']['settings'].update(rulesets=[]),
+            'tag bypass': lambda s: s['settings_audit']['settings']['rulesets'][0].update(bypass_actors=[{'actor_type': 'RepositoryRole', 'actor_id': 5}]),
+            'tag rule inactive': lambda s: s['settings_audit']['settings']['rulesets'][0].update(enforcement='disabled'),
+            'tag rule exclude': lambda s: s['settings_audit']['settings']['rulesets'][0]['conditions']['ref_name'].update(exclude=['refs/tags/v*']),
+            'tag signature absent': lambda s: s.pop('tag_signature'),
+            'tag fingerprint differs': lambda s: s['tag_signature'].update(fingerprint='f' * 40),
             'tag deleted': lambda s: s.update(tag=None),
             'tag moved': lambda s: s['tag_object']['object'].update(sha='d' * 40),
             'lightweight tag': lambda s: s['tag']['object'].update(type='commit'),
@@ -86,20 +98,24 @@ class Gates(unittest.TestCase):
             'checks PR merge ref': lambda s: s['checks'][0].update(event='pull_request'),
             'checks fork': lambda s: s['checks'][0].update(head_repository={'full_name': 'fork/hennery'}),
         }
+        baseline = self.snapshot
         for name, mutate in cases.items():
             with self.subTest(name=name):
-                original = self.snapshot
-                self.snapshot = copy.deepcopy(original)
+                # Every subcase starts fresh even when an assertion fails in
+                # a COPY mutation probe and unittest continues to the next.
+                self.snapshot = copy.deepcopy(baseline)
                 mutate(self.snapshot)
                 with self.assertRaises(gate.Refused):
                     self.validate()
-                self.snapshot = original
+        self.snapshot = baseline
 
     def test_each_tag_operation_refused_without_rule(self):
         for operation in ('creation', 'update', 'deletion'):
             with self.subTest(operation=operation):
                 s = copy.deepcopy(self.snapshot)
-                s['rulesets'][0]['rules'] = [r for r in s['rulesets'][0]['rules'] if r['type'] != operation]
+                rules = s['settings_audit']['settings']['rulesets']
+                for rule in rules:
+                    rule['rules'] = [r for r in rule['rules'] if r['type'] != operation]
                 with self.assertRaises(gate.Refused):
                     gate.validate(self.inventory, self.digest, self.root, self.context, s)
 
@@ -119,7 +135,7 @@ class Gates(unittest.TestCase):
             self.validate()
 
     def test_binding_each_field(self):
-        for field, value in [('inventory_sha256', 'f' * 64), ('source_sha', 'f' * 40), ('tag', 'v0.1.0'),
+        for field, value in [('settings_audit_sha256', 'f' * 64), ('inventory_sha256', 'f' * 64), ('source_sha', 'f' * 40), ('tag', 'v0.1.0'),
                              ('channels', ['crates']), ('targets', ['x86_64-unknown-linux-musl']),
                              ('candidate', {'run_id': 11, 'run_attempt': 1}),
                              ('publishing', {'run_id': 21, 'run_attempt': 1}),

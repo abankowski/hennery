@@ -7,6 +7,14 @@ on:
         description: Frozen candidate inventory SHA-256
         required: true
         type: string
+      settings_audit_sha256:
+        description: SHA-256 of the maintainer local settings audit
+        required: true
+        type: string
+      settings_audit:
+        description: Canonical maintainer audit JSON, fresh for this completed candidate
+        required: true
+        type: string
       source_sha:
         description: Exact qualified source commit
         required: true
@@ -50,7 +58,7 @@ jobs:
         run: python3 packaging/release/approval_summary.py
   authorize:
     needs: approval-tuple
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag)
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -88,7 +96,7 @@ jobs:
           nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}
@@ -104,7 +112,7 @@ jobs:
           echo "inventory_sha256=$INVENTORY" >> "$GITHUB_OUTPUT"
   sign:
     needs: authorize
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256
     environment:
       name: release
       url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -143,7 +151,7 @@ jobs:
           nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}
@@ -152,7 +160,7 @@ jobs:
           receipt: sign-preflight.json
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}
@@ -184,7 +192,7 @@ jobs:
           path: signatures/
   github:
     needs: [sign, authorize]
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GITHUB_ENABLED == 'true'
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GITHUB_ENABLED == 'true'
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -221,7 +229,7 @@ jobs:
           path: signatures
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}
@@ -230,7 +238,7 @@ jobs:
           receipt: publish-preflight.json
       - name: Reconcile every existing remote byte before any upload
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: nix develop .#release -c python3 packaging/release/publish.py reconcile --candidate candidate --signatures signatures --output reconciliation.json
       - name: Obtain short-lived publication authority after preflight
         id: publication-token
@@ -242,10 +250,9 @@ jobs:
           repositories: hennery
           permission-contents: write
           permission-actions: read
-          permission-administration: read
       - uses: ./.github/actions/release-gate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
         with:
           candidate: candidate
           inventory-sha256: ${{ inputs.inventory_sha256 }}

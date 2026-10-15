@@ -31,10 +31,16 @@ class Verification(unittest.TestCase):
             self.assertIn('--deny-self-hosted-runners', args)
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 class SignerIdentity(unittest.TestCase):
+    def setUp(self):
+        # A removed refusal guard must never escape to a real CLI/network call.
+        # RuntimeError deliberately makes such a probe invalid, not a counted
+        # authorization assertion failure.
+        transport = patch.object(verify.subprocess, 'run', side_effect=RuntimeError('signer tests must explicitly stub every transport'))
+        transport.start()
+        self.addCleanup(transport.stop)
+
     def test_branch_and_other_tag_signatures_are_rejected_for_files_and_images(self):
         fixture = test_gate.Gates(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
         (fixture.root / 'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
@@ -63,3 +69,21 @@ class SignerIdentity(unittest.TestCase):
             verify.verify_image('ghcr.io/marcinwadon/hennery@sha256:' + 'a' * 64, 'v0.1.0')
         with patch.object(verify.subprocess, 'run'), self.assertRaisesRegex(gate.Refused, 'immutable image'):
             verify.verify_image('ghcr.io/marcinwadon/hennery:latest', 'v0.1.0')
+
+class BinstallMetadata(unittest.TestCase):
+    def test_metadata_cannot_advertise_an_unverified_or_branch_signed_path(self):
+        import copy
+        good={'binstall':{'disabled-strategies':['crate-meta-data','quick-install','compile']},'hennery-release':{'verification':'external-sigstore','signer-identity':'https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0'}}
+        verify.require_binstall_metadata(good,'v0.1.0')
+        for kind in ('native','branch','wrong-tag','no-verifier'):
+            bad=copy.deepcopy(good)
+            if kind=='native':bad['binstall']['disabled-strategies'].remove('crate-meta-data')
+            elif kind=='branch':bad['hennery-release']['signer-identity']=bad['hennery-release']['signer-identity'].replace('@refs/tags/v0.1.0','@refs/heads/main')
+            elif kind=='wrong-tag':bad['hennery-release']['signer-identity']+='-other'
+            else:bad['hennery-release']['verification']='checksum-only'
+            with self.subTest(kind=kind),self.assertRaises(gate.Refused):
+                verify.require_binstall_metadata(bad,'v0.1.0')
+
+
+if __name__ == '__main__':
+    unittest.main()

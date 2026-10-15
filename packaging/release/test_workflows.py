@@ -127,5 +127,29 @@ class Workflows(unittest.TestCase):
                 workflow_policy.check(changed, 'release-candidate.yml')
 
 
+
+class PlatformBoundary(unittest.TestCase):
+    def test_release_jobs_run_on_the_release_tag_without_admin_policy_tokens(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for name in ('authorize', 'sign', 'github'):
+            job = data['jobs'][name]
+            self.assertNotIn('refs/heads/', job.get('if', ''))
+            self.assertIn('refs/tags/', job.get('if', ''))
+        text = (ROOT / '.github/workflows/release-publish.yml').read_text()
+        self.assertNotIn('RELEASE_POLICY_READ_TOKEN', text)
+        self.assertNotIn('permission-administration', text)
+        self.assertIn('settings_audit_sha256:', text)
+        self.assertIn('settings_audit:', text)
+
+    def test_candidate_retention_requires_prior_tag_signature_validation(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-candidate.yml').read_text())
+        self.assertIn('tag-signature', data['jobs'])
+        job = data['jobs']['tag-signature']
+        self.assertIn('tag_signature.py', str(job))
+        for name, job in data['jobs'].items():
+            if job.get('environment') == 'release-staging':
+                self.assertIn('tag-signature', job['needs'])
+
+
 if __name__ == '__main__':
     unittest.main()

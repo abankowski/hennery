@@ -215,6 +215,16 @@ def require_contract(root, channels, targets, tag):
     gate.require(set(channels) <= gate.CHANNELS and set(targets) <= gate.TARGETS, 'unqualified release channel/target')
     gate.require('-' not in tag or channels == ['github'], 'prerelease channels are GitHub only')
     gate.require(required_payloads(channels, targets, tag) <= {p.name for p in Path(root).iterdir()}, 'required release/channel payload missing')
+    if 'crates' in channels:
+        import tomllib
+        import verify
+        base = 'hennery-' + tag.removeprefix('v')
+        with tarfile.open(Path(root) / (base + '.crate'), 'r:gz') as archive:
+            entries = [m for m in archive.getmembers() if m.name == base + '/Cargo.toml']
+            gate.require(len(entries) == 1 and entries[0].isfile() and entries[0].size <= 1024*1024, 'crate metadata must be one bounded regular file')
+            with archive.extractfile(entries[0]) as metadata:
+                package = tomllib.loads(metadata.read().decode())['package']
+        verify.require_binstall_metadata(package.get('metadata', {}), tag)
 
 
 def main():
