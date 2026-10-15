@@ -3981,3 +3981,422 @@ fn d3b_start_failure_after_parent_delete_remains_durable_operator_work() {
             .any(|e| e.kind == "start_failed")
     );
 }
+
+#[test]
+fn reviewer_cancelled_parent_answer_reopens_operator_attention() {
+    let mut remaining = Vec::new();
+    for end in ["close", "delete", "tombstone"] {
+        let (w, parent) = pair();
+        pending(&w, "child", 2, "question", PendingKind::Elicitation);
+        w.store
+            .queue_ordinary_answer(
+                &parent,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "question",
+                    answer: &answer(),
+                },
+                &Hub::new(),
+            )
+            .unwrap();
+        assert!(attention(&w).is_empty());
+        if end == "tombstone" {
+            // Exercise the deletion trigger itself while an answer is still
+            // queued, independently of the public close-then-delete path.
+            raw(&w)
+                .execute(
+                    "UPDATE sessions SET lifecycle='deleted' WHERE owner_id=?1 AND id='parent'",
+                    [w.store.owner_id()],
+                )
+                .unwrap();
+        } else {
+            w.store.close_now("parent").unwrap();
+        }
+        assert_eq!(
+            attention(&w).len(),
+            1,
+            "cancellation must restore attention in the close transaction"
+        );
+        if end == "delete" {
+            w.store.delete_session("parent", None).unwrap();
+        }
+        assert_eq!(attention(&w).len(), 1, "deletion must preserve restored attention");
+        Store::open(&w.db)
+            .unwrap()
+            .refresh_delegation_attention(&Hub::new(), unix_now() + 600)
+            .unwrap();
+        assert!(w.store.still_open("child", "question").unwrap());
+        let queued: i64 = raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM answer_queue WHERE owner_id=?1 AND pending_id='question'",
+                [w.store.owner_id()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(queued, 0, "the undelivered answer was cancelled");
+        remaining.push((end, attention(&w).len()));
+    }
+    assert_eq!(
+        remaining,
+        vec![("close", 1), ("delete", 1), ("tombstone", 1)],
+        "close and delete must restore unresolved operator work"
+    );
+}
+
+#[test]
+fn reviewer_acknowledged_crash_does_not_reappear_after_parent_delete() {
+    let (w, _) = pair();
+    assert!(w.store.open_turn("child", "ongoing", &[]).unwrap());
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "work".into(),
+                turn_id: "ongoing".into(),
+            },
+        )
+        .unwrap();
+    w.store.record_close_request("parent").unwrap();
+    w.store
+        .ingest(
+            "child",
+            3,
+            &SessionBody::TurnEnded {
+                turn_id: "ongoing".into(),
+                outcome: TurnOutcome::Interrupted,
+                stop_reason: None,
+                error: Some("lost".into()),
+            },
+        )
+        .unwrap();
+    let id = attention(&w)[0].id.clone();
+    w.store
+        .enqueue_delegation_attention(&hennery_kernel::push::Push::detached(), "before-delete", "", unix_now())
+        .unwrap();
+    assert!(w.store.acknowledge_delegation_attention(&id).unwrap());
+    w.store.close_now("parent").unwrap();
+    w.store.delete_session("parent", None).unwrap();
+    let tombstone: (String, Option<String>, Option<String>, String, i64, String, i64) = raw(&w)
+        .query_row(
+            "SELECT attention_id,delivery_id,pending_id,reason,operator_epoch,push_run,push_at
+         FROM delegation_attention WHERE owner_id=?1 AND child_id='child' AND incident LIKE 'loss:%'",
+            [w.store.owner_id()],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_ne!(tombstone.0, id, "the former delivery identity must be scrubbed");
+    assert_eq!(
+        (
+            tombstone.1,
+            tombstone.2,
+            tombstone.3,
+            tombstone.4,
+            tombstone.5,
+            tombstone.6
+        ),
+        (None, None, "incident_resolved".into(), 0, String::new(), 0)
+    );
+    Store::open(&w.db).unwrap();
+    w.store
+        .ingest(
+            "child",
+            4,
+            &SessionBody::AdapterExited {
+                code: Some(1),
+                signal: None,
+                stderr_tail: String::new(),
+            },
+        )
+        .unwrap();
+    assert!(
+        attention(&w).is_empty(),
+        "the same acknowledged loss incident became new operator work"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn reviewer_slow_host_probes_do_not_starve_deadlines() {
+    let w = World::new();
+    for i in 0..32 {
+        let parent_id = format!("parent-{i:02}");
+        let child_id = format!("child-{i:02}");
+        let parent = w.start(&parent_id, &w.hat, McpIsolation::ClaudeStrict).unwrap();
+        w.active(&parent_id);
+        child(&w, &parent, &child_id, &w.hat);
+        pending(&w, &child_id, 2, &format!("question-{i}"), PendingKind::Elicitation);
+    }
+    let state = hennery_sessions::AppState::new(
+        Store::open(&w.db).unwrap(),
+        Hosts::open(&w.db).unwrap(),
+        Operator::open(&w.db).unwrap(),
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let reg = state
+        .hub
+        .register(
+            "host",
+            tx,
+            Capabilities(vec![Capability::ResolvePath, Capability::DelegationConfig]),
+            AgentIsolation::default(),
+        )
+        .unwrap();
+    state.hub.mark_ready("host", reg.conn_id);
+    hennery_sessions::delegation_worker::after_startup(&state);
+    assert!(matches!(rx.recv().await.unwrap(), CollectorFrame::ResolvePath { .. }));
+    raw(&w)
+        .execute(
+            "UPDATE delegation_notices SET deadline=?2 WHERE owner_id=?1",
+            params![w.store.owner_id(), unix_now() - 1],
+        )
+        .unwrap();
+    for _ in 0..4 {
+        tokio::time::advance(std::time::Duration::from_millis(250)).await;
+        tokio::task::yield_now().await;
+    }
+    let open = attention(&w).len();
+    let notified: i64 = raw(&w)
+        .query_row(
+            "SELECT COUNT(*) FROM delegation_attention WHERE owner_id=?1 AND state='open' AND push_run<>''",
+            [w.store.owner_id()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        rx.try_recv().is_err(),
+        "the first 15-second host probe must still be pending"
+    );
+    state.shutdown.cancel();
+    assert_eq!(
+        open, 32,
+        "all deadlines must reconcile within one second while the first host probe waits"
+    );
+    assert_eq!(
+        notified, 32,
+        "notification reconciliation must also be independent of host probes"
+    );
+}
+
+#[test]
+fn reviewer_migration20_recovers_preexisting_orphan_questions() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    w.store.close_now("parent").unwrap();
+    w.store.delete_session("parent", None).unwrap();
+    assert!(w.store.still_open("child", "question").unwrap());
+    assert!(notices(&w).is_empty());
+    // Reconstruct the D3a v19 schema after deletion: its notices and family
+    // edge are scrubbed, while the surviving child's callback is still open.
+    raw(&w)
+        .execute_batch(
+            "DROP TRIGGER attention_notice_update;
+        DROP TRIGGER attention_parent_delete;
+        DROP TRIGGER attention_child_end;
+        DROP TRIGGER attention_pending_end;
+        DROP TRIGGER attention_answer_cancelled;
+        DROP TABLE delegation_attention;
+        DROP INDEX delegation_notice_deadline;
+        PRAGMA user_version=19;",
+        )
+        .unwrap();
+    let upgraded = Store::open(&w.db).unwrap();
+    upgraded
+        .refresh_delegation_attention(&Hub::new(), unix_now() + 600)
+        .unwrap();
+    assert!(upgraded.still_open("child", "question").unwrap());
+    assert_eq!(
+        upgraded.operator_attention(None, "").unwrap().len(),
+        1,
+        "migration lost a preexisting orphan question"
+    );
+}
+
+#[test]
+fn d3b_cancelled_answer_restoration_rolls_back_with_the_endpoint() {
+    let (w, parent) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    w.store
+        .queue_ordinary_answer(
+            &parent,
+            1,
+            "digest",
+            &hennery_sessions::delegation_control::DelegatedAnswer {
+                key: "answer",
+                child: "child",
+                pending: "question",
+                answer: &answer(),
+            },
+            &Hub::new(),
+        )
+        .unwrap();
+    let mut conn = raw(&w);
+    let tx = conn.transaction().unwrap();
+    tx.execute(
+        "UPDATE sessions SET close_requested=1 WHERE owner_id=?1 AND id='parent'",
+        [w.store.owner_id()],
+    )
+    .unwrap();
+    let restored: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM delegation_attention WHERE owner_id=?1 AND state='open'",
+            [w.store.owner_id()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(restored, 1);
+    tx.rollback().unwrap();
+    assert!(attention(&w).is_empty());
+    assert_eq!(
+        w.store.answers_to_send("host").unwrap().len(),
+        0,
+        "a parent answer still waits for its guarded handoff"
+    );
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM answer_queue WHERE owner_id=?1 AND delegation_handoff=0",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn d3b_answer_cleanup_never_reopens_terminal_or_handed_off_questions() {
+    for case in ["terminal", "canonical_terminal", "handed_off", "delivered", "operator"] {
+        let (w, parent) = pair();
+        pending(&w, "child", 2, "question", PendingKind::Elicitation);
+        if case == "operator" {
+            assert!(matches!(
+                w.store.submit_answer("child", "question", &answer()).unwrap(),
+                hennery_sessions::store::AnswerSubmission::Queued(_)
+            ));
+        } else {
+            w.store
+                .queue_ordinary_answer(
+                    &parent,
+                    1,
+                    "digest",
+                    &hennery_sessions::delegation_control::DelegatedAnswer {
+                        key: "answer",
+                        child: "child",
+                        pending: "question",
+                        answer: &answer(),
+                    },
+                    &Hub::new(),
+                )
+                .unwrap();
+        }
+        match case {
+            "canonical_terminal" => {
+                // The canonical projection fences cleanup even before the
+                // queue's verdict has been updated in the same transaction.
+                raw(&w)
+                    .execute(
+                        "UPDATE pending SET state='cancelled' WHERE owner_id=?1 AND pending_id='question'",
+                        [w.store.owner_id()],
+                    )
+                    .unwrap();
+            }
+            "terminal" => {
+                w.store
+                    .ingest(
+                        "child",
+                        3,
+                        &SessionBody::PendingResolved {
+                            pending_id: "question".into(),
+                            resolution: PendingResolution::Cancelled,
+                            reason: None,
+                        },
+                    )
+                    .unwrap();
+            }
+            "handed_off" => {
+                raw(&w)
+                    .execute(
+                        "UPDATE answer_queue SET delegation_handoff=1 WHERE owner_id=?1",
+                        [w.store.owner_id()],
+                    )
+                    .unwrap();
+            }
+            "delivered" => {
+                raw(&w)
+                    .execute(
+                        "UPDATE answer_queue SET delivered=1 WHERE owner_id=?1",
+                        [w.store.owner_id()],
+                    )
+                    .unwrap();
+            }
+            _ => {}
+        }
+        // Queue cleanup itself must not manufacture a second answer opportunity.
+        raw(&w)
+            .execute("DELETE FROM answer_queue WHERE owner_id=?1", [w.store.owner_id()])
+            .unwrap();
+        assert!(attention(&w).is_empty(), "{case}");
+    }
+}
+
+#[test]
+fn d3b_migration20_filters_answers_terminal_and_root_questions() {
+    let (w, _) = pair();
+    for (seq, id) in [(2, "open"), (3, "accepted"), (4, "terminal")] {
+        pending(&w, "child", seq, id, PendingKind::Elicitation);
+    }
+    assert!(matches!(
+        w.store.submit_answer("child", "accepted", &answer()).unwrap(),
+        hennery_sessions::store::AnswerSubmission::Queued(_)
+    ));
+    w.store
+        .ingest(
+            "child",
+            5,
+            &SessionBody::PendingResolved {
+                pending_id: "terminal".into(),
+                resolution: PendingResolution::Cancelled,
+                reason: None,
+            },
+        )
+        .unwrap();
+    w.start("root", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    w.active("root");
+    pending(&w, "root", 2, "root-question", PendingKind::Elicitation);
+    w.store.close_now("parent").unwrap();
+    w.store.delete_session("parent", None).unwrap();
+    raw(&w)
+        .execute_batch(
+            "DROP TRIGGER attention_notice_update;
+        DROP TRIGGER attention_parent_delete;
+        DROP TRIGGER attention_child_end;
+        DROP TRIGGER attention_pending_end;
+        DROP TRIGGER attention_answer_cancelled;
+        DROP TABLE delegation_attention;
+        DROP INDEX delegation_notice_deadline;
+        PRAGMA user_version=19;",
+        )
+        .unwrap();
+    let upgraded = Store::open(&w.db).unwrap();
+    let work = upgraded.operator_attention(None, "").unwrap();
+    assert_eq!(work.len(), 1);
+    assert_eq!(work[0].pending_id.as_deref(), Some("open"));
+    // Reopening the database neither duplicates the backfill nor opens accepted answers.
+    assert_eq!(
+        Store::open(&w.db).unwrap().operator_attention(None, "").unwrap().len(),
+        1
+    );
+}
