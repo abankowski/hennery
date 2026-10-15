@@ -36,13 +36,14 @@ const EXAMPLE_CODE: &str = "ABCD-EFGH";
 const EXAMPLE_PORT: u16 = 7117;
 
 /// Every block name in the README, in order, with what runs it.
-const BLOCKS: [(&str, Runner); 10] = [
+const BLOCKS: [(&str, Runner); 11] = [
     ("clone", Runner::Workflow("ci.yml", "readme")),
     ("build", Runner::Workflow("ci.yml", "readme")),
     ("nix", Runner::Workflow("nix.yml", "flake")),
     ("build-without-nix", Runner::Workflow("ci.yml", "readme-without-nix")),
     ("up", Runner::Here),
     ("up-public", Runner::Here),
+    ("join-public", Runner::Here),
     ("join", Runner::Here),
     ("host-run", Runner::Here),
     ("reset-password", Runner::Here),
@@ -465,6 +466,8 @@ impl Machine {
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.home.join(".local/state"))
             .env("XDG_CACHE_HOME", self.home.join(".cache"))
+            .env_remove("SSL_CERT_FILE")
+            .env_remove("SSL_CERT_DIR")
             .env_remove("CLAUDE_CONFIG_DIR")
             .env_remove("CODEX_HOME")
             .env_remove("CODEX_SQLITE_HOME")
@@ -992,4 +995,133 @@ fn pairing_another_machine_works_as_the_readme_says() {
     });
     host.stop();
     up.stop();
+}
+
+/// Every changed byte must be an explicitly documented placeholder; HTTPS
+/// cannot be repaired into HTTP by the harness.
+fn public_pairing_script(script: &str, readme: &str, port: u16, code: &str) -> String {
+    for placeholder in ["`hennery.example`", "`443`", "`ABCD-EFGH`"] {
+        assert!(readme.contains(&format!("{placeholder} is a public-join placeholder")));
+    }
+    assert_eq!(script, "hennery host join https://hennery.example:443 ABCD-EFGH\n");
+    script
+        .replace("hennery.example:443", &format!("localhost:{port}"))
+        .replace("ABCD-EFGH", code)
+}
+#[test]
+fn public_pairing_placeholders_cannot_hide_protocol_or_unmarked_changes() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let script = block("join-public");
+    assert_eq!(
+        public_pairing_script(&script, &readme, 12345, "EFGH-IJKL"),
+        "hennery host join https://localhost:12345 EFGH-IJKL\n"
+    );
+    for original in ["https://", "hennery.example", "443", "ABCD-EFGH"] {
+        let changed = script.replace(original, "unexpected");
+        assert!(std::panic::catch_unwind(|| public_pairing_script(&changed, &readme, 12345, "EFGH-IJKL")).is_err());
+    }
+    for original in ["`hennery.example`", "`443`", "`ABCD-EFGH`"] {
+        let changed = readme.replace(&format!("{original} is a public-join placeholder"), "unmarked");
+        assert!(std::panic::catch_unwind(|| public_pairing_script(&script, &changed, 12345, "EFGH-IJKL")).is_err());
+    }
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn public_join_shell_block_pairs_runs_and_reconnects_over_wss() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery"));
+    for kind in ["caddy", "nginx"] {
+        let collector = Machine::new(&format!("public-collector-{kind}"));
+        let data = collector.data().join("collector");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("config.toml"), "proxy_client_ip_peers = ['127.0.0.1']\n").unwrap();
+        let mut up = collector.start(&block("up-public"), "up.log");
+        let listen = up.listening();
+        let link = setup_url(&mut up, &collector);
+        let session = set_up(&listen, &link, EXAMPLE_URL);
+        let cookie = format!("hennery_session={session}");
+        let (status, response) = request(
+            &listen,
+            "POST",
+            "/api/hosts/pairing-codes",
+            &[("Origin", EXAMPLE_URL), ("Cookie", &cookie)],
+            "",
+        );
+        assert_eq!(status, 201, "{response}");
+        let code =
+            serde_json::from_str::<serde_json::Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap()["code"]
+                .as_str()
+                .unwrap()
+                .to_string();
+        let ca = hennery_testkit::tls::TestCa::new();
+        let mut proxy =
+            hennery_testkit::reverse_proxy::RecipeProxy::start(kind, listen.parse().unwrap(), &ca, &collector.home)
+                .await;
+        let other = Machine::new(&format!("public-host-{kind}"));
+        let roots = other.home.join("fixture-roots.pem");
+        std::fs::write(&roots, &ca.pem).unwrap();
+        let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+        let script = public_pairing_script(&block("join-public"), &readme, proxy.port(), &code);
+        let mut join = other.sh(&script);
+        join.env("SSL_CERT_FILE", &roots);
+        let out = tokio::task::spawn_blocking(move || output_within(&mut join, Duration::from_secs(60)))
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("paired as host-"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("but the adapter runtime was not installed"));
+        let hostdir = other.data();
+        let paired = hennery_host::identity::Paired::read(&hostdir).unwrap().unwrap();
+        assert_eq!(
+            paired.collector_url,
+            format!("wss://localhost:{}/api/hosts/ws", proxy.port())
+        );
+        let mut host = start_with_roots(&other, &block("host-run"), "host.log", &roots);
+        host.wait_until("two hosts connected", || {
+            hosts(&listen, &session)
+                .1
+                .iter()
+                .filter(|h| h["connected"] == true)
+                .count()
+                == 2
+        });
+        proxy.renew_and_reload(&ca).await;
+        host.stop();
+        let mut restarted = start_with_roots(&other, &block("host-run"), "host-restarted.log", &roots);
+        restarted.wait_until("restarted WSS host", || {
+            hosts(&listen, &session)
+                .1
+                .iter()
+                .filter(|h| h["connected"] == true)
+                .count()
+                == 2
+        });
+        restarted.stop();
+        // Configuration must reach the binary's outer layer, before Origin/auth.
+        let (status, _) = request(
+            &listen,
+            "POST",
+            "/api/auth/login",
+            &[("Hennery-Client-IP", "not-an-ip")],
+            "invalid json",
+        );
+        assert_eq!(status, 400);
+        up.stop();
+    }
+}
+
+fn start_with_roots(machine: &Machine, script: &str, name: &str, roots: &Path) -> Group {
+    let log = machine.home.join(name);
+    let child = machine
+        .sh(script)
+        .env("SSL_CERT_FILE", roots)
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(std::fs::File::create(&log).unwrap())
+        .stderr(std::fs::File::create(log.with_extension("err")).unwrap())
+        .spawn()
+        .unwrap();
+    Group { child, log }
 }

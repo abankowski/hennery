@@ -582,7 +582,11 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
         hennery_sessions::router(state.clone())
             .merge(hennery_sessions::builtin::router(state.clone(), gateway.clone()))
             .merge(hennery_gateway::api::router(gateway))
-            .merge(hennery_gateway::proxy::router(proxy)),
+            .merge(hennery_gateway::proxy::router(proxy))
+            .layer(axum::middleware::from_fn(
+                hennery_kernel::client_address::resolve_request,
+            ))
+            .layer(axum::Extension(file.proxy_policy()?)),
         state.shutdown.clone(),
     )
     .await;

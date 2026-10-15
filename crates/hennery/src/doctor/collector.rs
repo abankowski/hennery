@@ -566,12 +566,20 @@ pub fn listeners(doctor: &Doctor) -> Finding {
             },
         },
     }
-    if file
-        .public_url(None)
-        .is_some_and(|url| Url::parse(&url).is_ok_and(|url| url.scheme() == "https"))
+    let configured = file.proxy_policy().expect("validated config").is_configured();
+    let attribution = format!(
+        "proxy-address attribution is {}; missing header uses the TCP peer; health success cannot prove header stripping or separate limiter budgets",
+        if configured { "configured" } else { "unconfigured" }
+    );
+    if configured
+        || file
+            .public_url(None)
+            .is_some_and(|url| Url::parse(&url).is_ok_and(|url| url.scheme() == "https"))
     {
-        verdict.warn("proxy-address attribution is unconfigured in W1; health success cannot prove header stripping or separate limiter budgets", "restrict public ingress until the W2 deployment and attribution checks pass");
-        verdict.ok(format!("external collector trust: {}", doctor.collector_trust.source()));
+        verdict.warn(attribution, "verify the exact peer and overwritten Hennery-Client-IP header with two clients; restrict ingress until the public deployment gate passes");
+    } else {
+        verdict.ok(attribution);
     }
+    verdict.ok(format!("external collector trust: {}", doctor.collector_trust.source()));
     Finding::Checked(verdict.check(16, "listeners"))
 }

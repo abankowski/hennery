@@ -1610,3 +1610,92 @@ async fn wss_outage_renewal_and_collector_restart_keep_one_adapter_and_deliver_o
     wait_dead(pid).await;
     collector.stop().await;
 }
+
+#[tokio::test]
+async fn caddy_outage_keeps_one_adapter_and_exactly_one_answer() {
+    real_proxy_outage("caddy").await;
+}
+#[tokio::test]
+async fn nginx_outage_keeps_one_adapter_and_exactly_one_answer() {
+    real_proxy_outage("nginx").await;
+}
+async fn real_proxy_outage(kind: &str) {
+    use hennery_testkit::{reverse_proxy::RecipeProxy, tls::TestCa};
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("hennery.db");
+    let collector = Collector::start(&db, None).await;
+    let addr = collector.addr;
+    let ca = TestCa::new();
+    let mut proxy = RecipeProxy::start(kind, addr, &ca, dir.path()).await;
+    let pid_file = dir.path().join("adapter-child.pid");
+    let script = FakeScript {
+        grandchild_pid_file: Some(pid_file.to_string_lossy().into()),
+        chunks: (1..=6).map(|n| format!("{n}.")).collect(),
+        chunk_delay_ms: 250,
+        ..asking(vec![hennery_testkit::FakeAsk::Permission])
+    };
+    let mut fake = AgentCommand::parse(env!("CARGO_BIN_EXE_hennery-fake-acp")).unwrap();
+    fake.env
+        .push((SCRIPT_ENV.into(), serde_json::to_string(&script).unwrap()));
+    let mut cfg = host_config(addr, &dir.path().join("host"), fake);
+    cfg.collector_url = hennery_host::pairing::collector_ws_url(&proxy.origin()).unwrap();
+    cfg.trust = hennery_host::transport::CollectorTrust::CaBundle { pem: ca.pem.clone() };
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let host = tokio::spawn(hennery_host::run_until(cfg, async {
+        let _ = stopped.await;
+    }));
+    let _reap = ReapGroup(pid_file.clone());
+    let c = client(&collector);
+    wait_host_connected(&c, &collector).await;
+    let session = start_session(&c, &collector).await;
+    prompt(&c, &collector, &session).await;
+    let pending = open_question(&c, &collector, &session).await;
+    let pid = wait_for("one adapter child", || async { pid_from(&pid_file) }).await;
+    proxy.pause();
+    wait_for("TLS host offline", || async {
+        (!collector.state.hub.connected_hosts().contains(&"host-1".to_string())).then_some(())
+    })
+    .await;
+    assert_eq!(
+        answer(&c, &collector, &session, &pending, json!({"option_id":"allow"}))
+            .await
+            .0,
+        202
+    );
+    assert_ne!(delivered(&collector, &pending), Some(true));
+    let bad_ca = TestCa::new();
+    proxy.resume(&bad_ca).await;
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert_eq!(pid_from(&pid_file), Some(pid));
+    assert!(hennery_testkit::pid_alive(pid));
+    assert!(!collector.state.hub.connected_hosts().contains(&"host-1".to_string()));
+    proxy.pause();
+    proxy.resume(&ca).await;
+    wait_for("answer reaches adapter", || async {
+        (delivered(&collector, &pending) == Some(true)).then_some(())
+    })
+    .await;
+    proxy.pause();
+    collector.stop().await;
+    tokio::time::sleep(Duration::from_millis(800)).await; // real offline facts
+    let collector = Collector::start(&db, Some(addr)).await;
+    proxy.resume(&ca).await;
+    let evs = wait_for("TLS transcript after recovery", || async {
+        let evs = events(&c, &collector, &session).await;
+        (!turn_ends(&evs).is_empty()).then_some(evs)
+    })
+    .await;
+    assert_eq!(agent_text(&evs), "permission:selected:allow1.2.3.4.5.6.");
+    assert_eq!(turn_ends(&evs).len(), 1);
+    assert_eq!(of_kind(&evs, "answer_result").len(), 1);
+    assert_eq!(of_kind(&evs, "user_turn").len(), 1);
+    let seqs: Vec<_> = evs.iter().filter_map(|e| e.host_seq).collect();
+    assert_eq!(seqs.iter().collect::<std::collections::BTreeSet<_>>().len(), seqs.len());
+    assert_eq!(pid_from(&pid_file), Some(pid));
+    assert!(hennery_testkit::pid_alive(pid));
+    stop.send(()).unwrap();
+    host.await.unwrap().unwrap();
+    wait_dead(pid).await;
+    collector.stop().await;
+}

@@ -2836,3 +2836,42 @@ fn doctors_up_endpoint_derivation_refuses_a_secure_loopback_downgrade() {
     assert!(seven.summary.contains("before hello"), "{seven:?}");
     assert_eq!(trap.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
 }
+
+#[test]
+fn proxy_attribution_diagnostics_never_claim_health_proves_the_deployment() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Fake::none();
+    let cx = machine(dir.path(), Platform::Linux, &fake);
+    let collector = dir.path().join("collector");
+    let (_rt, _state, addr) = live_collector(&collector);
+    let dirs = Dirs::by_contents(collector.clone(), Found::Given);
+    for (policy, expected) in [
+        ("", "proxy-address attribution is unconfigured"),
+        (
+            "proxy_client_ip_peers = ['127.0.0.1']",
+            "proxy-address attribution is configured",
+        ),
+    ] {
+        std::fs::write(
+            collector.join("config.toml"),
+            format!("listen = ['{addr}']\n{policy}\n"),
+        )
+        .unwrap();
+        let check = line(&checked(&cx, dirs.clone(), &nothing, &collector), 16).clone();
+        assert_eq!(
+            check.status,
+            if policy.is_empty() { Status::Ok } else { Status::Warn },
+            "{check:?}"
+        );
+        assert!(check.summary.contains(expected), "{check:?}");
+        assert!(
+            check
+                .summary
+                .contains("health success cannot prove header stripping or separate limiter budgets"),
+            "{check:?}"
+        );
+        assert!(check.summary.contains("missing header uses the TCP peer"), "{check:?}");
+    }
+    std::fs::write(collector.join("config.toml"), "proxy_client_ip_peers = ['0.0.0.0']").unwrap();
+    assert_eq!(line(&checked(&cx, dirs, &nothing, &collector), 16).status, Status::Fail);
+}

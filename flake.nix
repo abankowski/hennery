@@ -57,6 +57,9 @@
             bashInteractive
             zsh
             fish
+            # Execute the shipped same-machine TLS proxy recipes (W2).
+            caddy
+            nginx
           ] ++ webTools;
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           # Playwright uses the flake's browsers, never a download of its own.

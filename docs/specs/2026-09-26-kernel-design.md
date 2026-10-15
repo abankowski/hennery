@@ -103,13 +103,25 @@ CLI flags (they would show in process listings); they come from files, the
 environment, or systemd credentials. (A pairing code, single use and short
 lived, may be `host join`'s argument; left out, it is read from stdin, §4.1.)
 
-`config.toml` is read, never created. It has two keys: `listen` (§7) and
+`config.toml` is read, never created. It has `proxy_client_ip_peers` (below), `listen` (§7) and
 `public_url`, which also takes `--public-url` / `HENNERY_PUBLIC_URL`. An
 unknown key, an empty `listen`, an empty `HENNERY_LISTEN` or a file its group
 or others can write stops the start, naming the source. Before setup the
 configured `public_url` is the setup link's base (§3.1); once set up, the
 stored one stays in effect, and a configured one that differs only produces a
 warning naming `hennery admin reset-public-url` (§4.2).
+
+`proxy_client_ip_peers` defaults to empty and accepts at most eight exact
+unicast IP addresses, with no duplicates after mapped-IPv4 normalization.
+Only those TCP peers may assert one bare IP in `Hennery-Client-IP`; malformed
+or duplicate fields are 400 before authentication. A missing field falls
+back to the peer. Unconfigured peers' fields and all standard forwarding or
+identity headers are ignored. This resolved address charges and clears
+enrollment, password login/step-up and passkey login budgets, preserving
+their existing bounds and IPv6 /64 grouping. It grants no authentication,
+Origin or cookie exemption. The final proxy must overwrite every incoming
+instance from its connection peer, with backend access restricted. See the
+[WSS design](2026-10-14-wss-design.md) §5.2 and the W2 public deployment gate.
 
 ## 3. Operator authentication
 
@@ -174,8 +186,9 @@ frontend), and `SetupRequest` has no default hat name; hats add it.
   starts, so a parallel burst gets no more in than the budget. State is in
   memory, bounded, and a restart clears it; past capacity a live entry is
   never evicted (new addresses share one overflow budget), and loopback always
-  keeps an entry of its own. `X-Forwarded-For` is not trusted: behind a
-  reverse proxy every client shares the proxy's budget.
+  keeps an entry of its own. `X-Forwarded-For` is not trusted. Behind an
+  unconfigured proxy every client shares its budget; §2's exact-peer,
+  dedicated-header policy provides address-only attribution.
 - **Passkeys:** `webauthn-rs` with RP id and origin derived from `public_url`;
   subdomains and arbitrary ports not allowed. The RP id is `public_url`'s host
   exactly (not a registrable parent) and its origin the only one accepted; a

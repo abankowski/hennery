@@ -19,6 +19,13 @@ impl Default for TestCa {
     }
 }
 impl TestCa {
+    /// PEM leaf and key for external proxies, signed by this disposable CA.
+    pub fn server_pem(&self) -> (String, String) {
+        let params = CertificateParams::new(vec!["localhost".into(), "127.0.0.1".into(), "::1".into()]).unwrap();
+        let key = KeyPair::generate().unwrap();
+        let issuer = rcgen::Issuer::from_params(&self.params, &self.key);
+        (params.signed_by(&key, &issuer).unwrap().pem(), key.serialize_pem())
+    }
     pub fn new() -> Self {
         let key = KeyPair::generate().unwrap();
         let mut params = CertificateParams::new(vec!["fixture-ca".into()]).unwrap();
