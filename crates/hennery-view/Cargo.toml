@@ -11,6 +11,10 @@ readme = "README.md"
 include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "build.rs"]
 description = "Pure display fold for hennery session events"
 
+# The generator is a developer tool, not a release archive or installer.
+[package.metadata.dist]
+dist = false
+
 [dependencies]
 hennery-proto.workspace = true
 schemars.workspace = true

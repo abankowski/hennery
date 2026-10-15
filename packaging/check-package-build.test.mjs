@@ -1,0 +1,20 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+test('compiled build-script checks work without an untracked fixture parent',()=>{
+  const root=fs.mkdtempSync(join(tmpdir(),'hennery-r3-fresh-check-'));
+  const builds=resolve('target/debug/build');
+  const binaries=fs.readdirSync(builds).filter(n=>n.startsWith('hennery-kernel-')).map(n=>join(builds,n,'build-script-build')).filter(p=>fs.existsSync(p)).sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs);
+  assert.ok(binaries.length,'build hennery-kernel first');
+  const fixture=join(root,'target/debug/build/hennery-kernel-fixture');
+  fs.mkdirSync(fixture,{recursive:true});
+  fs.copyFileSync(binaries[0],join(fixture,'build-script-build'));
+  assert.equal(fs.existsSync(join(root,'.superpowers')),false);
+  const result=spawnSync(process.execPath,[resolve('packaging/check-package-build.mjs')],{cwd:root,encoding:'utf8'});
+  assert.equal(result.status,0,result.stdout+result.stderr);
+  assert.match(result.stdout,/11 compiled build-script checks passed/);
+  assert.equal(fs.existsSync(join(root,'.superpowers')),false);
+});

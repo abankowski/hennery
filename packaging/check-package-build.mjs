@@ -8,11 +8,11 @@ const directory=resolve('target/debug/build');
 const candidates=fs.readdirSync(directory).filter(n=>n.startsWith('hennery-kernel-')).map(n=>join(directory,n,'build-script-build')).filter(p=>fs.existsSync(p)).sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs);
 requireThat(candidates.length>0,'build hennery-kernel before checking its build script');
 let checks=0;
-function check(name,setup,expected,options={}){
+function check(name,setup,expected,options={},cwd){
  const root=fs.mkdtempSync(join(tmpdir(),'hennery-r3-build-')),manifest=join(root,'crates/hennery-kernel'),out=join(root,'out');
  fs.mkdirSync(manifest,{recursive:true});fs.mkdirSync(out);
  setup({root,manifest,out});
- const result=spawnSync(candidates[0],[],{encoding:'utf8',env:{...process.env,CARGO_MANIFEST_DIR:manifest,OUT_DIR:out,HENNERY_WEB_DIST:'',HENNERY_WEB_REQUIRE:'',...options}});
+ const result=spawnSync(candidates[0],[],{cwd,encoding:'utf8',env:{...process.env,CARGO_MANIFEST_DIR:manifest,OUT_DIR:out,HENNERY_WEB_DIST:'',HENNERY_WEB_REQUIRE:'',...options}});
  requireThat(result.status===expected,`${name}: exit ${result.status}, expected ${expected}: ${result.stderr}`);checks++;
  return {root,manifest,out};
 }
@@ -25,9 +25,9 @@ result=check('marked UI before checkout',ctx=>{neighboring(ctx);marked(ctx);},0)
 requireThat(fs.readFileSync(join(result.out,'web_assets.rs'),'utf8').includes('/web-dist/index.html'),'checkout took precedence over package');
 check('damaged marked UI refuses neighboring fallback',ctx=>{neighboring(ctx);marked(ctx);fs.unlinkSync(join(ctx.manifest,'web-dist/index.html'));},101);
 check('normalized package cannot lose marker',ctx=>{neighboring(ctx);fs.writeFileSync(join(ctx.manifest,'Cargo.toml.orig'),'[package]');},101);
-const relative=fs.mkdtempSync('.superpowers/r3-relative-ui-');
+const relative=fs.mkdtempSync(join(tmpdir(),'hennery-r3-relative-ui-'));
 fs.writeFileSync(join(relative,'index.html'),'relative UI');
-check('explicit relative override',()=>{},101,{HENNERY_WEB_DIST:relative});
+check('explicit relative override',()=>{},101,{HENNERY_WEB_DIST:'.'},relative);
 check('explicit missing override',()=>{},101,{HENNERY_WEB_DIST:'/no-such-hennery-ui-directory'});
 const incomplete=fs.mkdtempSync(join(tmpdir(),'hennery-r3-incomplete-'));
 fs.writeFileSync(join(incomplete,'app.js'),'no index');

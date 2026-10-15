@@ -45,6 +45,10 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Package, source and publisher refusal tests
         run: nix develop -c node --test packaging/crates.test.mjs packaging/crate-release.test.mjs packaging/publish-crates.test.mjs
+      - name: Only the CLI has release archives, installers and release features
+        run: |
+          nix develop -c sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+          R3_DIST="$RUNNER_TEMP/dist-bin/dist" nix develop -c node packaging/check-dist-plan.mjs
       - name: Prove OS network denial and unsupported-host refusal
         run: nix develop -c node packaging/check-offline.mjs
       - name: Pin the consumption toolchain independently of preparation Cargo
@@ -59,4 +63,4 @@ jobs:
       - name: Compiled package build-script precedence/refusals
         run: |
           nix develop -c cargo build -p hennery-kernel --locked
-          nix develop -c node packaging/check-package-build.mjs
+          nix develop -c node --test packaging/check-package-build.test.mjs

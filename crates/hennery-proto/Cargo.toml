@@ -11,6 +11,10 @@ readme = "README.md"
 include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "build.rs"]
 description = "Shared wire types for the hennery ACP cockpit"
 
+# The generator is a developer tool, not a release archive or installer.
+[package.metadata.dist]
+dist = false
+
 [dependencies]
 schemars.workspace = true
 serde.workspace = true

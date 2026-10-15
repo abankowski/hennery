@@ -50,6 +50,8 @@ tokio = { workspace = true, features = ["test-util"] }
 # cargo-dist ships the same CLI as the Cargo package.
 [package.metadata.dist]
 dist = true
+# OpenSSL built in for release archives (distribution §1.1).
+features = ["vendored-openssl"]
 
 # Upstream archives only. GNU users receive the qualified musl archives.
 [package.metadata.binstall]
