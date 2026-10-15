@@ -98,6 +98,7 @@ export default function QuestionCard({ item, env }: Props) {
   return (
     <section
       ref={ref}
+      data-pending-id={item.pending_id}
       className={'ask fade-in' + (live ? '' : ' stale')}
       aria-label={`Question from ${agent}`}
       tabIndex={live ? 0 : undefined}
@@ -152,6 +153,7 @@ export default function QuestionCard({ item, env }: Props) {
         <span>{d.text}</span>
         {d.note && <span className="q-note">{d.note}</span>}
       </p>
+      {local?.phase === 'uncertain' && <button className="btn btn-ghost" type="button" onClick={() => void book?.checkAnswer(item)}>Refresh question</button>}
       {d.error && (
         <p className="form-error q-error" role="alert">
           <bdi>{d.error}</bdi>

@@ -28,6 +28,8 @@ export const REASON_WORDS: Record<PendingReason, string> = {
  *  answered: an outcome holds only while the item is at it. */
 export type LocalAnswer =
   | { phase: 'sending'; version: number }
+  | { phase: 'checking'; version: number }
+  | { phase: 'uncertain'; version: number }
   | { phase: 'sent'; version: number }
   /** 409 `already_answered`: another tab or device answered first. */
   | { phase: 'taken'; version: number }
@@ -100,6 +102,10 @@ export function deliveryOf(q: Question, local: LocalAnswer | undefined, hostAway
   const none: Delivery = { text: '', controls: false, busy: false, answerAsMessage: false }
   const awayNote = hostAway ? { note: HOST_AWAY_NOTE } : {}
   switch (held?.phase) {
+    case 'checking':
+      return { ...none, text: 'Checking whether your answer was accepted…', controls: true, busy: true }
+    case 'uncertain':
+      return { ...none, text: 'Answer status unknown. Reconnect and refresh the question before retrying.' }
     case 'sending':
       if (isAnswerable(q)) return { ...none, text: 'Sending…', controls: true, busy: true }
       break

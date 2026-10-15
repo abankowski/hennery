@@ -4,6 +4,7 @@ import type { SessionCatalog } from '../generated/protocol'
 import type { Item, ItemPage } from '../generated/view'
 import { json, liveStream, routed, type Call, type LiveStream } from '../test-stream'
 import { useSessionItems } from './useSessionItems'
+import { deferred } from '../test-locks'
 
 // A session id that needs encoding in a path.
 const ID = 's/1 x'
@@ -56,6 +57,32 @@ afterEach(() => {
 })
 
 describe('useSessionItems', () => {
+  it.each(['http-first', 'sse-first', 'removed'])('fences a bounded old-card read against the stream: %s', async order => {
+    const response = deferred<Response>()
+    const stream = liveStream()
+    const q = (version: number) => ({ id: 'question:p', kind: 'question', pending_id: 'p', version, turn_id: 'old', ts: '2020-01-01T00:00:00Z' } as Item)
+    const t = routed(call => {
+      if (call.path.includes('/questions/')) return response.promise
+      if (call.path === STREAM_PATH) return stream.response
+      if (call.path === CATALOG_PATH) return json(catalog('m'))
+      return json(page([message('tail', 'new')], 10, true))
+    })
+    const { result } = renderHook(() => useSessionItems(ID, FAST), { wrapper: t.wrapper })
+    await waitFor(() => expect(result.current.stream).toBe('open'))
+    let reading!: Promise<void>
+    act(() => { reading = result.current.loadQuestion('p') })
+    if (order !== 'http-first') {
+      act(() => stream.event(order === 'removed' ? 'session_removed' : 'item', q(12)))
+      await waitFor(() => expect(order === 'removed' ? result.current.removed : result.current.pinned[0]?.version).toBe(order === 'removed' ? true : 12))
+    }
+    await act(async () => { response.resolve(json(q(order === 'http-first' ? 14 : 11))); await reading })
+    if (order === 'removed') { expect(result.current.pinned).toEqual([]); return }
+    act(() => stream.event('item', q(order === 'http-first' ? 13 : 12)))
+    await act(async () => {})
+    expect(result.current.pinned).toHaveLength(1)
+    expect(result.current.pinned[0].version).toBe(order === 'http-first' ? 14 : 12)
+    expect(t.calls.filter(c => c.path === STREAM_PATH)).toHaveLength(1)
+  })
   it('opens: the first page, the catalogue, then the stream from the page’s anchor', async () => {
     const s = server([page([message('a', 't1')], 10)])
     const { result } = renderHook(() => useSessionItems(ID, FAST), { wrapper: s.wrapper })

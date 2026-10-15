@@ -187,10 +187,12 @@ function useStartNotice(id: string): string | null {
  *  when a question that can be answered is held above it. Decided while
  *  rendering, never after: a card that left the window for one render
  *  would be mounted again. */
-function windowStart(items: readonly Item[], pin: string | null, size: number): number {
+function windowStart(items: readonly Item[], pin: string | null, size: number, pending?: string): number {
   const tail = Math.max(0, items.length - size)
   const at = pin === null ? -1 : items.findIndex((item) => item.id === pin)
-  const start = at < 0 ? tail : at
+  let start = at < 0 ? tail : at
+  const target = pending ? items.findIndex(item => item.kind === 'question' && item.pending_id === pending) : -1
+  if (target >= 0) start = Math.min(start, target)
   const open = items.findIndex((item) => item.kind === 'question' && isAnswerable(item))
   return open >= 0 && open < start ? open : start
 }
@@ -198,10 +200,10 @@ function windowStart(items: readonly Item[], pin: string | null, size: number): 
 /** The transcript's window over `items`: its first row pinned by id, `TAIL`
  *  rows at first, more revealed on demand; back to the tail when `loads`
  *  changes (a resync replaced the items). */
-function useTailWindow(items: Item[], loads: number, size: number) {
+function useTailWindow(items: Item[], loads: number, size: number, pending?: string) {
   const [pinned, setPinned] = useState<{ id: string; loads: number } | null>(null)
   const pin = pinned && pinned.loads === loads ? pinned.id : null
-  const start = windowStart(items, pin, size)
+  const start = windowStart(items, pin, size, pending)
   const visible = useMemo(() => (start === 0 ? items : items.slice(start)), [items, start])
   const firstHeld = useRef<string | undefined>(undefined)
 
@@ -230,7 +232,26 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   const s = useSessionItems(id, timing)
   const mcp = useMcpDelivery(id, summary?.lifecycle, Math.max(0, s.loads - 1))
   const info = useHeaderInfo(id, summary, awaitSummary, mcp.detail)
-  const win = useTailWindow(s.items, s.loads, tail)
+  const { search } = useLocation()
+  const requested = new URLSearchParams(search).get('pending')
+  const legacy = mcp.detail?.pending?.find(p => p.state === 'open' && !p.answered)?.pending_id
+  const targetQuestion = requested || legacy
+  const focusTarget = useRef<string | null>(null)
+  const questionRegion = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!s.loading && !s.removed && targetQuestion) void s.loadQuestion(targetQuestion)
+  }, [id, targetQuestion, s.loading, s.removed, s.loads, s.loadQuestion])
+  useEffect(() => {
+    if (!targetQuestion || focusTarget.current === `${id}:${targetQuestion}`) return
+    const card = [...(questionRegion.current?.querySelectorAll<HTMLElement>('[data-pending-id]') ?? [])].find(el => el.dataset.pendingId === targetQuestion)
+    if (!card) return
+    focusTarget.current = `${id}:${targetQuestion}`
+    if (document.activeElement === document.body || document.activeElement === null) {
+      if (!card.hasAttribute('tabindex')) card.tabIndex = -1
+      card.scrollIntoView?.({ block: 'nearest' }); card.focus({ preventScroll: true })
+    }
+  }, [id, targetQuestion, s.items, s.pinned])
+  const win = useTailWindow(s.items, s.loads, tail, targetQuestion)
   const narrow = useMediaQuery('(max-width: 767px)')
   const hostItems = useList('hosts', true)
   const hosts = useMemo(() => namesOf(hostItems, 'host_id'), [hostItems])
@@ -239,7 +260,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   const hats = useMemo(() => namesOf(hatItems, 'id'), [hatItems])
   const plan = useMemo(() => latestPlan(s.items), [s.items])
   const startNotice = useStartNotice(id)
-  const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id))
+  const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion)
   const announcement = useAnnouncement(answers)
   const hostAway = useHostAway(answers)
 
@@ -331,7 +352,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   }
 
   return (
-    <div className="session">
+    <div className="session" ref={questionRegion}>
       <SessionHeader
         id={id}
         info={info}
@@ -363,6 +384,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
           <bdi>{s.error}</bdi>
         </p>
       )}
+      {s.questionError && <p className="form-error" role="status">{s.questionError}</p>}
       <Scroller
         items={win.visible}
         loads={s.loads}
@@ -372,7 +394,10 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
           if (!win.reveal() && s.older && !s.loadingOlder) void s.loadOlder()
         }}
       >
-        {s.loading ? <p className="transcript-empty">Loading…</p> : <Transcript items={win.visible} env={env} />}
+        {s.loading ? <p className="transcript-empty">Loading…</p> : <>
+          {s.pinned.length > 0 && <div className="pinned-questions" aria-label="Earlier questions"><Transcript items={s.pinned} env={env} /></div>}
+          <Transcript items={win.visible} env={env} />
+        </>}
       </Scroller>
       {startNotice && (
         <p className="start-notice" role="status">

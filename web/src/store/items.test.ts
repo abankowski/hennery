@@ -17,6 +17,22 @@ function loaded(items: Item[], older = false): ItemsState {
 }
 
 describe('itemsReducer', () => {
+  it('pins an older linked question, fences HTTP/SSE in both orders and deduplicates paging', () => {
+    const question = (version: number) => ({ ...message('question:p', 'old', version, '2020-01-01T00:00:00Z'), kind: 'question' } as Item)
+    let state = loaded([message('tail', 'new')], true)
+    state = itemsReducer(state, { type: 'pin', item: question(10) })
+    state = itemsReducer(state, { type: 'upsert', item: question(12) })
+    state = itemsReducer(state, { type: 'pin', item: question(11) })
+    expect(state.pinned).toHaveLength(1)
+    expect(state.pinned[0].version).toBe(12)
+    state = itemsReducer(state, { type: 'pin', item: question(14) })
+    state = itemsReducer(state, { type: 'upsert', item: question(13) })
+    expect(state.pinned[0].version).toBe(14)
+    state = itemsReducer(state, { type: 'prepended', page: page([question(11)], false) })
+    expect(state.pinned).toEqual([])
+    expect(state.items.filter(i => i.id === 'question:p')).toHaveLength(1)
+    expect(state.items[0].version).toBe(14)
+  })
   it('takes a first page whole, with its anchor', () => {
     const state = loaded([message('a', 't1'), message('b', 't2')], true)
     expect(ids(state)).toEqual(['a', 'b'])

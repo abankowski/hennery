@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { Item } from '../generated/view'
 import { json, routed } from '../test-stream'
 import { AnswerBook, useAnswering, useHostAway } from './useAnswer'
+import { deferred } from '../test-locks'
 
 const TS = '2026-10-02T10:00:00.000Z'
 const msg = (id: string): Item => ({ id, version: 1, ts: TS, turn_id: 't1', kind: 'message', text: id }) as Item
@@ -38,6 +39,32 @@ function use(t: ReturnType<typeof routed>, initial: Props) {
 }
 
 describe('useAnswering', () => {
+  it('refreshes after an ambiguous answer without resending or dropping the draft', async () => {
+    const refreshed = deferred()
+    const t = routed(async call => {
+      if (call.method === 'POST') throw new TypeError('network lost')
+      await refreshed.promise
+      return json({ ...q, version: 2, answered: true, answerable: false })
+    })
+    const book = new AnswerBook(t.client, 's1')
+    const q = question('p') as Extract<Item, { kind: 'question' }>
+    book.updateDraft(q.id, () => ({ note: 'kept' }))
+    const answering = book.answer(q, { option_id: 'a' })
+    await waitFor(() => expect(t.calls.some(c => c.path.endsWith('/questions/p'))).toBe(true))
+    expect(book.localOf(q.id)?.phase).toBe('checking')
+    const duplicate = book.answer(q, { option_id: 'a' })
+    try {
+      // Assert before awaiting either answer: a missing guard must fail on
+      // the extra POST, rather than hang behind the deferred refresh.
+      expect(t.calls.filter(c => c.method === 'POST')).toHaveLength(1)
+    } finally {
+      refreshed.resolve()
+      await Promise.all([answering, duplicate])
+    }
+    expect(book.localOf(q.id)?.phase).toBe('sent')
+    expect(book.draftOf(q.id)).toEqual({ note: 'kept' })
+    expect(t.calls.filter(c => c.method === 'POST')).toHaveLength(1)
+  })
   it('keeps one book for the session', () => {
     const t = hosts([])
     const h = use(t, { items: [], loading: true })

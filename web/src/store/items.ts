@@ -15,6 +15,8 @@ import { foldVerdict } from '../lib/delivery'
 
 export interface ItemsState {
   items: Item[]
+  /** Bounded question reads whose groups have not been paged in. */
+  pinned: Item[]
   /** Groups exist before the first loaded one. */
   older: boolean
   /** The first page's anchor: where the item stream resumes. */
@@ -28,9 +30,10 @@ export type ItemsAction =
   /** An older page: its items go first, skipping ids already held. */
   | { type: 'prepended'; page: ItemPage }
   | { type: 'upsert'; item: Item }
+  | { type: 'pin'; item: Item }
   | { type: 'removed'; id: string }
 
-export const EMPTY_ITEMS: ItemsState = { items: [], older: false, epoch: '', revision: 0 }
+export const EMPTY_ITEMS: ItemsState = { items: [], pinned: [], older: false, epoch: '', revision: 0 }
 
 /** Whether `value` has what the store reads of an item. */
 export function isItem(value: unknown): value is Item {
@@ -92,14 +95,19 @@ export function itemsReducer(state: ItemsState, action: ItemsAction): ItemsState
     case 'loaded': {
       if (!isItemPage(action.page)) return state
       const { page } = action
-      return { items: distinct(page.items), older: page.older, epoch: page.epoch, revision: page.revision }
+      return { items: distinct(page.items), pinned: [], older: page.older, epoch: page.epoch, revision: page.revision }
     }
     case 'prepended': {
       if (!isItemPage(action.page)) return state
       const held = new Set(state.items.map((item) => item.id))
-      const before = distinct(action.page.items, held)
-      return { ...state, items: [...before, ...state.items], older: action.page.older }
+      const before = distinct(action.page.items, held).map(item => {
+        const pin = state.pinned.find(p => p.id === item.id)
+        return pin && pin.version > item.version ? foldVerdict(item, pin) : pin ? foldVerdict(pin, item) : item
+      })
+      const joined = new Set(before.map(i => i.id))
+      return { ...state, items: [...before, ...state.items], pinned: state.pinned.filter(i => !joined.has(i.id)), older: action.page.older }
     }
+    case 'pin':
     case 'upsert': {
       const { item } = action
       if (!isItem(item)) return state
@@ -110,6 +118,13 @@ export function itemsReducer(state: ItemsState, action: ItemsAction): ItemsState
         items[at] = foldVerdict(state.items[at], item)
         return { ...state, items }
       }
+      const pinned = state.pinned.findIndex(p => p.id === item.id)
+      if (pinned >= 0) {
+        if (item.version < state.pinned[pinned].version) return state
+        const pins = state.pinned.slice()
+        pins[pinned] = foldVerdict(pins[pinned], item)
+        return { ...state, pinned: pins }
+      }
       const group = groupOf(item)
       let last = -1
       for (let i = 0; i < state.items.length; i++) if (groupOf(state.items[i]) === group) last = i
@@ -119,13 +134,15 @@ export function itemsReducer(state: ItemsState, action: ItemsAction): ItemsState
         return { ...state, items }
       }
       if (isNewer(state, item)) return { ...state, items: [...state.items, item] }
+      if (item.kind === 'question') return { ...state, pinned: [...state.pinned, item].slice(-256) }
       // A turn not loaded (4a-i O-6): its page brings it.
       return state
     }
     case 'removed': {
       if (typeof action.id !== 'string') return state
       const items = state.items.filter((item) => item.id !== action.id)
-      return items.length === state.items.length ? state : { ...state, items }
+      const pinned = state.pinned.filter(item => item.id !== action.id)
+      return items.length === state.items.length && pinned.length === state.pinned.length ? state : { ...state, items, pinned }
     }
     default:
       return state

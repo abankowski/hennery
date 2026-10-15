@@ -66,6 +66,16 @@ beforeEach(() => {
 })
 
 describe('SessionView answering', () => {
+  it('a pending link reveals a delivered card above the rendered tail', async () => {
+    window.history.replaceState(null, '', '/sessions/s1?pending=p1')
+    try {
+      const s = server([question({ answered: true, answerable: false, delivered: true }), ...Array.from({ length: 10 }, (_, n) => said(n))])
+      render(<SessionView id={ID} timing={FAST} tail={2} />, { wrapper: s.wrapper })
+      expect(await screen.findByText('Run it?', { exact: true }, WAIT)).toBeVisible()
+      expect(screen.getByText('Answered', { exact: true })).toBeVisible()
+      expect(s.posted('/answer')).toEqual([])
+    } finally { window.history.replaceState(null, '', '/sessions/s1') }
+  })
   it('answers a question through its route, as the session’s agent asks it', async () => {
     const s = server([message('m1', 't1'), question()])
     render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })

@@ -3,10 +3,14 @@
 // and the streams' paths. Every id in a path is encoded: ids are server
 // data, never trusted to be path-safe.
 import type { Client } from './client'
-import type { ItemPage, SummaryPage, TurnContent } from '../generated/view'
+import type { Item, ItemPage, SummaryPage, TurnContent } from '../generated/view'
 import type { SessionCatalog, SessionDetail } from '../generated/protocol'
 
 const enc = encodeURIComponent
+
+export function questionCard(client: Client, id: string, pending: string): Promise<Item> {
+  return client.request<Item>('GET', `/api/view/sessions/${enc(id)}/questions/${enc(pending)}`)
+}
 
 /** `?a=1&b=2` of the params that are set, or nothing. */
 function query(params: Record<string, string | number | undefined>): string {
