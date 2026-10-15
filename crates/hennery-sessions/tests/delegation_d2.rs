@@ -1076,6 +1076,39 @@ fn typed_parent_provenance_does_not_reset_operator_push_epoch() {
             .edge
             .is_none()
     );
+    w.store
+        .ingest(
+            "child",
+            8,
+            &SessionBody::PendingResolved {
+                pending_id: "second".into(),
+                resolution: PendingResolution::Cancelled,
+                reason: Some(PendingReason::AgentWithdrew),
+            },
+        )
+        .unwrap();
+    queue(&w, &p, "followup-running");
+    assert!(w.store.dispatch_delegated("child", &catalog(), &h).unwrap());
+    let (request, turn) = take_prompt(&mut rx);
+    w.store
+        .ingest(
+            "child",
+            9,
+            &SessionBody::TurnStarted {
+                request_id: request,
+                turn_id: turn,
+            },
+        )
+        .unwrap();
+    assert!(
+        pending(&w, "child", 10, "third", PendingKind::Elicitation)
+            .edge
+            .is_none()
+    );
+    assert_eq!(
+        w.store.find_session("child").unwrap().unwrap().activity.as_deref(),
+        Some("blocked")
+    );
 }
 
 fn persisted_state_case(stored: &str, code: Option<&str>, expected: OperationState) {
@@ -1142,6 +1175,25 @@ receipt_case!(
         code: "future_failure".into()
     }
 );
+receipt_case!(
+    receipt_failure_detail_is_redacted,
+    "failed",
+    Some("private provider failure text"),
+    OperationState::Failed { code: "failed".into() }
+);
+#[test]
+fn receipt_failure_code_is_bounded() {
+    persisted_state_case(
+        "failed",
+        Some(&"x".repeat(129)),
+        OperationState::Failed { code: "failed".into() },
+    );
+    persisted_state_case(
+        "failed",
+        Some(&"x".repeat(128)),
+        OperationState::Failed { code: "x".repeat(128) },
+    );
+}
 macro_rules! error_case {
     ($name:ident,$code:literal) => {
         #[test]
@@ -1265,6 +1317,10 @@ fn disabling_and_reenabling_grant_cancels_queue_without_reviving_old_token() {
     let (w, p) = pair();
     ready(&w);
     queue(&w, &p, "followup");
+    pending(&w, "child", 3, "grant-question", PendingKind::Elicitation);
+    w.store
+        .queue_ordinary_answer(&p, 1, "grant-answer", "digest", "child", "grant-question", &answer())
+        .unwrap();
     let (h, mut rx) = connected();
     w.gateway.set_session_tools(&w.hat, false).unwrap();
     w.gateway.set_session_tools(&w.hat, true).unwrap();
@@ -1272,6 +1328,26 @@ fn disabling_and_reenabling_grant_cancels_queue_without_reviving_old_token() {
     assert!(!w.store.dispatch_delegated("child", &catalog(), &h).unwrap());
     assert!(rx.try_recv().is_err());
     assert!(w.store.session_tool_context(&p, 1, true).unwrap().is_none());
+    let states: Vec<String> = {
+        let c = raw(&w);
+        let mut stmt = c
+            .prepare("SELECT state FROM session_operations WHERE caller_id='parent'")
+            .unwrap();
+        stmt.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    };
+    assert!(states.iter().all(|state| state == "cancelled"));
+    let payload: String = raw(&w)
+        .query_row(
+            "SELECT payload FROM session_dispatch_queue WHERE source_id='parent'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(payload.is_empty());
+    assert!(matches!(
+        w.store.submit_answer("child", "grant-question", &answer()).unwrap(),
+        AnswerSubmission::Queued(_)
+    ));
     assert_eq!(
         w.store
             .queue_followup(&p, 1, "later", "later", "child", "later")
@@ -1378,6 +1454,10 @@ fn evidence_validator_requires_each_independent_proof_field() {
     }
     let mut unknown = c.clone();
     unknown.security.known = false;
+    unknown
+        .security
+        .axes
+        .insert("effort".into(), vec![ConfigValue::Id("high".into())]);
     assert!(!evidence_satisfies(&good, 7, &required, &unknown, &policy));
     let mut forbidden = c.clone();
     forbidden
@@ -1385,4 +1465,62 @@ fn evidence_validator_requires_each_independent_proof_field() {
         .axes
         .insert("mode".into(), vec![ConfigValue::Id("plan".into())]);
     assert!(!evidence_satisfies(&good, 7, &required, &forbidden, &policy));
+}
+
+#[test]
+fn endpoint_and_family_transition_each_cancel_and_scrub_undispatched_transfer() {
+    for transition in ["endpoint", "family"] {
+        let (w, p) = pair();
+        ready(&w);
+        queue(&w, &p, "followup");
+        if transition == "endpoint" {
+            // Isolate endpoint cleanup from the independently tested family hook.
+            raw(&w).execute_batch("DROP TRIGGER delegation_family_end;").unwrap();
+            w.store.record_close_request("child").unwrap();
+            let proof: Option<String> = raw(&w)
+                .query_row(
+                    "SELECT evidence FROM session_attach_evidence WHERE session_id='child'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(proof.is_none());
+        } else {
+            raw(&w)
+                .execute(
+                    "UPDATE session_families SET detached=1,reason='reassigned' WHERE child_id='child'",
+                    [],
+                )
+                .unwrap();
+        }
+        let (operation,queue,payload):(String,String,String)=raw(&w).query_row("SELECT o.state,q.state,q.payload FROM session_operations o JOIN session_dispatch_queue q USING(owner_id,operation_id) WHERE o.operation_key='followup'",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(operation, "cancelled", "{transition}");
+        assert_eq!(queue, "cancelled", "{transition}");
+        assert!(payload.is_empty(), "{transition}");
+    }
+}
+
+#[test]
+fn parent_close_receipt_waits_for_confirmed_child_close_and_retry_sends_nothing() {
+    let (w, p) = pair();
+    let (h, mut rx) = connected();
+    let accepted = w
+        .store
+        .queue_child_close(&p, 1, "close", "digest", "child", &h)
+        .unwrap();
+    assert_eq!(accepted.state, OperationState::AwaitingReconciliation);
+    assert!(matches!(rx.try_recv().unwrap(),CollectorFrame::CloseSession{session_id,..} if session_id=="child"));
+    assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "active");
+    assert!(w.store.find_session("child").unwrap().unwrap().close_requested);
+    w.store.ingest("child", 2, &SessionBody::SessionClosed).unwrap();
+    let completed = receipt(&w, &p, "close");
+    assert_eq!(completed.state, OperationState::Completed);
+    assert_eq!(
+        w.store
+            .queue_child_close(&p, 1, "close", "digest", "child", &h)
+            .unwrap(),
+        completed
+    );
+    assert!(rx.try_recv().is_err());
+    assert_eq!(w.store.find_session("parent").unwrap().unwrap().lifecycle, "active");
 }
