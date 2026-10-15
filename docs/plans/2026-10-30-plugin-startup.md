@@ -12,7 +12,7 @@
 
 ## Execution status
 
-**Implemented and locally verified**, on `plan/plugin-c2`. Original tasks run through `a99da88e`; the security amendment below fixes both findings from the parent review of `3442d264` and awaits re-review. Parent-owned security, task and whole-branch reviews and Linux/macOS CI remain pending; no review approval is claimed. The fresh replay reconstructed task 1 and the complete implementation exactly. This record distinguishes local full gates, fresh reconstruction, live initialization and provider inference.
+**Implemented and locally verified on merged D2/P2 main `a58479c7`**, branch `plan/plugin-c2`. The parent reported the security re-review of the pre-rebase `b1f9b402` as **APPROVE, no findings**. The rebase preserves D2's command/configuration/close fences and adds explicit integration regressions and projection fixes. The post-D2 verification record below is current; original task and security-amendment records remain historical evidence. Parent-owned post-rebase delta review and Linux/macOS PR CI remain pending.
 
 ## Scope
 
@@ -3763,7 +3763,7 @@ Run this harness in the lane dev shell with a fresh directory name under the led
 const fs = require('fs'), path = require('path'), crypto = require('crypto'), {spawnSync} = require('child_process');
 const lane = process.cwd(), root = path.resolve('.superpowers/sdd/plugin-c2');
 const plan = fs.readFileSync('docs/plans/2026-10-30-plugin-startup.md', 'utf8');
-const blocks = [...plan.matchAll(/```diff\n([\s\S]*?)```/g)].slice(4).map(m => m[1]);
+const blocks = [...plan.matchAll(/```diff\n([\s\S]*?)```/g)].slice(4,6).map(m => m[1]);
 if (blocks.length !== 2 || blocks.some(b => !b.includes('diff --git'))) throw Error('expected two amendment patches');
 const expected = plan.match(/\*\*Security amendment implementation tree:\*\* `([0-9a-f]{40})`/)[1];
 const tree = path.join(root, process.argv[2]);
@@ -3811,6 +3811,415 @@ for (const entry of cmd('git', ['ls-tree', '-r', expected], lane).toString().tri
 test('green', ['test', '-p', 'hennery-testkit', '--test', 'plugin_startup', '--test', 'plugin_startup_host', '--test', 'owner_filter', '--test', 'plugin_feed', '--locked']);
 fs.writeFileSync(path.join(logs, 'result.json'), JSON.stringify({blocks: blocks.length, filePatches: blocks.reduce((n, b) => n + (b.match(/^diff --git/gm) || []).length, 0), files, expected, results}, null, 2) + '\n');
 console.log('TREE MATCH ' + expected + ' FILES=' + files);
+```
+
+## Task 4: Integrate C2 with merged D2
+
+The parent reported C2's security re-review at `b1f9b402` as **APPROVE, no findings**. This task rebases onto merged D2/P2 main `a58479c7825ca7e609857dbb79e878dfa18c8a16`. The original patch sequences and their recorded bases remain historical; this task records current integration changes on the rebased C2 head `78f298d5`. Every rebase and continue uses `-c commit.gpgsign=false`.
+
+The conflicts retain CatalogProbe, DelegationConfig and PluginContext capabilities; D2's FencedPrompt retains its expected fence and receives no startup-context value, while the ordinary Prompt carries C2's optional context. The socket writer applies C2 only to ordinary Prompt frames. DelegatedPrompt remains a separate wire variant with generation/revision evidence and passes through D2's existing gated handoff and final host-actor checks. D2's queue, close-intent CAS and session operation mapping remain intact. The complete owner audit has 26 sources, preserves every minimum from both sides and retains P2/D2's stricter store floor of 156. No migration is added. Both generators are run; generated files are not hand-merged.
+
+**Post-D2 rebase implementation tree:** `1c70019afe73aa3a161c95e58ee28263ff8c157f`
+
+### Step 1: Preserve parent projection and exercise the shared actor
+
+The parent-turn projection regression must fail before the feature patch: C2's pre-D2 origin guard hides legitimate typed Parent turns. The host regression starts with an operator prompt containing context, then proves that a valid owned-child prompt receives its own single content block, stale generation and revision are rejected, and queued close intent rejects an otherwise current prompt after a configuration switch. Binary environment variables are isolated and SSL_CERT_FILE/SSL_CERT_DIR are cleared. The feed differential cases include complete plug-in origins, escaped keys and both duplicate-key orders.
+
+```diff
+diff --git a/crates/hennery-testkit/tests/plugin_feed.rs b/crates/hennery-testkit/tests/plugin_feed.rs
+index 0fc06892..9ca68f6f 100644
+--- a/crates/hennery-testkit/tests/plugin_feed.rs
++++ b/crates/hennery-testkit/tests/plugin_feed.rs
+@@ -425,6 +425,16 @@ fn unsupported_production_origins_and_differential_stored_origins_fail_closed()
+             false,
+         ),
+         (r#"{"kind":"plugin_context"}"#, false),
++        (r#"{"kind":"plugin_context","request_id":"context"}"#, false),
++        (r#"{"\u006bind":"plugin_context","request_id":"context"}"#, false),
++        (
++            r#"{"kind":"operator","kind":"plugin_context","request_id":"context"}"#,
++            false,
++        ),
++        (
++            r#"{"kind":"plugin_context","kind":"operator","request_id":"context"}"#,
++            false,
++        ),
+         (r#"null"#, false),
+     ] {
+         let body = format!(
+diff --git a/crates/hennery-testkit/tests/plugin_startup_host.rs b/crates/hennery-testkit/tests/plugin_startup_host.rs
+index 4727a972..47d3c27e 100644
+--- a/crates/hennery-testkit/tests/plugin_startup_host.rs
++++ b/crates/hennery-testkit/tests/plugin_startup_host.rs
+@@ -131,3 +131,230 @@ async fn context_and_operator_input_reach_one_acp_prompt_and_duplicate_delivery_
+     );
+     assert_eq!(blocks[1]["text"], "real operator request");
+ }
++
++#[tokio::test]
++async fn startup_context_does_not_leak_to_owned_child_or_bypass_config_and_close_fences() {
++    use hennery_host::{
++        profile::Profile,
++        session::{Attach, Launch, SessionOptions},
++    };
++    use hennery_proto::{
++        delegation_host::PromptFence,
++        frames::{ConfigValue, SessionConfig},
++    };
++
++    let binary = env!("CARGO_BIN_EXE_hennery-fake-acp");
++    hennery_testkit::first_exec(binary);
++    let dir = tempfile::tempdir().unwrap();
++    let script = FakeScript {
++        echo_prompt: true,
++        chunks: vec![],
++        config_options: hennery_testkit::sample_config_options(),
++        ..Default::default()
++    };
++    let agent = AgentCommand {
++        program: "/usr/bin/env".into(),
++        args: vec![
++            "-u".into(),
++            "SSL_CERT_FILE".into(),
++            "-u".into(),
++            "SSL_CERT_DIR".into(),
++            "-u".into(),
++            "HENNERY_DATA_DIR".into(),
++            "-u".into(),
++            "HENNERY_HOST_DATA_DIR".into(),
++            binary.into(),
++        ],
++        env: vec![
++            (SCRIPT_ENV.into(), serde_json::to_string(&script).unwrap()),
++            ("HOME".into(), dir.path().display().to_string()),
++            (
++                "XDG_CONFIG_HOME".into(),
++                dir.path().join("config").display().to_string(),
++            ),
++            ("XDG_DATA_HOME".into(), dir.path().join("data").display().to_string()),
++            ("XDG_CACHE_HOME".into(), dir.path().join("cache").display().to_string()),
++            ("XDG_STATE_HOME".into(), dir.path().join("state").display().to_string()),
++        ],
++    };
++    let (up, mut replies) = Uplink::new(Outbox::open_in_memory().unwrap());
++    let hooks = hennery_host::session::test_hooks::TestHooks::hold_after_first_switch();
++    let h = session::launch_delegated(
++        up.clone(),
++        Launch {
++            request_id: "start".into(),
++            session_id: "child".into(),
++            attach: Attach::New,
++            config: SessionConfig::default(),
++            agent,
++            cwd: dir.path().canonicalize().unwrap(),
++            profile: Profile::Generic,
++            mcp_servers: vec![],
++        },
++        SessionOptions {
++            test_hooks: Some(hooks.clone()),
++            ..Default::default()
++        },
++        7,
++    );
++    wait_host_fact(&up, |frames| {
++        frames.iter().any(|f| {
++            matches!(
++                f,
++                HostFrame::Session {
++                    body: SessionBody::SessionStarted { .. },
++                    ..
++                }
++            )
++        })
++    })
++    .await;
++    let evidence = up
++        .pending()
++        .unwrap()
++        .iter()
++        .find_map(|f| match f {
++            HostFrame::Session {
++                body: SessionBody::SessionStarted { indexed, .. },
++                ..
++            } => indexed.config_evidence.as_deref().cloned(),
++            _ => None,
++        })
++        .unwrap();
++    let block = StartupContext {
++        request_id: "operator".into(),
++        connection_id: "provider".into(),
++        namespace_epoch: "epoch".into(),
++        origin: InputOrigin::PluginContext {
++            request_id: "operator".into(),
++        },
++        context: serde_json::from_value(json!({"entries":[{"text":"plug-in reference only", "source_refs":[],
++            "provenance":[{"kind":"unverified"}]}],"generated_at":"now","truncated":false}))
++        .unwrap(),
++    };
++    assert!(h.send(SessionCmd::Prompt {
++        request_id: "operator".into(),
++        turn_id: "operator-turn".into(),
++        plugin_context: Some(block),
++        content: vec![json!({"type":"text","text":"operator task"})],
++    }));
++    wait_host_fact(&up, |frames| ended_turn(frames, "operator-turn")).await;
++    // Both generation and revision must survive the shared prompt match arm.
++    for (request, generation, revision) in [
++        ("stale-generation", 6, evidence.config_revision),
++        ("stale-revision", 7, evidence.config_revision + 1),
++    ] {
++        assert!(h.send(SessionCmd::FencedPrompt {
++            request_id: request.into(),
++            turn_id: request.into(),
++            content: vec![json!({"type":"text","text":"must stay fenced"})],
++            expected: PromptFence {
++                attach_generation: generation,
++                config_revision: revision
++            },
++        }));
++        assert!(
++            matches!(tokio::time::timeout(Duration::from_secs(20), replies.recv()).await.unwrap().unwrap(),
++            HostFrame::Error {request_id, code, ..} if request_id == request && code == "config_fence")
++        );
++    }
++    assert!(h.send(SessionCmd::FencedPrompt {
++        request_id: "parent".into(),
++        turn_id: "parent-turn".into(),
++        content: vec![json!({"type":"text","text":"owned child task"})],
++        expected: PromptFence {
++            attach_generation: 7,
++            config_revision: evidence.config_revision
++        },
++    }));
++    wait_host_fact(&up, |frames| ended_turn(frames, "parent-turn")).await;
++
++    // Hold after a configuration switch's reply is queued, then put a close
++    // behind a prompt whose new revision would otherwise be valid.
++    assert!(h.send(SessionCmd::SetConfig {
++        request_id: "switch".into(),
++        config_id: "model".into(),
++        value: ConfigValue::Id("large".into()),
++    }));
++    tokio::time::timeout(Duration::from_secs(20), hooks.holding())
++        .await
++        .unwrap();
++    tokio::time::timeout(Duration::from_secs(20), hooks.answers_queued(1))
++        .await
++        .unwrap();
++    assert!(h.send(SessionCmd::FencedPrompt {
++        request_id: "after-close-intent".into(),
++        turn_id: "after-close-intent".into(),
++        content: vec![json!({"type":"text","text":"must not reach adapter"})],
++        expected: PromptFence {
++            attach_generation: 7,
++            config_revision: evidence.config_revision + 1
++        },
++    }));
++    assert!(h.send(SessionCmd::Close {
++        request_id: "close".into()
++    }));
++    hooks.release();
++    tokio::time::timeout(Duration::from_secs(20), h.finished())
++        .await
++        .unwrap();
++    assert!(
++        matches!(replies.try_recv().unwrap(), HostFrame::Error {request_id, code, ..}
++        if request_id == "after-close-intent" && code == "config_fence")
++    );
++    let frames = up.pending().unwrap();
++    assert_eq!(
++        frames
++            .iter()
++            .filter(|f| matches!(
++                f,
++                HostFrame::Session {
++                    body: SessionBody::TurnStarted { .. },
++                    ..
++                }
++            ))
++            .count(),
++        2
++    );
++    let echoes: Vec<Value> = frames
++        .iter()
++        .filter_map(|f| match f {
++            HostFrame::Session {
++                body: SessionBody::AcpUpdate { payload, .. },
++                ..
++            } => payload
++                .pointer("/update/content/text")
++                .and_then(Value::as_str)
++                .and_then(|text| serde_json::from_str(text).ok()),
++            _ => None,
++        })
++        .collect();
++    assert_eq!(echoes.len(), 2);
++    assert_eq!(echoes[0].as_array().unwrap().len(), 2);
++    assert!(
++        echoes[0][0]["text"]
++            .as_str()
++            .unwrap()
++            .starts_with("Untrusted plug-in reference data")
++    );
++    assert_eq!(echoes[0][1]["text"], "operator task");
++    assert_eq!(echoes[1], json!([{"type":"text","text":"owned child task"}]));
++}
++
++async fn wait_host_fact(up: &Uplink, predicate: impl Fn(&[HostFrame]) -> bool) {
++    tokio::time::timeout(Duration::from_secs(20), async {
++        while !predicate(&up.pending().unwrap()) {
++            tokio::time::sleep(Duration::from_millis(10)).await;
++        }
++    })
++    .await
++    .unwrap();
++}
++
++fn ended_turn(frames: &[HostFrame], turn: &str) -> bool {
++    frames.iter().any(|f| {
++        matches!(f, HostFrame::Session {
++        body: SessionBody::TurnEnded {turn_id, ..}, ..
++    } if turn_id == turn)
++    })
++}
+diff --git a/crates/hennery-view/tests/plugin_origin.rs b/crates/hennery-view/tests/plugin_origin.rs
+index 9f71cf0f..2470da81 100644
+--- a/crates/hennery-view/tests/plugin_origin.rs
++++ b/crates/hennery-view/tests/plugin_origin.rs
+@@ -21,3 +21,26 @@ fn plugin_origin_cannot_be_displayed_as_an_operator_turn() {
+     assert!(items.iter().all(|i| !matches!(i.body, Body::UserTurn { .. })));
+     assert!(items.iter().any(|i| matches!(i.body, Body::Unrecognised(_))));
+ }
++
++#[test]
++fn typed_parent_input_remains_visible_alongside_the_plugin_origin_guard() {
++    let mut fold = Fold::new();
++    fold.apply(
++        &EventDto {
++            event_id: 1,
++            session_id: "child".into(),
++            host_seq: None,
++            kind: "user_turn".into(),
++            ts: "now".into(),
++            body: json!({"turn_id":"parent-turn", "content":[{"type":"text",
++                "text":"From parent session p (untrusted parent-provided task data): brief"}],
++                "origin":{"kind":"parent","session_id":"p","operation_id":"operation"}}),
++        },
++        &|_: &str| false,
++    );
++    let items = fold.take();
++    assert!(items.iter().any(|i| matches!(&i.body, Body::UserTurn {content, ..}
++        if matches!(content.as_slice(), [hennery_proto::rest::StoredBlock::Text {text}]
++            if text.starts_with("From parent session p")))));
++    assert!(items.iter().all(|i| !matches!(i.body, Body::Unrecognised(_))));
++}
+```
+
+### Step 2: Preserve supported Parent input and explicitly reject plug-in turn authors
+
+D2's new exhaustive feed verifier explicitly rejects PluginContext alongside ChildReport; the existing verified Parent operation check is preserved. The view accepts typed Operator and Parent producers while PluginContext remains a separate block, never an outer user-turn author. The parent's existing untrusted-task wrapper remains visible; family UI is outside C2.
+
+```diff
+diff --git a/crates/hennery-sessions/src/hub.rs b/crates/hennery-sessions/src/hub.rs
+index f59c7c31..dc06bfd4 100644
+--- a/crates/hennery-sessions/src/hub.rs
++++ b/crates/hennery-sessions/src/hub.rs
+@@ -124,7 +124,10 @@ impl HostConn {
+         }
+         if matches!(
+             frame,
+-            CollectorFrame::Prompt { plugin_context: Some(_), .. }
++            CollectorFrame::Prompt {
++                plugin_context: Some(_),
++                ..
++            }
+         ) && !self.capabilities.has(Capability::PluginContext)
+         {
+             return false;
+diff --git a/crates/hennery-sessions/src/plugin.rs b/crates/hennery-sessions/src/plugin.rs
+index 4694802b..415743b9 100644
+--- a/crates/hennery-sessions/src/plugin.rs
++++ b/crates/hennery-sessions/src/plugin.rs
+@@ -351,7 +351,7 @@ impl Store {
+         match origin {
+             InputOrigin::Operator {}=>Ok(true),
+             InputOrigin::Parent {session_id,operation_id}=>Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM session_operations WHERE owner_id = ?1 AND operation_id = ?2 AND caller_id = ?3 AND child_id = ?4 AND turn_id = ?5 AND tool IN ('session_send','session_spawn'))",params![self.owner_id(),operation_id,session_id,target,turn],|r|r.get(0))?),
+-            InputOrigin::ChildReport {..}=>Ok(false),
++            InputOrigin::ChildReport {..} | InputOrigin::PluginContext {..}=>Ok(false),
+         }
+     }
+ }
+diff --git a/crates/hennery-view/src/fold.rs b/crates/hennery-view/src/fold.rs
+index dc81d79d..6a2e94f5 100644
+--- a/crates/hennery-view/src/fold.rs
++++ b/crates/hennery-view/src/fold.rs
+@@ -318,11 +318,12 @@ impl Fold {
+         self.tools.clear();
+         self.plan = None;
+         // Collector-written provenance is data, never inferred from display
+-        // labels. Only the operator producer is supported on this path.
++        // labels. D2 also produces typed Parent turns; plug-in context is a
++        // separate block and can never become the outer turn author.
+         if event.body.get("origin").is_some_and(|value| {
+             !matches!(
+                 serde_json::from_value::<hennery_proto::plugin::InputOrigin>(value.clone()),
+-                Ok(hennery_proto::plugin::InputOrigin::Operator {})
++                Ok(hennery_proto::plugin::InputOrigin::Operator {} | hennery_proto::plugin::InputOrigin::Parent { .. })
+             )
+         }) {
+             self.unrecognised(event, "unsupported_input_origin");
+```
+
+Run the targeted C2 suites and D2 host/store suites, all six Rust checks, the web gate and `nix flake check -L`. Probe the combined host fence, close intent, parent projection and plug-in feed rejection in a source copy. Run the startup and delegated-host binaries in four concurrent copies for three rounds. Preserve this task's independent reconstruction separately from the original and security-amendment evidence.
+
+### Fresh post-D2 integration replay
+
+Save and run this harness under the ledger with a fresh directory name, inside the dev shell. It applies the exact two integration patches to the rebased C2 head, observes the parent-view assertion RED, applies the feature patch, compares the implementation tree before the new record update, and runs the targeted GREEN suites.
+
+```javascript
+const fs = require('fs'), path = require('path'), crypto = require('crypto'), {spawnSync} = require('child_process');
+const lane = process.cwd(), root = path.resolve('.superpowers/sdd/plugin-c2');
+const plan = fs.readFileSync('docs/plans/2026-10-30-plugin-startup.md', 'utf8');
+const blocks = [...plan.matchAll(/^```diff\n([\s\S]*?)^```/gm)].slice(6).map(m => m[1]);
+if (blocks.length !== 2 || blocks.some(b => !b.includes('diff --git'))) throw Error('expected two rebase integration patches');
+const expected = plan.match(/\*\*Post-D2 rebase implementation tree:\*\* `([0-9a-f]{40})`/)[1];
+const tree = path.join(root, process.argv[2]); fs.mkdirSync(tree);
+const logs = tree + '-logs'; fs.mkdirSync(logs);
+function cmd(program, args, cwd = tree, input) {
+  const r = spawnSync(program, args, {cwd, input, maxBuffer: 64 * 1024 * 1024});
+  if (r.status !== 0) throw Error(program + ': ' + r.stderr); return r.stdout;
+}
+cmd('tar', ['-x', '-C', tree], lane, cmd('git', ['archive', '78f298d5'], lane));
+cmd('git', ['init', '-q']);
+cmd(process.platform === 'darwin' ? '/bin/cp' : 'cp', [
+  ...(process.platform === 'darwin' ? ['-cR'] : ['--reflink=auto', '-R']), path.join(lane, 'target'), path.join(tree, 'target')
+], lane);
+function touch(dir) { for(const e of fs.readdirSync(dir,{withFileTypes:true})) { const p=path.join(dir,e.name); if(e.isDirectory()) touch(p); else if(e.name.endsWith('.rs')||e.name==='Cargo.toml') fs.utimesSync(p,new Date(),new Date()); } }
+touch(path.join(tree,'crates'));
+const results=[];
+function test(name,args,red=false) {
+  const r=spawnSync('cargo',args,{cwd:tree,encoding:'utf8',timeout:600000,maxBuffer:64*1024*1024});
+  const log=(r.stdout||'')+(r.stderr||'')+'\nEXIT='+r.status+'\n'; fs.writeFileSync(path.join(logs,name+'.log'),log);
+  if(red ? r.status!==101||!/test result: FAILED/.test(log) : r.status!==0) throw Error(name+' unexpected result '+r.status);
+  results.push({name,exit:r.status,red}); console.log(name+' EXIT='+r.status);
+}
+cmd('git',['apply','-'],tree,blocks[0]);
+test('parent-view-red',['test','-p','hennery-view','--test','plugin_origin','typed_parent_input_remains_visible','--locked'],true);
+cmd('git',['apply','-'],tree,blocks[1]);
+let files=0;
+for(const entry of cmd('git',['ls-tree','-r',expected],lane).toString().trim().split('\n')) {
+  const [meta,file]=entry.split('\t'),[mode,type,hash]=meta.split(' '),full=path.join(tree,file);
+  if(type!=='blob') throw Error('unexpected tree entry');
+  const stat=fs.lstatSync(full),bytes=stat.isSymbolicLink()?Buffer.from(fs.readlinkSync(full)):fs.readFileSync(full);
+  if(crypto.createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex')!==hash) throw Error('tree mismatch '+file);
+  if(mode==='100755'&&!(stat.mode&0o111)) throw Error('mode mismatch '+file); files++;
+}
+test('c2-and-host-green',['test','-p','hennery-testkit','--test','plugin_startup','--test','plugin_startup_host','--test','owner_filter','--test','plugin_feed','--test','delegation_host','--locked']);
+test('d2-green',['test','-p','hennery-sessions','--test','delegation_d2','--locked']);
+test('view-green',['test','-p','hennery-view','--test','plugin_origin','--locked']);
+test('typed-green',['test','-p','hennery-proto','-p','hennery-kernel','--test','plugin_startup','--locked']);
+fs.writeFileSync(path.join(logs,'result.json'),JSON.stringify({blocks:blocks.length,filePatches:blocks.reduce((n,b)=>n+(b.match(/^diff --git/gm)||[]).length,0),files,expected,results},null,2)+'\n');
+console.log('TREE MATCH '+expected+' FILES='+files);
 ```
 
 ## After this plan
@@ -3962,5 +4371,52 @@ The shared gated validator now checks the actual target host at both delivery bo
 Evidence is under `.superpowers/sdd/plugin-c2/`: `security-red-final-*.log`, `security-green-*.log`, `security-full-*.log`, `security-replay-1-logs/`, `security-probe-1-logs/` and `security-load/`. The new probes ran solely in `security-probe-1`; no probe mutation was made in the lane. These two fresh source copies are retained for the parent; their compiled targets are cleaned. Original task evidence above remains historical and is not replaced by amendment results.
 
 The web gate was not repeated because generated types and all web code are unchanged in this amendment; the original web gate remains recorded above. Provider prompts and Linux CI were not run by the lane. Parent re-review should focus on `3442d264..HEAD`: actual target-host revocation under the shared gate, source-session assignment isolation, and the three regression assertions. This is a request for independent security/task review, not an approval claim. The parent still owns PR checks, reviewDecision, mergeStateStatus and unresolved threads, bots included.
+
+### Post-D2 rebase verification record
+
+Implementation commit: `9385ee28`, with the reachable implementation tree recorded in task 4.
+
+The parent requested the rebase after D2 merged as main `a58479c7825ca7e609857dbb79e878dfa18c8a16`. The requested HTTPS fallback fetch completed with exit 0. Rebase and every continue used `-c commit.gpgsign=false`. The approved C2 commits map as follows:
+
+| Pre-rebase | Rebased |
+|---|---|
+| `6c2b11d8` | `dc84b828` |
+| `a99da88e` | `baa2288b` |
+| `3442d264` | `b5aa6c02` |
+| `b1f9b402` | `78f298d5` |
+
+Both sides' capabilities, prompt paths, schemas and documentation entries are retained. Generated files were rebuilt with both generators. The complete owner audit contains **26 source cases** and preserves every minimum from both heads, including store **156**. The symbol grep found no removed production accessor; `Hub::notify` remains and D2's separate `notify_parent_transfer` is retained. The old discovery test name was replaced by D2's seven-tool discovery test. No migration was added; D2's merged migration 18 and Nix SQL source-closure inputs remain intact.
+
+C2 only fetches context through the operator prompt API. D2's worker reserves typed Parent turns and emits DelegatedPrompt, which has no context field. C2's socket guard handles ordinary Prompt only. In the host's shared match arm, ordinary Prompt carries optional context with no delegated fence, while FencedPrompt carries its expected fence with no context. FencedPrompt still uses D2's current generation, configuration, pending-switch, question and ending checks before ACP handoff. Ordinary Prompt retains its operator path; C2 never converts a delegated command into that path. Store prompt commit retains C2's close/frozen-hat fence; D2's owned-child close-intent CAS and automatic-resume predicates are unchanged.
+
+Integration testing found two required enum/projection adaptations. D2's feed verifier needed an explicit PluginContext denial for the new enum variant. C2's view origin guard hid D2's legitimate typed Parent turns; a new test saw RED before the guard was corrected to accept the supported Parent producer while retaining the PluginContext outer-origin rejection. The new real host regression proves a startup-context operator prompt and a separate one-block owned-child prompt, rejects stale generation and revision, then holds a configuration reply and proves queued close intent prevents a later delegated turn. The feed differential test now includes complete plug-in origins, escaped keys and both duplicate-key orders.
+
+| Verification command / exercise | Result from output |
+|---|---|
+| Both protocol/view generators (without --check) | exit 0; generated files rebuilt |
+| `cargo fmt --all --check` | exit 0 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | exit 0 |
+| `cargo clippy -p hennery --locked -- -D warnings` | exit 0 |
+| `cargo test --workspace --locked` | exit 0; 2,374 passed |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | exit 0 |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | exit 0 |
+| `cargo test -p hennery-testkit --test plugin_startup --test plugin_startup_host --test owner_filter --test plugin_feed --test delegation_host --locked` | exit 0; 26 + 2 + 3 + 21 + 15 tests |
+| `cargo test -p hennery-sessions --test delegation_d2 --locked` | exit 0; 74 tests |
+| `cargo test -p hennery-proto -p hennery-kernel --test plugin_startup --locked` | exit 0; 2 + 3 tests |
+| `cargo test -p hennery-view --test plugin_origin --locked` | exit 0; 2 tests |
+| `pnpm --dir web install --frozen-lockfile`, `typecheck`, `test`, `build` | all exit 0; 1,823 tests in 102 files |
+| `nix flake check -L` | exit 0 on aarch64-darwin, including embedded web UI check |
+| Fresh rebase integration replay | two extracted diff blocks / six file patches; parent-view assertion RED; 148 targeted tests GREEN; exact 790-file implementation tree match before this task/record update |
+| Combined expected-fence bypass in copy | exit 101; host regression failed |
+| Queued-close guard bypass in copy | exit 101; host regression failed |
+| Parent display support removal in copy | exit 101; view regression failed |
+| Plug-in feed denial bypass in copy | exit 101; differential regression failed |
+| Four concurrent copies × three rounds, startup, startup-host and delegated-host binaries | 36 runs, 516 tests, all exit 0 |
+
+The first targeted compile exposed the missing exhaustive InputOrigin case and was not counted as a test failure. The final full checks and targeted suites include the integration fixes and complete feed vectors. The first fence probe failed to compile because untyped None removed inference; it was rejected as probe evidence. A fresh copy used typed `None::<PromptFence>` solely in the mutation and caught the actual assertion failure. No lane source was mutated by a probe. Both full workspace passes are retained in the ledger; the final pass above includes the added differential vectors.
+
+Evidence is in `.superpowers/sdd/plugin-c2/`: `rebase-generate-*.log`, `rebase-final-*.log`, `rebase-parent-red-view.log`, `rebase-replay-1-logs/`, `rebase-probe-2-logs/` and `rebase-load/`. Retained new source copies: `rebase-replay-1`, `rebase-probe-1` (invalid first probe) and `rebase-probe-2`; their compiled targets are cleaned. Earlier retained copies are listed in the historical records. The Nix check omits incompatible Linux systems; Linux/macOS PR CI and full PR status remain parent-owned. No provider prompt or GitHub action was performed by the lane.
+
+Review the post-rebase integration against `a58479c7`, especially the shared host match arm, Parent view support and explicit PluginContext feed denial. The old security approval applies to `b1f9b402`; this record requests independent review of the integration delta and does not claim a new approval. The push uses the requested `--force-with-lease=plan/plugin-c2:b1f9b402`; its result is reported to the parent separately.
 
 Generated with Claude AI — please review before distribution.
