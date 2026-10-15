@@ -1,20 +1,22 @@
 # R2 — Homebrew tap
 
 > Build first, then replay. Base `cbd002b0`; branch `plan/dist-homebrew`.
-> Built code: `71bc4a2b`; initial task 1: `31979159`.
+> Built code: `71bc4a2b`; initial task 1: `31979159`; review amendment: `cabc7420`.
 > No publication is authorized.
 
 ## Execution status
 
-Implementation is built and locally checked. Independent parent review and the
-three native CI proofs remain pending. The parent explicitly moved actual
-Homebrew acceptance to CI after the local CLT refusal; this record does not
+Implementation and the review amendment are built and locally checked. PR #155
+received CHANGES for optional-channel scheduling; task 3 addresses that finding
+and awaits parent re-review. The three native CI proofs remain pending. The
+parent explicitly moved actual Homebrew acceptance to CI after the local CLT
+refusal; this record does not
 claim a successful local install, upgrade or uninstall. Publication remains
 disabled. A merge never authorizes publication.
 
-The six Rust gates exited 0: fmt, both Clippy modes, workspace tests (2,376
-passed, one pre-existing ignored test, 161 suite summaries), and both generator
-checks. The final release Python suite passed 163 tests. Workflow policy,
+The original build's six Rust gates exited 0: fmt, both Clippy modes, workspace
+tests (2,376 passed, one pre-existing ignored test, 161 suite summaries), and both generator
+checks. Its release Python suite passed 163 tests. Workflow policy,
 actionlint on all four release workflows and shellcheck on both new shell
 helpers exited 0. Guard probes ran in copies with APFS-cloned targets: nine
 formula guards, 27 publication/registry/scope/smoke guards,
@@ -27,6 +29,14 @@ both tasks RED first, then GREEN; final release suite 163 passed; workflow
 policy and actionlint exited 0. The complete tracked tree and file modes match
 across 842 files, including this execution record. The replay
 used an APFS-cloned target and did not repeat the full Rust suite.
+
+The amendment passed 171 release tests, workflow policy, actionlint on all five
+release workflows, shellcheck on both archive helpers, and 15 additional caught
+probes in a copy with an APFS-cloned target. Its tests were seen RED first.
+The amendment does not change Rust; the verification budget and parent ruling
+exclude another full replay or Rust run. The original replay remains historical
+evidence for tasks 1/2. The new secret-free scheduling workflow runs on PR pushes;
+its actual Actions result remains pending parent relay.
 
 Local evidence, retained in the ledger:
 - Native cargo-dist build and web build succeeded. Generated notices had zero
@@ -59,10 +69,12 @@ public immutable releases and native qualification before enablement. R3's
 channel registry supplies the owning-job contract; this plan extends it without
 changing R1's runtime evidence algorithm or weakening other channels.
 
-Two tasks:
+Two initial tasks and one review amendment:
+
 1. Frozen formula checks and an isolated actual Homebrew acceptance harness.
 2. Shared release/PR native archive build, three-platform proof CI, owning job,
    signed protected publication, negative tests and operator guidance.
+3. Review amendment: explicit optional-channel scheduling and a real Actions regression.
 
 Out: Homebrew core, new platform qualification, a second service manager,
 automatic publication, token minting, actual releases, and application N-1 data
@@ -4712,10 +4724,1060 @@ if __name__ == '__main__':
 ```
 
 
+## Task 3: Review amendment — skipped optional ancestors
+
+Source commit: `cabc7420`, following reviewed head `05a55db6`. PR #155's Medium
+finding exposed Actions skip propagation (actions/runner#2205): an optional
+`crates` skip survives the successful `assemble` join and suppresses descendants
+whose conditions retain implicit `success()`. The old test incorrectly required
+the native job to have no condition. The same audit found `installer` and
+`retain` affected. The parent reported the rest of the review clean.
+
+### Step 1 — RED, then apply the feature blocks
+
+Replace the incorrect assertion and add the test blocks below first. The first
+run executed six tests and exited 1 (20 failing subtests and two errors for the
+missing Actions fixture). A later CI-lint coverage regression executed eight
+tests and exited 1 with one failure: CI omitted the native and scheduling
+workflows. No implementation guard was relaxed to obtain GREEN.
+
+The tests require cancellation and successful direct-result guards, including
+native acceptance before the selected Homebrew aggregate, and the existing
+storage switch before retention. They reject missing/implicit status conditions
+on current and future optional descendants, including multiple ancestor hops,
+and refuse status-function text hidden inside string literals. Ordinary DAGs
+without optional ancestors retain their implicit status behavior.
+
+### Step 2 — GREEN and actual scheduler regression
+
+Apply all feature blocks. Both native acceptance and installer jobs use explicit
+`!cancelled()` plus successful `assemble`. The selected Homebrew aggregate also
+requires native success; retention also requires installer and tag verification
+success. Channel selection, protected environment and storage opt-in persist.
+The publisher, its credential boundary, frozen bytes and channel ownership do
+not change.
+
+Workflow policy walks all descendants of conditional jobs in the candidate and
+scheduling qualification DAGs. This is a lint for explicit status conditions;
+the exact production guard semantics are bound by tests to the live regression.
+
+`release-scheduling.yml` uses no secrets, actions, protected environments or
+release artifacts, has empty permissions and two-minute job limits. It runs on
+PRs/main changes to packaging or workflows, and accepts only `github` or
+`github,homebrew` for manual runs. Its real optional `crates` job skips. The
+native matrix covers both channel selections; selected and unselected aggregates,
+installer and retention use the production guards with only the channel/storage
+inputs substituted. An unconditional final assertion requires every expected
+success and skip, so a suppressed descendant fails the workflow. The exact
+assertion shell was executed locally against one passing result set and all
+27 single-result corruptions (skipped, failure, cancelled or unexpected success).
+CI actionlint now covers every `release-*.yml` workflow.
+
+Commands actually run, all final exits 0:
+
+- `nix develop .#release -c python3 -B -m unittest discover -s packaging/release -p 'test_*.py'`: 171 tests.
+- `nix develop .#release -c python3 -B packaging/release/workflow_policy.py`: authority graph checked.
+- `nix develop .#release -c actionlint .github/workflows/release-*.yml`: five workflows.
+- `nix develop .#release -c nix shell nixpkgs#shellcheck -c shellcheck packaging/release/native-archive.sh packaging/release/homebrew-proof.sh`.
+
+### Step 3 — amendment probes, byte checks and parent handoff
+
+Fifteen guard mutations were caught in `.superpowers/probe-scheduling-2`, with a
+separately APFS-cloned target: native and installer status, aggregate status,
+native/assemble results, retention status/installer result, channel selection,
+policy hookup, quoted literals, transitive traversal, fixture native status,
+final assertion behavior/status, and CI actionlint coverage. The restored
+eight-test suite passed; all six staged source files matched the tested worktree
+and restored copy exactly. No probe mutation touched this worktree.
+
+No Rust sources or timing-dependent runtime tests changed. The parent explicitly
+requested no Rust full run; the amendment budget excludes a second fresh replay.
+The original full replay and workspace count above remain evidence for the
+initial build. Retain both scheduling scratch copies for parent cleanup; the
+first contains only copied sources after GNU `cp` refused the APFS `-c` flag.
+The successful second copy uses macOS `/bin/cp -c -R`.
+
+Parent's last CI relay for PR #155: Linux archives, readme and refusal tests
+passed; all three native proof jobs were pending. No new native success or live
+Actions scheduling success is claimed here. The parent owns checks,
+reviewDecision, mergeStateStatus and every unresolved review thread. Request
+re-review of the amendment range, focusing on skipped-ancestor behavior,
+failure/cancellation rejection, qualification DAG lint and the secret-free
+regression. Publication remains disabled and no merge publishes anything.
+
+<!-- r2:file {"encoding": "utf-8", "mode": "100644", "path": "packaging/release/test_homebrew_workflows.py", "phase": "tests", "sha256": "878e390af15eb787f9129c9897cc6e9a5f52f9f11b48ed90322ec0c5c61f9e41", "size": 5456, "task": 3} -->
+```text
+import copy
+from pathlib import Path
+import unittest
+import workflow_policy
+
+ROOT=Path(__file__).resolve().parents[2]
+
+
+def workflow(name): return workflow_policy.load_workflow((ROOT/'.github/workflows'/name).read_text())
+
+
+class HomebrewWorkflows(unittest.TestCase):
+    def test_channel_has_an_owning_aggregate_job_and_native_acceptance(self):
+        data=workflow('release-candidate.yml')
+        self.assertEqual(workflow_policy.CHANNEL_JOB_IDS['homebrew'],'homebrew')
+        job=data['jobs']['homebrew']
+        self.assertEqual(job['name'],'homebrew')
+        self.assertIn('homebrew-native',job['needs'])
+        native=data['jobs']['homebrew-native']
+        self.assertEqual(native['if'], "${{ !cancelled() && needs.assemble.result == 'success' }}")
+        self.assertEqual({x['runner'] for x in native['strategy']['matrix']['include']},
+                         {'ubuntu-24.04','ubuntu-24.04-arm','macos-15'})
+        self.assertIn('homebrew_accept.py',str(native))
+        self.assertIn('homebrew.py prepare',str(data['jobs']['assemble']))
+        self.assertIn('native-archive.sh',str(data['jobs']['archive']))
+
+    def test_pr_proof_is_secret_free_pinned_and_covers_every_advertised_platform(self):
+        data=workflow('release-homebrew.yml')
+        trigger=data.get('on',data.get(True))
+        self.assertIn('pull_request',trigger)
+        self.assertIn('packaging/**',trigger['pull_request']['paths'])
+        self.assertEqual(data['permissions'],{'contents':'read'})
+        self.assertNotIn('secrets.',str(data))
+        job=data['jobs']['proof']
+        self.assertEqual({x['runner'] for x in job['strategy']['matrix']['include']},
+                         {'ubuntu-24.04','ubuntu-24.04-arm','macos-15'})
+        self.assertIn('homebrew-proof.sh',str(job))
+        workflow_policy.check(data,'release-homebrew.yml')
+
+    def test_writer_exposes_tap_credential_only_after_signature_and_both_gates(self):
+        data=workflow('release-publish.yml'); job=data['jobs']['homebrew']
+        self.assertEqual(job['needs'],['github','authorize'])
+        self.assertEqual(job['permissions'],{'contents':'read','actions':'read'})
+        self.assertIn("vars.RELEASE_HOMEBREW_ENABLED == 'true'",job['if'])
+        steps=job['steps']
+        credential=[i for i,s in enumerate(steps) if 'secrets.RELEASE_HOMEBREW_TOKEN' in str(s)]
+        self.assertEqual(len(credential),1)
+        boundary=next(i for i,s in enumerate(steps) if s.get('with',{}).get('phase')=='boundary')
+        signature=next(i for i,s in enumerate(steps) if 'verify.py --candidate' in s.get('run',''))
+        self.assertLess(signature,boundary);self.assertLess(boundary,credential[0])
+        self.assertNotIn('RELEASE_HOMEBREW_TOKEN',str(job.get('env',{})))
+        workflow_policy.check(data,'release-publish.yml')
+
+    def test_policy_refuses_early_credential_missing_integrity_or_switch(self):
+        data=workflow('release-publish.yml')
+        for kind in ('early','job-env','missing-signature','missing-byte-check','missing-switch','ignored-upload','skip-signature'):
+            changed=copy.deepcopy(data);job=changed['jobs']['homebrew'];steps=job['steps']
+            if kind=='early':
+                step=next(s for s in steps if 'secrets.RELEASE_HOMEBREW_TOKEN' in str(s));steps.remove(step);steps.insert(0,step)
+            elif kind=='job-env': job.setdefault('env',{})['HOMEBREW_TAP_TOKEN']='${{ secrets.RELEASE_HOMEBREW_TOKEN }}'
+            elif kind=='missing-signature': job['steps']=[s for s in steps if 'verify.py --candidate' not in s.get('run','')]
+            elif kind=='missing-byte-check': job['steps']=[s for s in steps if 'homebrew_publish.py --verify' not in s.get('run','')]
+            elif kind=='missing-switch': job['if']=workflow_policy.CREDENTIAL_CONDITION
+            elif kind=='ignored-upload': steps[-1]['continue-on-error']=True
+            else: next(s for s in steps if 'verify.py --candidate' in s.get('run',''))['if']='false'
+            with self.subTest(kind=kind),self.assertRaises(ValueError): workflow_policy.check(changed,'release-publish.yml')
+
+    def test_registered_homebrew_name_cannot_be_stolen_or_missing_when_selected(self):
+        data=workflow('release-candidate.yml');data['jobs'].pop('homebrew')
+        data['jobs']['ordinary']={'name':'homebrew','timeout-minutes':5,'steps':[{'run':'false'}]}
+        with self.assertRaises(ValueError): workflow_policy.check(data,'release-candidate.yml')
+
+
+    def test_workflow_level_credential_aliases_refuse_before_any_job(self):
+        for expression in ("${{ secrets.RELEASE_HOMEBREW_TOKEN }}", "${{ secrets.release_homebrew_token }}",
+                           "${{ secrets['RELEASE_HOMEBREW_TOKEN'] }}", '${{ secrets["release_homebrew_token"] }}'):
+            data=workflow('release-publish.yml');data['env']={'HOMEBREW_TAP_TOKEN':expression}
+            with self.subTest(expression=expression),self.assertRaises(ValueError):workflow_policy.check(data,'release-publish.yml')
+
+
+    def test_renamed_job_and_workflow_cannot_hide_an_early_tap_credential(self):
+        data=workflow('release-publish.yml')
+        job=data['jobs'].pop('homebrew');data['jobs']['tap-mirror']=job
+        steps=job['steps'];step=next(s for s in steps if 'secrets.RELEASE_HOMEBREW_TOKEN' in str(s))
+        steps.remove(step);steps.insert(0,step)
+        with self.assertRaises(ValueError): workflow_policy.check(data,'generated.yml')
+
+
+if __name__=='__main__': unittest.main()
+```
+
+<!-- r2:file {"encoding": "utf-8", "mode": "100644", "path": "packaging/release/test_optional_scheduling.py", "phase": "tests", "sha256": "92b3d24ed49fedc3c83223f32d024a0dd72702cf48064536fc4040b9f205587d", "size": 7704, "task": 3} -->
+```text
+"""Skipped optional ancestors must not suppress candidate acceptance descendants."""
+import copy
+import json
+import os
+from pathlib import Path
+import subprocess
+import shlex
+import unittest
+
+import workflow_policy
+
+ROOT = Path(__file__).resolve().parents[2]
+NATIVE = "${{ !cancelled() && needs.assemble.result == 'success' }}"
+SELECT = "contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')"
+AGGREGATE = "${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && " + SELECT + " }}"
+RETAIN = "${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' }}"
+
+
+def workflow(name):
+    return workflow_policy.load_workflow((ROOT / '.github/workflows' / name).read_text())
+
+
+class OptionalScheduling(unittest.TestCase):
+    def test_ci_actionlint_covers_every_release_workflow(self):
+        steps = workflow('release-tests.yml')['jobs']['refusal-tests']['steps']
+        command = next(step['run'] for step in steps if step.get('name') == 'Actionlint')
+        words = shlex.split(command)
+        patterns = words[words.index('actionlint') + 1:]
+        checked = {path for pattern in patterns for path in ROOT.glob(pattern)}
+        self.assertLessEqual(set((ROOT / '.github/workflows').glob('release-*.yml')), checked)
+
+    def test_native_installer_aggregate_and_retention_have_explicit_safe_conditions(self):
+        jobs = workflow('release-candidate.yml')['jobs']
+        for name, expected in (('homebrew-native', NATIVE), ('installer', NATIVE),
+                               ('homebrew', AGGREGATE), ('retain', RETAIN)):
+            with self.subTest(job=name):
+                self.assertEqual(jobs[name].get('if'), expected)
+
+    def test_policy_refuses_missing_or_implicit_status_on_transitive_descendants(self):
+        original = workflow('release-candidate.yml')
+        for name in ('assemble', 'installer', 'homebrew-native', 'homebrew', 'retain'):
+            for condition in (None, "needs.assemble.result == 'success'", "contains('success()', 'success')"):
+                data = copy.deepcopy(original)
+                if condition is None:
+                    data['jobs'][name].pop('if', None)
+                else:
+                    data['jobs'][name]['if'] = condition
+                with self.subTest(job=name, condition=condition), self.assertRaisesRegex(ValueError, 'optional.*status'):
+                    workflow_policy.check(data, 'release-candidate.yml')
+
+    def test_policy_walks_new_optional_jobs_and_multiple_ancestor_hops(self):
+        data = workflow('release-candidate.yml')
+        data['jobs']['future-channel'] = {'if': "inputs.channels == 'future'", 'timeout-minutes': 1,
+                                         'steps': [{'run': 'true'}]}
+        data['jobs']['join'] = {'needs': ['archive', 'future-channel'], 'if': 'always()',
+                               'timeout-minutes': 1, 'steps': [{'run': 'true'}]}
+        data['jobs']['middle'] = {'needs': 'join', 'timeout-minutes': 1, 'steps': [{'run': 'true'}]}
+        data['jobs']['later'] = {'needs': 'middle', 'timeout-minutes': 1, 'steps': [{'run': 'true'}]}
+        with self.assertRaisesRegex(ValueError, 'later.*optional.*status'):
+            workflow_policy.check(data, 'release-candidate.yml')
+        data['jobs']['middle']['if'] = "!cancelled() && needs.join.result == 'success'"
+        data['jobs']['later']['if'] = "!cancelled() && needs.middle.result == 'success'"
+        workflow_policy.check(data, 'release-candidate.yml')
+
+    def test_nonoptional_ancestors_keep_implicit_success(self):
+        data = {'jobs': {'build': {'timeout-minutes': 1, 'steps': [{'run': 'true'}]},
+                         'test': {'needs': 'build', 'timeout-minutes': 1, 'steps': [{'run': 'true'}]}}}
+        workflow_policy.check(data, 'release-candidate.yml')
+
+    def test_secret_free_actions_regression_uses_production_guards(self):
+        data = workflow('release-scheduling.yml')
+        trigger = data.get('on', data.get(True))
+        self.assertIn('pull_request', trigger)
+        self.assertEqual(trigger['workflow_dispatch']['inputs']['channels']['options'], ['github', 'github,homebrew'])
+        self.assertEqual(data['permissions'], {})
+        self.assertNotIn('secrets.', str(data))
+        jobs = data['jobs']
+        self.assertEqual(jobs['crates']['if'], workflow('release-candidate.yml')['jobs']['crates']['if'])
+        self.assertEqual(jobs['assemble']['if'], workflow('release-candidate.yml')['jobs']['assemble']['if'])
+        for name in ('homebrew-native', 'installer'):
+            self.assertEqual(jobs[name]['if'], NATIVE)
+        self.assertEqual(jobs['homebrew-native']['strategy']['matrix']['channels'], ['github', 'github,homebrew'])
+        native_steps = jobs['homebrew-native']['steps']
+        self.assertNotIn('if', native_steps[0])
+        self.assertEqual(native_steps[1]['if'], SELECT.replace("github.event.inputs.channels || 'github'", 'matrix.channels'))
+        for name, channels in (('homebrew', 'github,homebrew'), ('homebrew-unselected', 'github')):
+            self.assertEqual(jobs[name]['if'], AGGREGATE.replace("github.event.inputs.channels || 'github'", repr(channels)))
+        self.assertEqual(jobs['retain']['if'], RETAIN.replace("vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true'", 'true'))
+        assertion = jobs['assert-scheduling']
+        self.assertEqual(assertion['if'], 'always()')
+        self.assertEqual(set(assertion['needs']), set(jobs) - {'assert-scheduling'})
+        run = assertion['steps'][0]['run']
+        self.assertIn("'crates': 'skipped'", run)
+        self.assertIn("'homebrew-unselected': 'skipped'", run)
+        for name in ('assemble', 'homebrew-native', 'installer', 'homebrew', 'retain'):
+            self.assertIn(repr(name) + ": 'success'", run)
+        workflow_policy.check(data, 'release-scheduling.yml')
+
+    def test_execute_exact_actions_assertion_accepts_only_expected_job_results(self):
+        job = workflow('release-scheduling.yml')['jobs']['assert-scheduling']
+        script = job['steps'][0]['run']
+        expected = {key: {'result': 'skipped' if key in ('crates', 'homebrew-unselected') else 'success'}
+                    for key in job['needs']}
+        result = subprocess.run(['bash', '-eu', '-c', script], env=dict(os.environ, RESULTS=json.dumps(expected)),
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in expected:
+            for status in ('skipped', 'failure', 'cancelled', 'success'):
+                if status == expected[name]['result']:
+                    continue
+                changed = copy.deepcopy(expected)
+                changed[name]['result'] = status
+                result = subprocess.run(['bash', '-eu', '-c', script],
+                                        env=dict(os.environ, RESULTS=json.dumps(changed)),
+                                        capture_output=True, text=True, check=False)
+                with self.subTest(job=name, status=status):
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('Scheduling regression:', result.stderr)
+
+    def test_regression_workflow_is_also_subject_to_optional_dag_policy(self):
+        data = workflow('release-scheduling.yml')
+        data['jobs']['installer'].pop('if')
+        with self.assertRaisesRegex(ValueError, 'installer.*optional.*status'):
+            workflow_policy.check(data, 'release-scheduling.yml')
+
+
+if __name__ == '__main__':
+    unittest.main()
+```
+
+<!-- r2:file {"encoding": "utf-8", "mode": "100644", "path": ".github/workflows/release-candidate.yml", "phase": "feature", "sha256": "bd16b9708fd05f1a30e2d60522a06321b16137db46e8f4bd4aedc9eccf43bcec", "size": 16788, "task": 3} -->
+```text
+name: release-candidate
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Annotated approved release tag; candidate creation only
+        required: true
+        type: string
+      channels:
+        description: Comma-separated channels; first alpha is github only
+        default: github
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-candidate-${{ github.event.inputs.tag || github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  tag-signature:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Verify pinned maintainer signature and exact candidate SHA before storage credentials
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: nix develop .#release -c python3 packaging/release/tag_signature.py --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
+  web-ui:
+    needs: tag-signature
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Build the UI once from the pinned lock
+        run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-ui
+          retention-days: 90
+          if-no-files-found: error
+          path: web/dist/
+  archive:
+    needs: web-ui
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            image: amd64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            image: arm64
+          - target: aarch64-apple-darwin
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Annotated tag, exact source and workspace version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          test "$(git cat-file -t "$RELEASE_TAG")" = tag
+          source_sha=$(git rev-parse "$RELEASE_TAG^{commit}")
+          test "$source_sha" = "$(git rev-parse HEAD)"
+          echo "RELEASE_SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
+          python3 -c 'import os,tomllib; from pathlib import Path; v=tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]; assert os.environ["RELEASE_TAG"] == "v"+v'
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: 1.98.1
+          targets: ${{ matrix.target }}
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Native build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-ui
+          path: web/dist/
+      - name: Pinned dist and source and licence inputs
+        run: |
+          sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+          echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
+          nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web licenses list --json > frontend-licences.json'
+          cargo metadata --locked --all-features --filter-platform '${{ matrix.target }}' --format-version=1 > cargo-metadata.json
+          nix develop .#release -c python3 packaging/release/supply.py materials --output release-materials \
+            --source-sha "$RELEASE_SOURCE_SHA" --target '${{ matrix.target }}' \
+            --cargo-metadata cargo-metadata.json --frontend-licences frontend-licences.json
+      - name: Current advisory databases; findings stop candidate creation
+        run: |
+          nix develop .#release -c cargo-audit audit --file Cargo.lock --db "$RUNNER_TEMP/release-advisories" --json > release-materials/rust-advisories.json
+          git -C "$RUNNER_TEMP/release-advisories" rev-parse HEAD > release-materials/rust-advisory-revision.txt
+          nix develop .#web -c pnpm --dir web audit --json > release-materials/web-advisories.json
+      - name: Build fresh final archive with notices
+        env:
+          HENNERY_WEB_REQUIRE: '1'
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          i=json.load(open('release-materials/build-identity.json'))
+          for key, field in [('HENNERY_BUILD_SOURCE_SHA','source_sha'),('HENNERY_BUILD_UI_SHA256','ui_sha256'),('HENNERY_BUILD_MANIFEST_SHA256','adapter_manifest_sha256')]:
+              print(key+'='+i[field])
+          PY
+      - name: Archive and content acceptance
+        env:
+          HENNERY_WEB_REQUIRE: '1'
+          TARGET: ${{ matrix.target }}
+        run: |
+          sh packaging/release/native-archive.sh
+      - name: Alpine executable and collector image smoke
+        if: runner.os == 'Linux'
+        env:
+          IMAGE_ARCH: ${{ matrix.image }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          binary="$PWD/unpacked/hennery-$TARGET/hennery"
+          docker run --rm -v "$binary:/hennery:ro" alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 /hennery --version
+          mkdir -p "dist/linux-$IMAGE_ARCH"
+          cp "$binary" "dist/linux-$IMAGE_ARCH/hennery"
+          docker build -t hennery-collector:candidate .
+          sh packaging/smoke-image.sh hennery-collector:candidate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: candidate-${{ matrix.target }}
+          retention-days: 90
+          if-no-files-found: error
+          path: target/distrib/
+  crates:
+    # Channel -> owning job ID: workflow_policy.CHANNEL_JOB_IDS. R4 uses "ghcr".
+    name: crates
+    needs: web-ui
+    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',crates,')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-ui
+          path: web/dist/
+      - name: Isolate package acceptance homes and the MSRV toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/r3-home"
+          for name in HOME CARGO_HOME RUSTUP_HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME npm_config_userconfig npm_config_cache; do
+            case "$name" in
+              HOME) value="$RUNNER_TEMP/r3-home" ;;
+              *) value="$RUNNER_TEMP/r3-home/$name" ;;
+            esac
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+      - name: Prepare and qualify all seven using the already built candidate UI
+        run: |
+          nix develop -c rustup toolchain install 1.88.0 --profile minimal
+          nix develop -c node packaging/prepare-crates.mjs "$RUNNER_TEMP/crates-prepared" "$GITHUB_SHA" "$PWD/web/dist"
+          nix develop -c sh packaging/ci-crates.sh "$RUNNER_TEMP/crates-prepared"
+          mkdir crates-flat
+          nix develop -c node packaging/prepare-crates.mjs --stage "$RUNNER_TEMP/crates-prepared" crates-flat
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-crates
+          retention-days: 90
+          if-no-files-found: error
+          path: crates-flat/
+  assemble:
+    needs: [archive, crates]
+    if: always() && needs.archive.result == 'success' && (needs.crates.result == 'success' || needs.crates.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: candidate-*
+          path: candidates
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.crates.result == 'success'
+        with:
+          name: release-crates
+          path: crates-flat
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Assemble global inputs; never silently merge conflicting materials
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_CHANNELS: ${{ github.event.inputs.channels || 'github' }}
+        run: |
+          sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+          echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
+          python3 packaging/release/assemble.py candidates target/distrib
+          if test -d crates-flat; then
+            nix develop -c node packaging/prepare-crates.mjs --stage crates-flat target/distrib
+          fi
+          "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global --output-format=json > target/distrib/dist-manifest.json
+          python3 packaging/harden-installer.py target/distrib/hennery-installer.sh
+          sh packaging/test-installer.sh target/distrib
+          sh packaging/check-formula.sh target/distrib
+          nix develop .#release -c python3 packaging/release/homebrew.py prepare target/distrib --tag "$RELEASE_TAG" --targets aarch64-apple-darwin,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+          git show HEAD:CHANGELOG.md > target/distrib/release-notes.md
+          git archive --format=tar --prefix=hennery-source/ HEAD | xz > target/distrib/hennery-source.tar.xz
+          python3 packaging/release/supply.py freeze --output target/distrib \
+            --source-sha "$(git rev-parse HEAD)" --tag "$RELEASE_TAG" --channels "$RELEASE_CHANNELS" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" > inventory-sha256.txt
+          cat inventory-sha256.txt >> "$GITHUB_STEP_SUMMARY"
+          echo 'Candidate still needs Object Lock retention and channel acceptance before approval.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: target/distrib/
+  installer:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Native installer positives and refusals
+        run: sh packaging/test-installer.sh candidate
+  homebrew-native:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+          - runner: ubuntu-24.04
+          - runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Preserve successful native no-ops for unselected Homebrew
+        run: echo 'Native acceptance executes only for a selected Homebrew channel'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Real isolated tap install, smoke, upgrade and uninstall of frozen bytes
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        run: nix develop .#release -c python3 packaging/release/homebrew_accept.py candidate "$RUNNER_TEMP/homebrew-proof"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        with:
+          name: homebrew-proof-${{ matrix.runner }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/homebrew-proof/result.json
+  homebrew:
+    name: homebrew
+    needs: [assemble, homebrew-native]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: All advertised native Homebrew platforms passed
+        run: echo 'Native local-tap acceptance passed on all three platforms'
+  retain:
+    needs: [assemble, installer, tag-signature]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' }}
+    environment: release-staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Retain exact versions under compliance retention and legal hold
+        env:
+          RELEASE_BUCKET: ${{ vars.RELEASE_CANDIDATE_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_CANDIDATE_STAGE_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_CANDIDATE_STAGE_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+        run: |
+          inventory=$(sha256sum candidate/release-inventory.json | cut -d' ' -f1)
+          nix develop .#release -c python3 packaging/release/retention.py stage \
+            --candidate candidate --bucket "$RELEASE_BUCKET" --inventory-sha256 "$inventory" --receipt retention-receipt.json
+          echo "Held candidate inventory: $inventory" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: retention-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: retention-receipt.json
+```
+
+<!-- r2:file {"encoding": "utf-8", "mode": "100644", "path": ".github/workflows/release-scheduling.yml", "phase": "feature", "sha256": "b770ca78c0bc400f0353db8524f4b03206b9492b1c2bfb58a391c2b65d92d073", "size": 3992, "task": 3} -->
+```text
+name: release-scheduling
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'packaging/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'packaging/**'
+  workflow_dispatch:
+    inputs:
+      channels:
+        description: Both selections omit the optional crates channel
+        type: choice
+        options: [github, 'github,homebrew']
+        default: github
+permissions: {}
+jobs:
+  # Exercise the real Actions skipped-ancestor scheduler (actions/runner#2205).
+  # Tests bind these guards to release-candidate.yml; no release artifacts,
+  # protected environments, actions, credentials or publication are involved.
+  crates:
+    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',crates,')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: exit 1
+  archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  tag-signature:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  assemble:
+    needs: [archive, crates]
+    if: always() && needs.archive.result == 'success' && (needs.crates.result == 'success' || needs.crates.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  installer:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  homebrew-native:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        channels: [github, 'github,homebrew']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Both channel selections must reach the native job
+        run: echo 'Explicit status permits the skipped optional ancestor'
+      - name: Selected acceptance stand-in
+        if: contains(format(',{0},', matrix.channels), ',homebrew,')
+        run: echo 'Selected Homebrew acceptance reached'
+  homebrew:
+    needs: [assemble, homebrew-native]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', 'github,homebrew'), ',homebrew,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  homebrew-unselected:
+    needs: [assemble, homebrew-native]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', 'github'), ',homebrew,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: exit 1
+  retain:
+    needs: [assemble, installer, tag-signature]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  assert-scheduling:
+    needs: [crates, archive, tag-signature, assemble, installer, homebrew-native, homebrew, homebrew-unselected, retain]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Fail if any expected acceptance or no-op was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          expected = {
+              'crates': 'skipped', 'archive': 'success', 'tag-signature': 'success',
+              'assemble': 'success', 'installer': 'success', 'homebrew-native': 'success',
+              'homebrew': 'success', 'homebrew-unselected': 'skipped', 'retain': 'success',
+          }
+          actual = {key: value['result'] for key, value in json.loads(os.environ['RESULTS']).items()}
+          if actual != expected:
+              raise SystemExit(f'Scheduling regression: expected {expected}, got {actual}')
+          print('Skipped optional crates: github and github,homebrew descendants passed')
+          PY
+```
+
+<!-- r2:file {"encoding": "utf-8", "mode": "100644", "path": ".github/workflows/release-tests.yml", "phase": "feature", "sha256": "8c4f27cb9774a5a2b6bc52b366b4dda66ec51f26a9510f7971359cc68601559d", "size": 1873, "task": 3} -->
+```text
+name: release-tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  refusal-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Negative gates, recovery, supply chain and workflow graph
+        run: nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py'
+      - name: Execute the exact README bootstrap against signed offline releases
+        run: |
+          sh packaging/readme-blocks.sh README.md release-bootstrap > "$RUNNER_TEMP/release-bootstrap.sh"
+          nix develop .#release -c python3 packaging/release/test_bootstrap.py --script "$RUNNER_TEMP/release-bootstrap.sh"
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: 1.98.1
+      - name: cargo-dist's actual installer with tiny shell executables
+        run: |
+          sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+          "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global
+          python3 packaging/release/make_installer_fixture.py target/distrib/hennery-installer.sh "$RUNNER_TEMP/installer-fixture"
+          python3 packaging/harden-installer.py "$RUNNER_TEMP/installer-fixture/hennery-installer.sh"
+          sh packaging/test-installer.sh "$RUNNER_TEMP/installer-fixture"
+      - name: Actionlint
+        run: nix develop .#release -c actionlint .github/workflows/release-*.yml
+```
+
+<!-- r2:file {"encoding": "utf-8", "mode": "100644", "path": "packaging/release/workflow_policy.py", "phase": "feature", "sha256": "63e6a129d712fc1b27ec1f4a4e0545b8df932403080a1b334e4af3f9e6f85f4e", "size": 13484, "task": 3} -->
+```text
+#!/usr/bin/env python3
+"""Defense-in-depth lint only; platform environment/registry policy is the boundary."""
+from pathlib import Path
+import re
+import sys
+
+
+
+CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
+# Channel -> owning YAML job ID. The literal API display name is the channel.
+# R4's name is reserved now; selection refuses until its owning job exists.
+CHANNEL_JOB_IDS = {'crates': 'crates', 'ghcr': 'ghcr', 'homebrew': 'homebrew'}
+
+
+def load_workflow(raw):
+    # Most release helpers use only the stdlib parts of gate/workflow_policy.
+    # The signed-workflow binding always needs the pinned parser and refuses
+    # explicitly when it is unavailable; there is no permissive fallback.
+    try:
+        import yaml
+    except ImportError as error:
+        raise ValueError('workflow parser unavailable; run inside nix develop .#release') from error
+
+    class UniqueSafeLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            self.flatten_mapping(node)
+            seen = set()
+            for key_node, _ in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                if key in seen:
+                    raise ValueError('duplicate workflow YAML key')
+                seen.add(key)
+            return super().construct_mapping(node, deep=deep)
+
+    try:
+        data = yaml.load(raw, Loader=UniqueSafeLoader)
+    except yaml.YAMLError as error:
+        raise ValueError('invalid workflow YAML') from error
+    if not isinstance(data, dict):
+        raise ValueError('workflow mapping required')
+    return data
+
+
+def candidate_channel_jobs(data):
+    """Bind job API names to owning IDs in the exact candidate workflow."""
+    jobs = data.get('jobs')
+    if not isinstance(jobs, dict) or not jobs:
+        raise ValueError('candidate job identity: jobs mapping required')
+    seen = set()
+    for job_id, job in jobs.items():
+        if not isinstance(job_id, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', job_id) or not isinstance(job, dict):
+            raise ValueError('candidate job identity: invalid job ID or definition')
+        display = job.get('name', job_id)
+        if not isinstance(display, str) or not display or '${{' in display:
+            raise ValueError('candidate job identity: names must be literal strings')
+        if display in seen:
+            raise ValueError('candidate job identity: display name collision')
+        seen.add(display)
+        if display in CHANNEL_JOB_IDS and CHANNEL_JOB_IDS[display] != job_id:
+            raise ValueError('candidate job identity: reserved name belongs to another job ID')
+        for channel, owner in CHANNEL_JOB_IDS.items():
+            if job_id == owner and (display != channel or 'strategy' in job):
+                raise ValueError('candidate job identity: channel owner requires its literal name and no matrix')
+    return {channel: owner for channel, owner in CHANNEL_JOB_IDS.items() if owner in jobs}
+
+
+def tap_credential(value):
+    return bool(re.search(r"secrets\s*(?:\.\s*release_homebrew_token|\[\s*['\"]release_homebrew_token['\"]\s*\])", str(value), re.I))
+
+
+def optional_job_status(data, name):
+    """Actions propagates skips through ancestors unless an explicit status is used.
+
+    Qualification DAGs may join an optional channel, then continue through
+    several unconditional jobs. Check every descendant, not only direct needs.
+    This lint does not prove the guard's result semantics; production guards
+    are also bound to the secret-free Actions scheduling regression.
+    """
+    jobs = data.get('jobs', {})
+    optional = {key for key, job in jobs.items() if 'if' in job}
+    descendants = set()
+    frontier = set(optional)
+    while frontier:
+        following = set()
+        for key, job in jobs.items():
+            needs = job.get('needs', [])
+            needs = [needs] if isinstance(needs, str) else needs
+            if key not in descendants and frontier.intersection(needs):
+                following.add(key)
+        descendants.update(following)
+        frontier = following
+    for key in sorted(descendants):
+        # A status-looking string literal is not an Actions status function.
+        condition = re.sub(r"'(?:[^']|'')*'|\"(?:[^\"\\]|\\.)*\"", '', str(jobs[key].get('if', '')))
+        if not re.search(r'(?<![\w.])(?:always|cancelled|failure|success)\s*\(', condition):
+            raise ValueError(f'{name}/{key}: optional job ancestor requires an explicit status condition')
+
+
+def privileged(job):
+    return tap_credential(job) or any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
+        s.get('uses', '').startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) or 'publish.py upload' in s.get('run', '')
+        for s in job.get('steps', []))
+
+
+def environment_name(job):
+    environment = job.get('environment')
+    return environment.get('name') if isinstance(environment, dict) else environment
+
+
+def writer(name, job):
+    # Protected-environment secrets can be publication credentials even when
+    # the ordinary job token is read-only (for example crates.io bootstrap).
+    return privileged(job) or (environment_name(job) == 'release' and name != 'authorize')
+
+
+def homebrew_writer(job):
+    """A tap secret is exposed only to the final, gated, exact-byte writer."""
+    if job.get('if') != CREDENTIAL_CONDITION + " && vars.RELEASE_HOMEBREW_ENABLED == 'true'":
+        raise ValueError('Homebrew needs its separate publication switch')
+    if job.get('needs') != ['github', 'authorize'] or job.get('permissions') != {'contents': 'read', 'actions': 'read'}:
+        raise ValueError('Homebrew must follow GitHub with a read-only ordinary token')
+    if tap_credential(job.get('env', {})):
+        raise ValueError('tap credential must not be job-scoped')
+    steps = job.get('steps', [])
+    def one(predicate):
+        positions = [i for i, step in enumerate(steps) if predicate(step)]
+        if len(positions) != 1:
+            raise ValueError('Homebrew requires one signature, byte check, boundary and credential step')
+        step = steps[positions[0]]
+        if step.get('if') is not None or step.get('continue-on-error') not in (None, False):
+            raise ValueError('Homebrew integrity and write steps must be unconditional and fatal')
+        return positions[0]
+    preflight = one(lambda s: s.get('with', {}).get('phase') == 'preflight')
+    signature = one(lambda s: 'verify.py --candidate' in s.get('run', ''))
+    integrity = one(lambda s: 'homebrew_publish.py --verify' in s.get('run', ''))
+    boundary = one(lambda s: s.get('with', {}).get('phase') == 'boundary')
+    credential = one(tap_credential)
+    if not preflight < signature < integrity < boundary < credential or credential != len(steps) - 1:
+        raise ValueError('Homebrew signature and fresh gates must precede the tap credential')
+    if 'homebrew_publish.py candidate' not in steps[credential].get('run', ''):
+        raise ValueError('tap credential may only reach the frozen formula writer')
+
+
+def check(data, name):
+    if tap_credential(data.get('env', {})):
+        raise ValueError('tap credential must not be workflow-scoped')
+    if name == 'release-candidate.yml':
+        candidate_channel_jobs(data)
+    if name in ('release-candidate.yml', 'release-scheduling.yml'):
+        optional_job_status(data, name)
+    jobs = data.get('jobs', {})
+    writers = [j for key, j in jobs.items() if writer(key, dict(j, permissions=j.get('permissions', data.get('permissions', {}))))]
+    if writers:
+        authorization = jobs.get('authorize', {})
+        effective = dict(authorization, permissions=authorization.get('permissions', data.get('permissions', {})))
+        if not authorization or privileged(effective) or authorization.get('environment') != 'release':
+            raise ValueError('a protected read-only authorization job must precede credential issuance')
+        proof = [s.get('with', {}).get('phase') for s in authorization.get('steps', []) if s.get('uses') == './.github/actions/release-gate']
+        if proof != ['preflight']:
+            raise ValueError('credential authorization must run the live preflight gate')
+    for key, job in jobs.items():
+        if tap_credential(job) or (name == 'release-publish.yml' and key == 'homebrew'):
+            homebrew_writer(job)
+        if 'uses' in job:
+            raise ValueError(f'{name}/{key}: reusable jobs need explicit authority review; put the gate inside the protected callee')
+        if not job.get('timeout-minutes'):
+            raise ValueError(f'{name}/{key}: timeout required')
+        permissions = job.get('permissions', data.get('permissions', {}))
+        effective = dict(job, permissions=permissions)
+        if job.get('continue-on-error') not in (None, False):
+            raise ValueError('release jobs cannot ignore failures')
+        for step in job.get('steps', []):
+            if step.get('uses') == './.github/actions/release-gate' and (step.get('if') is not None or step.get('continue-on-error') not in (None, False)):
+                raise ValueError('release gates must run unconditionally and stop on failure')
+        if writer(key, effective):
+            needs = job.get('needs', [])
+            needs = [needs] if isinstance(needs, str) else needs
+            if 'authorize' not in needs:
+                raise ValueError('writer must depend on protected credential authorization')
+            condition = ' '.join(job.get('if', '').split())
+            allowed = {CREDENTIAL_CONDITION} | {CREDENTIAL_CONDITION + " && vars.RELEASE_" + channel + "_ENABLED == 'true'" for channel in ('GITHUB', 'CRATES', 'GHCR', 'HOMEBREW')}
+            if condition not in allowed:
+                raise ValueError('credential issuance must match the authorized inventory and current run attempt')
+            env = job.get('environment')
+            if (env.get('name') if isinstance(env, dict) else env) != 'release':
+                raise ValueError(f'{name}/{key}: protected release environment required')
+            steps = job.get('steps', [])
+            phases = [s.get('with', {}).get('phase') for s in steps if s.get('uses') == './.github/actions/release-gate']
+            if phases != ['preflight', 'boundary']:
+                raise ValueError(f'{name}/{key}: live preflight and boundary gates required')
+            gates = {s['with']['phase']: i for i, s in enumerate(steps) if s.get('uses') == './.github/actions/release-gate'}
+            for i, step in enumerate(steps):
+                uses, run = step.get('uses', ''), step.get('run', '')
+                if uses.startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) and not gates['preflight'] < i < gates['boundary']:
+                    raise ValueError('publication credentials must be acquired after preflight and before revalidation')
+                if (uses.startswith('actions/attest') or 'publish.py upload' in run) and not gates['boundary'] < i:
+                    raise ValueError('signing/upload must follow boundary revalidation')
+        for step in job.get('steps', []):
+            uses = step.get('uses', '')
+            if uses and not uses.startswith('./') and not re.fullmatch(r'[^@]+@[0-9a-f]{40}', uses):
+                raise ValueError(f'{name}/{key}: action must be pinned by commit')
+            if name == 'release-candidate.yml' and ('cache' in uses.lower() or 'cache:' in str(step.get('with', {}))):
+                raise ValueError('candidate builds must restore no Actions cache')
+    if name == 'release-publish.yml':
+        # Safe defaults: dispatch only; per-channel opt-in is a separate switch.
+        trigger = data.get('on', data.get(True, {}))
+        if set(trigger) != {'workflow_dispatch'}:
+            raise ValueError('publication must be manual only')
+        for job in data['jobs'].values():
+            if privileged(job) and "vars.RELEASE_PUBLICATION_ENABLED == 'true'" not in job.get('if', ''):
+                raise ValueError('publication switch missing')
+
+
+def check_repository(root):
+    directory = Path(root) / '.github/workflows'
+    paths = sorted(set(directory.glob('*.yml')) | set(directory.glob('*.yaml')))
+    if not {'release-candidate.yml', 'release-publish.yml', 'release-tests.yml'} <= {p.name for p in paths}:
+        raise ValueError('candidate, publish and negative-test workflows required')
+    for path in paths:
+        data = load_workflow(path.read_text())
+        authority = tap_credential(data.get('env', {})) or any(privileged(dict(job, permissions=job.get('permissions', data.get('permissions', {}))))
+                        or environment_name(job) == 'release' or 'uses' in job for job in data.get('jobs', {}).values())
+        # Read-only legacy qualification jobs retain their existing style.
+        # Every writer/signer or reusable indirection is checked, whatever
+        # the filename: a generated release.yml cannot bypass this policy.
+        if path.name.startswith('release-') or authority:
+            check(data, path.name)
+
+
+if __name__ == '__main__':
+    check_repository(Path(__file__).resolve().parents[2])
+    print('release workflow authority graph checked')
+```
+
+
 ## After this plan
 
-The parent opens the PR and relays the three native proof results and any
-failures; those checks remain required before enabling Homebrew. Run an
+The parent maintains PR #155 and relays the scheduling regression and three
+native proof results and any failures; those checks remain required before enabling Homebrew. Run an
 independent review of the complete range and the specific risks above. Preserve
 both local refusals as evidence; never skip linkage or lie about CLT/OS versions.
 
