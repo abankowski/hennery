@@ -97,8 +97,17 @@ fn workspace_fence_rejects_outside_and_symlink_swap() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let cwd = root.path().canonicalize().unwrap();
-    assert_eq!(checked_cwd(cwd.to_str().unwrap(), &[cwd.clone()]).unwrap(), cwd);
-    assert!(checked_cwd(outside.path().canonicalize().unwrap().to_str().unwrap(), &[cwd.clone()]).is_err());
+    assert_eq!(
+        checked_cwd(cwd.to_str().unwrap(), std::slice::from_ref(&cwd)).unwrap(),
+        cwd
+    );
+    assert!(
+        checked_cwd(
+            outside.path().canonicalize().unwrap().to_str().unwrap(),
+            std::slice::from_ref(&cwd)
+        )
+        .is_err()
+    );
     assert!(checked_cwd(cwd.to_str().unwrap(), &[]).is_err());
     std::os::unix::fs::symlink(outside.path(), cwd.join("swapped")).unwrap();
     assert!(checked_cwd(cwd.join("swapped").to_str().unwrap(), &[cwd]).is_err());
@@ -136,6 +145,10 @@ async fn cold_catalog_uses_selected_adapter_without_prompt_or_mcp() {
     assert_eq!(result.defaults.model.as_deref(), Some("small"));
     assert!(!result.adapter_revision.is_empty());
     assert!(result.security.known);
+    assert_eq!(
+        result.freshness,
+        hennery_proto::delegation_host::CatalogFreshness::Fresh
+    );
     let requests = std::fs::read_to_string(log).unwrap();
     let first: serde_json::Value = serde_json::from_str(requests.lines().next().unwrap()).unwrap();
     assert_eq!(first["params"]["mcpServers"], json!([]));
@@ -669,4 +682,50 @@ async fn out_of_turn_question_fences_delegated_prompt() {
         matches!(tokio::time::timeout(Duration::from_secs(5),replies.recv()).await.unwrap().unwrap(),HostFrame::Error{code,..} if code=="config_fence")
     );
     stop(h).await;
+}
+
+#[tokio::test]
+async fn queued_close_fences_prompt_before_actor_reads_close() {
+    let root = tempfile::tempdir().unwrap();
+    let (up, mut replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let hooks = hennery_host::session::test_hooks::TestHooks::hold_after_first_switch();
+    let options = SessionOptions {
+        test_hooks: Some(hooks.clone()),
+        ..Default::default()
+    };
+    let h = session::launch_delegated(up.clone(), launch(root.path(), script(), Attach::New), options, 8);
+    let ev = evidence(&until(&up, |f| !f.is_empty()).await);
+    h.send(SessionCmd::SetConfig {
+        request_id: "switch".into(),
+        config_id: "model".into(),
+        value: ConfigValue::Id("large".into()),
+    });
+    tokio::time::timeout(Duration::from_secs(20), hooks.holding())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(20), hooks.answers_queued(1))
+        .await
+        .unwrap();
+    h.send(prompt(
+        PromptFence {
+            attach_generation: 8,
+            config_revision: ev.config_revision + 1,
+        },
+        "fenced-by-close",
+    ));
+    h.send(SessionCmd::Close {
+        request_id: "close".into(),
+    });
+    hooks.release();
+    tokio::time::timeout(Duration::from_secs(20), h.finished())
+        .await
+        .unwrap();
+    assert!(matches!(replies.try_recv().unwrap(),HostFrame::Error{code,..} if code=="config_fence"));
+    assert!(!up.pending().unwrap().iter().any(|f| matches!(
+        f,
+        HostFrame::Session {
+            body: SessionBody::TurnStarted { .. },
+            ..
+        }
+    )));
 }
