@@ -85,7 +85,8 @@ in
       common
       // {
         inherit cargoArtifacts;
-        cargoClippyExtraArgs = "--workspace --all-targets --no-default-features -- -D warnings";
+        # Crane appends these to common.cargoExtraArgs; scope/features occur once.
+        cargoClippyExtraArgs = "--all-targets -- -D warnings";
       }
     );
     # The binary embeds the web UI, not the placeholder: the release

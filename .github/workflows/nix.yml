@@ -41,6 +41,8 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ github.token }}
+      - name: Check rendered Cargo arguments on every supported system
+        run: python3 packaging/check-nix-args.py
       - name: Flake checks (package, clippy, rustfmt, cargo-audit)
         run: nix flake check -L
       - name: The package runs

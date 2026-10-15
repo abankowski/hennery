@@ -4,7 +4,6 @@ from pathlib import Path
 import re
 import sys
 
-import yaml
 
 
 CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
@@ -13,19 +12,26 @@ CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref
 CHANNEL_JOB_IDS = {'crates': 'crates', 'ghcr': 'ghcr'}
 
 
-class UniqueSafeLoader(yaml.SafeLoader):
-    def construct_mapping(self, node, deep=False):
-        self.flatten_mapping(node)
-        seen = set()
-        for key_node, _ in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if key in seen:
-                raise ValueError('duplicate workflow YAML key')
-            seen.add(key)
-        return super().construct_mapping(node, deep=deep)
-
-
 def load_workflow(raw):
+    # Most release helpers use only the stdlib parts of gate/workflow_policy.
+    # The signed-workflow binding always needs the pinned parser and refuses
+    # explicitly when it is unavailable; there is no permissive fallback.
+    try:
+        import yaml
+    except ImportError as error:
+        raise ValueError('workflow parser unavailable; run inside nix develop .#release') from error
+
+    class UniqueSafeLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            self.flatten_mapping(node)
+            seen = set()
+            for key_node, _ in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                if key in seen:
+                    raise ValueError('duplicate workflow YAML key')
+                seen.add(key)
+            return super().construct_mapping(node, deep=deep)
+
     try:
         data = yaml.load(raw, Loader=UniqueSafeLoader)
     except yaml.YAMLError as error:
