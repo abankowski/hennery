@@ -36,6 +36,26 @@ use std::sync::{Arc, Mutex};
 /// The audited sources, and the fewest statements each holds.
 const SOURCES: &[(&str, &str, usize)] = &[
     (
+        "hennery-sessions/src/delegation_control.rs",
+        include_str!("../../hennery-sessions/src/delegation_control.rs"),
+        1,
+    ),
+    (
+        "hennery-sessions/src/delegation_dispatch.rs",
+        include_str!("../../hennery-sessions/src/delegation_dispatch.rs"),
+        1,
+    ),
+    (
+        "hennery-sessions/src/delegation_runtime.rs",
+        include_str!("../../hennery-sessions/src/delegation_runtime.rs"),
+        1,
+    ),
+    (
+        "hennery-sessions/src/delegation_queue.rs",
+        include_str!("../../hennery-sessions/src/delegation_queue.rs"),
+        15,
+    ),
+    (
         "hennery-sessions/src/delegation.rs",
         include_str!("../../hennery-sessions/src/delegation.rs"),
         6,

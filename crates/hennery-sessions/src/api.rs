@@ -405,7 +405,7 @@ const MCP_UNDELIVERABLE: &str = "mcp_isolation_unavailable";
 /// L2): its live connection's capability and `agent`'s isolation, from the
 /// hub, and whether its rules name another hat, from the kernel. A host not
 /// connected takes nothing.
-fn mcp_context(state: &AppState, host_id: &str, agent: &str) -> anyhow::Result<McpContext> {
+pub(crate) fn mcp_context(state: &AppState, host_id: &str, agent: &str) -> anyhow::Result<McpContext> {
     let Some((capable, isolation)) = state.hub.mcp_isolation(host_id, agent) else {
         return Ok(McpContext::NONE);
     };

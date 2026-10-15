@@ -522,65 +522,233 @@ fn d2_queue_caps_and_policy_changes_cancel_without_reviving() {
 }
 
 fn child_world() -> (World, SessionIdentity) {
-    let w=World::new();
-    let parent=w.start("parent",&w.hat,McpIsolation::ClaudeStrict).unwrap();
+    let w = World::new();
+    let parent = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
     w.active("parent");
-    w.start("child",&w.hat,McpIsolation::ClaudeStrict).unwrap();
-    let mut conn=hennery_kernel::db::open(&w.db).unwrap();
-    let tx=conn.transaction().unwrap();
-    assert!(w.store.bind_family_in(&tx,&parent,1,"child",0).unwrap()); tx.commit().unwrap();
+    w.start("child", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    let mut conn = hennery_kernel::db::open(&w.db).unwrap();
+    let tx = conn.transaction().unwrap();
+    assert!(w.store.bind_family_in(&tx, &parent, 1, "child", 0).unwrap());
+    tx.commit().unwrap();
     w.active("child");
-    (w,parent)
+    (w, parent)
 }
 #[test]
 fn d2_answers_reuse_the_operator_slot_but_permissions_require_operator() {
-    use hennery_proto::{frames::{PendingKind,PendingExtract,Indexed,ElicitationAction},rest::AnswerRequest};
-    let (w,parent)=child_world();
-    for (seq,id,kind) in [(2,"ordinary",PendingKind::Elicitation),(3,"permission",PendingKind::Permission)] {
-        w.store.ingest("child",seq,&SessionBody::PendingOpened {pending_id:id.into(), indexed:Indexed {pending:Some(Box::new(PendingExtract {id:id.into(),kind,option_ids:Some(vec!["allow".into()]),title:Some("question".into())})),..Default::default()},payload:serde_json::json!({"message":"question","requestedSchema":{"type":"object"}})}).unwrap();
+    use hennery_proto::{
+        frames::{ElicitationAction, Indexed, PendingExtract, PendingKind},
+        rest::AnswerRequest,
+    };
+    let (w, parent) = child_world();
+    for (seq, id, kind) in [
+        (2, "ordinary", PendingKind::Elicitation),
+        (3, "permission", PendingKind::Permission),
+    ] {
+        w.store
+            .ingest(
+                "child",
+                seq,
+                &SessionBody::PendingOpened {
+                    pending_id: id.into(),
+                    indexed: Indexed {
+                        pending: Some(Box::new(PendingExtract {
+                            id: id.into(),
+                            kind,
+                            option_ids: Some(vec!["allow".into()]),
+                            title: Some("question".into()),
+                        })),
+                        ..Default::default()
+                    },
+                    payload: serde_json::json!({"message":"question","requestedSchema":{"type":"object"}}),
+                },
+            )
+            .unwrap();
     }
-    let answer=AnswerRequest::Elicitation {action:ElicitationAction::Accept,content:Some(serde_json::json!({"yes":true}))};
-    let receipt=w.store.queue_ordinary_answer(&parent,1,"answer","digest","child","ordinary",&answer).unwrap();
-    assert_eq!(receipt,w.store.queue_ordinary_answer(&parent,1,"answer","digest","child","ordinary",&answer).unwrap());
-    assert!(matches!(w.store.submit_answer("child","ordinary",&answer).unwrap(),hennery_sessions::store::AnswerSubmission::AlreadyAnswered));
-    assert!(w.store.queue_ordinary_answer(&parent,1,"permission","other","child","permission",&answer).unwrap_err().to_string().contains("operator_required"));
+    let answer = AnswerRequest::Elicitation {
+        action: ElicitationAction::Accept,
+        content: Some(serde_json::json!({"yes":true})),
+    };
+    let receipt = w
+        .store
+        .queue_ordinary_answer(&parent, 1, "answer", "digest", "child", "ordinary", &answer)
+        .unwrap();
+    assert_eq!(
+        receipt,
+        w.store
+            .queue_ordinary_answer(&parent, 1, "answer", "digest", "child", "ordinary", &answer)
+            .unwrap()
+    );
+    assert!(matches!(
+        w.store.submit_answer("child", "ordinary", &answer).unwrap(),
+        hennery_sessions::store::AnswerSubmission::AlreadyAnswered
+    ));
+    assert!(
+        w.store
+            .queue_ordinary_answer(&parent, 1, "permission", "other", "child", "permission", &answer)
+            .unwrap_err()
+            .to_string()
+            .contains("operator_required")
+    );
 }
 #[test]
 fn d2_spawns_are_atomic_independent_and_one_generation() {
-    let (w,parent)=child_world();
-    let config=hennery_proto::frames::SessionConfig{model:Some("independent".into()),..Default::default()};
-    let receipt=w.store.queue_spawn(&parent,1,"spawn","digest","codex","/project","brief",Some("worker"),&config,McpContext::NONE).unwrap();
-    let child=receipt.child_id.as_ref().unwrap();
-    assert_eq!(w.store.find_session(child).unwrap().unwrap().agent,"codex");
-    assert_eq!(w.store.queue_spawn(&parent,1,"spawn","digest","codex","/project","brief",Some("worker"),&config,McpContext::NONE).unwrap(),receipt);
-    assert_eq!(w.store.delegation_queue_depth(child).unwrap(),(1,5));
-    let child_identity=w.start("other-child",&w.hat,McpIsolation::ClaudeStrict).unwrap();
-    let mut conn=hennery_kernel::db::open(&w.db).unwrap(); let tx=conn.transaction().unwrap();
-    assert!(w.store.bind_family_in(&tx,&parent,1,"other-child",0).unwrap());tx.commit().unwrap();w.active("other-child");
-    assert!(w.store.queue_spawn(&child_identity,1,"nested","digest","claude","/project","brief",None,&Default::default(),McpContext::NONE).unwrap_err().to_string().contains("generation_limit"));
+    let (w, parent) = child_world();
+    let config = hennery_proto::frames::SessionConfig {
+        model: Some("independent".into()),
+        ..Default::default()
+    };
+    let receipt = w
+        .store
+        .queue_spawn(
+            &parent,
+            1,
+            "spawn",
+            "digest",
+            "codex",
+            "/project",
+            "brief",
+            Some("worker"),
+            &config,
+            McpContext::NONE,
+        )
+        .unwrap();
+    let child = receipt.child_id.as_ref().unwrap();
+    assert_eq!(w.store.find_session(child).unwrap().unwrap().agent, "codex");
+    assert_eq!(
+        w.store
+            .queue_spawn(
+                &parent,
+                1,
+                "spawn",
+                "digest",
+                "codex",
+                "/project",
+                "brief",
+                Some("worker"),
+                &config,
+                McpContext::NONE
+            )
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(w.store.delegation_queue_depth(child).unwrap(), (1, 5));
+    let child_identity = w.start("other-child", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    let mut conn = hennery_kernel::db::open(&w.db).unwrap();
+    let tx = conn.transaction().unwrap();
+    assert!(w.store.bind_family_in(&tx, &parent, 1, "other-child", 0).unwrap());
+    tx.commit().unwrap();
+    w.active("other-child");
+    assert!(
+        w.store
+            .queue_spawn(
+                &child_identity,
+                1,
+                "nested",
+                "digest",
+                "claude",
+                "/project",
+                "brief",
+                None,
+                &Default::default(),
+                McpContext::NONE
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("generation_limit")
+    );
 }
 #[test]
 fn d2_resume_and_dispatch_require_fresh_complete_generation_evidence() {
-    use hennery_proto::delegation_host::{HostCatalog,SecurityClassification,CatalogFreshness,ConfigEvidence,ConfigCompleteness};
-    use hennery_proto::frames::{Indexed,Capabilities,Capability,AgentIsolation,ConfigValue};
-    let (w,parent)=child_world();
-    let hub=hennery_sessions::hub::Hub::new(); let (tx,mut rx)=tokio::sync::mpsc::unbounded_channel();
-    let caps=Capabilities(vec![Capability::McpServers,Capability::DelegationConfig]);
-    let reg=hub.register("host",tx,caps,AgentIsolation([("claude".into(),McpIsolation::ClaudeStrict)].into_iter().collect())).unwrap();hub.mark_ready("host",reg.conn_id);
-    let catalog=HostCatalog {agent:"claude".into(),adapter_revision:"v1".into(),config_options:vec![],defaults:Default::default(),security:SecurityClassification {known:true,axes:Default::default()},freshness:CatalogFreshness::Fresh};
-    w.store.queue_followup(&parent,1,"send","digest","child","hello").unwrap();
-    assert!(!w.store.dispatch_delegated("child",&catalog,&hub).unwrap());
-    w.store.ingest("child",2,&SessionBody::SessionParked {reason:hennery_proto::frames::ParkReason::Operator}).unwrap();
-    assert!(w.store.attach_delegated("child",McpContext::NONE,&hub).unwrap());
-    let frame=rx.try_recv().unwrap();
-    let generation=match frame {hennery_proto::frames::CollectorFrame::DelegatedAttach {attach_generation,..}=>attach_generation,other=>panic!("{other:?}")};
-    let mut seq=3;
-    w.store.ingest("child",seq,&SessionBody::session_started("resume","agent-child")).unwrap();seq+=1;
-    for (gen,complete,should_send) in [(generation-1,ConfigCompleteness::Complete,false),(generation,ConfigCompleteness::Partial,false),(generation,ConfigCompleteness::Complete,true)] {
-        w.store.ingest("child",seq,&SessionBody::AcpUpdate {indexed:Indexed {config_evidence:Some(ConfigEvidence {attach_generation:gen,config_revision:seq,completeness:complete,actual:Default::default()}),..Default::default()},payload:serde_json::json!({})}).unwrap();seq+=1;
-        assert_eq!(w.store.dispatch_delegated("child",&catalog,&hub).unwrap(),should_send);
+    use hennery_proto::delegation_host::{
+        CatalogFreshness, ConfigCompleteness, ConfigEvidence, HostCatalog, SecurityClassification,
+    };
+    use hennery_proto::frames::{AgentIsolation, Capabilities, Capability, ConfigValue, Indexed};
+    let (w, parent) = child_world();
+    let hub = hennery_sessions::hub::Hub::new();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let caps = Capabilities(vec![Capability::McpServers, Capability::DelegationConfig]);
+    let reg = hub
+        .register(
+            "host",
+            tx,
+            caps,
+            AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect()),
+        )
+        .unwrap();
+    hub.mark_ready("host", reg.conn_id);
+    let catalog = HostCatalog {
+        agent: "claude".into(),
+        adapter_revision: "v1".into(),
+        config_options: vec![],
+        defaults: Default::default(),
+        security: SecurityClassification {
+            known: true,
+            axes: Default::default(),
+        },
+        freshness: CatalogFreshness::Fresh,
+    };
+    w.store
+        .queue_followup(&parent, 1, "send", "digest", "child", "hello")
+        .unwrap();
+    assert!(!w.store.dispatch_delegated("child", &catalog, &hub).unwrap());
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::SessionParked {
+                reason: hennery_proto::frames::ParkReason::Operator,
+            },
+        )
+        .unwrap();
+    assert!(
+        w.store
+            .attach_delegated("child", McpContext::NONE, &catalog, &hub)
+            .unwrap()
+    );
+    let frame = rx.try_recv().unwrap();
+    let generation = match frame {
+        hennery_proto::frames::CollectorFrame::DelegatedAttach { attach_generation, .. } => attach_generation,
+        other => panic!("{other:?}"),
+    };
+    let mut seq = 3;
+    w.store
+        .ingest("child", seq, &SessionBody::session_started("resume", "agent-child"))
+        .unwrap();
+    seq += 1;
+    for (attach_gen, complete, should_send) in [
+        (generation - 1, ConfigCompleteness::Complete, false),
+        (generation, ConfigCompleteness::Partial, false),
+        (generation, ConfigCompleteness::Complete, true),
+    ] {
+        w.store
+            .ingest(
+                "child",
+                seq,
+                &SessionBody::AcpUpdate {
+                    indexed: Indexed {
+                        config_evidence: Some(Box::new(ConfigEvidence {
+                            attach_generation: attach_gen,
+                            config_revision: seq,
+                            completeness: complete,
+                            actual: Default::default(),
+                        })),
+                        ..Default::default()
+                    },
+                    payload: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        seq += 1;
+        assert_eq!(
+            w.store.dispatch_delegated("child", &catalog, &hub).unwrap(),
+            should_send
+        );
     }
-    let prompt=rx.try_recv().unwrap();assert!(matches!(prompt,hennery_proto::frames::CollectorFrame::DelegatedPrompt {..}));
-    assert!(!w.store.dispatch_delegated("child",&catalog,&hub).unwrap());
-    let _=ConfigValue::Bool(false);
+    let prompt = rx.try_recv().unwrap();
+    assert!(matches!(
+        prompt,
+        hennery_proto::frames::CollectorFrame::DelegatedPrompt { .. }
+    ));
+    assert!(!w.store.dispatch_delegated("child", &catalog, &hub).unwrap());
+    let _ = ConfigValue::Bool(false);
 }
