@@ -148,10 +148,20 @@ impl Harness {
         gateway.runtime.store.set_session_tools(&hat, true).unwrap();
         let discovery: Arc<Mutex<Vec<Value>>> = Arc::default();
         let observed = discovery.clone();
+        let trace_auth = gateway.runtime.store.clone();
         let builtin = hennery_sessions::builtin::router(state.clone(), gateway).layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| {
                 let observed = observed.clone();
+                let trace_auth = trace_auth.clone();
                 async move {
+                    let caller_session = request.headers().get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.strip_prefix("Bearer "))
+                        .and_then(|token| trace_auth.authenticate_session(token).unwrap())
+                        .map(|identity| {
+                            let hennery_gateway::scope::PrincipalKind::Session { session_id, .. } = identity.principal.kind;
+                            session_id
+                        });
                     let (parts, body) = request.into_parts();
                     let bytes = axum::body::to_bytes(body, hennery_gateway::proxy::MAX_REQUEST_BODY).await.unwrap();
                     let message: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
@@ -160,7 +170,7 @@ impl Harness {
                         let (parts, body) = response.into_parts();
                         let bytes = axum::body::to_bytes(body, 1024*1024).await.unwrap();
                         let answer: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-                        observed.lock().unwrap().push(json!({"method":message["method"],"status":parts.status.as_u16(),"tool_count":answer["result"]["tools"].as_array().map(Vec::len)}));
+                        observed.lock().unwrap().push(json!({"caller_session":caller_session,"method":message["method"],"status":parts.status.as_u16(),"tool_count":answer["result"]["tools"].as_array().map(Vec::len)}));
                         axum::response::Response::from_parts(parts, axum::body::Body::from(bytes))
                     } else { response }
                 }
@@ -841,6 +851,8 @@ async fn pinned_adapter_discovers_seven_tools_and_attaches_one_child_without_inf
     let h = Harness::with_worker(script(), Some((command, profile)), false).await;
     let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
     assert_eq!(caps["catalogs"][0]["freshness"], "fresh");
+    assert_eq!(caps["catalogs"][0]["agent"], "worker");
+    assert_eq!(caps["catalogs"][0]["security"]["known"], true);
     let config = if runtime == "codex" {
         json!({"mode":"read-only"})
     } else {
@@ -860,8 +872,29 @@ async fn pinned_adapter_discovers_seven_tools_and_attaches_one_child_without_inf
             .map(|_| ())
     })
     .await;
+    let delivery = h.state.store.mcp_delivery(child).unwrap().unwrap();
+    assert_eq!(delivery.servers, 1);
+    assert_eq!(
+        delivery.mode,
+        if runtime == "codex" {
+            hennery_proto::rest::McpSessionDeliveryMode::Unisolated
+        } else {
+            hennery_proto::rest::McpSessionDeliveryMode::Isolated
+        }
+    );
+    assert_eq!(
+        h.state.hub.mcp_isolation(HOST, "worker").unwrap().1,
+        profile.mcp_isolation()
+    );
     let trace = eventually("pinned MCP seven-tool discovery", async || {
-        let trace = h.discovery.lock().unwrap().clone();
+        let trace: Vec<_> = h
+            .discovery
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| t["caller_session"] == child)
+            .cloned()
+            .collect();
         trace
             .iter()
             .any(|t| t["method"] == "tools/list" && t["status"] == 200 && t["tool_count"] == 7)
@@ -883,7 +916,7 @@ async fn pinned_adapter_discovers_seven_tools_and_attaches_one_child_without_inf
     assert!(status["last_report"].is_null());
     println!(
         "{}",
-        json!({"runtime":runtime,"child_attached":true,"brief_dispatched":false,"catalog_freshness":caps["catalogs"][0]["freshness"],"mcp":trace})
+        json!({"runtime":runtime,"child_id":child,"child_attached":true,"brief_dispatched":false,"catalog_agent":caps["catalogs"][0]["agent"],"profile_security_known":caps["catalogs"][0]["security"]["known"],"catalog_freshness":caps["catalogs"][0]["freshness"],"mcp_delivery":delivery,"mcp_isolation":profile.mcp_isolation(),"mcp":trace})
     );
     h.finish().await;
 }
