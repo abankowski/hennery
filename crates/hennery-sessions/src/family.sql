@@ -1,5 +1,6 @@
 -- Sessions migration 21: operator projection, never agent authority.
 ALTER TABLE sessions ADD COLUMN family_dirty INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX family_dirty_ready ON sessions(owner_id,id) WHERE family_dirty=1 AND lifecycle<>'deleted';
 CREATE VIEW delegation_question_routing AS
 SELECT p.owner_id,p.session_id,p.pending_id,p.kind,
  CASE WHEN EXISTS(SELECT 1 FROM answer_queue a WHERE a.owner_id=p.owner_id AND a.pending_id=p.pending_id)

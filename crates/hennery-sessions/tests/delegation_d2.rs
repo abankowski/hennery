@@ -212,6 +212,27 @@ fn d4_parent_child_counts_include_parent_handled_waiting_and_status_attention() 
 }
 
 #[test]
+fn d4_dirty_projection_cannot_write_into_a_frozen_hat() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
+    raw(&w)
+        .execute(
+            "INSERT INTO purged_hats(owner_id,hat_id,purged_at) VALUES (?1,?2,1)",
+            params![w.store.owner_id(), w.hat],
+        )
+        .unwrap();
+    let before = w.store.max_event_id().unwrap();
+    w.store.flush_family_changes(&Hub::new()).unwrap();
+    assert_eq!(
+        w.store.max_event_id().unwrap(),
+        before,
+        "purge freezes even projection writes"
+    );
+    assert!(w.store.family_page("parent", "", 20).unwrap().is_none());
+    assert_eq!(w.store.operator_waiting_count(None).unwrap(), 0);
+}
+
+#[test]
 fn d4_deadlines_and_receipts_invalidate_the_child_and_parent_summary() {
     let (w, p) = pair();
     w.store.flush_family_changes(&Hub::new()).unwrap();

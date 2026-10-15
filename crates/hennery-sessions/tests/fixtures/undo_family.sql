@@ -12,4 +12,5 @@ DROP TRIGGER family_view_pending_update;
 DROP TRIGGER family_view_answer_insert;
 DROP TRIGGER family_view_answer_delete;
 DROP TRIGGER family_view_operation_insert;
+DROP INDEX family_dirty_ready;
 ALTER TABLE sessions DROP COLUMN family_dirty;

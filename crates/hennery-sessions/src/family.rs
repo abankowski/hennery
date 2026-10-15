@@ -162,7 +162,9 @@ impl Store {
         let ids = {
             let mut stmt = tx.prepare(
                 "SELECT id FROM sessions WHERE owner_id = ?1 AND family_dirty=1
-            AND lifecycle<>'deleted' ORDER BY id LIMIT 128",
+            AND lifecycle<>'deleted' AND NOT EXISTS(SELECT 1 FROM purged_hats h
+                WHERE h.owner_id = ?1 AND h.hat_id=sessions.hat_id)
+            ORDER BY id LIMIT 128",
             )?;
             stmt.query_map([self.owner_id()], |r| r.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?
