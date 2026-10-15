@@ -1917,6 +1917,27 @@ fn deleted_replacement_children_do_not_reset_starts_budget_and_caller_delete_rem
     assert_eq!(epochs[0], (0, 32));
     assert!(epochs[1].0 > 0);
     assert_eq!(epochs[1].1, 1);
+    w.store.record_close_request("parent").unwrap();
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM delegation_start_budgets WHERE owner_id=?1 AND caller_id='parent'",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM session_operations WHERE owner_id=?1 AND caller_id='parent'",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        33
+    );
     delete_endpoint(&w, "parent");
     assert_eq!(
         raw(&w)
