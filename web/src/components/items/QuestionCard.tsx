@@ -74,6 +74,8 @@ export default function QuestionCard({ item, env }: Props) {
   const { composerEmpty, agent } = env
   const kind = request.type
   const routing = env.familyQuestions?.find(q => q.pending_id === item.pending_id)
+  const parentHandling = routing?.handling === 'parent_queued' || routing?.handling === 'parent_delivered'
+  const stateText = parentHandling && d.text === 'Needs your answer' ? 'Waiting for an answer' : d.text
 
   useEffect(() => {
     if (!live || !book) return
@@ -153,7 +155,7 @@ export default function QuestionCard({ item, env }: Props) {
       )}
       {item.answerable && routing && <p className="q-routing"><span>{handlingWords(routing.handling)}</span>{routing.reason && <> · <bdi>{routing.reason}</bdi></>}</p>}
       <p className="q-state">
-        <span>{d.text}</span>
+        <span>{stateText}</span>
         {d.note && <span className="q-note">{d.note}</span>}
       </p>
       {local?.phase === 'uncertain' && <button className="btn btn-ghost" type="button" onClick={() => void book?.checkAnswer(item)}>Refresh question</button>}
