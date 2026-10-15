@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 publish = ["crates-io"]
 readme = "README.md"
-include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "build.rs", "manifest.json"]
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/build.rs", "/manifest.json"]
 description = "Host supervisor and managed adapter runtime for hennery"
 
 [features]

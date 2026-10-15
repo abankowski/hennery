@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 publish = ["crates-io"]
 readme = "README.md"
-include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "build.rs", "package_ui.rs", "web-dist/**", "release-ui.json", "FRONTEND-NOTICES.txt", "SOURCE.json"]
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/build.rs", "/package_ui.rs", "/web-dist/**", "/release-ui.json", "/FRONTEND-NOTICES.txt", "/SOURCE.json"]
 description = "Storage, authentication, HTTP kernel and embedded UI for hennery"
 
 [dependencies]

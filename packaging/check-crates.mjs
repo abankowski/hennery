@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { registry } from './crate-registry.mjs';
-import { readJSON, verifyCandidate, inspectPackage, checkSourceTree, extract, requireThat, sha256 } from './crate-release.mjs';
+import { readJSON, verifyCandidate, inspectPackage, inspectProductionFeatures, checkSourceTree, extract, requireThat, sha256 } from './crate-release.mjs';
 import { run } from './prepare-crates.mjs';
 const out=resolve(process.argv[2]), inventory=readJSON(join(out,'crates-inventory.json'));
 verifyCandidate(out,inventory);
@@ -25,6 +25,10 @@ try {
     const root=join(out,'extracted',c.name,`${c.name}-${inventory.version}`);
     inspectPackage(root,c.name,inventory.source);
     await run('cargo',['fetch','--manifest-path',join(root,'Cargo.toml'),'--locked'],{cwd:empty,env});
+    // Exclude dev edges: checkout testkit enables hooks; registry consumers must not.
+    const features=execFileSync('cargo',['tree','--manifest-path',join(root,'Cargo.toml'),'--edges','normal,build,features','--format','{p} [{f}]','--offline','--locked'],{cwd:empty,env,encoding:'utf8',stdio:['ignore','pipe','inherit']});
+    inspectProductionFeatures(features);
+    console.log('Production feature graph has no test hooks or private test crates:',c.name);
     // Dry runs execute Cargo's packaging+verification against the test overlay, never upload.
     await run('cargo',['publish','--dry-run','--registry','crates-io','--manifest-path',join(root,'Cargo.toml'),'--locked'],{cwd:empty,env});
     await run('sh',[offline,'cargo','build','--manifest-path',join(root,'Cargo.toml'),'--locked','--offline'],{cwd:empty,env});

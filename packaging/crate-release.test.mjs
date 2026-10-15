@@ -121,3 +121,44 @@ test('frontend notices include build-tool runtime helpers as well as production 
  for(const name of ['react','vite']){mkdirSync(join(web,'node_modules',name));writeFileSync(join(web,'node_modules',name,'package.json'),JSON.stringify({name,version:'1.0.0',license:'MIT'}));writeFileSync(join(web,'node_modules',name,'LICENSE'),`MIT License\nCopyright ${name}\nPermission is hereby granted to copy this fixture.`);}
  const text=frontendNotices(web);assert.match(text,/react@1\.0\.0/);assert.match(text,/vite@1\.0\.0/);assert.match(text,/Copyright vite/);
 });
+
+import * as release from './crate-release.mjs';
+test('tarball inspection refuses repository integration harnesses', () => {
+  for (const name of ['hennery-proto', 'hennery-kernel']) {
+    const root = fixture(name);
+    mkdirSync(join(root, 'tests'));
+    writeFileSync(join(root, 'tests/package_ui.rs'), '// repository test harness');
+    assert.throws(() => inspectPackage(root, name, source), /repository test harness/);
+  }
+});
+test('production dependency audit refuses active hooks and private test crates', () => {
+  assert.doesNotThrow(() => release.inspectProductionFeatures('hennery v0.1.0-alpha.1 [default,vendored-openssl]\nhennery-sessions v0.1.0-alpha.1 []\n'));
+  for (const tree of ['', 'hennery-host feature "test-hooks"', 'hennery-sessions v0.1.0-alpha.1 [test-hooks]', 'hennery-testkit v0.1.0-alpha.1 []', 'hennery-pins v0.1.0-alpha.1 []']) {
+    assert.throws(() => release.inspectProductionFeatures(tree), /test-only production dependency/);
+  }
+});
+
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+test('real packaged acceptance refuses active hooks before its first publish dry run', () => {
+ const candidate=mkdtempSync(join(tmpdir(),'r3-feature-candidate-')),tree=sourceTree();
+ const archive=join(candidate,`hennery-source-${hex}.tar.gz`);
+ execFileSync('tar',['-czf',archive,'-C',tree.root,'.']);
+ const s={...source,sha256:sha256(readFileSync(archive))},i=inventoryFixture();i.source=s;i.source_files=tree.inventory;
+ const home=mkdtempSync(join(tmpdir(),'r3-feature-home-')),cargoHome=join(home,'cargo');mkdirSync(cargoHome);
+ const env={...process.env,HOME:home,CARGO_HOME:cargoHome};
+ for(const c of i.crates){
+  const parent=join(candidate,'extracted',c.name),root=join(parent,`${c.name}-${i.version}`);mkdirSync(join(root,'src'),{recursive:true});
+  cpSync('LICENSE',join(root,'LICENSE'));writeFileSync(join(root,'src/lib.rs'),'pub fn ready() {}\n');
+  writeFileSync(join(root,'Cargo.toml'),`[package]\nname="${c.name}"\nversion="${i.version}"\nedition="2024"\n[features]\ndefault=["test-hooks"]\ntest-hooks=[]\n`);
+  execFileSync('cargo',['generate-lockfile','--offline','--manifest-path',join(root,'Cargo.toml')],{env,stdio:'pipe'});
+  execFileSync('tar',['-czf',join(candidate,c.file),'-C',parent,`${c.name}-${i.version}`]);
+  const bytes=readFileSync(join(candidate,c.file));c.sha256=sha256(bytes);c.size=bytes.length;
+  c.index=indexEntry({name:c.name,version:i.version,dependencies:[],features:{default:['test-hooks'],'test-hooks':[]},rust_version:'1.88'},c.sha256);
+ }
+ writeFileSync(join(candidate,'crates-inventory.json'),JSON.stringify(i));
+ const result=spawnSync(process.execPath,[resolve('packaging/check-crates.mjs'),candidate],{env,encoding:'utf8',timeout:120000});
+ assert.equal(result.error,undefined);assert.equal(result.status,1,result.stdout+result.stderr);
+ assert.match(result.stderr,/test-only production dependency/);
+ assert.doesNotMatch(result.stdout,/\+ cargo publish/);
+});

@@ -45,6 +45,7 @@ export function validateSource(source, fetcher) {
 export function inspectPackage(root,name,source) {
   requireThat(fs.readFileSync(join(root,'LICENSE'),'utf8')===fs.readFileSync(new URL('../LICENSE',import.meta.url),'utf8'),`${name}: missing or wrong licence text`);
   const all=files(root);
+  for(const file of Object.keys(all)) requireThat(!file.startsWith('tests/'),'repository test harness in package: '+file);
   for(const file of Object.keys(all)) requireThat(!/(^|\/)(node_modules|\.npmrc|\.env|target|\.git)(\/|$)|\.map$/.test(file),'forbidden package input: '+file);
   if(name!=='hennery-kernel') return;
   validateSource(source);
@@ -60,6 +61,9 @@ export function inspectPackage(root,name,source) {
   const actual=files(join(root,'web-dist'));
   requireThat(actual['index.html'] && sameFiles(actual,marker.files),'UI inventory differs');
   requireThat(!fs.readFileSync(join(root,'web-dist/index.html'),'utf8').includes('hennery-web-ui-not-embedded'),'placeholder UI');
+}
+export function inspectProductionFeatures(tree) {
+  requireThat(typeof tree==='string' && tree.trim().length>0 && !/\btest-hooks\b|\bhennery-(?:testkit|pins)\b/.test(tree),'test-only production dependency or missing feature evidence');
 }
 export function checkSourceTree(root, expected) {
   const actual=files(root);

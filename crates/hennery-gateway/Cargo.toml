@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 publish = ["crates-io"]
 readme = "README.md"
-include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "build.rs"]
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/build.rs"]
 description = "MCP gateway for the hennery ACP cockpit"
 
 # Never `hennery-sessions`, in any table (umbrella §9, gateway spec §10):
