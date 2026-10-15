@@ -18,7 +18,7 @@ class Workflows(unittest.TestCase):
         return yaml.safe_load((ROOT / '.github/workflows/release-candidate.yml').read_text())
 
     def test_reserved_channel_names_belong_only_to_their_job_ids(self):
-        for channel in ('crates','ghcr'):
+        for channel in ('crates','ghcr','homebrew'):
             data=self.candidate()
             data['jobs'].pop(channel,None)
             data['jobs']['licence-review']={'name':channel,'timeout-minutes':5,'steps':[{'run':'exit 1'}]}
@@ -38,7 +38,7 @@ class Workflows(unittest.TestCase):
                 workflow_policy.check({'jobs':jobs},'release-candidate.yml')
 
     def test_channel_owner_has_literal_own_name_and_no_matrix(self):
-        for channel in ('crates','ghcr'):
+        for channel in ('crates','ghcr','homebrew'):
             for changed in ({},{'name':channel}):
                 data=self.candidate()
                 data['jobs'][channel]={'timeout-minutes':5,'steps':[{'run':'true'}],**changed}

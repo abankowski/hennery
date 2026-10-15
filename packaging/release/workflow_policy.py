@@ -9,7 +9,7 @@ import sys
 CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
 # Channel -> owning YAML job ID. The literal API display name is the channel.
 # R4's name is reserved now; selection refuses until its owning job exists.
-CHANNEL_JOB_IDS = {'crates': 'crates', 'ghcr': 'ghcr'}
+CHANNEL_JOB_IDS = {'crates': 'crates', 'ghcr': 'ghcr', 'homebrew': 'homebrew'}
 
 
 def load_workflow(raw):
@@ -64,8 +64,12 @@ def candidate_channel_jobs(data):
     return {channel: owner for channel, owner in CHANNEL_JOB_IDS.items() if owner in jobs}
 
 
+def tap_credential(value):
+    return bool(re.search(r"secrets\s*(?:\.\s*release_homebrew_token|\[\s*['\"]release_homebrew_token['\"]\s*\])", str(value), re.I))
+
+
 def privileged(job):
-    return any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
+    return tap_credential(job) or any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
         s.get('uses', '').startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) or 'publish.py upload' in s.get('run', '')
         for s in job.get('steps', []))
 
@@ -81,7 +85,37 @@ def writer(name, job):
     return privileged(job) or (environment_name(job) == 'release' and name != 'authorize')
 
 
+def homebrew_writer(job):
+    """A tap secret is exposed only to the final, gated, exact-byte writer."""
+    if job.get('if') != CREDENTIAL_CONDITION + " && vars.RELEASE_HOMEBREW_ENABLED == 'true'":
+        raise ValueError('Homebrew needs its separate publication switch')
+    if job.get('needs') != ['github', 'authorize'] or job.get('permissions') != {'contents': 'read', 'actions': 'read'}:
+        raise ValueError('Homebrew must follow GitHub with a read-only ordinary token')
+    if tap_credential(job.get('env', {})):
+        raise ValueError('tap credential must not be job-scoped')
+    steps = job.get('steps', [])
+    def one(predicate):
+        positions = [i for i, step in enumerate(steps) if predicate(step)]
+        if len(positions) != 1:
+            raise ValueError('Homebrew requires one signature, byte check, boundary and credential step')
+        step = steps[positions[0]]
+        if step.get('if') is not None or step.get('continue-on-error') not in (None, False):
+            raise ValueError('Homebrew integrity and write steps must be unconditional and fatal')
+        return positions[0]
+    preflight = one(lambda s: s.get('with', {}).get('phase') == 'preflight')
+    signature = one(lambda s: 'verify.py --candidate' in s.get('run', ''))
+    integrity = one(lambda s: 'homebrew_publish.py --verify' in s.get('run', ''))
+    boundary = one(lambda s: s.get('with', {}).get('phase') == 'boundary')
+    credential = one(tap_credential)
+    if not preflight < signature < integrity < boundary < credential or credential != len(steps) - 1:
+        raise ValueError('Homebrew signature and fresh gates must precede the tap credential')
+    if 'homebrew_publish.py candidate' not in steps[credential].get('run', ''):
+        raise ValueError('tap credential may only reach the frozen formula writer')
+
+
 def check(data, name):
+    if tap_credential(data.get('env', {})):
+        raise ValueError('tap credential must not be workflow-scoped')
     if name == 'release-candidate.yml':
         candidate_channel_jobs(data)
     jobs = data.get('jobs', {})
@@ -95,6 +129,8 @@ def check(data, name):
         if proof != ['preflight']:
             raise ValueError('credential authorization must run the live preflight gate')
     for key, job in jobs.items():
+        if tap_credential(job) or (name == 'release-publish.yml' and key == 'homebrew'):
+            homebrew_writer(job)
         if 'uses' in job:
             raise ValueError(f'{name}/{key}: reusable jobs need explicit authority review; put the gate inside the protected callee')
         if not job.get('timeout-minutes'):
@@ -152,7 +188,7 @@ def check_repository(root):
         raise ValueError('candidate, publish and negative-test workflows required')
     for path in paths:
         data = load_workflow(path.read_text())
-        authority = any(privileged(dict(job, permissions=job.get('permissions', data.get('permissions', {}))))
+        authority = tap_credential(data.get('env', {})) or any(privileged(dict(job, permissions=job.get('permissions', data.get('permissions', {}))))
                         or environment_name(job) == 'release' or 'uses' in job for job in data.get('jobs', {}).values())
         # Read-only legacy qualification jobs retain their existing style.
         # Every writer/signer or reusable indirection is checked, whatever

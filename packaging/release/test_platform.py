@@ -28,7 +28,7 @@ class Platform(unittest.TestCase):
 
             def get(self, path):
                 if path == '/contents/.github/workflows/release-candidate.yml?ref='+fixture.inventory['source_sha']:
-                    return workflow_content({'jobs':{'archive':{},'crates':{},'ghcr':{}}})
+                    return workflow_content({'jobs':{'archive':{},'crates':{},'ghcr':{},'homebrew':{}}})
                 if path.startswith('/git/ref/'):
                     return fixture.snapshot['tag']
                 if path.startswith('/git/tags/'):
@@ -81,7 +81,7 @@ class Platform(unittest.TestCase):
     def candidate_evidence(self, channels, jobs, required_jobs=None, workflow=None, validate=False):
         fixture = self.fixture()
         fixture.inventory['channels'] = channels
-        if workflow is None: workflow={'jobs':{'archive':{},'crates':{},'ghcr':{}}}
+        if workflow is None: workflow={'jobs':{'archive':{},'crates':{},'ghcr':{},'homebrew':{}}}
         class Fake(gate.GitHub):
             def verify_tag(self, inventory, object_sha):
                 return fixture.snapshot['tag_signature']
@@ -118,8 +118,16 @@ class Platform(unittest.TestCase):
         self.candidate_evidence(['github'], [self.job('archive')])
         self.candidate_evidence(['github'], [self.job('archive'),self.job('crates'),self.job('ghcr')])
 
+    def test_github_only_homebrew_native_noops_succeed_but_skipped_native_jobs_refuse(self):
+        native=[self.job('homebrew-native ('+runner+')') for runner in ('macos-15','ubuntu-24.04','ubuntu-24.04-arm')]
+        optional=[self.job(channel,'skipped') for channel in ('crates','ghcr','homebrew')]
+        self.candidate_evidence(['github'],[self.job('archive'),*optional,*native])
+        for skipped in native:
+            with self.subTest(skipped=skipped),self.assertRaises(gate.Refused):
+                self.candidate_evidence(['github'],[self.job('archive'),*optional,self.job(skipped['name'],'skipped')])
+
     def test_selected_channel_acceptance_must_exist_and_succeed(self):
-        for channel in ('crates','ghcr'):
+        for channel in ('crates','ghcr','homebrew'):
             self.candidate_evidence(['github',channel], [self.job('archive'),self.job(channel)])
             for jobs in ([], [self.job(channel,'skipped')], [self.job(channel,'failure')],
                          [self.job(channel,'cancelled')], [self.job(channel,None,'queued')],
@@ -128,7 +136,7 @@ class Platform(unittest.TestCase):
                     self.candidate_evidence(['github',channel], [self.job('archive'),*jobs])
 
     def test_optional_channels_do_not_waive_failures_or_other_skipped_jobs(self):
-        for channel in ('crates','ghcr'):
+        for channel in ('crates','ghcr','homebrew'):
             for job in (self.job(channel,'failure'),self.job(channel,'skipped','queued'),self.job(channel,'cancelled')):
                 with self.subTest(channel=channel,job=job), self.assertRaises(gate.Refused):
                     self.candidate_evidence(['github'],[self.job('archive'),job])
@@ -141,10 +149,10 @@ class Platform(unittest.TestCase):
         with self.assertRaises(gate.Refused):
             self.candidate_evidence(['github'],[self.job('archive')],required_jobs=[self.job('crates','skipped')])
 
-    def test_each_selected_channel_is_required_when_both_are_selected(self):
-        channels=['github','crates','ghcr']
-        self.candidate_evidence(channels,[self.job('archive'),self.job('crates'),self.job('ghcr')])
-        for channel in ('crates','ghcr'):
+    def test_each_selected_channel_is_required_when_all_are_selected(self):
+        channels=['github','crates','ghcr','homebrew']
+        self.candidate_evidence(channels,[self.job('archive'),self.job('crates'),self.job('ghcr'),self.job('homebrew')])
+        for channel in ('crates','ghcr','homebrew'):
             with self.subTest(channel=channel), self.assertRaises(gate.Refused):
                 self.candidate_evidence(channels,[self.job('archive'),self.job(channel)])
 
@@ -156,7 +164,7 @@ class Platform(unittest.TestCase):
         self.assertIn("',crates,'",workflow['jobs']['crates']['if'])
 
     def test_ordinary_job_renamed_to_reserved_channel_cannot_be_exempted(self):
-        for channel in ('crates','ghcr'):
+        for channel in ('crates','ghcr','homebrew'):
             for owner_present in (False,True):
                 workflow={'jobs':{'archive':{},'licence-review':{'name':channel}}}
                 if owner_present: workflow['jobs'][channel]={'name':channel}
@@ -170,7 +178,7 @@ class Platform(unittest.TestCase):
                 self.candidate_evidence(['github'],[self.job('archive'),self.job('ghcr','skipped')],workflow=workflow)
 
     def test_reserved_evidence_name_requires_owner_in_tagged_workflow(self):
-        for channel in ('crates','ghcr'):
+        for channel in ('crates','ghcr','homebrew'):
             for selected in (False,True):
                 with self.subTest(channel=channel,selected=selected),self.assertRaises(gate.Refused):
                     self.candidate_evidence(['github',channel] if selected else ['github'],

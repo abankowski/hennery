@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import platform
-import shutil
 import subprocess
 
 import gate
@@ -19,6 +18,30 @@ import homebrew
 
 BREW_COMMIT = '00001bedf8eac442bdabd327148be0b97998b27b'  # Homebrew 4.6.18
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def recipes():
+    result = {}
+    for operation in ('install', 'upgrade', 'uninstall'):
+        result[operation] = subprocess.check_output(
+            ['sh', str(ROOT / 'packaging/readme-blocks.sh'), str(ROOT / 'docs/homebrew.md'), 'homebrew-' + operation], text=True)
+    return result
+
+
+def smoke(binary, expected, tag, env, work):
+    gate.require(Path(binary).read_bytes() == expected, 'Homebrew changed executable bytes')
+    result = subprocess.run([str(binary), '--version'], env=env, cwd=work, check=True, capture_output=True, text=True)
+    gate.require(result.stdout.strip() == 'hennery ' + tag.removeprefix('v'), 'installed Homebrew executable has wrong version')
+    print(result.stdout, end='')
+
+
+def commit_formula(tap, formula, env, work, message):
+    path = Path(tap) / 'Formula/hennery.rb'
+    path.write_text(formula)
+    for args in (['add', 'Formula/hennery.rb'],
+                 ['-c', 'user.name=Marcin Wadoń', '-c', 'user.email=marcin.wadon@gmail.com',
+                  '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', message, '--', 'Formula/hennery.rb']):
+        subprocess.run(['git', '-C', str(tap), *args], env=env, cwd=work, check=True)
 
 
 def run(candidate, work, brew_source=None):
@@ -58,34 +81,34 @@ def run(candidate, work, brew_source=None):
     env['PATH'] = str(prefix / 'bin') + ':' + env['PATH']
     tap = prefix / 'Library/Taps/marcinwadon/homebrew-tap'
     (tap / 'Formula').mkdir(parents=True)
-    command('git', '-C', str(tap), 'init', '-q')
+    command('git', '-C', str(tap), 'init', '-q', '--initial-branch=main')
     command('git', '-C', str(tap), 'remote', 'add', 'origin', str(tap))
-    formula = tap / 'Formula/hennery.rb'
     local = original
     for target in inventory['targets']:
         name = 'hennery-' + target + '.tar.xz'
         local = local.replace(f'https://github.com/{gate.REPOSITORY}/releases/download/{inventory["tag"]}/{name}', (candidate / name).as_uri())
     old = local.replace(f'version "{inventory["tag"][1:]}"', 'version "0.0.0"')
-    formula.write_text(old)
+    commit_formula(tap, old, env, work, 'test(formula): install old-version fixture')
     sentinels = [work / 'data/hennery/preserve', work / 'home/Library/LaunchAgents/hennery-preserve.plist']
     for path in sentinels:
         path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'operator-owned sentinel\n')
-    # First install is a real older-keg fixture using the exact candidate payload.
-    command(brew, 'install', '--formula', 'marcinwadon/tap/hennery')
-    gate.require((prefix / 'Cellar/hennery/0.0.0/bin/hennery').is_file(), 'old keg missing')
-    formula.write_text(local)
-    command(brew, 'upgrade', '--formula', 'marcinwadon/tap/hennery')
-    installed = prefix / 'bin/hennery'
-    gate.require(installed.resolve().parent.parent.name == inventory['tag'][1:], 'upgrade did not select candidate keg')
-    command(brew, 'test', 'marcinwadon/tap/hennery')
-    # Compare installed native executable to the actual approved archive entry.
+    # Extract and compare without executing or unpacking arbitrary extra files.
     import tarfile
     with tarfile.open(candidate / ('hennery-' + native + '.tar.xz')) as archive:
         entries = [m for m in archive.getmembers() if m.isfile() and m.name.endswith('/hennery')]
         gate.require(len(entries) == 1, 'candidate executable ambiguous')
         expected = archive.extractfile(entries[0]).read()
-    gate.require(installed.read_bytes() == expected, 'Homebrew changed executable bytes')
-    command(brew, 'uninstall', '--force', 'marcinwadon/tap/hennery')
+    scripts = recipes()
+    # First install is a real older-keg fixture using the exact candidate payload.
+    command('sh', '-eu', '-c', scripts['install'])
+    installed = prefix / 'bin/hennery'
+    smoke(installed, expected, inventory['tag'], env, work)
+    gate.require((prefix / 'Cellar/hennery/0.0.0/bin/hennery').is_file(), 'old keg missing')
+    commit_formula(tap, local, env, work, 'test(formula): upgrade to frozen candidate')
+    command('sh', '-eu', '-c', scripts['upgrade'])
+    gate.require(installed.resolve().parent.parent.name == inventory['tag'][1:], 'upgrade did not select candidate keg')
+    smoke(installed, expected, inventory['tag'], env, work)
+    command('sh', '-eu', '-c', scripts['uninstall'])
     gate.require(not installed.exists() and not installed.is_symlink() and not (prefix / 'Cellar/hennery').exists(), 'uninstall left package files')
     gate.require(all(p.read_bytes() == b'operator-owned sentinel\n' for p in sentinels), 'package operation changed user data/service definitions')
     gate.require((candidate / 'release-inventory.json').read_bytes() == raw, 'acceptance changed frozen inventory')

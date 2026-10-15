@@ -41,6 +41,16 @@ def validate_settings(settings, channels):
     secrets = settings.get('release_secrets', [])
     if 'github' in channels:
         gate.require('RELEASE_PUBLISH_APP_KEY' in secrets, 'GitHub publishing credential must exist only in release')
+    if 'homebrew' in channels:
+        tap = settings.get('homebrew', {})
+        gate.require('RELEASE_HOMEBREW_TOKEN' in secrets, 'Homebrew credential must exist only in release')
+        gate.require(tap.get('repository') == 'marcinwadon/homebrew-tap' and tap.get('branch') == 'main'
+                     and tap.get('environment') == 'release' and tap.get('credential') == 'RELEASE_HOMEBREW_TOKEN',
+                     'Homebrew audit must name the protected tap credential and destination')
+        gate.require(tap.get('kind') in ('fine-grained-pat', 'app-installation')
+                     and tap.get('repositories') == ['marcinwadon/homebrew-tap']
+                     and tap.get('permissions') == {'contents': 'write'} and tap.get('scope_confirmed') is True,
+                     'maintainer must confirm tap-only contents scope; no broad token')
     if 'ghcr' in channels:
         ghcr = settings.get('ghcr', {})
         gate.require(ghcr.get('repository') == gate.REPOSITORY and ghcr.get('actions_access') == 'read', 'GHCR Actions access must be READ')
@@ -106,13 +116,13 @@ def collect(observations):
             'release_secrets': [s['name'] for s in pages(prefix + '/environments/release/secrets', 'secrets')],
             'immutable_releases': gh(prefix + '/immutable-releases')['enabled'],
             'maintainer_touch': observations.get('maintainer_touch'),
-            'ghcr': observations.get('ghcr'), 'crates': observations.get('crates')}
+            'ghcr': observations.get('ghcr'), 'crates': observations.get('crates'), 'homebrew': observations.get('homebrew')}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate', required=True, type=Path)
-    parser.add_argument('--observations', required=True, type=Path, help='maintainer UI inspection: GHCR Actions READ + negative push result, crates.io exact trusted publishers')
+    parser.add_argument('--observations', required=True, type=Path, help='maintainer inspection: GHCR access, crates.io trusted publishers, Homebrew tap-only credential scope')
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
     raw = (args.candidate / 'release-inventory.json').read_bytes(); inventory = gate.strict_json(raw)

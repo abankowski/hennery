@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 import re
+import shutil
 
 import gate
 
@@ -21,7 +22,11 @@ def check(root, tag, targets, require_test=True):
     gate.require(re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', tag), 'invalid Homebrew tag')
     path = root / 'hennery.rb'
     gate.require(path.is_file() and not path.is_symlink(), 'nonregular Homebrew formula')
-    formula = path.read_text()
+    raw = path.read_bytes()
+    try:
+        formula = raw.decode('utf-8')
+    except UnicodeError as error:
+        raise gate.Refused('formula must be UTF-8') from error
     gate.require(formula.startswith('class Hennery < Formula\n') and formula.endswith('\nend\n'), 'unexpected formula structure')
     versions = re.findall(r'^\s*version (.+)$', formula, re.M)
     gate.require(versions == ['"' + tag[1:] + '"'], 'formula version differs from candidate')
@@ -38,7 +43,7 @@ def check(root, tag, targets, require_test=True):
     gate.require(len(dict(pairs)) == len(pairs) and dict(pairs) == expected, 'formula URL or digest differs from candidate archives')
     if require_test:
         gate.require(formula.count(TEST_BLOCK) == 1, 'formula must carry the version, UI and notices test')
-    return formula.encode()
+    return raw
 
 
 def prepare(root, tag, targets):
@@ -50,14 +55,38 @@ def prepare(root, tag, targets):
     check(root, tag, targets)
 
 
+def freeze_proof(source, destination, tag, targets, source_sha):
+    """Unsigned native PR fixture; it cannot authorize any publication."""
+    gate.require(re.fullmatch('[0-9a-f]{40}', source_sha), 'invalid proof source SHA')
+    check(source, tag, targets)
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=False)
+    for name in ['hennery.rb', *['hennery-' + t + '.tar.xz' for t in targets]]:
+        shutil.copyfile(Path(source) / name, destination / name)
+    inventory = {'schema': 1, 'repository': gate.REPOSITORY, 'source_sha': source_sha,
+                 'tag': tag, 'channels': ['github'], 'targets': sorted(targets),
+                 'candidate': {'run_id': 1, 'run_attempt': 1},
+                 'artifacts': [{'name': p.name, 'size': p.stat().st_size, 'sha256': gate.digest(p.read_bytes())}
+                               for p in sorted(destination.iterdir())]}
+    (destination / 'release-inventory.json').write_bytes(gate.canonical(inventory))
+    gate.verify_files(inventory, destination)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['prepare', 'check'])
+    parser.add_argument('operation', choices=['prepare', 'check', 'freeze-proof'])
     parser.add_argument('candidate', type=Path)
+    parser.add_argument('destination', nargs='?', type=Path)
+    parser.add_argument('--source-sha')
     parser.add_argument('--tag', required=True)
     parser.add_argument('--targets', required=True)
     args = parser.parse_args()
     try:
-        (prepare if args.operation == 'prepare' else check)(args.candidate, args.tag, args.targets.split(','))
+        if args.operation == 'freeze-proof':
+            if args.destination is None or args.source_sha is None:
+                parser.error('freeze-proof needs a fresh destination and --source-sha')
+            freeze_proof(args.candidate, args.destination, args.tag, args.targets.split(','), args.source_sha)
+        else:
+            (prepare if args.operation == 'prepare' else check)(args.candidate, args.tag, args.targets.split(','))
     except (gate.Refused, OSError) as error:
         raise SystemExit(f'Homebrew refused: {error}') from error
