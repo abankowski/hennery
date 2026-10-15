@@ -322,6 +322,55 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE sessions ADD COLUMN mcp_delivery_servers INTEGER;
     ALTER TABLE sessions ADD COLUMN mcp_delivery_at TEXT;
 ",
+    // D1 (17): immutable family assignment, same-owner composite references,
+    // terminal routing fences. New children are allocated by D2, not here.
+    "
+    CREATE UNIQUE INDEX sessions_by_owner_identity ON sessions(id, owner_id);
+    CREATE TABLE session_families (
+        owner_id TEXT NOT NULL,
+        child_id TEXT NOT NULL,
+        parent_id TEXT NOT NULL,
+        root_id TEXT NOT NULL,
+        hat_id TEXT NOT NULL,
+        created_event_id INTEGER NOT NULL,
+        detached INTEGER NOT NULL DEFAULT 0 CHECK (detached IN (0, 1)),
+        reason TEXT,
+        PRIMARY KEY (child_id, owner_id),
+        CHECK (child_id <> parent_id AND child_id <> root_id),
+        FOREIGN KEY (child_id, owner_id) REFERENCES sessions(id, owner_id),
+        FOREIGN KEY (parent_id, owner_id) REFERENCES sessions(id, owner_id),
+        FOREIGN KEY (root_id, owner_id) REFERENCES sessions(id, owner_id),
+        FOREIGN KEY (hat_id, owner_id) REFERENCES hats(id, owner_id) ON DELETE CASCADE);
+    CREATE INDEX families_by_parent ON session_families(owner_id, parent_id);
+    CREATE TRIGGER family_assignment_immutable BEFORE UPDATE ON session_families
+    WHEN NEW.owner_id <> OLD.owner_id OR NEW.child_id <> OLD.child_id
+      OR NEW.parent_id <> OLD.parent_id OR NEW.root_id <> OLD.root_id
+      OR NEW.hat_id <> OLD.hat_id OR NEW.created_event_id <> OLD.created_event_id
+      OR (OLD.detached = 1 AND NEW.detached = 0)
+    BEGIN SELECT RAISE(ABORT, 'immutable family assignment'); END;
+    CREATE TRIGGER family_scope BEFORE INSERT ON session_families
+    WHEN NOT EXISTS (SELECT 1 FROM sessions c JOIN sessions p ON p.owner_id = NEW.owner_id
+        JOIN sessions r ON r.owner_id = NEW.owner_id
+        WHERE c.owner_id = NEW.owner_id AND c.id = NEW.child_id AND p.id = NEW.parent_id
+          AND r.id = NEW.root_id AND c.hat_id = NEW.hat_id AND p.hat_id = NEW.hat_id
+          AND r.hat_id = NEW.hat_id AND c.host_id = p.host_id AND p.host_id = r.host_id
+          AND c.lifecycle = 'starting' AND p.lifecycle = 'active'
+          AND c.close_requested = 0 AND p.close_requested = 0 AND r.close_requested = 0)
+      OR EXISTS (WITH RECURSIVE ancestors(id) AS (
+            SELECT NEW.parent_id UNION SELECT f.parent_id FROM session_families f
+            JOIN ancestors a ON a.id = f.child_id WHERE f.owner_id = NEW.owner_id)
+            SELECT 1 FROM ancestors WHERE id = NEW.child_id)
+    BEGIN SELECT RAISE(ABORT, 'invalid family scope'); END;
+    CREATE TRIGGER family_scope_end AFTER UPDATE OF hat_id, lifecycle, close_requested ON sessions
+    BEGIN
+      DELETE FROM session_families WHERE owner_id = NEW.owner_id
+        AND (child_id = NEW.id OR parent_id = NEW.id OR root_id = NEW.id) AND NEW.lifecycle = 'deleted';
+      UPDATE session_families SET detached = 1,
+        reason = CASE WHEN NEW.hat_id <> OLD.hat_id THEN 'reassigned' ELSE 'closed' END
+        WHERE owner_id = NEW.owner_id AND (child_id = NEW.id OR parent_id = NEW.id OR root_id = NEW.id)
+          AND detached = 0 AND (NEW.hat_id <> OLD.hat_id OR NEW.close_requested = 1 OR NEW.lifecycle = 'closed');
+    END;
+    ",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -799,7 +848,7 @@ fn stamp(at: time::OffsetDateTime) -> String {
     )
 }
 
-fn now() -> String {
+pub(crate) fn now() -> String {
     stamp(time::OffsetDateTime::now_utc())
 }
 
@@ -2013,7 +2062,7 @@ impl Store {
     /// session (decision E10). The session is `starting` already, so it
     /// counts itself in the mixedness: a session outside the default hat
     /// always finds its host mixed.
-    fn deliver_in(
+    pub(crate) fn deliver_in(
         &self,
         tx: &Transaction<'_>,
         session_id: &str,

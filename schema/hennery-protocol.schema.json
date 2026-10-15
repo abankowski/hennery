@@ -1383,6 +1383,23 @@
       ],
       "type": "object"
     },
+    "HatSessionTools": {
+      "additionalProperties": false,
+      "properties": {
+        "delegation_enabled": {
+          "type": "boolean"
+        },
+        "revision": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "delegation_enabled",
+        "revision"
+      ],
+      "type": "object"
+    },
     "HostFrame": {
       "description": "Host -> collector.",
       "oneOf": [
@@ -4529,6 +4546,45 @@
       ],
       "type": "object"
     },
+    "SessionFamily": {
+      "additionalProperties": false,
+      "properties": {
+        "child_id": {
+          "type": "string"
+        },
+        "created_event_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "detached": {
+          "type": "boolean"
+        },
+        "hat_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "child_id",
+        "parent_id",
+        "root_id",
+        "hat_id",
+        "created_event_id",
+        "detached"
+      ],
+      "type": "object"
+    },
     "SessionItem": {
       "description": "One session as the session list shows it (ACP core §8, §9; frontend\n§5), read from `sessions` alone: never the catalogue, commands or plan\n(P-23). The detail serves it as stored; the list, `bounded`.",
       "properties": {
@@ -4656,6 +4712,18 @@
       },
       "required": [
         "data"
+      ],
+      "type": "object"
+    },
+    "SetSessionTools": {
+      "additionalProperties": false,
+      "properties": {
+        "delegation_enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "delegation_enabled"
       ],
       "type": "object"
     },

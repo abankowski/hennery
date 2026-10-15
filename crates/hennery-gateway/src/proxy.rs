@@ -267,14 +267,14 @@ async fn reject_route(State(state): State<ProxyState>, headers: HeaderMap, body:
 
 /// Track whether hyper was asked for body data. An unpolled Expect upload
 /// can be refused without polling and thus without sending 100 Continue.
-struct RequestBody {
+pub struct RequestBody {
     stream: BodyDataStream,
     polled: bool,
     expect_continue: bool,
 }
 
 impl RequestBody {
-    fn new(body: Body, headers: &HeaderMap) -> Self {
+    pub fn new(body: Body, headers: &HeaderMap) -> Self {
         Self {
             stream: body.into_data_stream(),
             polled: false,
@@ -310,7 +310,7 @@ impl Stream for RequestBody {
 /// An unpolled Expect: 100-continue body is closed without draining, so
 /// a head-time refusal never invites the client to begin its upload.
 /// Past the cap, deadline or a read error, close HTTP/1 after the answer.
-async fn drain_rejected(mut body: RequestBody, mut answer: Response, limits: &Limits) -> Response {
+pub async fn drain_rejected(mut body: RequestBody, mut answer: Response, limits: &Limits) -> Response {
     let unstarted_expect = body.expect_continue && !body.polled;
     let drain = async {
         let mut remaining = limits.drain_cap;
@@ -345,7 +345,7 @@ fn upstream_auth(connection: &ScopedConnection) -> Response {
 }
 
 /// The bearer token of `Authorization`, if there is exactly one.
-fn bearer(headers: &HeaderMap) -> Option<&str> {
+pub fn bearer(headers: &HeaderMap) -> Option<&str> {
     let mut values = headers.get_all(header::AUTHORIZATION).iter();
     let value = values.next()?;
     if values.next().is_some() {

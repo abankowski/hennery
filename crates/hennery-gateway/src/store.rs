@@ -61,6 +61,7 @@ pub struct GatewayStore {
     /// The database's owner (`db::kernel_owner`), whom every query names.
     owner: String,
     refresh_caches: Mutex<Vec<Weak<crate::refresh::Attempts>>>,
+    pub(crate) delegation_watches: Arc<crate::revocation::Revocations>,
 }
 
 impl GatewayStore {
@@ -78,7 +79,9 @@ impl GatewayStore {
         let owner = db::kernel_owner(&mut conn)?;
         db::migrate_component(&mut conn, COMPONENT, MIGRATIONS)?;
         let plugins = crate::plugin::Control::for_core(path, &owner, conn.coordination());
+        let delegation_watches = crate::identity::grant_watches(conn.coordination());
         Ok(Self {
+            delegation_watches,
             conn: hennery_kernel::db::CoordinatedConnection::new(conn),
             plugins,
             owner,

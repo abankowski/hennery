@@ -66,6 +66,7 @@ hosts(id TEXT PK, owner_id, name, public_key, default_hat_id, platform,
   last_doctor JSON, last_seen_at, created_at, revoked_at NULL)
 pairing_codes(code_hash PK, owner_id, created_at, expires_at, used_at NULL)
 settings(owner_id, key, value, PRIMARY KEY(owner_id, key))   -- public_url, default_hat_id
+hat_session_tools(owner_id, hat_id, delegation_enabled, revision, PRIMARY KEY(owner_id, hat_id))
 project_recents(owner_id, host_id, hat_id, path, last_used_at,
   PRIMARY KEY(host_id, hat_id, path))
 push_subscriptions(id TEXT PK, owner_id, endpoint UNIQUE, p256dh, auth, device_label,
@@ -260,6 +261,13 @@ version may accept signed assertions only (umbrella §7.1, §15).
 
 ### 3.3 Origin rules and CSRF
 
+The session-bound MCP delivery design owns the opt-in built-in endpoint.
+`GET/PATCH /api/hats/{id}/session-tools` use these browser rules; PATCH also
+requires step-up. Every flag transition advances the revision. Enabling takes
+effect on a fresh start/resume; disabling immediately denies built-in access
+and cuts its separate grant watches without revoking external mounts. D2/D3
+attach queued cancellation and operator attention to that same revision fence.
+
 State-changing endpoints accept only `application/json`. `Origin` is checked
 per route class:
 
@@ -270,7 +278,8 @@ per route class:
 | `GET /api/hosts/ws` | Unauthenticated until a valid `hello` proof (ACP core §3.5) | Exempt |
 | `POST /api/setup` | Setup token (§3.1) | Must equal the submitted `public_url`'s origin; a missing `Origin` is rejected |
 | `POST /api/hosts/enroll` | Pairing code | Exempt |
-| `/mcp/*` (gateway proxy) | Bearer token | Exempt |
+| `/mcp/{slug}` (external gateway proxy) | Bearer token | Exempt |
+| `/mcp/builtin/hennery` (collector-local session MCP) | Live session bearer and its delivered delegation revision | Missing Origin accepted; a present Origin must exactly equal `public_url` origin, including GET/DELETE; no cookies or CORS |
 | `GET /api/mcp/oauth/callback`, `GET /api/mcp/oauth/callback.js` | `state` plus the flow cookie (gateway §4.3); the script is static, no data | Exempt |
 | `/healthz`, `/readyz` | None (no data) | Exempt |
 | `GET /setup`, `GET /setup.js` (static, no data) | None | Exempt |

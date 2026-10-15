@@ -580,6 +580,7 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
     let served = hennery_sessions::serve_all(
         listeners,
         hennery_sessions::router(state.clone())
+            .merge(hennery_sessions::builtin::router(state.clone(), gateway.clone()))
             .merge(hennery_gateway::api::router(gateway))
             .merge(hennery_gateway::proxy::router(proxy)),
         state.shutdown.clone(),
@@ -1325,9 +1326,9 @@ async fn start_gateway(
         egress.clone(),
         std::sync::Arc::new(state.push.clone()),
     )?;
-    state
-        .store
-        .set_session_mcp(std::sync::Arc::new(hennery_gateway::session::GatewayMcp::new(&gateway)));
+    state.store.set_session_mcp(std::sync::Arc::new(
+        hennery_gateway::session::GatewayMcp::for_collector(&gateway),
+    ));
     gateway.runtime.recover_plugins().await?;
     gateway.runtime.ensure_plugin_worker();
     gateway.runtime.announce_startup()?;

@@ -2,7 +2,9 @@
 
 pub mod api;
 pub mod attachments;
+pub mod builtin;
 pub mod content;
+pub mod delegation;
 pub mod forget;
 pub mod hats;
 pub mod hosts;
@@ -164,6 +166,7 @@ pub async fn serve_all(
 /// the client's address.
 pub fn router(state: AppState) -> Router {
     api::router(state.clone())
+        .merge(builtin::policy_router(state.clone()))
         .merge(hosts::router(state.clone()))
         .merge(hats::router(state.clone()))
         .merge(projects::router(state.clone()))

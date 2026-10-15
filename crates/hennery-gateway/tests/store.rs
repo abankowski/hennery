@@ -639,8 +639,18 @@ fn the_store_and_the_kernel_agree_on_the_owner_whichever_opens_first() {
             |r| r.get(0),
         )
         .unwrap();
-    // Connections, session tokens, stdio servers, then OAuth clients.
-    assert_eq!(version, 4);
+    // Connections, session tokens, stdio servers, OAuth clients, then D1's
+    // generation-bound delivered delegation revision.
+    assert_eq!(version, 5);
+    let connection = rusqlite::Connection::open(&last).unwrap();
+    let columns: Vec<String> = connection
+        .prepare("PRAGMA table_info(gw_session_tokens)")
+        .unwrap()
+        .query_map([], |row| row.get(1))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert!(columns.iter().any(|column| column == "delivered_delegation_revision"));
 }
 
 /// Plan 8a decision 19 (lane L11): a connection's `Debug` shows only its

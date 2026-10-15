@@ -254,6 +254,16 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE hosts ADD COLUMN mcp_isolation TEXT;
     ",
+    // D1: delegation is disabled unless explicitly enabled by the owner.
+    "
+    CREATE TABLE hat_session_tools (
+        owner_id TEXT NOT NULL,
+        hat_id TEXT NOT NULL,
+        delegation_enabled INTEGER NOT NULL CHECK (delegation_enabled IN (0, 1)),
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        PRIMARY KEY (owner_id, hat_id),
+        FOREIGN KEY (hat_id, owner_id) REFERENCES hats(id, owner_id) ON DELETE CASCADE);
+    ",
 ];
 
 #[cfg(test)]
