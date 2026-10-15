@@ -1,6 +1,20 @@
 use hennery_proto::codegen::{SCHEMA_PATH, TS_PATH, render_schema, render_ts};
 use std::path::Path;
 
+#[test]
+fn delegation_wire_dependencies_are_exported_once() {
+    let ts = render_ts();
+    let schema: serde_json::Value = serde_json::from_str(&render_schema()).unwrap();
+    for name in [
+        "ExecutionPolicy", "SetExecutionPolicy", "DelegationLimits", "CapabilitiesResult",
+        "ChildQuestion", "ChildSummary", "ChildList", "ChildStatus", "PromptFence",
+        "ConfigCompleteness", "ConfigEvidence", "CatalogFreshness", "SecurityClassification", "HostCatalog",
+    ] {
+        assert_eq!(ts.matches(&format!("export type {name} =")).count(), 1, "{name}");
+        assert!(schema["$defs"].get(name).is_some(), "{name}");
+    }
+}
+
 /// The generated output must not depend on which packages this test binary
 /// was built with: `cargo test --workspace` unifies `serde_json`'s
 /// `preserve_order` feature across the whole build graph (because
