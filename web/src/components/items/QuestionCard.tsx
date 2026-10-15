@@ -26,6 +26,7 @@ import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { deliveryOf, digitIndex, isEditable, optionTone, questionText, type OptionTone } from '../../lib/delivery'
 import { useAnswerState, useFormDraft } from '../../store/useAnswer'
 import Elicitation from './Elicitation'
+import { handlingWords } from '../FamilyPanel'
 import type { ItemEnv, ItemOf } from './types'
 
 type Question = ItemOf<'question'>
@@ -72,6 +73,7 @@ export default function QuestionCard({ item, env }: Props) {
   const ref = useRef<HTMLElement>(null)
   const { composerEmpty, agent } = env
   const kind = request.type
+  const routing = env.familyQuestions?.find(q => q.pending_id === item.pending_id)
 
   useEffect(() => {
     if (!live || !book) return
@@ -149,6 +151,7 @@ export default function QuestionCard({ item, env }: Props) {
           <Elicitation request={request} live={live} busy={d.busy} draft={draft} onDraft={onDraft} onAnswer={answer} />
         </>
       )}
+      {item.answerable && routing && <p className="q-routing"><span>{handlingWords(routing.handling)}</span>{routing.reason && <> · <bdi>{routing.reason}</bdi></>}</p>}
       <p className="q-state">
         <span>{d.text}</span>
         {d.note && <span className="q-note">{d.note}</span>}

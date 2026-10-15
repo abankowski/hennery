@@ -659,3 +659,17 @@ describe('answering through the book', () => {
     expect(t.posts()).toHaveLength(2)
   })
 })
+
+it('keeps parent-handled elicitation directly answerable and shows the server fallback reason', async () => {
+  const t = setup()
+  const q = elicitation({ fields: [], form_supported: true })
+  const env: ItemEnv = { sessionId: SESSION, agent: 'Codex', answers: t.book,
+    familyQuestions: [{ pending_id: 'e1', kind: 'elicitation', handling: 'parent_delivered' }] }
+  const view = show(q, env)
+  expect(screen.getByText('Parent is handling', { exact: true })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Decline' })).toBeEnabled()
+  view.again(q, { ...env, familyQuestions: [{ pending_id: 'e1', kind: 'elicitation', handling: 'operator_required', reason: 'parent_closed' }] })
+  expect(screen.getByText('Operator answer required', { exact: true })).toBeInTheDocument()
+  expect(screen.getByText('parent_closed', { exact: true })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Decline' })).toBeEnabled()
+})

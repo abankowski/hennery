@@ -4,7 +4,7 @@
 // The session's menu (Park, Close, Delete) sits at the end of its title row.
 import type { SessionItem } from '../generated/protocol'
 import type { ReactNode } from 'react'
-import type { PlanEntry } from '../generated/view'
+import type { FamilySummary, PlanEntry } from '../generated/view'
 import { agentLabel } from '../lib/agent'
 import { statusOf } from '../lib/status'
 import { basename } from '../lib/time'
@@ -14,7 +14,7 @@ import StepList from './StepList'
 import { reasonWords } from './items/Marker'
 
 /** What the header reads: a list summary or a session's detail. */
-export type HeaderInfo = SessionItem & { question_waits?: boolean }
+export type HeaderInfo = SessionItem & { question_waits?: boolean; operator_attention?: number; parent_handled_questions?: number; family?: FamilySummary }
 
 export function titleOf(info: HeaderInfo | undefined, id: string): string {
   return info?.title || basename(info?.cwd ?? '') || id
@@ -36,6 +36,9 @@ export default function SessionHeader({ id, info, hostName, plan, narrow, menu }
   // the row never disagree.
   const status = info
     ? statusOf({
+        operator_attention: info.operator_attention,
+        parent_handled_questions: info.parent_handled_questions,
+        family: info.family,
         lifecycle: info.lifecycle,
         activity: info.activity,
         question_waits: !!info.question_waits,

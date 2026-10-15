@@ -1,11 +1,9 @@
 // A session's status marker in the list and in the session's header
 // (frontend spec §5; plan 4c decisions 7 and 8): one rule for both. It
-// reads the server's two axes, lifecycle and activity, plus
-// `question_waits` and `presumed_parked`, directly: there is no staleness
-// heuristic and no "actionable" guess (F-9).
+// uses the server's operator attention separately from factual pending
+// questions. Older summaries without counts retain their original marker.
 
-/** The marker's colour: `attn` is the strongest and means only "waiting on
- *  a question"; `fail` is a hollow red ring. */
+/** Operator attention is strongest; `fail` is a hollow red ring. */
 export type Tone = 'attn' | 'run' | 'wait' | 'idle' | 'fail'
 
 export interface Marker {
@@ -20,18 +18,23 @@ export interface StatusInput {
   activity?: string
   question_waits: boolean
   presumed_parked: boolean
+  operator_attention?: number
+  parent_handled_questions?: number
+  family?: { child_counts: { active: number } }
 }
 
 /**
  * The marker for a session.
  *
- * Waiting on a question wins over every lifecycle, so a row's marker always
- * agrees with the waiting count (tab title, header badge), which counts
- * `blocked || question_waits` whatever the lifecycle. The wording is never
- * "needs you": the summary cannot tell an answer already in flight.
+ * Operator work wins over every lifecycle. A parent-handled question and
+ * an accepted answer awaiting delivery remain visible without adding to
+ * the operator badge. Waiting on children describes only an idle parent.
  */
 export function statusOf(s: StatusInput): Marker {
-  if (s.activity === 'blocked' || s.question_waits) return { tone: 'attn', label: 'Waiting on a question', resume: false }
+  if (s.operator_attention !== undefined ? s.operator_attention > 0 : s.activity === 'blocked' || s.question_waits) return { tone: 'attn', label: s.operator_attention !== undefined ? 'Waiting on you' : 'Waiting on a question', resume: false }
+  if ((s.parent_handled_questions ?? 0) > 0) return { tone: 'wait', label: 'Parent is handling', resume: false }
+  if (s.operator_attention === 0 && s.question_waits) return { tone: 'wait', label: 'Answer pending delivery', resume: false }
+  if (s.lifecycle === 'active' && s.activity === 'idle' && (s.family?.child_counts.active ?? 0) > 0) return { tone: 'wait', label: 'Waiting on children', resume: false }
   switch (s.lifecycle) {
     case 'failed':
       return { tone: 'fail', label: 'Failed', resume: false }

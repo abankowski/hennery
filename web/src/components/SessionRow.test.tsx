@@ -20,6 +20,8 @@ function summary(patch: Partial<SessionSummary> = {}): SessionSummary {
     created_at: '2026-10-01T00:00:00.000Z',
     last_event_at: '2026-10-02T10:00:00.000Z',
     question_waits: false,
+    operator_attention: patch.question_waits || patch.activity === 'blocked' ? 1 : 0,
+    parent_handled_questions: 0,
     ...patch,
   }
 }
@@ -74,8 +76,8 @@ describe('SessionRow', () => {
 
   it('marks a session waiting on a question with words', () => {
     render(<SessionRow now={NOW} session={summary({ question_waits: true })} selected={false} />)
-    expect(screen.getByRole('img', { name: 'Waiting on a question' })).toHaveClass('led-attn')
-    expect(screen.getByText('Waiting on a question')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Waiting on you' })).toHaveClass('led-attn')
+    expect(screen.getByText('Waiting on you')).toBeInTheDocument()
   })
 
   it('animates a running session', () => {
@@ -112,4 +114,15 @@ describe('SessionRow', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'Idle' })).toHaveAttribute('title', 'Idle')
   })
+})
+
+it('adds family links outside the session link, preserving native navigation', () => {
+  const family = { revision: 1, parent: { session_id: 'p/1', title: 'Coordinator', agent: 'claude' }, children: [{ session_id: 'c/1', title: 'Worker', agent: 'codex' }], child_counts: { total: 1, active: 1, waiting: 0 }, attention: 0 }
+  render(<SessionRow now={NOW} session={summary({ family })} selected={false} />)
+  const parentLink = screen.getByRole('link', { name: 'Parent: Coordinator' })
+  const childLink = screen.getByRole('link', { name: 'Child: Worker' })
+  expect(parentLink).toHaveAttribute('href', '/sessions/p%2F1')
+  expect(childLink).toHaveAttribute('href', '/sessions/c%2F1')
+  expect(parentLink.closest('.sess')).toBeNull()
+  expect(childLink.closest('.sess')).toBeNull()
 })

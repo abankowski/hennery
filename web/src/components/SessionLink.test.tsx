@@ -29,6 +29,8 @@ function summary(id: string, patch: Partial<SessionSummary> = {}): SessionSummar
     created_at: '2026-10-01T00:00:00.000Z',
     last_event_at: '2026-10-02T10:00:00.000Z',
     question_waits: false,
+    operator_attention: patch.question_waits || patch.activity === 'blocked' ? 1 : 0,
+    parent_handled_questions: 0,
     title: `Task ${id}`,
     ...patch,
   }

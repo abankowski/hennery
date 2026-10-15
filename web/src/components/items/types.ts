@@ -1,7 +1,7 @@
 // What every item renderer is given besides its item: the session it is in,
 // what answers its questions, and the composer's seams (its emptiness, its
 // prefill, sending a turn again).
-import type { Item } from '../../generated/view'
+import type { FamilyQuestion, Item } from '../../generated/view'
 import type { AnswerBook } from '../../store/useAnswer'
 
 export type ItemOf<K extends Item['kind']> = Extract<Item, { kind: K }>
@@ -14,6 +14,8 @@ export interface ItemEnv {
   hatName?: (id: string) => string | undefined
   /** Answers the session's questions; none makes every card read-only. */
   answers?: AnswerBook
+  /** Canonical family routing, read from the selected session family page. */
+  familyQuestions?: FamilyQuestion[]
   /** "Send again" for a turn that was not delivered; absent, none is offered. */
   onSendAgain?: (item: ItemOf<'marker'>) => void
   /** "Answer as a new message" for a question the agent stopped waiting
