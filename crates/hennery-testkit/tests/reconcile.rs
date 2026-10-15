@@ -2655,7 +2655,7 @@ async fn a_blocked_turn_and_its_end_each_queue_one_notice() {
         (notices[0].urgency, notices[0].body.as_str(), notices[0].tag.as_str()),
         (Urgency::High, "needs your answer", session.as_str())
     );
-    assert_eq!(notices[0].url, format!("/sessions/{session}"));
+    assert_eq!(notices[0].url, format!("/sessions/{session}?pending=p1"));
     host.emit(&session, opened("p2", &turn)).await;
     host.emit(
         &session,
