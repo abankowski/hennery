@@ -390,18 +390,26 @@ async fn handle(
                     true,
                 )
             } else {
-                match crate::session_tools::execute(
-                    &state.app,
-                    &identity,
-                    revision,
-                    &call.name,
-                    Value::Object(call.arguments),
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    crate::session_tools::execute(
+                        &state.app,
+                        &identity,
+                        revision,
+                        &call.name,
+                        Value::Object(call.arguments),
+                    ),
                 )
                 .await
                 {
-                    Ok(value) => (value, false),
-                    Err(error) => (
+                    Ok(Ok(value)) => (value, false),
+                    Ok(Err(error)) => (
                         json!({"code":crate::session_tools::error_code(&error),"message":"the session operation was refused"}),
+                        true,
+                    ),
+
+                    Err(_) => (
+                        json!({"code":"request_timeout","message":"retry with the same operation key"}),
                         true,
                     ),
                 }

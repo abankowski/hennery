@@ -1,4 +1,11 @@
 -- Sessions migration 18: delegation commands, dispatch eligibility and receipts.
+ALTER TABLE sessions ADD COLUMN delegated_child INTEGER NOT NULL DEFAULT 0;
+UPDATE sessions SET delegated_child = 1 WHERE EXISTS (SELECT 1 FROM session_families f WHERE f.owner_id = sessions.owner_id AND f.child_id = sessions.id);
+CREATE TRIGGER delegation_child_identity AFTER INSERT ON session_families
+BEGIN UPDATE sessions SET delegated_child = 1 WHERE owner_id = NEW.owner_id AND id = NEW.child_id; END;
+CREATE TRIGGER delegation_child_immutable BEFORE UPDATE OF delegated_child ON sessions
+WHEN OLD.delegated_child = 1 AND NEW.delegated_child <> 1
+BEGIN SELECT RAISE(ABORT,'immutable delegated identity'); END;
 CREATE TABLE session_operations (
     owner_id TEXT NOT NULL, caller_id TEXT NOT NULL, operation_key TEXT NOT NULL,
     operation_id TEXT NOT NULL, digest TEXT NOT NULL, tool TEXT NOT NULL,
@@ -44,8 +51,9 @@ BEGIN
       AND state IN ('queued','waiting_config');
     UPDATE session_attach_evidence SET evidence = NULL
     WHERE owner_id = NEW.owner_id AND session_id = NEW.id;
-    UPDATE session_dispatch_queue SET payload = ''
+    UPDATE session_dispatch_queue SET payload = '', required_config = '{}'
     WHERE owner_id = NEW.owner_id AND (source_id = NEW.id OR target_id = NEW.id) AND NEW.lifecycle = 'deleted';
+    DELETE FROM session_attach_evidence WHERE owner_id = NEW.owner_id AND session_id = NEW.id AND NEW.lifecycle = 'deleted';
 END;
 CREATE TRIGGER delegation_family_end AFTER UPDATE OF detached ON session_families
 WHEN NEW.detached = 1
