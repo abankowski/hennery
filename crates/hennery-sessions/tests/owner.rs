@@ -118,10 +118,13 @@ fn the_owner_id_migration_gives_every_row_the_owner() {
     {
         let conn = rusqlite::Connection::open(&db).unwrap();
         write_world(&conn, &owner, "a");
-        // Back to the store's schema before this plan (version 6): plan
+        // Back to the store's schema before this plan (version 6): D2's
+        // migration (version 18), D1's family migration (version 17), plan
         // 9a's migration (version 13), 10b-iii's (version 11), 5c's (version
         // 10) and 6b's (version 9) undone first, their indexes on `owner_id`
         // included; the events index (version 12) is made again if missing.
+        conn.execute_batch(include_str!("fixtures/undo_delegation.sql"))
+            .unwrap();
         conn.execute_batch(
             "
             DROP TRIGGER family_scope_end;
