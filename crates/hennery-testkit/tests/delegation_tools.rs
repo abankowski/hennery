@@ -1251,3 +1251,91 @@ async fn background_worker_advances_past_offline_page_and_wraps_to_repaired_earl
     assert_eq!(h.status(earlier).await["last_outcome"], "completed");
     h.finish().await;
 }
+
+#[tokio::test]
+async fn background_answer_worker_advances_past_held_page_and_wraps_to_repaired_earlier_answer() {
+    use rusqlite::params;
+    let mut worker = script();
+    worker.asks = vec![FakeAsk::Elicitation];
+    let h = Harness::with_worker(worker, None, false).await;
+    let earlier = h.spawn("answer-earlier", json!({})).await;
+    let earlier = earlier["child_id"].as_str().unwrap();
+    let later = h.spawn("answer-later", json!({})).await;
+    let later = later["child_id"].as_str().unwrap();
+    let (earlier_pending, later_pending) = eventually("both children asking", async || {
+        hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+        let earlier = h
+            .state
+            .store
+            .open_pending(earlier)
+            .unwrap()
+            .into_iter()
+            .find(|p| !p.answered)?;
+        let later = h
+            .state
+            .store
+            .open_pending(later)
+            .unwrap()
+            .into_iter()
+            .find(|p| !p.answered)?;
+        Some((earlier, later))
+    })
+    .await;
+    h.ok("session_answer", json!({"operation_key":"earlier-answer","child_id":earlier,"pending_id":earlier_pending.pending_id,"action":"accept","content":{"name":"answer"}})).await;
+    let mut conn = hennery_kernel::db::open(&h.cwd.join("hennery.db")).unwrap();
+    let revision: i64;
+    {
+        let tx = conn.transaction().unwrap();
+        let owner = h.state.store.owner_id();
+        revision = tx.query_row("SELECT accepted_revision FROM session_operations WHERE owner_id=?1 AND caller_id=?2 AND operation_key='earlier-answer'",params![owner,h.parent],|r|r.get(0)).unwrap();
+        // These accepted rows are held by a changed delegation grant. Fixture
+        // pressure bypasses admission limits; both live answers still use real
+        // parent grants, pending records, host actors and ACP traffic.
+        tx.execute("UPDATE session_operations SET operation_id='000-earlier-answer',accepted_revision=?3 WHERE owner_id=?1 AND caller_id=?2 AND operation_key='earlier-answer'",params![owner,h.parent,revision-1]).unwrap();
+        for i in 0..127 {
+            let pending = format!("held-answer-question-{i:04}");
+            let operation = format!("100-held-answer-{i:04}");
+            tx.execute("INSERT INTO pending(pending_id,session_id,turn_id,kind,option_ids,payload,state,opened_at,owner_id) SELECT ?1,session_id,turn_id,kind,option_ids,payload,'open',opened_at,owner_id FROM pending WHERE owner_id=?2 AND pending_id=?3",params![pending,owner,earlier_pending.pending_id]).unwrap();
+            tx.execute("INSERT INTO answer_queue(owner_id,pending_id,session_id,request_id,answer,submitted_at,delegation_handoff) SELECT owner_id,?1,session_id,?2,answer,submitted_at,0 FROM answer_queue WHERE owner_id=?3 AND pending_id=?4",params![pending,operation,owner,earlier_pending.pending_id]).unwrap();
+            tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,pending_id,request_id,state,accepted_revision) VALUES (?1,?2,?3,?3,'fixture','session_answer',?4,?5,?3,'queued',?6)",params![owner,h.parent,operation,earlier,pending,revision-1]).unwrap();
+        }
+        tx.commit().unwrap();
+    }
+    h.ok("session_answer", json!({"operation_key":"later-answer","child_id":later,"pending_id":later_pending.pending_id,"action":"accept","content":{"name":"answer"}})).await;
+    conn.execute("UPDATE session_operations SET operation_id='999-later-answer' WHERE owner_id=?1 AND caller_id=?2 AND operation_key='later-answer'",params![h.state.store.owner_id(),h.parent]).unwrap();
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM session_operations WHERE owner_id=?1 AND tool='session_answer' AND state='queued' AND operation_id < '999-later-answer'",[h.state.store.owner_id()],|r|r.get::<_,i64>(0)).unwrap(),128);
+    hennery_sessions::delegation_worker::after_startup(&h.state);
+    eventually("eligible answer beyond 128 held answers", async || {
+        (h.state
+            .store
+            .pending_item(&later_pending.pending_id)
+            .unwrap()
+            .unwrap()
+            .delivered
+            == Some(true))
+        .then_some(())
+    })
+    .await;
+    assert_eq!(
+        h.state
+            .store
+            .pending_item(&earlier_pending.pending_id)
+            .unwrap()
+            .unwrap()
+            .delivered,
+        None
+    );
+    conn.execute("UPDATE session_operations SET accepted_revision=?3 WHERE owner_id=?1 AND caller_id=?2 AND operation_key='earlier-answer'",params![h.state.store.owner_id(),h.parent,revision]).unwrap();
+    eventually("repaired earlier answer after cursor wrap", async || {
+        (h.state
+            .store
+            .pending_item(&earlier_pending.pending_id)
+            .unwrap()
+            .unwrap()
+            .delivered
+            == Some(true))
+        .then_some(())
+    })
+    .await;
+    h.finish().await;
+}
