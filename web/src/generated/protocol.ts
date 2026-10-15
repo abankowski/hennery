@@ -53,6 +53,51 @@ export type SetSessionTools = { delegation_enabled: boolean, };
 
 export type SessionFamily = { child_id: string, parent_id: string, root_id: string, hat_id: string, created_event_id: number, detached: boolean, reason: string | null, };
 
+export type ExecutionPolicy = { revision: number,
+/**
+ * Runtime -> profile security option id -> explicitly permitted values.
+ */
+allowed: { [key in string]: { [key in string]: Array<ConfigValue> } }, };
+
+export type SetExecutionPolicy = { allowed: { [key in string]: { [key in string]: Array<ConfigValue> } }, };
+
+export type DelegationLimits = { children: number, starts_per_operator_epoch: number, queued_prompts: number, queued_bytes: number, message_bytes: number, };
+
+export type CapabilitiesResult = { runtimes: Array<string>, catalogs: Array<HostCatalog>, cwd: string, policy: ExecutionPolicy, limits: DelegationLimits, };
+
+export type ChildQuestion = { pending_id: string, kind: PendingKind, operator_required: boolean, answered: boolean,
+/**
+ * The display fold's elicitation question. Permissions expose no schema.
+ */
+question: unknown, };
+
+export type ChildSummary = { child_id: string, lifecycle: string, activity: string | null, queued: number, close_requested: boolean, };
+
+export type ChildList = { children: Array<ChildSummary>, next_cursor: string | null, };
+
+export type ChildStatus = { summary: ChildSummary, requested: SessionConfig, actual: SessionConfig | null, questions: Array<ChildQuestion>, operations: Array<OperationReceipt>, last_outcome: string | null, last_report: string | null, truncated: boolean, reason: string | null, url: string, };
+
+export type PromptFence = { attach_generation: number, config_revision: number, };
+
+export type ConfigCompleteness = "complete" | "partial" | "unknown";
+
+export type ConfigEvidence = { attach_generation: number, config_revision: number, completeness: ConfigCompleteness, actual: SessionConfig, };
+
+export type CatalogFreshness = "fresh" | "stale" | "unknown";
+
+/**
+ * Profile-owned security axes and their baseline allowed values. `mode`
+ * means `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.
+ * Unknown profiles require explicit operator configuration on the collector.
+ */
+export type SecurityClassification = { known: boolean, axes: { [key in string]: Array<ConfigValue> }, };
+
+export type HostCatalog = { agent: string,
+/**
+ * Opaque digest of the configured adapter command/environment and catalog.
+ */
+adapter_revision: string, config_options: unknown[], defaults: SessionConfig, security: SecurityClassification, freshness: CatalogFreshness, };
+
 /**
  * Caller-host capabilities, scoped to the caller's hat and validated cwd.
  */

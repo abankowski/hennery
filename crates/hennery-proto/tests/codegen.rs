@@ -6,9 +6,20 @@ fn delegation_wire_dependencies_are_exported_once() {
     let ts = render_ts();
     let schema: serde_json::Value = serde_json::from_str(&render_schema()).unwrap();
     for name in [
-        "ExecutionPolicy", "SetExecutionPolicy", "DelegationLimits", "CapabilitiesResult",
-        "ChildQuestion", "ChildSummary", "ChildList", "ChildStatus", "PromptFence",
-        "ConfigCompleteness", "ConfigEvidence", "CatalogFreshness", "SecurityClassification", "HostCatalog",
+        "ExecutionPolicy",
+        "SetExecutionPolicy",
+        "DelegationLimits",
+        "CapabilitiesResult",
+        "ChildQuestion",
+        "ChildSummary",
+        "ChildList",
+        "ChildStatus",
+        "PromptFence",
+        "ConfigCompleteness",
+        "ConfigEvidence",
+        "CatalogFreshness",
+        "SecurityClassification",
+        "HostCatalog",
     ] {
         assert_eq!(ts.matches(&format!("export type {name} =")).count(), 1, "{name}");
         assert!(schema["$defs"].get(name).is_some(), "{name}");
