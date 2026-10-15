@@ -17,7 +17,7 @@ class HomebrewWorkflows(unittest.TestCase):
         self.assertEqual(job['name'],'homebrew')
         self.assertIn('homebrew-native',job['needs'])
         native=data['jobs']['homebrew-native']
-        self.assertNotIn('if',native, 'unselected native jobs must succeed as no-ops')
+        self.assertEqual(native['if'], "${{ !cancelled() && needs.assemble.result == 'success' }}")
         self.assertEqual({x['runner'] for x in native['strategy']['matrix']['include']},
                          {'ubuntu-24.04','ubuntu-24.04-arm','macos-15'})
         self.assertIn('homebrew_accept.py',str(native))

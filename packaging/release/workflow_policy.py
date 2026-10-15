@@ -68,6 +68,34 @@ def tap_credential(value):
     return bool(re.search(r"secrets\s*(?:\.\s*release_homebrew_token|\[\s*['\"]release_homebrew_token['\"]\s*\])", str(value), re.I))
 
 
+def optional_job_status(data, name):
+    """Actions propagates skips through ancestors unless an explicit status is used.
+
+    Qualification DAGs may join an optional channel, then continue through
+    several unconditional jobs. Check every descendant, not only direct needs.
+    This lint does not prove the guard's result semantics; production guards
+    are also bound to the secret-free Actions scheduling regression.
+    """
+    jobs = data.get('jobs', {})
+    optional = {key for key, job in jobs.items() if 'if' in job}
+    descendants = set()
+    frontier = set(optional)
+    while frontier:
+        following = set()
+        for key, job in jobs.items():
+            needs = job.get('needs', [])
+            needs = [needs] if isinstance(needs, str) else needs
+            if key not in descendants and frontier.intersection(needs):
+                following.add(key)
+        descendants.update(following)
+        frontier = following
+    for key in sorted(descendants):
+        # A status-looking string literal is not an Actions status function.
+        condition = re.sub(r"'(?:[^']|'')*'|\"(?:[^\"\\]|\\.)*\"", '', str(jobs[key].get('if', '')))
+        if not re.search(r'(?<![\w.])(?:always|cancelled|failure|success)\s*\(', condition):
+            raise ValueError(f'{name}/{key}: optional job ancestor requires an explicit status condition')
+
+
 def privileged(job):
     return tap_credential(job) or any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
         s.get('uses', '').startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) or 'publish.py upload' in s.get('run', '')
@@ -118,6 +146,8 @@ def check(data, name):
         raise ValueError('tap credential must not be workflow-scoped')
     if name == 'release-candidate.yml':
         candidate_channel_jobs(data)
+    if name in ('release-candidate.yml', 'release-scheduling.yml'):
+        optional_job_status(data, name)
     jobs = data.get('jobs', {})
     writers = [j for key, j in jobs.items() if writer(key, dict(j, permissions=j.get('permissions', data.get('permissions', {}))))]
     if writers:

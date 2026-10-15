@@ -1,0 +1,112 @@
+name: release-scheduling
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'packaging/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'packaging/**'
+  workflow_dispatch:
+    inputs:
+      channels:
+        description: Both selections omit the optional crates channel
+        type: choice
+        options: [github, 'github,homebrew']
+        default: github
+permissions: {}
+jobs:
+  # Exercise the real Actions skipped-ancestor scheduler (actions/runner#2205).
+  # Tests bind these guards to release-candidate.yml; no release artifacts,
+  # protected environments, actions, credentials or publication are involved.
+  crates:
+    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',crates,')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: exit 1
+  archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  tag-signature:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  assemble:
+    needs: [archive, crates]
+    if: always() && needs.archive.result == 'success' && (needs.crates.result == 'success' || needs.crates.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  installer:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  homebrew-native:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        channels: [github, 'github,homebrew']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Both channel selections must reach the native job
+        run: echo 'Explicit status permits the skipped optional ancestor'
+      - name: Selected acceptance stand-in
+        if: contains(format(',{0},', matrix.channels), ',homebrew,')
+        run: echo 'Selected Homebrew acceptance reached'
+  homebrew:
+    needs: [assemble, homebrew-native]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', 'github,homebrew'), ',homebrew,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  homebrew-unselected:
+    needs: [assemble, homebrew-native]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', 'github'), ',homebrew,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: exit 1
+  retain:
+    needs: [assemble, installer, tag-signature]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  assert-scheduling:
+    needs: [crates, archive, tag-signature, assemble, installer, homebrew-native, homebrew, homebrew-unselected, retain]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Fail if any expected acceptance or no-op was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          expected = {
+              'crates': 'skipped', 'archive': 'success', 'tag-signature': 'success',
+              'assemble': 'success', 'installer': 'success', 'homebrew-native': 'success',
+              'homebrew': 'success', 'homebrew-unselected': 'skipped', 'retain': 'success',
+          }
+          actual = {key: value['result'] for key, value in json.loads(os.environ['RESULTS']).items()}
+          if actual != expected:
+              raise SystemExit(f'Scheduling regression: expected {expected}, got {actual}')
+          print('Skipped optional crates: github and github,homebrew descendants passed')
+          PY
