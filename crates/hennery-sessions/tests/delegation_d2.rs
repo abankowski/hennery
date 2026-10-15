@@ -559,7 +559,8 @@ fn collector_restart_preserves_receipts_and_operation_key_namespace_across_tools
                     child: &child,
                     pending: "missing",
                     answer: &answer()
-                }
+                },
+                &Hub::new(),
             )
             .unwrap_err()
             .to_string()
@@ -929,6 +930,7 @@ fn ordinary_answers_share_one_slot_under_four_worker_race() {
                                 pending: "question",
                                 answer: &answer(),
                             },
+                            &Hub::new(),
                         ) {
                             Ok(_) => 1,
                             Err(e) => {
@@ -975,6 +977,7 @@ fn parent_close_frees_unhanded_answer_without_stealing_operator_slot() {
                 pending: "question",
                 answer: &answer(),
             },
+            &Hub::new(),
         )
         .unwrap();
     assert!(w.store.answers_to_send("host").unwrap().is_empty());
@@ -1004,7 +1007,8 @@ fn permissions_are_operator_only_and_status_contains_no_answer_capable_schema() 
                     child: "child",
                     pending: "permission",
                     answer: &answer()
-                }
+                },
+                &Hub::new(),
             )
             .unwrap_err()
             .to_string(),
@@ -1041,6 +1045,7 @@ fn accepted_answer_is_not_delivered_until_factual_host_verdict_and_survives_sour
                 pending: "question",
                 answer: &answer(),
             },
+            &Hub::new(),
         )
         .unwrap();
     let (h, mut rx) = connected();
@@ -1430,6 +1435,7 @@ fn disabling_and_reenabling_grant_cancels_queue_without_reviving_old_token() {
                 pending: "grant-question",
                 answer: &answer(),
             },
+            &Hub::new(),
         )
         .unwrap();
     let (h, mut rx) = connected();

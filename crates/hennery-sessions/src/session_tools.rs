@@ -167,6 +167,7 @@ pub async fn execute(
                     pending: &args.pending_id,
                     answer: &answer,
                 },
+                &state.hub,
             )?)?)
         }
         ToolCall::Status(args) => Ok(serde_json::to_value(state.store.child_status(

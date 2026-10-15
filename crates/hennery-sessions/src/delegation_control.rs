@@ -29,6 +29,7 @@ impl Store {
         revision: i64,
         digest: &str,
         input: &DelegatedAnswer<'_>,
+        hub: &Hub,
     ) -> Result<OperationReceipt> {
         let DelegatedAnswer {
             key,
@@ -74,6 +75,8 @@ impl Store {
         )?;
         let receipt = self.receipt_in(&tx, caller.session_id(), key)?.expect("inserted");
         tx.commit()?;
+        drop(conn);
+        hub.publish(queued.event);
         Ok(receipt)
     }
     pub fn queue_child_close(
@@ -105,6 +108,21 @@ impl Store {
         tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,request_id,state)
             VALUES (?1,?2,?3,?4,?5,'session_close',?6,?4,?7)",params![self.owner_id(),caller.session_id(),key,operation,digest,child,if lifecycle=="closed" {"completed"}else{"awaiting_reconciliation"}])?;
         tx.execute("UPDATE sessions SET close_requested = 1 WHERE owner_id = ?1 AND id = ?2 AND lifecycle NOT IN ('closed','deleted')",params![self.owner_id(),child])?;
+        let event = if lifecycle != "closed" {
+            Some(crate::store::collector_event(
+                &tx,
+                self.owner_id(),
+                child,
+                "operator_closed",
+                serde_json::json!({"origin": InputOrigin::Parent {
+                    session_id: caller.session_id().into(),
+                    operation_id: operation.clone(),
+                }}),
+                &crate::store::now(),
+            )?)
+        } else {
+            None
+        };
         let receipt = self.receipt_in(&tx, caller.session_id(), key)?.expect("inserted");
         tx.commit()?;
         let handed = hub.notify(
@@ -115,14 +133,25 @@ impl Store {
             },
         );
         drop(conn);
-        if !handed || !matches!(lifecycle.as_str(), "active" | "starting") {
+        let closed = if !handed || !matches!(lifecycle.as_str(), "active" | "starting") {
             self.close_delegated_unattached(
                 child,
                 &crate::store::Unattached {
                     lifecycle: lifecycle.clone(),
                     presumed_parked: presumed,
                 },
-            )?;
+            )
+        } else {
+            Ok(Vec::new())
+        };
+        // Publish after the fallback commits, so a dashboard wake-up observes
+        // its final lifecycle even when closing an idle parked child emits
+        // no additional event. The durable intent is published on error too.
+        if let Some(event) = event {
+            hub.publish(event);
+        }
+        for event in closed? {
+            hub.publish(event);
         }
         Ok(receipt)
     }

@@ -9,6 +9,7 @@ use hennery_kernel::hosts::{Enrollment, Hosts};
 use hennery_kernel::operator::{Operator, SetupOutcome};
 use hennery_kernel::secret::unix_now;
 use hennery_proto::frames::{McpIsolation, McpServer, SessionBody};
+use hennery_sessions::hub::Hub;
 use hennery_sessions::store::{McpContext, Store};
 use std::sync::Arc;
 struct World {
@@ -580,6 +581,7 @@ fn d2_answers_reuse_the_operator_slot_but_permissions_require_operator() {
                 pending: "ordinary",
                 answer: &answer,
             },
+            &Hub::new(),
         )
         .unwrap();
     assert_eq!(
@@ -594,7 +596,8 @@ fn d2_answers_reuse_the_operator_slot_but_permissions_require_operator() {
                     child: "child",
                     pending: "ordinary",
                     answer: &answer
-                }
+                },
+                &Hub::new(),
             )
             .unwrap()
     );
@@ -613,7 +616,8 @@ fn d2_answers_reuse_the_operator_slot_but_permissions_require_operator() {
                     child: "child",
                     pending: "permission",
                     answer: &answer
-                }
+                },
+                &Hub::new(),
             )
             .unwrap_err()
             .to_string()

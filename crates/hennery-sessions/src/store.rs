@@ -856,7 +856,7 @@ pub(crate) fn now() -> String {
 /// Write a collector-originated event (`host_seq` NULL, ACP core §8), for
 /// a session of `owner`'s only: for any other, or a tombstone (plan 9a
 /// A1), it fails and writes nothing.
-fn collector_event(
+pub(crate) fn collector_event(
     tx: &Transaction<'_>,
     owner: &str,
     session_id: &str,
