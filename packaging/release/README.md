@@ -129,18 +129,31 @@ candidate and audit objects until every approved channel/public path completes.
 Actions artifacts are convenience copies, never the retention authority.
 
 Candidate acceptance uses the signed inventory's selected channels. The stable
-GitHub job names `crates` and `ghcr` are registered in
-`gate.CANDIDATE_CHANNEL_JOBS`: each selected channel requires exactly one
+GitHub job names `crates` and `ghcr` are reserved in the explicit channel to
+owning YAML job ID registry `workflow_policy.CHANNEL_JOB_IDS`: each selected channel requires exactly one
 completed, successful job. Only an unselected registered job may be absent or
 completed with conclusion `skipped`; failures, pending jobs, duplicate registered
 names and skipped ordinary jobs refuse. Required CI/build/Nix/release-test
 workflows retain the strict rule that every job succeeds.
 
-R4 integration hook: name the aggregate candidate acceptance job `ghcr` exactly,
+CI and the runtime gate validate ownership using the same policy. The gate
+reads `.github/workflows/release-candidate.yml` at the exact signed source SHA
+through the read-only contents API, with no branch-tip fallback. Only the owning
+YAML job ID may use its reserved channel display name; that name must be literal
+and the owner cannot be a matrix job. Ordinary jobs cannot claim a reserved name.
+Dynamic/expression names, display collisions and duplicate YAML keys refuse.
+Missing or malformed workflow evidence also refuses before optional exemptions.
+
+R4 integration hook: `ghcr -> ghcr` is registered now, but the current tagged
+workflow has no owning `ghcr` job, so the gate keeps GHCR unselectable. Add the
+aggregate acceptance job with YAML ID and literal display name `ghcr`,
 run it whenever `ghcr` is selected, and make all platform acceptance work its
 dependencies. A matrix should feed that aggregate job. The gate already rejects
 selected GHCR if this job is missing, skipped or failed; an unselected GHCR job
-can be skipped without blocking a GitHub-only release. Keep the full candidate
+can be skipped without blocking a GitHub-only release. A further channel's owner
+is one explicit registry entry, `channel: owning-job-id`; its display name must
+be that channel. Any other candidate jobs, including platform matrix work, must
+succeed and receive no optional-channel exemption. Keep the full candidate
 assembly and held inventory bound to the same selected channel set.
 
 Crates gate receipts have a fresh UUID in their basename for every invocation,

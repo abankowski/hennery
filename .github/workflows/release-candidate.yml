@@ -163,7 +163,7 @@ jobs:
           if-no-files-found: error
           path: target/distrib/
   crates:
-    # Stable name registered in gate.CANDIDATE_CHANNEL_JOBS. R4 uses "ghcr".
+    # Channel -> owning job ID: workflow_policy.CHANNEL_JOB_IDS. R4 uses "ghcr".
     name: crates
     needs: web-ui
     if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',crates,')

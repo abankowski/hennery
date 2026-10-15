@@ -5,6 +5,7 @@ The Python API is deliberately usable offline. The CLI ALWAYS fetches live
 platform evidence; it never accepts a snapshot supplied by a candidate.
 """
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -14,12 +15,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import workflow_policy
+
 REPOSITORY = 'marcinwadon/hennery'
 REQUIRED_WORKFLOWS = ('.github/workflows/ci.yml', '.github/workflows/build.yml', '.github/workflows/nix.yml', '.github/workflows/release-tests.yml')
 CHANNELS = {'github', 'crates', 'ghcr', 'homebrew'}
-# Stable GitHub job names for optional candidate acceptance. R4 must name its
-# single aggregate acceptance job "ghcr"; matrix work must feed that job.
-CANDIDATE_CHANNEL_JOBS = {'crates': 'crates', 'ghcr': 'ghcr'}
+CHANNEL_JOB_IDS = workflow_policy.CHANNEL_JOB_IDS
 TARGETS = {'aarch64-apple-darwin', 'aarch64-unknown-linux-musl', 'x86_64-unknown-linux-musl'}
 
 
@@ -204,10 +205,25 @@ class GitHub:
         import tag_signature
         return tag_signature.verify(inventory['tag'], inventory['source_sha'], object_sha)
 
+    def candidate_channels(self, source_sha):
+        # The jobs API has display names, not YAML job IDs. Establish their
+        # ownership from the workflow at the signed commit, never a branch tip.
+        require(re.fullmatch('[0-9a-f]{40}', source_sha), 'invalid workflow source SHA')
+        path = '.github/workflows/release-candidate.yml'
+        payload = self.get('/contents/' + path + '?ref=' + source_sha)
+        try:
+            require(payload['type'] == 'file' and payload['path'] == path and payload['encoding'] == 'base64'
+                    and isinstance(payload.get('content'), str), 'unexpected candidate workflow content')
+            raw = base64.b64decode(''.join(payload['content'].splitlines()), validate=True)
+            return workflow_policy.candidate_channel_jobs(workflow_policy.load_workflow(raw))
+        except (ValueError, KeyError, TypeError) as error:
+            raise Refused(f'candidate workflow job identity invalid: {error}') from error
+
     def evidence(self, inventory, context, settings_audit):
         tag = self.get('/git/ref/tags/' + urllib.parse.quote(inventory['tag'], safe=''))
         obj = self.get('/git/tags/' + tag['object']['sha']) if tag.get('object', {}).get('type') == 'tag' else None
         signature = self.verify_tag(inventory, tag['object']['sha'])
+        channel_jobs = self.candidate_channels(inventory['source_sha'])
         checks = self.pages('/actions/runs?head_sha=' + inventory['source_sha'], 'workflow_runs')
         # Workflow success alone can hide skipped acceptance jobs. All jobs in
         # each latest qualifying workflow must have succeeded, never skipped.
@@ -221,11 +237,12 @@ class GitHub:
         candidate_jobs = self.pages(f"/actions/runs/{candidate_run['id']}/attempts/{candidate_run['run_attempt']}/jobs", 'jobs')
         reason = 'candidate has skipped/missing/unsuccessful acceptance or retention jobs'
         require(candidate_jobs, reason)
-        for name, channel in CANDIDATE_CHANNEL_JOBS.items():
-            matches = [j for j in candidate_jobs if j.get('name') == name]
+        for channel in CHANNEL_JOB_IDS:
+            matches = [j for j in candidate_jobs if j.get('name') == channel]
+            require(not matches or channel in channel_jobs, reason)
             require(len(matches) == 1 if channel in inventory['channels'] else len(matches) <= 1, reason)
         for job in candidate_jobs:
-            channel = CANDIDATE_CHANNEL_JOBS.get(job.get('name'))
+            channel = job.get('name') if job.get('name') in channel_jobs else None
             unselected = channel is not None and channel not in inventory['channels']
             require(job.get('status') == 'completed' and (job.get('conclusion') == 'success'
                     or (unselected and job.get('conclusion') == 'skipped')), reason)
