@@ -22,7 +22,10 @@ use serde_json::{Value, json};
 use std::{
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -165,6 +168,7 @@ struct Harness {
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     host: tokio::task::JoinHandle<anyhow::Result<()>>,
     server: tokio::task::JoinHandle<()>,
+    approve_builtin: AtomicBool,
 }
 impl Drop for Harness {
     fn drop(&mut self) {
@@ -290,6 +294,7 @@ impl Harness {
             shutdown: Some(shutdown),
             host,
             server,
+            approve_builtin: AtomicBool::new(true),
         };
         h.wait("host ready", || h.state.hub.is_ready(HOST).then_some(()))
             .await?;
@@ -325,7 +330,7 @@ impl Harness {
         let result = tokio::time::timeout(BOUND, async {
             loop {
                 if let Some(value) = predicate() {
-                    println!("{}", json!({"phase":phase,"passed":true}));
+                    println!("{}", json!({"phase":phase}));
                     return Ok(value);
                 }
                 if self
@@ -337,6 +342,16 @@ impl Harness {
                 {
                     self.diagnostics(phase)?;
                     bail!("actual adapter tools/call was refused at protocol parsing");
+                }
+                if phase == "genuine child elicitation"
+                    && let Some(child) = self.child()
+                {
+                    let events = self.state.store.events(&child, 0, 1000)?;
+                    if events.iter().any(|event| event.kind == "turn_ended")
+                        && !events.iter().any(|event| event.kind == "pending_opened")
+                    {
+                        bail!("child completed without a genuine ACP elicitation; prose is not answer evidence");
+                    }
                 }
                 self.approve_parent_tools().await?;
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -355,7 +370,7 @@ impl Harness {
         }
     }
     async fn approve_parent_tools(&self) -> Result<()> {
-        if self.parent.is_empty() {
+        if self.parent.is_empty() || !self.approve_builtin.load(Ordering::SeqCst) {
             return Ok(());
         }
         for question in self.state.store.open_pending(&self.parent)? {
@@ -430,6 +445,13 @@ impl Harness {
             "{}",
             json!({"phase":phase,"error_classes":errors,"errors":messages,"event_kinds":kinds,"mcp":*self.trace.lock().unwrap()})
         );
+        if let Some(child) = self.child() {
+            let events = self.state.store.events(&child, 0, 1000)?;
+            println!(
+                "{}",
+                json!({"phase":"child_diagnostics","assistant":scrub_error(&assistant_text(&events))?,"event_kinds":events.iter().map(|event|event.kind.as_str()).collect::<Vec<_>>()})
+            );
+        }
         Ok(())
     }
     async fn catalog(&self, agent: &str) -> Result<HostCatalog> {
@@ -482,9 +504,569 @@ impl Harness {
         self.state.shutdown.cancel();
         Ok(())
     }
+    async fn action(&self, session: &str, action: &str) -> Result<()> {
+        let response = self
+            .client
+            .post(format!("{}/api/sessions/{session}/{action}", self.url))
+            .send()
+            .await?;
+        ensure!(response.status().is_success(), "{action} HTTP {}", response.status());
+        Ok(())
+    }
+    async fn set_axis(&self, session: &str, id: &str, value: &str) -> Result<()> {
+        let response = self
+            .client
+            .post(format!("{}/api/sessions/{session}/config", self.url))
+            .json(&json!({"config_id":id,"value":value}))
+            .send()
+            .await?;
+        ensure!(
+            response.status() == reqwest::StatusCode::ACCEPTED,
+            "config switch HTTP {}",
+            response.status()
+        );
+        ensure!(
+            self.state
+                .store
+                .catalog(session)?
+                .context("actual catalog after switch")?
+                .current
+                .axes
+                .get(id)
+                == Some(&hennery_proto::frames::ConfigValue::Id(value.into())),
+            "config switch was not actually read back"
+        );
+        Ok(())
+    }
+    fn question(
+        &self,
+        session: &str,
+        after: i64,
+        kind: hennery_proto::frames::PendingKind,
+    ) -> Option<hennery_proto::rest::PendingItem> {
+        self.state
+            .store
+            .events(session, after, 1000)
+            .ok()?
+            .iter()
+            .filter(|event| event.kind == "pending_opened")
+            .filter_map(|event| event.body["pending_id"].as_str())
+            .filter_map(|id| self.state.store.pending_item(id).ok().flatten())
+            .find(|question| question.kind == kind)
+    }
+    async fn question_for_turn(
+        &self,
+        session: &str,
+        turn: &str,
+        after: i64,
+        kind: hennery_proto::frames::PendingKind,
+        phase: &str,
+    ) -> Result<hennery_proto::rest::PendingItem> {
+        self.wait(phase, || {
+            if let Some(question) = self.question(session, after, kind) {
+                return Some(Ok(question));
+            }
+            self.state.store.ended_turn_outcome(turn).ok().flatten().map(|outcome| {
+                Err(anyhow::anyhow!(
+                    "provider turn {outcome:?} without the required genuine question"
+                ))
+            })
+        })
+        .await?
+    }
+    async fn idle(&self, session: &str) -> Result<()> {
+        self.wait("session idle",||{
+            let row = self.state.store.find_session(session).ok().flatten()?;
+            if row.lifecycle != "active" || row.activity.as_deref() != Some("idle") || row.open_turn_id.is_some() { return None; }
+            let conn = hennery_kernel::db::open(&self.dir.path().join("hennery.db")).ok()?;
+            let quiet: bool = conn.query_row("SELECT NOT EXISTS(SELECT 1 FROM delegation_notices WHERE owner_id=?1 AND parent_id=?2 AND state IN ('parent_queued','waiting_config','awaiting_reconciliation'))",rusqlite::params![self.state.store.owner_id(),session],|row|row.get(0)).ok()?;
+            quiet.then_some(())
+        }).await
+    }
+    async fn answer_permission(
+        &self,
+        session: &str,
+        question: &hennery_proto::rest::PendingItem,
+        allow: bool,
+    ) -> Result<()> {
+        ensure!(
+            question.kind == hennery_proto::frames::PendingKind::Permission,
+            "permission only"
+        );
+        let kind = if allow { "allow_once" } else { "reject_once" };
+        let option = question.payload["options"]
+            .as_array()
+            .and_then(|options| options.iter().find(|option| option["kind"] == kind))
+            .and_then(|option| option["optionId"].as_str())
+            .context("expected one-shot permission option")?;
+        let response = self
+            .client
+            .post(format!(
+                "{}/api/sessions/{session}/pending/{}/answer",
+                self.url, question.pending_id
+            ))
+            .json(&json!({"option_id":option}))
+            .send()
+            .await?;
+        ensure!(
+            response.status() == reqwest::StatusCode::ACCEPTED,
+            "operator permission HTTP {}",
+            response.status()
+        );
+        self.wait("operator permission delivered", || {
+            self.state
+                .store
+                .pending_item(&question.pending_id)
+                .ok()
+                .flatten()
+                .filter(|pending| pending.delivered == Some(true))
+        })
+        .await?;
+        Ok(())
+    }
+    fn token_hash(&self, session: &str) -> Result<Option<String>> {
+        Ok(hennery_kernel::db::open(&self.dir.path().join("hennery.db"))?
+            .query_row(
+                "SELECT token_hash FROM gw_session_tokens WHERE owner_id=?1 AND session_id=?2 AND revoked_at IS NULL",
+                rusqlite::params![self.state.store.owner_id(), session],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+    fn capture(&self, child: &str) -> Result<()> {
+        let Ok(file) = std::env::var("HENNERY_D4_CAPTURE") else {
+            return Ok(());
+        };
+        let mut events = self.state.store.events(child, 0, 1000)?;
+        for event in &mut events {
+            scrub_capture(&mut event.body);
+        }
+        let mut text = String::new();
+        for event in events {
+            text.push_str("event: event\ndata: ");
+            text.push_str(&serde_json::to_string(&event)?);
+            text.push_str("\n\n");
+        }
+        let root = self.dir.path().canonicalize()?.display().to_string();
+        text = redact_credentials(&text)?
+            .replace(&root, "/tmp/smoke")
+            .replace(&self.dir.path().display().to_string(), "/tmp/smoke")
+            .replace(&root.replace('/', "-"), "-tmp-smoke")
+            .replace(&self.dir.path().display().to_string().replace('/', "-"), "-tmp-smoke");
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(file)?;
+        std::io::Write::write_all(&mut output, text.as_bytes())?;
+        Ok(())
+    }
+    async fn extended(&self, child: &str, child_runtime: &str, child_pid: u32) -> Result<()> {
+        use hennery_proto::frames::PendingKind;
+        self.idle(child).await?;
+        self.idle(&self.parent).await?;
+        if child_runtime == "codex" {
+            self.set_axis(child, "collaboration_mode", "default").await?;
+        }
+        let path = self.dir.path().canonicalize()?.join("permission-denied.txt");
+        let after = self.state.store.max_event_id()?;
+        let execution = json!({"cmd":format!("printf test > '{}'",path.display()),"sandbox_permissions":"require_escalated","justification":"D4 scratch operator-denial acceptance"});
+        let turn = self.prompt(child,&format!("New operator acceptance task, superseding the earlier no-shell restriction only for this scratch command: call exec_command with exactly these arguments: {execution}. You MUST request real operator approval through the tool; do not describe or simulate it. Do not change mode or policy or write by another means. The operator will deny this once. After denial do not retry and reply PERMISSION_DENIED_OK.")).await?;
+        let permission = self
+            .question_for_turn(child, &turn, after, PendingKind::Permission, "genuine child permission")
+            .await?;
+        self.wait("permission routes to operator", || {
+            self.state
+                .store
+                .operator_attention(None, "")
+                .ok()?
+                .into_iter()
+                .find(|attention| attention.pending_id.as_deref() == Some(&permission.pending_id))
+        })
+        .await?;
+        ensure!(!permission.answered, "parent must not answer a permission");
+        self.answer_permission(child, &permission, false).await?;
+        self.wait("denied child turn ends", || {
+            self.state.store.ended_turn_outcome(&turn).ok().flatten()
+        })
+        .await?;
+        ensure!(!path.exists(), "operator denial must prevent the edit");
+        println!("{}", json!({"case":"operator_permission_fallback","passed":true}));
+
+        self.idle(child).await?;
+        self.idle(&self.parent).await?;
+        self.approve_builtin.store(false, Ordering::SeqCst);
+        let after = self.state.store.max_event_id()?;
+        let busy = self.prompt(&self.parent,"Call session_list exactly once using the hennery MCP tool, then reply BUSY_RELEASED. Do not call any other tools.").await?;
+        let held = self
+            .question_for_turn(
+                &self.parent,
+                &busy,
+                after,
+                PendingKind::Permission,
+                "parent busy at real MCP approval",
+            )
+            .await?;
+        let updates: Vec<_> = self
+            .state
+            .store
+            .events(&self.parent, 0, 1000)?
+            .into_iter()
+            .filter_map(|event| event.body.pointer("/payload/update").cloned())
+            .collect();
+        ensure!(
+            builtin_permission(&held.payload, &updates),
+            "busy boundary must be a real known built-in call"
+        );
+        let report_turn = self
+            .prompt(child, "Reply exactly CHILD_BUSY_REPORT without using tools.")
+            .await?;
+        self.wait("busy child report source", || {
+            self.state.store.ended_turn_outcome(&report_turn).ok().flatten()
+        })
+        .await?;
+        self.wait("report queued while parent busy",||{
+            let conn = hennery_kernel::db::open(&self.dir.path().join("hennery.db")).ok()?;
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM delegation_notices WHERE owner_id=?1 AND child_id=?2 AND source_turn=?3 AND state='parent_queued')",rusqlite::params![self.state.store.owner_id(),child,report_turn],|row|row.get::<_,bool>(0)).ok()?.then_some(())
+        }).await?;
+        ensure!(
+            self.state
+                .store
+                .find_session(&self.parent)?
+                .context("parent")?
+                .open_turn_id
+                .as_deref()
+                == Some(&busy),
+            "notice must not overlap the active parent turn"
+        );
+        self.answer_permission(&self.parent, &held, true).await?;
+        self.approve_builtin.store(true, Ordering::SeqCst);
+        self.wait("busy report delivered after parent release",||{
+            let conn = hennery_kernel::db::open(&self.dir.path().join("hennery.db")).ok()?;
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM delegation_notices WHERE owner_id=?1 AND child_id=?2 AND source_turn=?3 AND state='parent_delivered')",rusqlite::params![self.state.store.owner_id(),child,report_turn],|row|row.get::<_,bool>(0)).ok()?.then_some(())
+        }).await?;
+        println!("{}", json!({"case":"busy_parent_report_delivery","passed":true}));
+
+        self.idle(child).await?;
+        self.idle(&self.parent).await?;
+        if child_runtime == "codex" {
+            self.set_axis(child, "collaboration_mode", "plan").await?;
+        }
+        let token = self.token_hash(&self.parent)?.context("parent current token")?;
+        self.action(&self.parent, "park").await?;
+        ensure!(
+            self.state
+                .store
+                .find_session(&self.parent)?
+                .context("parked parent")?
+                .lifecycle
+                == "parked",
+            "parent must be genuinely parked"
+        );
+        ensure!(
+            self.token_hash(&self.parent)?.is_none(),
+            "park must revoke the old token"
+        );
+        let after = self.state.store.max_event_id()?;
+        let turn = self.prompt(child, question_brief(child_runtime)).await?;
+        let question = self
+            .question_for_turn(
+                child,
+                &turn,
+                after,
+                PendingKind::Elicitation,
+                "parked-parent child elicitation",
+            )
+            .await?;
+        self.wait("parked parent answers after automatic resume", || {
+            self.state
+                .store
+                .pending_item(&question.pending_id)
+                .ok()
+                .flatten()
+                .filter(|pending| pending.delivered == Some(true))
+        })
+        .await?;
+        ensure!(
+            self.token_hash(&self.parent)?.is_some_and(|rotated| rotated != token),
+            "automatic resume must rotate the session token"
+        );
+        let resumed = self.state.store.events(&self.parent, after, 1000)?;
+        let first_prompt = resumed
+            .iter()
+            .find(|event| event.kind == "user_turn")
+            .context("resumed notice prompt")?;
+        ensure!(
+            resumed.iter().any(|event| event.event_id < first_prompt.event_id
+                && event.body.pointer("/indexed/config_evidence/completeness") == Some(&json!("complete"))),
+            "fresh resume config evidence must precede notice prompt"
+        );
+        println!(
+            "{}",
+            json!({"case":"parked_parent_resume_config_token_rotation","passed":true})
+        );
+
+        let old = self.state.hub.routable_conn(HOST).context("current host connection")?;
+        ensure!(
+            self.state.hub.disconnect_and_wait(HOST, Duration::from_secs(30)).await,
+            "scratch collector socket did not close"
+        );
+        self.wait("collector-side reconnect and reconciliation", || {
+            self.state
+                .hub
+                .routable_conn(HOST)
+                .filter(|connection| *connection != old)
+                .filter(|_| self.state.hub.is_ready(HOST))
+        })
+        .await?;
+        println!(
+            "{}",
+            json!({"case":"collector_socket_reconnect","passed":true,"collector_process_restart":false})
+        );
+
+        self.idle(child).await?;
+        self.idle(&self.parent).await?;
+        ensure!(
+            node_pids()?.contains(&child_pid),
+            "child adapter PID must still belong directly to this test"
+        );
+        let after = self.state.store.max_event_id()?;
+        // Only the node process started after this test's parent adapter was
+        // recorded. Its supervisor exercises the real crash/loss/coalescing path.
+        ensure!(
+            unsafe { libc::kill(i32::try_from(child_pid)?, libc::SIGKILL) } == 0,
+            "kill own child adapter"
+        );
+        self.wait("real child adapter failure", || {
+            self.state
+                .store
+                .find_session(child)
+                .ok()
+                .flatten()
+                .filter(|row| row.lifecycle == "parked" || row.lifecycle == "failed")
+        })
+        .await?;
+        self.wait("child failure produces a durable notice",||{
+            let conn = hennery_kernel::db::open(&self.dir.path().join("hennery.db")).ok()?;
+            conn.query_row("SELECT COUNT(*) = 1 FROM delegation_notices WHERE owner_id=?1 AND child_id=?2 AND source_event_id>?3 AND kind='session_unavailable'",rusqlite::params![self.state.store.owner_id(),child,after],|row|row.get::<_,bool>(0)).ok()?.then_some(())
+        }).await?;
+        println!("{}", json!({"case":"actual_child_adapter_failure","passed":true}));
+
+        self.idle(&self.parent).await?;
+        self.action(&self.parent, "close").await?;
+        ensure!(
+            self.state
+                .store
+                .find_session(&self.parent)?
+                .context("closed parent")?
+                .lifecycle
+                == "closed",
+            "parent must actually close"
+        );
+        self.action(child, "resume").await?;
+        self.idle(child).await?;
+        let after = self.state.store.max_event_id()?;
+        let turn = self.prompt(child, question_brief(child_runtime)).await?;
+        let question = self
+            .question_for_turn(
+                child,
+                &turn,
+                after,
+                PendingKind::Elicitation,
+                "closed-parent child elicitation",
+            )
+            .await?;
+        self.wait("closed-parent question falls back to operator", || {
+            self.state
+                .store
+                .operator_attention(None, "")
+                .ok()?
+                .into_iter()
+                .find(|attention| attention.pending_id.as_deref() == Some(&question.pending_id))
+        })
+        .await?;
+        ensure!(
+            self.state
+                .store
+                .find_session(&self.parent)?
+                .context("closed parent after fallback")?
+                .lifecycle
+                == "closed",
+            "fallback must not reopen the parent"
+        );
+        println!("{}", json!({"case":"closed_parent_operator_fallback","passed":true}));
+        Ok(())
+    }
+}
+
+fn node_pids() -> Result<Vec<u32>> {
+    let output = std::process::Command::new("/bin/ps")
+        .args(["-Ao", "pid=,ppid=,comm="])
+        .output()?;
+    ensure!(output.status.success(), "inspect own adapter PIDs");
+    Ok(String::from_utf8(output.stdout)?
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            let parent: u32 = fields.next()?.parse().ok()?;
+            let binary = fields.next()?;
+            (parent == std::process::id() && Path::new(binary).file_name()?.to_str()? == "node").then_some(pid)
+        })
+        .collect())
+}
+
+fn process_token_exposure() -> Result<Vec<Value>> {
+    let output = std::process::Command::new("/bin/ps")
+        .args(["-Ao", "pid=,ppid=,comm="])
+        .output()?;
+    ensure!(output.status.success(), "inspect own process tree");
+    let rows: Vec<(u32, u32, String)> = String::from_utf8(output.stdout)?
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((
+                fields.next()?.parse().ok()?,
+                fields.next()?.parse().ok()?,
+                fields.next()?.to_owned(),
+            ))
+        })
+        .collect();
+    let mut own = vec![std::process::id()];
+    loop {
+        let before = own.len();
+        for (pid, parent, _) in &rows {
+            if own.contains(parent) && !own.contains(pid) {
+                own.push(*pid);
+            }
+        }
+        if own.len() == before {
+            break;
+        }
+    }
+    let mut result = vec![];
+    for (pid, _, binary) in rows {
+        if !own.contains(&pid)
+            || !Path::new(&binary)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| matches!(name, "node" | "codex" | "claude"))
+        {
+            continue;
+        }
+        let output = std::process::Command::new("/bin/ps")
+            .args(["-ww", "-p", &pid.to_string(), "-o", "command="])
+            .output()?;
+        if !output.status.success() {
+            continue;
+        }
+        let arguments = String::from_utf8(output.stdout)?;
+        let role = if arguments.contains("@agentclientprotocol/claude-agent-acp/") {
+            "claude_adapter"
+        } else if arguments.contains("@agentclientprotocol/codex-acp/") {
+            "codex_adapter"
+        } else {
+            Path::new(&binary)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("runtime")
+        };
+        // Raw argv never leaves this function. Only presence booleans are evidence.
+        result.push(json!({"process":role,"bearer_in_argv":arguments.to_ascii_lowercase().contains("bearer "),"authorization_header_in_argv":arguments.to_ascii_lowercase().contains("authorization")}));
+    }
+    Ok(result)
+}
+
+fn scrub_capture(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                let key = key.to_ascii_lowercase();
+                if key.contains("authorization")
+                    || key.contains("token")
+                    || matches!(
+                        key.as_str(),
+                        "headers" | "http_headers" | "cookie" | "set-cookie" | "api_key"
+                    )
+                {
+                    *value = json!("[redacted]");
+                } else {
+                    scrub_capture(value);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                scrub_capture(value);
+            }
+        }
+        Value::String(text) if text.to_ascii_lowercase().contains("bearer") => *value = json!("[redacted bearer]"),
+        _ => {}
+    }
+}
+
+#[test]
+fn captured_acp_removes_headers_and_bearers_before_retention() {
+    let mut value = json!({"headers":[{"name":"Authorization","value":"private"}],"nested":{"Authorization":"private","access_token":"private","note":"Bearer private"},"safe":"CHILD_ACCEPTANCE_OK"});
+    scrub_capture(&mut value);
+    assert!(!value.to_string().contains("private"));
+    assert_eq!(value["safe"], "CHILD_ACCEPTANCE_OK");
+}
+
+#[test]
+fn recorded_live_schema_answer_preserves_delivery_and_parent_provenance() {
+    use hennery_proto::{
+        frames::PendingKind,
+        plugin::InputOrigin,
+        rest::{EventDto, PendingState},
+    };
+    use hennery_view::{Body, Request};
+    let events: Vec<EventDto> = include_str!("fixtures/delegation-codex-acp-1.13.0.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let items = hennery_view::fold(&events, &|_: &str| false);
+    let questions: Vec<_> = items
+        .iter()
+        .filter_map(|item| {
+            if let Body::Question(question) = &item.body {
+                Some(question)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(questions.len(), 1);
+    let question = questions[0];
+    assert_eq!(question.question_kind, PendingKind::Elicitation);
+    assert_eq!(question.state, PendingState::Delivered);
+    assert_eq!(question.delivered, Some(true));
+    assert!(question.answered);
+    assert!(!question.answerable);
+    assert!(matches!(&question.request,Request::Elicitation{form_supported:true,fields,..} if !fields.is_empty()));
+    for kind in ["user_turn", "answer_submitted"] {
+        let event = events.iter().find(|event| event.kind == kind).unwrap();
+        assert!(matches!(
+            serde_json::from_value::<InputOrigin>(event.body["origin"].clone()).unwrap(),
+            InputOrigin::Parent { .. }
+        ));
+    }
+    assert!(assistant_text(&events).contains("CHILD_ACCEPTANCE_OK"));
+}
+
+fn question_brief(runtime: &str) -> &'static str {
+    if runtime == "claude" {
+        "This is an actual tool acceptance test. You MUST immediately call AskUserQuestion to ask one required single-choice question with options blue and green, named acceptance_color. You do not know the answer. Do not choose a color yourself, infer it, or ask in plain text. Wait for the real tool response before replying CHILD_ACCEPTANCE_OK followed by the returned color. If the question tool is unavailable, reply ELICITATION_UNAVAILABLE; never pretend you called it. Do not read/write files or run commands."
+    } else {
+        "This is an actual tool acceptance test. You are in Plan mode. You MUST immediately call the request_user_input tool to ask one required single-choice question named acceptance_color with options blue and green. You do not know the answer. Do not choose a color yourself, infer it, or ask in plain text. Wait for the real tool response before replying CHILD_ACCEPTANCE_OK followed by the returned color. If the question tool is unavailable, reply ELICITATION_UNAVAILABLE; never pretend you called it. Do not read/write files or run commands."
+    }
 }
 
 fn scrub_error(message: &str) -> Result<String> {
+    Ok(redact_credentials(message)?.chars().take(2000).collect())
+}
+
+fn redact_credentials(message: &str) -> Result<String> {
     fn strings(value: &Value, output: &mut Vec<String>) {
         match value {
             Value::String(text) if text.len() >= 8 => output.push(text.clone()),
@@ -513,7 +1095,7 @@ fn scrub_error(message: &str) -> Result<String> {
     for secret in secrets {
         clean = clean.replace(&secret, "[credential]");
     }
-    Ok(clean.chars().take(2000).collect())
+    Ok(clean)
 }
 
 fn builtin_permission(payload: &Value, updates: &[Value]) -> bool {
@@ -536,6 +1118,15 @@ fn builtin_permission(payload: &Value, updates: &[Value]) -> bool {
                 })
             });
     claude || codex
+}
+
+fn assistant_text(events: &[hennery_proto::rest::EventDto]) -> String {
+    events
+        .iter()
+        .filter_map(|event| event.body.pointer("/payload/update"))
+        .filter(|update| update["sessionUpdate"] == "agent_message_chunk")
+        .filter_map(|update| update.pointer("/content/text").and_then(Value::as_str))
+        .collect()
 }
 
 #[test]
@@ -586,7 +1177,7 @@ async fn pinned_runtime_provider_authentication() -> Result<()> {
         }
         let events = h.state.store.events(&h.parent, 0, 1000)?;
         ensure!(
-            serde_json::to_string(&events)?.contains("HENNERY_PROVIDER_OK"),
+            assistant_text(&events).contains("HENNERY_PROVIDER_OK"),
             "provider did not return the acceptance marker"
         );
         println!(
@@ -611,7 +1202,7 @@ fn requested(catalog: &HostCatalog) -> SessionConfig {
             options
                 .iter()
                 .filter_map(|option| option["value"].as_str())
-                .find(|model| matches!(*model, "sonnet" | "gpt-6-luna"))
+                .find(|model| matches!(*model, "sonnet" | "gpt-6-sol"))
         })
     {
         config.model = Some(model.into());
@@ -652,11 +1243,8 @@ async fn pinned_parent_child_provider_matrix() -> Result<()> {
         let catalog = h.catalog(&child_runtime).await?;
         let config = requested(&catalog);
         ensure!(hennery_sessions::delegation_runtime::config_offered(&catalog, &config), "chosen child configuration absent from actual catalog");
-        let brief = if child_runtime == "claude" {
-            "Acceptance task: immediately use AskUserQuestion to ask one required single-choice question with options blue and green, named acceptance_color. Do not ask in plain text. After the answer, reply exactly CHILD_ACCEPTANCE_OK followed by the color. Do not read or write any files or run commands."
-        } else {
-            "Acceptance task: use request_user_input to ask one required single-choice question named acceptance_color with options blue and green. Do not ask in plain text. After the answer, reply exactly CHILD_ACCEPTANCE_OK followed by the color. Do not read or write any files or run commands."
-        };
+        let brief = question_brief(&child_runtime);
+        let parent_nodes = node_pids()?;
         let arguments = json!({"operation_key":"d4-live-spawn","cwd":h.dir.path().canonicalize()?,"agent":child_runtime,"brief":brief,"config":config,"name":"acceptance child"});
         let prompt = format!("Use your hennery MCP tools for this acceptance. First call session_capabilities with agent={child_runtime}. Then call session_spawn EXACTLY ONCE with this JSON: {arguments}. Do not use another subagent facility. If a child ordinary question arrives, answer it with session_answer: action accept and content matching its schema, selecting blue. For an ordinary question the acceptance color is blue. Do not answer permission requests, run shell commands, or read/write files. After spawning, end your turn with SPAWN_ACCEPTED; the durable system will deliver the child's question. Do not poll or close the child.");
         h.prompt(&h.parent, &prompt).await?;
@@ -668,12 +1256,14 @@ async fn pinned_parent_child_provider_matrix() -> Result<()> {
         let evidence: hennery_proto::delegation_host::ConfigEvidence = serde_json::from_str(&evidence)?;
         ensure!(evidence.completeness == hennery_proto::delegation_host::ConfigCompleteness::Complete, "child configuration not completely read back");
         ensure!(config.model.as_ref().is_none_or(|v| evidence.actual.model.as_ref() == Some(v)), "child model readback differs");
+        ensure!(config.mode.as_ref().is_none_or(|v| evidence.actual.mode.as_ref() == Some(v)), "child permission mode readback differs");
         ensure!(config.axes.iter().all(|(k,v)| evidence.actual.axes.get(k) == Some(v)), "child effort readback differs");
-        let pending = h.wait("genuine child elicitation", || h.state.store.open_pending(&child).ok()?.into_iter().find(|p| p.kind == hennery_proto::frames::PendingKind::Elicitation)).await?;
+        let child_pid = h.wait("own child adapter PID", || { let candidates:Vec<_> = node_pids().ok()?.into_iter().filter(|pid|!parent_nodes.contains(pid)).collect(); (candidates.len() == 1).then(||candidates[0]) }).await?;
+        let pending = h.wait("genuine child elicitation", || h.question(&child,0,hennery_proto::frames::PendingKind::Elicitation)).await?;
         h.wait("real parent answer delivered", || h.state.store.pending_item(&pending.pending_id).ok().flatten().filter(|p| p.delivered == Some(true))).await?;
         h.wait("child provider continuation", || {
             let events = h.state.store.events(&child, 0, 1000).ok()?;
-            serde_json::to_string(&events).ok()?.contains("CHILD_ACCEPTANCE_OK").then_some(())
+            assistant_text(&events).contains("CHILD_ACCEPTANCE_OK").then_some(())
         }).await?;
         let events = h.state.store.events(&child, 0, 1000)?;
         let brief = events.iter().find(|event| event.kind == "user_turn").context("child brief event")?;
@@ -688,9 +1278,16 @@ async fn pinned_parent_child_provider_matrix() -> Result<()> {
         for tool in ["session_capabilities", "session_spawn", "session_answer"] {
             ensure!(trace.iter().any(|r| r["caller"] == h.parent && r["tool"] == tool && r["is_error"] == false), "real parent did not successfully call {tool}");
         }
-        println!("{}", json!({"parent_runtime":parent,"child_runtime":child_runtime,"spawn":true,"real_elicitation":true,"parent_answer_delivered":true,"child_continued":true,"requested_config":config,"actual_config":evidence,"mcp":trace,"extended_lifecycle_acceptance":false,"phone_vendor_acceptance":false}));
+        println!("{}", json!({"case":"base_parent_child_loop","parent_runtime":parent,"child_runtime":child_runtime,"spawn":true,"real_elicitation":true,"parent_answer_delivered":true,"child_continued":true,"requested_config":config,"actual_config":evidence,"mcp":trace}));
+        h.capture(&child)?;
+        println!("{}",json!({"case":"process_token_exposure","processes":process_token_exposure()?}));
+        h.extended(&child,&child_runtime,child_pid).await?;
+        println!("{}",json!({"parent_runtime":parent,"child_runtime":child_runtime,"base_loop":true,"extended_lifecycle_acceptance":true}));
         Ok(())
     }.await;
+    if result.is_err() {
+        h.diagnostics("acceptance failed")?;
+    }
     let cleanup = h.finish().await;
     result.and(cleanup)
 }
