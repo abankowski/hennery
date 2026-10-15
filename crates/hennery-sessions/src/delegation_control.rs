@@ -355,13 +355,18 @@ impl Store {
 
 impl Store {
     pub fn dispatch_delegation_answers(&self, hub: &Hub) -> Result<()> {
+        self.dispatch_delegation_answers_after(hub, "").map(|_| ())
+    }
+    /// Dispatch one bounded page, including held rows in cursor progress. An
+    /// empty page returns `None`, so a persistent caller can wrap to the start.
+    pub fn dispatch_delegation_answers_after(&self, hub: &Hub, after: &str) -> Result<Option<String>> {
         let mut conn = self.conn();
         let rows = {
             let mut stmt=conn.prepare("SELECT o.operation_id,o.caller_id,o.child_id,o.pending_id,o.request_id,o.accepted_revision,a.answer,s.host_id
             FROM session_operations o JOIN answer_queue a ON a.owner_id = ?1 AND a.pending_id = o.pending_id
             JOIN sessions s ON s.owner_id = ?1 AND s.id = o.child_id
-            WHERE o.owner_id = ?1 AND o.tool = 'session_answer' AND o.state = 'queued' AND a.delegation_handoff = 0 AND a.delivered IS NULL LIMIT 128")?;
-            stmt.query_map([self.owner_id()], |r| {
+            WHERE o.owner_id = ?1 AND o.tool = 'session_answer' AND o.state = 'queued' AND a.delegation_handoff = 0 AND a.delivered IS NULL AND o.operation_id > ?2 ORDER BY o.operation_id LIMIT 128")?;
+            stmt.query_map(params![self.owner_id(), after], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -375,6 +380,7 @@ impl Store {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
         };
+        let next = rows.last().map(|row| row.0.clone());
         for (operation, source, child, pending, request, revision, answer, host) in rows {
             let tx = conn.transaction()?;
             if !self.transfer_in(&tx, &source, &child, revision)? || !hub.is_ready(&host) {
@@ -400,6 +406,6 @@ impl Store {
                 tx.commit()?;
             }
         }
-        Ok(())
+        Ok(next)
     }
 }

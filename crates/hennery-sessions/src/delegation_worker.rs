@@ -2,26 +2,34 @@
 //! operator attention, then reuse these same transfer/config/close gates.
 use crate::{AppState, delegation_runtime::checked_cwd};
 use std::time::Duration;
+#[derive(Default)]
+struct Cursors {
+    prompts: String,
+    answers: String,
+}
 pub fn after_startup(state: &AppState) {
     let state = state.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_millis(250));
-        let mut after = String::new();
+        let mut cursors = Cursors::default();
         loop {
             tokio::select! {biased; ()=state.shutdown.cancelled()=>break,_=tick.tick()=>{}}
-            if let Err(error) = drain_page(&state, &mut after).await {
+            if let Err(error) = drain_page(&state, &mut cursors).await {
                 tracing::warn!(code=%crate::session_tools::error_code(&error),"delegation dispatch deferred");
             }
         }
     });
 }
 pub async fn drain(state: &AppState) -> anyhow::Result<()> {
-    drain_page(state, &mut String::new()).await
+    drain_page(state, &mut Cursors::default()).await
 }
-async fn drain_page(state: &AppState, after: &mut String) -> anyhow::Result<()> {
-    state.store.dispatch_delegation_answers(&state.hub)?;
-    let targets = state.store.delegation_targets_after(after)?;
-    *after = targets.last().cloned().unwrap_or_default();
+async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<()> {
+    cursors.answers = state
+        .store
+        .dispatch_delegation_answers_after(&state.hub, &cursors.answers)?
+        .unwrap_or_default();
+    let targets = state.store.delegation_targets_after(&cursors.prompts)?;
+    cursors.prompts = targets.last().cloned().unwrap_or_default();
     for target in targets {
         let Some(session) = state.store.find_session(&target)? else {
             continue;
