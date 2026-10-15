@@ -86,12 +86,10 @@ def metadata(path, raw):
             output.write(raw)
 
 
-def qualify(candidate, expected, work, inputs):
-    candidate, work = Path(candidate), Path(work)
+def inspect_candidate(candidate, work, raw):
+    # Data qualification is shared by the unprivileged aggregate and the
+    # publishing verifier. Only qualify() authenticates publication authority.
     gate.require(not work.resolve().is_relative_to(candidate.resolve()), 'OCI working directory must be outside immutable candidate')
-    raw = (candidate / 'release-inventory.json').read_bytes()
-    proof = approval.verify_dispatch(candidate, inputs)
-    gate.require(proof['inventory_sha256'] == gate.digest(raw) == expected, 'signed inventory digest mismatch')
     inventory = gate.strict_json(raw)
     gate.verify_files(inventory, candidate)
     gate.require('ghcr' in inventory['channels'] and set(TARGETS.values()) <= set(inventory['targets']), 'signed inventory needs GHCR and both Linux targets')
@@ -109,6 +107,24 @@ def qualify(candidate, expected, work, inputs):
     metadata(work / 'verified.json', gate.canonical(actual))
     metadata(work / 'binary-sha256.json', gate.canonical(binaries))
     metadata(work / 'index-digest.txt', (actual['digest'] + '\n').encode())
+    return actual
+
+
+def accept(candidate, work, revision, version):
+    candidate, work = Path(candidate), Path(work)
+    raw = (candidate / 'release-inventory.json').read_bytes()
+    inventory = gate.strict_json(raw)
+    gate.require(inventory['source_sha'] == revision and inventory['tag'] == 'v' + version,
+                 'candidate source/tag mismatch')
+    return inspect_candidate(candidate, work, raw)
+
+
+def qualify(candidate, expected, work, inputs):
+    candidate, work = Path(candidate), Path(work)
+    raw = (candidate / 'release-inventory.json').read_bytes()
+    proof = approval.verify_dispatch(candidate, inputs)
+    gate.require(proof['inventory_sha256'] == gate.digest(raw) == expected, 'signed inventory digest mismatch')
+    actual = inspect_candidate(candidate, work, raw)
     metadata(work / 'release-inventory.json.asc', inputs['maintainer_signature'].encode())
     return actual
 
@@ -123,9 +139,14 @@ def main():
     check = sub.add_parser('qualify')
     check.add_argument('candidate', type=Path); check.add_argument('inventory_sha256')
     check.add_argument('work', type=Path)
+    acceptance = sub.add_parser('accept')
+    acceptance.add_argument('candidate', type=Path); acceptance.add_argument('work', type=Path)
+    acceptance.add_argument('revision'); acceptance.add_argument('version')
     args = parser.parse_args()
     if args.command == 'assemble':
         result = assemble(args.candidate, args.work, args.natives, args.revision, args.version)
+    elif args.command == 'accept':
+        result = accept(args.candidate, args.work, args.revision, args.version)
     else:
         inputs = gate.strict_json(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())['inputs']
         result = qualify(args.candidate, args.inventory_sha256, args.work, inputs)

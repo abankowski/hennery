@@ -102,6 +102,15 @@ corresponding-source/licence/advisory review remains mandatory. Image scanner
 SBOMs additionally cover the base filesystem. Binary SPDX is embedded and signed
 separately because filesystem scanning cannot discover all static/frontend code.
 
+R3's channel registry binds the reserved display name `ghcr` to job ID `ghcr`
+in the workflow at the signed source commit. That aggregate downloads the frozen
+candidate after assembly, checks its source/tag, complete inventory, executable
+hashes and retained OCI/index bytes, then round-trips the index through loopback.
+Retention waits for its success when GHCR is selected. GitHub-only candidates
+may skip both optional channel jobs; a selected missing/skipped/failed aggregate
+is refused by the shared gate. Candidate `accept` checks data before approval;
+publication `qualify` still requires the maintainer signature and live gate.
+
 PR/main `build.yml` also qualifies real release-target OCI output using explicitly
 marked CI notices/SPDX fixtures, signing-input extraction and loopback acceptance.
 Those fixture images are never promoted to release candidates. Real Docker

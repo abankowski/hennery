@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import sys
 import tarfile
 import unittest
 from unittest.mock import patch
@@ -93,6 +94,32 @@ class ReleaseFixture(CandidateFixtures):
 
 
 class Candidate(ReleaseFixture, unittest.TestCase):
+    def test_candidate_acceptance_binds_exact_source_and_tag_before_approval(self):
+        helper = self.assembled()
+        self.assertTrue(hasattr(helper, 'accept'), 'the aggregate must accept frozen OCI without publishing authority')
+        for revision, version in [('b' * 40, self.version), (self.revision, '0.2.0')]:
+            with self.subTest(revision=revision, version=version), self.assertRaisesRegex(gate.Refused, 'candidate source/tag'):
+                helper.accept(self.candidate, self.work, revision, version)
+        accepted = helper.accept(self.candidate, self.work, self.revision, self.version)
+        self.assertEqual(accepted, json.loads((self.candidate / 'ghcr-index.json').read_bytes()))
+        self.assertFalse((self.work / 'release-inventory.json.asc').exists())
+        result = subprocess.run([sys.executable, str(PACKAGING / 'ghcr-candidate.py'), 'accept',
+            str(self.candidate), str(self.root / 'cli-acceptance'), self.revision, self.version],
+            text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), accepted)
+
+    def test_candidate_acceptance_refuses_changed_frozen_payload(self):
+        helper = self.assembled()
+        self.assertTrue(hasattr(helper, 'accept'), 'the aggregate must verify frozen OCI bytes')
+        payload = self.candidate / 'ghcr-oci-layout.tar'
+        raw = payload.read_bytes()
+        changed = raw.replace(b'1.0.0', b'1.0.1', 1)
+        self.assertNotEqual(changed, raw)
+        payload.write_bytes(changed)
+        with self.assertRaisesRegex(gate.Refused, 'candidate digest'):
+            helper.accept(self.candidate, self.work, self.revision, self.version)
+
     def test_native_output_freezes_index_platforms_and_binary_identity(self):
         helper = self.assembled()
         descriptor = json.loads((self.candidate / 'ghcr-index.json').read_bytes())
@@ -324,16 +351,49 @@ class Orchestrator(unittest.TestCase):
             self.assertEqual(len(logins), 1 if name == 'ghcr' else 0)
             if logins: self.assertEqual(logins[0]['env']['GHCR_TOKEN'], '${{ secrets.GHCR_PUBLISH_TOKEN }}')
 
-    def test_github_only_candidates_have_no_skipped_optional_channel_job(self):
+    def test_candidate_channels_have_registered_aggregate_jobs_and_retention_guard(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
-        self.assertEqual(set(workflow['jobs']), {'tag-signature', 'web-ui', 'archive', 'assemble', 'installer', 'retain'})
-        for name, job in workflow['jobs'].items():
-            if name != 'retain':
-                self.assertNotIn('if', job, name + ' must qualify GitHub-only candidates too')
-        # Channel selection belongs to steps; no candidate-level skipped GHCR job
-        # is introduced for R1's generic selected-channel job policy to classify.
-        assemble = workflow['jobs']['assemble']
-        self.assertTrue(any('ghcr' in str(step.get('if', '')) for step in assemble['steps']))
+        self.assertEqual(set(workflow['jobs']), {'tag-signature', 'web-ui', 'archive', 'crates', 'assemble', 'ghcr', 'installer', 'retain'})
+        import workflow_policy
+        try:
+            bindings = workflow_policy.candidate_channel_jobs(workflow)
+        except ValueError as error:
+            self.fail('the shipped candidate graph must satisfy the reserved registry: ' + str(error))
+        self.assertEqual(bindings, {'crates': 'crates', 'ghcr': 'ghcr'})
+        aggregate = workflow['jobs']['ghcr']
+        self.assertEqual(aggregate['name'], 'ghcr')
+        self.assertEqual(aggregate['needs'], 'assemble')
+        self.assertNotIn('strategy', aggregate)
+        self.assertIn(",ghcr,", aggregate['if'])
+        retain = workflow['jobs']['retain']
+        self.assertIn('ghcr', retain['needs'])
+        for text in ['always()', "needs.ghcr.result == 'success'", "needs.ghcr.result == 'skipped'", '!contains(']:
+            self.assertIn(text, retain['if'])
+        selection = "contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')"
+        def retained(selected, outcome, enabled=True, failed=None):
+            expression = retain['if'].replace(selection, str(selected)).replace('always()', 'True')
+            expression = expression.replace('vars.RELEASE_CANDIDATE_STORAGE_ENABLED', repr('true' if enabled else 'false'))
+            for name in ['assemble', 'installer', 'tag-signature', 'ghcr']:
+                status = outcome if name == 'ghcr' else ('failure' if name == failed else 'success')
+                expression = expression.replace('needs.' + name + '.result', repr(status))
+            return eval(expression.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not '), {'__builtins__': {}})
+        self.assertTrue(retained(False, 'skipped'))
+        self.assertTrue(retained(True, 'success'))
+        for selected in [False, True]:
+            for outcome in ['failure', 'cancelled']:
+                self.assertFalse(retained(selected, outcome))
+            self.assertFalse(retained(selected, 'success', enabled=False))
+            for failed in ['assemble', 'installer', 'tag-signature']:
+                self.assertFalse(retained(selected, 'success', failed=failed))
+        self.assertFalse(retained(True, 'skipped'))
+
+    def test_aggregate_verifies_frozen_oci_before_loopback_acceptance(self):
+        workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
+        self.assertIn('ghcr', workflow['jobs'])
+        commands = '\n'.join(s.get('run', '') for s in workflow['jobs']['ghcr']['steps'])
+        self.assertIn('ghcr-candidate.py accept', commands)
+        self.assertIn('test-image-registry.sh', commands)
+        self.assertLess(commands.index('ghcr-candidate.py accept'), commands.index('test-image-registry.sh'))
 
     def test_real_candidate_freezes_oci_payloads_before_global_inventory(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
@@ -342,6 +402,38 @@ class Orchestrator(unittest.TestCase):
         assemble = '\n'.join(s.get('run', '') for s in workflow['jobs']['assemble']['steps'])
         self.assertIn('ghcr-candidate.py assemble', assemble)
         self.assertLess(assemble.index('ghcr-candidate.py assemble'), assemble.index('supply.py freeze'))
+
+
+class CandidateGate(unittest.TestCase):
+    def fixture(self):
+        from test_platform import Platform
+        fixture = Platform()
+        self.addCleanup(fixture.doCleanups)
+        workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
+        import workflow_policy
+        self.assertEqual(workflow_policy.candidate_channel_jobs(workflow).get('ghcr'), 'ghcr')
+        return fixture, workflow
+
+    def test_selected_ghcr_requires_successful_job_in_the_actual_candidate_workflow(self):
+        fixture, workflow = self.fixture()
+        jobs = [fixture.job(name, 'skipped' if name == 'crates' else 'success') for name in workflow['jobs']]
+        try:
+            fixture.candidate_evidence(['github', 'ghcr'], jobs, workflow=workflow)
+        except gate.Refused as error:
+            self.fail('the registered successful GHCR aggregate must qualify: ' + str(error))
+        for conclusion in [None, 'skipped', 'failure', 'cancelled']:
+            changed = [j for j in jobs if j['name'] != 'ghcr']
+            if conclusion is not None: changed.append(fixture.job('ghcr', conclusion))
+            with self.subTest(conclusion=conclusion), self.assertRaises(gate.Refused):
+                fixture.candidate_evidence(['github', 'ghcr'], changed, workflow=workflow)
+
+    def test_github_only_accepts_both_registered_channel_jobs_skipped(self):
+        fixture, workflow = self.fixture()
+        jobs = [fixture.job(name, 'skipped' if name in ('crates', 'ghcr') else 'success') for name in workflow['jobs']]
+        try:
+            fixture.candidate_evidence(['github'], jobs, workflow=workflow)
+        except gate.Refused as error:
+            self.fail('GitHub-only candidate must pass with unselected channels skipped: ' + str(error))
 
 
 if __name__ == '__main__':

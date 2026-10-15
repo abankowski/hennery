@@ -25,7 +25,8 @@ never promoted to a release.
 [R4's collector-image guide](images.md) describes the release target, labels,
 reviewed notices and binary/image SBOMs, native OCI candidates, gated GHCR
 publication, digest deployment, volume upgrades and maintainer-only setup.
-Its R1 adapter integration remains mandatory and publication is disabled.
+R1's shared gate and R3's registered GHCR aggregate are integrated; publication
+remains disabled pending independent review and maintainer qualification.
 PR/main images are never promoted to releases.
 
 Every archive builds with the `vendored-openssl` feature

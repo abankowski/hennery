@@ -117,6 +117,9 @@ class Workflow(unittest.TestCase):
                         'nix develop .#release -c python3 packaging/ghcr-verify.py publish']:
             job = {'permissions': {'contents': 'read', 'packages': 'read'}, 'steps': [{'run': command}]}
             with self.subTest(command=command): self.assertTrue(workflow_policy.privileged(job))
+        for action in ['actions/create-github-app-token@fixture', 'rust-lang/crates-io-auth-action@fixture']:
+            job = {'permissions': {'contents': 'read'}, 'steps': [{'uses': action}]}
+            with self.subTest(action=action): self.assertTrue(workflow_policy.privileged(job))
 
     def test_lint_reference_is_not_a_registry_writer(self):
         job = {'permissions': {'contents': 'read'}, 'steps': [{'run':

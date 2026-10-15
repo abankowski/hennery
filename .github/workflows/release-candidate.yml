@@ -275,6 +275,31 @@ jobs:
           retention-days: 90
           if-no-files-found: error
           path: target/distrib/
+  # Registered by workflow_policy.CHANNEL_JOB_IDS: ghcr -> ghcr.
+  ghcr:
+    name: ghcr
+    needs: assemble
+    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Verify the frozen GHCR payload, then accept the retained index through loopback
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          nix develop .#image -c python3 packaging/ghcr-candidate.py accept candidate image-acceptance "$GITHUB_SHA" "${RELEASE_TAG#v}"
+          nix develop .#image -c sh packaging/test-image-registry.sh image-acceptance/layout
   installer:
     needs: assemble
     if: ${{ !cancelled() && needs.assemble.result == 'success' }}
@@ -341,8 +366,8 @@ jobs:
       - name: All advertised native Homebrew platforms passed
         run: echo 'Native local-tap acceptance passed on all three platforms'
   retain:
-    needs: [assemble, installer, tag-signature]
-    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' }}
+    needs: [assemble, installer, tag-signature, ghcr]
+    if: always() && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')))
     environment: release-staging
     runs-on: ubuntu-24.04
     timeout-minutes: 20

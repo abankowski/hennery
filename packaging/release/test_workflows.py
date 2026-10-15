@@ -52,6 +52,7 @@ class Workflows(unittest.TestCase):
     def test_channel_registry_explicitly_maps_a_channel_to_its_owning_job_id(self):
         from unittest.mock import patch
         data=self.candidate()
+        data['jobs'].pop('ghcr', None)
         data['jobs']['container-acceptance']={'name':'ghcr','timeout-minutes':5,'steps':[{'run':'true'}]}
         with patch.dict(workflow_policy.CHANNEL_JOB_IDS,{'ghcr':'container-acceptance'}):
             workflow_policy.check(data,'release-candidate.yml')
