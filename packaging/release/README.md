@@ -128,4 +128,24 @@ candidates or conflicting remote bytes need a new candidate/version. Hold
 candidate and audit objects until every approved channel/public path completes.
 Actions artifacts are convenience copies, never the retention authority.
 
+Candidate acceptance uses the signed inventory's selected channels. The stable
+GitHub job names `crates` and `ghcr` are registered in
+`gate.CANDIDATE_CHANNEL_JOBS`: each selected channel requires exactly one
+completed, successful job. Only an unselected registered job may be absent or
+completed with conclusion `skipped`; failures, pending jobs, duplicate registered
+names and skipped ordinary jobs refuse. Required CI/build/Nix/release-test
+workflows retain the strict rule that every job succeeds.
+
+R4 integration hook: name the aggregate candidate acceptance job `ghcr` exactly,
+run it whenever `ghcr` is selected, and make all platform acceptance work its
+dependencies. A matrix should feed that aggregate job. The gate already rejects
+selected GHCR if this job is missing, skipped or failed; an unselected GHCR job
+can be skipped without blocking a GitHub-only release. Keep the full candidate
+assembly and held inventory bound to the same selected channel set.
+
+Crates gate receipts have a fresh UUID in their basename for every invocation,
+including repeated preflights and publication retries. R1 audit retention keys
+by basename within the publishing run/attempt and keeps conditional creation,
+versioning, compliance retention and legal hold intact.
+
 Generated with Claude AI — please review before distribution.

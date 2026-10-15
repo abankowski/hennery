@@ -74,7 +74,20 @@ def validate(*a):
  if {kind=='approval-rejected'!r}: raise gate.Refused('fixture platform approval rejected')
  return {{}}
 gate.validate=validate
-retention.audit=lambda *a: None
+audit_root=Path({str(root/'audit')!r}); audit_root.mkdir(exist_ok=True)
+def aws(*args):
+ # Exercise real retention.audit, replacing only S3 transport. Conditional
+ # create models the immutable store across separate gate processes.
+ gate.require(args[0]=='put-object','unexpected audit transport operation')
+ for flag,value in [('--if-none-match','*'),('--object-lock-mode','COMPLIANCE'),('--object-lock-legal-hold-status','ON'),('--checksum-algorithm','SHA256')]:
+  gate.require(args[args.index(flag)+1]==value,'audit conditional write or retention weakened')
+ key=args[args.index('--key')+1]
+ with Path({str(root/'audit-calls.jsonl')!r}).open('a') as output: output.write(__import__('json').dumps(list(args))+'\\n')
+ try:
+  with (audit_root/key.replace('/','_')).open('xb') as output: output.write(Path(args[args.index('--body')+1]).read_bytes())
+ except FileExistsError: raise gate.Refused('412 PreconditionFailed: audit key already exists')
+ return {{'VersionId':'fixture-version'}}
+retention.aws=aws
 with Path({str(root/'calls.jsonl')!r}).open('a') as output: output.write(__import__('json').dumps(sys.argv[1:])+'\\n')
 gate.main()
 if {kind=='global-after-gate'!r} and len(Path({str(root/'calls.jsonl')!r}).read_text().splitlines())==2:
@@ -86,13 +99,13 @@ if {kind=='global-after-gate'!r} and len(Path({str(root/'calls.jsonl')!r}).read_
         env = dict(os.environ, GITHUB_ACTIONS='true',GITHUB_REPOSITORY=gate.REPOSITORY,GITHUB_REF='refs/tags/v0.1.0',GITHUB_SHA=source['sha'],GITHUB_EVENT_NAME='workflow_dispatch',GITHUB_EVENT_PATH=str(event),GITHUB_RUN_ID='20',GITHUB_RUN_ATTEMPT='1',GH_TOKEN='offline-fixture',RELEASE_AUDIT_BUCKET='offline-fixture',R1_INVENTORY_SHA256=digest,TMPDIR=str(self.root))
         return root,candidate,digest,env
 
-    def run_publish(self,kind):
+    def run_publish(self,kind,repetitions=1):
         root,candidate,digest,env = self.fixture(kind)
         program = f'''import fs from 'node:fs';
 import {{publishFrozen,r1Gate}} from {str(self.repo/'packaging/publish-crates.mjs')!r};
 const dir={str(candidate)!r}, digest={gate.digest((candidate/'crates-inventory.json').read_bytes())!r};
 let credentials=0, uploads=0,error='';
-try{{await publishFrozen({{dir,digest,gate:args=>r1Gate({{...args,rootDigest:{digest!r}}}),credentials:async()=>{{credentials++;return 'offline';}},fetcher:async(url,options={{}})=>{{if(options.method==='PUT'){{uploads++;throw Error('unexpected upload');}}if(url.endsWith('/download'))return new Response(url.split('/').at(-3));if(url.startsWith('https://index.crates.io/')){{const name=url.split('/').at(-1);return new Response(JSON.stringify({{vers:'0.1.0',cksum:(await import('node:crypto')).createHash('sha256').update(name).digest('hex')}}));}}return new Response('source');}}}});}}catch(e){{error=String(e);}}
+try{{for(let i=0;i<{repetitions};i++) await publishFrozen({{dir,digest,gate:args=>r1Gate({{...args,rootDigest:{digest!r}}}),credentials:async()=>{{credentials++;return 'offline';}},fetcher:async(url,options={{}})=>{{if(options.method==='PUT'){{uploads++;throw Error('unexpected upload');}}if(url.endsWith('/download'))return new Response(url.split('/').at(-3));if(url.startsWith('https://index.crates.io/')){{const name=url.split('/').at(-1);return new Response(JSON.stringify({{vers:'0.1.0',cksum:(await import('node:crypto')).createHash('sha256').update(name).digest('hex')}}));}}return new Response('source');}}}});}}catch(e){{error=String(e);}}
 console.log('RESULT:'+JSON.stringify({{credentials,uploads,error}}));
 '''
         result = subprocess.run([os.environ.get('R3_FIXTURE_NODE','node'),'--input-type=module','-e',program],cwd=root,env=env,capture_output=True,text=True)
@@ -111,6 +124,20 @@ console.log('RESULT:'+JSON.stringify({{credentials,uploads,error}}));
         receipts=[c[c.index('--receipt')+1] for c in calls]
         self.assertEqual(len(set(receipts)),len(calls))
         self.assertTrue(all(Path(p).is_file() and not Path(p).is_relative_to(root/'candidate') for p in receipts))
+
+    def test_repeated_preflights_and_publications_use_immutable_unique_audit_keys(self):
+        result,root=self.run_publish('valid',repetitions=2)
+        self.assertEqual(result,{'credentials':2,'uploads':0,'error':''})
+        calls=[json.loads(line) for line in (root/'audit-calls.jsonl').read_text().splitlines()]
+        self.assertEqual(len(calls),32)
+        keys=[c[c.index('--key')+1] for c in calls]
+        self.assertEqual(len(set(keys)),32)
+        self.assertTrue(all(key.startswith('audit/20/1/') for key in keys))
+        self.assertEqual(len(list((root/'audit').iterdir())),32)
+        for call,key in zip(calls,keys):
+            self.assertEqual(call[call.index('--if-none-match')+1],'*')
+            path=Path(call[call.index('--body')+1])
+            self.assertEqual((root/'audit'/key.replace('/','_')).read_bytes(),path.read_bytes())
 
     def test_missing_gate_refuses_before_credentials(self):
         result,root=self.run_publish('missing-gate')

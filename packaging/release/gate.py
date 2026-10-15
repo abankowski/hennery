@@ -17,6 +17,9 @@ import urllib.request
 REPOSITORY = 'marcinwadon/hennery'
 REQUIRED_WORKFLOWS = ('.github/workflows/ci.yml', '.github/workflows/build.yml', '.github/workflows/nix.yml', '.github/workflows/release-tests.yml')
 CHANNELS = {'github', 'crates', 'ghcr', 'homebrew'}
+# Stable GitHub job names for optional candidate acceptance. R4 must name its
+# single aggregate acceptance job "ghcr"; matrix work must feed that job.
+CANDIDATE_CHANNEL_JOBS = {'crates': 'crates', 'ghcr': 'ghcr'}
 TARGETS = {'aarch64-apple-darwin', 'aarch64-unknown-linux-musl', 'x86_64-unknown-linux-musl'}
 
 
@@ -216,7 +219,16 @@ class GitHub:
                 require(jobs and all(j.get('status') == 'completed' and j.get('conclusion') == 'success' for j in jobs), f'{path}: missing/skipped/unsuccessful jobs')
         candidate_run = self.get(f"/actions/runs/{inventory['candidate']['run_id']}")
         candidate_jobs = self.pages(f"/actions/runs/{candidate_run['id']}/attempts/{candidate_run['run_attempt']}/jobs", 'jobs')
-        require(candidate_jobs and all(j.get('status') == 'completed' and j.get('conclusion') == 'success' for j in candidate_jobs), 'candidate has skipped/missing/unsuccessful acceptance or retention jobs')
+        reason = 'candidate has skipped/missing/unsuccessful acceptance or retention jobs'
+        require(candidate_jobs, reason)
+        for name, channel in CANDIDATE_CHANNEL_JOBS.items():
+            matches = [j for j in candidate_jobs if j.get('name') == name]
+            require(len(matches) == 1 if channel in inventory['channels'] else len(matches) <= 1, reason)
+        for job in candidate_jobs:
+            channel = CANDIDATE_CHANNEL_JOBS.get(job.get('name'))
+            unselected = channel is not None and channel not in inventory['channels']
+            require(job.get('status') == 'completed' and (job.get('conclusion') == 'success'
+                    or (unselected and job.get('conclusion') == 'skipped')), reason)
         return {'tag': tag, 'tag_object': obj, 'tag_signature': signature, 'settings_audit': settings_audit,
                 'candidate_run': candidate_run,
                 'publisher_run': self.get(f"/actions/runs/{context['publishing']['run_id']}"),

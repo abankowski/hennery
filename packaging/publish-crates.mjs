@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { sha256, readJSON, requireThat, verifyCandidate, validateSource, publishBody } from './crate-release.mjs';
 import { indexPath } from './crate-registry.mjs';
 export async function preflight({dir,digest,gate,fetcher=fetch}) {
@@ -84,7 +85,8 @@ export function r1Gate(args) {
   requireThat(args.channel==='crates' && ['preflight','boundary'].includes(args.phase),'R1 channel/phase differs');
   const validate=()=>requireThat(signedCratesDigest(args.dir,args.rootDigest)===args.digest,'R1 global inventory channel digest differs');
   validate();
-  const receipt=join(fs.mkdtempSync(join(tmpdir(),'hennery-r3-gate-')),'receipt.json');
+  // R1 audit storage keys by basename, across every invocation in this attempt.
+  const receipt=join(fs.mkdtempSync(join(tmpdir(),'hennery-r3-gate-')),`crates-${args.phase}-${randomUUID()}.json`);
   execFileSync(executable,['crates','--candidate',resolve(args.dir),'--inventory-sha256',args.rootDigest,'--phase',args.phase,'--receipt',receipt],{encoding:'utf8'});
   validate();
 }
