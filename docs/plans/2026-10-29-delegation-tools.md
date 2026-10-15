@@ -8,9 +8,11 @@
 
 ## Execution status (2026-10-15)
 
-Built first on **plan/deleg-d2**, rebased onto merged P1 at 256691fe before replay. Codex gpt-6-astra reviewed **256691fe..2443592e** on the maintainer's behalf: **APPROVE AFTER AMENDMENTS**, no Critical findings, 126 focused tests passed. The reviewer confirmed the redundant owner UPSERT predicate mutation is **EQUIVALENT**; the predicate stays. Tasks 5–6 below address the two Important findings test-first: committed close/answer event publication and answer pagination with wraparound. The verification record distinguishes original evidence from amendment checks, copy probes, load and a fresh complete replay. Scoped review confirmation and Linux/macOS CI remain parent-owned.
+Built first on **plan/deleg-d2**, rebased onto merged P1 at 256691fe before replay. Codex gpt-6-astra reviewed **256691fe..2443592e** on the maintainer's behalf: **APPROVE AFTER AMENDMENTS**, no Critical findings, 126 focused tests passed. The reviewer confirmed the redundant owner UPSERT predicate mutation is **EQUIVALENT**; the predicate stays. Tasks 5–6 below address the two Important findings test-first: committed close/answer event publication and answer pagination with wraparound. The verification record distinguishes original evidence from amendment checks, copy probes, load and a fresh complete replay. The parent subsequently reported scoped re-confirmation **CONFIRMED** and PR **149** ready for review. The branch is now rebased onto W2; the latest base and verification are recorded below. Linux/macOS CI status remains parent-owned.
 
-Implementation base: **256691feb9cba161f0c29b14016bc857a4da86e5**. Embedded implementation head: **395fa1401a6c046c0ed7afae27f6248f74e8bde4**.
+Current branch base: **e36e66c8b1790a6b1555e04b7fb0c34bf34d3e1d** (merged W2). Rebased verification head: **312672750937adfa3b938e3385ded651b355743c**.
+
+Historical replay — Implementation base: **256691feb9cba161f0c29b14016bc857a4da86e5**. Embedded implementation head: **395fa1401a6c046c0ed7afae27f6248f74e8bde4**.
 
 The replay compares every tracked implementation file with the embedded head. Only this plan and its README index are excluded from that comparison; both documentation files remain exactly at the pinned base during replay. Each patch still has an exact complete staged-tree assertion.
 
@@ -11018,7 +11020,26 @@ The parent runs independent task, security and whole-branch reviews on the embed
 
 ## Verification record
 
-### Review amendments for draft PR 149
+### Confirmed amendments and W2 rebase
+
+The parent reported scoped re-confirmation **CONFIRMED**, with PR **149** ready for review. The branch was then rebased without conflicts onto **e36e66c8b1790a6b1555e04b7fb0c34bf34d3e1d** (merged W2), producing verification head **312672750937adfa3b938e3385ded651b355743c**. Both W2 and D2 entries remain in the documentation index. A range comparison preserved every D2 code patch; only the documentation commits gained the W2 index context. `Cargo.lock` is unchanged.
+
+All six requested Rust checks ran on that rebased tree inside the dev shell with scratch HOME/XDG/tool configuration and exited **0**:
+
+| Command | Exit | Passed |
+|---|---:|---:|
+| `cargo fmt --all --check` | 0 | 0 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | 0 | 0 |
+| `cargo clippy -p hennery --locked -- -D warnings` | 0 | 0 |
+| `cargo test --workspace --locked` | 0 | 2334 |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | 0 | 0 |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | 0 | 0 |
+
+Evidence is retained in `.superpowers/sdd/deleg-d2/checks-w2-rebase/`. The embedded 12-block replay and its results below remain explicitly historical evidence for base **256691fe** and implementation **395fa140**; this rebase did not rerun or relabel that replay. The latest verification base is **e36e66c8**, as stated above.
+
+The parent reported the earlier CI failure was confined to cargo-audit's crates.io index lookup for every crate and reran it. No dependency or audit workaround was applied here. Current checks, reviewDecision, mergeStateStatus and unresolved threads remain parent-owned; this lane performed no GitHub action.
+
+### Review amendments before W2 rebase (historical)
 
 Codex gpt-6-astra reviewed **256691fe..2443592e** on the maintainer's behalf: **APPROVE AFTER AMENDMENTS**, no Critical findings; 126 focused tests passed. The two Important findings were answer starvation behind the first 128 held rows, and unrecorded/unpublished delegated close changes plus unpublished queued parent answers.
 
