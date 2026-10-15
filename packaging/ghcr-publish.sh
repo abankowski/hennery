@@ -9,11 +9,11 @@ expected=$3
 # latest, spaces, slashes or shell option injection.
 printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || exit 1
 printf '%s\n' "$expected" | grep -Eq '^sha256:[0-9a-f]{64}$' || exit 1
-reference="ghcr.io/marcinwadon/hennery:$version"
+reference="ghcr.io/marcinwadon/hennery@$expected"
 # Inspect the authenticated registry HTTP response itself. Skopeo can flatten
 # 401/403 MANIFEST_UNKNOWN responses to the same text as an absent manifest.
 check_remote() {
-    if python3 packaging/ghcr-remote.py "$version" "$expected" "$REGISTRY_AUTH_FILE"; then
+    if python3 packaging/ghcr-remote.py "$1" "$expected" "$REGISTRY_AUTH_FILE"; then
         return 0
     else
         result=$?
@@ -36,15 +36,27 @@ import sys
 if Path(sys.argv[1]).resolve() != Path(sys.argv[2]).resolve():
     raise SystemExit('layout argument differs from signed candidate')
 PY
-if check_remote; then
-    echo "ok: already published $reference@$expected"
+nix develop .#release -c python3 packaging/ghcr-verify.py all
+if check_remote "$version"; then
+    echo "ok: already published $reference"
+    exit 0
+fi
+if check_remote "$expected"; then
+    echo "ok: retained digest already published $reference"
     exit 0
 fi
 # Revalidation immediately precedes the write; renewed publishing attempt
 # approval is required even for the identical retained candidate.
 sh packaging/ghcr-gate.sh boundary "ghcr-upload-$$.json"
+nix develop .#release -c python3 packaging/ghcr-verify.py all
+# The final gate may outlast reconciliation. Never overwrite a version tag:
+# reconcile it again, then upload content addressed bytes only.
+if check_remote "$version"; then
+    echo "ok: already published $reference"
+    exit 0
+fi
 skopeo copy --all --preserve-digests --authfile "$REGISTRY_AUTH_FILE" \
     "oci:$layout" "docker://$reference"
 # An ambiguous upload is accepted only if remote bytes match exactly.
-check_remote || { echo 'upload not visible; stop and reconcile on an approved retry' >&2; exit 1; }
-echo "ok: published $reference@$expected"
+check_remote "$expected" || { echo 'upload not visible; stop and reconcile on an approved retry' >&2; exit 1; }
+echo "ok: published $reference"

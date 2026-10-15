@@ -363,12 +363,13 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.cratesio.outputs.token }}
         run: nix develop .#release -c node packaging/publish-crates.mjs candidate "$INVENTORY"
 
-  # R4: all registry writes use the protected credential, never GITHUB_TOKEN.
+  # R4: generate and verify bundles before protected registry publication.
   ghcr:
     needs:
       - authorize
       - sign
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GHCR_ENABLED == 'true'
+      - ghcr-attest
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(inputs.channels), 'ghcr')
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -408,6 +409,10 @@ jobs:
         run: |
           nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
           nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signatures
       - uses: ./.github/actions/release-gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -421,6 +426,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y skopeo
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ghcr-attestations-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: attestation-bundles
+          merge-multiple: true
+      - name: Verify candidate Sigstore and every OCI bundle before registry credentials
+        run: |
+          sh packaging/ghcr-gate.sh preflight ghcr-publish-verify.json
+          nix develop .#release -c python3 packaging/ghcr-verify.py all
       - name: Authenticate only the protected environment GHCR credential
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
@@ -449,6 +463,7 @@ jobs:
           version=$(python3 -c 'import json; print(json.load(open("image-candidate/verified.json"))["version"])')
           digest=$(cat image-candidate/index-digest.txt)
           sh packaging/ghcr-publish.sh image-candidate/layout "$version" "$digest"
+          nix develop .#release -c python3 packaging/ghcr-verify.py publish
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Remove registry credential
         if: always()
@@ -456,8 +471,8 @@ jobs:
   ghcr-attest:
     needs:
       - authorize
-      - ghcr
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GHCR_ENABLED == 'true'
+      - sign
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(inputs.channels), 'ghcr')
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -506,6 +521,10 @@ jobs:
         run: |
           nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
           nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signatures
       - uses: ./.github/actions/release-gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -515,19 +534,10 @@ jobs:
           channel: ghcr
           phase: preflight
           receipt: ghcr-${{ matrix.subject }}-preflight.json
-      - name: Authenticate only the protected environment GHCR credential
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
-          GHCR_USER: ${{ vars.GHCR_PUBLISH_USER }}
+      - name: Verify candidate provenance and prepare signed local OCI bytes
         run: |
-          sh packaging/ghcr-gate.sh preflight "ghcr-$SUBJECT-login.json"
-          test -n "$GHCR_TOKEN"
-          test -n "$GHCR_USER"
-          export DOCKER_CONFIG="$RUNNER_TEMP/ghcr-registry"
-          mkdir -p "$DOCKER_CONFIG"
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
-          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
-          echo "REGISTRY_AUTH_FILE=$DOCKER_CONFIG/config.json" >> "$GITHUB_ENV"
+          sh packaging/ghcr-gate.sh preflight "ghcr-$SUBJECT-prepare.json"
+          nix develop .#release -c python3 packaging/ghcr-verify.py candidate
       - name: Extract signed retained signing inputs
         id: subject
         run: python3 packaging/image-signing-inputs.py image-candidate/layout "$SUBJECT" signing-inputs >> "$GITHUB_OUTPUT"
@@ -548,7 +558,7 @@ jobs:
         with:
           subject-name: ghcr.io/marcinwadon/hennery
           subject-digest: ${{ steps.subject.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: false
       - name: Preserve provenance bundle
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
@@ -563,7 +573,7 @@ jobs:
         with:
           subject-name: ghcr.io/marcinwadon/hennery
           subject-digest: ${{ steps.subject.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: false
           sbom-path: signing-inputs/image.spdx.json
         if: matrix.subject != 'index'
       - name: Preserve image-sbom bundle
@@ -581,7 +591,7 @@ jobs:
         with:
           subject-name: ghcr.io/marcinwadon/hennery
           subject-digest: ${{ steps.subject.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: false
           sbom-path: signing-inputs/binary.spdx.json
         if: matrix.subject != 'index'
       - name: Preserve binary-sbom bundle
@@ -596,12 +606,12 @@ jobs:
           DIGEST: ${{ steps.subject.outputs.digest }}
         run: |
           nix develop .#release -c python3 packaging/release/verify.py --image "ghcr.io/marcinwadon/hennery@$DIGEST" \
-            --inventory-directory candidate --approval-signature image-candidate/release-inventory.json.asc --tag "$RELEASE_TAG" \
+            --manifest "image-candidate/layout/blobs/sha256/${DIGEST#sha256:}" --inventory-directory candidate --approval-signature image-candidate/release-inventory.json.asc --tag "$RELEASE_TAG" \
             --bundle "attestation-bundles/ghcr-$SUBJECT-provenance.json"
           if [ "$SUBJECT" != index ]; then
               for kind in image-sbom binary-sbom; do
                   nix develop .#release -c python3 packaging/release/verify.py --image "ghcr.io/marcinwadon/hennery@$DIGEST"         \
-                    --inventory-directory candidate --approval-signature image-candidate/release-inventory.json.asc --tag "$RELEASE_TAG" \
+                    --manifest "image-candidate/layout/blobs/sha256/${DIGEST#sha256:}" --inventory-directory candidate --approval-signature image-candidate/release-inventory.json.asc --tag "$RELEASE_TAG" \
                     --predicate-type https://spdx.dev/Document --bundle "attestation-bundles/ghcr-$SUBJECT-$kind.json"
               done
           fi
@@ -621,9 +631,6 @@ jobs:
           path: attestation-bundles/
           retention-days: 90
           if-no-files-found: error
-      - name: Remove registry credential
-        if: always()
-        run: rm -f "$RUNNER_TEMP/ghcr-registry/config.json"
   ghcr-complete:
     needs:
       - authorize

@@ -24,21 +24,35 @@ def validate(workflow):
         job = workflow['jobs'][name]
         if job.get('permissions', {}).get('packages') != 'read':
             raise ValueError('ordinary package token must be READ')
-        if job.get('if') != workflow_policy.CREDENTIAL_CONDITION + " && vars.RELEASE_GHCR_ENABLED == 'true'":
+        if job.get('if') != workflow_policy.CREDENTIAL_CONDITION + " && vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(inputs.channels), 'ghcr')":
             raise ValueError('GHCR channel enable gate missing')
         steps = job['steps']
+        downloads = [s.get('with', {}) for s in steps if s.get('uses', '').startswith('actions/download-artifact@')]
+        if not any(s.get('name') == 'signatures-${{ github.run_id }}-${{ github.run_attempt }}'
+                   and s.get('path') == 'signatures' for s in downloads):
+            raise ValueError('exact current-attempt candidate Sigstore bundle download missing')
         logins = [s for s in steps if 'docker login' in s.get('run', '')]
-        if len(logins) != 1 or logins[0].get('env', {}).get('GHCR_TOKEN') != '${{ secrets.GHCR_PUBLISH_TOKEN }}':
-            raise ValueError('protected environment registry credential required')
-        login = logins[0]
-        guard = 'sh packaging/ghcr-gate.sh preflight '
-        if guard not in login['run'] or login['run'].index(guard) > login['run'].index('docker login'):
-            raise ValueError('pre-credential revalidation missing')
-        preflight = next(i for i, s in enumerate(steps) if s.get('with', {}).get('phase') == 'preflight')
-        if preflight >= steps.index(login):
-            raise ValueError('credentials precede preflight')
+        if name == 'ghcr':
+            if len(logins) != 1 or logins[0].get('env', {}).get('GHCR_TOKEN') != '${{ secrets.GHCR_PUBLISH_TOKEN }}':
+                raise ValueError('protected environment registry credential required')
+            login = logins[0]
+            guard = 'sh packaging/ghcr-gate.sh preflight '
+            if guard not in login['run'] or login['run'].index(guard) > login['run'].index('docker login'):
+                raise ValueError('pre-credential revalidation missing')
+            checks = [i for i, s in enumerate(steps) if 'ghcr-verify.py all' in s.get('run', '')]
+            if not checks or checks[0] >= steps.index(login):
+                raise ValueError('Sigstore verification must precede registry credential')
+            if 'ghcr-attest' not in job['needs']:
+                raise ValueError('OCI bundle verification must precede upload')
+            if not any(s.get('pattern') == 'ghcr-attestations-*-${{ github.run_id }}-${{ github.run_attempt }}'
+                       and s.get('path') == 'attestation-bundles' for s in downloads):
+                raise ValueError('current-attempt verified OCI bundle download missing')
+        elif logins or any('GHCR_PUBLISH_TOKEN' in str(s) for s in steps):
+            raise ValueError('OCI generator must not receive registry credentials')
         for i, step in enumerate(steps):
             if step.get('uses', '').startswith('actions/attest-'):
+                if step['with'].get('push-to-registry') is not False:
+                    raise ValueError('OCI bundles must verify before registry publication')
                 if not steps[i - 1].get('run', '').startswith('sh packaging/ghcr-gate.sh boundary '):
                     raise ValueError('pre-signing revalidation missing')
     signer = workflow['jobs']['ghcr-attest']
@@ -46,7 +60,7 @@ def validate(workflow):
         if step.get('uses') == './.github/actions/release-gate' and '${{ matrix.subject }}' not in step['with']['receipt']:
             raise ValueError('matrix gate receipts must be unique')
     checks = [s for s in signer['steps'] if 'packaging/release/verify.py' in s.get('run', '')]
-    if len(checks) != 1 or any(x not in checks[0]['run'] for x in ['--approval-signature', '--inventory-directory', 'https://spdx.dev/Document', 'image-sbom binary-sbom']):
+    if len(checks) != 1 or any(x not in checks[0]['run'] for x in ['--approval-signature', '--inventory-directory', '--manifest', 'https://spdx.dev/Document', 'image-sbom binary-sbom']):
         raise ValueError('signed-inventory OCI predicate verification missing')
     receipt = workflow['jobs'].get('ghcr-complete', {})
     if receipt.get('if') != "always() && contains(fromJSON(inputs.channels), 'ghcr')" or set(receipt.get('needs', [])) != {'authorize', 'ghcr', 'ghcr-attest'}:
@@ -56,6 +70,27 @@ def validate(workflow):
 class Workflow(unittest.TestCase):
     def setUp(self):
         self.workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    def test_channel_selection_is_required_for_both_ghcr_jobs(self):
+        for name in CHANNEL_JOBS:
+            self.assertIn("contains(fromJSON(inputs.channels), 'ghcr')", self.workflow['jobs'][name]['if'])
+
+    def test_oci_bundles_are_generated_before_registry_publication(self):
+        signer = self.workflow['jobs']['ghcr-attest']
+        self.assertIn('sign', signer['needs'])
+        self.assertNotIn('ghcr', signer['needs'])
+        self.assertIn('ghcr-attest', self.workflow['jobs']['ghcr']['needs'])
+        for step in signer['steps']:
+            if step.get('uses', '').startswith('actions/attest-'):
+                self.assertIs(step['with'].get('push-to-registry'), False)
+        self.assertFalse(any('docker login' in step.get('run', '') for step in signer['steps']))
+
+    def test_sigstore_verification_precedes_registry_credentials(self):
+        steps = self.workflow['jobs']['ghcr']['steps']
+        checks = [i for i, s in enumerate(steps) if 'ghcr-verify.py' in s.get('run', '')]
+        self.assertTrue(checks, 'all exact candidate/OCI bundles must verify before registry credentials')
+        login = next(i for i, s in enumerate(steps) if 'docker login' in s.get('run', ''))
+        self.assertLess(checks[0], login)
 
     def test_all_writers_and_signers_are_protected(self):
         try:
@@ -78,7 +113,8 @@ class Workflow(unittest.TestCase):
         with self.assertRaises(ValueError): validate(changed)
 
     def test_dedicated_credential_writers_are_detected_with_read_only_job_tokens(self):
-        for command in ['docker login ghcr.io', 'sh packaging/ghcr-publish.sh layout 0.1.0 digest']:
+        for command in ['docker login ghcr.io', 'sh packaging/ghcr-publish.sh layout 0.1.0 digest',
+                        'nix develop .#release -c python3 packaging/ghcr-verify.py publish']:
             job = {'permissions': {'contents': 'read', 'packages': 'read'}, 'steps': [{'run': command}]}
             with self.subTest(command=command): self.assertTrue(workflow_policy.privileged(job))
 
@@ -128,7 +164,7 @@ class Workflow(unittest.TestCase):
             with self.subTest(boundary=i), self.assertRaisesRegex(ValueError, 'pre-signing'): validate(changed)
 
     def test_registry_credential_boundary_requires_revalidation(self):
-        for job in CHANNEL_JOBS:
+        for job in ['ghcr']:
             changed = copy.deepcopy(self.workflow)
             for step in changed['jobs'][job]['steps']:
                 if 'docker login' in step.get('run', ''):
@@ -136,7 +172,7 @@ class Workflow(unittest.TestCase):
             with self.subTest(job=job), self.assertRaisesRegex(ValueError, 'pre-credential'): validate(changed)
 
     def test_ordinary_token_cannot_replace_environment_registry_credential(self):
-        for job in CHANNEL_JOBS:
+        for job in ['ghcr']:
             changed = copy.deepcopy(self.workflow)
             for step in changed['jobs'][job]['steps']:
                 if 'docker login' in step.get('run', ''): step['env']['GHCR_TOKEN'] = '${{ github.token }}'

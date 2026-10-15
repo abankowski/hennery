@@ -60,6 +60,9 @@ class ReleaseFixture(CandidateFixtures):
         self.root = base
 
     def freeze(self):
+        (self.candidate / 'sha256.sum').write_text(''.join(
+            gate.digest(p.read_bytes()) + '  ' + p.name + '\n'
+            for p in sorted(self.candidate.iterdir()) if p.name not in ('sha256.sum', 'release-inventory.json')))
         self.inventory = {
             'schema': 1, 'repository': gate.REPOSITORY, 'source_sha': self.revision,
             'tag': 'v' + self.version, 'channels': ['ghcr', 'github'],
@@ -317,8 +320,9 @@ class Orchestrator(unittest.TestCase):
             job = workflow['jobs'][name]
             self.assertEqual(job['environment'], 'release')
             self.assertEqual(job['permissions'].get('packages'), 'read')
-            login = next(s for s in job['steps'] if 'docker login' in s.get('run', ''))
-            self.assertEqual(login['env']['GHCR_TOKEN'], '${{ secrets.GHCR_PUBLISH_TOKEN }}')
+            logins = [s for s in job['steps'] if 'docker login' in s.get('run', '')]
+            self.assertEqual(len(logins), 1 if name == 'ghcr' else 0)
+            if logins: self.assertEqual(logins[0]['env']['GHCR_TOKEN'], '${{ secrets.GHCR_PUBLISH_TOKEN }}')
 
     def test_github_only_candidates_have_no_skipped_optional_channel_job(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())

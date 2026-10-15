@@ -119,27 +119,38 @@ retention and candidate/publishing run attempts. Its audit is maintainer-local;
 publishers receive no administration credential. See the [R1 contract](release/README.md).
 
 `ghcr` and `ghcr-attest` depend directly on protected read-only `authorize` and
-match its inventory and current attempt. In-job preflight precedes registry
-authentication; every upload and provenance/SPDX signing operation gets fresh
+match its inventory, current attempt and selected `ghcr` channel. The gate
+checks that dispatch selection against the signed inventory. A GitHub-only
+dispatch skips both jobs even when GHCR is globally enabled. Every upload and
+provenance/SPDX signing operation gets fresh
 boundary validation. Receipt names include the matrix subject, avoiding held
 storage collisions. `ghcr-gate.sh` calls the real gate, then reuses R1's pinned-key
 inventory verifier and checks both OCI platform/index digests and executable
 identity. OCI is materialized outside the held root; changed working bytes or
 metadata refuse. The publisher accepts only that verified layout path.
 
-Both registry-writing jobs authenticate with **`GHCR_PUBLISH_TOKEN`**, a secret
+The `ghcr-attest` matrix generates bundles with registry publication disabled,
+using R1's exact candidate Sigstore bundle before signing. It verifies each new
+bundle against the actual local manifest bytes and the exact maintainer-approved
+digest before retaining it. `ghcr` waits for that entire matrix, downloads R1's
+candidate signature artifact and all seven OCI bundles, and verifies every
+candidate payload and OCI subject before registry credentials. The publisher
+repeats this verification after its final live gate and before upload.
+
+Only `ghcr` authenticates with **`GHCR_PUBLISH_TOKEN`**, a secret
 held only in `release`, and `GHCR_PUBLISH_USER`, its environment variable.
 The ordinary job token requests `packages: read`; the package's Actions access
 must independently be **READ**, with inherited write/admin access disabled.
 GitHub's attestation API uses the ordinary token with protected OIDC/attestation
-permissions; registry pushes use the separately logged-in credential. The pinned
-[action implementation](https://github.com/actions/attest/blob/ce27ba3b4a9a139d9a20a4a07d69fabb52f1e5bc/src/attest.ts)
-obtains registry credentials separately from its GitHub API token. Credential
+permissions; the generator has no registry credential. After image upload,
+the pinned ORAS tool attaches the already verified bundles as
+[Sigstore OCI referrers](https://github.com/sigstore/cosign/blob/main/specs/BUNDLE_SPEC.md),
+with fresh gate and full verification before each attachment. Credential
 kind/capability must be qualified by the maintainer; no App/fine-grained registry
 support is assumed. No fallback to `GITHUB_TOKEN` is present.
 
-After signing, each platform/index provenance and both platform SPDX bundles are
-checked with R1's shared hardware-inventory-plus-Sigstore verifier. Bundles and
+After upload, each remote platform/index and all seven provenance/SPDX bundles
+are checked again with R1's shared hardware-inventory-plus-Sigstore verifier. Bundles and
 gate receipts are held under that publishing attempt. The final read-only
 completion check refuses skipped/failed jobs, stale inventory/attempts and an
 invalid digest. Rerunning failed jobs requires renewed whole-attempt approval.
@@ -147,10 +158,14 @@ Both `RELEASE_PUBLICATION_ENABLED` and `RELEASE_GHCR_ENABLED` remain disabled
 until maintainer setup and review. First alpha releases are GitHub only; GHCR
 requires a separately approved stable channel set.
 
-Recovery reads and hashes the immutable remote version. Equal bytes may skip
-upload; only authenticated HTTP 404 plus structured absence permits copying
-retained bytes. Auth/network/ambiguous errors or differing digests stop. Lost
-responses require reconciliation on a newly approved attempt. No mutable aliases,
+Recovery reads and hashes the remote version and exact digest. Equal bytes may
+skip upload; only authenticated HTTP 404 plus structured absence permits copying
+retained bytes. Reconciliation repeats after the final gate. Auth/network/
+ambiguous errors or a differing version stop. Uploads address only the immutable
+digest: this publisher neither creates nor replaces version tags, so a version
+appearing after the final check cannot be overwritten. Use the approved digest
+from the inventory, not a version-tag assumption. Lost responses require
+reconciliation on a newly approved attempt. No mutable aliases,
 rebuild, changed approval signature or replacement release bytes are permitted.
 
 ## Maintainer-only setup and release steps

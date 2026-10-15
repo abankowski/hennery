@@ -100,7 +100,7 @@ def privileged(job):
     return tap_credential(job) or any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
         s.get('uses', '').startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) or
         'publish.py upload' in s.get('run', '') or
-        re.search(r'(?m)(?:^|[|;&])\s*(?:(?:nix\s+develop\s+\S+\s+-c\s+)?(?:ba)?sh\s+)?(?:packaging/ghcr-publish\.sh|docker\s+login)(?:\s|$)', s.get('run', ''))
+        re.search(r'(?m)(?:^|[|;&])\s*(?:nix\s+develop\s+\S+\s+-c\s+)?(?:(?:ba)?sh\s+|python3\s+)?(?:packaging/ghcr-publish\.sh|packaging/ghcr-verify\.py\s+publish|docker\s+login)(?:\s|$)', s.get('run', ''))
         for s in job.get('steps', []))
 
 
@@ -180,7 +180,8 @@ def check(data, name):
             if 'authorize' not in needs:
                 raise ValueError('writer must depend on protected credential authorization')
             condition = ' '.join(job.get('if', '').split())
-            allowed = {CREDENTIAL_CONDITION} | {CREDENTIAL_CONDITION + " && vars.RELEASE_" + channel + "_ENABLED == 'true'" for channel in ('GITHUB', 'CRATES', 'GHCR', 'HOMEBREW')}
+            allowed = {CREDENTIAL_CONDITION} | {CREDENTIAL_CONDITION + " && vars.RELEASE_" + channel + "_ENABLED == 'true'" for channel in ('GITHUB', 'CRATES', 'HOMEBREW')}
+            allowed.add(CREDENTIAL_CONDITION + " && vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(inputs.channels), 'ghcr')")
             if condition not in allowed:
                 raise ValueError('credential issuance must match the authorized inventory and current run attempt')
             env = job.get('environment')

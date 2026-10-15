@@ -58,6 +58,7 @@
             pkgs.gnupg
             pkgs.jq
             web.nodejs_24
+            pkgs.oras
           ];
         };
         # R4's non-publishing OCI/registry contract tests. Uses the same pinned

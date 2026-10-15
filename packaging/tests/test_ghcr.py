@@ -21,7 +21,7 @@ class Gates(ReleaseFixture, unittest.TestCase):
         super().setUp()
         self.repo = self.root
         (self.repo / 'packaging').mkdir()
-        for name in ['ghcr-gate.sh', 'ghcr-publish.sh', 'image.py', 'ghcr-remote.py', 'ghcr-candidate.py']:
+        for name in ['ghcr-gate.sh', 'ghcr-publish.sh', 'image.py', 'ghcr-remote.py', 'ghcr-candidate.py', 'ghcr-verify.py']:
             shutil.copyfile(PACKAGING / name, self.repo / 'packaging' / name)
         shutil.copytree(PACKAGING / 'release', self.repo / 'packaging/release',
                         ignore=shutil.ignore_patterns('__pycache__'))
@@ -29,6 +29,13 @@ class Gates(ReleaseFixture, unittest.TestCase):
         with patch.object(approval.subprocess, 'run', side_effect=self.crypto):
             report = helper.qualify(self.candidate, self.inventory_digest, self.work, self.inputs)
         candidate, digest = self.work, report['digest']
+        signatures = self.repo / 'signatures'; signatures.mkdir()
+        (signatures / 'release-inventory.json.asc').write_text(self.signature)
+        (signatures / 'release.sigstore.jsonl').write_text('{}')
+        bundles = self.repo / 'attestation-bundles'; bundles.mkdir()
+        for subject in ['amd64', 'arm64', 'index']:
+            for kind in (['provenance'] if subject == 'index' else ['provenance', 'image-sbom', 'binary-sbom']):
+                (bundles / ('ghcr-' + subject + '-' + kind + '.json')).write_text('{}')
         self.adapter = self.repo / 'packaging/release-gate'
         self.adapter.write_text('#!' + sys.executable + '''
 import os, pathlib, sys
@@ -98,7 +105,7 @@ if sys.argv[1] == 'packaging/ghcr-remote.py':
                 log.write('inspect\\n')
             if os.environ.get('REVOKE_AFTER_INSPECT') == '1':
                 Path(os.environ['GATE_REVOKED_MARKER']).write_text('review revoked')
-            remote = Path(os.environ['REMOTE'])
+            remote = Path(os.environ['DIGEST_REMOTE'] if '/manifests/sha256:' in request.full_url else os.environ['REMOTE'])
             if remote.exists():
                 return Response(remote.read_bytes())
             status = int(os.environ.get('REMOTE_STATUS', '404'))
@@ -114,6 +121,10 @@ else:
     os.execv(''' + repr(sys.executable) + ''', [''' + repr(sys.executable) + ''', *sys.argv[1:]])
 ''')
         python.chmod(0o755)
+        gh = fakebin / 'gh'
+        gh.write_text('#!/bin/sh\necho "$@" >> "$SIGSTORE_CALLS"\n'
+                      '[ ! -f "$GATE_REVOKED_MARKER.sigstore" ] || exit 97\nexit "${SIGSTORE_EXIT:-0}"\n')
+        gh.chmod(0o755)
         gpg = fakebin / 'gpg'
         gpg.write_text('#!' + sys.executable + '''
 import hashlib, os, pathlib, sys
@@ -136,14 +147,21 @@ if [ "$1" = inspect ]; then
     if [ "${REMOTE_ERROR:-missing}" = missing ]; then echo 'manifest unknown' >&2; else echo "$REMOTE_ERROR" >&2; fi
     exit 1
 fi
-if [ "$1" = copy ]; then cp "$CORRECT_REMOTE" "$REMOTE"; exit "${COPY_EXIT:-0}"; fi
+if [ "$1" = copy ]; then
+    for arg do destination=$arg; done
+    printf '%s' "$destination" > "$DIGEST_REMOTE.destination"
+    cp "$CORRECT_REMOTE" "$DIGEST_REMOTE"
+    if [ "${VERSION_DURING_COPY:-0}" = 1 ]; then printf concurrent-version > "$REMOTE"; fi
+    exit "${COPY_EXIT:-0}"
+fi
 exit 90
 ''')
         skopeo.chmod(0o755)
         correct = self.repo / 'correct-remote.json'
         correct.write_bytes((candidate / 'layout/blobs/sha256' / digest[7:]).read_bytes())
         self.env.update(TRANSPORT_CALLS=str(self.repo / 'transport.log'),
-                        REMOTE=str(self.repo / 'remote.json'), CORRECT_REMOTE=str(correct))
+                        REMOTE=str(self.repo / 'remote.json'), CORRECT_REMOTE=str(correct),
+                        DIGEST_REMOTE=str(self.repo / 'digest-remote.json'), SIGSTORE_CALLS=str(self.repo / 'sigstore.log'))
         self.digest = digest
 
     def run_script(self, script='ghcr-gate.sh', *args):
@@ -265,11 +283,61 @@ exit 90
         self.assertEqual(result.returncode, 19)
         self.assertEqual(self.transport(), [])
 
+    def test_failing_sigstore_verifier_prevents_any_registry_write(self):
+        verifier = self.repo / 'bin/gh'
+        verifier.write_text('#!/bin/sh\necho called >> "$ADAPTER_CALLS"\nexit 97\n')
+        verifier.chmod(0o755)
+        result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
+        self.assertEqual(result.returncode, 97, result.stderr)
+        self.assertIn('called', (self.repo / 'adapter.log').read_text())
+        self.assertEqual(self.transport(), [])
+
+    def test_differing_version_appearing_during_gate_refuses_without_overwrite(self):
+        self.adapter.write_text(self.adapter.read_text() + '''
+if sys.argv[sys.argv.index('--phase') + 1] == 'boundary':
+    pathlib.Path(os.environ['REMOTE']).write_bytes(b'concurrent-existing-version')
+''')
+        result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
+        self.assertNotEqual(result.returncode, 0, 'stale absence must not authorize overwrite')
+        self.assertEqual(Path(self.env['REMOTE']).read_bytes(), b'concurrent-existing-version')
+        self.assertNotIn('copy', self.transport())
+
+    def test_sigstore_rejected_after_final_gate_prevents_image_upload(self):
+        self.adapter.write_text(self.adapter.read_text() + '''
+if sys.argv[sys.argv.index('--phase') + 1] == 'boundary':
+    pathlib.Path(os.environ['GATE_REVOKED_MARKER'] + '.sigstore').write_text('reject')
+''')
+        result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
+        self.assertEqual(result.returncode, 97, result.stderr)
+        self.assertNotIn('copy', self.transport())
+
+    def test_upload_by_digest_cannot_overwrite_a_concurrent_version_tag(self):
+        self.env['VERSION_DURING_COPY'] = '1'
+        result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        destination = Path(self.env['DIGEST_REMOTE'] + '.destination').read_text()
+        self.assertEqual(destination, 'docker://ghcr.io/marcinwadon/hennery@' + self.digest)
+        self.assertEqual(Path(self.env['REMOTE']).read_bytes(), b'concurrent-version')
+
+    def test_precredential_workflow_refuses_failing_sigstore_before_login(self):
+        workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-publish.yml').read_text())
+        steps = workflow['jobs']['ghcr']['steps']
+        check = next(s['run'] for s in steps if 'ghcr-verify.py all' in s.get('run', ''))
+        login = next(s['run'] for s in steps if 'docker login' in s.get('run', ''))
+        self.env['SIGSTORE_EXIT'] = '97'
+        docker = self.repo / 'bin/docker'; marker = self.repo / 'docker-called'
+        docker.write_text('#!/bin/sh\ntouch ' + str(marker) + '\n'); docker.chmod(0o755)
+        result = subprocess.run(['sh', '-ec', check + '\n' + login], cwd=self.repo, env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 97, result.stderr)
+        self.assertTrue(Path(self.env['SIGSTORE_CALLS']).exists())
+        self.assertFalse(marker.exists())
+
     def test_approval_revoked_after_inspection_refuses_before_copy(self):
         self.env['REVOKE_AFTER_INSPECT'] = '1'
         result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
         self.assertEqual(result.returncode, 19)
-        self.assertEqual(self.transport(), ['inspect'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect'])
 
     def test_actual_payload_change_after_approval_refuses(self):
         candidate = self.repo / 'image-candidate'
@@ -377,22 +445,22 @@ exit 90
         self.env['REMOTE_ERROR'] = 'name unknown: repository name not known to registry'
         result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', '0.1.0', self.digest)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.transport(), ['inspect', 'copy', 'inspect'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect', 'inspect', 'copy', 'inspect'])
 
     def test_missing_upload_is_revalidated_then_digest_checked(self):
         result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', '0.1.0', self.digest)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.transport(), ['inspect', 'copy', 'inspect'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect', 'inspect', 'copy', 'inspect'])
         self.assertEqual(len((self.repo / 'adapter.log').read_text().splitlines()), 2)
 
     def test_ambiguous_upload_stops_and_retry_reconciles(self):
         self.env['COPY_EXIT'] = '5'
         args = ('ghcr-publish.sh', 'image-candidate/layout', '0.1.0', self.digest)
         self.assertEqual(self.run_script(*args).returncode, 5)
-        self.assertEqual(self.transport(), ['inspect', 'copy'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect', 'inspect', 'copy'])
         self.env['GITHUB_RUN_ATTEMPT'] = '2'
         self.assertEqual(self.run_script(*args).returncode, 0)
-        self.assertEqual(self.transport(), ['inspect', 'copy', 'inspect'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect', 'inspect', 'copy', 'inspect', 'inspect'])
 
     def test_moving_or_injected_version_refuses(self):
         for version in ['latest', '0.1', '../image', '0.1.0;echo bad', '-x']:

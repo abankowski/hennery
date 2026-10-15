@@ -72,6 +72,16 @@ class Workflows(unittest.TestCase):
                 with self.subTest(raw=raw[-150:]),self.assertRaises(ValueError):
                     workflow_policy.check_repository(root)
 
+    def test_ghcr_credentials_require_selected_channel_as_well_as_enablement(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for name in ['ghcr', 'ghcr-attest']:
+            changed = copy.deepcopy(data)
+            selected = " && contains(fromJSON(inputs.channels), 'ghcr')"
+            self.assertIn(selected, changed['jobs'][name]['if'])
+            changed['jobs'][name]['if'] = changed['jobs'][name]['if'].replace(selected, '')
+            with self.subTest(job=name), self.assertRaises(ValueError):
+                workflow_policy.check(changed, 'release-publish.yml')
+
     def test_all_release_workflows(self):
         workflow_policy.check_repository(ROOT)
 

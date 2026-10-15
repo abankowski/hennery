@@ -63,6 +63,14 @@ class HTTP(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'digest mismatch'):
             self.check()
 
+    def test_immutable_digest_lookup_is_hashed_against_expected_manifest(self):
+        self.assertEqual(remote.reconcile(self.digest, self.digest, self.authfile, self), 0)
+        self.assertEqual(self.calls[-1][0].full_url,
+                         'https://ghcr.io/v2/marcinwadon/hennery/manifests/' + self.digest)
+        self.body = b'other digest content'
+        with self.assertRaisesRegex(ValueError, 'digest mismatch'):
+            remote.reconcile(self.digest, self.digest, self.authfile, self)
+
     def test_only_authenticated_404_with_explicit_absence_is_absent(self):
         self.status = 404
         for code in ['MANIFEST_UNKNOWN', 'NAME_UNKNOWN']:
