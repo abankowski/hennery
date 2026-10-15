@@ -7,6 +7,14 @@ use hennery_gateway::scope::PrincipalKind;
 use hennery_proto::delegation::SessionFamily;
 use rusqlite::{OptionalExtension, Transaction, params};
 
+struct CallerRow {
+    cwd: String,
+    agent: String,
+    capabilities: String,
+    isolation: Option<String>,
+    mode: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionToolContext {
     owner_id: String,
@@ -67,16 +75,28 @@ impl Store {
             return Ok(None);
         }
         let PrincipalKind::Session { session_id, host_id } = &identity.principal.kind;
-        let row: Option<(String, String)> = tx.query_row(
-            "SELECT s.cwd, s.agent FROM sessions s JOIN hosts h ON h.id = s.host_id AND h.owner_id = ?1
+        let row: Option<CallerRow> = tx.query_row(
+            "SELECT s.cwd, s.agent, h.capabilities, h.mcp_isolation, s.mcp_delivery_mode
+             FROM sessions s JOIN hosts h ON h.id = s.host_id AND h.owner_id = ?1
              WHERE s.owner_id = ?1 AND s.id = ?2 AND s.host_id = ?3 AND s.hat_id = ?4
                AND s.close_requested = 0 AND s.lifecycle IN ('starting', 'active') AND s.presumed_parked = 0
                AND (?5 = 0 OR s.lifecycle = 'active') AND h.revoked_at IS NULL
                AND (s.mcp_delivery_mode = 'isolated' OR (s.mcp_delivery_mode = 'unisolated' AND s.hat_id = h.default_hat_id))
                AND NOT EXISTS (SELECT 1 FROM purged_hats p WHERE p.owner_id = ?1 AND p.hat_id = s.hat_id)",
              params![self.owner_id(), session_id, host_id, identity.principal.hat_id, mutation],
-             |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
-        let Some((cwd, agent)) = row else { return Ok(None) };
+             |r| Ok(CallerRow { cwd: r.get(0)?, agent: r.get(1)?, capabilities: r.get(2)?, isolation: r.get(3)?, mode: r.get(4)? })).optional()?;
+        let Some(row) = row else { return Ok(None) };
+        let capable = serde_json::from_str::<hennery_proto::frames::Capabilities>(&row.capabilities)
+            .is_ok_and(|c| c.has(hennery_proto::frames::Capability::McpServers));
+        let isolation = row
+            .isolation
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<hennery_proto::frames::AgentIsolation>(value).ok())
+            .unwrap_or_default();
+        if !capable || (row.mode == "isolated" && !isolation.isolates(&row.agent)) {
+            return Ok(None);
+        }
+        let (cwd, agent) = (row.cwd, row.agent);
         if !hennery_kernel::hats::is_canonical(&cwd) {
             return Ok(None);
         }

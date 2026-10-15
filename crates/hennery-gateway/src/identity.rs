@@ -76,20 +76,20 @@ pub(crate) fn builtin_in(tx: &Transaction<'_>, owner: &str, hat: &str) -> Result
         .map(|s| BuiltinDescriptor { revision: s.revision }))
 }
 
-type WatchRegistry = Vec<(Weak<hennery_kernel::coordination::Coordination>, Weak<Revocations>)>;
+type WatchRegistry = Vec<(Weak<hennery_kernel::coordination::Coordination>, Arc<Revocations>)>;
 pub(crate) fn grant_watches(coordination: Arc<hennery_kernel::coordination::Coordination>) -> Arc<Revocations> {
     static REGISTRY: OnceLock<Mutex<WatchRegistry>> = OnceLock::new();
     let mut registry = REGISTRY.get_or_init(Mutex::default).lock().expect("grant registry");
-    registry.retain(|(key, watches)| key.strong_count() > 0 && watches.strong_count() > 0);
+    registry.retain(|(key, _)| key.strong_count() > 0);
     if let Some(watches) = registry.iter().find_map(|(key, watches)| {
         key.upgrade()
             .filter(|key| Arc::ptr_eq(key, &coordination))
-            .and_then(|_| watches.upgrade())
+            .map(|_| watches.clone())
     }) {
         return watches;
     }
     let watches = Arc::new(Revocations::new());
-    registry.push((Arc::downgrade(&coordination), Arc::downgrade(&watches)));
+    registry.push((Arc::downgrade(&coordination), watches.clone()));
     watches
 }
 fn grant_key(owner: &str, hat: &str, revision: i64) -> String {

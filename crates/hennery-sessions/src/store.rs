@@ -340,7 +340,7 @@ const MIGRATIONS: &[&str] = &[
         FOREIGN KEY (child_id, owner_id) REFERENCES sessions(id, owner_id),
         FOREIGN KEY (parent_id, owner_id) REFERENCES sessions(id, owner_id),
         FOREIGN KEY (root_id, owner_id) REFERENCES sessions(id, owner_id),
-        FOREIGN KEY (hat_id, owner_id) REFERENCES hats(id, owner_id));
+        FOREIGN KEY (hat_id, owner_id) REFERENCES hats(id, owner_id) ON DELETE CASCADE);
     CREATE INDEX families_by_parent ON session_families(owner_id, parent_id);
     CREATE TRIGGER family_assignment_immutable BEFORE UPDATE ON session_families
     WHEN NEW.owner_id <> OLD.owner_id OR NEW.child_id <> OLD.child_id

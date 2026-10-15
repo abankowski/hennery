@@ -78,16 +78,7 @@ async fn endpoint(
     body: Body,
 ) -> Response {
     let mut body = RequestBody::new(body, &headers);
-    let Ok(permit) = state.limits.requests.try_acquire("builtin") else {
-        return secure(
-            drain_rejected(
-                body,
-                error(StatusCode::SERVICE_UNAVAILABLE, "busy", "busy"),
-                &state.limits,
-            )
-            .await,
-        );
-    };
+    let mut permit = None;
     let origin = state.app.operator.public_url();
     let mut token_watch = None;
     let mut grant_watch = None;
@@ -111,7 +102,7 @@ async fn endpoint(
                     tokio::select! { biased;
                         () = cancelled.cancelled() => no_scope(),
                         () = grant_cancelled.cancelled() => no_scope(),
-                        response = handle(&state, identity, method, &headers, &mut body) => response,
+                        response = handle(&state, identity, method, &headers, &mut body, &mut permit) => response,
                     }
                 } else {
                     no_scope()
@@ -136,7 +127,7 @@ async fn endpoint(
         token_watch = None;
         grant_watch = None;
     }
-    secure(watched_response(answer, token_watch, grant_watch, Some(permit)))
+    secure(watched_response(answer, token_watch, grant_watch, permit))
 }
 fn watched_response(
     answer: Response,
@@ -214,6 +205,30 @@ struct ClientInfo {
     version: String,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default, rename = "description")]
+    _description: Option<String>,
+    #[serde(default, rename = "websiteUrl")]
+    _website_url: Option<String>,
+    #[serde(default, rename = "icons")]
+    _icons: Option<Vec<ClientIcon>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClientIcon {
+    #[serde(rename = "src")]
+    _src: String,
+    #[serde(default, rename = "mimeType")]
+    _mime_type: Option<String>,
+    #[serde(default, rename = "sizes")]
+    _sizes: Option<Vec<String>>,
+    #[serde(default, rename = "theme")]
+    _theme: Option<IconTheme>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum IconTheme {
+    Light,
+    Dark,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -228,6 +243,7 @@ async fn handle(
     method: Method,
     headers: &HeaderMap,
     body: &mut RequestBody,
+    permit: &mut Option<hennery_kernel::egress::Permit>,
 ) -> Response {
     let Some(revision) = identity.delivered_delegation_revision() else {
         return no_scope();
@@ -273,6 +289,10 @@ async fn handle(
     {
         return rpc_error(Value::Null, -32600, StatusCode::NOT_ACCEPTABLE);
     }
+    let Ok(acquired) = state.limits.requests.try_acquire("builtin") else {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "busy", "busy");
+    };
+    *permit = Some(acquired);
     let read = async {
         let mut bytes = Vec::new();
         while let Some(chunk) = body.next().await {
@@ -292,7 +312,10 @@ async fn handle(
     let Some(value) = hennery_gateway::decode_json_once(&bytes) else {
         return rpc_error(Value::Null, -32700, StatusCode::BAD_REQUEST);
     };
-    let has_id = value.as_object().is_some_and(|v| v.contains_key("id"));
+    let Some(object) = value.as_object() else {
+        return rpc_error(Value::Null, -32600, StatusCode::BAD_REQUEST);
+    };
+    let has_id = object.contains_key("id");
     let Ok(message) = serde_json::from_value::<Message>(value) else {
         return rpc_error(Value::Null, -32600, StatusCode::BAD_REQUEST);
     };
@@ -317,7 +340,16 @@ async fn handle(
     }
     let result = match message.method.as_str() {
         "initialize" => {
-            let Ok(init) = serde_json::from_value::<Initialize>(message.params.unwrap_or(Value::Null)) else {
+            let params = message.params.unwrap_or(Value::Null);
+            if !params.is_object() || !params.get("clientInfo").is_some_and(Value::is_object) {
+                return rpc_error(id, -32602, StatusCode::BAD_REQUEST);
+            }
+            if params["clientInfo"].get("icons").is_some_and(|icons| {
+                !icons.is_null() && !icons.as_array().is_some_and(|items| items.iter().all(Value::is_object))
+            }) {
+                return rpc_error(id, -32602, StatusCode::BAD_REQUEST);
+            }
+            let Ok(init) = serde_json::from_value::<Initialize>(params) else {
                 return rpc_error(id, -32602, StatusCode::BAD_REQUEST);
             };
             let _ = (
@@ -336,7 +368,11 @@ async fn handle(
         "ping" if no_params => json!({}),
         "tools/list" if no_params => json!({"tools":[]}),
         "tools/call" => {
-            let Ok(call) = serde_json::from_value::<Call>(message.params.unwrap_or(Value::Null)) else {
+            let params = message.params.unwrap_or(Value::Null);
+            if !params.is_object() {
+                return rpc_error(id, -32602, StatusCode::BAD_REQUEST);
+            }
+            let Ok(call) = serde_json::from_value::<Call>(params) else {
                 return rpc_error(id, -32602, StatusCode::BAD_REQUEST);
             };
             let _ = (call.name, call.arguments);
@@ -350,7 +386,12 @@ async fn handle(
                     .flatten()
                     .is_some();
             let code = if active { "tool_unavailable" } else { "session_starting" };
-            let structured = json!({"code":code});
+            let structured = serde_json::to_value(hennery_proto::rest::ApiError {
+                code: code.into(),
+                message: "session control tools are unavailable".into(),
+                session_id: None,
+            })
+            .expect("a typed error serializes");
             json!({"isError":true, "structuredContent":structured, "content":[{"type":"text","text":structured.to_string()}]})
         }
         "ping" | "tools/list" => return rpc_error(id, -32602, StatusCode::BAD_REQUEST),
@@ -377,8 +418,12 @@ async fn get_policy(State(state): State<AppState>, axum::extract::Path(hat): axu
 async fn set_policy(
     State(state): State<AppState>,
     axum::extract::Path(hat): axum::extract::Path<String>,
-    Json(request): Json<SetSessionTools>,
+    request: Result<Json<SetSessionTools>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejected) => return error(rejected.status(), "invalid", "invalid request"),
+    };
     let Some(store) = state.store.mcp().authenticator() else {
         return no_scope();
     };
