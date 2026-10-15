@@ -167,7 +167,7 @@ impl Harness {
     }
 }
 #[tokio::test]
-async fn starting_discovery_stateless_protocol_and_no_enabled_tools() {
+async fn starting_discovery_stateless_protocol_and_seven_control_tools() {
     let h = Harness::new().await;
     for version in ["2025-03-26", "2025-06-18", "2025-11-25"] {
         let response = h.rpc(json!({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":version,"capabilities":{},"clientInfo":{"name":"fixture", "version":"1"}}})).await;
@@ -179,9 +179,26 @@ async fn starting_discovery_stateless_protocol_and_no_enabled_tools() {
         .await;
     assert_eq!(initialized.status(), StatusCode::ACCEPTED);
     assert!(initialized.bytes().await.unwrap().is_empty());
+    let discovery = h.rpc(json!({"jsonrpc":"2.0","id":"list","method":"tools/list"})).await;
+    let names: std::collections::BTreeSet<_> = discovery["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
     assert_eq!(
-        h.rpc(json!({"jsonrpc":"2.0","id":"list","method":"tools/list"})).await["result"],
-        json!({"tools":[]})
+        names,
+        [
+            "session_capabilities",
+            "session_spawn",
+            "session_send",
+            "session_status",
+            "session_list",
+            "session_close",
+            "session_answer"
+        ]
+        .into_iter()
+        .collect()
     );
     assert_eq!(
         h.rpc(json!({"jsonrpc":"2.0","id":2,"method":"ping"})).await["result"],
@@ -203,7 +220,7 @@ async fn starting_discovery_stateless_protocol_and_no_enabled_tools() {
     let call = h
         .rpc(json!({"jsonrpc":"2.0","id":3,"method":"tools/call", "params":{"name":"session_spawn","arguments":{}}}))
         .await;
-    assert_eq!(call["result"]["structuredContent"]["code"], "tool_unavailable");
+    assert_eq!(call["result"]["structuredContent"]["code"], "invalid_arguments");
     assert_eq!(
         serde_json::from_str::<Value>(call["result"]["content"][0]["text"].as_str().unwrap()).unwrap(),
         call["result"]["structuredContent"]
