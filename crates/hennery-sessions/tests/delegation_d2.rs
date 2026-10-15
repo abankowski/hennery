@@ -4351,6 +4351,7 @@ async fn reviewer_slow_host_probes_do_not_starve_deadlines() {
     state.hub.mark_ready("host", reg.conn_id);
     hennery_sessions::delegation_worker::after_startup(&state);
     assert!(matches!(rx.recv().await.unwrap(), CollectorFrame::ResolvePath { .. }));
+    let before_deadlines = w.store.max_event_id().unwrap();
     raw(&w)
         .execute(
             "UPDATE delegation_notices SET deadline=?2 WHERE owner_id=?1",
@@ -4362,6 +4363,18 @@ async fn reviewer_slow_host_probes_do_not_starve_deadlines() {
         tokio::task::yield_now().await;
     }
     let open = attention(&w).len();
+    let invalidated: i64 = raw(&w)
+        .query_row(
+            "SELECT count(*) FROM events WHERE owner_id=?1
+        AND kind='family_changed' AND event_id>?2",
+            params![w.store.owner_id(), before_deadlines],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        invalidated >= 32,
+        "deadline routing must invalidate all child summaries while the host probe is pending"
+    );
     let notified: i64 = raw(&w)
         .query_row(
             "SELECT COUNT(*) FROM delegation_attention WHERE owner_id=?1 AND state='open' AND push_run<>''",
