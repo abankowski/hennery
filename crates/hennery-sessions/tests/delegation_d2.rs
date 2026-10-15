@@ -464,7 +464,20 @@ fn collector_restart_preserves_receipts_and_operation_key_namespace_across_tools
     let (w, p) = pair();
     let first = w
         .store
-        .queue_spawn(&p, 1, "spawn-digest", &hennery_sessions::delegation_queue::DelegatedLaunch { key: "shared", agent: "claude", cwd: "/project", brief: "brief", name: None, config: &config("wanted"), mcp: McpContext::NONE })
+        .queue_spawn(
+            &p,
+            1,
+            "spawn-digest",
+            &hennery_sessions::delegation_queue::DelegatedLaunch {
+                key: "shared",
+                agent: "claude",
+                cwd: "/project",
+                brief: "brief",
+                name: None,
+                config: &config("wanted"),
+                mcp: McpContext::NONE,
+            },
+        )
         .unwrap();
     let child = first.child_id.clone().unwrap();
     let reopened = Store::open(&w.db).unwrap();
@@ -482,7 +495,17 @@ fn collector_restart_preserves_receipts_and_operation_key_namespace_across_tools
     );
     assert!(
         reopened
-            .queue_ordinary_answer(&p, 1, "answer-digest", &hennery_sessions::delegation_control::DelegatedAnswer { key: "shared", child: &child, pending: "missing", answer: &answer() })
+            .queue_ordinary_answer(
+                &p,
+                1,
+                "answer-digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "shared",
+                    child: &child,
+                    pending: "missing",
+                    answer: &answer()
+                }
+            )
             .unwrap_err()
             .to_string()
             .contains("operation_conflict")
@@ -643,7 +666,20 @@ fn concurrent_identical_keys_create_one_durable_operation() {
     assert_eq!(w.store.delegation_queue_depth("child").unwrap(), (1, 4));
 }
 fn spawn(w: &World, p: &SessionIdentity, key: &str) -> anyhow::Result<OperationReceipt> {
-    w.store.queue_spawn(p, 1, key, &hennery_sessions::delegation_queue::DelegatedLaunch { key: key, agent: "claude", cwd: "/project", brief: "brief", name: None, config: &SessionConfig::default(), mcp: McpContext::NONE })
+    w.store.queue_spawn(
+        p,
+        1,
+        key,
+        &hennery_sessions::delegation_queue::DelegatedLaunch {
+            key,
+            agent: "claude",
+            cwd: "/project",
+            brief: "brief",
+            name: None,
+            config: &SessionConfig::default(),
+            mcp: McpContext::NONE,
+        },
+    )
 }
 fn user_turn_with_origin(w: &World, id: &str, seq: u64, turn: &str, origin: InputOrigin) {
     assert!(
@@ -828,7 +864,17 @@ fn ordinary_answers_share_one_slot_under_four_worker_race() {
                     let s = Store::open(&db).unwrap();
                     barrier.wait();
                     if i % 2 == 0 {
-                        match s.queue_ordinary_answer(&p, 1, "digest", &hennery_sessions::delegation_control::DelegatedAnswer { key: &format!("parent-{i}"), child: "child", pending: "question", answer: &answer() }) {
+                        match s.queue_ordinary_answer(
+                            &p,
+                            1,
+                            "digest",
+                            &hennery_sessions::delegation_control::DelegatedAnswer {
+                                key: &format!("parent-{i}"),
+                                child: "child",
+                                pending: "question",
+                                answer: &answer(),
+                            },
+                        ) {
                             Ok(_) => 1,
                             Err(e) => {
                                 assert_eq!(e.to_string(), "already_answered");
@@ -864,7 +910,17 @@ fn parent_close_frees_unhanded_answer_without_stealing_operator_slot() {
     let (w, p) = pair();
     pending(&w, "child", 2, "question", PendingKind::Elicitation);
     w.store
-        .queue_ordinary_answer(&p, 1, "digest", &hennery_sessions::delegation_control::DelegatedAnswer { key: "answer", child: "child", pending: "question", answer: &answer() })
+        .queue_ordinary_answer(
+            &p,
+            1,
+            "digest",
+            &hennery_sessions::delegation_control::DelegatedAnswer {
+                key: "answer",
+                child: "child",
+                pending: "question",
+                answer: &answer(),
+            },
+        )
         .unwrap();
     assert!(w.store.answers_to_send("host").unwrap().is_empty());
     assert!(matches!(
@@ -884,7 +940,17 @@ fn permissions_are_operator_only_and_status_contains_no_answer_capable_schema() 
     pending(&w, "child", 2, "permission", PendingKind::Permission);
     assert_eq!(
         w.store
-            .queue_ordinary_answer(&p, 1, "digest", &hennery_sessions::delegation_control::DelegatedAnswer { key: "permission", child: "child", pending: "permission", answer: &answer() })
+            .queue_ordinary_answer(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "permission",
+                    child: "child",
+                    pending: "permission",
+                    answer: &answer()
+                }
+            )
             .unwrap_err()
             .to_string(),
         "operator_required"
@@ -910,7 +976,17 @@ fn accepted_answer_is_not_delivered_until_factual_host_verdict_and_survives_sour
     let (w, p) = pair();
     pending(&w, "child", 2, "question", PendingKind::Elicitation);
     w.store
-        .queue_ordinary_answer(&p, 1, "digest", &hennery_sessions::delegation_control::DelegatedAnswer { key: "answer", child: "child", pending: "question", answer: &answer() })
+        .queue_ordinary_answer(
+            &p,
+            1,
+            "digest",
+            &hennery_sessions::delegation_control::DelegatedAnswer {
+                key: "answer",
+                child: "child",
+                pending: "question",
+                answer: &answer(),
+            },
+        )
         .unwrap();
     let (h, mut rx) = connected();
     w.store.dispatch_delegation_answers(&h).unwrap();
@@ -1289,7 +1365,17 @@ fn disabling_and_reenabling_grant_cancels_queue_without_reviving_old_token() {
     queue(&w, &p, "followup");
     pending(&w, "child", 3, "grant-question", PendingKind::Elicitation);
     w.store
-        .queue_ordinary_answer(&p, 1, "digest", &hennery_sessions::delegation_control::DelegatedAnswer { key: "grant-answer", child: "child", pending: "grant-question", answer: &answer() })
+        .queue_ordinary_answer(
+            &p,
+            1,
+            "digest",
+            &hennery_sessions::delegation_control::DelegatedAnswer {
+                key: "grant-answer",
+                child: "child",
+                pending: "grant-question",
+                answer: &answer(),
+            },
+        )
         .unwrap();
     let (h, mut rx) = connected();
     w.gateway.set_session_tools(&w.hat, false).unwrap();
@@ -1349,7 +1435,20 @@ fn current_path_rule_blocks_cross_hat_allocation_and_queued_dispatch() {
     ));
     assert_eq!(
         w.store
-            .queue_spawn(&p, 1, "digest", &hennery_sessions::delegation_queue::DelegatedLaunch { key: "foreign-cwd", agent: "claude", cwd: "/other", brief: "brief", name: None, config: &SessionConfig::default(), mcp: McpContext::NONE })
+            .queue_spawn(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_queue::DelegatedLaunch {
+                    key: "foreign-cwd",
+                    agent: "claude",
+                    cwd: "/other",
+                    brief: "brief",
+                    name: None,
+                    config: &SessionConfig::default(),
+                    mcp: McpContext::NONE
+                }
+            )
             .unwrap_err()
             .to_string(),
         "not_found"
@@ -1382,9 +1481,10 @@ fn evidence_validator_requires_each_independent_proof_field() {
         axes: BTreeMap::from([("effort".into(), ConfigValue::Id("high".into()))]),
     };
     let mut c = catalog();
-    c.security
-        .axes
-        .insert("mode".into(), vec![ConfigValue::Id("default".into())]);
+    c.security.axes.insert(
+        "mode".into(),
+        vec![ConfigValue::Id("default".into()), ConfigValue::Id("plan".into())],
+    );
     let policy = ExecutionPolicy {
         revision: 2,
         allowed: Default::default(),

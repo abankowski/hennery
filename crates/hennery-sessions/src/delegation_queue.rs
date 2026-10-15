@@ -17,6 +17,17 @@ pub const MAX_QUEUE_BYTES: i64 = 1024 * 1024;
 pub const MAX_CHILDREN: i64 = 8;
 pub const MAX_STARTS: i64 = 32;
 
+/// Validated launch values retained together through atomic allocation.
+pub struct DelegatedLaunch<'a> {
+    pub key: &'a str,
+    pub agent: &'a str,
+    pub cwd: &'a str,
+    pub brief: &'a str,
+    pub name: Option<&'a str>,
+    pub config: &'a SessionConfig,
+    pub mcp: McpContext,
+}
+
 fn uuid() -> String {
     uuid::Uuid::now_v7().to_string()
 }
@@ -241,20 +252,22 @@ impl Store {
         tx.commit()?;
         Ok(receipt)
     }
-    #[allow(clippy::too_many_arguments)]
     pub fn queue_spawn(
         &self,
         identity: &SessionIdentity,
         revision: i64,
-        key: &str,
         digest: &str,
-        agent: &str,
-        cwd: &str,
-        brief: &str,
-        name: Option<&str>,
-        config: &SessionConfig,
-        mcp: McpContext,
+        launch: &DelegatedLaunch<'_>,
     ) -> Result<OperationReceipt> {
+        let DelegatedLaunch {
+            key,
+            agent,
+            cwd,
+            brief,
+            name,
+            config,
+            mcp,
+        } = *launch;
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let caller = self
@@ -327,8 +340,7 @@ impl Store {
             params![self.owner_id(), receipt.operation_id, epoch],
         )?;
         tx.execute("INSERT INTO session_attach_evidence(owner_id,session_id,attach_generation,requested_config) VALUES (?1,?2,1,?3)",params![self.owner_id(),child,serde_json::to_string(config)?])?;
-        tx.commit()?;
-        self.mcp().cut(cut);
+        crate::store::commit_then_cut(tx, self.mcp().as_ref(), cut)?;
         Ok(receipt)
     }
 }

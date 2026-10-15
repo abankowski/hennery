@@ -152,8 +152,7 @@ impl Store {
             attach_generation: u64::try_from(generation)?,
             agent_session_id: if new_start { None } else { agent_session },
         };
-        tx.commit()?;
-        self.mcp().cut(cut);
+        crate::store::commit_then_cut(tx, self.mcp().as_ref(), cut)?;
         // conn owns the shared gate here: close cannot commit in this gap.
         if !self.handoff_delegated(&conn, &source, &host, frame, hub)? {
             conn.execute("UPDATE session_operations SET state = 'waiting_config' WHERE owner_id = ?1 AND child_id = ?2 AND turn_id IS NULL AND tool IN ('session_spawn','session_send') AND state = 'awaiting_reconciliation'",params![self.owner_id(),target])?;

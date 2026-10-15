@@ -14,18 +14,28 @@ use hennery_proto::{
 };
 use rusqlite::{OptionalExtension, params};
 use sha2::{Digest, Sha256};
+
+/// One ordinary answer, admitted through the same validator as operator input.
+pub struct DelegatedAnswer<'a> {
+    pub key: &'a str,
+    pub child: &'a str,
+    pub pending: &'a str,
+    pub answer: &'a AnswerRequest,
+}
 impl Store {
-    #[allow(clippy::too_many_arguments)]
     pub fn queue_ordinary_answer(
         &self,
         identity: &SessionIdentity,
         revision: i64,
-        key: &str,
         digest: &str,
-        child: &str,
-        pending: &str,
-        answer: &AnswerRequest,
+        input: &DelegatedAnswer<'_>,
     ) -> Result<OperationReceipt> {
+        let DelegatedAnswer {
+            key,
+            child,
+            pending,
+            answer,
+        } = *input;
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let caller = self
