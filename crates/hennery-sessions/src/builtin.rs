@@ -367,7 +367,7 @@ async fn handle(
             json!({"protocolVersion":version, "capabilities":{"tools":{}}, "serverInfo":{"name":"hennery","version":env!("CARGO_PKG_VERSION")}})
         }
         "ping" if no_params => json!({}),
-        "tools/list" if no_params => json!({"tools":[]}),
+        "tools/list" if no_params => crate::tool_args::discovery(),
         "tools/call" => {
             let params = message.params.unwrap_or(Value::Null);
             if !params.is_object() {
@@ -376,8 +376,6 @@ async fn handle(
             let Ok(call) = serde_json::from_value::<Call>(params) else {
                 return rpc_error(id, -32602, StatusCode::BAD_REQUEST);
             };
-            let _ = (call.name, call.arguments);
-            // D2 supplies typed handlers, accepted revisions and receipts.
             let active = state.app.hub.is_ready(context.host_id())
                 && state
                     .app
@@ -386,14 +384,37 @@ async fn handle(
                     .ok()
                     .flatten()
                     .is_some();
-            let code = if active { "tool_unavailable" } else { "session_starting" };
-            let structured = serde_json::to_value(hennery_proto::rest::ApiError {
-                code: code.into(),
-                message: "session control tools are unavailable".into(),
-                session_id: None,
-            })
-            .expect("a typed error serializes");
-            json!({"isError":true, "structuredContent":structured, "content":[{"type":"text","text":structured.to_string()}]})
+            let (structured, failed) = if !active {
+                (
+                    json!({"code":"session_starting","message":"the session is starting"}),
+                    true,
+                )
+            } else {
+                match tokio::time::timeout(
+                    state.limits.answer_timeout.min(std::time::Duration::from_secs(30)),
+                    crate::session_tools::execute(
+                        &state.app,
+                        &identity,
+                        revision,
+                        &call.name,
+                        Value::Object(call.arguments),
+                    ),
+                )
+                .await
+                {
+                    Ok(Ok(value)) => (value, false),
+                    Ok(Err(error)) => (
+                        json!({"code":crate::session_tools::error_code(&error),"message":"the session operation was refused"}),
+                        true,
+                    ),
+
+                    Err(_) => (
+                        json!({"code":"request_timeout","message":"retry with the same operation key"}),
+                        true,
+                    ),
+                }
+            };
+            json!({"isError":failed,"structuredContent":structured,"content":[{"type":"text","text":structured.to_string()}]})
         }
         "ping" | "tools/list" => return rpc_error(id, -32602, StatusCode::BAD_REQUEST),
         _ => return rpc_error(id, -32601, StatusCode::OK),

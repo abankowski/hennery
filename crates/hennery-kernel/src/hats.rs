@@ -532,16 +532,9 @@ impl Hosts {
         anyhow::ensure!(is_canonical(path), "not a canonical path: {path:?}");
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let Some(default_hat) = host_default_hat(&tx, self.owner_id(), host_id)? else {
-            return Ok(None);
-        };
-        let rules = rules_of(&tx, self.owner_id(), host_id)?;
+        let result = session_hat_in(&tx, self.owner_id(), host_id, path)?;
         tx.commit()?;
-        let decided = resolve(&rules, &default_hat, path);
-        Ok(Some(match near_miss(&rules, path, &decided) {
-            Some(rule) => SessionHat::Ambiguous(rule.clone()),
-            None => SessionHat::Decided(decided),
-        }))
+        Ok(result)
     }
 
     /// Whether one of the host's rules names a hat other than its default:
@@ -680,6 +673,26 @@ impl Hosts {
             |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)),
         )?)
     }
+}
+
+/// Resolve placement in the caller's mutation transaction. Delegated allocation
+/// and dispatch use this rather than retaining a preflight path-rule decision.
+pub fn session_hat_in(
+    conn: &rusqlite::Transaction<'_>,
+    owner: &str,
+    host_id: &str,
+    path: &str,
+) -> Result<Option<SessionHat>> {
+    anyhow::ensure!(is_canonical(path), "not a canonical path");
+    let Some(default_hat) = host_default_hat(conn, owner, host_id)? else {
+        return Ok(None);
+    };
+    let rules = rules_of(conn, owner, host_id)?;
+    let decided = resolve(&rules, &default_hat, path);
+    Ok(Some(match near_miss(&rules, path, &decided) {
+        Some(rule) => SessionHat::Ambiguous(rule.clone()),
+        None => SessionHat::Decided(decided),
+    }))
 }
 
 fn host_exists(conn: &rusqlite::Connection, owner: &str, host_id: &str) -> Result<bool> {

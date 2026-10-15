@@ -196,7 +196,7 @@ impl Store {
                 let input: OperatorInput =
                     serde_json::from_str(&raw).map_err(|_| anyhow::anyhow!("unsupported input origin"))?;
                 ensure!(
-                    matches!(input.origin, InputOrigin::Operator {}) && input.turn_id == *turn,
+                    self.verified_input_in(core, &input.origin, &candidate.session_id, turn)? && input.turn_id == *turn,
                     "unsupported input origin"
                 );
                 let mut user = Assembly::new(ASSEMBLY_BYTES);
@@ -343,5 +343,15 @@ impl Store {
         };
         tx.commit()?;
         Ok(page)
+    }
+}
+
+impl Store {
+    fn verified_input_in(&self, tx: &Transaction<'_>, origin: &InputOrigin, target: &str, turn: &str) -> Result<bool> {
+        match origin {
+            InputOrigin::Operator {}=>Ok(true),
+            InputOrigin::Parent {session_id,operation_id}=>Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM session_operations WHERE owner_id = ?1 AND operation_id = ?2 AND caller_id = ?3 AND child_id = ?4 AND turn_id = ?5 AND tool IN ('session_send','session_spawn'))",params![self.owner_id(),operation_id,session_id,target,turn],|r|r.get(0))?),
+            InputOrigin::ChildReport {..}=>Ok(false),
+        }
     }
 }

@@ -371,6 +371,7 @@ const MIGRATIONS: &[&str] = &[
           AND detached = 0 AND (NEW.hat_id <> OLD.hat_id OR NEW.close_requested = 1 OR NEW.lifecycle = 'closed');
     END;
     ",
+    include_str!("delegation_schema.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -855,7 +856,7 @@ pub(crate) fn now() -> String {
 /// Write a collector-originated event (`host_seq` NULL, ACP core §8), for
 /// a session of `owner`'s only: for any other, or a tombstone (plan 9a
 /// A1), it fails and writes nothing.
-fn collector_event(
+pub(crate) fn collector_event(
     tx: &Transaction<'_>,
     owner: &str,
     session_id: &str,
@@ -1069,7 +1070,7 @@ fn fact_applies(tx: &Transaction<'_>, owner: &str, session_id: &str, turn_id: Op
 /// with its streams cut, and a request arriving between the cut and the
 /// commit would hold a fresh watch nothing cuts. The one place the sessions
 /// module cuts (`tests/cut_after_commit.rs` holds it to that).
-fn commit_then_cut(tx: Transaction<'_>, mcp: &dyn SessionMcp, cut: Cut) -> Result<()> {
+pub(crate) fn commit_then_cut(tx: Transaction<'_>, mcp: &dyn SessionMcp, cut: Cut) -> Result<()> {
     tx.commit()?;
     mcp.cut(cut);
     Ok(())
@@ -1479,7 +1480,12 @@ fn check_answer(kind: PendingKind, option_ids: Option<&[String]>, answer: &Answe
 }
 
 /// The frame that carries a queued answer to its host.
-fn answer_frame(request_id: String, session_id: &str, pending_id: &str, answer: AnswerRequest) -> CollectorFrame {
+pub(crate) fn answer_frame(
+    request_id: String,
+    session_id: &str,
+    pending_id: &str,
+    answer: AnswerRequest,
+) -> CollectorFrame {
     let (session_id, pending_id) = (session_id.to_string(), pending_id.to_string());
     match answer {
         AnswerRequest::Permission { option_id } => CollectorFrame::AnswerPermission {
@@ -2434,10 +2440,13 @@ impl Store {
     /// session detail).
     pub fn open_pending(&self, session_id: &str) -> Result<Vec<PendingItem>> {
         let conn = self.conn();
+        self.open_pending_in(&conn, session_id, u32::MAX)
+    }
+    pub(crate) fn open_pending_in(&self, conn: &Connection, session_id: &str, limit: u32) -> Result<Vec<PendingItem>> {
         let mut stmt = conn.prepare(&format!(
-            "SELECT {PENDING_COLUMNS} WHERE p.session_id = ?1 AND p.state = 'open' AND p.owner_id = ?2 ORDER BY p.rowid"
+            "SELECT {PENDING_COLUMNS} WHERE p.session_id = ?1 AND p.state = 'open' AND p.owner_id = ?2 ORDER BY p.rowid LIMIT ?3"
         ))?;
-        let rows = stmt.query_map([session_id, &self.owner], PendingRow::read)?;
+        let rows = stmt.query_map(params![session_id, self.owner, limit], PendingRow::read)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?.item()?);
@@ -2471,6 +2480,25 @@ impl Store {
     ) -> Result<AnswerSubmission> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let result = self.submit_answer_in(
+            &tx,
+            session_id,
+            pending_id,
+            answer,
+            &hennery_proto::plugin::InputOrigin::Operator {},
+        )?;
+        tx.commit()?;
+        Ok(result)
+    }
+
+    pub(crate) fn submit_answer_in(
+        &self,
+        tx: &Transaction<'_>,
+        session_id: &str,
+        pending_id: &str,
+        answer: &AnswerRequest,
+        origin: &hennery_proto::plugin::InputOrigin,
+    ) -> Result<AnswerSubmission> {
         let row: Option<(String, String, Option<String>, String, bool)> = tx
             .query_row(
                 "SELECT p.kind, p.state, p.option_ids, s.host_id,
@@ -2497,20 +2525,20 @@ impl Store {
         let request_id = uuid::Uuid::now_v7().to_string();
         let ts = now();
         tx.execute(
-            "INSERT INTO answer_queue(pending_id, session_id, request_id, answer, submitted_at, owner_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO answer_queue(pending_id, session_id, request_id, answer, submitted_at, owner_id, input_origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 pending_id,
                 session_id,
                 request_id,
                 serde_json::to_string(answer)?,
                 ts,
-                self.owner
+                self.owner,
+                serde_json::to_string(origin)?
             ],
         )?;
-        let body = json!({ "pending_id": pending_id, "request_id": request_id, "answer": answer });
-        let event = collector_event(&tx, &self.owner, session_id, "answer_submitted", body, &ts)?;
-        tx.commit()?;
+        let body = json!({ "pending_id": pending_id, "request_id": request_id, "answer": answer, "origin": origin });
+        let event = collector_event(tx, &self.owner, session_id, "answer_submitted", body, &ts)?;
         Ok(AnswerSubmission::Queued(Box::new(QueuedAnswer {
             event,
             host_id,
@@ -2530,7 +2558,7 @@ impl Store {
              FROM answer_queue q
                  JOIN pending p ON p.pending_id = q.pending_id AND p.owner_id = q.owner_id
                  JOIN sessions s ON s.id = q.session_id AND s.owner_id = q.owner_id
-             WHERE s.host_id = ?1 AND q.delivered IS NULL AND p.state = 'open' AND q.owner_id = ?2
+             WHERE s.host_id = ?1 AND q.delivered IS NULL AND q.delegation_handoff = 1 AND p.state = 'open' AND q.owner_id = ?2
              ORDER BY q.rowid",
         )?;
         let rows = stmt.query_map([host_id, &self.owner], |r| {
@@ -2590,8 +2618,8 @@ impl Store {
         self.open_turn_with(session_id, turn_id, content, &[])
     }
 
-    /// C1's typed production boundary. Delegation producers are not enabled
-    /// until D3; accepting their wire types here would manufacture authority.
+    /// Public callers may produce Operator input only. The internal durable
+    /// dispatcher writes Parent provenance with its verified operation mapping.
     pub fn open_turn_with_origin(
         &self,
         session_id: &str,
@@ -3147,6 +3175,21 @@ impl Store {
     pub fn close_now(&self, session_id: &str) -> Result<Vec<EventDto>> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let mcp = self.mcp();
+        let (events, cut) = close_in(&tx, &self.owner, mcp.as_ref(), session_id)?;
+        commit_then_cut(tx, mcp.as_ref(), cut)?;
+        Ok(events)
+    }
+
+    /// A delegated close judged unreachable must not tear down a newer
+    /// operator resume which deliberately cleared that close intent.
+    pub fn close_delegated_unattached(&self, session_id: &str, expected: &Unattached) -> Result<Vec<EventDto>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let eligible:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = ?2 AND close_requested = 1 AND lifecycle = ?3 AND presumed_parked = ?4)",params![self.owner,session_id,expected.lifecycle,expected.presumed_parked],|r|r.get(0))?;
+        if !eligible {
+            return Ok(Vec::new());
+        }
         let mcp = self.mcp();
         let (events, cut) = close_in(&tx, &self.owner, mcp.as_ref(), session_id)?;
         commit_then_cut(tx, mcp.as_ref(), cut)?;
@@ -3750,11 +3793,15 @@ impl Store {
                         )
                         .optional()?;
                     if let Some(content) = content {
-                        // Only the authenticated operator producer exists in
-                        // C1. This event is collector-written, never copied
-                        // from an ACP payload or inferred from prompt text.
-                        let body = json!({ "turn_id": turn_id, "content": serde_json::from_str::<Value>(&content)?,
-                            "origin": hennery_proto::plugin::InputOrigin::Operator {} });
+                        // Origin belongs to the reserved turn, written by an
+                        // authenticated operator or verified parent dispatcher.
+                        let raw_origin: String = tx.query_row(
+                            "SELECT input_origin FROM turns WHERE owner_id = ?1 AND turn_id = ?2",
+                            params![self.owner, turn_id],
+                            |r| r.get(0),
+                        )?;
+                        let origin: hennery_proto::plugin::InputOrigin = serde_json::from_str(&raw_origin)?;
+                        let body = json!({ "turn_id": turn_id, "content": serde_json::from_str::<Value>(&content)?, "origin": origin });
                         let user_turn = collector_event(&tx, &self.owner, session_id, "user_turn", body, &ts)?;
                         link_attachments(&tx, &self.owner, user_turn.event_id, &user_turn.body["content"])?;
                         created.push(user_turn);
@@ -3946,7 +3993,7 @@ impl Store {
                                  AND pending_id <> ?3 AND owner_id = ?4 AND turn_id IS NULL
                                  AND reason = 'agent_withdrew'
                                  AND opened_event_id > coalesce((SELECT max(event_id) FROM events
-                                     WHERE session_id = ?1 AND kind = 'user_turn' AND owner_id = ?4), 0)))",
+                                     WHERE session_id = ?1 AND kind = 'user_turn' AND owner_id = ?4 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'), 0)))",
                             params![session_id, indexed.turn_id, pending_id, self.owner],
                             |r| r.get::<_, bool>(0),
                         )?;
@@ -3963,7 +4010,7 @@ impl Store {
                              OR EXISTS(SELECT 1 FROM pending WHERE session_id = ?1 AND pending_id <> ?2
                                  AND owner_id = ?3 AND turn_id IS NULL AND reason = 'agent_withdrew'
                                  AND opened_event_id > coalesce((SELECT max(event_id) FROM events
-                                     WHERE session_id = ?1 AND kind = 'user_turn' AND owner_id = ?3), 0))",
+                                     WHERE session_id = ?1 AND kind = 'user_turn' AND owner_id = ?3 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'), 0))",
                             params![session_id, pending_id, self.owner],
                             |r| r.get::<_, bool>(0),
                         )?;
@@ -4117,6 +4164,9 @@ impl Store {
             }),
             None => None,
         };
+        if !created.is_empty() {
+            self.ingest_delegation_in(&tx, session_id, body)?;
+        }
         commit_then_cut(tx, mcp.as_ref(), cut)?;
         Ok(Ingested { events: created, edge })
     }
@@ -4264,6 +4314,15 @@ impl Store {
     /// facts stored but not applied are left out (final review F1).
     pub fn events(&self, session_id: &str, after: i64, limit: u32) -> Result<Vec<EventDto>> {
         let conn = self.conn();
+        self.events_in(&conn, session_id, after, limit)
+    }
+    pub(crate) fn events_in(
+        &self,
+        conn: &Connection,
+        session_id: &str,
+        after: i64,
+        limit: u32,
+    ) -> Result<Vec<EventDto>> {
         let mut stmt = conn.prepare(EVENTS_AFTER)?;
         let rows = stmt.query_map(params![session_id, after, limit, self.owner], EventRow::read)?;
         let mut out = Vec::new();

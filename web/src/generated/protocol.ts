@@ -53,6 +53,96 @@ export type SetSessionTools = { delegation_enabled: boolean, };
 
 export type SessionFamily = { child_id: string, parent_id: string, root_id: string, hat_id: string, created_event_id: number, detached: boolean, reason: string | null, };
 
+export type ExecutionPolicy = { revision: number,
+/**
+ * Runtime -> profile security option id -> explicitly permitted values.
+ */
+allowed: { [key in string]: { [key in string]: Array<ConfigValue> } }, };
+
+export type SetExecutionPolicy = { allowed: { [key in string]: { [key in string]: Array<ConfigValue> } }, };
+
+export type DelegationLimits = { children: number, starts_per_operator_epoch: number, queued_prompts: number, queued_bytes: number, message_bytes: number, };
+
+export type CapabilitiesResult = { runtimes: Array<string>, catalogs: Array<HostCatalog>, cwd: string, policy: ExecutionPolicy, limits: DelegationLimits, };
+
+export type ChildQuestion = { pending_id: string, kind: PendingKind, operator_required: boolean, answered: boolean,
+/**
+ * The display fold's elicitation question. Permissions expose no schema.
+ */
+question: unknown, };
+
+export type ChildSummary = { child_id: string, lifecycle: string, activity: string | null, queued: number, close_requested: boolean, };
+
+export type ChildList = { children: Array<ChildSummary>, next_cursor: string | null, };
+
+export type ChildStatus = { summary: ChildSummary, requested: SessionConfig, actual: SessionConfig | null, questions: Array<ChildQuestion>, operations: Array<OperationReceipt>, last_outcome: string | null, last_report: string | null, truncated: boolean, reason: string | null, url: string, };
+
+export type PromptFence = { attach_generation: number, config_revision: number, };
+
+export type ConfigCompleteness = "complete" | "partial" | "unknown";
+
+export type ConfigEvidence = { attach_generation: number, config_revision: number, completeness: ConfigCompleteness, actual: SessionConfig, };
+
+export type CatalogFreshness = "fresh" | "stale" | "unknown";
+
+/**
+ * Profile-owned security axes and their baseline allowed values. `mode`
+ * means `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.
+ * Unknown profiles require explicit operator configuration on the collector.
+ */
+export type SecurityClassification = { known: boolean, axes: { [key in string]: Array<ConfigValue> }, };
+
+export type HostCatalog = { agent: string,
+/**
+ * Opaque digest of the configured adapter command/environment and catalog.
+ */
+adapter_revision: string, config_options: unknown[], defaults: SessionConfig, security: SecurityClassification, freshness: CatalogFreshness, };
+
+/**
+ * Caller-host capabilities, scoped to the caller's hat and validated cwd.
+ */
+export type CapabilitiesArgs = { agent: string | null, cwd: string | null, };
+
+/**
+ * Start one independently configured direct child, without provider fallback.
+ */
+export type SpawnArgs = { operation_key: string, cwd: string, brief: string, name: string | null, agent: string | null, config: SessionConfig, };
+
+/**
+ * Queue an ordinary follow-up for an owned direct child.
+ */
+export type SendArgs = { operation_key: string, child_id: string, text: string, };
+
+/**
+ * Answer ordinary elicitation only. ACP permissions remain operator-only.
+ */
+export type AnswerArgs = { operation_key: string, child_id: string, pending_id: string, action: ElicitationAction, content: unknown | null, };
+
+/**
+ * Read a direct child's state, optionally selecting one operation receipt.
+ */
+export type StatusArgs = { child_id: string, operation_key: string | null, };
+
+/**
+ * Page direct children only, never owner-wide sessions or grandchildren.
+ */
+export type ListArgs = { cursor: string | null, limit: number | null, };
+
+/**
+ * Close one direct child. Does not delete sessions or clean files.
+ */
+export type CloseArgs = { operation_key: string, child_id: string, };
+
+/**
+ * Durable acceptance/delivery record. Delivery never implies completion.
+ */
+export type OperationReceipt = { operation_id: string, child_id: string | null, turn_id: string | null, pending_id: string | null, state: OperationState, };
+
+/**
+ * A delegation operation's state, independent of the session lifecycle.
+ */
+export type OperationState = { "state": "accepted" } | { "state": "waiting_config" } | { "state": "queued" } | { "state": "awaiting_reconciliation" } | { "state": "delivered" } | { "state": "completed" } | { "state": "not_delivered" } | { "state": "cancelled" } | { "state": "failed", code: string, };
+
 export type TextRole = "user" | "assistant";
 
 export type Excerpt = { role: TextRole, text: string, };
@@ -99,7 +189,7 @@ export type SessionConfig = { model?: string | null, mode?: string | null, axes?
  * collector never sends a frame that needs a capability to a host that
  * lacks it.
  */
-export type Capability = "projects" | "images" | "park" | "resolve_path" | "forget_session" | "mcp_servers";
+export type Capability = "projects" | "images" | "park" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "delegation_config";
 
 /**
  * `hello.capabilities`. Deserialized leniently: a capability this build
@@ -225,7 +315,11 @@ title?: string | null, };
  * "the adapter has no config" (a response that failed to parse looks
  * empty).
  */
-export type Indexed = { turn_id?: string | null,
+export type Indexed = {
+/**
+ * Fresh host-produced configuration proof, never retained collector values.
+ */
+config_evidence?: ConfigEvidence | null, turn_id?: string | null,
 /**
  * On a `session_info_update` that names a title: the title the agent
  * reported, as it sent it; empty when it cleared it (ACP `null`). The
@@ -367,7 +461,7 @@ export type ForgetOutcome = "complete" | "partial";
 /**
  * Host -> collector.
  */
-export type HostFrame = { "type": "hello", protocol_version: string, host_version: string, host_id: string,
+export type HostFrame = { "type": "catalog", request_id: string, catalog: HostCatalog, } | { "type": "hello", protocol_version: string, host_version: string, host_id: string,
 /**
  * Proof of possession of the host's key (ACP core §3.5): its
  * Ed25519 signature, hex, over `hello_proof_message(nonce, host_id,
@@ -416,7 +510,19 @@ truncated: boolean, };
 /**
  * Collector -> host.
  */
-export type CollectorFrame = { "type": "hello_ack", protocol_version: string, collector_version: string,
+export type CollectorFrame = { "type": "probe_catalog", request_id: string, agent: string, cwd: string, } | { "type": "delegated_attach", request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue },
+/**
+ * Passed in `session/new` / `session/load`. Only to a host that
+ * announced `mcp_servers`.
+ */
+mcp_servers?: Array<McpServer>,
+/**
+ * The collector knowingly delivers to an agent the host cannot isolate
+ * (the mixed-host fallback's default hat, or a single-hat host,
+ * umbrella §8.5). Absent, the host refuses servers for such an agent
+ * (`mcp_isolation_unavailable`): isolation is never lost by omission.
+ */
+isolation_waived?: boolean, } | { "type": "delegated_prompt", request_id: string, session_id: string, turn_id: string, content: unknown[], expected: PromptFence, } | { "type": "hello_ack", protocol_version: string, collector_version: string,
 /**
  * Highest committed seq per session listed in `hello`; the host
  * fast-forwards its counters if they are lower (lost outbox).

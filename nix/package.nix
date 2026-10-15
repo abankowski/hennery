@@ -16,6 +16,9 @@ let
     root = ../.;
     fileset = lib.fileset.unions [
       (craneLib.fileset.commonCargoSources ../.)
+      # Crane's common set omits SQL read by Rust's include_str!.
+      ../crates/hennery-sessions/src/delegation_schema.sql
+      ../crates/hennery-sessions/tests/fixtures/undo_delegation.sql
       (lib.fileset.maybeMissing ../adapters/manifest.json)
       (lib.fileset.maybeMissing ../crates/hennery-host/manifest.json)
     ];

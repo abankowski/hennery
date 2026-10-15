@@ -37,6 +37,10 @@ pub enum Capability {
     /// servers it cannot isolate unless the collector waived that
     /// (`mcp_isolation_unavailable`). A host without it gets no servers.
     McpServers,
+    /// Disposable runtime catalog discovery without a user prompt.
+    CatalogProbe,
+    /// Generation-bound evidence and serialized delegated prompt admission.
+    DelegationConfig,
 }
 
 /// The longest agent data root a host may report (plan 9d, O12's shape
@@ -577,6 +581,9 @@ impl SessionConfig {
 /// empty).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Indexed {
+    /// Fresh host-produced configuration proof, never retained collector values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_evidence: Option<Box<crate::delegation_host::ConfigEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
     /// On a `session_info_update` that names a title: the title the agent
@@ -792,6 +799,10 @@ pub struct DirEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostFrame {
+    Catalog {
+        request_id: String,
+        catalog: crate::delegation_host::HostCatalog,
+    },
     Hello {
         protocol_version: String,
         host_version: String,
@@ -899,6 +910,7 @@ impl CollectorFrame {
         match self {
             Self::ListProjects { .. } | Self::BrowseDirectory { .. } => Ok(Some(Capability::Projects)),
             Self::ResolvePath { .. } => Ok(Some(Capability::ResolvePath)),
+            Self::ProbeCatalog { .. } => Ok(Some(Capability::CatalogProbe)),
             // Not a probe of state, but carried as one (`session_forgotten`).
             Self::ForgetSession { .. } => Ok(Some(Capability::ForgetSession)),
             Self::HelloAck { .. }
@@ -906,6 +918,8 @@ impl CollectorFrame {
             | Self::StartSession { .. }
             | Self::ResumeSession { .. }
             | Self::Prompt { .. }
+            | Self::DelegatedAttach { .. }
+            | Self::DelegatedPrompt { .. }
             | Self::CancelTurn { .. }
             | Self::SetConfig { .. }
             | Self::AnswerPermission { .. }
@@ -923,10 +937,14 @@ impl CollectorFrame {
     /// compile.
     pub fn mcp_delivery(&self) -> Option<&McpDelivery> {
         match self {
-            Self::StartSession { mcp, .. } | Self::ResumeSession { mcp, .. } => Some(mcp),
+            Self::StartSession { mcp, .. } | Self::ResumeSession { mcp, .. } | Self::DelegatedAttach { mcp, .. } => {
+                Some(mcp)
+            }
             Self::HelloAck { .. }
             | Self::HelloError { .. }
             | Self::Prompt { .. }
+            | Self::DelegatedPrompt { .. }
+            | Self::ProbeCatalog { .. }
             | Self::CancelTurn { .. }
             | Self::SetConfig { .. }
             | Self::AnswerPermission { .. }
@@ -945,7 +963,9 @@ impl CollectorFrame {
     /// The agent a start or resume names.
     pub fn agent(&self) -> Option<&str> {
         match self {
-            Self::StartSession { agent, .. } | Self::ResumeSession { agent, .. } => Some(agent),
+            Self::StartSession { agent, .. }
+            | Self::ResumeSession { agent, .. }
+            | Self::DelegatedAttach { agent, .. } => Some(agent),
             _ => None,
         }
     }
@@ -957,7 +977,8 @@ impl HostFrame {
     /// or this does not compile (umbrella §5.4).
     pub fn probe_request_id(&self) -> Option<&str> {
         match self {
-            Self::Projects { request_id, .. }
+            Self::Catalog { request_id, .. }
+            | Self::Projects { request_id, .. }
             | Self::Directory { request_id, .. }
             | Self::ResolvedPath { request_id, .. }
             | Self::SessionForgotten { request_id, .. } => Some(request_id),
@@ -970,6 +991,37 @@ impl HostFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CollectorFrame {
+    ProbeCatalog {
+        request_id: String,
+        agent: String,
+        cwd: String,
+    },
+    /// A delegated attach uses an independently allocated, nonzero generation.
+    /// `agent_session_id` absent starts a new adapter session; present loads it.
+    DelegatedAttach {
+        request_id: String,
+        session_id: String,
+        #[ts(type = "number")]
+        committed_seq: u64,
+        agent: String,
+        cwd: String,
+        #[serde(flatten)]
+        config: SessionConfig,
+        hat_id: String,
+        #[serde(flatten)]
+        mcp: McpDelivery,
+        #[ts(type = "number")]
+        attach_generation: u64,
+        agent_session_id: Option<String>,
+    },
+    DelegatedPrompt {
+        request_id: String,
+        session_id: String,
+        turn_id: String,
+        #[ts(type = "unknown[]")]
+        content: Vec<Value>,
+        expected: crate::delegation_host::PromptFence,
+    },
     HelloAck {
         protocol_version: String,
         collector_version: String,

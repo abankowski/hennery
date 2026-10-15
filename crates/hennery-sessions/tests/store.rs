@@ -375,6 +375,8 @@ fn the_teardown_migration_upgrades_skeleton_turns() {
     // Roll the file back to the walking skeleton's schema (version 1).
     {
         let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(include_str!("fixtures/undo_delegation.sql"))
+            .unwrap();
         conn.execute_batch(
             "DROP TRIGGER family_scope_end;
              DROP TRIGGER family_scope;
@@ -2464,6 +2466,8 @@ fn the_hat_migration_gives_each_session_its_hosts_default_hat() {
     // Back to the store's schema before hats (version 9): plan 10b-iii's
     // migration (version 11) and plan 9a's (version 13) undone too.
     let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(include_str!("fixtures/undo_delegation.sql"))
+        .unwrap();
     conn.execute_batch(
         "DROP TRIGGER family_scope_end;
          DROP TRIGGER family_scope;
@@ -2744,6 +2748,9 @@ fn rows_of(conn: &Connection, id: &str, events: &[i64], turns: &[String], hashes
         let filter = match table.as_str() {
             "sessions" => format!("id = '{id}'"),
             "session_families" => format!("child_id = '{id}' OR parent_id = '{id}' OR root_id = '{id}'"),
+            "session_dispatch_queue" => format!("source_id = '{id}' OR target_id = '{id}'"),
+            "session_operations" => format!("caller_id = '{id}' OR child_id = '{id}'"),
+            "delegation_start_budgets" => format!("caller_id = '{id}'"),
             "event_attachments" => format!("event_id IN ({})", list(events.iter().map(i64::to_string).collect())),
             "turn_attachments" => format!("turn_id IN ({})", quoted(turns)),
             "attachments" => format!("sha256 IN ({})", quoted(hashes)),
@@ -2823,7 +2830,17 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
              SELECT 'family-child', host_id, agent, cwd, hat_id, 'starting', created_at, last_event_at, owner_id
              FROM sessions WHERE id = 's1';
          INSERT INTO session_families(owner_id, child_id, parent_id, root_id, hat_id, created_event_id)
-             SELECT owner_id, 'family-child', 's1', 's1', hat_id, 0 FROM sessions WHERE id = 's1';",
+             SELECT owner_id, 'family-child', 's1', 's1', hat_id, 0 FROM sessions WHERE id = 's1';
+         INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state)
+             SELECT owner_id, 's1', 'delete-queue', 'delete-operation', 'digest', 'session_send', 'family-child', 'queued'
+             FROM sessions WHERE id = 's1';
+         INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config)
+             SELECT owner_id, 'delete-operation', 's1', 'family-child', 1, 'queued private brief', '{}'
+             FROM sessions WHERE id = 's1';
+         INSERT INTO session_attach_evidence(owner_id,session_id,attach_generation,requested_config)
+             SELECT owner_id, 's1', 1, '{}' FROM sessions WHERE id = 's1';
+         INSERT INTO delegation_start_budgets(owner_id,caller_id,epoch,starts)
+             SELECT owner_id, 's1', 0, 1 FROM sessions WHERE id = 's1';",
     )
     .unwrap();
     store.close_now("s1").unwrap();
@@ -2837,6 +2854,10 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
         "pending",
         "session_catalog",
         "session_families",
+        "session_operations",
+        "session_dispatch_queue",
+        "session_attach_evidence",
+        "delegation_start_budgets",
         "sessions",
         "turn_attachments",
         "turns",

@@ -333,6 +333,11 @@ async fn serve(socket: WebSocket, state: AppState, nonce: [u8; 32]) {
                 if state.hub.probe_rejected(conn_id, &request_id, &code, &message) {
                     continue;
                 }
+                match state.store.reject_delegation(&host_id, &request_id) {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(_) => break,
+                }
                 if let Some(session_id) = reconcile_closes.remove(&request_id) {
                     if code == "not_attached" {
                         match state.store.close_after_rejected_reconcile_close(&session_id) {
@@ -443,6 +448,7 @@ async fn serve(socket: WebSocket, state: AppState, nonce: [u8; 32]) {
             // Probe replies answer the probe of this connection that they
             // name, if it still waits (ACP core §3.3).
             frame @ (HostFrame::Projects { .. }
+            | HostFrame::Catalog { .. }
             | HostFrame::Directory { .. }
             | HostFrame::ResolvedPath { .. }
             | HostFrame::SessionForgotten { .. }) => {

@@ -167,7 +167,7 @@ impl Harness {
     }
 }
 #[tokio::test]
-async fn starting_discovery_stateless_protocol_and_no_enabled_tools() {
+async fn starting_discovery_stateless_protocol_and_seven_control_tools() {
     let h = Harness::new().await;
     for version in ["2025-03-26", "2025-06-18", "2025-11-25"] {
         let response = h.rpc(json!({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":version,"capabilities":{},"clientInfo":{"name":"fixture", "version":"1"}}})).await;
@@ -179,9 +179,26 @@ async fn starting_discovery_stateless_protocol_and_no_enabled_tools() {
         .await;
     assert_eq!(initialized.status(), StatusCode::ACCEPTED);
     assert!(initialized.bytes().await.unwrap().is_empty());
+    let discovery = h.rpc(json!({"jsonrpc":"2.0","id":"list","method":"tools/list"})).await;
+    let names: std::collections::BTreeSet<_> = discovery["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
     assert_eq!(
-        h.rpc(json!({"jsonrpc":"2.0","id":"list","method":"tools/list"})).await["result"],
-        json!({"tools":[]})
+        names,
+        [
+            "session_capabilities",
+            "session_spawn",
+            "session_send",
+            "session_status",
+            "session_list",
+            "session_close",
+            "session_answer"
+        ]
+        .into_iter()
+        .collect()
     );
     assert_eq!(
         h.rpc(json!({"jsonrpc":"2.0","id":2,"method":"ping"})).await["result"],
@@ -203,7 +220,7 @@ async fn starting_discovery_stateless_protocol_and_no_enabled_tools() {
     let call = h
         .rpc(json!({"jsonrpc":"2.0","id":3,"method":"tools/call", "params":{"name":"session_spawn","arguments":{}}}))
         .await;
-    assert_eq!(call["result"]["structuredContent"]["code"], "tool_unavailable");
+    assert_eq!(call["result"]["structuredContent"]["code"], "invalid_arguments");
     assert_eq!(
         serde_json::from_str::<Value>(call["result"]["content"][0]["text"].as_str().unwrap()).unwrap(),
         call["result"]["structuredContent"]
@@ -912,4 +929,52 @@ async fn standard_client_icons_are_typed_data_and_positional_icons_are_refused()
         h.post(serde_json::to_vec(&bad).unwrap()).await.status(),
         StatusCode::BAD_REQUEST
     );
+}
+
+#[tokio::test]
+async fn tool_deadline_bounds_an_unanswered_host_probe_and_reclaims_request_permit() {
+    use hennery_proto::frames::CollectorFrame;
+    use std::time::Duration;
+    let h = Harness::with_limits(
+        hennery_gateway::proxy::Limits::new(1, 32, Duration::from_secs(1), Duration::from_millis(50))
+            .with_answer_timeout(Duration::from_millis(50)),
+    )
+    .await;
+    let capabilities = Capabilities(vec![Capability::McpServers, Capability::ResolvePath]);
+    h.state
+        .hosts
+        .record_hello("host", "fixture", &capabilities, unix_now())
+        .unwrap();
+    let previous = h.state.hub.routable_conn("host").unwrap();
+    h.state.hub.unregister("host", previous);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let registered = h
+        .state
+        .hub
+        .register(
+            "host",
+            tx,
+            capabilities,
+            AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect()),
+        )
+        .unwrap();
+    h.state.hub.mark_ready("host", registered.conn_id);
+    h.state
+        .store
+        .ingest(
+            "session",
+            1,
+            &hennery_proto::frames::SessionBody::session_started("start", "adapter"),
+        )
+        .unwrap();
+    let (probe,call)=tokio::join!(
+        tokio::time::timeout(Duration::from_secs(2),rx.recv()),
+        tokio::time::timeout(Duration::from_secs(2),h.rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_capabilities","arguments":{}}})))
+    );
+    assert!(matches!(probe.unwrap().unwrap(), CollectorFrame::ResolvePath { .. }));
+    let call = call.expect("tool deadline must bound a stalled host probe");
+    assert_eq!(call["result"]["isError"], true);
+    assert_eq!(call["result"]["structuredContent"]["code"], "request_timeout");
+    let ping = h.rpc(json!({"jsonrpc":"2.0","id":2,"method":"ping"})).await;
+    assert_eq!(ping["result"], json!({}));
 }

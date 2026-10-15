@@ -379,6 +379,8 @@ async fn handshake(
                 Capability::ResolvePath,
                 Capability::ForgetSession,
                 Capability::McpServers,
+                Capability::CatalogProbe,
+                Capability::DelegationConfig,
             ]),
             mcp_isolation: announce.mcp_isolation,
             workspace_roots: announce.workspace_roots,
@@ -561,6 +563,8 @@ fn not_attached(uplink: &Uplink, request_id: String) {
 
 /// A `start_session` or `resume_session`.
 struct AttachRequest {
+    generation: Option<u64>,
+    roots: Vec<PathBuf>,
     request_id: String,
     session_id: String,
     committed_seq: u64,
@@ -699,6 +703,17 @@ fn spawn_or_restart(
         return;
     }
     if let Some(handle) = map.handles.get(&req.session_id).filter(|h| !h.is_ended())
+        && req.generation.is_some()
+        && handle.attach_generation() != req.generation
+    {
+        uplink.reply(HostFrame::Error {
+            request_id: req.request_id,
+            code: "attach_generation_conflict".into(),
+            message: "attached generation differs".into(),
+        });
+        return;
+    }
+    if let Some(handle) = map.handles.get(&req.session_id).filter(|h| !h.is_ended())
         && handle.send(SessionCmd::Restart {
             request_id: req.request_id.clone(),
         })
@@ -715,8 +730,11 @@ fn spawn_or_restart(
         profile,
         mcp_servers: req.mcp.mcp_servers,
     };
-    map.handles
-        .insert(req.session_id, session::launch(uplink.clone(), launch, options));
+    let handle = match req.generation {
+        Some(generation) => session::launch_delegated_in(uplink.clone(), launch, options, generation, req.roots),
+        None => session::launch(uplink.clone(), launch, options),
+    };
+    map.handles.insert(req.session_id, handle);
 }
 
 fn handle(
@@ -728,6 +746,88 @@ fn handle(
     frame: CollectorFrame,
 ) -> Result<()> {
     match frame {
+        CollectorFrame::ProbeCatalog { request_id, agent, cwd } => {
+            let Some(command) = cfg.agents.get(&agent).cloned() else {
+                uplink.reply(HostFrame::Error {
+                    request_id,
+                    code: "unknown_agent".into(),
+                    message: "runtime unavailable".into(),
+                });
+                return Ok(());
+            };
+            let (catalogs, profile, roots, uplink) = (
+                probes.catalog.clone(),
+                cfg.profile(&agent),
+                cfg.workspace_roots.clone(),
+                uplink.clone(),
+            );
+            tokio::spawn(async move {
+                let result = catalogs
+                    .catalog(&agent, command, profile, PathBuf::from(cwd), roots)
+                    .await;
+                uplink.reply(match result {
+                    Ok(catalog) => HostFrame::Catalog { request_id, catalog },
+                    Err(error) => HostFrame::Error {
+                        request_id,
+                        code: if error.to_string() == "busy" {
+                            "busy"
+                        } else {
+                            "catalog_unavailable"
+                        }
+                        .into(),
+                        message: "runtime catalog unavailable".into(),
+                    },
+                });
+            });
+        }
+        CollectorFrame::DelegatedAttach {
+            request_id,
+            session_id,
+            committed_seq,
+            agent,
+            cwd,
+            config,
+            hat_id: _,
+            mcp,
+            attach_generation,
+            agent_session_id,
+        } => attach(
+            cfg,
+            uplink,
+            sessions,
+            homes,
+            AttachRequest {
+                generation: Some(attach_generation),
+                roots: cfg.workspace_roots.clone(),
+                request_id,
+                session_id,
+                committed_seq,
+                agent,
+                cwd,
+                config,
+                mcp,
+                attach: match agent_session_id {
+                    Some(agent_session_id) => Attach::Load { agent_session_id },
+                    None => Attach::New,
+                },
+            },
+        )?,
+        CollectorFrame::DelegatedPrompt {
+            request_id,
+            session_id,
+            turn_id,
+            content,
+            expected,
+        } => match live_session(sessions, &session_id) {
+            Some(handle)
+                if handle.send(SessionCmd::FencedPrompt {
+                    request_id: request_id.clone(),
+                    turn_id,
+                    content,
+                    expected,
+                }) => {}
+            _ => not_attached(uplink, request_id),
+        },
         CollectorFrame::StartSession {
             request_id,
             session_id,
@@ -744,6 +844,8 @@ fn handle(
             sessions,
             homes,
             AttachRequest {
+                generation: None,
+                roots: cfg.workspace_roots.clone(),
                 request_id,
                 session_id,
                 committed_seq,
@@ -770,6 +872,8 @@ fn handle(
             sessions,
             homes,
             AttachRequest {
+                generation: None,
+                roots: cfg.workspace_roots.clone(),
                 request_id,
                 session_id,
                 committed_seq,
