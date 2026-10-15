@@ -879,10 +879,10 @@ async fn delegated_parked_close_is_attributed_and_reaches_existing_dashboard_str
     );
     let summary = dashboard
         .matching("session_upsert", |summary| {
-            summary["id"] == child && summary["lifecycle"] == "closed"
+            summary["session_id"] == child && summary["lifecycle"] == "closed"
         })
         .await;
-    assert_eq!(summary["close_requested"], false);
+    assert_eq!(summary["question_waits"], false);
     h.ok("session_close", arguments).await;
     assert_eq!(h.state.store.events(child, before, 100).unwrap().len(), events.len());
     h.finish().await;
