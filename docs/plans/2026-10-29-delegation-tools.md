@@ -8,9 +8,9 @@
 
 ## Execution status (2026-10-15)
 
-Built first on **plan/deleg-d2**, rebased onto merged P1 at 256691fe before replay. Codex gpt-6-astra reviewed **256691fe..2443592e** on the maintainer's behalf: **APPROVE AFTER AMENDMENTS**, no Critical findings, 126 focused tests passed. The reviewer confirmed the redundant owner UPSERT predicate mutation is **EQUIVALENT**; the predicate stays. Tasks 5–6 below address the two Important findings test-first: committed close/answer event publication and answer pagination with wraparound. The verification record distinguishes original evidence from amendment checks, copy probes, load and a fresh complete replay. The parent subsequently reported scoped re-confirmation **CONFIRMED** and PR **149** ready for review. The branch is now rebased onto W2; the latest base and verification are recorded below. Linux/macOS CI status remains parent-owned.
+Built first on **plan/deleg-d2**, rebased onto merged P1 at 256691fe before replay. Codex gpt-6-astra reviewed **256691fe..2443592e** on the maintainer's behalf: **APPROVE AFTER AMENDMENTS**, no Critical findings, 126 focused tests passed. The reviewer confirmed the redundant owner UPSERT predicate mutation is **EQUIVALENT**; the predicate stays. Tasks 5–6 below address the two Important findings test-first: committed close/answer event publication and answer pagination with wraparound. The verification record distinguishes original evidence from amendment checks, copy probes, load and a fresh complete replay. The parent subsequently reported scoped re-confirmation **CONFIRMED** and PR **149** ready for review. The branch is now rebased onto R1. A later Nix source-closure defect is corrected; its cause, exact fix and verification are recorded below. Linux/macOS CI status remains parent-owned.
 
-Current branch base: **e36e66c8b1790a6b1555e04b7fb0c34bf34d3e1d** (merged W2). Rebased verification head: **312672750937adfa3b938e3385ded651b355743c**.
+Current branch base: **191aa71b7ac044d708c1849e491e9813fc47f53c** (merged R1). Verified source head: **49f102a2185aa35b717061c5d86e9c9327a0cddb**.
 
 Historical replay — Implementation base: **256691feb9cba161f0c29b14016bc857a4da86e5**. Embedded implementation head: **395fa1401a6c046c0ed7afae27f6248f74e8bde4**.
 
@@ -11010,6 +11010,38 @@ nix develop -c cargo test -p hennery-testkit --test delegation_tools --test owne
 ```
 
 
+### Task 7: include delegated SQL in the Nix source closure
+
+This packaging correction applies to rebased D2 at **e1cbd65004b2799899263827e7b64b2a4c73f295**, after R1. It is separate from the historical 12-block replay above. Crane's common Cargo fileset omits SQL; Rust's compile-time production migration and rollback fixture must both be present. The original native Nix Clippy build failed on the missing production migration, while the audit succeeded.
+
+The exact correction, replayed in a fresh directory and compared with the complete **49f102a2185aa35b717061c5d86e9c9327a0cddb** tree:
+
+```diff
+diff --git a/nix/package.nix b/nix/package.nix
+index a141f6f4a57332b881e3095a814ad1ccbbe2005a..e65fad27ffc7acb58a800889eb6773483bfdc86a 100644
+--- a/nix/package.nix
++++ b/nix/package.nix
+@@ -16,6 +16,9 @@ let
+     root = ../.;
+     fileset = lib.fileset.unions [
+       (craneLib.fileset.commonCargoSources ../.)
++      # Crane's common set omits SQL read by Rust's include_str!.
++      ../crates/hennery-sessions/src/delegation_schema.sql
++      ../crates/hennery-sessions/tests/fixtures/undo_delegation.sql
+       (lib.fileset.maybeMissing ../adapters/manifest.json)
+       (lib.fileset.maybeMissing ../crates/hennery-host/manifest.json)
+     ];
+```
+
+On the native aarch64-darwin host, run:
+
+```bash
+nix build .#checks.aarch64-darwin.audit --no-link -L
+nix flake check -L
+```
+
+Both commands passed. Each fileset entry also has an independent removal probe in a COPY: each fails Nix Clippy on its exact missing SQL path; the restored copy passes. The fresh replay observed both source inputs absent before the patch, then passed native Nix Clippy and source-input assertions for all three declared systems. No audit option, type, test or rule was weakened.
+
 ## After this plan
 
 D3 adds reverse durable delivery at the **Store::ingest_delegation_in** seam, inside the transaction that applies a factual child event. D2's transfer/evidence/handoff predicates are the shared fenced admission primitives. D3 must add its own reverse-direction durable operation, provenance, wake budget, cancellation/replay, acknowledgement and operator-attention path; it must not infer a notice from a socket send or use operator resume to bypass close intent. D2 deliberately emits no parent notice and no ChildReport activity.
@@ -11019,6 +11051,48 @@ D4 consumes the catalog and policy routes plus family/status metadata for the op
 The parent runs independent task, security and whole-branch reviews on the embedded code, opens the PR, checks **checks, reviewDecision, mergeStateStatus and all unresolved review threads**, and obtains Linux/macOS CI evidence. No merge or PR status is claimed by this child.
 
 ## Verification record
+
+### R1 rebase and Nix source-closure correction
+
+Rebased without conflicts onto **191aa71b7ac044d708c1849e491e9813fc47f53c**; the verified implementation is **49f102a2185aa35b717061c5d86e9c9327a0cddb**. `Cargo.lock` remains byte-identical to main and the previous D2 head (Git blob **d9cf1c624893c796f49ce80f51a38d458e8d7f0e**). The fix changes only the source fileset in `nix/package.nix`: include `delegation_schema.sql` and `tests/fixtures/undo_delegation.sql`.
+
+The earlier transient-index hypothesis was disproved. The unmodified **07f3a5fe** audit was built locally, printed all **431** missing-crate yanked-index diagnostics, and exited **0** through install/fixup. Independent comparison against main **191aa71b** found the exact same audit derivations:
+
+| Platform | Main and unmodified D2 audit derivation | Evidence |
+|---|---|---|
+| aarch64-darwin | `wp5yh5qkm3bdv23pysfw3na6qxwa3glj-hennery-audit-0.0.0.drv` | Both builds exit 0; identical output; both logs contain the same 431 diagnostics |
+| x86_64-linux | `4mzaisl1k8ybr3djndrph9ibwrdwj8kn-hennery-audit-0.0.0.drv` | Derivation equality evaluated; Linux execution remains CI-owned |
+
+Pinned Crane's `cargoAudit.nix` already defaults to `--ignore yanked` and filters its source to lockfiles/audit configuration; D2 added no manifest, feature, lockfile or audit-option change. Those diagnostics are nonfatal and are also present on main. This fix does not alter that policy.
+
+The actual D2 failure was reproduced with native `nix build .#checks.aarch64-darwin.clippy --no-link -L`: **exit 1**, `couldn't read crates/hennery-sessions/src/delegation_schema.sql`. Crane's common fileset contains Rust/TOML/lock files, so both newly embedded SQL inputs were excluded. The same source is used by the package. Earlier Cargo-only checks compiled the complete checkout and did not exercise this filtered source.
+
+After the three-line fileset fix:
+
+| Verification | Observed result |
+|---|---|
+| Native `nix flake check -L` | 0: package, Clippy, fmt, audit and embedded-UI check pass |
+| Native audit alone, fixed source | 0 |
+| Independent production-SQL removal in a COPY | 1: exact missing production migration compile error |
+| Independent fixture-SQL removal in a COPY | 1: exact missing rollback fixture compile error |
+| Restored COPY Nix Clippy | 0 |
+| Fresh one-patch replay | Exact complete tree matches **49f102a2185aa35b717061c5d86e9c9327a0cddb**; native Nix Clippy 0 |
+| Source inputs on aarch64-darwin, x86_64-linux and aarch64-linux | Both SQL files present; source checks pass on all three systems |
+
+Fresh replay **deleg-d2-nix-replay-1** starts from **e1cbd65004b2799899263827e7b64b2a4c73f295**, applies the one nonempty patch in Task 7 and ends at **04e3cee7a6a44eb9b565772790c1100ef4b93bd3**. The original 12-block replay remains unchanged historical evidence. Logs: `/tmp/deleg-d2-{audit-07,audit-fixed,nix-clippy-07,nix-fixed-flake,nix-sql-probes,nix-replay}.log`; comparison/probe/replay ledgers remain in the named scratch directories listed in the cleanup manifest. No scratch tree was deleted.
+
+All six Rust checks ran on the rebased fixed tree, inside the dev shell with scratch HOME/XDG/tool configuration:
+
+| Command | Exit | Passed |
+|---|---:|---:|
+| `cargo fmt --all --check` | 0 | 0 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | 0 | 0 |
+| `cargo clippy -p hennery --locked -- -D warnings` | 0 | 0 |
+| `cargo test --workspace --locked` | 0 | 2336 |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | 0 | 0 |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | 0 | 0 |
+
+Evidence: `.superpowers/sdd/deleg-d2/checks-nix-r1/`. Native Nix checks passed; execution on Linux and PR **149** checks/reviewDecision/mergeStateStatus/unresolved threads remain parent-owned. No GitHub action was performed by this lane.
 
 ### Confirmed amendments and W2 rebase
 
