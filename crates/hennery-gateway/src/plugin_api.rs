@@ -108,6 +108,14 @@ impl IntoResponse for InvalidQuery {
     }
 }
 pub fn machine_query(query: Option<&str>) -> Result<(Option<String>, usize), InvalidQuery> {
+    bounded_machine_query(query, 20)
+}
+/// Source ids contain no activity bodies; their independent cap permits a
+/// reset to finish without consuming the registration's whole minute budget.
+pub fn inventory_query(query: Option<&str>) -> Result<(Option<String>, usize), InvalidQuery> {
+    bounded_machine_query(query, plugin::feed::INVENTORY_MAX_IDS)
+}
+fn bounded_machine_query(query: Option<&str>, max: usize) -> Result<(Option<String>, usize), InvalidQuery> {
     let query = query.unwrap_or("");
     if query.len() > 4096 {
         return Err(InvalidQuery);
@@ -120,7 +128,7 @@ pub fn machine_query(query: Option<&str>) -> Result<(Option<String>, usize), Inv
                 cursor = Some(value.into_owned())
             }
             "limit" if limit.is_none() => {
-                let parsed = value.parse::<usize>().ok().filter(|n| (1..=20).contains(n));
+                let parsed = value.parse::<usize>().ok().filter(|n| (1..=max).contains(n));
                 let Some(parsed) = parsed else {
                     return Err(InvalidQuery);
                 };
@@ -129,7 +137,7 @@ pub fn machine_query(query: Option<&str>) -> Result<(Option<String>, usize), Inv
             _ => return Err(InvalidQuery),
         }
     }
-    Ok((cursor, limit.unwrap_or(20)))
+    Ok((cursor, limit.unwrap_or(max)))
 }
 pub fn machine_failure(err: anyhow::Error) -> Response {
     // Errors are fixed policy labels; never return upstream/SQL/serde text.

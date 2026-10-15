@@ -298,7 +298,10 @@ impl Store {
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<PluginSourceInventoryPage> {
-        let limit = page_limit(limit)?;
+        ensure!(
+            (1..=hennery_gateway::plugin::feed::INVENTORY_MAX_IDS).contains(&limit),
+            "invalid plug-in inventory limit"
+        );
         let plugins = self.plugins();
         let mut conn = self.conn();
         let tx = conn.transaction()?;

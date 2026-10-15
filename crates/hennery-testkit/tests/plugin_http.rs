@@ -81,6 +81,23 @@ struct World {
     id: String,
 }
 impl World {
+    fn seed_inventory(&self, count: usize) {
+        let mut core = hennery_kernel::db::open(&self._dir.path().join("hennery.db")).unwrap();
+        let tx = core.transaction().unwrap();
+        let owner = self.runtime.store.owner_id();
+        let hat = self.runtime.store.connection(&self.id).unwrap().unwrap().hat_id;
+        {
+            let mut session = tx.prepare("INSERT INTO sessions(id,host_id,agent,cwd,lifecycle,created_at,last_event_at,owner_id,hat_id) VALUES(?1,'host','fake','/scratch/project','parked','now','now',?2,?3)").unwrap();
+            let mut event = tx.prepare("INSERT INTO events(session_id,host_seq,kind,body,ts,owner_id) VALUES(?1,1,'session_started','{}','now',?2)").unwrap();
+            for i in 0..count {
+                let id = format!("source-{i:05}");
+                session.execute(rusqlite::params![id, owner, hat]).unwrap();
+                event.execute(rusqlite::params![id, owner]).unwrap();
+            }
+        }
+        tx.commit().unwrap();
+    }
+
     async fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("hennery.db");
@@ -196,6 +213,119 @@ impl World {
             .await
             .unwrap()
     }
+}
+
+#[tokio::test]
+async fn inventory_query_limit_is_separate_from_content_and_aliases_stay_strict() {
+    let world = World::new().await;
+    let grant = world.register().await;
+    let token = grant["token"].as_str().unwrap();
+    let client = reqwest::Client::new();
+    for query in ["limit=500", "%6cimit=500"] {
+        let response = client
+            .get(format!("{}/api/plugins/inventory?{query}", world.server.base))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{query}");
+        let response = client
+            .get(format!("{}/api/plugins/activity?{query}", world.server.base))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+    }
+    for route in ["activity", "inventory"] {
+        for query in [
+            "limit=0",
+            "limit=501",
+            "limit=18446744073709551616",
+            "limit=1&%6cimit=2",
+            "owner=other",
+            "hat_id=other",
+            "token=secret",
+            "after=",
+            "unknown=value",
+        ] {
+            let response = client
+                .get(format!("{}/api/plugins/{route}?{query}", world.server.base))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{route}?{query}");
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            assert_eq!(response.json::<Value>().await.unwrap()["code"], "invalid_query");
+        }
+    }
+}
+
+#[tokio::test]
+async fn inventory_ten_thousand_sources_complete_in_twenty_pages_with_shared_budget() {
+    let world = World::new().await;
+    world.seed_inventory(10_000);
+    let grant = world.register().await;
+    let token = grant["token"].as_str().unwrap();
+    let client = reqwest::Client::new();
+    assert_eq!(world.lease(token).await.status(), StatusCode::OK);
+    let mut after = None;
+    let mut seen = Vec::new();
+    let mut stable = None;
+    let mut pages = 0;
+    loop {
+        let mut request = client
+            .get(format!("{}/api/plugins/inventory", world.server.base))
+            .bearer_auth(token);
+        if let Some(cursor) = &after {
+            request = request.query(&[("after", cursor)]);
+        }
+        let response = request.send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let body = response.bytes().await.unwrap();
+        assert!(body.len() <= 128 * 1024);
+        let page: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(page["source_ids"].as_array().unwrap().len(), 500);
+        let pair = (page["watermark"].clone(), page["resume_cursor"].clone());
+        assert_eq!(pair.0, pair.1);
+        match &stable {
+            Some(expected) => assert_eq!(&pair, expected),
+            None => stable = Some(pair),
+        }
+        seen.extend(
+            page["source_ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap().to_owned()),
+        );
+        pages += 1;
+        after = page["next_cursor"].as_str().map(str::to_owned);
+        if after.is_none() {
+            break;
+        }
+        assert!(pages < 21);
+    }
+    assert_eq!(pages, 20);
+    assert_eq!(seen, (0..10_000).map(|i| format!("source-{i:05}")).collect::<Vec<_>>());
+    let response = client
+        .get(format!("{}/api/plugins/activity", world.server.base))
+        .query(&[("after", stable.unwrap().1.as_str().unwrap())])
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap()["items"], json!([]));
+    // One lease, twenty inventory pages and one resume consume 22 requests.
+    for _ in 22..60 {
+        assert_eq!(world.lease(token).await.status(), StatusCode::OK);
+    }
+    let busy = world.lease(token).await;
+    assert_eq!(busy.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(busy.json::<Value>().await.unwrap()["code"], "busy");
 }
 
 #[tokio::test]

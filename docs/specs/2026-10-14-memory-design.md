@@ -273,6 +273,19 @@ The reset protocol supplies a bounded paginated source-id inventory at a
 consistent watermark, then resumes from that watermark; consumers remove
 observations absent from the inventory. No transcript backfill is implied.
 
+Inventory pages contain only source ids: default and maximum 500 ids, with
+the complete serialized JSON response capped at 128 KiB. Content pages keep
+their separate 20-item limit. A snapshot retains its original watermark and
+resume cursor while each successful inventory page renews a 60-second idle
+expiry, bounded by an immutable 20-minute lifetime from snapshot creation.
+The existing registration-wide 60-request/minute and 8-MiB budgets still
+apply. Expired snapshots, including snapshots created before this lifetime
+contract, return `reset_required`; consumers discard partial inventories and
+restart without applying a partial reconciliation. The absolute cap bounds
+retained snapshot state even when a client keeps paging or replays a cursor.
+These inventory-only bounds were confirmed by the parent on the maintainer's
+behalf, 2026-10-15 (C1b).
+
 Hat reassignment is an exposure boundary. A registered feed may read only
 turns after the session's latest assignment into that hat and from currently
 eligible mounted hosts. **Bind before the first registered proxy request**,
