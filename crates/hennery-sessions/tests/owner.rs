@@ -124,6 +124,11 @@ fn the_owner_id_migration_gives_every_row_the_owner() {
         // included; the events index (version 12) is made again if missing.
         conn.execute_batch(
             "
+            DROP TRIGGER family_scope_end;
+            DROP TRIGGER family_scope;
+            DROP TRIGGER family_assignment_immutable;
+            DROP TABLE session_families;
+            DROP INDEX sessions_by_owner_identity;
             DROP TRIGGER events_of_a_tombstone;
             DROP TRIGGER turns_of_a_tombstone;
             DROP TRIGGER pending_of_a_tombstone;
