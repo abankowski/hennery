@@ -109,6 +109,13 @@ pub(crate) fn random() -> String {
     hex::encode(random_bytes::<32>())
 }
 impl Store {
+    /// Authentication only; used again immediately before HTTP delivery.
+    pub fn available(&self, token: &str, admin: bool) -> Result<()> {
+        self.inner.lock().expect("store").auth(token, admin, false).map(|_| ())
+    }
+    pub fn authenticated_namespace(&self, token: &str, admin: bool) -> Result<String> {
+        Ok(self.inner.lock().expect("store").auth(token, admin, false)?.id)
+    }
     pub fn open(path: &Path) -> Result<Self> {
         let mut db = db::open(path)?;
         db::migrate_component(&mut db, "memory", &[include_str!("schema.sql")])?;
@@ -360,7 +367,7 @@ impl Store {
         })
     }
     pub fn brief(&self, token: &str, subject: &str, project: Option<String>) -> Result<Value> {
-        let page = self.search(
+        let mut page = self.search(
             token,
             &Query {
                 query: Some(subject.into()),
@@ -369,7 +376,31 @@ impl Store {
                 ..Query::default()
             },
         )?;
-        Ok(json!({"sources":page.entries,"mode_used":"deterministic","fallback_reason":null,"stale":page.stale}))
+        // Render quotations, never inferred facts. Retain source ids, dates,
+        // roles and typed evidence separately, even when texts disagree.
+        loop {
+            let text = page
+                .entries
+                .iter()
+                .map(|e| {
+                    format!(
+                        "[{}] {} — {}\n> {}",
+                        e.id,
+                        hennery_kernel::secret::rfc3339(e.created_at),
+                        e.title,
+                        e.body.replace('\n', "\n> ")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let value = json!({"text":text,"sources":page.entries,"mode_used":"deterministic","fallback_reason":null,"stale":page.stale,"truncated":page.next_cursor.is_some()});
+            if serde_json::to_vec(&serde_json::to_string(&value)?)?.len() <= 14 * 1024 {
+                return Ok(value);
+            }
+            ensure!(!page.entries.is_empty(), "brief exceeds response bound");
+            page.entries.pop();
+            page.next_cursor = Some(String::new());
+        }
     }
 }
 pub(crate) fn put(tx: &rusqlite::Transaction<'_>, ns: &str, e: &Entry) -> Result<()> {
