@@ -41,7 +41,8 @@ pub const SILENT_UPDATES: [&str; 5] = [
 
 /// Event kinds that make no item: the session's own state, shown by the
 /// session list and the header.
-pub const SILENT_EVENTS: [&str; 6] = [
+pub const SILENT_EVENTS: [&str; 7] = [
+    "family_changed",
     "session_started",
     "turn_started",
     "config_applied",
@@ -359,7 +360,19 @@ impl Fold {
                         truncated |= cut_off;
                     }
                 }
-                self.create_ordinal(event, Body::UserTurn { content, truncated });
+                let origin = event
+                    .body
+                    .get("origin")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value(value).ok());
+                self.create_ordinal(
+                    event,
+                    Body::UserTurn {
+                        content,
+                        origin,
+                        truncated,
+                    },
+                );
             }
             Err(_) => self.unrecognised(event, "user_turn"),
         }

@@ -52,6 +52,99 @@ pub struct SessionSummary {
     /// whether or not an answer is queued (a question outside a turn sets
     /// no `blocked` activity).
     pub question_waits: bool,
+    #[serde(default)]
+    pub operator_attention: u32,
+    #[serde(default)]
+    pub parent_handled_questions: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub family: Option<FamilySummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct FamilyLink {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    pub agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ChildCounts {
+    pub total: u32,
+    pub active: u32,
+    pub waiting: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct FamilySummary {
+    #[ts(type = "number")]
+    pub revision: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub parent: Option<FamilyLink>,
+    pub child_counts: ChildCounts,
+    /// At most three children; the family route pages the rest.
+    pub children: Vec<FamilyLink>,
+    pub attention: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct FamilyOperation {
+    pub operation_id: String,
+    pub tool: String,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pending_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct FamilyQuestion {
+    pub pending_id: String,
+    pub kind: String,
+    pub handling: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct FamilyChild {
+    pub summary: SessionSummary,
+    pub routing: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+    /// Latest 16 receipts, bounded independently of transcript size.
+    pub operations: Vec<FamilyOperation>,
+    pub questions: Vec<FamilyQuestion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct FamilyPage {
+    pub summary: SessionSummary,
+    pub children: Vec<FamilyChild>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub next_cursor: Option<String>,
+    pub questions: Vec<FamilyQuestion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub routing: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
 }
 
 /// `GET /api/view/sessions`: a page of summaries, as `GET /api/sessions`
@@ -172,9 +265,14 @@ mod tests {
         let summary = SessionSummary {
             session: session.clone(),
             question_waits: true,
+            operator_attention: 1,
+            parent_handled_questions: 0,
+            family: None,
         };
         let mut expected = serde_json::to_value(&session).unwrap();
         expected["question_waits"] = true.into();
+        expected["operator_attention"] = 1.into();
+        expected["parent_handled_questions"] = 0.into();
         let value = serde_json::to_value(&summary).unwrap();
         assert_eq!(value, expected);
         assert_eq!(serde_json::from_value::<SessionSummary>(value).unwrap(), summary);

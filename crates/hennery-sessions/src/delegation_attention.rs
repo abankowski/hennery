@@ -19,7 +19,8 @@ pub struct OperatorAttention {
 }
 impl Store {
     pub fn refresh_delegation_attention(&self, hub: &Hub, now: i64) -> Result<()> {
-        self.refresh_attention_after(hub, now, "").map(drop)
+        self.refresh_attention_after(hub, now, "")?;
+        self.flush_family_changes(hub)
     }
     pub(crate) fn refresh_attention_after(&self, hub: &Hub, now: i64, after: &str) -> Result<String> {
         let mut conn = self.conn();

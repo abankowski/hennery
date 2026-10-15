@@ -1,5 +1,19 @@
 -- Test-only rollback of migration 18 before reconstructing a historical schema.
 -- Production migrations remain append-only.
+DROP TRIGGER family_view_attention_insert;
+DROP TRIGGER family_view_attention_update;
+DROP TRIGGER family_view_edge_insert;
+DROP TRIGGER family_view_edge_update;
+DROP TRIGGER family_view_edge_delete;
+DROP TRIGGER family_view_operation_update;
+DROP VIEW delegation_question_routing;
+DROP TRIGGER family_view_session_state;
+DROP TRIGGER family_view_pending_insert;
+DROP TRIGGER family_view_pending_update;
+DROP TRIGGER family_view_answer_insert;
+DROP TRIGGER family_view_answer_delete;
+DROP TRIGGER family_view_operation_insert;
+ALTER TABLE sessions DROP COLUMN family_dirty;
 DROP TRIGGER attention_notice_update;
 DROP TRIGGER attention_parent_delete;
 DROP TRIGGER attention_child_end;

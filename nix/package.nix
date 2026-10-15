@@ -20,6 +20,8 @@ let
       ../crates/hennery-sessions/src/delegation_schema.sql
       ../crates/hennery-sessions/src/delegation_delivery.sql
       ../crates/hennery-sessions/src/delegation_attention.sql
+      ../crates/hennery-sessions/src/family.sql
+      ../crates/hennery-sessions/tests/fixtures/undo_family.sql
       ../crates/hennery-sessions/tests/fixtures/undo_delegation.sql
       (lib.fileset.maybeMissing ../adapters/manifest.json)
       (lib.fileset.maybeMissing ../crates/hennery-host/manifest.json)

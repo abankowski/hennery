@@ -47,14 +47,14 @@ use axum::routing::get;
 use axum::{Json, Router};
 use futures::StreamExt;
 use hennery_kernel::operator::Authenticated;
-use hennery_proto::rest::{EventDto, SessionItem};
+use hennery_proto::rest::EventDto;
 use hennery_view::api::{
     SessionRemoved, SessionSummary, SummaryPage, TurnContent, WaitingChanged, anchor, parse_anchor,
 };
 use hennery_view::cap::{GROUP_MAX_QUESTIONS, ID_MAX_BYTES};
 use hennery_view::{Body, Fold, Item, group_key, question_id};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -109,6 +109,8 @@ pub fn router(state: AppState) -> Router {
     let routes = Router::new()
         .route("/api/view/sessions", get(summaries))
         .route("/api/view/sessions/{id}", get(page))
+        .route("/api/view/sessions/{id}/family", get(family))
+        .route("/api/view/sessions/{id}/takeover", axum::routing::post(takeover))
         .route("/api/view/sessions/{id}/questions/{pending_id}", get(question_card))
         .route("/api/view/sessions/{id}/turns/{turn_id}", get(undelivered_turn))
         .route("/api/stream/view/sessions/{id}", get(item_stream))
@@ -132,6 +134,55 @@ fn not_found() -> Response {
     error(StatusCode::NOT_FOUND, "not_found", "no such session")
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FamilyParams {
+    #[serde(default)]
+    after: String,
+    limit: Option<u32>,
+}
+async fn family(State(state): State<AppState>, Path(id): Path<String>, Query(q): Query<FamilyParams>) -> Response {
+    if id.len() > 128 || q.after.len() > 128 {
+        return error(StatusCode::BAD_REQUEST, "invalid_arguments", "invalid arguments");
+    }
+    match state
+        .store
+        .family_page(&id, &q.after, q.limit.unwrap_or(20).clamp(1, 100))
+    {
+        Ok(Some(page)) => Json(page).into_response(),
+        Ok(None) => not_found(),
+        Err(err) => internal(err),
+    }
+}
+struct Takeover {}
+impl<'de> Deserialize<'de> for Takeover {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let fields = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        if fields.is_empty() {
+            Ok(Self {})
+        } else {
+            Err(serde::de::Error::custom("expected an empty object"))
+        }
+    }
+}
+async fn takeover(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    hennery_kernel::json::ApiJson(request): hennery_kernel::json::ApiJson<serde_json::Value>,
+) -> Response {
+    if serde_json::from_value::<Takeover>(request).is_err() {
+        return error(StatusCode::BAD_REQUEST, "invalid_arguments", "expected an empty object");
+    }
+    if id.len() > 128 {
+        return not_found();
+    }
+    match state.store.take_over_child(&id, &state.hub) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(err) => internal(err),
+    }
+}
+
 async fn question_card(State(state): State<AppState>, Path((id, pending_id)): Path<(String, String)>) -> Response {
     match stored_question(&state.store, &id, &pending_id) {
         Ok(Some(item)) => Json(item).into_response(),
@@ -152,15 +203,21 @@ async fn summaries(State(state): State<AppState>, Query(params): Query<ListParam
         // meanwhile is sent again rather than missed.
         let revision = state.store.max_event_id()?;
         let page = state.store.list(&filter.query())?;
-        let waiting = state.store.sessions_waiting()?;
         Ok(SummaryPage {
-            sessions: page.sessions.into_iter().map(|s| summary(s, &waiting)).collect(),
+            sessions: page
+                .sessions
+                .into_iter()
+                .map(|s| state.store.family_summary(&s.session_id))
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect(),
             next_cursor: page.next_cursor,
             revision,
             epoch: epoch().to_string(),
             // The hat's alone of the filters: the count is the list's
             // whole, not the page's.
-            waiting: state.store.waiting_count(filter.hat())?,
+            waiting: state.store.operator_waiting_count(filter.hat())?,
         })
     };
     match page() {
@@ -171,14 +228,6 @@ async fn summaries(State(state): State<AppState>, Query(params): Query<ListParam
 
 /// A list item as a summary: `waiting` holds the sessions with an open
 /// question.
-fn summary(session: SessionItem, waiting: &HashSet<String>) -> SessionSummary {
-    let question_waits = waiting.contains(&session.session_id);
-    SessionSummary {
-        session,
-        question_waits,
-    }
-}
-
 /// `GET /api/view/sessions/{id}`'s query.
 #[derive(Deserialize)]
 struct PageParams {
@@ -1037,23 +1086,18 @@ async fn list_follow(
     // The count this stream last sent: none yet, so the resume's burst
     // ends with it, whatever changed.
     let mut counted: Option<u32> = None;
-    let mut changed = store.sessions_changed_after(after)?;
+    let mut changed = store.family_changed_after(after)?;
     loop {
         // Every change to what it counts (an activity, a question's state,
         // a hat, a delete) is written with an event of the session's.
         let count = if counted.is_none() || !changed.is_empty() {
-            Some(store.waiting_count(hat)?)
+            Some(store.operator_waiting_count(hat)?)
         } else {
             None
         };
-        let waiting = if changed.is_empty() {
-            HashSet::new()
-        } else {
-            store.sessions_waiting()?
-        };
         let mut messages = Vec::new();
         for session_id in changed {
-            let Some(item) = store.find_session_item(&session_id)? else {
+            let Some(summary) = store.family_summary(&session_id)? else {
                 // Deleted (plan 9a; ACP core §9): its tombstone. It has
                 // no event after its `session_deleted` (triggers refuse
                 // them), so this is sent once, or twice when the delete
@@ -1066,7 +1110,6 @@ async fn list_follow(
                 }
                 continue;
             };
-            let summary = summary(item.bounded(), &waiting);
             if sent.get(&session_id) == Some(&summary) {
                 continue;
             }
@@ -1089,6 +1132,9 @@ async fn list_follow(
         // anything else after the hold.
         let held = tokio::select! {
             () = tx.closed() => return Ok(()),
+            // Routing transitions also occur on deadlines and acknowledgements,
+            // without a host fact to ring the hub. Read their durable events.
+            () = tokio::time::sleep(Duration::from_secs(1)) => false,
             rung = doorbell.recv() => match rung {
                 Err(RecvError::Closed) => return Ok(()),
                 Err(RecvError::Lagged(_)) => false,
@@ -1100,7 +1146,7 @@ async fn list_follow(
         }
         let max = store.max_event_id()?;
         changed = if max > cursor {
-            store.sessions_changed_after(cursor)?
+            store.family_changed_after(cursor)?
         } else {
             Vec::new()
         };

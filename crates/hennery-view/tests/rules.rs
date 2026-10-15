@@ -445,7 +445,7 @@ fn a_user_turn_carries_its_images_as_attachments() {
         )],
         &none,
     );
-    let Body::UserTurn { content, truncated } = &items[0].body else {
+    let Body::UserTurn { content, truncated, .. } = &items[0].body else {
         panic!()
     };
     assert!(!truncated);
