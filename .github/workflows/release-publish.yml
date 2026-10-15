@@ -7,6 +7,10 @@ on:
         description: Frozen candidate inventory SHA-256
         required: true
         type: string
+      maintainer_signature:
+        description: Armored hardware-backed detached signature over the exact frozen inventory
+        required: true
+        type: string
       settings_audit_sha256:
         description: SHA-256 of the maintainer local settings audit
         required: true
@@ -175,6 +179,11 @@ jobs:
       - name: Preserve downloadable Sigstore bundle and approval receipts
         run: |
           mkdir signatures
+          python3 - <<'PYAPPROVAL'
+          import json, os
+          from pathlib import Path
+          Path('signatures/release-inventory.json.asc').write_text(json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['inputs']['maintainer_signature'])
+          PYAPPROVAL
           cp '${{ steps.attest.outputs.bundle-path }}' signatures/release.sigstore.jsonl
           cp sign-preflight.json sign-boundary.json retention-receipt.json signatures/
           nix develop .#release -c python3 - <<'PY'
@@ -182,6 +191,7 @@ jobs:
           from pathlib import Path
           sys.path.insert(0,'packaging/release')
           import retention
+          retention.audit(Path('signatures/release-inventory.json.asc'), os.environ['RELEASE_AUDIT_BUCKET'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
           retention.audit(Path('signatures/release.sigstore.jsonl'), os.environ['RELEASE_AUDIT_BUCKET'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

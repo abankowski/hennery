@@ -16,6 +16,7 @@ def settings():
         'rulesets': settings_audit.tag_rulesets(123),
         'repository_secrets': [], 'release_secrets': ['RELEASE_PUBLISH_APP_KEY', 'GHCR_PUBLISH_TOKEN'],
         'immutable_releases': True,
+        'maintainer_touch': {'confirmed': True, 'fingerprint': 'F26C7F594DFE84D131703AFC23E5A318AE8D2861', 'policy': 'on'},
         'ghcr': {'repository': gate.REPOSITORY, 'actions_access': 'read', 'dedicated_credential': 'GHCR_PUBLISH_TOKEN',
                  'negative_push': {'read_status': 200, 'push_status': 403, 'credential': 'GITHUB_TOKEN'}},
         'crates': [{'crate': name, 'repository': gate.REPOSITORY, 'workflow': 'release-publish.yml', 'environment': 'release'} for name in settings_audit.CRATES],

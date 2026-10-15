@@ -56,6 +56,7 @@
             pkgs.gh
             pkgs.git
             pkgs.gnupg
+            pkgs.jq
           ];
         };
         devShells.default = pkgs.mkShell {

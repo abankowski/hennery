@@ -249,6 +249,9 @@ def main():
         require(supplied == inventory[key], f'dispatch {key} changed')
     require(inputs.get('inventory_sha256') == args.inventory_sha256, 'dispatch inventory changed')
     require(args.channel in inventory['channels'], 'channel not approved')
+    import approval
+    proof = approval.verify_dispatch(args.candidate, inputs)
+    require(proof['inventory_sha256'] == args.inventory_sha256 == digest(raw), 'maintainer signature does not approve this inventory digest')
     import supply
     supply.require_contract(args.candidate, inventory['channels'], inventory['targets'], inventory['tag'])
     supply.verify_binary_inventory(inventory, args.candidate)

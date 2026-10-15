@@ -81,6 +81,8 @@ checks supplement the platform boundary; a branch-editable boolean is not it.
 | R4 | Replace `packaging/r1-ghcr-gate upload/sign` with `packaging/release-gate ghcr`, `preflight` before dedicated credentials and `boundary` before each upload/sign. Freeze `ghcr-oci-layout.tar`, `ghcr-index.json` and SBOM/acceptance material. Extract outside the root; recheck both platform/index digests and executable hashes from signed `inventory.binaries[target]`. Ordinary `GITHUB_TOKEN` is READ only at the package; registry authentication uses a separate `release` environment secret. |
 
 There is no alternate `r1-ghcr-gate`, approval-ID protocol or branch signer.
+Dispatch input `maintainer_signature` carries the detached armored OpenPGP signature over the exact frozen `release-inventory.json`. Every channel gate verifies it before credentials and at each write boundary. Publishers retain and upload `release-inventory.json.asc` as a sidecar outside the frozen candidate. The pinned hardware-backed maintainer signature is authority; tag checks and Sigstore remain additional defenses. Every file/OCI verifier requires both. `ghcr-index.json` must contain a `digest` matching the requested immutable image subject; its bytes are covered by the global signed inventory.
+
 All file, installer and image verification pins the certificate identity to
 `https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<exact-version-tag>`
 with the GitHub OIDC issuer and exact source ref. `verify.py` supplies the shared
@@ -99,7 +101,8 @@ the external verified path. The required metadata for each concrete version is:
 disabled-strategies = ["crate-meta-data", "quick-install", "compile"]
 
 [package.metadata.hennery-release]
-verification = "external-sigstore"
+verification = "external-openpgp-sigstore"
+maintainer-fingerprint = "F26C7F594DFE84D131703AFC23E5A318AE8D2861"
 signer-identity = "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0"
 ```
 

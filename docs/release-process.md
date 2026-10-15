@@ -15,9 +15,28 @@ ordinary `GITHUB_TOKEN` write permissions or OIDC. Static lint and job condition
 cannot stop issuance. Such a branch must neither obtain dedicated publishing
 credentials nor produce a signature accepted by consumers. All signing identities
 must be the exact release workflow at a protected release tag; branch identities
-are rejected. Repository disruption/denial of service is outside that guarantee.
+are rejected. The **maintainer decision, 2026-10-15**, adds the root of trust:
+the exact immutable inventory must carry a detached OpenPGP signature made with
+the maintainer's hardware-backed signing subkey. Someone without access to that
+physical signing authority cannot authorize different release bytes, including
+an agent with the maintainer's SSH push key that creates an unsigned tag and
+changes its workflow to mint an exact-tag attestation. Sigstore alone is insufficient.
+Consumers use a reviewed, independently trusted verifier and pinned public key.
+Repository disruption/denial of service is outside that guarantee. Signed-tag
+checks remain defense in depth; the inventory signature is release authority.
 
 Before enabling any switch, the maintainer must configure and audit:
+
+0. **Physical approval:** configure the signing slot on the YubiKey locally:
+   `ykman openpgp keys set-touch sig on`. This requests touch for each signature.
+   `cached-fixed` is an alternative with a 15-second reuse window after touch
+   and cannot be disabled without deleting the private key; another process
+   could sign within that window. Prefer `on` for release approval and remove
+   the key after use. Confirm that no accessible software copy of the signing
+   subkey defeats the hardware boundary. The audit records an explicit personal
+   confirmation, not a remotely verified hardware property:
+   `"maintainer_touch":{"confirmed":true,"fingerprint":"F26C7F594DFE84D131703AFC23E5A318AE8D2861","policy":"on"}`.
+   See [Yubico's touch policies](https://docs.yubico.com/software/yubikey/tools/ykman/OpenPGP_Commands.html).
 
 1. **Environment `release`:** required reviewer is exactly the maintainer's User
    ID; administrator bypass explicitly disabled. Deployments allow only `v*`
@@ -139,6 +158,24 @@ repositories, Apple notarization, public caches and R6 modules retain their gate
 
 ## Settings audit and publication approval
 
+Inspect the final digest set, source, channels and targets through trusted local
+tools. At approval time, sign the **exact held canonical inventory bytes** locally:
+
+```sh
+packaging/hennery-release sign-approval --inventory candidate/release-inventory.json \
+  --signature release-inventory.json.asc --confirm-hardware-touch
+```
+
+This invokes `gpg --detach-sign` with the full pinned signing fingerprint, using
+the local hardware/PIN/touch interaction. It refuses CI and existing output;
+never run signing in Actions or give CI a private key. The CLI cannot prove touch
+configuration; the explicit confirmation is the maintainer's assertion. The
+signature is a public sidecar, outside the frozen candidate, avoiding a digest
+cycle. Supply its complete armored bytes as dispatch input `maintainer_signature`.
+Gates require it before issuing publication credentials and at every boundary;
+publishers verify and upload it as `release-inventory.json.asc`, and retain it
+with approval evidence. A new inventory requires a new physical approval.
+
 Run the reviewed `settings_audit.py` locally with the maintainer's own `gh`
 authentication, after the candidate run completes. It independently verifies the pinned tag signature before using owner settings
 authentication, then checks the actual owner, environment, both rulesets including bypass actors, secret locations and immutable
@@ -173,10 +210,25 @@ announcements advance.
 
 ## Consumer verification and recovery
 
-Every accepted signature must have certificate identity
+Every consumer first requires the valid detached maintainer signature over the
+exact inventory, pinned to signing subkey
+`F26C7F594DFE84D131703AFC23E5A318AE8D2861` (primary key
+`1CE2B7354FC6ED5D9DE12DF664C16DED80CCEABA`). Missing, malformed, wrong-key and
+different-inventory signatures refuse even when Sigstore passes. Manual checking
+uses a trusted checkout and the same verifier:
+
+```sh
+packaging/hennery-release verify-approval --inventory candidate/release-inventory.json \
+  --signature release-inventory.json.asc
+python3 packaging/release/verify.py --candidate candidate --tag v0.1.0 \
+  --source-sha "$SOURCE_SHA" --bundle release.sigstore.jsonl \
+  --approval-signature release-inventory.json.asc
+```
+
+Both verifications are mandatory. Every accepted Sigstore signature must have certificate identity
 `https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<exact-release-tag>`,
 GitHub OIDC issuer and matching source ref. `verify.py` checks the inventory's
-attestation first, then source/tag, every payload/checksum/binary digest and each
+hardware approval first, then attestation, source/tag, every payload/checksum/binary digest and each
 payload attestation. It also supports immutable OCI digests and relevant SLSA/
 SPDX predicates; R4 applies the same policy to platforms and final index. A
 branch's valid cryptographic signature is rejected. Do not trust an unsigned
@@ -184,9 +236,11 @@ checksum or execute a downloaded installer before authenticating it through a
 trusted copy of this verifier. The verifier itself must come from reviewed,
 trusted source, not arbitrary branch code or an unverified artifact.
 
-The hardened installer requires the real GitHub CLI and verifies the downloaded
-archive with the exact tag identity before extraction/execution, in addition to
-SHA-256. A caller may supply a durable local Sigstore bundle; it is still fully
+The hardened installer requires GnuPG, jq and the real GitHub CLI. It verifies the
+inventory against its embedded pinned public key, binds the archive's SHA-256
+and release tag to that signed inventory, and requires the exact Sigstore tag
+identity before extraction/execution. A caller may supply durable local sidecars;
+they are still fully
 verified. No missing verifier/hash/signature fallback is accepted. It stages in a
 private sibling directory and atomically creates the destination without
 replacing files, links, directories or races. It uses no sudo and starts no
@@ -198,7 +252,15 @@ Sigstore workflow identity through invented metadata. Freeze and live gates read
 binstall strategies and require the exact tag identity for the external verifier.
 Keep native acceptance disabled pending the parent's capability ruling and a reviewed
 R3 bridge; do not claim it is an authenticated install path. The common external
-verifier enforces the exact tag identity. See [upstream signing support](https://github.com/cargo-bins/cargo-binstall/blob/main/SIGNING.md).
+verifier enforces both the hardware approval and exact tag identity. See [upstream signing support](https://github.com/cargo-bins/cargo-binstall/blob/main/SIGNING.md).
+
+OCI verification additionally requires the complete frozen inventory directory
+and detached signature: pass `--image ghcr.io/marcinwadon/hennery@sha256:...`,
+`--inventory-directory candidate`, `--approval-signature release-inventory.json.asc`
+and `--tag` to `verify.py`. The hashed `ghcr-index.json` must contain a `digest`
+matching the requested immutable image. R4 must normalize that index descriptor
+and apply this policy before accepting an OCI subject; an attestation alone or a
+mutable image tag is insufficient.
 
 Retries recover held exact versions, recheck holds/digests and renew audit/attempt
 approval. Reconcile every remote artifact, including lost upload responses. Reuse

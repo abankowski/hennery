@@ -78,6 +78,9 @@ def validate_live(candidate, phase):
         value = gate.strict_json(event[key]) if key in ('channels', 'targets', 'candidate') else event[key]
         gate.require(value == inventory[key], 'dispatch approval changed')
     gate.require('github' in inventory['channels'], 'GitHub channel not enabled')
+    import approval
+    proof = approval.verify_dispatch(candidate, event)
+    gate.require(proof['inventory_sha256'] == event['inventory_sha256'], 'maintainer signature differs at publication boundary')
     receipt = gate.validate(inventory, event['inventory_sha256'], candidate, context, gate.GitHub(os.environ['GH_TOKEN']).evidence(inventory, context, gate.strict_json(event['settings_audit'])))
     receipt['phase'] = phase
     audit = Path('audit')
@@ -125,6 +128,10 @@ def main():
     # Signatures are verification sidecars, not inventory payloads (no cycles).
     bundle = args.signatures / 'release.sigstore.jsonl'
     gate.require(bundle.is_file() and not bundle.is_symlink(), 'downloadable attestation bundle missing')
+    import approval
+    approval_signature = args.signatures / 'release-inventory.json.asc'
+    proof = approval.verify(args.candidate / 'release-inventory.json', approval_signature)
+    gate.require(proof['inventory_sha256'] == gate.digest(gate.canonical(inventory)), 'maintainer approval differs from publication inventory')
     tag_path = '/repos/' + gate.REPOSITORY + '/releases/tags/' + urllib.parse.quote(inventory['tag'], safe='')
     release = api(tag_path)
     if release is not None:
@@ -140,12 +147,14 @@ def main():
         data = asset_bytes(prior[0])
         gate.require(data is not None, 'existing signature is unverifiable')
         bundle = recover_bundle(args.signatures / 'recovered-release.sigstore.jsonl', data)
-        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'])
+        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], approval_signature=approval_signature)
     else:
-        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], os.environ['GITHUB_SHA'])
+        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], os.environ['GITHUB_SHA'], approval_signature)
     files = {p.name: p for p in args.candidate.iterdir()}
     files['release.sigstore.jsonl'] = bundle
+    files['release-inventory.json.asc'] = approval_signature
     expected = {name: gate.digest(path.read_bytes()) for name, path in files.items()}
+    gate.require(expected['release-inventory.json.asc'] == proof['signature_sha256'], 'maintainer signature changed before publication')
     reconciliation = plan(expected, release_assets(release))
     if args.operation == 'upload':
         require_enabled()

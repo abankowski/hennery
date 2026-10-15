@@ -113,7 +113,7 @@ class Supply(unittest.TestCase):
     def write_cli_crate(root, tag, identity_ref=None):
         base='hennery-'+tag.removeprefix('v')
         identity_ref=identity_ref or 'refs/tags/'+tag
-        text='[package]\nname="hennery"\nversion="'+tag.removeprefix('v')+'"\n[package.metadata.binstall]\ndisabled-strategies=["crate-meta-data","quick-install","compile"]\n[package.metadata.hennery-release]\nverification="external-sigstore"\nsigner-identity="https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@'+identity_ref+'"\n'
+        text='[package]\nname="hennery"\nversion="'+tag.removeprefix('v')+'"\n[package.metadata.binstall]\ndisabled-strategies=["crate-meta-data","quick-install","compile"]\n[package.metadata.hennery-release]\nverification="external-openpgp-sigstore"\nmaintainer-fingerprint="F26C7F594DFE84D131703AFC23E5A318AE8D2861"\nsigner-identity="https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@'+identity_ref+'"\n'
         with tarfile.open(root/(base+'.crate'),'w:gz') as archive:
             data=text.encode();entry=tarfile.TarInfo(base+'/Cargo.toml');entry.size=len(data);archive.addfile(entry,io.BytesIO(data))
 

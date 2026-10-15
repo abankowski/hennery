@@ -29,6 +29,9 @@ class Publication(unittest.TestCase):
 
 
 class Recovery(unittest.TestCase):
+    def setUp(self):
+        mocked=patch('approval.verify',side_effect=lambda inventory,signature:{'inventory_sha256':gate.digest(inventory.read_bytes()),'signature_sha256':gate.digest(signature.read_bytes())}); mocked.start(); self.addCleanup(mocked.stop)
+
     def test_reconcile_then_upload_reuses_the_verified_existing_bundle(self):
         import sys
         import test_gate
@@ -37,7 +40,8 @@ class Recovery(unittest.TestCase):
         signatures = fixture.root.parent / (fixture.root.name + '-signatures'); signatures.mkdir()
         self.addCleanup(lambda: __import__('shutil').rmtree(signatures))
         (signatures / 'release.sigstore.jsonl').write_bytes(b'new attempt bundle')
-        remote = {p.name: p.read_bytes() for p in fixture.root.iterdir()} | {'release.sigstore.jsonl': b'previous verified bundle'}
+        (signatures / 'release-inventory.json.asc').write_bytes(b'verified hardware signature')
+        remote = {p.name: p.read_bytes() for p in fixture.root.iterdir()} | {'release.sigstore.jsonl': b'previous verified bundle', 'release-inventory.json.asc':b'verified hardware signature'}
         assets = [{'name': n, 'url': n} for n in remote]
         release = {'id': 42, 'tag_name': fixture.inventory['tag'], 'draft': False, 'immutable': True}
         def api(path, method='GET', **kwargs):
@@ -63,6 +67,9 @@ class Recovery(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b'wrong')
 
 class ImmutablePublication(unittest.TestCase):
+    def setUp(self):
+        mocked=patch('approval.verify',side_effect=lambda inventory,signature:{'inventory_sha256':gate.digest(inventory.read_bytes()),'signature_sha256':gate.digest(signature.read_bytes())}); mocked.start(); self.addCleanup(mocked.stop)
+
     def scenario(self, seal):
         import json,sys,urllib.parse
         import test_gate
@@ -72,8 +79,9 @@ class ImmutablePublication(unittest.TestCase):
         (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
         with tempfile.TemporaryDirectory() as tmp:
             signatures=Path(tmp);(signatures/'release.sigstore.jsonl').write_bytes(b'verified bundle')
+            (signatures/'release-inventory.json.asc').write_bytes(b'verified hardware signature')
             remote={};release=None;writes=[]
-            expected={p.name for p in fixture.root.iterdir()}|{'release.sigstore.jsonl'}
+            expected={p.name for p in fixture.root.iterdir()}|{'release.sigstore.jsonl','release-inventory.json.asc'}
             def api(path,method='GET',data=None,**kwargs):
                 nonlocal release
                 if method=='GET':
@@ -110,6 +118,7 @@ class ImmutablePublication(unittest.TestCase):
         (fixture.root/'release-inventory.json').write_bytes(gate.canonical(fixture.inventory))
         with tempfile.TemporaryDirectory() as tmp:
             signatures=Path(tmp);(signatures/'release.sigstore.jsonl').write_bytes(b'bundle')
+            (signatures/'release-inventory.json.asc').write_bytes(b'verified hardware signature')
             release={'id':42,'tag_name':fixture.inventory['tag'],'draft':False,'immutable':False}
             with patch.dict('os.environ',{'GITHUB_SHA':'a'*40}),patch.object(publish,'api',return_value=release),patch.object(publish,'release_assets',return_value=[]),patch('verify.verify'),patch.object(sys,'argv',['publish.py','reconcile','--candidate',str(fixture.root),'--signatures',str(signatures),'--output',str(signatures/'result.json')]),self.assertRaisesRegex(gate.Refused,'published release must be immutable'):
                 publish.main()

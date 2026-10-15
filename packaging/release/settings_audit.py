@@ -26,6 +26,9 @@ def tag_rulesets(owner_id):
 def validate_settings(settings, channels):
     owner = settings['owner']
     gate.require(owner.get('login') == gate.REPOSITORY.split('/')[0] and owner.get('type') == 'User' and type(owner.get('id')) is int and owner['id'] > 0, 'settings audit requires the personal repository owner')
+    import tag_signature
+    touch = settings.get('maintainer_touch', {})
+    gate.require(touch.get('confirmed') is True and touch.get('fingerprint') == tag_signature.FINGERPRINT and touch.get('policy') in ('on', 'cached-fixed'), 'maintainer hardware touch confirmation missing; remote verification is impossible')
     env = settings['environment']
     gate.require(env.get('name') == 'release' and env.get('can_admins_bypass') is False, 'release environment missing or bypass not explicitly disabled')
     reviewers = [r for rule in env.get('protection_rules', []) if rule.get('type') == 'required_reviewers' for r in rule.get('reviewers', [])]
@@ -102,6 +105,7 @@ def collect(observations):
             'rulesets': rulesets, 'repository_secrets': [s['name'] for s in pages(prefix + '/actions/secrets', 'secrets')],
             'release_secrets': [s['name'] for s in pages(prefix + '/environments/release/secrets', 'secrets')],
             'immutable_releases': gh(prefix + '/immutable-releases')['enabled'],
+            'maintainer_touch': observations.get('maintainer_touch'),
             'ghcr': observations.get('ghcr'), 'crates': observations.get('crates')}
 
 
