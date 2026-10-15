@@ -71,7 +71,7 @@ macro_rules! tool_args {
         pub struct $name { $($(#[$field_meta])* pub $field: $ty),* }
         impl<'de> Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                #[derive(Deserialize)]
+                #[derive(Deserialize, JsonSchema, TS)]
                 #[serde(deny_unknown_fields)]
                 struct Fields { $($(#[$field_meta])* $field: $ty),* }
                 struct Object;
@@ -107,6 +107,7 @@ tool_args! {
         pub name: Option<String>,
         pub agent: Option<String>,
         #[serde(deserialize_with = "strict_config")]
+        #[schemars(with = "ConfigFields")]
         pub config: crate::frames::SessionConfig,
     }
 }
@@ -125,6 +126,7 @@ tool_args! {
         pub child_id: String,
         pub pending_id: String,
         pub action: crate::frames::ElicitationAction,
+        #[ts(type = "unknown | null")]
         pub content: Option<serde_json::Value>,
     }
 }
@@ -150,15 +152,16 @@ tool_args! {
     }
 }
 
-fn strict_config<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<crate::frames::SessionConfig, D::Error> {
-    tool_args! {
-        pub struct ConfigFields {
-            pub model: Option<String>,
-            pub mode: Option<String>,
-            #[serde(default)]
-            pub axes: std::collections::BTreeMap<String, crate::frames::ConfigValue>,
-        }
+tool_args! {
+    /// Object-only strict decoding/schema adapter for the shared session config.
+    pub struct ConfigFields {
+        pub model: Option<String>,
+        pub mode: Option<String>,
+        #[serde(default)]
+        pub axes: std::collections::BTreeMap<String, crate::frames::ConfigValue>,
     }
+}
+fn strict_config<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<crate::frames::SessionConfig, D::Error> {
     let fields = ConfigFields::deserialize(deserializer)?;
     Ok(crate::frames::SessionConfig {
         model: fields.model,
@@ -179,7 +182,7 @@ pub struct OperationReceipt {
 }
 
 /// A delegation operation's state, independent of the session lifecycle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OperationState {
     Accepted,
@@ -191,6 +194,37 @@ pub enum OperationState {
     NotDelivered,
     Cancelled,
     Failed { code: String },
+}
+
+// Serde's internally tagged unit variants ignore additional fields even with
+// deny_unknown_fields. Empty struct variants enforce the advertised shape.
+impl<'de> Deserialize<'de> for OperationState {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+        enum Wire {
+            Accepted {},
+            WaitingConfig {},
+            Queued {},
+            AwaitingReconciliation {},
+            Delivered {},
+            Completed {},
+            NotDelivered {},
+            Cancelled {},
+            Failed { code: String },
+        }
+        Ok(match Wire::deserialize(deserializer)? {
+            Wire::Accepted {} => Self::Accepted,
+            Wire::WaitingConfig {} => Self::WaitingConfig,
+            Wire::Queued {} => Self::Queued,
+            Wire::AwaitingReconciliation {} => Self::AwaitingReconciliation,
+            Wire::Delivered {} => Self::Delivered,
+            Wire::Completed {} => Self::Completed,
+            Wire::NotDelivered {} => Self::NotDelivered,
+            Wire::Cancelled {} => Self::Cancelled,
+            Wire::Failed { code } => Self::Failed { code },
+        })
+    }
 }
 
 /// Self-contained tool argument schemas for MCP discovery.
