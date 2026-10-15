@@ -30,6 +30,7 @@ class Hardener(unittest.TestCase):
             (tools / 'gpg').write_text('''#!/bin/sh
 for arg in "$@"; do
     if [ "$arg" = --import ]; then
+        printf called > "$TEST_ROOT/gpg-import-called"
         [ "$HENNERY_TEST_SIGNATURE" != import-failed ] || exit 1
         exit 0
     fi
@@ -60,7 +61,7 @@ err() { echo "$*" >&2; exit 1; }
 run() {
 local _dir="$TEST_ROOT/$HENNERY_TEST_SIGNATURE" _file="$TEST_ROOT/archive" _artifact_name=hennery-test.tar.xz
 APP_VERSION=1.2.3
-''' + block + '\nprintf authenticated > "$TEST_ROOT/authenticated"\n}\nrun\n')
+''' + block + '\nprintf authenticated > "$TEST_ROOT/authenticated"\n}\n# Conditional callers suppress errexit inside functions; refusal must be explicit.\nif run; then exit 0; else exit 1; fi\n')
             env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'], TEST_ROOT=str(root),
                        HENNERY_ATTESTATION_BUNDLE=str(root / 'bundle'), HENNERY_RELEASE_INVENTORY=str(root / 'inventory'),
                        HENNERY_RELEASE_SIGNATURE=str(root / 'signature'))
@@ -71,6 +72,7 @@ APP_VERSION=1.2.3
                     (root / 'signature').write_bytes(raw)
                     (root / 'authenticated').unlink(missing_ok=True)
                     (root / 'gpg-called').unlink(missing_ok=True)
+                    (root / 'gpg-import-called').unlink(missing_ok=True)
                     if case == 'different-inventory':
                         (root / 'inventory').write_bytes(raw + b' ')
                     elif case == 'missing':
@@ -101,7 +103,9 @@ APP_VERSION=1.2.3
                     else:
                         self.assertNotEqual(result.returncode, 0, 'valid-looking tag attestation bypassed ' + case)
                         self.assertFalse((root / 'authenticated').exists())
-                        self.assertIn('maintainer', result.stderr)
+                        if case == 'import-failed':
+                            self.assertTrue((root / 'gpg-import-called').exists(), 'the import must actually be attempted')
+                            self.assertFalse((root / 'gpg-called').exists(), 'failed import must refuse before signature verification')
                         if case in ('missing', 'empty-signature', 'missing-inventory'):
                             self.assertFalse((root / 'gpg-called').exists(), 'missing input must be refused before invoking gpg')
 
