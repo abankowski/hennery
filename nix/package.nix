@@ -23,6 +23,7 @@ let
       ../crates/hennery-sessions/src/family.sql
       ../crates/hennery-sessions/tests/fixtures/undo_family.sql
       ../crates/hennery-memory/src/schema.sql
+      ../crates/hennery-memory/src/schema2.sql
       ../crates/hennery-sessions/tests/fixtures/undo_delegation.sql
       ../crates/hennery-testkit/tests/fixtures/delegation-codex-acp-1.13.0.jsonl
       (lib.fileset.maybeMissing ../adapters/manifest.json)

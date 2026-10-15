@@ -5,7 +5,7 @@ use hennery_kernel::{
     db, redact,
     secret::{random_bytes, sha256_hex, unix_now},
 };
-use hennery_proto::plugin::{Provenance, SourceRef};
+use hennery_proto::plugin::{Excerpt, Provenance, SourceRef};
 use hmac::{Hmac, Mac};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,8 @@ pub struct Store {
 pub(crate) struct Inner {
     pub db: db::OwnedConnection,
     pub leases: HashMap<String, (Instant, i64)>,
+    pub stale: std::collections::HashSet<String>,
+    pub generations: HashMap<String, u64>,
 }
 pub struct Credentials {
     pub namespace: String,
@@ -64,6 +66,17 @@ impl Query {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Observation {
+    pub event_key: String,
+    pub turn_id: String,
+    pub completed_at: String,
+    pub excerpts: Vec<Excerpt>,
+    pub source_refs: Vec<SourceRef>,
+    pub provenance: Vec<Provenance>,
+    pub truncated: bool,
+    pub gaps: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     pub id: String,
     pub kind: String,
@@ -72,6 +85,14 @@ pub struct Entry {
     pub project_key: Option<String>,
     pub author: String,
     pub created_at: i64,
+    #[serde(default)]
+    pub updated_at: i64,
+    #[serde(default)]
+    pub covered_through: Option<String>,
+    #[serde(default)]
+    pub project_key_omitted: bool,
+    #[serde(default)]
+    pub project_key_digest: Option<String>,
     pub revision: u64,
     pub memory_kind: Option<String>,
     pub tags: Vec<String>,
@@ -80,7 +101,7 @@ pub struct Entry {
     pub truncated: bool,
     pub stale: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub turns: Vec<hennery_proto::plugin::PluginActivityItem>,
+    pub turns: Vec<Observation>,
     #[serde(default)]
     pub older_turns: u64,
 }
@@ -109,6 +130,21 @@ pub(crate) fn random() -> String {
     hex::encode(random_bytes::<32>())
 }
 impl Store {
+    pub fn delivery_stamp(&self, token: &str) -> Result<(String, u64)> {
+        let inner = self.inner.lock().expect("store");
+        let ns = inner.auth(token, false, false)?;
+        Ok((ns.id.clone(), *inner.generations.get(&ns.id).unwrap_or(&0)))
+    }
+    pub fn deliverable(&self, token: &str, stamp: &(String, u64)) -> Result<()> {
+        let inner = self.inner.lock().expect("store");
+        let ns = inner.auth(token, false, false)?;
+        ensure!(
+            ns.id == stamp.0 && *inner.generations.get(&ns.id).unwrap_or(&0) == stamp.1,
+            "delivery invalidated"
+        );
+        Ok(())
+    }
+
     /// Authentication only; used again immediately before HTTP delivery.
     pub fn available(&self, token: &str, admin: bool) -> Result<()> {
         self.inner.lock().expect("store").auth(token, admin, false).map(|_| ())
@@ -118,11 +154,18 @@ impl Store {
     }
     pub fn open(path: &Path) -> Result<Self> {
         let mut db = db::open(path)?;
-        db::migrate_component(&mut db, "memory", &[include_str!("schema.sql")])?;
+        db::migrate_component(
+            &mut db,
+            "memory",
+            &[include_str!("schema.sql"), include_str!("schema2.sql")],
+        )?;
+        db.busy_timeout(std::time::Duration::from_millis(100))?;
         Ok(Self {
             inner: Mutex::new(Inner {
                 db,
                 leases: HashMap::new(),
+                stale: Default::default(),
+                generations: Default::default(),
             }),
         })
     }
@@ -199,6 +242,10 @@ impl Store {
             project_key: None,
             author: "agent".into(),
             created_at: unix_now(),
+            updated_at: unix_now(),
+            covered_through: None,
+            project_key_omitted: false,
+            project_key_digest: None,
             revision: 1,
             memory_kind: safe.kind,
             tags: safe.tags,
@@ -233,7 +280,7 @@ impl Store {
         let limit = q.limit.unwrap_or(if recent { 5 } else { 10 });
         ensure!((1..=20).contains(&limit), "invalid limit");
         ensure!(
-            q.project_key.as_ref().is_none_or(|p| p.len() <= 1024),
+            q.project_key.as_ref().is_none_or(|p| p.len() <= 128 * 1024),
             "invalid project"
         );
         ensure!(
@@ -285,13 +332,13 @@ impl Store {
             .map(|(i, _)| {
                 format!(
                     "CASE WHEN EXISTS (SELECT 1 FROM entries_fts WHERE rowid=e.seq AND entries_fts MATCH ?{}) THEN 1 ELSE 0 END",
-                    i + 6
+                    i + 7
                 )
             })
             .collect::<Vec<_>>()
             .join(" + ");
         let coverage = if coverage.is_empty() { "0".to_string() } else { coverage };
-        let sql=format!("SELECT e.data, ({coverage}) AS coverage FROM entries e WHERE e.namespace=?1 AND (?2 IS NULL OR e.kind=?2) AND (?3 IS NULL OR e.project=?3)
+        let sql=format!("SELECT e.data, ({coverage}) AS coverage FROM entries e WHERE e.namespace=?1 AND (?2 IS NULL OR e.kind=?2) AND (?3 IS NULL OR (e.project_digest=?6 AND e.project=?3))
             AND ((?4='' AND {}) OR EXISTS (SELECT 1 FROM entries_fts WHERE rowid=e.seq AND entries_fts MATCH ?4)) ORDER BY coverage DESC,e.seq DESC LIMIT 21 OFFSET ?5",if recent{"1"}else{"0"});
         let mut values: Vec<rusqlite::types::Value> = vec![
             ns.id.clone().into(),
@@ -299,6 +346,7 @@ impl Store {
             q.project_key.clone().into(),
             matched.into(),
             (offset as i64).into(),
+            q.project_key.as_ref().map(|p| sha256_hex(p.as_bytes())).into(),
         ];
         values.extend(terms.iter().map(|t| rusqlite::types::Value::Text(format!("\"{t}\""))));
         let mut stmt = inner.db.prepare(&sql)?;
@@ -315,6 +363,12 @@ impl Store {
             entry.truncated |= clipped.len() < entry.body.len();
             entry.body = clipped;
             entry.stale |= inner.stale(&ns.id);
+            if entry.project_key.as_ref().is_some_and(|p| p.len() > 1024) {
+                entry.project_key_digest = entry.project_key.as_ref().map(|p| sha256_hex(p.as_bytes()));
+                entry.project_key = None;
+                entry.project_key_omitted = true;
+                entry.truncated = true;
+            }
             // Preserve typed evidence and roles. Only display text/tags may
             // shrink, visibly, so a single escaped entry cannot stall a page.
             while serde_json::to_vec(&serde_json::to_string(&entry)?)?.len() > 12 * 1024 {
@@ -325,15 +379,10 @@ impl Store {
                     *tag = bounded(tag, tag.len() / 2);
                 }
                 for turn in &mut entry.turns {
-                    if let hennery_proto::plugin::ActivityBody::CompletedTurn {
-                        excerpts, truncated, ..
-                    } = &mut turn.body
-                    {
-                        for excerpt in excerpts {
-                            excerpt.text = bounded(&excerpt.text, excerpt.text.len() / 2);
-                        }
-                        *truncated = true;
+                    for excerpt in &mut turn.excerpts {
+                        excerpt.text = bounded(&excerpt.text, excerpt.text.len() / 2);
                     }
+                    turn.truncated = true;
                 }
                 entry.truncated = true;
                 ensure!(
@@ -360,10 +409,11 @@ impl Store {
                 .expect("cursor"),
             )
         });
+        let stale = inner.stale(&ns.id) || entries.iter().any(|e| e.stale);
         Ok(Page {
             entries,
             next_cursor,
-            stale: inner.stale(&ns.id),
+            stale,
         })
     }
     pub fn brief(&self, token: &str, subject: &str, project: Option<String>) -> Result<Value> {
@@ -386,7 +436,15 @@ impl Store {
                     format!(
                         "[{}] {} — {}\n> {}",
                         e.id,
-                        hennery_kernel::secret::rfc3339(e.created_at),
+                        if e.kind == "note" {
+                            format!(
+                                "observed {} through {}",
+                                hennery_kernel::secret::rfc3339(e.created_at),
+                                hennery_kernel::secret::rfc3339(e.updated_at)
+                            )
+                        } else {
+                            hennery_kernel::secret::rfc3339(e.created_at)
+                        },
                         e.title,
                         e.body.replace('\n', "\n> ")
                     )
@@ -406,7 +464,7 @@ impl Store {
 pub(crate) fn put(tx: &rusqlite::Transaction<'_>, ns: &str, e: &Entry) -> Result<()> {
     tx.execute("DELETE FROM entries WHERE namespace=?1 AND id=?2", params![ns, e.id])?;
     tx.execute(
-        "INSERT INTO entries(namespace,id,kind,project,title,body,data) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        "INSERT INTO entries(namespace,id,kind,project,title,body,data,project_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
         params![
             ns,
             e.id,
@@ -414,12 +472,18 @@ pub(crate) fn put(tx: &rusqlite::Transaction<'_>, ns: &str, e: &Entry) -> Result
             e.project_key,
             e.title,
             e.body,
-            serde_json::to_string(e)?
+            serde_json::to_string(e)?,
+            e.project_key.as_ref().map(|p| sha256_hex(p.as_bytes()))
         ],
     )?;
     Ok(())
 }
 impl Inner {
+    pub(crate) fn invalidate(&mut self, id: &str) {
+        let value = self.generations.entry(id.into()).or_default();
+        *value = value.wrapping_add(1);
+    }
+
     pub(crate) fn auth(&self, token: &str, admin: bool, write: bool) -> Result<Namespace> {
         ensure!(token.len() <= 256, "unavailable");
         let column = if admin { "lifecycle_hash" } else { "tool_hash" };
@@ -454,7 +518,11 @@ impl Inner {
         Ok(row.0)
     }
     pub(crate) fn stale(&self, id: &str) -> bool {
-        !self.leases.contains_key(id)
+        self.stale.contains(id)
+            || self
+                .leases
+                .get(id)
+                .is_some_and(|(end, unix)| *end <= Instant::now() || *unix <= unix_now())
     }
 }
 fn terms(query: &str) -> Result<Vec<String>> {

@@ -85,51 +85,76 @@ fn string_literals(source: &str) -> Vec<String> {
 fn every_memory_statement_prepares_and_scopes_before_data_access() {
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch(include_str!("../src/schema.sql")).unwrap();
+    db.execute_batch(include_str!("../src/schema2.sql")).unwrap();
     let source = include_str!("../src/store.rs");
     let fragments = string_literals(source);
     let coverage = fragments
         .iter()
         .find(|s| s.starts_with("CASE WHEN "))
         .expect("actual coverage SQL")
-        .replace("{}", "6");
-    let mut count = 0;
-    for sql in string_literals(source).into_iter().filter(|s| {
-        ["SELECT ", "INSERT ", "DELETE ", "UPDATE "]
-            .iter()
-            .any(|v| s.starts_with(v))
-    }) {
-        count += 1;
-        let sql = sql
-            .replace("{column}", "tool_hash")
-            .replace("{coverage}", &coverage)
-            .replace("{}", "0");
-        db.prepare(&sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
-        let compact = sql.split_whitespace().collect::<String>();
-        if sql.starts_with("INSERT INTO namespaces(") {
-            continue;
-        } // Explicit local bootstrap, never a mounted operation.
-        if sql.contains("FROM namespaces WHERE tool_hash=?1") {
-            continue;
-        } // Credential lookup fixes immutable namespace.
-        assert!(
-            compact.contains("namespace=?") || (sql.starts_with("INSERT ") && compact.contains("(namespace,")),
-            "missing parameterized namespace: {sql}"
-        );
-        if sql.contains("entries_fts MATCH") {
-            assert!(sql.contains("rowid=e.seq"), "FTS must be correlated to the scoped row");
-            let plan = format!("EXPLAIN QUERY PLAN {sql}");
-            let mut stmt = db.prepare(&plan).unwrap();
-            let mut query = stmt.raw_query();
-            let mut descriptions = Vec::new();
-            while let Some(r) = query.next().unwrap() {
-                descriptions.push(r.get::<_, String>(3).unwrap());
+        .replace("{}", "7");
+    let mut count = [0, 0];
+    for (file, source) in [source, include_str!("../src/consumer.rs")].into_iter().enumerate() {
+        for sql in string_literals(source).into_iter().filter(|s| {
+            ["SELECT ", "INSERT ", "DELETE ", "UPDATE "]
+                .iter()
+                .any(|v| s.starts_with(v))
+        }) {
+            count[file] += 1;
+            let tables = if sql.contains("{table}") {
+                vec![
+                    "entries",
+                    "sources",
+                    "requests",
+                    "suppressed",
+                    "seen",
+                    "feeds",
+                    "receipts",
+                ]
+            } else {
+                vec!["entries"]
+            };
+            for table in tables {
+                let sql = sql
+                    .replace("{table}", table)
+                    .replace("{column}", "tool_hash")
+                    .replace("{coverage}", &coverage)
+                    .replace("{}", "0");
+                db.prepare(&sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+                let compact = sql.split_whitespace().collect::<String>();
+                if sql.starts_with("INSERT INTO namespaces(") {
+                    continue;
+                } // Explicit local bootstrap, never a mounted operation.
+                if sql.contains("FROM namespaces WHERE tool_hash=?1") {
+                    continue;
+                } // Credential lookup fixes immutable namespace.
+                if sql.contains("FROM namespaces WHERE id=?1")
+                    || (sql.starts_with("UPDATE namespaces ") && sql.contains("WHERE id=?1"))
+                {
+                    continue;
+                } // Credential-selected or filesystem-owner namespace metadata.
+                if ["SELECT count(*) FROM feeds","SELECT EXISTS(SELECT 1 FROM feeds)","SELECT f.namespace FROM feeds f JOIN namespaces n ON n.id=f.namespace WHERE n.state='active' ORDER BY f.namespace LIMIT 129"].contains(&sql.as_str()){continue;} // Bounded local worker/key inventory only; never exposed to mounted tools.
+                assert!(
+                    compact.contains("namespace=?") || (sql.starts_with("INSERT ") && compact.contains("(namespace,")),
+                    "missing parameterized namespace: {sql}"
+                );
+                if sql.contains("entries_fts MATCH") {
+                    assert!(sql.contains("rowid=e.seq"), "FTS must be correlated to the scoped row");
+                    let plan = format!("EXPLAIN QUERY PLAN {sql}");
+                    let mut stmt = db.prepare(&plan).unwrap();
+                    let mut query = stmt.raw_query();
+                    let mut descriptions = Vec::new();
+                    while let Some(r) = query.next().unwrap() {
+                        descriptions.push(r.get::<_, String>(3).unwrap());
+                    }
+                    assert!(descriptions.iter().any(|s| s.contains("CORRELATED")));
+                    assert!(
+                        !descriptions.iter().any(|s| s.contains("LIST SUBQUERY")),
+                        "{descriptions:?}"
+                    );
+                }
             }
-            assert!(descriptions.iter().any(|s| s.contains("CORRELATED")));
-            assert!(
-                !descriptions.iter().any(|s| s.contains("LIST SUBQUERY")),
-                "{descriptions:?}"
-            );
         }
     }
-    assert_eq!(count, 8, "new statements need explicit audit coverage");
+    assert_eq!(count, [8, 43], "new statements need explicit audit coverage");
 }

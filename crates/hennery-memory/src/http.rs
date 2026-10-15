@@ -1,6 +1,9 @@
 //! Stateless HTTP MCP and distinct generic lifecycle operations. Parse typed
 //! arguments directly from raw JSON, preserving duplicate-key evidence.
-use crate::store::{Query, Remember, Store};
+use crate::{
+    consumer::Forget,
+    store::{Query, Remember, Store},
+};
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
@@ -136,6 +139,7 @@ pub fn router(store: Arc<Store>) -> Router {
         scopes: Arc::default(),
     })
 }
+const VERSIONS: &[&str] = &["2025-03-26", "2025-06-18", "2025-11-25"];
 fn response(status: StatusCode, value: Value) -> Response {
     let mut response = (status, Json(value)).into_response();
     response
@@ -174,6 +178,26 @@ async fn rpc(State(service): State<Service>, request: Request) -> Response {
     let credential_admin = token.starts_with("hnry_lifecycle_");
     let Ok(namespace) = service.store.authenticated_namespace(&token, credential_admin) else {
         return refused();
+    };
+    let versions = request
+        .headers()
+        .get_all("mcp-protocol-version")
+        .iter()
+        .collect::<Vec<_>>();
+    if versions.len() > 1
+        || versions
+            .first()
+            .is_some_and(|h| h.to_str().ok().is_none_or(|v| !VERSIONS.contains(&v)))
+    {
+        return response(StatusCode::BAD_REQUEST, json!({"error":"invalid protocol version"}));
+    }
+    let stamp = if credential_admin {
+        None
+    } else {
+        match service.store.delivery_stamp(&token) {
+            Ok(stamp) => Some(stamp),
+            Err(_) => return refused(),
+        }
     };
     let pool = if credential_admin {
         &service.admin_permits
@@ -246,26 +270,37 @@ async fn rpc(State(service): State<Service>, request: Request) -> Response {
     let params = rpc.params.as_deref().map(RawValue::get).unwrap_or("{}");
     let result: Result<Value, anyhow::Error> = (|| {
         if admin {
+            if rpc.method == "hennery_plugin_forget" {
+                return Ok(serde_json::to_value(
+                    service.store.forget(&token, object::<Forget>(params)?)?,
+                )?);
+            }
             anyhow::ensure!(
                 rpc.method == "hennery_plugin_capabilities",
                 "unsupported lifecycle operation"
             );
+            service.store.lifecycle_active(&token)?;
             let _: Empty = object(params)?;
-            return Ok(json!({"version":1,"activity_v1":false,"forget_v1":false,"startup_context_v1":false}));
+            return Ok(json!({"version":1,"activity_v1":true,"forget_v1":true,"startup_context_v1":false}));
         }
         match rpc.method.as_str() {
             "initialize" => {
                 let init: Initialize = object(params)?;
                 anyhow::ensure!(
-                    ["2025-03-26", "2025-06-18", "2025-11-25"].contains(&init.protocol_version.as_str())
+                    init.protocol_version.len() <= 128
                         && init.capabilities.is_object()
                         && init.client_info.name.len() <= 256
                         && init.client_info.version.len() <= 128
                         && init.client_info.title.as_ref().is_none_or(|s| s.len() <= 256),
                     "unsupported initialize"
                 );
+                let version = if VERSIONS.contains(&init.protocol_version.as_str()) {
+                    init.protocol_version.as_str()
+                } else {
+                    VERSIONS[VERSIONS.len() - 1]
+                };
                 Ok(
-                    json!({"protocolVersion":init.protocol_version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"hennery-memory","version":env!("CARGO_PKG_VERSION")}}),
+                    json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"hennery-memory","version":env!("CARGO_PKG_VERSION")}}),
                 )
             }
             "ping" => {
@@ -337,6 +372,12 @@ async fn rpc(State(service): State<Service>, request: Request) -> Response {
                     .store
                     .available(&token, admin)
                     .map_err(|_| std::io::Error::from(std::io::ErrorKind::PermissionDenied))?;
+                if let Some(stamp) = &stamp {
+                    service
+                        .store
+                        .deliverable(&token, stamp)
+                        .map_err(|_| std::io::Error::from(std::io::ErrorKind::PermissionDenied))?;
+                }
                 Ok::<Bytes, std::io::Error>(Bytes::from(bytes))
             });
             let mut response = Response::new(Body::from_stream(stream));

@@ -199,6 +199,10 @@ const GATEWAY_STATEMENTS: usize = 53;
 /// `every_file_with_sql_is_audited_or_exempt`.
 const EXEMPT: &[(&str, &str)] = &[
     (
+        "hennery-memory/src/consumer.rs",
+        "separate optional memory database; actual consumer SQL is prepared and namespace-scoped by hennery-memory/tests/sql_scope.rs, including bounded local worker inventories",
+    ),
+    (
         "hennery-memory/src/store.rs",
         "separate optional memory database, never hennery.db; every statement is prepared and namespace-scoped by hennery-memory/tests/sql_scope.rs",
     ),

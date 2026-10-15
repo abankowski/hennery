@@ -309,3 +309,28 @@ async fn standard_client_metadata_and_protocol_error_codes_are_supported() {
     assert_eq!(notification.status(), 202);
     assert!(notification.bytes().await.unwrap().is_empty());
 }
+#[tokio::test]
+async fn protocol_headers_are_single_supported_values_and_initialize_negotiates() {
+    let w = World::new().await;
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_remember","arguments":{"title":"version fixture","body":"no mutation","idempotency_key":"version"}}}"#;
+    for headers in [vec!["future"], vec!["2025-06-18", "2025-06-18"]] {
+        let mut request = reqwest::Client::new()
+            .post(&w.url)
+            .bearer_auth(&w.tool)
+            .header("content-type", "application/json")
+            .body(body);
+        for version in headers {
+            request = request.header("mcp-protocol-version", version);
+        }
+        assert_eq!(request.send().await.unwrap().status(), 400);
+    }
+    assert!(
+        w.store
+            .search(&w.tool, &hennery_memory::store::Query::search("mutation"))
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    let value=w.raw(&w.tool,r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"future","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#).await.json::<Value>().await.unwrap();
+    assert_eq!(value["result"]["protocolVersion"], "2025-11-25");
+}

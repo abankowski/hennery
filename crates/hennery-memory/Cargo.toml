@@ -24,9 +24,11 @@ tokio.workspace = true
 reqwest.workspace = true
 url.workspace = true
 zeroize.workspace = true
+time = { workspace = true, features = ["parsing"] }
 
 [dev-dependencies]
 tempfile.workspace = true
 hennery-host = { workspace = true, features = ["test-hooks"] }
 hennery-sessions.workspace = true
 hennery-testkit = { path = "../hennery-testkit" }
+tower = { version = "0.5", features = ["util"] }

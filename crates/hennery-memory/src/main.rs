@@ -1,6 +1,11 @@
 //! Explicit standalone service: no default data path and no core installer.
 use clap::{Parser, Subcommand};
-use hennery_memory::{http, store::Store};
+use hennery_memory::{
+    consumer::{self, FeedConfig},
+    http, keys,
+    store::Store,
+};
+use std::io::Read;
 use std::{
     os::unix::fs::{DirBuilderExt, PermissionsExt},
     path::PathBuf,
@@ -20,6 +25,32 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Read a C1 grant from bounded stdin, never command arguments.
+    Attach {
+        #[arg(long)]
+        namespace: String,
+    },
+    /// Explicit filesystem-owner erasure, including after an offline revoke.
+    Purge {
+        #[arg(long)]
+        namespace: String,
+    },
+    Suppress {
+        #[arg(long)]
+        namespace: String,
+        #[arg(long)]
+        session: String,
+    },
+    Writes {
+        #[arg(long)]
+        namespace: String,
+        #[arg(long)]
+        enabled: bool,
+    },
+    Status {
+        #[arg(long)]
+        namespace: String,
+    },
     /// Mint one isolated namespace's tool and lifecycle credentials, shown once.
     Create {
         #[arg(long)]
@@ -55,6 +86,22 @@ async fn run() -> anyhow::Result<()> {
     );
     let store = Arc::new(Store::open(&args.data_dir.join("memory.db"))?);
     match args.command {
+        Command::Attach { namespace } => {
+            let mut bytes = zeroize::Zeroizing::new(Vec::new());
+            std::io::stdin().take(16385).read_to_end(&mut bytes)?;
+            anyhow::ensure!(
+                bytes.len() <= 16384 && bytes.first() == Some(&b'{'),
+                "bounded object required"
+            );
+            let config: FeedConfig = serde_json::from_slice(&bytes)?;
+            let key = keys::load(&args.data_dir, store.has_feed_credentials()?)?;
+            store.attach(&namespace, config, &key)?;
+            println!("grant attached; namespace requires a fresh lease");
+        }
+        Command::Purge { namespace } => println!("{}", serde_json::to_string(&store.owner_purge(&namespace)?)?),
+        Command::Suppress { namespace, session } => store.suppress(&namespace, &session)?,
+        Command::Writes { namespace, enabled } => store.set_writes(&namespace, enabled)?,
+        Command::Status { namespace } => println!("{}", store.status(&namespace)?),
         Command::Create { owner, hat } => {
             let c = store.create(&owner, &hat)?;
             println!(
@@ -65,11 +112,20 @@ async fn run() -> anyhow::Result<()> {
         Command::Serve { listen } => {
             let listener = tokio::net::TcpListener::bind(listen).await?;
             println!("memory listening on {}", listener.local_addr()?);
+            let worker = if store.has_feed_credentials()? {
+                let key = Arc::new(keys::load(&args.data_dir, true)?);
+                Some(tokio::spawn(consumer::worker(store.clone(), key)))
+            } else {
+                None
+            };
             axum::serve(listener, http::router(store))
                 .with_graceful_shutdown(async {
                     let _ = tokio::signal::ctrl_c().await;
                 })
                 .await?;
+            if let Some(worker) = worker {
+                worker.abort();
+            }
         }
     }
     Ok(())
