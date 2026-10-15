@@ -909,3 +909,332 @@ async fn inventory_pages_are_paced_with_room_for_lease_and_activity_requests() {
         );
     }
 }
+
+#[tokio::test]
+async fn deletion_at_seen_capacity_commits_and_current_page_replay_stays_idempotent() {
+    let w = World::new(60).await;
+    w.set(
+        vec![turn("deleted-source", "initial", "deletion-capacity-marker", op())],
+        "before",
+    );
+    w.poll().await.unwrap();
+    w.raw().execute(
+        "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<99999) INSERT INTO seen(namespace,event_key,digest) SELECT ?1,'historical-'||x,?2 FROM n",
+        rusqlite::params![w.c.namespace, "f".repeat(64)],
+    ).unwrap();
+    assert_eq!(
+        w.raw()
+            .query_row("SELECT count(*) FROM seen WHERE namespace=?1", [&w.c.namespace], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
+        100000
+    );
+    // The old event is deliberately first, so pruning must refresh its replay evidence too.
+    w.set(vec![turn("deleted-source", "initial", "deletion-capacity-marker", op()),json!({"kind":"session_removed","event_key":"removed","session_id":"deleted-source","namespace_epoch":w.remote.epoch,"provenance":[]})], "after");
+    w.raw().execute_batch("CREATE TRIGGER fail_seen_prune BEFORE DELETE ON seen WHEN OLD.event_key LIKE 'historical-%' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert!(w.poll().await.is_err());
+    assert_eq!(w.cursor().as_deref(), Some("before"));
+    assert_eq!(
+        w.raw()
+            .query_row(
+                "SELECT count(*) FROM entries WHERE namespace=?1",
+                [&w.c.namespace],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+    w.raw().execute_batch("DROP TRIGGER fail_seen_prune").unwrap();
+    w.poll()
+        .await
+        .expect("deletion must commit even with a full deduplication ledger");
+    assert_eq!(w.cursor().as_deref(), Some("after"));
+    assert_eq!(
+        w.raw()
+            .query_row(
+                "SELECT count(*) FROM entries WHERE namespace=?1",
+                [&w.c.namespace],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        w.raw()
+            .query_row("SELECT count(*) FROM seen WHERE namespace=?1", [&w.c.namespace], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
+        100000
+    );
+    let revision: i64 = w
+        .raw()
+        .query_row("SELECT revision FROM feeds WHERE namespace=?1", [&w.c.namespace], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    w.poll().await.unwrap();
+    assert!(
+        w.s.search(&w.c.tool, &Query::search("deletion-capacity-marker"))
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    let mut changed = turn("deleted-source", "initial", "changed", op());
+    changed["event_key"] = json!("initial");
+    w.set(vec![changed], "forged");
+    assert!(w.poll().await.is_err());
+    assert_eq!(w.cursor().as_deref(), Some("after"));
+    assert_eq!(
+        w.raw()
+            .query_row("SELECT revision FROM feeds WHERE namespace=?1", [&w.c.namespace], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        revision + 1
+    );
+    // A pruned event cannot be admitted under the already committed cursor.
+    w.set(
+        vec![turn("new", "historical-1", "must not replay pruned history", op())],
+        "after",
+    );
+    assert!(w.poll().await.is_err());
+    assert_eq!(
+        w.raw()
+            .query_row(
+                "SELECT count(*) FROM entries WHERE namespace=?1",
+                [&w.c.namespace],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mixed_inventory_reset_is_linear_and_other_namespaces_keep_making_progress() {
+    let w = Arc::new(World::new(60).await);
+    w.set(
+        vec![
+            turn("gone-0", "initial", "removed-note", op()),
+            turn("kept", "kept", "retained-note", op()),
+        ],
+        "before",
+    );
+    w.poll().await.unwrap();
+    w.s.remember(
+        &w.c.tool,
+        serde_json::from_value(json!({"title":"assertion","body":"x".repeat(16000),"idempotency_key":"seed"})).unwrap(),
+    )
+    .unwrap();
+    let other = w.s.create("owner", "other").unwrap();
+    let mut db = w.raw();
+    let note: String = db
+        .query_row(
+            "SELECT data FROM entries WHERE namespace=?1 AND id=?2",
+            rusqlite::params![w.c.namespace, hennery_kernel::secret::sha256_hex(b"native-note:gone-0")],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let memory: String = db
+        .query_row(
+            "SELECT data FROM entries WHERE namespace=?1 AND kind='memory'",
+            [&w.c.namespace],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let other_id = other.namespace.clone();
+    let tx = db.transaction().unwrap();
+    for (data, kind) in [(&note, "note"), (&memory, "memory")] {
+        let mut entry: Value = serde_json::from_str(data).unwrap();
+        if kind == "memory" {
+            entry["id"] = json!(hennery_kernel::secret::sha256_hex(b"memory:0"));
+            entry["body"] = json!("foreign-assertion");
+        }
+        tx.execute(
+            "INSERT INTO entries(namespace,id,kind,title,body,data) VALUES(?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![
+                other_id,
+                entry["id"].as_str().unwrap(),
+                kind,
+                entry["title"].as_str().unwrap(),
+                entry["body"].as_str().unwrap(),
+                entry.to_string()
+            ],
+        )
+        .unwrap();
+    }
+    tx.execute(
+        "INSERT INTO sources(namespace,session,event_key) VALUES(?1,'gone-0','foreign')",
+        [&other_id],
+    )
+    .unwrap();
+    tx.execute(
+        "DELETE FROM entries WHERE namespace=?1 AND kind='memory'",
+        [&w.c.namespace],
+    )
+    .unwrap();
+    for i in 0..1500 {
+        let session = format!("gone-{i}");
+        if i > 0 {
+            let mut e: Value = serde_json::from_str(&note.replace("gone-0", &session)).unwrap();
+            e["id"] = json!(hennery_kernel::secret::sha256_hex(
+                format!("native-note:{session}").as_bytes()
+            ));
+            tx.execute(
+                "INSERT INTO entries(namespace,id,kind,title,body,data) VALUES(?1,?2,'note',?3,?4,?5)",
+                rusqlite::params![
+                    w.c.namespace,
+                    e["id"].as_str().unwrap(),
+                    e["title"].as_str().unwrap(),
+                    e["body"].as_str().unwrap(),
+                    e.to_string()
+                ],
+            )
+            .unwrap();
+            tx.execute(
+                "INSERT INTO sources(namespace,session,event_key) VALUES(?1,?2,?3)",
+                rusqlite::params![w.c.namespace, session, format!("initial-{i}")],
+            )
+            .unwrap();
+        }
+        let mut e: Value = serde_json::from_str(&memory).unwrap();
+        e["id"] = json!(hennery_kernel::secret::sha256_hex(format!("memory:{i}").as_bytes()));
+        let gone = json!({"session_id":session,"turn_id":"initial","event_id":7});
+        let kept = json!({"session_id":"kept","turn_id":"kept","event_id":7});
+        e["source_refs"] = json!([gone, kept]);
+        if i == 0 {
+            // Dangling provenance must be removed even without a matching ref.
+            e["source_refs"] = json!([kept]);
+        }
+        e["provenance"] =
+            json!([{"kind":"source","origin":op(),"source":gone},{"kind":"source","origin":op(),"source":kept}]);
+        if i == 1 {
+            e["source_refs"] = json!([gone]);
+            e["provenance"] = json!([{"kind":"source","origin":op(),"source":gone}]);
+        } else if i == 2 {
+            e["source_refs"] = json!([kept]);
+            e["provenance"] = json!([{"kind":"source","origin":op(),"source":kept}]);
+        }
+        tx.execute(
+            "INSERT INTO entries(namespace,id,kind,title,body,data) VALUES(?1,?2,'memory',?3,?4,?5)",
+            rusqlite::params![
+                w.c.namespace,
+                e["id"].as_str().unwrap(),
+                e["title"].as_str().unwrap(),
+                e["body"].as_str().unwrap(),
+                e.to_string()
+            ],
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+    w.remote.status.store(409, Ordering::SeqCst);
+    *w.remote.inventory.lock().unwrap() = vec![
+        json!({"version":1,"source_ids":["kept"],"next_cursor":null,"resume_cursor":"fresh","watermark":"fresh","lease_until":unix_now()+60}),
+    ];
+    db.execute_batch("CREATE TRIGGER fail_inventory BEFORE UPDATE ON feeds BEGIN SELECT RAISE(ABORT,'fixture'); END;")
+        .unwrap();
+    assert!(w.poll().await.is_err());
+    db.execute_batch("DROP TRIGGER fail_inventory").unwrap();
+    assert_eq!(w.cursor().as_deref(), Some("before"));
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM entries WHERE namespace=?1 AND kind='note'",
+            [&w.c.namespace],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1501
+    );
+    assert!(w.s.available(&w.c.tool, false).is_err());
+    let done = Arc::new(AtomicBool::new(false));
+    let reader = {
+        let s = w.s.clone();
+        let done = done.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut worst = Duration::ZERO;
+            let mut reads = 0;
+            while !done.load(Ordering::SeqCst) {
+                let t = std::time::Instant::now();
+                let page = s.recent(&other.tool, &Query::default()).unwrap();
+                assert_eq!(page.entries.len(), 1);
+                let memories = s.search(&other.tool, &Query::search("foreign")).unwrap();
+                assert_eq!(memories.entries.len(), 1);
+                assert_eq!(memories.entries[0].body, "foreign-assertion");
+                worst = worst.max(t.elapsed());
+                reads += 1;
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            (worst, reads)
+        })
+    };
+    let begin = std::time::Instant::now();
+    let result = w.poll().await;
+    done.store(true, Ordering::SeqCst);
+    let (worst, reads) = reader.await.unwrap();
+    eprintln!(
+        "mixed reset 1500 notes + 1500 16KiB memories: {:?}; other namespace worst {:?}, reads {reads}",
+        begin.elapsed(),
+        worst
+    );
+    result.expect("mixed reset must fit the lease");
+    assert!(
+        begin.elapsed() < Duration::from_secs(12),
+        "linear reset must finish well within its 60s lease"
+    );
+    assert!(
+        worst < Duration::from_secs(3),
+        "other namespaces must not wait for the entire reset"
+    );
+    assert!(reads > 1);
+    assert_eq!(w.cursor().as_deref(), Some("fresh"));
+    let db = w.raw();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM sources WHERE namespace=?1", [&other_id], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM sources WHERE namespace=?1",
+            [&w.c.namespace],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM entries WHERE namespace=?1 AND kind='note'",
+            [&w.c.namespace],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    let mut stmt = db
+        .prepare("SELECT data FROM entries WHERE namespace=?1 AND kind='memory'")
+        .unwrap();
+    let entries = stmt.query_map([&w.c.namespace], |r| r.get::<_, String>(0)).unwrap();
+    let mut count = 0;
+    for e in entries {
+        let e: hennery_memory::store::Entry = serde_json::from_str(&e.unwrap()).unwrap();
+        assert_eq!(e.body.len(), 16000);
+        if e.id == hennery_kernel::secret::sha256_hex(b"memory:1") {
+            assert!(e.source_refs.is_empty());
+            assert!(matches!(
+                e.provenance.as_slice(),
+                [hennery_proto::plugin::Provenance::Unverified {}]
+            ));
+        } else {
+            assert_eq!(e.source_refs.len(), 1);
+            assert_eq!(e.source_refs[0].session_id, "kept");
+        }
+        assert_eq!(e.provenance.len(), 1);
+        count += 1;
+    }
+    assert_eq!(count, 1500);
+    assert!(w.s.recent(&w.c.tool, &Query::default()).unwrap().stale);
+}

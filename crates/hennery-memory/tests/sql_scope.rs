@@ -121,6 +121,22 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
                     .replace("{coverage}", &coverage)
                     .replace("{}", "0");
                 db.prepare(&sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+                if sql.starts_with("SELECT seq,id,data FROM entries ") {
+                    let mut stmt = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+                    let descriptions = stmt
+                        .query_map(["scope", "memory", "0", "10000"], |r| r.get::<_, String>(3))
+                        .unwrap()
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .unwrap();
+                    assert!(
+                        descriptions.iter().any(|s| s.contains("scoped_entries")),
+                        "reset keyset reads need the namespace/kind/seq index: {descriptions:?}"
+                    );
+                    assert!(
+                        !descriptions.iter().any(|s| s.contains("TEMP B-TREE")),
+                        "reset chunks must not sort the entire corpus: {descriptions:?}"
+                    );
+                }
                 let compact = sql.split_whitespace().collect::<String>();
                 if sql.starts_with("INSERT INTO namespaces(") {
                     continue;
@@ -156,5 +172,5 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
             }
         }
     }
-    assert_eq!(count, [8, 44], "new statements need explicit audit coverage");
+    assert_eq!(count, [8, 51], "new statements need explicit audit coverage");
 }

@@ -33,6 +33,11 @@ struct Job {
     cursor: Option<String>,
     config: FeedConfig,
 }
+struct InventoryPlan {
+    absent: Vec<String>,
+    note_ids: Vec<String>,
+    replacements: Vec<(String, String)>,
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Forget {
@@ -220,7 +225,9 @@ impl Consumer {
                     );
                     after = Some(next);
                 }
-                store.inventory(job, ids, resume.context("missing inventory")?, latest_start, until)?;
+                store
+                    .inventory(job, ids, resume.context("missing inventory")?, latest_start, until)
+                    .await?;
                 Ok(false)
             }
         }
@@ -379,8 +386,26 @@ impl Store {
                     |r| r.get(0),
                 )
                 .optional()?;
-            if let Some(old) = old {
-                ensure!(old == digest, "source event changed");
+            if let Some(old) = &old {
+                ensure!(*old == digest, "source event changed");
+            } else {
+                // A committed cursor may only replay already admitted evidence.
+                // Pruned history cannot be reintroduced by a non-advancing page.
+                ensure!(
+                    job.cursor.as_ref() != Some(&page.next_cursor),
+                    "non-advancing new event"
+                );
+            }
+            // Refresh current-page evidence before pruning, including duplicates.
+            tx.execute(
+                "DELETE FROM seen WHERE namespace=?1 AND event_key=?2",
+                params![job.id, item.event_key],
+            )?;
+            tx.execute(
+                "INSERT INTO seen(namespace,event_key,digest) VALUES(?1,?2,?3)",
+                params![job.id, item.event_key, digest],
+            )?;
+            if old.is_some() {
                 continue;
             }
             match &item.body {
@@ -459,16 +484,19 @@ impl Store {
                     }
                 }
             }
-            tx.execute(
-                "INSERT INTO seen(namespace,event_key,digest) VALUES(?1,?2,?3)",
-                params![job.id, item.event_key, digest],
-            )?;
         }
-        budget(&tx, &job.id)?;
         tx.execute(
             "UPDATE feeds SET cursor=?2,revision=revision+1 WHERE namespace=?1",
             params![job.id, page.next_cursor],
         )?;
+        // Only evidence behind this cursor is evicted, atomically with its
+        // projection. A stale job cannot commit, and the <=20 current items
+        // were refreshed above. Capacity never prevents a deletion page.
+        tx.execute(
+            "DELETE FROM seen WHERE namespace=?1 AND rowid IN (SELECT rowid FROM seen WHERE namespace=?1 ORDER BY rowid DESC LIMIT -1 OFFSET 100000)",
+            [&job.id],
+        )?;
+        budget(&tx, &job.id)?;
         check_lease(start, until)?;
         tx.commit()?;
         if erased {
@@ -492,7 +520,7 @@ impl Store {
         ensure!(ids.len() <= 10000, "local source budget exceeded");
         Ok(ids)
     }
-    fn inventory(
+    async fn inventory(
         &self,
         job: &Job,
         ids: std::collections::BTreeSet<String>,
@@ -500,32 +528,108 @@ impl Store {
         start: Instant,
         until: i64,
     ) -> Result<()> {
+        let plan = self.prepare_inventory(job, ids, start, until).await?;
+        self.commit_inventory(job, plan, resume, start, until)
+    }
+    async fn prepare_inventory(
+        &self,
+        job: &Job,
+        ids: std::collections::BTreeSet<String>,
+        start: Instant,
+        until: i64,
+    ) -> Result<InventoryPlan> {
+        let absent = Arc::new(
+            self.known_sources(job)?
+                .difference(&ids)
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+        );
+        let note_ids = Arc::new(
+            absent
+                .iter()
+                .map(|s| sha256_hex(format!("native-note:{s}").as_bytes()))
+                .collect::<std::collections::BTreeSet<_>>(),
+        );
+        let high_water: i64 = {
+            let inner = self.inner.lock().expect("store");
+            inner.live(job)?;
+            check_lease(start, until)?;
+            inner.db.query_row(
+                "SELECT coalesce(max(seq),0) FROM entries WHERE namespace=?1",
+                [&job.id],
+                |r| r.get(0),
+            )?
+        };
+        let mut replacements = Vec::new();
+        let mut scanned = 0;
+        // Both R1 entry kinds use scoped_entries(namespace,kind,seq). Each
+        // bounded keyset read releases the mutex before JSON/CPU work. The
+        // high water excludes later inserts; another feed/lifecycle mutation
+        // changes the job revision and cancels the entire prepared result.
+        for kind in ["note", "memory"] {
+            let mut after = 0;
+            loop {
+                let rows = {
+                    let inner = self.inner.lock().expect("store");
+                    inner.live(job)?;
+                    check_lease(start, until)?;
+                    let mut stmt = inner.db.prepare("SELECT seq,id,data FROM entries WHERE namespace=?1 AND kind=?2 AND seq>?3 AND seq<=?4 ORDER BY seq LIMIT 32")?;
+                    stmt.query_map(params![job.id, kind, after, high_water], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                let Some(last) = rows.last() else {
+                    break;
+                };
+                after = last.0;
+                scanned += rows.len();
+                ensure!(scanned <= 10000, "namespace full");
+                let absent = absent.clone();
+                let note_ids = note_ids.clone();
+                replacements.extend(
+                    tokio::task::spawn_blocking(move || prepare_entries(kind, rows, &absent, &note_ids)).await??,
+                );
+            }
+        }
+        Ok(InventoryPlan {
+            absent: absent.iter().cloned().collect(),
+            note_ids: note_ids.iter().cloned().collect(),
+            replacements,
+        })
+    }
+    fn commit_inventory(
+        &self,
+        job: &Job,
+        plan: InventoryPlan,
+        resume: String,
+        start: Instant,
+        until: i64,
+    ) -> Result<()> {
+        let absent = serde_json::to_string(&plan.absent)?;
+        let note_ids = serde_json::to_string(&plan.note_ids)?;
         let mut inner = self.inner.lock().expect("store");
         inner.live(job)?;
         check_lease(start, until)?;
+        // Only the atomic SQL commit holds the shared mutex. No JSON parsing,
+        // source-by-memory scans or FTS reinsertion for unchanged text occur.
         let tx = inner.db.transaction()?;
-        let old = {
-            let mut stmt = tx.prepare("SELECT session FROM sources WHERE namespace=?1")?;
-            stmt.query_map([&job.id], |r| r.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        for id in old {
-            if !ids.contains(&id) {
-                remove_source(&tx, &job.id, &id)?;
-            }
-        }
-        let retained = {
-            let mut stmt = tx.prepare("SELECT data FROM entries WHERE namespace=?1 AND kind='note'")?;
-            stmt.query_map([&job.id], |r| r.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        for data in retained {
-            let mut entry: Entry = serde_json::from_str(&data)?;
-            entry.stale = true;
-            for turn in &mut entry.turns {
-                turn.gaps = true;
-            }
-            put(&tx, &job.id, &entry)?;
+        tx.execute(
+            "DELETE FROM entries WHERE namespace=?1 AND kind='note' AND id IN (SELECT value FROM json_each(?2))",
+            params![job.id, note_ids],
+        )?;
+        tx.execute(
+            "DELETE FROM sources WHERE namespace=?1 AND session IN (SELECT value FROM json_each(?2))",
+            params![job.id, absent],
+        )?;
+        for (id, data) in plan.replacements {
+            ensure!(
+                tx.execute(
+                    "UPDATE entries SET data=?3 WHERE namespace=?1 AND id=?2",
+                    params![job.id, id, data]
+                )? == 1,
+                "reset snapshot changed"
+            );
         }
         tx.execute(
             "UPDATE feeds SET cursor=?2,revision=revision+1 WHERE namespace=?1",
@@ -875,6 +979,43 @@ fn render_note(entry: &mut Entry) -> Result<()> {
         }
     }
 }
+fn prepare_entries(
+    kind: &str,
+    rows: Vec<(i64, String, String)>,
+    absent: &std::collections::BTreeSet<String>,
+    note_ids: &std::collections::BTreeSet<String>,
+) -> Result<Vec<(String, String)>> {
+    let mut changes = Vec::new();
+    for (_, id, data) in rows {
+        if kind == "note" && note_ids.contains(&id) {
+            continue;
+        }
+        let mut entry: Entry = serde_json::from_str(&data)?;
+        let changed = if kind == "note" {
+            entry.stale = true;
+            for turn in &mut entry.turns {
+                turn.gaps = true;
+            }
+            true
+        } else {
+            let refs = entry.source_refs.len();
+            let provenance = entry.provenance.len();
+            entry.source_refs.retain(|r| !absent.contains(&r.session_id));
+            entry
+                .provenance
+                .retain(|p| !matches!(p, Provenance::Source { source, .. } if absent.contains(&source.session_id)));
+            let changed = refs != entry.source_refs.len() || provenance != entry.provenance.len();
+            if changed && entry.provenance.is_empty() {
+                entry.provenance.push(Provenance::Unverified {});
+            }
+            changed
+        };
+        if changed {
+            changes.push((id, serde_json::to_string(&entry)?));
+        }
+    }
+    Ok(changes)
+}
 fn remove_source(tx: &rusqlite::Transaction<'_>, ns: &str, session: &str) -> Result<()> {
     tx.execute(
         "DELETE FROM entries WHERE namespace=?1 AND id=?2 AND kind='note'",
@@ -961,5 +1102,104 @@ pub async fn worker(store: Arc<Store>, key: Arc<MasterKey>) {
             }
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+    fn fixture() -> (tempfile::TempDir, Store, crate::store::Credentials, MasterKey) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("memory.db")).unwrap();
+        let credentials = store.create("owner", "hat").unwrap();
+        let key = MasterKey::from_bytes([9; 32]);
+        store
+            .attach(
+                &credentials.namespace,
+                FeedConfig {
+                    collector_url: "http://localhost/".into(),
+                    namespace_epoch: "a".repeat(64),
+                    activity_token: format!("hnry_activity_{}", "b".repeat(64)),
+                    activity: true,
+                    internal_network: true,
+                },
+                &key,
+            )
+            .unwrap();
+        (dir, store, credentials, key)
+    }
+    #[tokio::test]
+    async fn prepared_inventory_checks_revision_before_commit() {
+        let (_dir, store, c, key) = fixture();
+        let job = store.job(&key, &c.namespace).unwrap();
+        let start = Instant::now();
+        let until = unix_now() + 60;
+        let plan = store
+            .prepare_inventory(&job, Default::default(), start, until)
+            .await
+            .unwrap();
+        store
+            .forget(
+                &c.lifecycle,
+                Forget {
+                    request_id: "fence".into(),
+                    namespace_epoch: job.epoch.clone(),
+                    target: Target::Session {
+                        session_id: "cancelled".into(),
+                    },
+                },
+            )
+            .unwrap();
+        assert!(
+            store
+                .commit_inventory(&job, plan, "stale".into(), start, until)
+                .is_err()
+        );
+        assert!(
+            store
+                .inner
+                .lock()
+                .unwrap()
+                .db
+                .query_row("SELECT cursor FROM feeds WHERE namespace=?1", [&c.namespace], |r| {
+                    r.get::<_, Option<String>>(0)
+                })
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.available(&c.tool, false).is_err());
+    }
+    #[tokio::test]
+    async fn prepared_inventory_checks_lease_before_commit() {
+        let (_dir, store, c, key) = fixture();
+        let job = store.job(&key, &c.namespace).unwrap();
+        let plan = store
+            .prepare_inventory(&job, Default::default(), Instant::now(), unix_now() + 60)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .commit_inventory(
+                    &job,
+                    plan,
+                    "expired".into(),
+                    Instant::now() - Duration::from_secs(61),
+                    unix_now() + 60
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .inner
+                .lock()
+                .unwrap()
+                .db
+                .query_row("SELECT cursor FROM feeds WHERE namespace=?1", [&c.namespace], |r| {
+                    r.get::<_, Option<String>>(0)
+                })
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.available(&c.tool, false).is_err());
     }
 }
