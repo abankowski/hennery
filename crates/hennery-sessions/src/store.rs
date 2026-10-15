@@ -1070,7 +1070,7 @@ fn fact_applies(tx: &Transaction<'_>, owner: &str, session_id: &str, turn_id: Op
 /// with its streams cut, and a request arriving between the cut and the
 /// commit would hold a fresh watch nothing cuts. The one place the sessions
 /// module cuts (`tests/cut_after_commit.rs` holds it to that).
-fn commit_then_cut(tx: Transaction<'_>, mcp: &dyn SessionMcp, cut: Cut) -> Result<()> {
+pub(crate) fn commit_then_cut(tx: Transaction<'_>, mcp: &dyn SessionMcp, cut: Cut) -> Result<()> {
     tx.commit()?;
     mcp.cut(cut);
     Ok(())
