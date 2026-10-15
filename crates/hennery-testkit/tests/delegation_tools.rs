@@ -394,6 +394,28 @@ async fn direct_children_only_and_close_does_not_cascade_or_reopen() {
         .await;
     assert_eq!(http, reqwest::StatusCode::ACCEPTED);
     let independent = independent["session_id"].as_str().unwrap();
+    eventually("independent parent active", async || {
+        h.state
+            .store
+            .find_session(independent)
+            .unwrap()
+            .filter(|s| s.lifecycle == "active")
+            .map(|_| ())
+    })
+    .await;
+    let independent_log = std::fs::read_to_string(h.cwd.join("claude-sessions.jsonl")).unwrap();
+    let independent_session: Value = serde_json::from_str(independent_log.lines().last().unwrap()).unwrap();
+    let independent_token = independent_session["params"]["mcpServers"][0]["headers"][0]["value"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("Bearer ")
+        .unwrap();
+    let separate=h.raw.post(format!("{}/mcp/builtin/hennery",h.url)).bearer_auth(independent_token).header("accept","application/json")
+        .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_spawn","arguments":{"operation_key":"other-family","cwd":h.cwd,"agent":"worker","brief":"independent family","config":{}}}})).send().await.unwrap().json::<Value>().await.unwrap();
+    assert_eq!(separate["result"]["isError"], false, "{separate}");
+    let separate = separate["result"]["structuredContent"]["child_id"].as_str().unwrap();
+    let hidden_child = h.call("session_status", json!({"child_id":separate})).await;
+    assert_eq!(hidden_child["structuredContent"]["code"], "not_found");
     let hidden = h.call("session_status", json!({"child_id":independent})).await;
     assert_eq!(hidden["structuredContent"]["code"], "not_found");
     let log = std::fs::read_to_string(h.cwd.join("worker-sessions.jsonl")).unwrap();
@@ -441,6 +463,9 @@ async fn direct_children_only_and_close_does_not_cascade_or_reopen() {
     let page = h.ok("session_list", json!({"limit":1})).await;
     assert_eq!(page["children"].as_array().unwrap().len(), 1);
     let cursor = page["next_cursor"].as_str().unwrap();
+    let foreign_cursor=h.raw.post(format!("{}/mcp/builtin/hennery",h.url)).bearer_auth(independent_token).header("accept","application/json")
+        .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_list","arguments":{"cursor":cursor,"limit":1}}})).send().await.unwrap().json::<Value>().await.unwrap();
+    assert_eq!(foreign_cursor["result"]["structuredContent"]["code"], "invalid_cursor");
     let rest = h.ok("session_list", json!({"cursor":cursor,"limit":1})).await;
     assert_eq!(rest["children"].as_array().unwrap().len(), 1);
     h.finish().await;
