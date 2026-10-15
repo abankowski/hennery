@@ -13,6 +13,7 @@ use hennery_proto::{
     rest::AnswerRequest,
 };
 use rusqlite::{OptionalExtension, params};
+use sha2::{Digest, Sha256};
 impl Store {
     #[allow(clippy::too_many_arguments)]
     pub fn queue_ordinary_answer(
@@ -83,6 +84,8 @@ impl Store {
             return Ok(receipt);
         }
         ensure!(self.owned_child_in(&tx, &caller, child, true)?, "not_found");
+        let routing:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM session_families WHERE owner_id = ?1 AND parent_id = ?2 AND child_id = ?3 AND detached = 0)",params![self.owner_id(),caller.session_id(),child],|r|r.get(0))?;
+        ensure!(routing, "not_found");
         let (host, lifecycle): (String, String) = tx.query_row(
             "SELECT host_id,lifecycle FROM sessions WHERE owner_id = ?1 AND id = ?2",
             params![self.owner_id(), child],
@@ -120,18 +123,17 @@ impl Store {
         let caller = self
             .session_tool_context_in(&tx, identity, revision, true)?
             .ok_or_else(|| anyhow::anyhow!("not_found"))?;
+        let scope = hex::encode(Sha256::digest(serde_json::to_vec(&(
+            self.owner_id(),
+            caller.session_id(),
+            caller.hat_id(),
+        ))?));
         let after = if let Some(cursor) = cursor {
-            let raw = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, cursor)
-                .map_err(|_| anyhow::anyhow!("invalid_cursor"))?;
-            let parts: Vec<String> = serde_json::from_slice(&raw).map_err(|_| anyhow::anyhow!("invalid_cursor"))?;
-            ensure!(
-                parts.len() == 4
-                    && parts[0] == self.owner_id()
-                    && parts[1] == caller.session_id()
-                    && parts[2] == caller.hat_id(),
-                "invalid_cursor"
-            );
-            parts[3].clone()
+            let (bound, after) = cursor
+                .split_once('.')
+                .ok_or_else(|| anyhow::anyhow!("invalid_cursor"))?;
+            ensure!(bound == scope && after.len() <= 128, "invalid_cursor");
+            after.to_owned()
         } else {
             String::new()
         };
@@ -163,15 +165,7 @@ impl Store {
             .collect::<rusqlite::Result<_>>()?;
         let next_cursor = if children.len() > limit as usize {
             children.pop();
-            Some(base64::Engine::encode(
-                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-                serde_json::to_vec(&[
-                    self.owner_id(),
-                    caller.session_id(),
-                    caller.hat_id(),
-                    &children.last().unwrap().child_id,
-                ])?,
-            ))
+            Some(format!("{scope}.{}", children.last().unwrap().child_id))
         } else {
             None
         };
@@ -222,29 +216,68 @@ impl Store {
         }
         let last_outcome:Option<String>=tx.query_row("SELECT outcome FROM turns WHERE owner_id = ?1 AND session_id = ?2 AND state = 'ended' ORDER BY rowid DESC LIMIT 1",params![self.owner_id(),child],|r|r.get(0)).optional()?.flatten();
         let mut questions = Vec::new();
+        let mut question_bytes = 0usize;
+        let mut truncated = false;
         for pending in self.open_pending_in(&tx, child, 100)? {
             let permission = pending.kind == PendingKind::Permission;
+            let mut question = if permission {
+                None
+            } else {
+                Some(serde_json::to_value(hennery_view::item::Question::from_pending(
+                    &pending,
+                ))?)
+            };
+            if let Some(value) = &question {
+                let bytes = serde_json::to_vec(value)?.len();
+                if bytes > 8192 || question_bytes + bytes > 32768 {
+                    question = None;
+                    truncated = true;
+                } else {
+                    question_bytes += bytes;
+                }
+            }
             questions.push(ChildQuestion {
                 pending_id: pending.pending_id.clone(),
                 kind: pending.kind,
                 operator_required: permission,
                 answered: pending.answered,
-                question: if permission {
-                    None
-                } else {
-                    Some(serde_json::to_value(hennery_view::item::Question::from_pending(
-                        &pending,
-                    ))?)
-                },
+                question,
             });
         }
         let mut fold = hennery_view::Fold::new();
-        let events = self.events_in(&tx, child, 0, 1000)?;
+        let mut events = Vec::new();
+        let mut stmt=tx.prepare("SELECT event_id,host_seq,kind,body,ts FROM events WHERE owner_id = ?1 AND session_id = ?2 AND applied = 1 ORDER BY event_id DESC LIMIT 1000")?;
+        let mut rows = stmt.query(params![self.owner_id(), child])?;
+        let mut bytes = 0usize;
+        while let Some(row) = rows.next()? {
+            let raw: String = row.get(3)?;
+            if bytes + raw.len() > 128 * 1024 {
+                truncated = true;
+                break;
+            }
+            bytes += raw.len();
+            let kind: String = row.get(2)?;
+            let boundary = kind == "user_turn";
+            events.push(hennery_proto::rest::EventDto {
+                event_id: row.get(0)?,
+                session_id: child.into(),
+                host_seq: row.get::<_, Option<i64>>(1)?.map(|n| n as u64),
+                kind,
+                body: serde_json::from_str(&raw)?,
+                ts: row.get(4)?,
+            });
+            if boundary {
+                break;
+            }
+        }
+        drop(rows);
+        drop(stmt);
+        events.reverse();
         for event in &events {
             fold.apply(event, &|_: &str| false);
         }
         let mut report = String::new();
-        let mut truncated = events.len() == 1000;
+        truncated |= events.len() == 1000;
         for item in fold.take() {
             if let hennery_view::Body::Message(text) = item.body {
                 report = text.text;

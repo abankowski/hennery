@@ -154,6 +154,7 @@ impl Store {
         tool: &str,
     ) -> Result<OperationReceipt> {
         ensure!(text.len() <= 65536, "invalid_arguments");
+        let text = hennery_kernel::redact::text(text).unwrap_or_else(|| text.to_owned());
         let (count,bytes):(i64,i64)=tx.query_row("SELECT COUNT(*), COALESCE(SUM(length(CAST(payload AS BLOB))),0)
             FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id = ?2 AND state IN ('queued','waiting_config')",
             params![self.owner_id(),child],|r|Ok((r.get(0)?,r.get(1)?)))?;
@@ -234,7 +235,7 @@ impl Store {
             return Ok(receipt);
         }
         let nested: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM session_families WHERE owner_id = ?1 AND child_id = ?2)",
+            "SELECT delegated_child = 1 FROM sessions WHERE owner_id = ?1 AND id = ?2",
             params![self.owner_id(), caller.session_id()],
             |r| r.get(0),
         )?;
