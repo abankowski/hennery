@@ -10,6 +10,8 @@
 
 ## Execution status
 
+Review amendment completed on the rebase to approved C1b `49c0f4d7`; both Medium findings are corrected. Amendment checks, load and copy probes are recorded below. Parent scoped re-confirmation and PR CI remain pending.
+
 Built on `plan/recall-r1`; original base `a58479c7`, integration base C1b `bf632e58` (C2 main `7fe43fbe`). Four exact construction patches below were generated from the built commits. Task 3 includes the preserved WIP commit and its completed consumer. Final verification and replay results are recorded below. Independent review, PR status and Linux/macOS CI belong to the parent; no approval or publication is claimed.
 
 ## Scope
@@ -5597,7 +5599,7 @@ index 00000000..5da3bbfb
 +}
 ```
 
-## Verification and execution record
+## Initial verification and execution record (before review)
 
 All final commands ran inside the flake dev shell on native macOS, with isolated tool HOME/XDG/Cargo cache. Final source is the task-four checkpoint; only plan/index metadata changed afterward. Moving the cache path caused one dependency rebuild; no global package or config was installed. Earlier targeted/probe commands used the existing tool cache before that correction. Both probe families and the replay have independent APFS-cloned targets; target directories were never shared.
 
@@ -5636,6 +5638,726 @@ The final replay also built both actual binaries, passed the explicit live proof
 
 **Review request:** parent-run independent review of C1b separately (`7fe43fbe..bf632e58`) and R1 from `bf632e58` through this plan-record commit. Natural stacked split: tasks 1–2 (R1a, store/tools), then tasks 3–4 (R1b, consumer/lifecycle/live proof). Review tool versus lifecycle auth, immutable owner/hat/epoch selection and typed evidence, fail-closed lease and delivery races, purge/checkpoint and historical receipt honesty, literal/correlated FTS, and request/network/storage/resource limits. C1b expiry invalidates snapshot use; physical source-ID cleanup occurs on replacement/lifecycle, not by an expiry sweeper. No independent approval is claimed. PR creation, checks, reviewDecision, mergeStateStatus and all unresolved threads (including bots) remain parent-owned and unqueried. No publication.
 
+
+## Review amendment (2026-10-16)
+
+The parent reported two reproduced Medium findings and a CHANGES verdict for R1. Both are corrected in `3827a465`, on the conflict-free rebase onto approved C1b `49c0f4d7` (main `cbd002b0`). The rebased initial R1 head is `469cfeee`. C1b is in PR #153 CI according to the parent; its full PR status remains parent-owned. The original four patches and initial replay above remain historical evidence, not claims about this amendment. No new full replay or workspace-wide test run was performed, as the amended verification budget and parent explicitly require.
+
+**Deduplication capacity:** the new exact-100,000-row regression failed first (101). Current-page evidence, including duplicate events, is refreshed after digest comparison. The cursor, projection and pruning of the historical suffix beyond 100,000 rows share one transaction. All admitted current-page events remain in the bounded suffix; stale jobs cannot commit, and an already committed cursor rejects previously unseen/pruned history. This maintenance relies on C1's authoritative ordered cursor contract. Forced pruning failure proves projection/cursor rollback; identical current-page replay and changed-duplicate refusal remain tested. No quota was raised or disabled.
+
+**Inventory reconciliation:** the root mixed-corpus regression failed on old code after 134.78 seconds. The fixed implementation reads at most 32 owned rows per chunk through the existing namespace/kind/sequence index, deserializes each entry once outside the shared mutex on the blocking pool, and prepares canonical metadata changes in memory. Absent note IDs and source IDs are deleted in bulk; deliberate references/provenance are detached in one scoped pass, retaining unrelated evidence or an explicit unverified fallback. Unchanged body/title/project fields and their FTS rows are not reinserted. A cursor/revision fence and lease check precede the final atomic SQL commit, with a second lease check before commit. Expiry, lifecycle changes or a failed cursor update cannot partially delete sources. The mutex is held for bounded row-copy chunks and the final SQL transaction, rather than the whole reset/JSON pass. This retains one short shared commit; it does not claim separate per-namespace SQLite writers.
+
+The final local 1,500-note plus 1,500-memory (16,000-byte bodies) case completed its successful reset in 1.21 seconds; the other namespace's worst wait was 0.592 seconds. It also forces a failed commit and verifies full rollback, preserves a foreign namespace with colliding source/entry IDs, and covers provenance-only detachment, unverified fallback, unchanged memories, retained note gaps and exact source removal. Its limits are 12 seconds for successful reconciliation and 3 seconds for another namespace's wait, well inside the 60-second lease. The actual reset SQL plan is checked for the scoped index and absence of a full-corpus sort. Both private commit-fence unit regressions initially failed to compile before the prepare/commit APIs existed, then passed; their revision and expiry defenses also saw behavioral RED in the copy.
+
+**Rebase lock maintenance:** the first post-rebase `--locked` invocation exited 101 before running tests, because main's workspace version changed to `0.1.0-alpha.1` while the new path-package lock entry still said `0.0.0`. `cargo update -p hennery-memory --offline` changed that single entry and no external dependency. All final invocations retain `--locked`.
+
+| Final command (private HOME/XDG, flake dev shell) | Exit | Output |
+|---|---:|---|
+| `cargo test -p hennery-memory --locked` | 0 | 56 passed, 1 ignored |
+| `cargo fmt --all --check` | 0 | completed successfully |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | 0 | completed successfully |
+| `cargo clippy -p hennery --locked -- -D warnings` | 0 | completed successfully |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | 0 | completed successfully |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | 0 | completed successfully |
+| `cargo build -p hennery -p hennery-memory --bins --locked` | 0 | completed successfully |
+| `cargo test -p hennery-memory --tests --no-run --locked --message-format=json` | 0 | completed successfully |
+| `nix flake check -L` | 0 | completed successfully |
+
+The SQL audit now prepares 51 consumer statements (including the two private test queries), keeping the original namespace checks and adding a real query-plan assertion. Both embedded SQL files remain in the Nix source filter. No core runtime source, UI, model or plug-in opt-in behavior changed.
+
+**Timing load:** four independent fixture processes concurrently for three rounds: 216 passing test executions in 48 groups, all exit 0. The previous 17 timing/lease/fence/body/spawn/live cases plus the new mixed-corpus reset ran 4×3. Static capacity and SQL cases were not loaded. Each mounted proof used the newly built real collector and plug-in, drove all four tools through the session MCP proxy, and preserved online confirmed/offline unconfirmed purge behavior without a model. Loaded reset/other-namespace observations are saved in the ledger JSON and logs; every sample met the unchanged 12-second/3-second bounds.
+
+**Copy probes:** all 18 new/relocated guard mutations failed behaviorally (101) and the restored five selected regressions passed, exit 0, with a final zero diff against the frozen copy. Coverage: bounded cursor-committed seen history; current-page refresh; non-advancing replay; both bulk deletes and their scopes; replacement scope and persistence; references, provenance and fallback; retained stale/gap evidence; final revision/lease fences; the linear reset algorithm; scoped indexed chunk reads. For the performance removal probe only, the copy used 400 notes plus 400 memories and a tighter 2-second bound, baseline and restored, so reverting the old quadratic implementation is caught without paying for two 135-second runs. The real worktree and loaded regression retain 1,500+1,500 and 12 seconds. Targets were APFS-cloned with `/bin/cp -c -R` before any copy build; no target directory was shared.
+
+Evidence lives under `.superpowers/sdd/recall-r1/amendment-1/`; the new retained copy is `probes-amendment-1`. Prior copies remain as listed above. Independent scoped re-confirmation is requested through the parent for `469cfeee` through the final amendment-record commit. Review cursor-pruning replay assumptions, deletion at capacity, snapshot/final-commit fences, atomic rollback, namespace scope, FTS consistency and bounded lock/CPU work. PR checks, reviewDecision, mergeStateStatus and all unresolved threads, bots included, remain parent-owned and unqueried. No publication.
+
+**Built amendment:** apply this exact additional diff to the rebased initial R1 head `469cfeee`. It is embedded from the tested fix commit, not replayed as a second plan.
+
+```diff
+diff --git a/Cargo.lock b/Cargo.lock
+index da50e5ad..97fca198 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1621 +1621 @@ name = "hennery-memory"
+-version = "0.0.0"
++version = "0.1.0-alpha.1"
+diff --git a/crates/hennery-memory/src/consumer.rs b/crates/hennery-memory/src/consumer.rs
+index cfa43cb5..cd5b887d 100644
+--- a/crates/hennery-memory/src/consumer.rs
++++ b/crates/hennery-memory/src/consumer.rs
+@@ -35,0 +36,5 @@ struct Job {
++struct InventoryPlan {
++    absent: Vec<String>,
++    note_ids: Vec<String>,
++    replacements: Vec<(String, String)>,
++}
+@@ -223 +228,3 @@ impl Consumer {
+-                store.inventory(job, ids, resume.context("missing inventory")?, latest_start, until)?;
++                store
++                    .inventory(job, ids, resume.context("missing inventory")?, latest_start, until)
++                    .await?;
+@@ -382,2 +389,20 @@ impl Store {
+-            if let Some(old) = old {
+-                ensure!(old == digest, "source event changed");
++            if let Some(old) = &old {
++                ensure!(*old == digest, "source event changed");
++            } else {
++                // A committed cursor may only replay already admitted evidence.
++                // Pruned history cannot be reintroduced by a non-advancing page.
++                ensure!(
++                    job.cursor.as_ref() != Some(&page.next_cursor),
++                    "non-advancing new event"
++                );
++            }
++            // Refresh current-page evidence before pruning, including duplicates.
++            tx.execute(
++                "DELETE FROM seen WHERE namespace=?1 AND event_key=?2",
++                params![job.id, item.event_key],
++            )?;
++            tx.execute(
++                "INSERT INTO seen(namespace,event_key,digest) VALUES(?1,?2,?3)",
++                params![job.id, item.event_key, digest],
++            )?;
++            if old.is_some() {
+@@ -462,4 +486,0 @@ impl Store {
+-            tx.execute(
+-                "INSERT INTO seen(namespace,event_key,digest) VALUES(?1,?2,?3)",
+-                params![job.id, item.event_key, digest],
+-            )?;
+@@ -467 +487,0 @@ impl Store {
+-        budget(&tx, &job.id)?;
+@@ -471,0 +492,8 @@ impl Store {
++        // Only evidence behind this cursor is evicted, atomically with its
++        // projection. A stale job cannot commit, and the <=20 current items
++        // were refreshed above. Capacity never prevents a deletion page.
++        tx.execute(
++            "DELETE FROM seen WHERE namespace=?1 AND rowid IN (SELECT rowid FROM seen WHERE namespace=?1 ORDER BY rowid DESC LIMIT -1 OFFSET 100000)",
++            [&job.id],
++        )?;
++        budget(&tx, &job.id)?;
+@@ -495 +523 @@ impl Store {
+-    fn inventory(
++    async fn inventory(
+@@ -502,0 +531,80 @@ impl Store {
++        let plan = self.prepare_inventory(job, ids, start, until).await?;
++        self.commit_inventory(job, plan, resume, start, until)
++    }
++    async fn prepare_inventory(
++        &self,
++        job: &Job,
++        ids: std::collections::BTreeSet<String>,
++        start: Instant,
++        until: i64,
++    ) -> Result<InventoryPlan> {
++        let absent = Arc::new(
++            self.known_sources(job)?
++                .difference(&ids)
++                .cloned()
++                .collect::<std::collections::BTreeSet<_>>(),
++        );
++        let note_ids = Arc::new(
++            absent
++                .iter()
++                .map(|s| sha256_hex(format!("native-note:{s}").as_bytes()))
++                .collect::<std::collections::BTreeSet<_>>(),
++        );
++        let high_water: i64 = {
++            let inner = self.inner.lock().expect("store");
++            inner.live(job)?;
++            check_lease(start, until)?;
++            inner.db.query_row(
++                "SELECT coalesce(max(seq),0) FROM entries WHERE namespace=?1",
++                [&job.id],
++                |r| r.get(0),
++            )?
++        };
++        let mut replacements = Vec::new();
++        let mut scanned = 0;
++        // Both R1 entry kinds use scoped_entries(namespace,kind,seq). Each
++        // bounded keyset read releases the mutex before JSON/CPU work. The
++        // high water excludes later inserts; another feed/lifecycle mutation
++        // changes the job revision and cancels the entire prepared result.
++        for kind in ["note", "memory"] {
++            let mut after = 0;
++            loop {
++                let rows = {
++                    let inner = self.inner.lock().expect("store");
++                    inner.live(job)?;
++                    check_lease(start, until)?;
++                    let mut stmt = inner.db.prepare("SELECT seq,id,data FROM entries WHERE namespace=?1 AND kind=?2 AND seq>?3 AND seq<=?4 ORDER BY seq LIMIT 32")?;
++                    stmt.query_map(params![job.id, kind, after, high_water], |r| {
++                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
++                    })?
++                    .collect::<rusqlite::Result<Vec<_>>>()?
++                };
++                let Some(last) = rows.last() else {
++                    break;
++                };
++                after = last.0;
++                scanned += rows.len();
++                ensure!(scanned <= 10000, "namespace full");
++                let absent = absent.clone();
++                let note_ids = note_ids.clone();
++                replacements.extend(
++                    tokio::task::spawn_blocking(move || prepare_entries(kind, rows, &absent, &note_ids)).await??,
++                );
++            }
++        }
++        Ok(InventoryPlan {
++            absent: absent.iter().cloned().collect(),
++            note_ids: note_ids.iter().cloned().collect(),
++            replacements,
++        })
++    }
++    fn commit_inventory(
++        &self,
++        job: &Job,
++        plan: InventoryPlan,
++        resume: String,
++        start: Instant,
++        until: i64,
++    ) -> Result<()> {
++        let absent = serde_json::to_string(&plan.absent)?;
++        let note_ids = serde_json::to_string(&plan.note_ids)?;
+@@ -505,0 +614,2 @@ impl Store {
++        // Only the atomic SQL commit holds the shared mutex. No JSON parsing,
++        // source-by-memory scans or FTS reinsertion for unchanged text occur.
+@@ -507,22 +617,16 @@ impl Store {
+-        let old = {
+-            let mut stmt = tx.prepare("SELECT session FROM sources WHERE namespace=?1")?;
+-            stmt.query_map([&job.id], |r| r.get::<_, String>(0))?
+-                .collect::<rusqlite::Result<Vec<_>>>()?
+-        };
+-        for id in old {
+-            if !ids.contains(&id) {
+-                remove_source(&tx, &job.id, &id)?;
+-            }
+-        }
+-        let retained = {
+-            let mut stmt = tx.prepare("SELECT data FROM entries WHERE namespace=?1 AND kind='note'")?;
+-            stmt.query_map([&job.id], |r| r.get::<_, String>(0))?
+-                .collect::<rusqlite::Result<Vec<_>>>()?
+-        };
+-        for data in retained {
+-            let mut entry: Entry = serde_json::from_str(&data)?;
+-            entry.stale = true;
+-            for turn in &mut entry.turns {
+-                turn.gaps = true;
+-            }
+-            put(&tx, &job.id, &entry)?;
++        tx.execute(
++            "DELETE FROM entries WHERE namespace=?1 AND kind='note' AND id IN (SELECT value FROM json_each(?2))",
++            params![job.id, note_ids],
++        )?;
++        tx.execute(
++            "DELETE FROM sources WHERE namespace=?1 AND session IN (SELECT value FROM json_each(?2))",
++            params![job.id, absent],
++        )?;
++        for (id, data) in plan.replacements {
++            ensure!(
++                tx.execute(
++                    "UPDATE entries SET data=?3 WHERE namespace=?1 AND id=?2",
++                    params![job.id, id, data]
++                )? == 1,
++                "reset snapshot changed"
++            );
+@@ -877,0 +982,37 @@ fn render_note(entry: &mut Entry) -> Result<()> {
++fn prepare_entries(
++    kind: &str,
++    rows: Vec<(i64, String, String)>,
++    absent: &std::collections::BTreeSet<String>,
++    note_ids: &std::collections::BTreeSet<String>,
++) -> Result<Vec<(String, String)>> {
++    let mut changes = Vec::new();
++    for (_, id, data) in rows {
++        if kind == "note" && note_ids.contains(&id) {
++            continue;
++        }
++        let mut entry: Entry = serde_json::from_str(&data)?;
++        let changed = if kind == "note" {
++            entry.stale = true;
++            for turn in &mut entry.turns {
++                turn.gaps = true;
++            }
++            true
++        } else {
++            let refs = entry.source_refs.len();
++            let provenance = entry.provenance.len();
++            entry.source_refs.retain(|r| !absent.contains(&r.session_id));
++            entry
++                .provenance
++                .retain(|p| !matches!(p, Provenance::Source { source, .. } if absent.contains(&source.session_id)));
++            let changed = refs != entry.source_refs.len() || provenance != entry.provenance.len();
++            if changed && entry.provenance.is_empty() {
++                entry.provenance.push(Provenance::Unverified {});
++            }
++            changed
++        };
++        if changed {
++            changes.push((id, serde_json::to_string(&entry)?));
++        }
++    }
++    Ok(changes)
++}
+@@ -965,0 +1107,99 @@ pub async fn worker(store: Arc<Store>, key: Arc<MasterKey>) {
++
++#[cfg(test)]
++mod reset_tests {
++    use super::*;
++    fn fixture() -> (tempfile::TempDir, Store, crate::store::Credentials, MasterKey) {
++        let dir = tempfile::tempdir().unwrap();
++        let store = Store::open(&dir.path().join("memory.db")).unwrap();
++        let credentials = store.create("owner", "hat").unwrap();
++        let key = MasterKey::from_bytes([9; 32]);
++        store
++            .attach(
++                &credentials.namespace,
++                FeedConfig {
++                    collector_url: "http://localhost/".into(),
++                    namespace_epoch: "a".repeat(64),
++                    activity_token: format!("hnry_activity_{}", "b".repeat(64)),
++                    activity: true,
++                    internal_network: true,
++                },
++                &key,
++            )
++            .unwrap();
++        (dir, store, credentials, key)
++    }
++    #[tokio::test]
++    async fn prepared_inventory_checks_revision_before_commit() {
++        let (_dir, store, c, key) = fixture();
++        let job = store.job(&key, &c.namespace).unwrap();
++        let start = Instant::now();
++        let until = unix_now() + 60;
++        let plan = store
++            .prepare_inventory(&job, Default::default(), start, until)
++            .await
++            .unwrap();
++        store
++            .forget(
++                &c.lifecycle,
++                Forget {
++                    request_id: "fence".into(),
++                    namespace_epoch: job.epoch.clone(),
++                    target: Target::Session {
++                        session_id: "cancelled".into(),
++                    },
++                },
++            )
++            .unwrap();
++        assert!(
++            store
++                .commit_inventory(&job, plan, "stale".into(), start, until)
++                .is_err()
++        );
++        assert!(
++            store
++                .inner
++                .lock()
++                .unwrap()
++                .db
++                .query_row("SELECT cursor FROM feeds WHERE namespace=?1", [&c.namespace], |r| {
++                    r.get::<_, Option<String>>(0)
++                })
++                .unwrap()
++                .is_none()
++        );
++        assert!(store.available(&c.tool, false).is_err());
++    }
++    #[tokio::test]
++    async fn prepared_inventory_checks_lease_before_commit() {
++        let (_dir, store, c, key) = fixture();
++        let job = store.job(&key, &c.namespace).unwrap();
++        let plan = store
++            .prepare_inventory(&job, Default::default(), Instant::now(), unix_now() + 60)
++            .await
++            .unwrap();
++        assert!(
++            store
++                .commit_inventory(
++                    &job,
++                    plan,
++                    "expired".into(),
++                    Instant::now() - Duration::from_secs(61),
++                    unix_now() + 60
++                )
++                .is_err()
++        );
++        assert!(
++            store
++                .inner
++                .lock()
++                .unwrap()
++                .db
++                .query_row("SELECT cursor FROM feeds WHERE namespace=?1", [&c.namespace], |r| {
++                    r.get::<_, Option<String>>(0)
++                })
++                .unwrap()
++                .is_none()
++        );
++        assert!(store.available(&c.tool, false).is_err());
++    }
++}
+diff --git a/crates/hennery-memory/tests/consumer.rs b/crates/hennery-memory/tests/consumer.rs
+index e640e93b..af18efd7 100644
+--- a/crates/hennery-memory/tests/consumer.rs
++++ b/crates/hennery-memory/tests/consumer.rs
+@@ -911,0 +912,329 @@ async fn inventory_pages_are_paced_with_room_for_lease_and_activity_requests() {
++
++#[tokio::test]
++async fn deletion_at_seen_capacity_commits_and_current_page_replay_stays_idempotent() {
++    let w = World::new(60).await;
++    w.set(
++        vec![turn("deleted-source", "initial", "deletion-capacity-marker", op())],
++        "before",
++    );
++    w.poll().await.unwrap();
++    w.raw().execute(
++        "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<99999) INSERT INTO seen(namespace,event_key,digest) SELECT ?1,'historical-'||x,?2 FROM n",
++        rusqlite::params![w.c.namespace, "f".repeat(64)],
++    ).unwrap();
++    assert_eq!(
++        w.raw()
++            .query_row("SELECT count(*) FROM seen WHERE namespace=?1", [&w.c.namespace], |r| {
++                r.get::<_, i64>(0)
++            })
++            .unwrap(),
++        100000
++    );
++    // The old event is deliberately first, so pruning must refresh its replay evidence too.
++    w.set(vec![turn("deleted-source", "initial", "deletion-capacity-marker", op()),json!({"kind":"session_removed","event_key":"removed","session_id":"deleted-source","namespace_epoch":w.remote.epoch,"provenance":[]})], "after");
++    w.raw().execute_batch("CREATE TRIGGER fail_seen_prune BEFORE DELETE ON seen WHEN OLD.event_key LIKE 'historical-%' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
++    assert!(w.poll().await.is_err());
++    assert_eq!(w.cursor().as_deref(), Some("before"));
++    assert_eq!(
++        w.raw()
++            .query_row(
++                "SELECT count(*) FROM entries WHERE namespace=?1",
++                [&w.c.namespace],
++                |r| r.get::<_, i64>(0)
++            )
++            .unwrap(),
++        1
++    );
++    w.raw().execute_batch("DROP TRIGGER fail_seen_prune").unwrap();
++    w.poll()
++        .await
++        .expect("deletion must commit even with a full deduplication ledger");
++    assert_eq!(w.cursor().as_deref(), Some("after"));
++    assert_eq!(
++        w.raw()
++            .query_row(
++                "SELECT count(*) FROM entries WHERE namespace=?1",
++                [&w.c.namespace],
++                |r| r.get::<_, i64>(0)
++            )
++            .unwrap(),
++        0
++    );
++    assert_eq!(
++        w.raw()
++            .query_row("SELECT count(*) FROM seen WHERE namespace=?1", [&w.c.namespace], |r| {
++                r.get::<_, i64>(0)
++            })
++            .unwrap(),
++        100000
++    );
++    let revision: i64 = w
++        .raw()
++        .query_row("SELECT revision FROM feeds WHERE namespace=?1", [&w.c.namespace], |r| {
++            r.get(0)
++        })
++        .unwrap();
++    w.poll().await.unwrap();
++    assert!(
++        w.s.search(&w.c.tool, &Query::search("deletion-capacity-marker"))
++            .unwrap()
++            .entries
++            .is_empty()
++    );
++    let mut changed = turn("deleted-source", "initial", "changed", op());
++    changed["event_key"] = json!("initial");
++    w.set(vec![changed], "forged");
++    assert!(w.poll().await.is_err());
++    assert_eq!(w.cursor().as_deref(), Some("after"));
++    assert_eq!(
++        w.raw()
++            .query_row("SELECT revision FROM feeds WHERE namespace=?1", [&w.c.namespace], |r| r
++                .get::<_, i64>(0))
++            .unwrap(),
++        revision + 1
++    );
++    // A pruned event cannot be admitted under the already committed cursor.
++    w.set(
++        vec![turn("new", "historical-1", "must not replay pruned history", op())],
++        "after",
++    );
++    assert!(w.poll().await.is_err());
++    assert_eq!(
++        w.raw()
++            .query_row(
++                "SELECT count(*) FROM entries WHERE namespace=?1",
++                [&w.c.namespace],
++                |r| r.get::<_, i64>(0)
++            )
++            .unwrap(),
++        0
++    );
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn mixed_inventory_reset_is_linear_and_other_namespaces_keep_making_progress() {
++    let w = Arc::new(World::new(60).await);
++    w.set(
++        vec![
++            turn("gone-0", "initial", "removed-note", op()),
++            turn("kept", "kept", "retained-note", op()),
++        ],
++        "before",
++    );
++    w.poll().await.unwrap();
++    w.s.remember(
++        &w.c.tool,
++        serde_json::from_value(json!({"title":"assertion","body":"x".repeat(16000),"idempotency_key":"seed"})).unwrap(),
++    )
++    .unwrap();
++    let other = w.s.create("owner", "other").unwrap();
++    let mut db = w.raw();
++    let note: String = db
++        .query_row(
++            "SELECT data FROM entries WHERE namespace=?1 AND id=?2",
++            rusqlite::params![w.c.namespace, hennery_kernel::secret::sha256_hex(b"native-note:gone-0")],
++            |r| r.get(0),
++        )
++        .unwrap();
++    let memory: String = db
++        .query_row(
++            "SELECT data FROM entries WHERE namespace=?1 AND kind='memory'",
++            [&w.c.namespace],
++            |r| r.get(0),
++        )
++        .unwrap();
++    let other_id = other.namespace.clone();
++    let tx = db.transaction().unwrap();
++    for (data, kind) in [(&note, "note"), (&memory, "memory")] {
++        let mut entry: Value = serde_json::from_str(data).unwrap();
++        if kind == "memory" {
++            entry["id"] = json!(hennery_kernel::secret::sha256_hex(b"memory:0"));
++            entry["body"] = json!("foreign-assertion");
++        }
++        tx.execute(
++            "INSERT INTO entries(namespace,id,kind,title,body,data) VALUES(?1,?2,?3,?4,?5,?6)",
++            rusqlite::params![
++                other_id,
++                entry["id"].as_str().unwrap(),
++                kind,
++                entry["title"].as_str().unwrap(),
++                entry["body"].as_str().unwrap(),
++                entry.to_string()
++            ],
++        )
++        .unwrap();
++    }
++    tx.execute(
++        "INSERT INTO sources(namespace,session,event_key) VALUES(?1,'gone-0','foreign')",
++        [&other_id],
++    )
++    .unwrap();
++    tx.execute(
++        "DELETE FROM entries WHERE namespace=?1 AND kind='memory'",
++        [&w.c.namespace],
++    )
++    .unwrap();
++    for i in 0..1500 {
++        let session = format!("gone-{i}");
++        if i > 0 {
++            let mut e: Value = serde_json::from_str(&note.replace("gone-0", &session)).unwrap();
++            e["id"] = json!(hennery_kernel::secret::sha256_hex(
++                format!("native-note:{session}").as_bytes()
++            ));
++            tx.execute(
++                "INSERT INTO entries(namespace,id,kind,title,body,data) VALUES(?1,?2,'note',?3,?4,?5)",
++                rusqlite::params![
++                    w.c.namespace,
++                    e["id"].as_str().unwrap(),
++                    e["title"].as_str().unwrap(),
++                    e["body"].as_str().unwrap(),
++                    e.to_string()
++                ],
++            )
++            .unwrap();
++            tx.execute(
++                "INSERT INTO sources(namespace,session,event_key) VALUES(?1,?2,?3)",
++                rusqlite::params![w.c.namespace, session, format!("initial-{i}")],
++            )
++            .unwrap();
++        }
++        let mut e: Value = serde_json::from_str(&memory).unwrap();
++        e["id"] = json!(hennery_kernel::secret::sha256_hex(format!("memory:{i}").as_bytes()));
++        let gone = json!({"session_id":session,"turn_id":"initial","event_id":7});
++        let kept = json!({"session_id":"kept","turn_id":"kept","event_id":7});
++        e["source_refs"] = json!([gone, kept]);
++        if i == 0 {
++            // Dangling provenance must be removed even without a matching ref.
++            e["source_refs"] = json!([kept]);
++        }
++        e["provenance"] =
++            json!([{"kind":"source","origin":op(),"source":gone},{"kind":"source","origin":op(),"source":kept}]);
++        if i == 1 {
++            e["source_refs"] = json!([gone]);
++            e["provenance"] = json!([{"kind":"source","origin":op(),"source":gone}]);
++        } else if i == 2 {
++            e["source_refs"] = json!([kept]);
++            e["provenance"] = json!([{"kind":"source","origin":op(),"source":kept}]);
++        }
++        tx.execute(
++            "INSERT INTO entries(namespace,id,kind,title,body,data) VALUES(?1,?2,'memory',?3,?4,?5)",
++            rusqlite::params![
++                w.c.namespace,
++                e["id"].as_str().unwrap(),
++                e["title"].as_str().unwrap(),
++                e["body"].as_str().unwrap(),
++                e.to_string()
++            ],
++        )
++        .unwrap();
++    }
++    tx.commit().unwrap();
++    w.remote.status.store(409, Ordering::SeqCst);
++    *w.remote.inventory.lock().unwrap() = vec![
++        json!({"version":1,"source_ids":["kept"],"next_cursor":null,"resume_cursor":"fresh","watermark":"fresh","lease_until":unix_now()+60}),
++    ];
++    db.execute_batch("CREATE TRIGGER fail_inventory BEFORE UPDATE ON feeds BEGIN SELECT RAISE(ABORT,'fixture'); END;")
++        .unwrap();
++    assert!(w.poll().await.is_err());
++    db.execute_batch("DROP TRIGGER fail_inventory").unwrap();
++    assert_eq!(w.cursor().as_deref(), Some("before"));
++    assert_eq!(
++        db.query_row(
++            "SELECT count(*) FROM entries WHERE namespace=?1 AND kind='note'",
++            [&w.c.namespace],
++            |r| r.get::<_, i64>(0)
++        )
++        .unwrap(),
++        1501
++    );
++    assert!(w.s.available(&w.c.tool, false).is_err());
++    let done = Arc::new(AtomicBool::new(false));
++    let reader = {
++        let s = w.s.clone();
++        let done = done.clone();
++        tokio::task::spawn_blocking(move || {
++            let mut worst = Duration::ZERO;
++            let mut reads = 0;
++            while !done.load(Ordering::SeqCst) {
++                let t = std::time::Instant::now();
++                let page = s.recent(&other.tool, &Query::default()).unwrap();
++                assert_eq!(page.entries.len(), 1);
++                let memories = s.search(&other.tool, &Query::search("foreign")).unwrap();
++                assert_eq!(memories.entries.len(), 1);
++                assert_eq!(memories.entries[0].body, "foreign-assertion");
++                worst = worst.max(t.elapsed());
++                reads += 1;
++                std::thread::sleep(Duration::from_millis(2));
++            }
++            (worst, reads)
++        })
++    };
++    let begin = std::time::Instant::now();
++    let result = w.poll().await;
++    done.store(true, Ordering::SeqCst);
++    let (worst, reads) = reader.await.unwrap();
++    eprintln!(
++        "mixed reset 1500 notes + 1500 16KiB memories: {:?}; other namespace worst {:?}, reads {reads}",
++        begin.elapsed(),
++        worst
++    );
++    result.expect("mixed reset must fit the lease");
++    assert!(
++        begin.elapsed() < Duration::from_secs(12),
++        "linear reset must finish well within its 60s lease"
++    );
++    assert!(
++        worst < Duration::from_secs(3),
++        "other namespaces must not wait for the entire reset"
++    );
++    assert!(reads > 1);
++    assert_eq!(w.cursor().as_deref(), Some("fresh"));
++    let db = w.raw();
++    assert_eq!(
++        db.query_row("SELECT count(*) FROM sources WHERE namespace=?1", [&other_id], |r| r
++            .get::<_, i64>(0))
++            .unwrap(),
++        1
++    );
++    assert_eq!(
++        db.query_row(
++            "SELECT count(*) FROM sources WHERE namespace=?1",
++            [&w.c.namespace],
++            |r| r.get::<_, i64>(0)
++        )
++        .unwrap(),
++        1
++    );
++    assert_eq!(
++        db.query_row(
++            "SELECT count(*) FROM entries WHERE namespace=?1 AND kind='note'",
++            [&w.c.namespace],
++            |r| r.get::<_, i64>(0)
++        )
++        .unwrap(),
++        1
++    );
++    let mut stmt = db
++        .prepare("SELECT data FROM entries WHERE namespace=?1 AND kind='memory'")
++        .unwrap();
++    let entries = stmt.query_map([&w.c.namespace], |r| r.get::<_, String>(0)).unwrap();
++    let mut count = 0;
++    for e in entries {
++        let e: hennery_memory::store::Entry = serde_json::from_str(&e.unwrap()).unwrap();
++        assert_eq!(e.body.len(), 16000);
++        if e.id == hennery_kernel::secret::sha256_hex(b"memory:1") {
++            assert!(e.source_refs.is_empty());
++            assert!(matches!(
++                e.provenance.as_slice(),
++                [hennery_proto::plugin::Provenance::Unverified {}]
++            ));
++        } else {
++            assert_eq!(e.source_refs.len(), 1);
++            assert_eq!(e.source_refs[0].session_id, "kept");
++        }
++        assert_eq!(e.provenance.len(), 1);
++        count += 1;
++    }
++    assert_eq!(count, 1500);
++    assert!(w.s.recent(&w.c.tool, &Query::default()).unwrap().stale);
++}
+diff --git a/crates/hennery-memory/tests/sql_scope.rs b/crates/hennery-memory/tests/sql_scope.rs
+index e91464d8..5a873e1a 100644
+--- a/crates/hennery-memory/tests/sql_scope.rs
++++ b/crates/hennery-memory/tests/sql_scope.rs
+@@ -123,0 +124,16 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
++                if sql.starts_with("SELECT seq,id,data FROM entries ") {
++                    let mut stmt = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
++                    let descriptions = stmt
++                        .query_map(["scope", "memory", "0", "10000"], |r| r.get::<_, String>(3))
++                        .unwrap()
++                        .collect::<rusqlite::Result<Vec<_>>>()
++                        .unwrap();
++                    assert!(
++                        descriptions.iter().any(|s| s.contains("scoped_entries")),
++                        "reset keyset reads need the namespace/kind/seq index: {descriptions:?}"
++                    );
++                    assert!(
++                        !descriptions.iter().any(|s| s.contains("TEMP B-TREE")),
++                        "reset chunks must not sort the entire corpus: {descriptions:?}"
++                    );
++                }
+@@ -159 +175 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
+-    assert_eq!(count, [8, 44], "new statements need explicit audit coverage");
++    assert_eq!(count, [8, 51], "new statements need explicit audit coverage");
+```
 
 ## After this plan
 
