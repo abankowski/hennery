@@ -351,7 +351,8 @@ impl Store {
         match origin {
             InputOrigin::Operator {}=>Ok(true),
             InputOrigin::Parent {session_id,operation_id}=>Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM session_operations WHERE owner_id = ?1 AND operation_id = ?2 AND caller_id = ?3 AND child_id = ?4 AND turn_id = ?5 AND tool IN ('session_send','session_spawn'))",params![self.owner_id(),operation_id,session_id,target,turn],|r|r.get(0))?),
-            InputOrigin::ChildReport {..} | InputOrigin::PluginContext {..}=>Ok(false),
+            InputOrigin::ChildReport {..}=>self.verified_child_report_in(tx,origin,target,turn),
+            InputOrigin::PluginContext {..}=>Ok(false),
         }
     }
 }

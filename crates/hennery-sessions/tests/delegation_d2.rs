@@ -266,6 +266,721 @@ fn answer() -> AnswerRequest {
     }
 }
 
+fn notices(w: &World) -> Vec<(String, String, String)> {
+    raw(w)
+        .prepare("SELECT kind,state,source_events FROM delegation_notices WHERE owner_id = ?1 ORDER BY rowid")
+        .unwrap()
+        .query_map([w.store.owner_id()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+#[test]
+fn d3_question_is_transactional_and_replayed_or_unapplied_facts_add_nothing() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    assert_eq!(notices(&w).len(), 1);
+    assert_eq!(notices(&w)[0].0, "question");
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    ended(&w, "child", 3, "unknown");
+    assert_eq!(notices(&w).len(), 1);
+    let conn = raw(&w);
+    conn.execute_batch("CREATE TRIGGER fail_notice BEFORE INSERT ON delegation_notices BEGIN SELECT RAISE(ABORT,'notice failed'); END;").unwrap();
+    assert!(
+        w.store
+            .ingest(
+                "child",
+                4,
+                &SessionBody::PendingOpened {
+                    pending_id: "rollback".into(),
+                    indexed: Indexed {
+                        pending: Some(Box::new(PendingExtract {
+                            id: "rollback".into(),
+                            kind: PendingKind::Elicitation,
+                            option_ids: None,
+                            title: None
+                        })),
+                        ..Default::default()
+                    },
+                    payload: json!({})
+                }
+            )
+            .is_err()
+    );
+    assert!(!w.store.still_open("child", "rollback").unwrap());
+}
+
+#[test]
+fn d3_idle_adapter_loss_and_following_park_share_one_incident() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::AdapterExited {
+                code: Some(1),
+                signal: None,
+                stderr_tail: String::new(),
+            },
+        )
+        .unwrap();
+    assert_eq!(notices(&w).len(), 1);
+    assert_eq!(notices(&w)[0].0, "session_unavailable");
+    let (h, mut rx) = connected();
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    let (request, turn) = take_prompt(&mut rx);
+    w.store
+        .ingest(
+            "parent",
+            3,
+            &SessionBody::TurnStarted {
+                request_id: request,
+                turn_id: turn,
+            },
+        )
+        .unwrap();
+    w.store
+        .ingest(
+            "child",
+            3,
+            &SessionBody::SessionParked {
+                reason: ParkReason::AdapterExited,
+            },
+        )
+        .unwrap();
+    assert_eq!(notices(&w).len(), 1);
+    assert_eq!(
+        notices(&w)[0].1,
+        "parent_delivered",
+        "coalescing must not wake the parent twice"
+    );
+    let refs: Vec<i64> = serde_json::from_str(&notices(&w)[0].2).unwrap();
+    assert_eq!(refs.len(), 2);
+}
+
+#[test]
+fn d3_loss_obsoletes_out_of_turn_question_before_cancellation_frame() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    w.store
+        .ingest(
+            "child",
+            3,
+            &SessionBody::AdapterExited {
+                code: Some(1),
+                signal: None,
+                stderr_tail: String::new(),
+            },
+        )
+        .unwrap();
+    assert_eq!(notices(&w)[0].1, "obsolete");
+    assert!(
+        w.store.still_open("child", "question").unwrap(),
+        "canonical cancellation comes later"
+    );
+    w.store
+        .ingest(
+            "child",
+            4,
+            &SessionBody::SessionParked {
+                reason: ParkReason::AdapterExited,
+            },
+        )
+        .unwrap();
+    assert_eq!(notices(&w).len(), 2);
+    assert_eq!(notices(&w)[1].0, "session_unavailable");
+}
+
+#[test]
+fn d3_withdrawal_is_distinct_and_idle_park_does_not_wake_parent() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    w.store
+        .ingest(
+            "child",
+            3,
+            &SessionBody::PendingResolved {
+                pending_id: "question".into(),
+                resolution: PendingResolution::Cancelled,
+                reason: Some(PendingReason::AgentWithdrew),
+            },
+        )
+        .unwrap();
+    assert_eq!(notices(&w)[0].1, "obsolete");
+    assert_eq!(notices(&w)[1].0, "question_cancelled");
+    w.store
+        .ingest(
+            "child",
+            4,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    assert_eq!(notices(&w).len(), 2);
+}
+
+#[test]
+fn d3_collector_reconciliation_and_host_revoke_record_loss() {
+    for revoke in [false, true] {
+        let (w, _) = pair();
+        pending(&w, "child", 2, "question", PendingKind::Elicitation);
+        if revoke {
+            w.store.revoke_host("host").unwrap();
+        } else {
+            w.store.reconcile_host("host", &[]).unwrap();
+        }
+        assert_eq!(notices(&w)[0].1, "obsolete");
+        assert_eq!(notices(&w).iter().filter(|n| n.0 == "session_unavailable").count(), 1);
+    }
+}
+
+#[test]
+fn d3_permission_and_closed_parent_record_operator_disposition() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "permission", PendingKind::Permission);
+    assert_eq!(notices(&w)[0].1, "operator_required");
+    w.store.record_close_request("parent").unwrap();
+    pending(&w, "child", 3, "question", PendingKind::Elicitation);
+    assert!(notices(&w).iter().all(|n| n.1 == "operator_required"));
+}
+
+#[test]
+fn d3_delete_scrubs_notices_and_reassignment_disables_routing() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    raw(&w)
+        .execute(
+            "UPDATE sessions SET hat_id = ?1 WHERE owner_id = ?2 AND id = 'child'",
+            params![w.other, w.store.owner_id()],
+        )
+        .unwrap();
+    assert_eq!(notices(&w)[0].1, "operator_required");
+    w.store.close_now("child").unwrap();
+    w.store.delete_session("child", None).unwrap();
+    assert!(notices(&w).is_empty());
+}
+
+fn ready_parent(w: &World) {
+    seed(w, "parent", &config("wanted"), 7);
+    proof(w, "parent", 2, 7, 10, ConfigCompleteness::Complete, config("wanted"));
+}
+
+#[test]
+fn d3_ordinary_parent_start_is_the_only_generation_zero_seed() {
+    let w = World::new();
+    let p = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    let mut started = SessionBody::session_started("start", "agent-parent");
+    if let SessionBody::SessionStarted { indexed, .. } = &mut started {
+        indexed.config_evidence = Some(Box::new(ConfigEvidence {
+            attach_generation: 0,
+            config_revision: 1,
+            completeness: ConfigCompleteness::Complete,
+            actual: config("wanted"),
+        }));
+    }
+    w.store.ingest("parent", 1, &started).unwrap();
+    child(&w, &p, "child", &w.hat);
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    let (h, _rx) = connected();
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    // An unapplied duplicate start cannot replace current attach proof.
+    proof(&w, "parent", 2, 0, 5, ConfigCompleteness::Complete, config("wanted"));
+    w.store.ingest("parent", 3, &started).unwrap();
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT config_revision FROM session_attach_evidence WHERE owner_id=?1 AND session_id='parent'",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        5
+    );
+}
+
+#[test]
+fn d3_collector_start_failure_has_one_durable_factual_source() {
+    for starting in [false, true] {
+        let (w, _) = pair();
+        if starting {
+            raw(&w)
+                .execute(
+                    "UPDATE sessions SET lifecycle='starting' WHERE owner_id=?1 AND id='child'",
+                    [w.store.owner_id()],
+                )
+                .unwrap();
+            w.store.mark_failed_if_starting("child", "start_failed").unwrap();
+            w.store.mark_failed_if_starting("child", "start_failed").unwrap();
+        } else {
+            w.store.mark_failed("child", "start_failed").unwrap();
+            w.store.mark_failed("child", "start_failed").unwrap();
+        }
+        assert_eq!(notices(&w).len(), 1);
+        assert_eq!(notices(&w)[0].0, "session_failed");
+    }
+}
+
+#[test]
+fn d3_late_factual_start_failure_updates_the_existing_incident() {
+    let (w, _) = pair();
+    w.store.mark_failed("child", "start_not_delivered").unwrap();
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::StartFailed {
+                request_id: "late".into(),
+                code: "adapter_failed".into(),
+                message: "failure".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(notices(&w).len(), 1);
+    let refs: Vec<i64> = serde_json::from_str(&notices(&w)[0].2).unwrap();
+    assert_eq!(refs.len(), 2);
+}
+
+#[test]
+fn d3_operator_answer_obsoletes_queued_question_in_its_acceptance_transaction() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    w.store.submit_answer("child", "question", &answer()).unwrap();
+    assert_eq!(notices(&w)[0].1, "obsolete");
+    w.store
+        .ingest(
+            "child",
+            3,
+            &SessionBody::PendingResolved {
+                pending_id: "question".into(),
+                resolution: PendingResolution::Delivered,
+                reason: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(notices(&w).len(), 1, "a delivered answer is not a cancellation notice");
+}
+
+#[test]
+fn d3_report_uses_exact_source_turn_and_keeps_utf8_tail_under_eight_kib() {
+    let (w, p) = pair();
+    ready(&w);
+    ready_parent(&w);
+    let (h, mut rx) = connected();
+    let mut seq = 3;
+    for (key, text) in [
+        ("first", format!("{}END-第一", "ą".repeat(6000))),
+        ("second", "SECOND-ONLY".to_string()),
+    ] {
+        queue(&w, &p, key);
+        assert!(w.store.dispatch_delegated("child", &catalog(), &h).unwrap());
+        let (request, turn) = take_prompt(&mut rx);
+        w.store
+            .ingest(
+                "child",
+                seq,
+                &SessionBody::TurnStarted {
+                    request_id: request,
+                    turn_id: turn.clone(),
+                },
+            )
+            .unwrap();
+        seq += 1;
+        w.store.ingest("child",seq,&SessionBody::AcpUpdate {indexed:Indexed {turn_id:Some(turn.clone()),..Default::default()},payload:json!({"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}})}).unwrap();
+        seq += 1;
+        ended(&w, "child", seq, &turn);
+        seq += 1;
+    }
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    let frame = rx.try_recv().unwrap();
+    let CollectorFrame::DelegatedPrompt { content, .. } = frame else {
+        panic!()
+    };
+    let text = content[0]["text"].as_str().unwrap();
+    assert!(text.len() <= 8192);
+    assert!(text.contains("END-第一"));
+    assert!(!text.contains("SECOND-ONLY"));
+    assert!(text.contains("\"truncated\":true"));
+}
+
+#[test]
+fn d3_reverse_delivery_reserves_once_and_only_facts_acknowledge_it() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    let (h, mut rx) = connected();
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    let (request, turn) = take_prompt(&mut rx);
+    assert_eq!(
+        w.store.find_session("parent").unwrap().unwrap().open_turn_id.as_deref(),
+        Some(turn.as_str())
+    );
+    assert_eq!(notices(&w)[0].1, "awaiting_reconciliation");
+    assert!(!w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    w.store
+        .ingest(
+            "parent",
+            3,
+            &SessionBody::TurnStarted {
+                request_id: request,
+                turn_id: turn.clone(),
+            },
+        )
+        .unwrap();
+    assert_eq!(notices(&w)[0].1, "parent_delivered");
+    let user = w
+        .store
+        .events("parent", 0, 100)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == "user_turn")
+        .unwrap();
+    let origin: InputOrigin = serde_json::from_value(user.body["origin"].clone()).unwrap();
+    assert!(matches!(origin,InputOrigin::ChildReport {child_id,..} if child_id=="child"));
+    assert!(
+        user.body["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not operator input or approval")
+    );
+    ended(&w, "parent", 4, &turn);
+    assert_eq!(
+        notices(&w)[0].1,
+        "parent_delivered",
+        "a delivered question remains unresolved"
+    );
+}
+
+#[test]
+fn d3_reverse_delivery_checks_pending_config_close_grant_and_family() {
+    for cut in [
+        "pending",
+        "config",
+        "partial",
+        "stale",
+        "close_parent",
+        "close_child",
+        "grant",
+        "family",
+    ] {
+        let (w, _) = pair();
+        ready_parent(&w);
+        pending(&w, "child", 2, "question", PendingKind::Elicitation);
+        match cut {
+            "pending" => {
+                pending(&w, "parent", 3, "parent-question", PendingKind::Elicitation);
+            }
+            "config" => {
+                raw(&w)
+                    .execute(
+                        "UPDATE session_attach_evidence SET evidence=NULL WHERE owner_id=?1 AND session_id='parent'",
+                        [w.store.owner_id()],
+                    )
+                    .unwrap();
+            }
+            "partial" => {
+                proof(&w, "parent", 3, 7, 11, ConfigCompleteness::Partial, config("wanted"));
+            }
+            "stale" => {
+                let stale = ConfigEvidence {
+                    attach_generation: 8,
+                    config_revision: 11,
+                    completeness: ConfigCompleteness::Complete,
+                    actual: config("wanted"),
+                };
+                raw(&w)
+                    .execute(
+                        "UPDATE session_attach_evidence SET evidence=?2 WHERE owner_id=?1 AND session_id='parent'",
+                        params![w.store.owner_id(), serde_json::to_string(&stale).unwrap()],
+                    )
+                    .unwrap();
+            }
+            "close_parent" => {
+                w.store.record_close_request("parent").unwrap();
+            }
+            "close_child" => {
+                w.store.record_close_request("child").unwrap();
+            }
+            "grant" => {
+                w.gateway.set_session_tools(&w.hat, false).unwrap();
+            }
+            _ => {
+                raw(&w)
+                    .execute(
+                        "UPDATE session_families SET detached=1 WHERE owner_id=?1 AND child_id='child'",
+                        [w.store.owner_id()],
+                    )
+                    .unwrap();
+            }
+        }
+        let (h, mut rx) = connected();
+        if cut == "family" {
+            assert_eq!(notices(&w)[0].1, "operator_required");
+        }
+        assert!(
+            !w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap(),
+            "{cut}"
+        );
+        assert!(rx.try_recv().is_err(), "{cut}");
+    }
+}
+
+#[test]
+fn d3_two_reverse_workers_and_an_operator_compete_for_one_slot() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    let (h, mut rx) = connected();
+    let second = Store::open(&w.db).unwrap();
+    let third = Store::open(&w.db).unwrap();
+    let gate = Barrier::new(3);
+    let results = std::thread::scope(|scope| {
+        let a = scope.spawn(|| {
+            gate.wait();
+            w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap()
+        });
+        let b = scope.spawn(|| {
+            gate.wait();
+            second.dispatch_child_notice("parent", &catalog(), &h).unwrap()
+        });
+        let c = scope.spawn(|| {
+            gate.wait();
+            third
+                .open_turn("parent", "operator-race", &[json!({"type":"text","text":"operator"})])
+                .unwrap()
+        });
+        (a.join().unwrap(), b.join().unwrap(), c.join().unwrap())
+    });
+    assert_eq!([results.0, results.1, results.2].into_iter().filter(|v| *v).count(), 1);
+    if results.0 || results.1 {
+        take_prompt(&mut rx);
+    }
+    assert!(rx.try_recv().is_err());
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM turns WHERE owner_id=?1 AND session_id='parent'",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn d3_restart_keeps_uncertain_association_and_late_start_can_win() {
+    for rejection in [true, false] {
+        let (w, _) = pair();
+        ready_parent(&w);
+        pending(&w, "child", 2, "question", PendingKind::Elicitation);
+        let (h, mut rx) = connected();
+        assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+        let (request, turn) = take_prompt(&mut rx);
+        let reopened = Store::open(&w.db).unwrap();
+        assert!(!reopened.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+        if rejection {
+            assert!(reopened.reject_delegation("host", &request).unwrap());
+        } else {
+            reopened
+                .reconcile_host(
+                    "host",
+                    &[
+                        hennery_proto::frames::AttachedSession {
+                            session_id: "parent".into(),
+                            last_seq: 2,
+                            open_turn_id: None,
+                        },
+                        hennery_proto::frames::AttachedSession {
+                            session_id: "child".into(),
+                            last_seq: 2,
+                            open_turn_id: None,
+                        },
+                    ],
+                )
+                .unwrap();
+        }
+        assert_eq!(notices(&w)[0].1, "operator_required");
+        reopened
+            .ingest(
+                "parent",
+                3,
+                &SessionBody::TurnStarted {
+                    request_id: request,
+                    turn_id: turn.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(notices(&w)[0].1, "parent_delivered");
+        assert!(!reopened.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+        assert!(rx.try_recv().is_err());
+    }
+}
+
+#[test]
+fn d3_wake_budget_survives_reopen_and_child_questions_do_not_reset_it() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    let (h, mut rx) = connected();
+    for n in 0..21 {
+        pending(&w, "child", n + 2, &format!("question-{n}"), PendingKind::Elicitation);
+        let reopened = Store::open(&w.db).unwrap();
+        let sent = reopened.dispatch_child_notice("parent", &catalog(), &h).unwrap();
+        assert_eq!(sent, n < 20);
+        if sent {
+            let (request, turn) = take_prompt(&mut rx);
+            w.store
+                .ingest(
+                    "parent",
+                    n * 2 + 3,
+                    &SessionBody::TurnStarted {
+                        request_id: request,
+                        turn_id: turn.clone(),
+                    },
+                )
+                .unwrap();
+            ended(&w, "parent", n * 2 + 4, &turn);
+        }
+    }
+    assert_eq!(notices(&w).last().unwrap().1, "operator_required");
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT SUM(wakes) FROM delegation_budgets WHERE owner_id=?1",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        20
+    );
+    user_turn_with_origin(&w, "parent", 43, "operator-root", InputOrigin::Operator {});
+    pending(&w, "child", 23, "new-epoch-question", PendingKind::Elicitation);
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    assert_eq!(
+        notices(&w)[20].1,
+        "operator_required",
+        "a new operator epoch does not replay an escalated notice"
+    );
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM delegation_budgets WHERE owner_id=?1",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn d3_unsent_handoff_spends_no_budget_and_does_not_leave_a_turn() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    let (h, rx) = connected();
+    drop(rx);
+    assert!(!w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    assert_eq!(notices(&w)[0].1, "parent_queued");
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COALESCE(SUM(wakes),0) FROM delegation_budgets WHERE owner_id=?1",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    assert!(w.store.find_session("parent").unwrap().unwrap().open_turn_id.is_none());
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM turns WHERE owner_id=?1 AND session_id='parent'",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    assert!(
+        raw(&w)
+            .query_row(
+                "SELECT target_turn FROM delegation_notices WHERE owner_id=?1",
+                [w.store.owner_id()],
+                |r| r.get::<_, Option<String>>(0)
+            )
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn d3_queue_overflow_has_a_durable_disposition_without_evicting_questions() {
+    let (w, _) = pair();
+    for n in 0..33 {
+        pending(&w, "child", n + 2, &format!("q-{n}"), PendingKind::Elicitation);
+    }
+    let rows = notices(&w);
+    assert_eq!(rows.len(), 33);
+    assert_eq!(rows.iter().filter(|r| r.1 == "parent_queued").count(), 32);
+    assert_eq!(rows.last().unwrap().1, "operator_required");
+    assert_eq!(w.store.open_pending("child").unwrap().len(), 33);
+}
+
+#[test]
+fn d3_automatic_parent_resume_requires_genuine_park_and_fresh_proof() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    w.store
+        .ingest(
+            "parent",
+            3,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    let (h, mut rx) = connected();
+    let mcp = McpContext {
+        capable: true,
+        isolation: McpIsolation::ClaudeStrict,
+        rules_name_other_hats: false,
+    };
+    assert!(w.store.attach_notice_parent("parent", mcp, &catalog(), &h).unwrap());
+    let generation = match rx.try_recv().unwrap() {
+        CollectorFrame::DelegatedAttach { attach_generation, .. } => attach_generation,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(generation, 8);
+    assert!(!w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    w.store
+        .ingest("parent", 4, &SessionBody::session_started("resume", "agent-parent"))
+        .unwrap();
+    proof(
+        &w,
+        "parent",
+        5,
+        generation,
+        1,
+        ConfigCompleteness::Complete,
+        config("wanted"),
+    );
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+}
+
+#[test]
+fn d3_collector_close_obsoletes_its_question_before_endpoint_routing_cuts() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    w.store.close_now("child").unwrap();
+    assert_eq!(notices(&w)[0].1, "obsolete");
+    assert!(notices(&w).iter().any(|n| n.0 == "question_cancelled"));
+}
+
 #[test]
 fn delegated_unattached_close_records_parent_intent_and_publishes_all_committed_events() {
     let (w, p) = pair();

@@ -372,6 +372,7 @@ const MIGRATIONS: &[&str] = &[
     END;
     ",
     include_str!("delegation_schema.sql"),
+    include_str!("delegation_delivery.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -877,14 +878,16 @@ pub(crate) fn collector_event(
         "UPDATE sessions SET last_event_at = ?2, last_event_id = ?3 WHERE id = ?1 AND owner_id = ?4",
         params![session_id, ts, event_id, owner],
     )?;
-    Ok(EventDto {
+    let event = EventDto {
         event_id,
         session_id: session_id.to_string(),
         host_seq: None,
         kind: kind.to_string(),
         body,
         ts: ts.to_string(),
-    })
+    };
+    crate::delegation_delivery::record_in(tx, owner, &event)?;
+    Ok(event)
 }
 
 /// The image blocks of a stored content that name their image, each with
@@ -2158,10 +2161,12 @@ impl Store {
         let tx = conn.transaction()?;
         let failed = tx.execute(
             "UPDATE sessions SET lifecycle = 'failed', failure_reason = ?2
-             WHERE id = ?1 AND lifecycle <> 'deleted' AND owner_id = ?3",
+             WHERE id = ?1 AND lifecycle <> 'deleted' AND owner_id = ?3
+                 AND (lifecycle <> 'failed' OR failure_reason IS NOT ?2)",
             params![id, reason, self.owner],
         )?;
         let cut = if failed == 1 {
+            self.record_delegation_failure_in(&tx, id, reason)?;
             self.mcp().revoke_in(&tx, id)?
         } else {
             Cut::default()
@@ -2184,6 +2189,7 @@ impl Store {
             params![id, reason, self.owner],
         )?;
         let cut = if failed == 1 {
+            self.record_delegation_failure_in(&tx, id, reason)?;
             self.mcp().revoke_in(&tx, id)?
         } else {
             Cut::default()
@@ -4205,6 +4211,9 @@ impl Store {
         };
         if !created.is_empty() {
             self.ingest_delegation_in(&tx, session_id, body)?;
+            for event in &created {
+                crate::delegation_delivery::record_in(&tx, &self.owner, event)?;
+            }
         }
         commit_then_cut(tx, mcp.as_ref(), cut)?;
         Ok(Ingested { events: created, edge })
@@ -4344,6 +4353,7 @@ impl Store {
                 _ => {}
             }
         }
+        self.settle_notices_in(&tx)?;
         commit_then_cut(tx, mcp.as_ref(), cut)?;
         Ok(out)
     }

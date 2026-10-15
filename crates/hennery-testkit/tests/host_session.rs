@@ -16,6 +16,18 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+fn unknown_normal_configuration() -> Indexed {
+    Indexed {
+        config_evidence: Some(Box::new(hennery_proto::delegation_host::ConfigEvidence {
+            attach_generation: 0,
+            config_revision: 1,
+            completeness: hennery_proto::delegation_host::ConfigCompleteness::Partial,
+            actual: SessionConfig::default(),
+        })),
+        ..Indexed::default()
+    }
+}
+
 fn kinds(frames: &[HostFrame]) -> Vec<String> {
     frames
         .iter()
@@ -1467,7 +1479,7 @@ async fn a_switch_without_a_read_back_announces_no_catalogue() {
     );
     let frames = wait_until(&uplink, has("session_started")).await;
     assert_eq!(switches(&log), "model=large\n");
-    assert_eq!(started_extracts(&frames), Indexed::default());
+    assert_eq!(started_extracts(&frames), unknown_normal_configuration());
     assert_eq!(kinds(&frames), ["session_started"]);
 }
 
@@ -1492,7 +1504,7 @@ async fn a_hung_switch_is_reported_and_the_session_still_starts() {
     );
     let frames = wait_until(&uplink, has("host_note:config_failed")).await;
     assert_eq!(kinds(&frames), ["session_started", "host_note:config_failed"]);
-    assert_eq!(started_extracts(&frames), Indexed::default());
+    assert_eq!(started_extracts(&frames), unknown_normal_configuration());
     let text = note_text(&frames, "config_failed");
     assert!(text.contains("model=large: no answer within"), "{text}");
     // Nothing is sent after a switch that did not answer.
@@ -1536,7 +1548,11 @@ async fn a_late_model_switch_stops_the_starts_switches_so_its_clamp_cannot_undo_
         "model=large\n",
         "the mode switch went out behind a late model switch"
     );
-    assert_eq!(started_extracts(&frames), Indexed::default(), "the values are unknown");
+    assert_eq!(
+        started_extracts(&frames),
+        unknown_normal_configuration(),
+        "the values are unknown"
+    );
     let text = note_text(&frames, "config_failed");
     assert!(
         text.contains("mode=plan: not sent: an earlier switch did not answer"),
@@ -1675,7 +1691,7 @@ async fn a_switch_without_a_read_back_does_not_skip_later_values_on_stale_data()
     );
     let frames = wait_until(&uplink, has("session_started")).await;
     assert_eq!(switches(&log), "model=large\nmode=default\n");
-    assert_eq!(started_extracts(&frames), Indexed::default());
+    assert_eq!(started_extracts(&frames), unknown_normal_configuration());
     assert_eq!(kinds(&frames), ["session_started"]);
 }
 

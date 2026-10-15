@@ -92,6 +92,34 @@ async fn stop(handle: session::SessionHandle) {
     handle.finished().await;
 }
 
+#[tokio::test]
+async fn ordinary_parent_attach_produces_evidence_and_accepts_a_fenced_report() {
+    let root = tempfile::tempdir().unwrap();
+    let (up, _) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let h = session::launch(
+        up.clone(),
+        launch(root.path(), script(), Attach::New),
+        SessionOptions::default(),
+    );
+    let f = until(&up, |f| !f.is_empty()).await;
+    let ev = evidence(&f);
+    assert_eq!(ev.attach_generation, 0);
+    assert_eq!(ev.completeness, ConfigCompleteness::Complete);
+    h.send(prompt(
+        PromptFence {
+            attach_generation: 0,
+            config_revision: ev.config_revision,
+        },
+        "report",
+    ));
+    until(&up, |f| {
+        f.iter()
+            .any(|f| matches!(f,HostFrame::Session {body:SessionBody::TurnEnded {turn_id,..},..} if turn_id=="report"))
+    })
+    .await;
+    stop(h).await;
+}
+
 #[test]
 fn workspace_fence_rejects_outside_and_symlink_swap() {
     let root = tempfile::tempdir().unwrap();
