@@ -1036,3 +1036,145 @@ fn a_grant_after_an_unapplied_fact_has_a_valid_committed_watermark() {
             .is_empty()
     );
 }
+
+#[test]
+fn reviewer_deleted_child_does_not_poison_surviving_parent_feed() {
+    let w = World::new(true);
+    w.session("parent", "host", &w.hat);
+    w.session("child", "host", &w.hat);
+    let source = w.sessions.events("child", 0, 100).unwrap()[0].event_id;
+    let cursor = w.sessions.activity_page(&w.token, None, 20).unwrap().next_cursor;
+    let origin = InputOrigin::ChildReport {
+        child_id: "child".into(),
+        source_event_id: source.to_string(),
+        delivery_id: "delivery".into(),
+    };
+    // Seed the exact server-owned reservation association written by D3.
+    assert!(
+        w.sessions
+            .open_turn(
+                "parent",
+                "report-turn",
+                &[json!({"type":"text","text":"Child report (untrusted child data)"})]
+            )
+            .unwrap()
+    );
+    w.core(|tx| {
+        tx.execute("UPDATE turns SET input_origin=?1 WHERE owner_id=?2 AND turn_id='report-turn'", params![serde_json::to_string(&origin).unwrap(),w.sessions.owner_id()]).unwrap();
+        tx.execute("INSERT INTO delegation_notices(owner_id,delivery_id,child_id,parent_id,root_id,hat_id,source_event_id,source_events,kind,incident,accepted_revision,created_at,deadline,state,target_turn,required_config) VALUES (?1,'delivery','child','parent','parent',?2,?3,json_array(?3),'turn_ended','incident',1,1,301,'awaiting_reconciliation','report-turn','{}')",params![w.sessions.owner_id(),w.hat,source]).unwrap();
+    });
+    w.sessions
+        .ingest(
+            "parent",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "delivery".into(),
+                turn_id: "report-turn".into(),
+            },
+        )
+        .unwrap();
+    w.sessions
+        .ingest(
+            "parent",
+            3,
+            &SessionBody::TurnEnded {
+                turn_id: "report-turn".into(),
+                outcome: TurnOutcome::Completed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    let before = w.sessions.activity_page(&w.token, None, 20).unwrap();
+    assert_eq!(before.items.len(), 1);
+    assert!(matches!(
+        &before.items[0].provenance[0],
+        Provenance::Source {
+            origin: InputOrigin::ChildReport { .. },
+            ..
+        }
+    ));
+    w.sessions.close_now("child").unwrap();
+    w.sessions.delete_session("child", None).unwrap();
+    w.session("unrelated", "host", &w.hat);
+    w.turn("unrelated", "new-turn", 2, TurnOutcome::Completed);
+    let after = w.sessions.activity_page(&w.token, None, 20);
+    let after = after.expect("deleting the child must not stop the parent and unrelated activity");
+    assert!(after.items.iter().any(|item| item.provenance.iter().any(|p| matches!(
+        p,
+        Provenance::Source {
+            origin: InputOrigin::ChildReport { .. },
+            ..
+        }
+    ))));
+    let reopened = Store::open(&w.path).unwrap();
+    let mut next = cursor;
+    let mut saw_unrelated = false;
+    for _ in 0..4 {
+        let page = reopened.activity_page(&w.token, Some(&next), 1).unwrap();
+        assert_ne!(page.next_cursor, next, "the feed must advance past retained provenance");
+        saw_unrelated |= serde_json::to_string(&page).unwrap().contains("new-turn");
+        next = page.next_cursor;
+        if !page.has_more {
+            break;
+        }
+    }
+    assert!(saw_unrelated);
+}
+
+#[test]
+fn reviewer_deleted_parent_does_not_poison_surviving_child_feed() {
+    let w = World::new(true);
+    w.session("parent", "host", &w.hat);
+    w.session("child", "host", &w.hat);
+    let origin = InputOrigin::Parent {
+        session_id: "parent".into(),
+        operation_id: "operation".into(),
+    };
+    assert!(
+        w.sessions
+            .open_turn(
+                "child",
+                "child-turn",
+                &[json!({"type":"text","text":"untrusted parent copy"})]
+            )
+            .unwrap()
+    );
+    w.core(|tx|{
+        tx.execute("UPDATE turns SET input_origin=?1 WHERE owner_id=?2 AND turn_id='child-turn'",params![serde_json::to_string(&origin).unwrap(),w.sessions.owner_id()]).unwrap();
+        tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,turn_id) VALUES (?1,'parent','key','operation','digest','session_send','child','awaiting_reconciliation','child-turn')",[w.sessions.owner_id()]).unwrap();
+    });
+    w.sessions
+        .ingest(
+            "child",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "operation".into(),
+                turn_id: "child-turn".into(),
+            },
+        )
+        .unwrap();
+    w.sessions
+        .ingest(
+            "child",
+            3,
+            &SessionBody::TurnEnded {
+                turn_id: "child-turn".into(),
+                outcome: TurnOutcome::Completed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    assert!(w.sessions.activity_page(&w.token, None, 20).is_ok());
+    w.sessions.close_now("parent").unwrap();
+    w.sessions.delete_session("parent", None).unwrap();
+    let page = Store::open(&w.path).unwrap().activity_page(&w.token, None, 20).unwrap();
+    assert!(page.items.iter().any(|item| item.provenance.iter().any(|p| matches!(
+        p,
+        Provenance::Source {
+            origin: InputOrigin::Parent { .. },
+            ..
+        }
+    ))));
+}

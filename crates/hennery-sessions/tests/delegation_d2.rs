@@ -2955,3 +2955,220 @@ fn target_pages_bound_progress_and_wrap_without_foreign_or_settled_rows() {
     );
     assert_eq!(w.store.delegation_targets_after("").unwrap(), first);
 }
+
+#[test]
+fn reviewer_actual_host_crash_has_one_parent_delivery() {
+    let (w, p) = pair();
+    ready(&w);
+    ready_parent(&w);
+    let (h, mut rx) = connected();
+    queue(&w, &p, "crash-work");
+    assert!(w.store.dispatch_delegated("child", &catalog(), &h).unwrap());
+    let (request_id, turn_id) = take_prompt(&mut rx);
+    w.store
+        .ingest(
+            "child",
+            3,
+            &SessionBody::TurnStarted {
+                request_id,
+                turn_id: turn_id.clone(),
+            },
+        )
+        .unwrap();
+    pending(&w, "child", 4, "crash-question", PendingKind::Elicitation);
+    // Exact order emitted by Actor::adapter_exited.
+    w.store
+        .ingest(
+            "child",
+            5,
+            &SessionBody::TurnEnded {
+                turn_id,
+                outcome: TurnOutcome::Interrupted,
+                stop_reason: None,
+                error: Some("the adapter exited".into()),
+            },
+        )
+        .unwrap();
+    w.store
+        .ingest(
+            "child",
+            6,
+            &SessionBody::PendingResolved {
+                pending_id: "crash-question".into(),
+                resolution: PendingResolution::Cancelled,
+                reason: Some(PendingReason::AdapterLost),
+            },
+        )
+        .unwrap();
+    w.store
+        .ingest(
+            "child",
+            7,
+            &SessionBody::AdapterExited {
+                code: Some(1),
+                signal: None,
+                stderr_tail: String::new(),
+            },
+        )
+        .unwrap();
+    w.store
+        .ingest(
+            "child",
+            8,
+            &SessionBody::SessionParked {
+                reason: ParkReason::AdapterExited,
+            },
+        )
+        .unwrap();
+    let mut delivered = 0;
+    while w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap() {
+        let (request_id, turn_id) = take_prompt(&mut rx);
+        w.store
+            .ingest(
+                "parent",
+                3 + delivered * 2,
+                &SessionBody::TurnStarted {
+                    request_id,
+                    turn_id: turn_id.clone(),
+                },
+            )
+            .unwrap();
+        ended(&w, "parent", 4 + delivered * 2, &turn_id);
+        delivered += 1;
+        assert!(delivered < 10);
+    }
+    assert_eq!(
+        delivered,
+        1,
+        "one adapter incident must not cause several parent turns: {:?}",
+        notices(&w)
+    );
+}
+
+#[test]
+fn reviewer_out_of_turn_question_keeps_its_projection_after_later_operator_turn() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    pending(&w, "child", 2, "early-question", PendingKind::Elicitation);
+    // An ordinary operator prompt may start while an out-of-turn callback remains open.
+    assert!(
+        w.store
+            .open_turn("child", "later-operator", &[json!({"type":"text","text":"continue"})])
+            .unwrap()
+    );
+    w.store
+        .ingest(
+            "child",
+            3,
+            &SessionBody::TurnStarted {
+                request_id: "operator-request".into(),
+                turn_id: "later-operator".into(),
+            },
+        )
+        .unwrap();
+    let (h, mut rx) = connected();
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    let CollectorFrame::DelegatedPrompt { content, .. } = rx.try_recv().unwrap() else {
+        panic!()
+    };
+    let text = content[0]["text"].as_str().unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(text.split_once('\n').unwrap().1).unwrap();
+    assert!(
+        metadata["question"].is_object(),
+        "the queued question must not be lost to a later user_turn: {text}"
+    );
+}
+
+#[test]
+fn reviewer_host_crash_delivered_between_frames_never_wakes_twice_and_keeps_error() {
+    for cut in 1..=4 {
+        let (w, p) = pair();
+        ready(&w);
+        ready_parent(&w);
+        let (hub, mut rx) = connected();
+        queue(&w, &p, "crash-work");
+        assert!(w.store.dispatch_delegated("child", &catalog(), &hub).unwrap());
+        let (request, turn) = take_prompt(&mut rx);
+        w.store
+            .ingest(
+                "child",
+                3,
+                &SessionBody::TurnStarted {
+                    request_id: request,
+                    turn_id: turn.clone(),
+                },
+            )
+            .unwrap();
+        pending(&w, "child", 4, "crash-question", PendingKind::Elicitation);
+        let frames = [
+            SessionBody::TurnEnded {
+                turn_id: turn,
+                outcome: TurnOutcome::Interrupted,
+                stop_reason: None,
+                error: Some("the adapter exited: diagnostic".into()),
+            },
+            SessionBody::PendingResolved {
+                pending_id: "crash-question".into(),
+                resolution: PendingResolution::Cancelled,
+                reason: Some(PendingReason::AdapterLost),
+            },
+            SessionBody::AdapterExited {
+                code: Some(1),
+                signal: None,
+                stderr_tail: "diagnostic stderr".into(),
+            },
+            SessionBody::SessionParked {
+                reason: ParkReason::AdapterExited,
+            },
+        ];
+        for (i, frame) in frames.iter().enumerate() {
+            w.store.ingest("child", 5 + i as u64, frame).unwrap();
+            if i + 1 == cut {
+                assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+                let CollectorFrame::DelegatedPrompt {
+                    request_id,
+                    turn_id,
+                    content,
+                    ..
+                } = rx.try_recv().unwrap()
+                else {
+                    panic!()
+                };
+                assert!(
+                    content[0]["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains("the adapter exited: diagnostic")
+                );
+                w.store
+                    .ingest(
+                        "parent",
+                        3,
+                        &SessionBody::TurnStarted {
+                            request_id,
+                            turn_id: turn_id.clone(),
+                        },
+                    )
+                    .unwrap();
+                ended(&w, "parent", 4, &turn_id);
+            }
+        }
+        let rows = notices(&w);
+        assert_eq!(rows.len(), 2, "one obsolete question and one loss incident: {rows:?}");
+        assert_eq!(rows[0].1, "obsolete");
+        assert_eq!(rows[1].1, "parent_delivered");
+        assert_eq!(serde_json::from_str::<Vec<i64>>(&rows[1].2).unwrap().len(), 4);
+        assert!(!w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+        assert!(rx.try_recv().is_err());
+        assert_eq!(
+            raw(&w)
+                .query_row(
+                    "SELECT SUM(wakes) FROM delegation_budgets WHERE owner_id=?1",
+                    [w.store.owner_id()],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+    }
+}

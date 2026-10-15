@@ -13,7 +13,8 @@ pub(crate) fn record_in(tx: &Transaction<'_>, owner: &str, event: &EventDto) -> 
         || event.kind == "presumed_parked" && reason == Some("host_revoked")
         || event.kind == "session_parked" && reason == Some("adapter_exited")
         || event.kind == "turn_ended_synthesized"
-        || event.kind == "pending_cancelled"
+        || event.kind == "turn_ended" && event.body["outcome"] == "interrupted"
+        || matches!(event.kind.as_str(), "pending_cancelled" | "pending_resolved")
             && matches!(
                 reason,
                 Some("adapter_lost" | "host_restarted" | "host_revoked" | "session_parked")
@@ -122,28 +123,33 @@ impl crate::store::Store {
         }
         Ok(())
     }
-    /// C1 validates server-written provenance against this durable association.
-    pub(crate) fn verified_child_report_in(
+    /// The destination's origin is written by the internal dispatcher in the
+    /// reservation transaction. Public prompts cannot supply delegated origins,
+    /// and host facts copy this value rather than choosing one. Compare strict
+    /// typed bytes from the surviving turn: deleting a source scrubs its routing
+    /// receipts without invalidating already delivered historical provenance.
+    /// This evidence grants no current family or session-control authority.
+    pub(crate) fn verified_delegated_input_in(
         &self,
         tx: &Transaction<'_>,
         origin: &InputOrigin,
         target: &str,
         turn: &str,
     ) -> Result<bool> {
-        let InputOrigin::ChildReport {
-            child_id,
-            source_event_id,
-            delivery_id,
-        } = origin
-        else {
+        if !matches!(origin, InputOrigin::ChildReport { .. } | InputOrigin::Parent { .. }) {
             return Ok(false);
-        };
-        Ok(tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM delegation_notices WHERE owner_id = ?1 AND delivery_id = ?2
-            AND child_id = ?3 AND parent_id = ?4 AND target_turn = ?5 AND CAST(source_event_id AS TEXT) = ?6)",
-            params![self.owner_id(), delivery_id, child_id, target, turn, source_event_id],
-            |r| r.get(0),
-        )?)
+        }
+        let saved: Option<String> = tx
+            .query_row(
+                "SELECT input_origin FROM turns WHERE owner_id = ?1 AND session_id = ?2 AND turn_id = ?3",
+                params![self.owner_id(), target, turn],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(saved
+            .and_then(|raw| serde_json::from_str::<InputOrigin>(&raw).ok())
+            .as_ref()
+            == Some(origin))
     }
 }
 
@@ -161,10 +167,17 @@ mod tests {
         let mut conn = store.conn();
         let tx = conn.transaction().unwrap();
         tx.execute(
-            "INSERT INTO delegation_notices(owner_id,delivery_id,child_id,parent_id,root_id,hat_id,source_event_id,
-            source_events,kind,incident,accepted_revision,created_at,deadline,required_config,target_turn)
-            VALUES (?1,'delivery','child','parent','parent','hat',7,'[7]','turn_ended','incident',1,1,301,?2,'turn')",
-            params![store.owner_id(), "{}"],
+            "INSERT INTO turns(owner_id,turn_id,session_id,content,created_at,input_origin)
+            VALUES (?1,'turn','parent','[]','test',?2)",
+            params![
+                store.owner_id(),
+                serde_json::to_string(&InputOrigin::ChildReport {
+                    child_id: "child".into(),
+                    source_event_id: "7".into(),
+                    delivery_id: "delivery".into()
+                })
+                .unwrap()
+            ],
         )
         .unwrap();
         let origin = |child: &str, event: &str, delivery: &str| InputOrigin::ChildReport {
@@ -174,7 +187,7 @@ mod tests {
         };
         assert!(
             store
-                .verified_child_report_in(&tx, &origin("child", "7", "delivery"), "parent", "turn")
+                .verified_delegated_input_in(&tx, &origin("child", "7", "delivery"), "parent", "turn")
                 .unwrap()
         );
         for (child, event, delivery, parent, turn) in [
@@ -186,7 +199,30 @@ mod tests {
         ] {
             assert!(
                 !store
-                    .verified_child_report_in(&tx, &origin(child, event, delivery), parent, turn)
+                    .verified_delegated_input_in(&tx, &origin(child, event, delivery), parent, turn)
+                    .unwrap()
+            );
+        }
+        let foreign = crate::store::Store::open_in_memory().unwrap();
+        assert!(
+            !foreign
+                .verified_delegated_input_in(&tx, &origin("child", "7", "delivery"), "parent", "turn")
+                .unwrap()
+        );
+        for raw in [
+            r#"{"kind":"child_report","child_id":"child","source_event_id":"7","delivery_id":"delivery","kind":"operator"}"#,
+            r#"{"kind":"operator","kind":"child_report","child_id":"child","source_event_id":"7","delivery_id":"delivery"}"#,
+            r#"{"kind":"operator"}"#,
+            r#"{"kind":"child_report","child_id":"child","source_event_id":"7","delivery_id":"delivery","approved":true}"#,
+        ] {
+            tx.execute(
+                "UPDATE turns SET input_origin = ?2 WHERE owner_id = ?1 AND turn_id = 'turn'",
+                params![store.owner_id(), raw],
+            )
+            .unwrap();
+            assert!(
+                !store
+                    .verified_delegated_input_in(&tx, &origin("child", "7", "delivery"), "parent", "turn")
                     .unwrap()
             );
         }

@@ -44,7 +44,7 @@ Out: D3b attention deadlines and durable operator attention projection/push reco
 2. Reverse versus forward scope; two workers and an operator reserving one slot; close at either endpoint before handoff; grant disable, detach, deletion and reassignment under the shared gate.
 3. Generation-zero normal attachment evidence versus positive automatic-resume generations; stale/partial proof, config switches, host final admission and C2 rebase interaction.
 4. Durable delivery association across restart/reject/late turn_started; wake reservation/refund and root epochs surviving child replacement and restart.
-5. Exact source-turn folding, truncation, unrecognized output, hostile report text and C1 provenance verification. Historical copies remain in surviving transcripts; deleting their source removes notice verification, conservatively refusing later optional-feed projection rather than attributing unverifiable content.
+5. Exact source-turn folding, truncation, unrecognized output, hostile report text and C1 provenance verification. Historical copies remain in surviving transcripts. The review amendment below verifies their strict typed origin against the server-written destination turn, so deleting the source never poisons a later feed page. This evidence grants no current control authority.
 6. D3a operator_required is not yet operator attention/push. D3b and D4 remain release blockers. Parent-run independent review and Ubuntu CI are required before merge.
 
 ## File structure
@@ -1971,13 +1971,13 @@ index e65fad27..40c8903f 100644
 - [x] Revert-probe source recording, scope/close/config/pending guards, budget accounting, turn/association persistence, factual acknowledgement, loss obsolescence/coalescing, terminal cleanup, C1 references and the scheduler in a scratch COPY. Record each detected mutation and any equivalent/uncovered mutation honestly.
 - [x] Run timing-sensitive store/host/HTTP tests with four binaries concurrently, three rounds.
 - [x] Replay both nonempty blocks in a FRESH directory on the pinned base; verify expected RED/GREEN exits, positive file count and exact final implementation bytes.
-- [ ] Check staged bytes contain no probe mutations, author identity and repository rules; commit and push plan/deleg-d3. Ask the parent for independent security and whole-branch review with the SHA range and races above. The parent opens the PR and reports complete status.
+- [x] Check staged bytes contain no probe mutations, author identity and repository rules; commit and push plan/deleg-d3. Ask the parent for independent security and whole-branch review with the SHA range and races above. The parent opens the PR and reports complete status.
 
 ### Task 2: record execution
 
-- [ ] Add actual command exits, test counts, copy-probe/load and replay evidence below; update docs/README.md. Commit as docs(plan): record D3a delivery execution and push.
+- [x] Add actual command exits, test counts, copy-probe/load and replay evidence below; update docs/README.md. Commit as docs(plan): record D3a delivery execution and push.
 
-The implementation and execution record are preserved in local commits. Push is blocked: `git push origin plan/deleg-d3` exited 128 because the SSH agent refused signing and the remote rejected authentication. No alternative publishing route was attempted; the parent must restore personal SSH authentication before these two tasks can be marked complete.
+The original implementation and execution record were pushed by the parent at 15bd2205, and draft PR #151 was opened. This lane's SSH attempt had exited 128 because the agent refused signing; no alternative publishing route was attempted here. The parent review returned CHANGES, addressed in the amendment below; re-review and complete PR status remain parent-owned.
 
 ## After this plan
 
@@ -2009,7 +2009,7 @@ The actual automatic HTTP/WebSocket/fake-ACP question→parent→MCP answer→ch
 
 All mutations ran only in **probe-copy-1**, restoring each source before the next mutation. The first pass detected 40/44 mutations. Three missed assertions were strengthened (collector withdrawal obsolescence, present-but-partial/stale evidence, and explicit detached-family routing). Nine refinement mutations were then detected, including the combined read-bound mutation and five extra effects: **49 effective detected mutations**. Successful baselines and each expected test failure are in probe-initial-results.json, probe-refinement-results.json and their referenced logs.
 
-The individual source-turn-id removal retains the source-event upper bound, and the individual upper-bound removal retains the source-turn-id filter. Those individual mutations were not detected. Removing both was detected. Equivalence of the individual removals is a **parent review request**, not an approval claimed here. No guard was removed to accommodate a probe.
+The original tests did not detect individual source-turn or upper-bound removals; removing both was detected. **Review correction:** the source-turn predicate is redundant under current ordering, but the upper bound is necessary. The reviewer supplied an out-of-turn question followed by an ordinary operator turn; removing the source-event upper bound loses its question projection. That regression and its isolated mutation probe are included in the amendment below. No guard was removed to accommodate a probe.
 
 The ownership mutation was separately rechecked after the audit's correct nine production-statement minimum was established (the tenth INSERT is a cfg(test) fixture, intentionally excluded by the existing scanner). Exact owner audit command: cargo test -p hennery-testkit --test owner_filter --locked. Positive baseline exit 0 (3 tests), owner predicate removal exit 101 with the specific missing-owner assertion. See owner-recheck.json. Existing source minima and audit rules were unchanged.
 
@@ -2131,8 +2131,655 @@ Scratch directories retained for parent cleanup: baseline-1, probe-copy-1 and re
 
 ### Review and coordination
 
-Independent security and whole-branch review is requested for the final a58479c7..HEAD range, focusing on the six Review Focus items above, synchronous gated reservation as the claim implementation, and read-bound equivalence. C2's minimal shared seam includes the host generation-zero line, the applied SessionStarted seed, and four host_session assertions now requiring exact typed Partial evidence while preserving every unknown-field assertion. C2 must compose startup/prompt reservations with the common owner/config/close fences. Its startup/API/connection/wire implementation was untouched.
+Independent security and whole-branch review is requested for the final a58479c7..HEAD range, focusing on the six Review Focus items above, synchronous gated reservation as the claim implementation, and the corrected source-bound evidence. C2's minimal shared seam includes the host generation-zero line, the applied SessionStarted seed, and four host_session assertions now requiring exact typed Partial evidence while preserving every unknown-field assertion. C2 must compose startup/prompt reservations with the common owner/config/close fences. Its startup/API/connection/wire implementation was untouched.
 
 PR creation, checks, reviewDecision, mergeStateStatus and unresolved review threads (including bots) are parent-owned. This execution record claims no external review or CI result. D3b and D4 remain release blockers.
+
+
+## Review amendment: host loss, retained provenance and source bounds (2026-10-15)
+
+Parent review of draft PR #151 returned CHANGES. D3b is paused at local WIP 0f5bf731; these fixes build on 15bd2205. Two Important findings and one Minor are addressed here; independent re-review remains parent-owned.
+
+### Scope and decisions
+
+- Classify the actual host-produced interrupted ending and adapter-loss pending resolution as the same attach incident as exit/park/collector facts. Keep source references and a bounded failure detail. Delivery between any two frames must not create another parent turn or wake charge.
+- Treat the existing server-written destination turns.input_origin as the durable provenance evidence. Public prompts reject delegated origins; the internal dispatchers write Parent/ChildReport atomically with reservation, and the host cannot choose an origin. Strictly deserialize and compare every field, scoped to owner, destination session and turn. This also fixes the symmetric Parent-origin failure after deleting its parent. No new content, identifiers, table or migration is retained. Existing plan 9 deletion/purge removes the destination turn normally; historical copies in a surviving conversation remain as already documented. Provenance never grants current family or control rights.
+- The reviewer's out-of-turn question regression proves the source-event upper bound is necessary. Only the source-turn predicate remains redundant under current serialization/order.
+
+### Review focus
+
+Examine actual host versus collector loss classification, dispatch interleavings and preserved error detail; strict surviving-turn attestation including duplicate/unknown origin fields, owner/session/turn scope, source deletion and reopen; both origin directions, feed cursors and purge boundaries; and the isolated upper-bound probe.
+
+### Amendment task, step 1: regressions first
+
+Initial runtime RED: actual crash fan-out, between-frame report missing error, deleted-child feed and symmetric deleted-parent feed. The out-of-turn regression passes the correct baseline and must fail its isolated upper-bound mutation in a scratch COPY.
+
+<!-- amend-replay {"checks":[["cargo test -p hennery-sessions --test delegation_d2 --locked reviewer_",101],["cargo test -p hennery-testkit --test plugin_feed --locked reviewer_",101]]} -->
+```diff
+diff --git a/crates/hennery-sessions/tests/delegation_d2.rs b/crates/hennery-sessions/tests/delegation_d2.rs
+index 7d69e2d7..621b03b1 100644
+--- a/crates/hennery-sessions/tests/delegation_d2.rs
++++ b/crates/hennery-sessions/tests/delegation_d2.rs
+@@ -2955,3 +2955,220 @@ fn target_pages_bound_progress_and_wrap_without_foreign_or_settled_rows() {
+     );
+     assert_eq!(w.store.delegation_targets_after("").unwrap(), first);
+ }
++
++#[test]
++fn reviewer_actual_host_crash_has_one_parent_delivery() {
++    let (w, p) = pair();
++    ready(&w);
++    ready_parent(&w);
++    let (h, mut rx) = connected();
++    queue(&w, &p, "crash-work");
++    assert!(w.store.dispatch_delegated("child", &catalog(), &h).unwrap());
++    let (request_id, turn_id) = take_prompt(&mut rx);
++    w.store
++        .ingest(
++            "child",
++            3,
++            &SessionBody::TurnStarted {
++                request_id,
++                turn_id: turn_id.clone(),
++            },
++        )
++        .unwrap();
++    pending(&w, "child", 4, "crash-question", PendingKind::Elicitation);
++    // Exact order emitted by Actor::adapter_exited.
++    w.store
++        .ingest(
++            "child",
++            5,
++            &SessionBody::TurnEnded {
++                turn_id,
++                outcome: TurnOutcome::Interrupted,
++                stop_reason: None,
++                error: Some("the adapter exited".into()),
++            },
++        )
++        .unwrap();
++    w.store
++        .ingest(
++            "child",
++            6,
++            &SessionBody::PendingResolved {
++                pending_id: "crash-question".into(),
++                resolution: PendingResolution::Cancelled,
++                reason: Some(PendingReason::AdapterLost),
++            },
++        )
++        .unwrap();
++    w.store
++        .ingest(
++            "child",
++            7,
++            &SessionBody::AdapterExited {
++                code: Some(1),
++                signal: None,
++                stderr_tail: String::new(),
++            },
++        )
++        .unwrap();
++    w.store
++        .ingest(
++            "child",
++            8,
++            &SessionBody::SessionParked {
++                reason: ParkReason::AdapterExited,
++            },
++        )
++        .unwrap();
++    let mut delivered = 0;
++    while w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap() {
++        let (request_id, turn_id) = take_prompt(&mut rx);
++        w.store
++            .ingest(
++                "parent",
++                3 + delivered * 2,
++                &SessionBody::TurnStarted {
++                    request_id,
++                    turn_id: turn_id.clone(),
++                },
++            )
++            .unwrap();
++        ended(&w, "parent", 4 + delivered * 2, &turn_id);
++        delivered += 1;
++        assert!(delivered < 10);
++    }
++    assert_eq!(
++        delivered,
++        1,
++        "one adapter incident must not cause several parent turns: {:?}",
++        notices(&w)
++    );
++}
++
++#[test]
++fn reviewer_out_of_turn_question_keeps_its_projection_after_later_operator_turn() {
++    let (w, _) = pair();
++    ready_parent(&w);
++    pending(&w, "child", 2, "early-question", PendingKind::Elicitation);
++    // An ordinary operator prompt may start while an out-of-turn callback remains open.
++    assert!(
++        w.store
++            .open_turn("child", "later-operator", &[json!({"type":"text","text":"continue"})])
++            .unwrap()
++    );
++    w.store
++        .ingest(
++            "child",
++            3,
++            &SessionBody::TurnStarted {
++                request_id: "operator-request".into(),
++                turn_id: "later-operator".into(),
++            },
++        )
++        .unwrap();
++    let (h, mut rx) = connected();
++    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
++    let CollectorFrame::DelegatedPrompt { content, .. } = rx.try_recv().unwrap() else {
++        panic!()
++    };
++    let text = content[0]["text"].as_str().unwrap();
++    let metadata: serde_json::Value = serde_json::from_str(text.split_once('\n').unwrap().1).unwrap();
++    assert!(
++        metadata["question"].is_object(),
++        "the queued question must not be lost to a later user_turn: {text}"
++    );
++}
++
++#[test]
++fn reviewer_host_crash_delivered_between_frames_never_wakes_twice_and_keeps_error() {
++    for cut in 1..=4 {
++        let (w, p) = pair();
++        ready(&w);
++        ready_parent(&w);
++        let (hub, mut rx) = connected();
++        queue(&w, &p, "crash-work");
++        assert!(w.store.dispatch_delegated("child", &catalog(), &hub).unwrap());
++        let (request, turn) = take_prompt(&mut rx);
++        w.store
++            .ingest(
++                "child",
++                3,
++                &SessionBody::TurnStarted {
++                    request_id: request,
++                    turn_id: turn.clone(),
++                },
++            )
++            .unwrap();
++        pending(&w, "child", 4, "crash-question", PendingKind::Elicitation);
++        let frames = [
++            SessionBody::TurnEnded {
++                turn_id: turn,
++                outcome: TurnOutcome::Interrupted,
++                stop_reason: None,
++                error: Some("the adapter exited: diagnostic".into()),
++            },
++            SessionBody::PendingResolved {
++                pending_id: "crash-question".into(),
++                resolution: PendingResolution::Cancelled,
++                reason: Some(PendingReason::AdapterLost),
++            },
++            SessionBody::AdapterExited {
++                code: Some(1),
++                signal: None,
++                stderr_tail: "diagnostic stderr".into(),
++            },
++            SessionBody::SessionParked {
++                reason: ParkReason::AdapterExited,
++            },
++        ];
++        for (i, frame) in frames.iter().enumerate() {
++            w.store.ingest("child", 5 + i as u64, frame).unwrap();
++            if i + 1 == cut {
++                assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
++                let CollectorFrame::DelegatedPrompt {
++                    request_id,
++                    turn_id,
++                    content,
++                    ..
++                } = rx.try_recv().unwrap()
++                else {
++                    panic!()
++                };
++                assert!(
++                    content[0]["text"]
++                        .as_str()
++                        .unwrap()
++                        .contains("the adapter exited: diagnostic")
++                );
++                w.store
++                    .ingest(
++                        "parent",
++                        3,
++                        &SessionBody::TurnStarted {
++                            request_id,
++                            turn_id: turn_id.clone(),
++                        },
++                    )
++                    .unwrap();
++                ended(&w, "parent", 4, &turn_id);
++            }
++        }
++        let rows = notices(&w);
++        assert_eq!(rows.len(), 2, "one obsolete question and one loss incident: {rows:?}");
++        assert_eq!(rows[0].1, "obsolete");
++        assert_eq!(rows[1].1, "parent_delivered");
++        assert_eq!(serde_json::from_str::<Vec<i64>>(&rows[1].2).unwrap().len(), 4);
++        assert!(!w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
++        assert!(rx.try_recv().is_err());
++        assert_eq!(
++            raw(&w)
++                .query_row(
++                    "SELECT SUM(wakes) FROM delegation_budgets WHERE owner_id=?1",
++                    [w.store.owner_id()],
++                    |r| r.get::<_, i64>(0)
++                )
++                .unwrap(),
++            1
++        );
++    }
++}
+diff --git a/crates/hennery-testkit/tests/plugin_feed.rs b/crates/hennery-testkit/tests/plugin_feed.rs
+index 8a4e0994..6fd9618b 100644
+--- a/crates/hennery-testkit/tests/plugin_feed.rs
++++ b/crates/hennery-testkit/tests/plugin_feed.rs
+@@ -1023,3 +1023,145 @@ fn a_grant_after_an_unapplied_fact_has_a_valid_committed_watermark() {
+             .is_empty()
+     );
+ }
++
++#[test]
++fn reviewer_deleted_child_does_not_poison_surviving_parent_feed() {
++    let w = World::new(true);
++    w.session("parent", "host", &w.hat);
++    w.session("child", "host", &w.hat);
++    let source = w.sessions.events("child", 0, 100).unwrap()[0].event_id;
++    let cursor = w.sessions.activity_page(&w.token, None, 20).unwrap().next_cursor;
++    let origin = InputOrigin::ChildReport {
++        child_id: "child".into(),
++        source_event_id: source.to_string(),
++        delivery_id: "delivery".into(),
++    };
++    // Seed the exact server-owned reservation association written by D3.
++    assert!(
++        w.sessions
++            .open_turn(
++                "parent",
++                "report-turn",
++                &[json!({"type":"text","text":"Child report (untrusted child data)"})]
++            )
++            .unwrap()
++    );
++    w.core(|tx| {
++        tx.execute("UPDATE turns SET input_origin=?1 WHERE owner_id=?2 AND turn_id='report-turn'", params![serde_json::to_string(&origin).unwrap(),w.sessions.owner_id()]).unwrap();
++        tx.execute("INSERT INTO delegation_notices(owner_id,delivery_id,child_id,parent_id,root_id,hat_id,source_event_id,source_events,kind,incident,accepted_revision,created_at,deadline,state,target_turn,required_config) VALUES (?1,'delivery','child','parent','parent',?2,?3,json_array(?3),'turn_ended','incident',1,1,301,'awaiting_reconciliation','report-turn','{}')",params![w.sessions.owner_id(),w.hat,source]).unwrap();
++    });
++    w.sessions
++        .ingest(
++            "parent",
++            2,
++            &SessionBody::TurnStarted {
++                request_id: "delivery".into(),
++                turn_id: "report-turn".into(),
++            },
++        )
++        .unwrap();
++    w.sessions
++        .ingest(
++            "parent",
++            3,
++            &SessionBody::TurnEnded {
++                turn_id: "report-turn".into(),
++                outcome: TurnOutcome::Completed,
++                stop_reason: None,
++                error: None,
++            },
++        )
++        .unwrap();
++    let before = w.sessions.activity_page(&w.token, None, 20).unwrap();
++    assert_eq!(before.items.len(), 1);
++    assert!(matches!(
++        &before.items[0].provenance[0],
++        Provenance::Source {
++            origin: InputOrigin::ChildReport { .. },
++            ..
++        }
++    ));
++    w.sessions.close_now("child").unwrap();
++    w.sessions.delete_session("child", None).unwrap();
++    w.session("unrelated", "host", &w.hat);
++    w.turn("unrelated", "new-turn", 2, TurnOutcome::Completed);
++    let after = w.sessions.activity_page(&w.token, None, 20);
++    let after = after.expect("deleting the child must not stop the parent and unrelated activity");
++    assert!(after.items.iter().any(|item| item.provenance.iter().any(|p| matches!(
++        p,
++        Provenance::Source {
++            origin: InputOrigin::ChildReport { .. },
++            ..
++        }
++    ))));
++    let reopened = Store::open(&w.path).unwrap();
++    let mut next = cursor;
++    let mut saw_unrelated = false;
++    for _ in 0..4 {
++        let page = reopened.activity_page(&w.token, Some(&next), 1).unwrap();
++        assert_ne!(page.next_cursor, next, "the feed must advance past retained provenance");
++        saw_unrelated |= serde_json::to_string(&page).unwrap().contains("new-turn");
++        next = page.next_cursor;
++        if !page.has_more {
++            break;
++        }
++    }
++    assert!(saw_unrelated);
++}
++
++#[test]
++fn reviewer_deleted_parent_does_not_poison_surviving_child_feed() {
++    let w = World::new(true);
++    w.session("parent", "host", &w.hat);
++    w.session("child", "host", &w.hat);
++    let origin = InputOrigin::Parent {
++        session_id: "parent".into(),
++        operation_id: "operation".into(),
++    };
++    assert!(
++        w.sessions
++            .open_turn(
++                "child",
++                "child-turn",
++                &[json!({"type":"text","text":"untrusted parent copy"})]
++            )
++            .unwrap()
++    );
++    w.core(|tx|{
++        tx.execute("UPDATE turns SET input_origin=?1 WHERE owner_id=?2 AND turn_id='child-turn'",params![serde_json::to_string(&origin).unwrap(),w.sessions.owner_id()]).unwrap();
++        tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,turn_id) VALUES (?1,'parent','key','operation','digest','session_send','child','awaiting_reconciliation','child-turn')",[w.sessions.owner_id()]).unwrap();
++    });
++    w.sessions
++        .ingest(
++            "child",
++            2,
++            &SessionBody::TurnStarted {
++                request_id: "operation".into(),
++                turn_id: "child-turn".into(),
++            },
++        )
++        .unwrap();
++    w.sessions
++        .ingest(
++            "child",
++            3,
++            &SessionBody::TurnEnded {
++                turn_id: "child-turn".into(),
++                outcome: TurnOutcome::Completed,
++                stop_reason: None,
++                error: None,
++            },
++        )
++        .unwrap();
++    assert!(w.sessions.activity_page(&w.token, None, 20).is_ok());
++    w.sessions.close_now("parent").unwrap();
++    w.sessions.delete_session("parent", None).unwrap();
++    let page = Store::open(&w.path).unwrap().activity_page(&w.token, None, 20).unwrap();
++    assert!(page.items.iter().any(|item| item.provenance.iter().any(|p| matches!(
++        p,
++        Provenance::Source {
++            origin: InputOrigin::Parent { .. },
++            ..
++        }
++    ))));
++}
+```
+
+### Amendment task, step 2: implement retained attestation and host coalescing
+
+<!-- amend-replay {"checks":[["cargo test -p hennery-sessions --lib --test delegation_d2 --locked",0],["cargo test -p hennery-testkit --test plugin_feed --test owner_filter --locked",0]]} -->
+```diff
+diff --git a/crates/hennery-sessions/src/delegation_delivery.rs b/crates/hennery-sessions/src/delegation_delivery.rs
+index c57bf6e6..1d11c5e5 100644
+--- a/crates/hennery-sessions/src/delegation_delivery.rs
++++ b/crates/hennery-sessions/src/delegation_delivery.rs
+@@ -13,7 +13,8 @@ pub(crate) fn record_in(tx: &Transaction<'_>, owner: &str, event: &EventDto) ->
+         || event.kind == "presumed_parked" && reason == Some("host_revoked")
+         || event.kind == "session_parked" && reason == Some("adapter_exited")
+         || event.kind == "turn_ended_synthesized"
+-        || event.kind == "pending_cancelled"
++        || event.kind == "turn_ended" && event.body["outcome"] == "interrupted"
++        || matches!(event.kind.as_str(), "pending_cancelled" | "pending_resolved")
+             && matches!(
+                 reason,
+                 Some("adapter_lost" | "host_restarted" | "host_revoked" | "session_parked")
+@@ -122,28 +123,33 @@ impl crate::store::Store {
+         }
+         Ok(())
+     }
+-    /// C1 validates server-written provenance against this durable association.
+-    pub(crate) fn verified_child_report_in(
++    /// The destination's origin is written by the internal dispatcher in the
++    /// reservation transaction. Public prompts cannot supply delegated origins,
++    /// and host facts copy this value rather than choosing one. Compare strict
++    /// typed bytes from the surviving turn: deleting a source scrubs its routing
++    /// receipts without invalidating already delivered historical provenance.
++    /// This evidence grants no current family or session-control authority.
++    pub(crate) fn verified_delegated_input_in(
+         &self,
+         tx: &Transaction<'_>,
+         origin: &InputOrigin,
+         target: &str,
+         turn: &str,
+     ) -> Result<bool> {
+-        let InputOrigin::ChildReport {
+-            child_id,
+-            source_event_id,
+-            delivery_id,
+-        } = origin
+-        else {
++        if !matches!(origin, InputOrigin::ChildReport { .. } | InputOrigin::Parent { .. }) {
+             return Ok(false);
+-        };
+-        Ok(tx.query_row(
+-            "SELECT EXISTS(SELECT 1 FROM delegation_notices WHERE owner_id = ?1 AND delivery_id = ?2
+-            AND child_id = ?3 AND parent_id = ?4 AND target_turn = ?5 AND CAST(source_event_id AS TEXT) = ?6)",
+-            params![self.owner_id(), delivery_id, child_id, target, turn, source_event_id],
+-            |r| r.get(0),
+-        )?)
++        }
++        let saved: Option<String> = tx
++            .query_row(
++                "SELECT input_origin FROM turns WHERE owner_id = ?1 AND session_id = ?2 AND turn_id = ?3",
++                params![self.owner_id(), target, turn],
++                |r| r.get(0),
++            )
++            .optional()?;
++        Ok(saved
++            .and_then(|raw| serde_json::from_str::<InputOrigin>(&raw).ok())
++            .as_ref()
++            == Some(origin))
+     }
+ }
+ 
+@@ -161,10 +167,17 @@ mod tests {
+         let mut conn = store.conn();
+         let tx = conn.transaction().unwrap();
+         tx.execute(
+-            "INSERT INTO delegation_notices(owner_id,delivery_id,child_id,parent_id,root_id,hat_id,source_event_id,
+-            source_events,kind,incident,accepted_revision,created_at,deadline,required_config,target_turn)
+-            VALUES (?1,'delivery','child','parent','parent','hat',7,'[7]','turn_ended','incident',1,1,301,?2,'turn')",
+-            params![store.owner_id(), "{}"],
++            "INSERT INTO turns(owner_id,turn_id,session_id,content,created_at,input_origin)
++            VALUES (?1,'turn','parent','[]','test',?2)",
++            params![
++                store.owner_id(),
++                serde_json::to_string(&InputOrigin::ChildReport {
++                    child_id: "child".into(),
++                    source_event_id: "7".into(),
++                    delivery_id: "delivery".into()
++                })
++                .unwrap()
++            ],
+         )
+         .unwrap();
+         let origin = |child: &str, event: &str, delivery: &str| InputOrigin::ChildReport {
+@@ -174,7 +187,7 @@ mod tests {
+         };
+         assert!(
+             store
+-                .verified_child_report_in(&tx, &origin("child", "7", "delivery"), "parent", "turn")
++                .verified_delegated_input_in(&tx, &origin("child", "7", "delivery"), "parent", "turn")
+                 .unwrap()
+         );
+         for (child, event, delivery, parent, turn) in [
+@@ -186,7 +199,30 @@ mod tests {
+         ] {
+             assert!(
+                 !store
+-                    .verified_child_report_in(&tx, &origin(child, event, delivery), parent, turn)
++                    .verified_delegated_input_in(&tx, &origin(child, event, delivery), parent, turn)
++                    .unwrap()
++            );
++        }
++        let foreign = crate::store::Store::open_in_memory().unwrap();
++        assert!(
++            !foreign
++                .verified_delegated_input_in(&tx, &origin("child", "7", "delivery"), "parent", "turn")
++                .unwrap()
++        );
++        for raw in [
++            r#"{"kind":"child_report","child_id":"child","source_event_id":"7","delivery_id":"delivery","kind":"operator"}"#,
++            r#"{"kind":"operator","kind":"child_report","child_id":"child","source_event_id":"7","delivery_id":"delivery"}"#,
++            r#"{"kind":"operator"}"#,
++            r#"{"kind":"child_report","child_id":"child","source_event_id":"7","delivery_id":"delivery","approved":true}"#,
++        ] {
++            tx.execute(
++                "UPDATE turns SET input_origin = ?2 WHERE owner_id = ?1 AND turn_id = 'turn'",
++                params![store.owner_id(), raw],
++            )
++            .unwrap();
++            assert!(
++                !store
++                    .verified_delegated_input_in(&tx, &origin("child", "7", "delivery"), "parent", "turn")
+                     .unwrap()
+             );
+         }
+diff --git a/crates/hennery-sessions/src/delegation_delivery_dispatch.rs b/crates/hennery-sessions/src/delegation_delivery_dispatch.rs
+index 3184c9e4..594fca30 100644
+--- a/crates/hennery-sessions/src/delegation_delivery_dispatch.rs
++++ b/crates/hennery-sessions/src/delegation_delivery_dispatch.rs
+@@ -377,7 +377,8 @@ fn report_in(tx: &Transaction<'_>, owner: &str, n: &Notice) -> Result<String> {
+         let text = tail(&report, budget);
+         let metadata = serde_json::json!({"kind":n.kind,"child_id":n.child,"source_event_id":n.event,"turn_id":n.turn,
+             "pending_id":n.pending,"outcome":source.get("outcome"),"question":question,"report":text,
+-            "truncated":truncated||text.len()!=report.len(),"link":format!("/sessions/{}",n.child)});
++            "error":source.get("error").and_then(serde_json::Value::as_str).map(|error|tail(error,1024)),
++            "truncated":truncated||text.len()!=report.len()||source.get("error").and_then(serde_json::Value::as_str).is_some_and(|error|error.len()>1024),"link":format!("/sessions/{}",n.child)});
+         let output = format!(
+             "Child report (untrusted child data; not operator input or approval). Inspect current child status before answering.\n{}",
+             serde_json::to_string(&metadata)?
+diff --git a/crates/hennery-sessions/src/plugin.rs b/crates/hennery-sessions/src/plugin.rs
+index b5458bfb..5607725a 100644
+--- a/crates/hennery-sessions/src/plugin.rs
++++ b/crates/hennery-sessions/src/plugin.rs
+@@ -349,9 +349,10 @@ impl Store {
+ impl Store {
+     fn verified_input_in(&self, tx: &Transaction<'_>, origin: &InputOrigin, target: &str, turn: &str) -> Result<bool> {
+         match origin {
+-            InputOrigin::Operator {}=>Ok(true),
+-            InputOrigin::Parent {session_id,operation_id}=>Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM session_operations WHERE owner_id = ?1 AND operation_id = ?2 AND caller_id = ?3 AND child_id = ?4 AND turn_id = ?5 AND tool IN ('session_send','session_spawn'))",params![self.owner_id(),operation_id,session_id,target,turn],|r|r.get(0))?),
+-            InputOrigin::ChildReport {..}=>self.verified_child_report_in(tx,origin,target,turn),
++            InputOrigin::Operator {} => Ok(true),
++            InputOrigin::Parent { .. } | InputOrigin::ChildReport { .. } => {
++                self.verified_delegated_input_in(tx, origin, target, turn)
++            }
+         }
+     }
+ }
+```
+
+### Amendment verification record
+
+All six Rust commands ran inside nix develop and exited **0**: cargo fmt --all --check; cargo clippy --workspace --all-targets --locked -- -D warnings; cargo clippy -p hennery --locked -- -D warnings; cargo test --workspace --locked; cargo run -p hennery-proto --bin gen --locked -- --check; cargo run -p hennery-view --bin gen-view --locked -- --check. Logs: /tmp/deleg-d3-amend-complete-{fmt,clippy,binary-clippy,tests,proto,view}.log. The final strict-origin fixture was also checked by /tmp/deleg-d3-amend-final-{fmt,clippy}.log.
+
+Full count: **2369 passed across 155 suites**, versus **2,364** before this amendment: **five new regression tests**. Targeted suites passed: sessions library 66, delegation_d2 98, plugin_feed 23, owner_filter 3. No ownership rule, statement minimum, type or assertion was weakened. The provenance unit fixture now represents the production server-written destination reservation and verifies all references, foreign owner/session/turn and malformed/duplicate/unknown raw origin fields.
+
+Final nix flake check -L exited **0** (/tmp/deleg-d3-amend-flake-final.log), including native package, clippy, audit, rustfmt and embedded UI checks. Incompatible Linux systems were explicitly omitted; Linux/macOS CI and complete PR status remain parent-owned. Web files are untouched.
+
+**RED:** the actual host sequence and between-frame diagnostic tests failed before the fix; both deletion-direction feed tests failed with unsupported input origin. Fresh replay independently reproduced these failures. The new out-of-turn question test passes the correct baseline and fails when only the source-event upper bound is removed.
+
+**COPY probes:** 12 detected mutations, each with a successful exact-command baseline. Mutations ran only in amendment/probe-copy-1 and each source was restored. Requiring the deleted source notice again fails the child-deletion feed test specifically. Source-turn predicate removal alone passed all 98 delegation tests; the isolated upper-bound removal failed its regression. The earlier equivalence candidate for the upper bound is withdrawn. Details: probe-results.json, post-probes.json and their referenced logs.
+
+| Mutation | Detected exit | Test command |
+|---|---:|---|
+| host-interrupted-loss | 101 | cargo test -p hennery-sessions --test delegation_d2 --locked reviewer_actual_host_crash |
+| host-pending-loss | 101 | cargo test -p hennery-sessions --test delegation_d2 --locked reviewer_actual_host_crash |
+| delivered-incident-not-requeued | 101 | cargo test -p hennery-sessions --test delegation_d2 --locked reviewer_host_crash_delivered |
+| bounded-failure-detail | 101 | cargo test -p hennery-sessions --test delegation_d2 --locked reviewer_host_crash_delivered |
+| source-event-upper-bound | 101 | cargo test -p hennery-sessions --test delegation_d2 --locked reviewer_out_of_turn_question |
+| origin-owner | 101 | cargo test -p hennery-sessions --lib --locked child_report_provenance |
+| origin-destination | 101 | cargo test -p hennery-sessions --lib --locked child_report_provenance |
+| origin-turn | 101 | cargo test -p hennery-sessions --lib --locked child_report_provenance |
+| origin-strict-decoding | 101 | cargo test -p hennery-sessions --lib --locked child_report_provenance |
+| origin-all-fields | 101 | cargo test -p hennery-sessions --lib --locked child_report_provenance |
+| feed-retained-origin | 101 | cargo test -p hennery-testkit --test plugin_feed --locked reviewer_ |
+| deleted-notice-required-again | 101 | cargo test -p hennery-testkit --test plugin_feed --locked reviewer_deleted_child |
+
+**Load:** four binaries concurrently, three rounds per regression group: 24 binaries, 60 passed test executions, all exit **0**. Store cases exercise the actual host sequence and delivery after each of its four frames; feed cases exercise deletion/reopen/cursor safety in both directions. Evidence: load-results.json and individual logs.
+
+**Fresh amendment replay:** archived base **15bd2205**, two nonempty blocks, **5 files extracted**, expected exits **101, 101, 0, 0**. Compared **781 tracked files byte-for-byte**, excluding only this plan and the README execution index: exact. Evidence: replay-result.json and replay-1-*.log. Scratch amendment/replay-1 and amendment/probe-copy-1 remain for parent cleanup; no scratch tree was deleted and no mutation ran in the worktree.
+
+The exact executed amendment replay harness follows (the scratch registry is copied from the lane tool cache). Its invocation was nix develop -c node .superpowers/sdd/deleg-d3/amendment/replay.mjs replay-1, always in a fresh directory.
+
+```javascript
+import fs from 'node:fs';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+const root=process.cwd();
+const ledger=path.join(root,'.superpowers/sdd/deleg-d3/amendment');
+const destination=path.join(ledger,process.argv[2]??'replay-1');
+if(fs.existsSync(destination))throw Error('fresh directory required');
+fs.mkdirSync(destination,{recursive:true});
+const run=(args,cwd=destination,options={})=>{
+  const result=spawnSync(args[0],args.slice(1),{cwd,encoding:'utf8',maxBuffer:16*1024*1024,...options});
+  if(result.status!==0)throw Error(`${args[0]} exited ${result.status}: ${result.stderr}`);
+  return result.stdout;
+};
+const archive=spawnSync('git',['archive','15bd2205'],{cwd:root,maxBuffer:32*1024*1024});
+if(archive.status!==0)throw Error('archive failed');
+run(['tar','-x'],destination,{input:archive.stdout});
+run(['git','init','-q']);run(['git','add','--force','.']);
+run(['git','-c','user.name=Marcin Wadoń','-c','user.email=marcin.wadon@gmail.com','-c','commit.gpgsign=false','commit','-qm','test(delegation): pin D3 replay base']);
+const home=path.join(destination,'.superpowers/tool-home');fs.mkdirSync(path.join(home,'cargo'),{recursive:true});
+fs.cpSync(path.join(root,'.superpowers/sdd/deleg-d3/tool-home/cargo/registry'),path.join(home,'cargo/registry'),{recursive:true,mode:fs.constants.COPYFILE_FICLONE});
+const source=fs.readFileSync(path.join(root,'docs/plans/2026-10-31-delegation-delivery.md'),'utf8');
+const blocks=[...source.matchAll(/<!-- amend-replay (.+?) -->\n```diff\n([\s\S]*?)\n```/g)];
+if(blocks.length!==2)throw Error(`expected 2 blocks, found ${blocks.length}`);
+const files=new Set();const checks=[];
+for(const [index,block]of blocks.entries()) {
+  const meta=JSON.parse(block[1]);const patch=block[2]+'\n';
+  for(const match of patch.matchAll(/^diff --git a\/(.+) b\/(.+)$/gm)){if(match[1]!==match[2])throw Error('rename unsupported');files.add(match[2]);}
+  run(['git','apply','--index','-'],destination,{input:patch});
+  for(const [command,expected]of meta.checks) {
+    const log=path.join(ledger,`${path.basename(destination)}-${index}-${checks.length}.log`);
+    const fd=fs.openSync(log,'w');
+    const result=spawnSync('nix',['develop','-c','bash','-c',command],{cwd:destination,env:{...process.env,HOME:home,CARGO_HOME:path.join(home,'cargo'),XDG_CONFIG_HOME:path.join(home,'config'),XDG_DATA_HOME:path.join(home,'data'),XDG_CACHE_HOME:path.join(home,'cache')},stdio:['ignore',fd,fd]});
+    fs.closeSync(fd);fs.appendFileSync(log,`\nEXIT=${result.status}\n`);
+    checks.push({command,expected,exit:result.status,log});
+    fs.writeFileSync(path.join(ledger,'replay-progress.json'),JSON.stringify({destination,files:files.size,checks},null,2));
+    if(result.status!==expected)throw Error(`${command}: ${result.status}, expected ${expected}; ${log}`);
+  }
+}
+if(files.size===0)throw Error('zero extracted files');
+const excluded=new Set(['docs/plans/2026-10-31-delegation-delivery.md','docs/README.md']);
+const inventory=cwd=>run(['git','ls-files','-z'],cwd).split('\0').filter(f=>f&&!excluded.has(f)).sort();
+const actual=inventory(root),replayed=inventory(destination);
+if(JSON.stringify(actual)!==JSON.stringify(replayed))throw Error('complete tracked inventory mismatch');
+for(const file of actual){if(!fs.readFileSync(path.join(destination,file)).equals(fs.readFileSync(path.join(root,file))))throw Error(`tree mismatch: ${file}`);}
+const summary={destination,blocks:blocks.length,files:files.size,compared:actual.length,checks,exact:true};
+fs.writeFileSync(path.join(ledger,'replay-result.json'),JSON.stringify(summary,null,2));
+process.stdout.write(JSON.stringify(summary,null,2)+'\n');
+```
+
+Re-review requested for **15bd2205..HEAD**, including the symmetric Parent-origin fix. Check that retained turn provenance confers no current authority, purge removes destination history normally, host and collector facts form one loss incident, late facts cannot requeue it, and the upper bound protects an earlier out-of-turn question. The parent owns pushing if SSH refuses, PR #151 checks, reviewDecision, mergeStateStatus and unresolved review threads, bots included. D3b resumes after rebasing onto this amendment; D3b/D4 still block ordinary release.
 
 Generated with Claude AI — please review before distribution.
