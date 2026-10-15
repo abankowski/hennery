@@ -205,3 +205,62 @@ fn same_wire_bytes_are_filtered_once_before_typed_dispatch() {
         );
     }
 }
+
+#[test]
+fn every_text_config_axis_and_pagination_bound_has_an_edge_case() {
+    for (field, max) in [("cwd", 4096), ("brief", 65536), ("name", 256), ("agent", 128)] {
+        let mut args = spawn();
+        args[field] = json!("x".repeat(max));
+        assert!(decode_tool("session_spawn", &args).is_ok(), "{field} at limit");
+        for bad in [String::new(), "x".repeat(max + 1)] {
+            args[field] = json!(bad);
+            assert!(decode_tool("session_spawn", &args).is_err(), "{field}: {}", bad.len());
+        }
+    }
+    for field in ["model", "mode"] {
+        let mut args = spawn();
+        args["config"][field] = json!("x".repeat(512));
+        assert!(decode_tool("session_spawn", &args).is_ok());
+        args["config"][field] = json!("x".repeat(513));
+        assert!(decode_tool("session_spawn", &args).is_err());
+    }
+    for (count, allowed) in [(64, true), (65, false)] {
+        let mut args = spawn();
+        args["config"]["axes"] = Value::Object((0..count).map(|i| (format!("axis{i}"), json!(true))).collect());
+        assert_eq!(decode_tool("session_spawn", &args).is_ok(), allowed);
+    }
+    for (key, value) in [
+        ("".into(), json!(true)),
+        ("x".repeat(513), json!(true)),
+        ("x".into(), json!("")),
+        ("x".into(), json!("x".repeat(513))),
+    ] {
+        let mut args = spawn();
+        args["config"]["axes"] = json!({ key: value });
+        assert!(decode_tool("session_spawn", &args).is_err());
+    }
+    assert!(decode_tool("session_capabilities", &json!({"agent":"x".repeat(129)})).is_err());
+    assert!(decode_tool("session_capabilities", &json!({"cwd":"x".repeat(4097)})).is_err());
+    for field in ["operation_key", "child_id", "text"] {
+        let mut args = json!({"operation_key":"k", "child_id":"c", "text":"go"});
+        args[field] = json!("x".repeat(if field == "text" { 65537 } else { 129 }));
+        assert!(decode_tool("session_send", &args).is_err(), "{field}");
+    }
+    for field in ["pending_id", "child_id", "content"] {
+        let mut args = json!({"operation_key":"k", "child_id":"c", "pending_id":"p", "action":"accept", "content":{}});
+        args[field] = if field == "content" {
+            json!({"value":"x".repeat(65536)})
+        } else {
+            json!("x".repeat(129))
+        };
+        assert!(decode_tool("session_answer", &args).is_err(), "{field}");
+    }
+    assert!(decode_tool("session_list", &json!({"cursor":"x".repeat(129)})).is_err());
+    assert!(
+        decode_tool(
+            "session_status",
+            &json!({"child_id":"c", "operation_key":"x".repeat(129)})
+        )
+        .is_err()
+    );
+}
