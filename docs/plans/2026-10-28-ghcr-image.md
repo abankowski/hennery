@@ -34,7 +34,7 @@ plan 3c. The fleet parent assigned this future-dated plan path on 2026-10-15.
 
 ## Execution status (2026-10-15)
 
-**Built and integrated with merged R1; scoped integration review and native CI
+**Review amendments 1–3 implemented; R3 integration (finding 4) deferred by parent. Scoped review and native CI
 remain parent-owned. Nothing published or enabled.** Rebased `plan/dist-r4`
 onto `origin/main` at `191aa71b` with signing disabled. Conflicts preserved both
 release/image shells, R1's hardware-root/bootstrap/package policy, collector
@@ -54,8 +54,8 @@ remain refused by R1's common verifier.
 The provisional adapter, approval-ID environment protocol and orphan reusable
 candidate/publisher workflows are removed. `packaging/release-gate ghcr` is the
 only live authority. `ghcr` and `ghcr-attest` use environment **`release`**, direct
-`needs: authorize` and R1's exact current inventory/attempt condition. All registry
-writes, including attestation pushes, use **`secrets.GHCR_PUBLISH_TOKEN`**, held
+`needs: authorize` and R1's exact current inventory/attempt condition. Only the publishing job performs registry
+writes, including attestation pushes, using **`secrets.GHCR_PUBLISH_TOKEN`**, held
 only in that environment, with `vars.GHCR_PUBLISH_USER`. The ordinary job token
 requests package READ; the package's actual Actions access must separately be
 READ. No administration credential is given to publishers. Both release switches
@@ -68,7 +68,7 @@ allows only the verified working layout. Materialization is outside the held
 candidate; ambiguous/link/duplicate archive paths, working-file/metadata changes
 and changed source/version/descriptors refuse. Unique matrix receipt names avoid
 held-audit collisions. Signing jobs verify every provenance and image/binary SPDX
-bundle with the common hardware-plus-exact-tag verifier and hold those bundles.
+bundle before registry publication with the common hardware-plus-exact-tag verifier and hold those bundles.
 
 Current RED evidence: 10 new integration tests produced **11 assertion failures**
 against the previous implementation, including both rejected approved platform
@@ -957,6 +957,7 @@ COPY --chmod=0444 dist/linux-${TARGETARCH}/binary.spdx.json /usr/share/doc/henne
             pkgs.git
             pkgs.gnupg
             pkgs.jq
+            pkgs.oras
           ];
         };
         # R4's non-publishing OCI/registry contract tests. Uses the same pinned
@@ -1593,6 +1594,9 @@ class ReleaseFixture(CandidateFixtures):
         self.root = base
 
     def freeze(self):
+        (self.candidate / 'sha256.sum').write_text(''.join(
+            gate.digest(p.read_bytes()) + '  ' + p.name + '\n'
+            for p in sorted(self.candidate.iterdir()) if p.name not in ('sha256.sum', 'release-inventory.json')))
         self.inventory = {
             'schema': 1, 'repository': gate.REPOSITORY, 'source_sha': self.revision,
             'tag': 'v' + self.version, 'channels': ['ghcr', 'github'],
@@ -1850,8 +1854,9 @@ class Orchestrator(unittest.TestCase):
             job = workflow['jobs'][name]
             self.assertEqual(job['environment'], 'release')
             self.assertEqual(job['permissions'].get('packages'), 'read')
-            login = next(s for s in job['steps'] if 'docker login' in s.get('run', ''))
-            self.assertEqual(login['env']['GHCR_TOKEN'], '${{ secrets.GHCR_PUBLISH_TOKEN }}')
+            logins = [s for s in job['steps'] if 'docker login' in s.get('run', '')]
+            self.assertEqual(len(logins), 1 if name == 'ghcr' else 0)
+            if logins: self.assertEqual(logins[0]['env']['GHCR_TOKEN'], '${{ secrets.GHCR_PUBLISH_TOKEN }}')
 
     def test_github_only_candidates_have_no_skipped_optional_channel_job(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
@@ -2774,7 +2779,7 @@ class Gates(ReleaseFixture, unittest.TestCase):
         super().setUp()
         self.repo = self.root
         (self.repo / 'packaging').mkdir()
-        for name in ['ghcr-gate.sh', 'ghcr-publish.sh', 'image.py', 'ghcr-remote.py', 'ghcr-candidate.py']:
+        for name in ['ghcr-gate.sh', 'ghcr-publish.sh', 'image.py', 'ghcr-remote.py', 'ghcr-candidate.py', 'ghcr-verify.py']:
             shutil.copyfile(PACKAGING / name, self.repo / 'packaging' / name)
         shutil.copytree(PACKAGING / 'release', self.repo / 'packaging/release',
                         ignore=shutil.ignore_patterns('__pycache__'))
@@ -2782,6 +2787,13 @@ class Gates(ReleaseFixture, unittest.TestCase):
         with patch.object(approval.subprocess, 'run', side_effect=self.crypto):
             report = helper.qualify(self.candidate, self.inventory_digest, self.work, self.inputs)
         candidate, digest = self.work, report['digest']
+        signatures = self.repo / 'signatures'; signatures.mkdir()
+        (signatures / 'release-inventory.json.asc').write_text(self.signature)
+        (signatures / 'release.sigstore.jsonl').write_text('{}')
+        bundles = self.repo / 'attestation-bundles'; bundles.mkdir()
+        for subject in ['amd64', 'arm64', 'index']:
+            for kind in (['provenance'] if subject == 'index' else ['provenance', 'image-sbom', 'binary-sbom']):
+                (bundles / ('ghcr-' + subject + '-' + kind + '.json')).write_text('{}')
         self.adapter = self.repo / 'packaging/release-gate'
         self.adapter.write_text('#!' + sys.executable + '''
 import os, pathlib, sys
@@ -2851,7 +2863,7 @@ if sys.argv[1] == 'packaging/ghcr-remote.py':
                 log.write('inspect\\n')
             if os.environ.get('REVOKE_AFTER_INSPECT') == '1':
                 Path(os.environ['GATE_REVOKED_MARKER']).write_text('review revoked')
-            remote = Path(os.environ['REMOTE'])
+            remote = Path(os.environ['DIGEST_REMOTE'] if '/manifests/sha256:' in request.full_url else os.environ['REMOTE'])
             if remote.exists():
                 return Response(remote.read_bytes())
             status = int(os.environ.get('REMOTE_STATUS', '404'))
@@ -2867,6 +2879,10 @@ else:
     os.execv(''' + repr(sys.executable) + ''', [''' + repr(sys.executable) + ''', *sys.argv[1:]])
 ''')
         python.chmod(0o755)
+        gh = fakebin / 'gh'
+        gh.write_text('#!/bin/sh\necho "$@" >> "$SIGSTORE_CALLS"\n'
+                      '[ ! -f "$GATE_REVOKED_MARKER.sigstore" ] || exit 97\nexit "${SIGSTORE_EXIT:-0}"\n')
+        gh.chmod(0o755)
         gpg = fakebin / 'gpg'
         gpg.write_text('#!' + sys.executable + '''
 import hashlib, os, pathlib, sys
@@ -2889,14 +2905,21 @@ if [ "$1" = inspect ]; then
     if [ "${REMOTE_ERROR:-missing}" = missing ]; then echo 'manifest unknown' >&2; else echo "$REMOTE_ERROR" >&2; fi
     exit 1
 fi
-if [ "$1" = copy ]; then cp "$CORRECT_REMOTE" "$REMOTE"; exit "${COPY_EXIT:-0}"; fi
+if [ "$1" = copy ]; then
+    for arg do destination=$arg; done
+    printf '%s' "$destination" > "$DIGEST_REMOTE.destination"
+    cp "$CORRECT_REMOTE" "$DIGEST_REMOTE"
+    if [ "${VERSION_DURING_COPY:-0}" = 1 ]; then printf concurrent-version > "$REMOTE"; fi
+    exit "${COPY_EXIT:-0}"
+fi
 exit 90
 ''')
         skopeo.chmod(0o755)
         correct = self.repo / 'correct-remote.json'
         correct.write_bytes((candidate / 'layout/blobs/sha256' / digest[7:]).read_bytes())
         self.env.update(TRANSPORT_CALLS=str(self.repo / 'transport.log'),
-                        REMOTE=str(self.repo / 'remote.json'), CORRECT_REMOTE=str(correct))
+                        REMOTE=str(self.repo / 'remote.json'), CORRECT_REMOTE=str(correct),
+                        DIGEST_REMOTE=str(self.repo / 'digest-remote.json'), SIGSTORE_CALLS=str(self.repo / 'sigstore.log'))
         self.digest = digest
 
     def run_script(self, script='ghcr-gate.sh', *args):
@@ -3018,11 +3041,61 @@ exit 90
         self.assertEqual(result.returncode, 19)
         self.assertEqual(self.transport(), [])
 
+    def test_failing_sigstore_verifier_prevents_any_registry_write(self):
+        verifier = self.repo / 'bin/gh'
+        verifier.write_text('#!/bin/sh\necho called >> "$ADAPTER_CALLS"\nexit 97\n')
+        verifier.chmod(0o755)
+        result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
+        self.assertEqual(result.returncode, 97, result.stderr)
+        self.assertIn('called', (self.repo / 'adapter.log').read_text())
+        self.assertEqual(self.transport(), [])
+
+    def test_differing_version_appearing_during_gate_refuses_without_overwrite(self):
+        self.adapter.write_text(self.adapter.read_text() + '''
+if sys.argv[sys.argv.index('--phase') + 1] == 'boundary':
+    pathlib.Path(os.environ['REMOTE']).write_bytes(b'concurrent-existing-version')
+''')
+        result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
+        self.assertNotEqual(result.returncode, 0, 'stale absence must not authorize overwrite')
+        self.assertEqual(Path(self.env['REMOTE']).read_bytes(), b'concurrent-existing-version')
+        self.assertNotIn('copy', self.transport())
+
+    def test_sigstore_rejected_after_final_gate_prevents_image_upload(self):
+        self.adapter.write_text(self.adapter.read_text() + '''
+if sys.argv[sys.argv.index('--phase') + 1] == 'boundary':
+    pathlib.Path(os.environ['GATE_REVOKED_MARKER'] + '.sigstore').write_text('reject')
+''')
+        result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
+        self.assertEqual(result.returncode, 97, result.stderr)
+        self.assertNotIn('copy', self.transport())
+
+    def test_upload_by_digest_cannot_overwrite_a_concurrent_version_tag(self):
+        self.env['VERSION_DURING_COPY'] = '1'
+        result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        destination = Path(self.env['DIGEST_REMOTE'] + '.destination').read_text()
+        self.assertEqual(destination, 'docker://ghcr.io/marcinwadon/hennery@' + self.digest)
+        self.assertEqual(Path(self.env['REMOTE']).read_bytes(), b'concurrent-version')
+
+    def test_precredential_workflow_refuses_failing_sigstore_before_login(self):
+        workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-publish.yml').read_text())
+        steps = workflow['jobs']['ghcr']['steps']
+        check = next(s['run'] for s in steps if 'ghcr-verify.py all' in s.get('run', ''))
+        login = next(s['run'] for s in steps if 'docker login' in s.get('run', ''))
+        self.env['SIGSTORE_EXIT'] = '97'
+        docker = self.repo / 'bin/docker'; marker = self.repo / 'docker-called'
+        docker.write_text('#!/bin/sh\ntouch ' + str(marker) + '\n'); docker.chmod(0o755)
+        result = subprocess.run(['sh', '-ec', check + '\n' + login], cwd=self.repo, env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 97, result.stderr)
+        self.assertTrue(Path(self.env['SIGSTORE_CALLS']).exists())
+        self.assertFalse(marker.exists())
+
     def test_approval_revoked_after_inspection_refuses_before_copy(self):
         self.env['REVOKE_AFTER_INSPECT'] = '1'
         result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', self.version, self.digest)
         self.assertEqual(result.returncode, 19)
-        self.assertEqual(self.transport(), ['inspect'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect'])
 
     def test_actual_payload_change_after_approval_refuses(self):
         candidate = self.repo / 'image-candidate'
@@ -3130,22 +3203,22 @@ exit 90
         self.env['REMOTE_ERROR'] = 'name unknown: repository name not known to registry'
         result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', '0.1.0', self.digest)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.transport(), ['inspect', 'copy', 'inspect'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect', 'inspect', 'copy', 'inspect'])
 
     def test_missing_upload_is_revalidated_then_digest_checked(self):
         result = self.run_script('ghcr-publish.sh', 'image-candidate/layout', '0.1.0', self.digest)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.transport(), ['inspect', 'copy', 'inspect'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect', 'inspect', 'copy', 'inspect'])
         self.assertEqual(len((self.repo / 'adapter.log').read_text().splitlines()), 2)
 
     def test_ambiguous_upload_stops_and_retry_reconciles(self):
         self.env['COPY_EXIT'] = '5'
         args = ('ghcr-publish.sh', 'image-candidate/layout', '0.1.0', self.digest)
         self.assertEqual(self.run_script(*args).returncode, 5)
-        self.assertEqual(self.transport(), ['inspect', 'copy'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect', 'inspect', 'copy'])
         self.env['GITHUB_RUN_ATTEMPT'] = '2'
         self.assertEqual(self.run_script(*args).returncode, 0)
-        self.assertEqual(self.transport(), ['inspect', 'copy', 'inspect'])
+        self.assertEqual(self.transport(), ['inspect', 'inspect', 'inspect', 'copy', 'inspect', 'inspect'])
 
     def test_moving_or_injected_version_refuses(self):
         for version in ['latest', '0.1', '../image', '0.1.0;echo bad', '-x']:
@@ -3174,6 +3247,112 @@ class SigningInputs(CandidateFixtures, unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+~~~~
+
+### File: `packaging/tests/test_ghcr_verify.py`
+
+~~~~python
+"""All crypto/registry transports are doubled; production verifiers are executed."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import unittest
+from unittest.mock import patch
+from test_ghcr_candidate import ReleaseFixture, approval, gate, release_verify, PACKAGING
+
+spec = importlib.util.spec_from_file_location('ghcr_verify', PACKAGING / 'ghcr-verify.py')
+helper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(helper)
+
+
+class Bundles(ReleaseFixture, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        producer = self.assembled()
+        with patch.object(approval.subprocess, 'run', side_effect=self.crypto):
+            self.index = producer.qualify(self.candidate, self.inventory_digest, self.work, self.inputs)
+        self.signatures = self.root / 'signatures'; self.signatures.mkdir()
+        (self.signatures / 'release-inventory.json.asc').write_text(self.signature)
+        (self.signatures / 'release.sigstore.jsonl').write_text('{}')
+        self.bundles = self.root / 'bundles'; self.bundles.mkdir()
+        for *_, bundle in helper.subjects(self.work, self.bundles): bundle.write_text('{}')
+        self.calls = []
+        environment = patch.dict(os.environ, {'REGISTRY_AUTH_FILE': str(self.root / 'registry-auth.json')})
+        environment.start(); self.addCleanup(environment.stop)
+
+    def transport(self, command, **kwargs):
+        self.calls.append(command)
+        return self.crypto(command, **kwargs)
+
+    def test_all_final_artifacts_and_seven_exact_local_oci_subjects_verify(self):
+        with patch.object(helper.subprocess, 'run', side_effect=self.transport):
+            helper.check(self.candidate, self.work, self.signatures, self.bundles)
+        gh = [c for c in self.calls if c[0] == 'gh']
+        self.assertEqual(len(gh), len(self.inventory['artifacts']) + 1 + 7)
+        self.assertTrue(all('--bundle' in c for c in gh))
+        self.assertTrue(all(not str(c[3]).startswith('oci://') for c in gh))
+        expected = {self.index['digest'], *self.index['platforms'].values()}
+        self.assertEqual({'sha256:' + Path(c[3]).name for c in gh[-7:]}, expected)
+
+    def test_failing_candidate_or_any_oci_verifier_prevents_every_upload(self):
+        for failing_call in [1, len(self.inventory['artifacts']) + 2, len(self.inventory['artifacts']) + 8]:
+            self.calls = []; count = 0
+            def fail(command, **kwargs):
+                nonlocal count
+                if command[0] == 'gh':
+                    count += 1
+                    if count == failing_call: raise subprocess.CalledProcessError(97, command)
+                return self.transport(command, **kwargs)
+            with self.subTest(call=failing_call), patch.object(helper.subprocess, 'run', side_effect=fail):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    helper.publish(self.candidate, self.work, self.signatures, self.bundles)
+            self.assertFalse(any(c[0] in ('oras', 'sh') for c in self.calls))
+
+    def test_verifier_failure_after_gate_prevents_bundle_upload(self):
+        gated = False
+        def transport(command, **kwargs):
+            nonlocal gated
+            if command[0] == 'sh': gated = True
+            if gated and command[0] == 'gh': raise subprocess.CalledProcessError(97, command)
+            return self.transport(command, **kwargs)
+        with patch.object(helper.subprocess, 'run', side_effect=transport), self.assertRaises(subprocess.CalledProcessError):
+            helper.publish(self.candidate, self.work, self.signatures, self.bundles)
+        self.assertTrue(gated)
+        self.assertFalse(any(c[0] == 'oras' for c in self.calls))
+
+    def test_uploads_exact_seven_preverified_bundles_then_verifies_remote_images(self):
+        with patch.object(helper.subprocess, 'run', side_effect=self.transport):
+            helper.publish(self.candidate, self.work, self.signatures, self.bundles)
+        uploads = [c for c in self.calls if c[0] == 'oras']
+        self.assertEqual(len(uploads), 7)
+        self.assertTrue(all(c[:2] == ['oras', 'attach'] and '@sha256:' in c[-2] for c in uploads))
+        self.assertEqual({c[-1] for c in uploads}, {str(b) + ':' + helper.BUNDLE_TYPE for *_, b in helper.subjects(self.work, self.bundles)})
+        last_upload = max(i for i, c in enumerate(self.calls) if c[0] == 'oras')
+        self.assertEqual(len([c for c in self.calls[last_upload + 1:] if c[0] == 'gh' and str(c[3]).startswith('oci://')]), 7)
+
+    def test_local_manifest_must_hash_to_the_exact_signed_image(self):
+        digest = self.index['digest']; manifest = self.work / 'layout/blobs/sha256' / digest[7:]
+        original = manifest.read_bytes()
+        for data in [b'{}', original + b' ']:
+            manifest.write_bytes(data); self.calls = []
+            with patch.object(helper.subprocess, 'run', side_effect=self.transport), self.assertRaisesRegex(gate.Refused, 'local manifest'):
+                helper.check(self.candidate, self.work, self.signatures, self.bundles)
+            self.assertFalse(any(c[0] == 'gh' and c[3] == str(manifest) for c in self.calls))
+
+    def test_missing_oci_bundle_refuses_before_any_bundle_upload(self):
+        next(helper.subjects(self.work, self.bundles))[-1].unlink()
+        with patch.object(helper.subprocess, 'run', side_effect=self.transport), self.assertRaisesRegex(gate.Refused, 'verification bundle'):
+            helper.publish(self.candidate, self.work, self.signatures, self.bundles)
+        self.assertFalse(any(c[0] == 'oras' for c in self.calls))
+
+    def test_working_metadata_cannot_omit_signed_platform_verification(self):
+        metadata = self.work / 'verified.json'
+        changed = json.loads(metadata.read_bytes()); changed['platforms'] = {}
+        metadata.write_text(json.dumps(changed))
+        with patch.object(helper.subprocess, 'run', side_effect=self.transport), self.assertRaisesRegex(gate.Refused, 'signed descriptor'):
+            helper.check(self.candidate, self.work, self.signatures, self.bundles)
 ~~~~
 
 ### File: `packaging/tests/test_ghcr_remote.py`
@@ -3243,6 +3422,14 @@ class HTTP(unittest.TestCase):
         self.body = b'other manifest bytes'
         with self.assertRaisesRegex(ValueError, 'digest mismatch'):
             self.check()
+
+    def test_immutable_digest_lookup_is_hashed_against_expected_manifest(self):
+        self.assertEqual(remote.reconcile(self.digest, self.digest, self.authfile, self), 0)
+        self.assertEqual(self.calls[-1][0].full_url,
+                         'https://ghcr.io/v2/marcinwadon/hennery/manifests/' + self.digest)
+        self.body = b'other digest content'
+        with self.assertRaisesRegex(ValueError, 'digest mismatch'):
+            remote.reconcile(self.digest, self.digest, self.authfile, self)
 
     def test_only_authenticated_404_with_explicit_absence_is_absent(self):
         self.status = 404
@@ -3355,21 +3542,35 @@ def validate(workflow):
         job = workflow['jobs'][name]
         if job.get('permissions', {}).get('packages') != 'read':
             raise ValueError('ordinary package token must be READ')
-        if job.get('if') != workflow_policy.CREDENTIAL_CONDITION + " && vars.RELEASE_GHCR_ENABLED == 'true'":
+        if job.get('if') != workflow_policy.CREDENTIAL_CONDITION + " && vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(inputs.channels), 'ghcr')":
             raise ValueError('GHCR channel enable gate missing')
         steps = job['steps']
+        downloads = [s.get('with', {}) for s in steps if s.get('uses', '').startswith('actions/download-artifact@')]
+        if not any(s.get('name') == 'signatures-${{ github.run_id }}-${{ github.run_attempt }}'
+                   and s.get('path') == 'signatures' for s in downloads):
+            raise ValueError('exact current-attempt candidate Sigstore bundle download missing')
         logins = [s for s in steps if 'docker login' in s.get('run', '')]
-        if len(logins) != 1 or logins[0].get('env', {}).get('GHCR_TOKEN') != '${{ secrets.GHCR_PUBLISH_TOKEN }}':
-            raise ValueError('protected environment registry credential required')
-        login = logins[0]
-        guard = 'sh packaging/ghcr-gate.sh preflight '
-        if guard not in login['run'] or login['run'].index(guard) > login['run'].index('docker login'):
-            raise ValueError('pre-credential revalidation missing')
-        preflight = next(i for i, s in enumerate(steps) if s.get('with', {}).get('phase') == 'preflight')
-        if preflight >= steps.index(login):
-            raise ValueError('credentials precede preflight')
+        if name == 'ghcr':
+            if len(logins) != 1 or logins[0].get('env', {}).get('GHCR_TOKEN') != '${{ secrets.GHCR_PUBLISH_TOKEN }}':
+                raise ValueError('protected environment registry credential required')
+            login = logins[0]
+            guard = 'sh packaging/ghcr-gate.sh preflight '
+            if guard not in login['run'] or login['run'].index(guard) > login['run'].index('docker login'):
+                raise ValueError('pre-credential revalidation missing')
+            checks = [i for i, s in enumerate(steps) if 'ghcr-verify.py all' in s.get('run', '')]
+            if not checks or checks[0] >= steps.index(login):
+                raise ValueError('Sigstore verification must precede registry credential')
+            if 'ghcr-attest' not in job['needs']:
+                raise ValueError('OCI bundle verification must precede upload')
+            if not any(s.get('pattern') == 'ghcr-attestations-*-${{ github.run_id }}-${{ github.run_attempt }}'
+                       and s.get('path') == 'attestation-bundles' for s in downloads):
+                raise ValueError('current-attempt verified OCI bundle download missing')
+        elif logins or any('GHCR_PUBLISH_TOKEN' in str(s) for s in steps):
+            raise ValueError('OCI generator must not receive registry credentials')
         for i, step in enumerate(steps):
             if step.get('uses', '').startswith('actions/attest-'):
+                if step['with'].get('push-to-registry') is not False:
+                    raise ValueError('OCI bundles must verify before registry publication')
                 if not steps[i - 1].get('run', '').startswith('sh packaging/ghcr-gate.sh boundary '):
                     raise ValueError('pre-signing revalidation missing')
     signer = workflow['jobs']['ghcr-attest']
@@ -3377,7 +3578,7 @@ def validate(workflow):
         if step.get('uses') == './.github/actions/release-gate' and '${{ matrix.subject }}' not in step['with']['receipt']:
             raise ValueError('matrix gate receipts must be unique')
     checks = [s for s in signer['steps'] if 'packaging/release/verify.py' in s.get('run', '')]
-    if len(checks) != 1 or any(x not in checks[0]['run'] for x in ['--approval-signature', '--inventory-directory', 'https://spdx.dev/Document', 'image-sbom binary-sbom']):
+    if len(checks) != 1 or any(x not in checks[0]['run'] for x in ['--approval-signature', '--inventory-directory', '--manifest', 'https://spdx.dev/Document', 'image-sbom binary-sbom']):
         raise ValueError('signed-inventory OCI predicate verification missing')
     receipt = workflow['jobs'].get('ghcr-complete', {})
     if receipt.get('if') != "always() && contains(fromJSON(inputs.channels), 'ghcr')" or set(receipt.get('needs', [])) != {'authorize', 'ghcr', 'ghcr-attest'}:
@@ -3387,6 +3588,27 @@ def validate(workflow):
 class Workflow(unittest.TestCase):
     def setUp(self):
         self.workflow = yaml.safe_load(WORKFLOW.read_text())
+
+    def test_channel_selection_is_required_for_both_ghcr_jobs(self):
+        for name in CHANNEL_JOBS:
+            self.assertIn("contains(fromJSON(inputs.channels), 'ghcr')", self.workflow['jobs'][name]['if'])
+
+    def test_oci_bundles_are_generated_before_registry_publication(self):
+        signer = self.workflow['jobs']['ghcr-attest']
+        self.assertIn('sign', signer['needs'])
+        self.assertNotIn('ghcr', signer['needs'])
+        self.assertIn('ghcr-attest', self.workflow['jobs']['ghcr']['needs'])
+        for step in signer['steps']:
+            if step.get('uses', '').startswith('actions/attest-'):
+                self.assertIs(step['with'].get('push-to-registry'), False)
+        self.assertFalse(any('docker login' in step.get('run', '') for step in signer['steps']))
+
+    def test_sigstore_verification_precedes_registry_credentials(self):
+        steps = self.workflow['jobs']['ghcr']['steps']
+        checks = [i for i, s in enumerate(steps) if 'ghcr-verify.py' in s.get('run', '')]
+        self.assertTrue(checks, 'all exact candidate/OCI bundles must verify before registry credentials')
+        login = next(i for i, s in enumerate(steps) if 'docker login' in s.get('run', ''))
+        self.assertLess(checks[0], login)
 
     def test_all_writers_and_signers_are_protected(self):
         try:
@@ -3409,7 +3631,8 @@ class Workflow(unittest.TestCase):
         with self.assertRaises(ValueError): validate(changed)
 
     def test_dedicated_credential_writers_are_detected_with_read_only_job_tokens(self):
-        for command in ['docker login ghcr.io', 'sh packaging/ghcr-publish.sh layout 0.1.0 digest']:
+        for command in ['docker login ghcr.io', 'sh packaging/ghcr-publish.sh layout 0.1.0 digest',
+                        'nix develop .#release -c python3 packaging/ghcr-verify.py publish']:
             job = {'permissions': {'contents': 'read', 'packages': 'read'}, 'steps': [{'run': command}]}
             with self.subTest(command=command): self.assertTrue(workflow_policy.privileged(job))
 
@@ -3459,7 +3682,7 @@ class Workflow(unittest.TestCase):
             with self.subTest(boundary=i), self.assertRaisesRegex(ValueError, 'pre-signing'): validate(changed)
 
     def test_registry_credential_boundary_requires_revalidation(self):
-        for job in CHANNEL_JOBS:
+        for job in ['ghcr']:
             changed = copy.deepcopy(self.workflow)
             for step in changed['jobs'][job]['steps']:
                 if 'docker login' in step.get('run', ''):
@@ -3467,7 +3690,7 @@ class Workflow(unittest.TestCase):
             with self.subTest(job=job), self.assertRaisesRegex(ValueError, 'pre-credential'): validate(changed)
 
     def test_ordinary_token_cannot_replace_environment_registry_credential(self):
-        for job in CHANNEL_JOBS:
+        for job in ['ghcr']:
             changed = copy.deepcopy(self.workflow)
             for step in changed['jobs'][job]['steps']:
                 if 'docker login' in step.get('run', ''): step['env']['GHCR_TOKEN'] = '${{ github.token }}'
@@ -3536,11 +3759,11 @@ expected=$3
 # latest, spaces, slashes or shell option injection.
 printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || exit 1
 printf '%s\n' "$expected" | grep -Eq '^sha256:[0-9a-f]{64}$' || exit 1
-reference="ghcr.io/marcinwadon/hennery:$version"
+reference="ghcr.io/marcinwadon/hennery@$expected"
 # Inspect the authenticated registry HTTP response itself. Skopeo can flatten
 # 401/403 MANIFEST_UNKNOWN responses to the same text as an absent manifest.
 check_remote() {
-    if python3 packaging/ghcr-remote.py "$version" "$expected" "$REGISTRY_AUTH_FILE"; then
+    if python3 packaging/ghcr-remote.py "$1" "$expected" "$REGISTRY_AUTH_FILE"; then
         return 0
     else
         result=$?
@@ -3563,18 +3786,116 @@ import sys
 if Path(sys.argv[1]).resolve() != Path(sys.argv[2]).resolve():
     raise SystemExit('layout argument differs from signed candidate')
 PY
-if check_remote; then
-    echo "ok: already published $reference@$expected"
+nix develop .#release -c python3 packaging/ghcr-verify.py all
+if check_remote "$version"; then
+    echo "ok: already published $reference"
+    exit 0
+fi
+if check_remote "$expected"; then
+    echo "ok: retained digest already published $reference"
     exit 0
 fi
 # Revalidation immediately precedes the write; renewed publishing attempt
 # approval is required even for the identical retained candidate.
 sh packaging/ghcr-gate.sh boundary "ghcr-upload-$$.json"
+nix develop .#release -c python3 packaging/ghcr-verify.py all
+# The final gate may outlast reconciliation. Never overwrite a version tag:
+# reconcile it again, then upload content addressed bytes only.
+if check_remote "$version"; then
+    echo "ok: already published $reference"
+    exit 0
+fi
 skopeo copy --all --preserve-digests --authfile "$REGISTRY_AUTH_FILE" \
     "oci:$layout" "docker://$reference"
 # An ambiguous upload is accepted only if remote bytes match exactly.
-check_remote || { echo 'upload not visible; stop and reconcile on an approved retry' >&2; exit 1; }
-echo "ok: published $reference@$expected"
+check_remote "$expected" || { echo 'upload not visible; stop and reconcile on an approved retry' >&2; exit 1; }
+echo "ok: published $reference"
+~~~~
+
+### File: `packaging/ghcr-verify.py`
+
+~~~~python
+#!/usr/bin/env python3
+"""Verify exact held candidate/OCI bundles before credentials and registry writes."""
+import argparse
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent / 'release'))
+import gate
+import verify
+
+PROVENANCE = 'https://slsa.dev/provenance/v1'
+SPDX = 'https://spdx.dev/Document'
+BUNDLE_TYPE = 'application/vnd.dev.sigstore.bundle.v0.3+json'
+
+
+def candidate(root, signatures):
+    inventory = gate.strict_json((root / 'release-inventory.json').read_bytes())
+    verify.verify(root, signatures / 'release.sigstore.jsonl', inventory['source_sha'],
+                  inventory['tag'], approval_signature=signatures / 'release-inventory.json.asc')
+    return inventory
+
+
+def subjects(work, bundles):
+    index = gate.strict_json((work / 'verified.json').read_bytes())
+    for subject, digest in [('index', index['digest']), *index['platforms'].items()]:
+        for kind in (['provenance'] if subject == 'index' else ['provenance', 'image-sbom', 'binary-sbom']):
+            yield subject, kind, digest, PROVENANCE if kind == 'provenance' else SPDX, bundles / f'ghcr-{subject}-{kind}.json'
+
+
+def check(root, work, signatures, bundles, remote=False):
+    inventory = candidate(root, signatures)
+    gate.require(gate.strict_json((work / 'verified.json').read_bytes())
+                 == gate.strict_json((root / 'ghcr-index.json').read_bytes()),
+                 'working image must match the signed descriptor')
+    for _, _, digest, predicate, bundle in subjects(work, bundles):
+        gate.require(bundle.is_file() and not bundle.is_symlink(), 'missing/nonregular OCI verification bundle')
+        manifest = None if remote else work / 'layout/blobs/sha256' / digest.removeprefix('sha256:')
+        verify.verify_image('ghcr.io/marcinwadon/hennery@' + digest, inventory['tag'], bundle,
+                            predicate, root, signatures / 'release-inventory.json.asc', manifest)
+    return inventory
+
+
+def publish(root, work, signatures, bundles):
+    # Verify the complete set before the first registry write; verify again after
+    # every gate so altered bundles cannot be published under a stale result.
+    check(root, work, signatures, bundles)
+    for subject, kind, digest, predicate, bundle in subjects(work, bundles):
+        subprocess.run(['sh', 'packaging/ghcr-gate.sh', 'boundary',
+                        f'ghcr-attach-{subject}-{kind}-{os.getpid()}.json'], check=True)
+        check(root, work, signatures, bundles)
+        subprocess.run(['oras', 'attach', '--registry-config', os.environ['REGISTRY_AUTH_FILE'],
+                        '--artifact-type', BUNDLE_TYPE,
+                        '--annotation', 'dev.sigstore.bundle.predicateType=' + predicate,
+                        '--annotation', 'dev.sigstore.bundle.content=dsse-envelope',
+                        'ghcr.io/marcinwadon/hennery@' + digest,
+                        str(bundle) + ':' + BUNDLE_TYPE], check=True)
+    check(root, work, signatures, bundles, remote=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('phase', choices=['candidate', 'all', 'remote', 'publish'])
+    args = parser.parse_args()
+    root = Path(os.environ['RELEASE_CANDIDATE'])
+    signatures = Path('signatures')
+    if args.phase == 'candidate':
+        candidate(root, signatures)
+    else:
+        work = Path(os.environ['IMAGE_CANDIDATE'])
+        operation = publish if args.phase == 'publish' else check
+        kwargs = {'remote': True} if args.phase == 'remote' else {}
+        operation(root, work, signatures, Path('attestation-bundles'), **kwargs)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(error.returncode) from None
 ~~~~
 
 ### File: `packaging/ghcr-remote.py`
@@ -3603,7 +3924,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def reconcile(version, expected, authfile, opener=None):
-    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', version):
+    if not re.fullmatch(r'(?:[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?|sha256:[0-9a-f]{64})', version):
         raise ValueError('invalid image version')
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', expected):
         raise ValueError('invalid image digest')
@@ -3694,7 +4015,7 @@ def attestation_command(subject, tag, bundle=None):
     return command
 
 
-def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/provenance/v1', candidate=None, approval_signature=None):
+def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/provenance/v1', candidate=None, approval_signature=None, manifest=None):
     gate.require(re.fullmatch(r'ghcr\.io/marcinwadon/hennery@sha256:[0-9a-f]{64}', image), 'verification requires an immutable image digest')
     gate.require(predicate_type in ('https://slsa.dev/provenance/v1', 'https://spdx.dev/Document'), 'unexpected attestation predicate')
     gate.require(candidate is not None and approval_signature is not None, 'image requires maintainer-signed inventory')
@@ -3716,7 +4037,14 @@ def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/prove
         gate.require(all(isinstance(d, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', d) for d in digests)
                      and len(set(digests)) == 3, 'invalid signed image digest set')
     gate.require(image.split('@', 1)[1] in digests, 'image digest is not in maintainer-signed inventory')
-    command = attestation_command('oci://' + image, tag, bundle) + ['--predicate-type', predicate_type]
+    subject = 'oci://' + image
+    if manifest is not None:
+        manifest = Path(manifest)
+        gate.require(bundle is not None and manifest.is_file() and not manifest.is_symlink()
+                     and 'sha256:' + gate.digest(manifest.read_bytes()) == image.split('@', 1)[1],
+                     'local manifest must match the approved image digest and have a bundle')
+        subject = manifest
+    command = attestation_command(subject, tag, bundle) + ['--predicate-type', predicate_type]
     if bundle is None:
         command += ['--bundle-from-oci']
     subprocess.run(command, check=True)
@@ -3766,13 +4094,14 @@ if __name__ == '__main__':
     parser.add_argument('--bundle', type=Path)
     parser.add_argument('--approval-signature', required=True, type=Path)
     parser.add_argument('--inventory-directory', type=Path)
+    parser.add_argument('--manifest', type=Path, help='verify a local manifest against its exact approved digest before upload')
     parser.add_argument('--source-sha')
     parser.add_argument('--tag', required=True)
     parser.add_argument('--signer-sha')
     parser.add_argument('--predicate-type', default='https://slsa.dev/provenance/v1')
     args = parser.parse_args()
     if args.image:
-        verify_image(args.image, args.tag, args.bundle, args.predicate_type, args.inventory_directory, args.approval_signature)
+        verify_image(args.image, args.tag, args.bundle, args.predicate_type, args.inventory_directory, args.approval_signature, args.manifest)
     else:
         if args.bundle is None or args.source_sha is None:
             parser.error('file verification requires --bundle and --source-sha')
@@ -3798,7 +4127,7 @@ def privileged(job):
     return any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
         s.get('uses', '').startswith('actions/create-github-app-token@') or
         'publish.py upload' in s.get('run', '') or
-        re.search(r'(?m)(?:^|[|;&])\s*(?:(?:nix\s+develop\s+\S+\s+-c\s+)?(?:ba)?sh\s+)?(?:packaging/ghcr-publish\.sh|docker\s+login)(?:\s|$)', s.get('run', ''))
+        re.search(r'(?m)(?:^|[|;&])\s*(?:nix\s+develop\s+\S+\s+-c\s+)?(?:(?:ba)?sh\s+|python3\s+)?(?:packaging/ghcr-publish\.sh|packaging/ghcr-verify\.py\s+publish|docker\s+login)(?:\s|$)', s.get('run', ''))
         for s in job.get('steps', []))
 
 
@@ -3842,7 +4171,8 @@ def check(data, name):
             if 'authorize' not in needs:
                 raise ValueError('writer must depend on protected credential authorization')
             condition = ' '.join(job.get('if', '').split())
-            allowed = {CREDENTIAL_CONDITION} | {CREDENTIAL_CONDITION + " && vars.RELEASE_" + channel + "_ENABLED == 'true'" for channel in ('GITHUB', 'CRATES', 'GHCR', 'HOMEBREW')}
+            allowed = {CREDENTIAL_CONDITION} | {CREDENTIAL_CONDITION + " && vars.RELEASE_" + channel + "_ENABLED == 'true'" for channel in ('GITHUB', 'CRATES', 'HOMEBREW')}
+            allowed.add(CREDENTIAL_CONDITION + " && vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(inputs.channels), 'ghcr')")
             if condition not in allowed:
                 raise ValueError('credential issuance must match the authorized inventory and current run attempt')
             env = job.get('environment')
@@ -3894,6 +4224,176 @@ def check_repository(root):
 if __name__ == '__main__':
     check_repository(Path(__file__).resolve().parents[2])
     print('release workflow authority graph checked')
+~~~~
+
+### File: `packaging/release/test_workflows.py`
+
+~~~~python
+"""Workflow structure is part of the gate; every privileged job is checked."""
+import copy
+from pathlib import Path
+import re
+import unittest
+import tempfile
+import shutil
+
+import yaml
+
+import workflow_policy
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class Workflows(unittest.TestCase):
+    def test_ghcr_credentials_require_selected_channel_as_well_as_enablement(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for name in ['ghcr', 'ghcr-attest']:
+            changed = copy.deepcopy(data)
+            selected = " && contains(fromJSON(inputs.channels), 'ghcr')"
+            self.assertIn(selected, changed['jobs'][name]['if'])
+            changed['jobs'][name]['if'] = changed['jobs'][name]['if'].replace(selected, '')
+            with self.subTest(job=name), self.assertRaises(ValueError):
+                workflow_policy.check(changed, 'release-publish.yml')
+
+    def test_all_release_workflows(self):
+        workflow_policy.check_repository(ROOT)
+
+    def test_arbitrary_workflow_filename_cannot_hide_write_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(ROOT / '.github', root / '.github')
+            data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+            data['on'] = data.pop(True) if True in data else data['on']
+            data['jobs']['sign'].pop('environment')
+            data['jobs']['sign']['steps'] = [s for s in data['jobs']['sign']['steps'] if s.get('uses') != './.github/actions/release-gate']
+            (root / '.github/workflows/release.yml').write_text(yaml.safe_dump(data))
+            with self.assertRaises(ValueError):
+                workflow_policy.check_repository(root)
+
+    def test_credentials_cannot_start_without_current_bound_authorization(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for kind in ('missing-authorize', 'missing-auth-gate', 'old-attempt-condition', 'ignored-authorize-dependency', 'or-bypass'):
+            changed = copy.deepcopy(data)
+            if kind == 'missing-authorize':
+                changed['jobs'].pop('authorize')
+            elif kind == 'missing-auth-gate':
+                changed['jobs']['authorize']['steps'] = [s for s in changed['jobs']['authorize']['steps'] if s.get('uses') != './.github/actions/release-gate']
+            elif kind == 'old-attempt-condition':
+                changed['jobs']['sign']['if'] = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main'"
+            elif kind == 'ignored-authorize-dependency':
+                changed['jobs']['sign']['needs'] = 'approval-tuple'
+            else:
+                changed['jobs']['sign']['if'] += ' || true'
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                workflow_policy.check(changed, 'release-publish.yml')
+
+    def test_authorization_job_is_protected_and_has_no_publication_authority(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for field, value in [('environment', None), ('permissions', {'contents': 'write'}), ('permissions', {'id-token': 'write'})]:
+            changed = copy.deepcopy(data)
+            changed['jobs']['authorize'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                workflow_policy.check(changed, 'release-publish.yml')
+
+    def test_gate_cannot_be_skipped_or_ignore_failure(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for name in ('authorize', 'sign', 'github'):
+            for field, value in [('if', 'false'), ('continue-on-error', True)]:
+                changed = copy.deepcopy(data)
+                step = next(s for s in changed['jobs'][name]['steps'] if s.get('uses') == './.github/actions/release-gate')
+                step[field] = value
+                with self.subTest(job=name, field=field), self.assertRaises(ValueError):
+                    workflow_policy.check(changed, 'release-publish.yml')
+
+    def test_read_only_job_with_release_secrets_still_requires_authorization(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        data['jobs']['bootstrap-crates'] = {
+            'runs-on': 'ubuntu-24.04', 'timeout-minutes': 10, 'environment': 'release',
+            'permissions': {'contents': 'read'}, 'steps': [{'run': 'echo protected credential job'}],
+        }
+        with self.assertRaises(ValueError):
+            workflow_policy.check(data, 'release-publish.yml')
+
+    def test_authorization_job_cannot_ignore_failures(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        data['jobs']['authorize']['continue-on-error'] = True
+        with self.assertRaises(ValueError):
+            workflow_policy.check(data, 'release-publish.yml')
+
+    def test_each_privileged_job_requires_environment(self):
+        for workflow in (ROOT / '.github/workflows').glob('release-*.yml'):
+            data = yaml.safe_load(workflow.read_text())
+            for name, job in data['jobs'].items():
+                if workflow_policy.privileged(job):
+                    for value in (None, 'unguarded'):
+                        with self.subTest(workflow=workflow.name, job=name, value=value):
+                            mutated = copy.deepcopy(data)
+                            mutated['jobs'][name]['environment'] = value
+                            with self.assertRaises(ValueError):
+                                workflow_policy.check(mutated, workflow.name)
+
+    def test_remove_either_boundary_refuses(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for phase in ('preflight', 'boundary'):
+            changed = copy.deepcopy(data)
+            # Isolate phase completeness from the independent credential-order
+            # guards. Removing this guard must fail our assertion, not a later
+            # gates['phase'] lookup with KeyError.
+            steps = [s for s in changed['jobs']['github']['steps'] if s.get('uses') == './.github/actions/release-gate']
+            changed['jobs']['github']['steps'] = [s for s in steps if s.get('with', {}).get('phase') != phase]
+            with self.assertRaises(ValueError):
+                workflow_policy.check(changed, 'release-publish.yml')
+
+    def test_credentials_and_writes_cannot_precede_their_gates(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for job_name, match in [('sign', 'actions/attest'), ('github', 'actions/create-github-app-token')]:
+            changed = copy.deepcopy(data)
+            steps = changed['jobs'][job_name]['steps']
+            step = next(s for s in steps if s.get('uses', '').startswith(match))
+            steps.remove(step)
+            steps.insert(0, step)
+            with self.subTest(job=job_name), self.assertRaises(ValueError):
+                workflow_policy.check(changed, 'release-publish.yml')
+
+    def test_reusable_job_cannot_hide_its_environment(self):
+        with self.assertRaises(ValueError):
+            workflow_policy.check({'jobs': {'sign': {'uses': './.github/workflows/release-sign.yml'}}}, 'release-wrapper.yml')
+
+    def test_unpinned_action_and_cache_refuse(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-candidate.yml').read_text())
+        for action in ('actions/checkout@v4', 'Swatinem/rust-cache@' + 'a' * 40):
+            changed = copy.deepcopy(data)
+            changed['jobs']['archive']['steps'].append({'uses': action})
+            with self.assertRaises(ValueError):
+                workflow_policy.check(changed, 'release-candidate.yml')
+
+
+
+class PlatformBoundary(unittest.TestCase):
+    def test_release_jobs_run_on_the_release_tag_without_admin_policy_tokens(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for name in ('authorize', 'sign', 'github'):
+            job = data['jobs'][name]
+            self.assertNotIn('refs/heads/', job.get('if', ''))
+            self.assertIn('refs/tags/', job.get('if', ''))
+        text = (ROOT / '.github/workflows/release-publish.yml').read_text()
+        self.assertNotIn('RELEASE_POLICY_READ_TOKEN', text)
+        self.assertNotIn('permission-administration', text)
+        self.assertIn('settings_audit_sha256:', text)
+        self.assertIn('settings_audit:', text)
+
+    def test_candidate_retention_requires_prior_tag_signature_validation(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-candidate.yml').read_text())
+        self.assertIn('tag-signature', data['jobs'])
+        job = data['jobs']['tag-signature']
+        self.assertIn('tag_signature.py', str(job))
+        for name, job in data['jobs'].items():
+            if job.get('environment') == 'release-staging':
+                self.assertIn('tag-signature', job['needs'])
+
+
+if __name__ == '__main__':
+    unittest.main()
 ~~~~
 
 ### File: `.github/workflows/release-publish.yml`
@@ -4187,12 +4687,13 @@ jobs:
             reconciliation.json
             public-path.json
 
-  # R4: all registry writes use the protected credential, never GITHUB_TOKEN.
+  # R4: generate and verify bundles before protected registry publication.
   ghcr:
     needs:
       - authorize
       - sign
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GHCR_ENABLED == 'true'
+      - ghcr-attest
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(inputs.channels), 'ghcr')
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -4232,6 +4733,10 @@ jobs:
         run: |
           nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
           nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signatures
       - uses: ./.github/actions/release-gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -4245,6 +4750,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y skopeo
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ghcr-attestations-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: attestation-bundles
+          merge-multiple: true
+      - name: Verify candidate Sigstore and every OCI bundle before registry credentials
+        run: |
+          sh packaging/ghcr-gate.sh preflight ghcr-publish-verify.json
+          nix develop .#release -c python3 packaging/ghcr-verify.py all
       - name: Authenticate only the protected environment GHCR credential
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
@@ -4273,6 +4787,7 @@ jobs:
           version=$(python3 -c 'import json; print(json.load(open("image-candidate/verified.json"))["version"])')
           digest=$(cat image-candidate/index-digest.txt)
           sh packaging/ghcr-publish.sh image-candidate/layout "$version" "$digest"
+          nix develop .#release -c python3 packaging/ghcr-verify.py publish
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Remove registry credential
         if: always()
@@ -4280,8 +4795,8 @@ jobs:
   ghcr-attest:
     needs:
       - authorize
-      - ghcr
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GHCR_ENABLED == 'true'
+      - sign
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(inputs.channels), 'ghcr')
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -4330,6 +4845,10 @@ jobs:
         run: |
           nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
           nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signatures
       - uses: ./.github/actions/release-gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -4339,19 +4858,10 @@ jobs:
           channel: ghcr
           phase: preflight
           receipt: ghcr-${{ matrix.subject }}-preflight.json
-      - name: Authenticate only the protected environment GHCR credential
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
-          GHCR_USER: ${{ vars.GHCR_PUBLISH_USER }}
+      - name: Verify candidate provenance and prepare signed local OCI bytes
         run: |
-          sh packaging/ghcr-gate.sh preflight "ghcr-$SUBJECT-login.json"
-          test -n "$GHCR_TOKEN"
-          test -n "$GHCR_USER"
-          export DOCKER_CONFIG="$RUNNER_TEMP/ghcr-registry"
-          mkdir -p "$DOCKER_CONFIG"
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
-          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
-          echo "REGISTRY_AUTH_FILE=$DOCKER_CONFIG/config.json" >> "$GITHUB_ENV"
+          sh packaging/ghcr-gate.sh preflight "ghcr-$SUBJECT-prepare.json"
+          nix develop .#release -c python3 packaging/ghcr-verify.py candidate
       - name: Extract signed retained signing inputs
         id: subject
         run: python3 packaging/image-signing-inputs.py image-candidate/layout "$SUBJECT" signing-inputs >> "$GITHUB_OUTPUT"
@@ -4372,7 +4882,7 @@ jobs:
         with:
           subject-name: ghcr.io/marcinwadon/hennery
           subject-digest: ${{ steps.subject.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: false
       - name: Preserve provenance bundle
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
@@ -4387,7 +4897,7 @@ jobs:
         with:
           subject-name: ghcr.io/marcinwadon/hennery
           subject-digest: ${{ steps.subject.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: false
           sbom-path: signing-inputs/image.spdx.json
         if: matrix.subject != 'index'
       - name: Preserve image-sbom bundle
@@ -4405,7 +4915,7 @@ jobs:
         with:
           subject-name: ghcr.io/marcinwadon/hennery
           subject-digest: ${{ steps.subject.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: false
           sbom-path: signing-inputs/binary.spdx.json
         if: matrix.subject != 'index'
       - name: Preserve binary-sbom bundle
@@ -4420,12 +4930,12 @@ jobs:
           DIGEST: ${{ steps.subject.outputs.digest }}
         run: |
           nix develop .#release -c python3 packaging/release/verify.py --image "ghcr.io/marcinwadon/hennery@$DIGEST" \
-            --inventory-directory candidate --approval-signature image-candidate/release-inventory.json.asc --tag "$RELEASE_TAG" \
+            --manifest "image-candidate/layout/blobs/sha256/${DIGEST#sha256:}" --inventory-directory candidate --approval-signature image-candidate/release-inventory.json.asc --tag "$RELEASE_TAG" \
             --bundle "attestation-bundles/ghcr-$SUBJECT-provenance.json"
           if [ "$SUBJECT" != index ]; then
               for kind in image-sbom binary-sbom; do
                   nix develop .#release -c python3 packaging/release/verify.py --image "ghcr.io/marcinwadon/hennery@$DIGEST"         \
-                    --inventory-directory candidate --approval-signature image-candidate/release-inventory.json.asc --tag "$RELEASE_TAG" \
+                    --manifest "image-candidate/layout/blobs/sha256/${DIGEST#sha256:}" --inventory-directory candidate --approval-signature image-candidate/release-inventory.json.asc --tag "$RELEASE_TAG" \
                     --predicate-type https://spdx.dev/Document --bundle "attestation-bundles/ghcr-$SUBJECT-$kind.json"
               done
           fi
@@ -4445,9 +4955,6 @@ jobs:
           path: attestation-bundles/
           retention-days: 90
           if-no-files-found: error
-      - name: Remove registry credential
-        if: always()
-        run: rm -f "$RUNNER_TEMP/ghcr-registry/config.json"
   ghcr-complete:
     needs:
       - authorize
@@ -4606,27 +5113,38 @@ retention and candidate/publishing run attempts. Its audit is maintainer-local;
 publishers receive no administration credential. See the [R1 contract](release/README.md).
 
 `ghcr` and `ghcr-attest` depend directly on protected read-only `authorize` and
-match its inventory and current attempt. In-job preflight precedes registry
-authentication; every upload and provenance/SPDX signing operation gets fresh
+match its inventory, current attempt and selected `ghcr` channel. The gate
+checks that dispatch selection against the signed inventory. A GitHub-only
+dispatch skips both jobs even when GHCR is globally enabled. Every upload and
+provenance/SPDX signing operation gets fresh
 boundary validation. Receipt names include the matrix subject, avoiding held
 storage collisions. `ghcr-gate.sh` calls the real gate, then reuses R1's pinned-key
 inventory verifier and checks both OCI platform/index digests and executable
 identity. OCI is materialized outside the held root; changed working bytes or
 metadata refuse. The publisher accepts only that verified layout path.
 
-Both registry-writing jobs authenticate with **`GHCR_PUBLISH_TOKEN`**, a secret
+The `ghcr-attest` matrix generates bundles with registry publication disabled,
+using R1's exact candidate Sigstore bundle before signing. It verifies each new
+bundle against the actual local manifest bytes and the exact maintainer-approved
+digest before retaining it. `ghcr` waits for that entire matrix, downloads R1's
+candidate signature artifact and all seven OCI bundles, and verifies every
+candidate payload and OCI subject before registry credentials. The publisher
+repeats this verification after its final live gate and before upload.
+
+Only `ghcr` authenticates with **`GHCR_PUBLISH_TOKEN`**, a secret
 held only in `release`, and `GHCR_PUBLISH_USER`, its environment variable.
 The ordinary job token requests `packages: read`; the package's Actions access
 must independently be **READ**, with inherited write/admin access disabled.
 GitHub's attestation API uses the ordinary token with protected OIDC/attestation
-permissions; registry pushes use the separately logged-in credential. The pinned
-[action implementation](https://github.com/actions/attest/blob/ce27ba3b4a9a139d9a20a4a07d69fabb52f1e5bc/src/attest.ts)
-obtains registry credentials separately from its GitHub API token. Credential
+permissions; the generator has no registry credential. After image upload,
+the pinned ORAS tool attaches the already verified bundles as
+[Sigstore OCI referrers](https://github.com/sigstore/cosign/blob/main/specs/BUNDLE_SPEC.md),
+with fresh gate and full verification before each attachment. Credential
 kind/capability must be qualified by the maintainer; no App/fine-grained registry
 support is assumed. No fallback to `GITHUB_TOKEN` is present.
 
-After signing, each platform/index provenance and both platform SPDX bundles are
-checked with R1's shared hardware-inventory-plus-Sigstore verifier. Bundles and
+After upload, each remote platform/index and all seven provenance/SPDX bundles
+are checked again with R1's shared hardware-inventory-plus-Sigstore verifier. Bundles and
 gate receipts are held under that publishing attempt. The final read-only
 completion check refuses skipped/failed jobs, stale inventory/attempts and an
 invalid digest. Rerunning failed jobs requires renewed whole-attempt approval.
@@ -4634,10 +5152,14 @@ Both `RELEASE_PUBLICATION_ENABLED` and `RELEASE_GHCR_ENABLED` remain disabled
 until maintainer setup and review. First alpha releases are GitHub only; GHCR
 requires a separately approved stable channel set.
 
-Recovery reads and hashes the immutable remote version. Equal bytes may skip
-upload; only authenticated HTTP 404 plus structured absence permits copying
-retained bytes. Auth/network/ambiguous errors or differing digests stop. Lost
-responses require reconciliation on a newly approved attempt. No mutable aliases,
+Recovery reads and hashes the remote version and exact digest. Equal bytes may
+skip upload; only authenticated HTTP 404 plus structured absence permits copying
+retained bytes. Reconciliation repeats after the final gate. Auth/network/
+ambiguous errors or a differing version stop. Uploads address only the immutable
+digest: this publisher neither creates nor replaces version tags, so a version
+appearing after the final check cannot be overwritten. Use the approved digest
+from the inventory, not a version-tag assumption. Lost responses require
+reconciliation on a newly approved attempt. No mutable aliases,
 rebuild, changed approval signature or replacement release bytes are permitted.
 
 ## Maintainer-only setup and release steps
@@ -4963,7 +5485,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [Session-bound MCP and family identity (D1)](plans/2026-10-27-delegation-mcp.md) — collector-local opt-in MCP delivery, generation-bound grants, shared identity and immutable scoped family storage; built first, exact fresh replay and guard/load evidence recorded. Actual pinned Claude/Codex discovery passed. Maintainer-delegated review returned APPROVE; its one cycle-fixture Minor is corrected and independently probed. Linux/macOS CI remains parent-owned; tools, durable delivery and UI follow in D2–D4.
 
    - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — hardware-backed inventory approval plus the executed verify-then-run README bootstrap, re-confirmed by the parent. The Linux CI tool-directory collision is repaired with duplicate-name/conflict regressions. Rebased onto W2 at `e36e66c8`; post-rebase checks, COPY probes and fresh replay evidence are recorded in the plan. PR #145 awaits review and CI; maintainer-only setup remains and publication is disabled.
-   - [GHCR collector image (R4)](plans/2026-10-28-ghcr-image.md) — rebased onto merged R1 at `191aa71b`: real shared `release-gate ghcr`, protected environment credentials and hardware-signed inventory plus exact-tag Sigstore. Native OCI/index bytes enter the complete held candidate; each writer revalidates actual image/binary digests. R1's shared OCI verifier also checks both platform subjects. Fresh 29-file replay, 152 R4 and 96 R1 contracts, 130 assertion-producing copy probes; current Rust/lint evidence is in the plan. Draft #143 Docker acceptance and scoped integration review remain parent-owned. Nothing published.
+   - [GHCR collector image (R4)](plans/2026-10-28-ghcr-image.md) — rebased onto merged R1 at `191aa71b`: real shared `release-gate ghcr`, protected environment credentials and hardware-signed inventory plus exact-tag Sigstore. Native OCI/index bytes enter the complete held candidate; each writer revalidates actual image/binary digests. R1's shared OCI verifier also checks both platform subjects. Fresh 32-file replay, 168 R4 and 97 R1 contracts, scoped assertion-producing copy probes; current Rust/lint evidence is in the plan. Draft #143 Docker acceptance and scoped integration review remain parent-owned. Nothing published.
 
 ## Maintainer decisions (2026-09-27)
 
@@ -4988,48 +5510,71 @@ Every open design decision is resolved; the specs carry the details.
 _Generated with Claude AI — please review before distribution._
 ~~~~
 
+## Scoped review amendments (2026-10-15)
+
+The scoped review of `fc8aea88..6b1c9241` returned CHANGES. Five new
+regressions first failed by assertion: missing candidate verification, stale
+remote absence, both job selection conditions, OCI generation order and
+pre-credential verification. Findings **1–3** are addressed in this record.
+Finding **4 remains deliberately deferred** until the parent confirms R3 merged:
+no rebase or aggregate candidate job is included in this amendment. Its reserved
+`ghcr` job-ID/display-name binding and retention dependencies must be integrated
+then; both lanes’ credential detectors must survive that rebase.
+
+`ghcr-attest` now waits for R1’s `sign` and creates bundles with
+`push-to-registry: false`, without a registry credential. It verifies R1’s exact
+candidate bundle and each OCI bundle locally against the actual manifest bytes,
+whose SHA-256 must equal the exact signed image digest. `ghcr` waits for the
+complete matrix, downloads those bundles and re-verifies all candidate payloads
+and all seven OCI bundles before login. The publisher repeats that verification
+after the final gate. Only then does it upload the image and attach already
+verified bundles through ORAS, with fresh gate/verification before each write.
+Remote image verification remains after upload. The common R1 verifier retains
+hardware approval, exact tag/source identity and predicate pinning.
+
+Both channel jobs require JSON dispatch selection, checked against the signed
+inventory by the gate; globally enabled GHCR does not schedule a GitHub-only
+dispatch. The production authority policy accepts only that GHCR condition.
+
+Reconciliation repeats after the final live gate. Image upload is by digest:
+no version tag is created or overwritten. This removes the residual check/write
+race even if differing version content appears immediately after the last check.
+The digest is the deployment reference and public release identity; reviewed
+atomic version-tag creation would be separate work, not a claimed guarantee.
+
 ## Verification record
 
-Final fresh snapshot: `.superpowers/sdd/r4/replay-15`, from **`191aa71b`**.
-**29 complete File blocks, 0 patches**, with identical source bytes/modes after
+Final fresh snapshot: `.superpowers/sdd/r4/replay-17`, from **`191aa71b`**.
+**32 complete File blocks, 0 patches**, with identical source bytes/modes after
 each task. The plan itself is excluded from recursive embedding and is copied
 back after the execution record. Final staged and committed bytes are compared
 with that frozen tested snapshot before the exact-lease push.
 
-R4 contracts: **152 passed**, exit 0, including candidate materialization,
+R4 contracts: **168 passed**, exit 0, including candidate materialization,
 consumer platform membership, signature/inventory/gate refusal, registry recovery,
 workflow boundaries, real immutable audit receipt uniqueness, GitHub-only candidate
 job selection and process/UI smoke doubles. R1's complete release suite:
-**96 passed**, exit 0, including actual disposable-key cryptography. Actionlint
+**97 passed**, exit 0, including actual disposable-key cryptography. Actionlint
 on all **seven workflows** and shellcheck on **seven scripts** exit 0. Production
 workflow-policy repository check exits 0. Native Docker is not proven by fixtures.
 
-**130 distinct copy-only mutations, 130 caught, 0 missed**. Every counted probe
-has an actual assertion failure, never an ERROR/message-only result. This is the
-current distinct set, not historical runs added together. It includes skipping
-the live gate, missing/invalid signature or wrong global inventory, revocation
-between inspection and upload, wrong upload layout, signed descriptor/platform
-membership, archive/link/path/metadata refusal, pinned tool context, ordinary-token
-credential substitution and each signing boundary. Fresh replay repeats the same
-mutation set. Receipt collision probes call the REAL `retention.audit()` through
-an immutable-store transport double; no audit no-op is used. R4 adds no optional
-candidate job, so GitHub-only releases introduce no skipped GHCR candidate job.
-Selected skipped/failed publishers still refuse completion; R3’s generic channel
-hook is left untouched. A real-audit regression first reproduced HTTP 412
-when a gate receipt shared a basename with its retained attestation bundle.
-Each signing gate now uses a distinct `-boundary.json` basename; all **25**
-matrix gate/bundle objects pass real immutable audit, and three independent
-revert probes restore the collisions. Earlier counts are historical. Logs: `r1-probe4-*`,
-`replay15-task*-*.log`, `replay15-probes.log` in the lane ledger directory.
+**23 scoped amendment mutations caught, 0 missed**, each with an actual
+assertion failure, in COPY `review2-probe-2` and fresh replay 17. Logs:
+`review2-probes.log` inside each copy, `review2-copy2-probes.log` and
+`replay17-probes.log` outside. Scope covers both verification boundaries, exact
+local manifest/signed descriptor binding, bundle generation/verification before registry writes,
+downloaded current-attempt bundles, every attachment, post-upload verification,
+late remote conflict and digest-only upload, both channel conditions and policy.
+The full suites, actionlint, shellcheck and production authority check all exit 0. The previous
+130/130 set belongs to `6b1c9241`; it is historical, not a claim about this
+changed implementation.
 
-Replay 12 was retained after nested Nix temporary paths exceeded GnuPG’s
-agent socket limit. Fresh replay 15 uses `TMPDIR=/tmp`; no cryptographic or test
-requirement changed. Replay 13 caught a transport-double restriction to attempt
-1; the fixture now accepts the current attempt while retaining immutable keys.
-Replay 14 predates the subsequently discovered gate/bundle basename collision;
-replay 15 contains the final fix and expanded real-audit regression.
+Earlier failed/intermediate replay directories 12–16 remain retained. Replay 17
+uses `TMPDIR=/tmp`; the prior GnuPG socket-limit and attempt-fixture corrections
+are preserved. New ORAS is pinned through the existing flake lock; its version
+command and workflow lint are qualified locally, actual registry behavior is CI.
 
-Six Rust checks, all final exits **0**:
+Previous integration’s six Rust checks, all final exits **0** (not rerun for this packaging-only amendment):
 
 ~~~~sh
 nix develop -c cargo fmt --all --check
@@ -5062,9 +5607,9 @@ full retry passed. No Rust/web source change or test/type/rule weakening occurre
 
 ## After this plan
 
-- Parent scoped review of the **`fc8aea88..R4 head` integration**, with full branch
+- Parent scoped review of the **`6b1c9241..R4 head` review amendments 1–3**, with full branch
   based on **`191aa71b`**. Inspect new shared membership/classifier changes,
-  protected credential selection, exact held bytes, every boundary and retries.
+  protected credential selection, pre-publication candidate/OCI Sigstore checks, exact held bytes, every boundary and retries. Finding 4 waits for the parent’s R3 merge notice; do not rebase yet.
 - Parent watches draft **#143** native Docker proof and reads checks,
   reviewDecision, mergeStateStatus and unresolved human/bot threads. Local Docker
   is unavailable; no real publication/login or live settings acceptance was run.
@@ -5073,7 +5618,7 @@ full retry passed. No Rust/web source change or test/type/rule weakening occurre
 - No mutable aliases/announcements until every approved channel and public-path
   acceptance succeeds. New bytes require a new immutable version/candidate.
 - Scratch retained: current `r1-rebase-task1`, `r1-rebase-task3`,
-  `r1-rebase-task4`, `r1-probe-1` through `r1-probe-4`, `replay-12` through `replay-15`; prior
+  `r1-rebase-task4`, `r1-probe-1` through `r1-probe-4`, `review2-probe-1`/`review2-probe-2`, `replay-12` through `replay-17`; prior
   `replay-1` through `replay-11`, `amend-probe-1` through `amend-probe-6`,
   `chain-probe-1`, `subject-probe-1`/`subject-probe-2`, `uid-probe-1` through
   `uid-probe-3`, `base-probe-3`/`base-probe-4`. None is deleted by this lane.
