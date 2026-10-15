@@ -79,6 +79,8 @@ pub struct AppState {
     /// The host removals with an attempt in flight (plan 9d B7).
     pub forgets: Arc<forget::InFlight>,
     pub catalogs: Arc<delegation_runtime::Catalogs>,
+    /// One notification reconciliation identity per collector, shared by workers.
+    pub(crate) delegation_run: Arc<str>,
 }
 
 impl AppState {
@@ -100,6 +102,7 @@ impl AppState {
             sweep_interval: sweep::INTERVAL,
             forgets: Arc::new(forget::InFlight::default()),
             catalogs: Arc::default(),
+            delegation_run: uuid::Uuid::now_v7().to_string().into(),
         }
     }
 }

@@ -3172,7 +3172,6 @@ fn reviewer_host_crash_delivered_between_frames_never_wakes_twice_and_keeps_erro
         );
     }
 }
-||||||| parent of 0f5bf731 (wip(delegation): preserve D3b attention and push work)
 
 // D3b: operator attention is durable state, independent of push success.
 #[test]
@@ -3277,6 +3276,15 @@ fn d3b_delivered_unanswered_question_escalation_is_sticky() {
     assert_eq!(attention(&w).len(), 1, "delivery facts cannot erase fallback");
     assert!(!w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
     assert!(rx.try_recv().is_err());
+    let id = attention(&w)[0].id.clone();
+    let now = deadline(&w) + 2;
+    user_turn_with_origin(&w, "parent", 5, "new-operator", InputOrigin::Operator {});
+    w.store.refresh_delegation_attention(&hub, now).unwrap();
+    assert!(w.store.rearm_delegation_attention(&id, "new-operator", now).unwrap());
+    assert!(attention(&w).is_empty());
+    assert_eq!(notices(&w)[0].1, "parent_delivered");
+    assert!(!w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+    assert!(rx.try_recv().is_err(), "rearm must not duplicate a delivered question");
 }
 #[test]
 fn d3b_delivered_report_needs_no_answer_or_deadline_fallback() {
@@ -3316,6 +3324,7 @@ fn d3b_permission_and_parent_close_commit_attention_atomically() {
     let notice = notices.try_recv().unwrap();
     assert!(notice.url.contains("pending="));
     assert!(notice.tag.starts_with("delegation:"));
+    assert_eq!(notice.detail.as_deref(), Some("question"));
 }
 #[test]
 fn d3b_attention_write_failure_rolls_back_permission_source() {
@@ -3399,8 +3408,14 @@ fn d3b_parent_delete_preserves_scrubbed_surviving_child_attention() {
             .unwrap(),
         None
     );
-    assert!(matches!(w.store.submit_answer("child", "question", &answer()).unwrap(), AnswerSubmission::Accepted(_)));
-    assert!(attention(&w).is_empty(), "the detached child remains directly answerable");
+    assert!(matches!(
+        w.store.submit_answer("child", "question", &answer()).unwrap(),
+        AnswerSubmission::Queued(_)
+    ));
+    assert!(
+        attention(&w).is_empty(),
+        "the detached child remains directly answerable"
+    );
     w.store.close_now("child").unwrap();
     w.store.delete_session("child", None).unwrap();
     assert!(attention(&w).is_empty());
@@ -3445,7 +3460,23 @@ fn d3b_rearm_requires_explicit_intent_a_new_factual_operator_turn_and_live_edge(
     w.store.refresh_delegation_attention(&hub, due).unwrap();
     let id = attention(&w)[0].id.clone();
     assert!(!w.store.rearm_delegation_attention(&id, "missing", due + 1).unwrap());
-    user_turn_with_origin(&w, "parent", 3, "operator", InputOrigin::Operator {});
+    user_turn_with_origin(
+        &w,
+        "parent",
+        3,
+        "copied-report",
+        InputOrigin::ChildReport {
+            child_id: "child".into(),
+            source_event_id: "7".into(),
+            delivery_id: "copy".into(),
+        },
+    );
+    assert!(
+        !w.store
+            .rearm_delegation_attention(&id, "copied-report", due + 1)
+            .unwrap()
+    );
+    user_turn_with_origin(&w, "parent", 5, "operator", InputOrigin::Operator {});
     assert_eq!(attention(&w).len(), 1, "a plain operator prompt does not rearm");
     assert!(w.store.rearm_delegation_attention(&id, "operator", due + 1).unwrap());
     assert!(attention(&w).is_empty());
@@ -3493,4 +3524,460 @@ fn d3b_final_push_guard_rejects_purge_and_deleted_children() {
         }
         assert!(!w.store.delegation_push_current(&n).unwrap());
     }
+}
+
+#[test]
+fn d3b_acknowledging_a_report_is_durable_but_cannot_answer_a_question() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    w.store.record_close_request("parent").unwrap();
+    let question = attention(&w)[0].id.clone();
+    assert!(!w.store.acknowledge_delegation_attention(&question).unwrap());
+    assert!(w.store.still_open("child", "question").unwrap());
+    w.store
+        .ingest(
+            "child",
+            3,
+            &SessionBody::AdapterExited {
+                code: Some(1),
+                signal: None,
+                stderr_tail: String::new(),
+            },
+        )
+        .unwrap();
+    let report = attention(&w).into_iter().find(|a| a.pending_id.is_none()).unwrap().id;
+    assert!(w.store.acknowledge_delegation_attention(&report).unwrap());
+    assert_eq!(
+        notices(&w)
+            .into_iter()
+            .find(|n| n.0 == "session_unavailable")
+            .unwrap()
+            .1,
+        "resolved"
+    );
+    assert!(!w.store.acknowledge_delegation_attention(&report).unwrap());
+    let (hub, _) = connected();
+    Store::open(&w.db)
+        .unwrap()
+        .refresh_delegation_attention(&hub, unix_now() + 600)
+        .unwrap();
+    assert!(attention(&w).is_empty());
+}
+#[test]
+fn d3b_rearm_rejects_an_operator_prompt_that_predates_the_fallback() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    user_turn_with_origin(&w, "parent", 3, "before-deadline", InputOrigin::Operator {});
+    let (hub, _) = connected();
+    let due = deadline(&w);
+    w.store.refresh_delegation_attention(&hub, due).unwrap();
+    let id = attention(&w)[0].id.clone();
+    assert!(
+        !w.store
+            .rearm_delegation_attention(&id, "before-deadline", due + 1)
+            .unwrap()
+    );
+}
+
+#[test]
+fn d3b_revoked_parent_host_falls_back_without_waiting_for_deadline() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    Hosts::open(&w.db).unwrap().revoke("host", unix_now()).unwrap();
+    w.store.revoke_host("host").unwrap();
+    w.store
+        .refresh_delegation_attention(&Hub::new(), deadline(&w) - 299)
+        .unwrap();
+    assert!(attention(&w).iter().any(|a| a.reason == "parent_unavailable"));
+}
+#[test]
+fn d3b_push_admission_checks_the_canonical_answer_queue() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "permission", PendingKind::Permission);
+    let (push, mut notices) = hennery_kernel::push::Push::new();
+    w.store.enqueue_delegation_attention(&push, "run", "", 1000).unwrap();
+    let notice = notices.try_recv().unwrap();
+    w.store
+        .submit_answer(
+            "child",
+            "permission",
+            &AnswerRequest::Permission {
+                option_id: "allow".into(),
+            },
+        )
+        .unwrap();
+    // Final admission remains safe even if a derived projection is stale.
+    raw(&w)
+        .execute(
+            "UPDATE delegation_attention SET state='open' WHERE owner_id=?1",
+            [w.store.owner_id()],
+        )
+        .unwrap();
+    assert!(!w.store.delegation_push_current(&notice).unwrap());
+}
+#[test]
+fn d3b_reassignment_racing_enqueue_rejects_old_hat_payloads() {
+    let (w, _) = pair();
+    user_turn_with_origin(&w, "child", 2, "report", InputOrigin::Operator {});
+    w.store.record_close_request("parent").unwrap();
+    w.store
+        .ingest(
+            "child",
+            4,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    let (push, mut notices) = hennery_kernel::push::Push::new();
+    let start = Barrier::new(3);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            start.wait();
+            w.store.enqueue_delegation_attention(&push, "run", "", 1000).unwrap();
+        });
+        scope.spawn(|| {
+            start.wait();
+            assert!(matches!(
+                w.store.reassign_hat("child", &w.other).unwrap(),
+                hennery_sessions::store::Reassign::Done(_)
+            ));
+        });
+        start.wait();
+    });
+    while let Some(notice) = notices.try_recv() {
+        assert_eq!(
+            w.store.delegation_push_current(&notice).unwrap(),
+            notice.hat_id == w.other
+        );
+    }
+    assert!(w.store.operator_attention(Some(&w.hat), "").unwrap().is_empty());
+    assert_eq!(w.store.operator_attention(Some(&w.other), "").unwrap().len(), 1);
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM delegation_attention WHERE owner_id=?1 AND delivery_id IS NOT NULL",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+}
+#[test]
+fn d3b_muted_and_dropped_pushes_leave_durable_work_for_reconciliation() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "permission", PendingKind::Permission);
+    w.store
+        .enqueue_delegation_attention(&hennery_kernel::push::Push::detached(), "lost", "", 1000)
+        .unwrap();
+    assert_eq!(attention(&w).len(), 1);
+    let (push, mut notices) = hennery_kernel::push::Push::new();
+    w.store
+        .enqueue_delegation_attention(&push, "restart", "", 1001)
+        .unwrap();
+    let template = notices.try_recv().unwrap();
+    assert!(
+        hennery_kernel::delivery::payload_for(
+            &template,
+            hennery_kernel::push::PushPolicy {
+                muted: true,
+                ..Default::default()
+            }
+        )
+        .is_none()
+    );
+    for i in 0..hennery_kernel::push::NOTICE_QUEUE {
+        let mut notice = template.clone();
+        notice.tag = format!("fill-{i}");
+        push.notify(notice);
+    }
+    w.store
+        .enqueue_delegation_attention(&push, "overflow", "", 1002)
+        .unwrap();
+    assert_eq!(notices.dropped(), 1);
+    assert_eq!(attention(&w).len(), 1);
+    while notices.try_recv().is_some() {}
+    w.store
+        .enqueue_delegation_attention(&push, "overflow", "", 1302)
+        .unwrap();
+    assert_eq!(notices.try_recv().unwrap(), template);
+    assert_eq!(attention(&w).len(), 1);
+}
+#[test]
+fn d3b_parent_delete_removes_inert_attention_metadata_for_delivered_reports() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    user_turn_with_origin(&w, "child", 2, "report", InputOrigin::Operator {});
+    let (hub, mut rx) = connected();
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+    let (request, turn) = take_prompt(&mut rx);
+    w.store
+        .ingest(
+            "parent",
+            3,
+            &SessionBody::TurnStarted {
+                request_id: request,
+                turn_id: turn.clone(),
+            },
+        )
+        .unwrap();
+    ended(&w, "parent", 4, &turn);
+    w.store.close_now("parent").unwrap();
+    w.store.delete_session("parent", None).unwrap();
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM delegation_attention WHERE owner_id=?1",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+}
+#[test]
+fn d3b_attention_pages_and_push_pages_are_bounded_and_advance() {
+    let (w, _) = pair();
+    for i in 0..129 {
+        pending(&w, "child", 2 + i, &format!("permission-{i}"), PendingKind::Permission);
+    }
+    let first = w.store.operator_attention(Some(&w.hat), "").unwrap();
+    assert_eq!(first.len(), 100);
+    let second = w
+        .store
+        .operator_attention(Some(&w.hat), &first.last().unwrap().id)
+        .unwrap();
+    assert_eq!(second.len(), 29);
+    let (push, mut notices) = hennery_kernel::push::Push::new();
+    let after = w.store.enqueue_delegation_attention(&push, "run", "", 1000).unwrap();
+    assert!(!after.is_empty());
+    let mut count = 0;
+    while notices.try_recv().is_some() {
+        count += 1;
+    }
+    assert_eq!(count, 128);
+    w.store
+        .enqueue_delegation_attention(&push, "run", &after, 1000)
+        .unwrap();
+    assert!(notices.try_recv().is_some());
+    assert!(notices.try_recv().is_none());
+}
+
+#[tokio::test]
+async fn d3b_repeated_drains_share_one_notification_run_but_restart_reconciles() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "permission", PendingKind::Permission);
+    let (push, mut notices) = hennery_kernel::push::Push::new();
+    let mut state = hennery_sessions::AppState::new(
+        Store::open(&w.db).unwrap(),
+        Hosts::open(&w.db).unwrap(),
+        Operator::open(&w.db).unwrap(),
+    );
+    state.push = push.clone();
+    hennery_sessions::delegation_worker::drain(&state).await.unwrap();
+    let first = notices.try_recv().unwrap();
+    hennery_sessions::delegation_worker::drain(&state.clone())
+        .await
+        .unwrap();
+    assert!(
+        notices.try_recv().is_none(),
+        "workers in one collector share a run identity"
+    );
+    let mut restarted = hennery_sessions::AppState::new(
+        Store::open(&w.db).unwrap(),
+        Hosts::open(&w.db).unwrap(),
+        Operator::open(&w.db).unwrap(),
+    );
+    restarted.push = push;
+    hennery_sessions::delegation_worker::drain(&restarted).await.unwrap();
+    assert_eq!(notices.try_recv().unwrap(), first);
+}
+
+#[test]
+fn d3b_automatic_report_completion_does_not_bypass_operator_push_routing() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    let (hub, mut rx) = connected();
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+    let (request, turn) = take_prompt(&mut rx);
+    w.store
+        .ingest(
+            "parent",
+            3,
+            &SessionBody::TurnStarted {
+                request_id: request,
+                turn_id: turn.clone(),
+            },
+        )
+        .unwrap();
+    let ended = w
+        .store
+        .ingest_fact(
+            "parent",
+            4,
+            &SessionBody::TurnEnded {
+                turn_id: turn,
+                outcome: TurnOutcome::Completed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    let (push, mut notices) = hennery_kernel::push::Push::new();
+    w.store.route_push_edge(&ended.edge.unwrap(), &push).unwrap();
+    assert!(
+        notices.try_recv().is_none(),
+        "automatic root reports must not create ordinary completion pushes"
+    );
+    assert!(
+        w.store
+            .open_turn("parent", "operator", &[json!({"type":"text","text":"continue"})])
+            .unwrap()
+    );
+    w.store
+        .ingest(
+            "parent",
+            5,
+            &SessionBody::TurnStarted {
+                request_id: "operator".into(),
+                turn_id: "operator".into(),
+            },
+        )
+        .unwrap();
+    let ended = w
+        .store
+        .ingest_fact(
+            "parent",
+            6,
+            &SessionBody::TurnEnded {
+                turn_id: "operator".into(),
+                outcome: TurnOutcome::Completed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    w.store.route_push_edge(&ended.edge.unwrap(), &push).unwrap();
+    assert_eq!(notices.try_recv().unwrap().tag, "parent");
+}
+#[test]
+fn d3b_new_completion_after_parent_delete_creates_durable_operator_work() {
+    let (w, _) = pair();
+    assert!(
+        w.store
+            .open_turn("child", "ongoing", &[json!({"type":"text","text":"work"})])
+            .unwrap()
+    );
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "work".into(),
+                turn_id: "ongoing".into(),
+            },
+        )
+        .unwrap();
+    w.store.close_now("parent").unwrap();
+    w.store.delete_session("parent", None).unwrap();
+    let ended = w
+        .store
+        .ingest_fact(
+            "child",
+            3,
+            &SessionBody::TurnEnded {
+                turn_id: "ongoing".into(),
+                outcome: TurnOutcome::Completed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    let rows = attention(&w);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].pending_id, None);
+    let (push, mut notices) = hennery_kernel::push::Push::new();
+    w.store.route_push_edge(&ended.edge.unwrap(), &push).unwrap();
+    assert!(notices.try_recv().is_none());
+    w.store.enqueue_delegation_attention(&push, "run", "", 1000).unwrap();
+    assert!(notices.try_recv().unwrap().tag.starts_with("delegation:"));
+}
+#[test]
+fn d3b_orphan_host_crash_coalesces_and_obsoletes_question_before_cancel_frame() {
+    let (w, _) = pair();
+    assert!(w.store.open_turn("child", "ongoing", &[]).unwrap());
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "work".into(),
+                turn_id: "ongoing".into(),
+            },
+        )
+        .unwrap();
+    pending(&w, "child", 3, "question", PendingKind::Elicitation);
+    w.store.close_now("parent").unwrap();
+    w.store.delete_session("parent", None).unwrap();
+    let frames = [
+        SessionBody::TurnEnded {
+            turn_id: "ongoing".into(),
+            outcome: TurnOutcome::Interrupted,
+            stop_reason: None,
+            error: Some("lost".into()),
+        },
+        SessionBody::PendingResolved {
+            pending_id: "question".into(),
+            resolution: PendingResolution::Cancelled,
+            reason: Some(PendingReason::AdapterLost),
+        },
+        SessionBody::AdapterExited {
+            code: Some(1),
+            signal: None,
+            stderr_tail: String::new(),
+        },
+        SessionBody::SessionParked {
+            reason: ParkReason::AdapterExited,
+        },
+    ];
+    let mut identity = None;
+    for (i, frame) in frames.iter().enumerate() {
+        w.store.ingest("child", 4 + i as u64, frame).unwrap();
+        let rows = attention(&w);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].pending_id, None);
+        if let Some(id) = &identity {
+            assert_eq!(&rows[0].id, id);
+        } else {
+            identity = Some(rows[0].id.clone());
+        }
+    }
+}
+
+#[test]
+fn d3b_start_failure_after_parent_delete_remains_durable_operator_work() {
+    let (w, parent) = pair();
+    w.start("starting", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    {
+        let mut conn = raw(&w);
+        let tx = conn.transaction().unwrap();
+        assert!(w.store.bind_family_in(&tx, &parent, 1, "starting", 0).unwrap());
+        tx.commit().unwrap();
+    }
+    w.store.close_now("parent").unwrap();
+    w.store.delete_session("parent", None).unwrap();
+    w.store.mark_failed_if_starting("starting", "late failure").unwrap();
+    assert_eq!(w.store.find_session("starting").unwrap().unwrap().lifecycle, "failed");
+    let rows = attention(&w);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].child_id, "starting");
+    assert!(
+        w.store
+            .events("starting", 0, 100)
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "start_failed")
+    );
 }

@@ -25,6 +25,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/hosts/{id}/runtime-catalog", get(catalog))
         .route("/api/delegation/attention", get(attention))
         .route("/api/delegation/attention/{id}/rearm", post(rearm))
+        .route("/api/delegation/attention/{id}/acknowledge", post(acknowledge))
         .layer(DefaultBodyLimit::max(32 * 1024));
     hennery_kernel::auth::operator_only(routes, state.operator.clone()).with_state(state)
 }
@@ -63,6 +64,20 @@ async fn rearm(State(state): State<AppState>, Path(id): Path<String>, ApiJson(re
             StatusCode::CONFLICT,
             "rearm_unavailable",
             "a new operator prompt and eligible routing are required",
+        ),
+        Err(err) => internal(err),
+    }
+}
+async fn acknowledge(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if id.len() > 128 {
+        return error(StatusCode::BAD_REQUEST, "invalid_arguments", "invalid arguments");
+    }
+    match state.store.acknowledge_delegation_attention(&id) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => error(
+            StatusCode::CONFLICT,
+            "acknowledgement_unavailable",
+            "only an outstanding status report can be acknowledged",
         ),
         Err(err) => internal(err),
     }

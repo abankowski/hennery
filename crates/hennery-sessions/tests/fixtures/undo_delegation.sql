@@ -4,7 +4,6 @@ DROP TRIGGER attention_notice_update;
 DROP TRIGGER attention_parent_delete;
 DROP TRIGGER attention_child_end;
 DROP TRIGGER attention_pending_end;
-DROP TRIGGER attention_answer;
 DROP TABLE delegation_attention;
 DROP INDEX delegation_notice_deadline;
 DROP TRIGGER notice_endpoint_end;

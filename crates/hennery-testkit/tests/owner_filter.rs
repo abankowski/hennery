@@ -38,7 +38,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-sessions/src/delegation_attention.rs",
         include_str!("../../hennery-sessions/src/delegation_attention.rs"),
-        10,
+        15,
     ),
     (
         "hennery-sessions/src/delegation_delivery_dispatch.rs",
@@ -48,7 +48,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-sessions/src/delegation_delivery.rs",
         include_str!("../../hennery-sessions/src/delegation_delivery.rs"),
-        10,
+        11,
     ),
     (
         "hennery-sessions/src/delegation_control.rs",

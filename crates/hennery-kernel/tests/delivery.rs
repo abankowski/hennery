@@ -657,9 +657,10 @@ async fn d3b_guard_rejects_a_stale_queued_notice_before_encryption_or_send() {
     setup.subscribe("https://push.example.net/device", &Browser::new(21), None);
     let delivery = setup.delivery(at_once());
     let (push, notices) = Push::new();
+    let current_guard = notices.guard();
     push.set_guard(Arc::new(|_| false));
     let done = delivery
-        .deliver_guarded(&notice(&setup.hat()), notices.guard())
+        .deliver_guarded(&notice(&setup.hat()), current_guard)
         .await
         .unwrap();
     assert!(done.is_empty());
@@ -689,7 +690,12 @@ async fn d3b_guard_is_rechecked_after_retry_delay() {
         .await
         .unwrap();
     assert_eq!(setup.fake.sent().len(), 1, "revoked work must not retry");
-    assert_eq!(result[0].1, Outcome::Failed("notification no longer current".into()));
+    assert_eq!(result[0].1, Outcome::Suppressed);
+    assert_eq!(
+        setup.hosts.subscriptions().unwrap()[0].last_error,
+        None,
+        "revoked work is not a device failure"
+    );
 }
 #[tokio::test]
 async fn d3b_production_queue_uses_the_installed_guard() {

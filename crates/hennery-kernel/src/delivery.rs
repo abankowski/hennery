@@ -175,6 +175,8 @@ impl Default for RetryPolicy {
 /// What became of one subscription's push.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
+    /// The owning module withdrew this work before transport admission.
+    Suppressed,
     /// The push service took it (2xx).
     Delivered,
     /// The subscription is gone (404, 410): removed.
@@ -333,7 +335,7 @@ impl<T: Transport> Delivery<T> {
                     this.send_one(&sub, &plaintext, urgency, subject.as_deref(), &notice, &guard)
                         .await
                 } else {
-                    Outcome::Failed("notification no longer current".into())
+                    Outcome::Suppressed
                 };
                 (sub.id, outcome)
             });
@@ -370,6 +372,7 @@ impl<T: Transport> Delivery<T> {
             }
         };
         let recorded = match &outcome {
+            Outcome::Suppressed => Ok(()),
             Outcome::Delivered => self.hosts.record_push_success(&sub.id, &sub.endpoint, unix_now()),
             Outcome::Removed => self.hosts.remove_gone_subscription(&sub.id, &sub.endpoint).map(|_| ()),
             Outcome::Failed(why) => self.hosts.record_push_error(&sub.id, &sub.endpoint, why),
@@ -382,7 +385,7 @@ impl<T: Transport> Delivery<T> {
                 tracing::info!(id = %sub.id, host = %sub.endpoint_host(), "push subscription gone; removed")
             }
             Outcome::Failed(why) => tracing::warn!(id = %sub.id, host = %sub.endpoint_host(), %why, "push failed"),
-            Outcome::Delivered => {}
+            Outcome::Delivered | Outcome::Suppressed => {}
         }
         outcome
     }
@@ -436,7 +439,7 @@ impl<T: Transport> Delivery<T> {
         let mut delays = self.retry.delays.iter();
         loop {
             if !guard(notice) {
-                return Outcome::Failed("notification no longer current".into());
+                return Outcome::Suppressed;
             }
             let sent = tokio::time::timeout(self.retry.attempt_timeout, self.transport.send(request.clone()))
                 .await

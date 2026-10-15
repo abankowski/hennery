@@ -5,8 +5,8 @@ use crate::{
 };
 use anyhow::Result;
 use hennery_kernel::push::{Notice, Push, Urgency};
-use hennery_proto::frames::Capability;
-use rusqlite::{OptionalExtension, params};
+use hennery_proto::{frames::Capability, plugin::InputOrigin, rest::EventDto};
+use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -30,10 +30,15 @@ impl Store {
                 "SELECT n.delivery_id,n.deadline,p.host_id,
                 f.detached = 0 AND p.hat_id = f.hat_id AND c.hat_id = f.hat_id
                 AND p.close_requested = 0 AND p.lifecycle IN ('starting','active','parked')
+                AND c.close_requested = 0 AND c.lifecycle IN ('starting','active','parked','failed')
+                AND h.revoked_at IS NULL
+                AND (p.mcp_delivery_mode = 'isolated' OR (p.mcp_delivery_mode = 'unisolated' AND p.hat_id = h.default_hat_id))
+                AND NOT EXISTS(SELECT 1 FROM purged_hats x WHERE x.owner_id = ?1 AND x.hat_id = n.hat_id)
                 AND g.delegation_enabled = 1 AND g.revision = n.accepted_revision
                 FROM delegation_notices n JOIN session_families f ON f.owner_id = ?1 AND f.child_id = n.child_id
                 JOIN sessions p ON p.owner_id = ?1 AND p.id = n.parent_id
                 JOIN sessions c ON c.owner_id = ?1 AND c.id = n.child_id
+                JOIN hosts h ON h.owner_id = ?1 AND h.id = p.host_id
                 JOIN hat_session_tools g ON g.owner_id = ?1 AND g.hat_id = n.hat_id
                 WHERE n.owner_id = ?1 AND n.delivery_id > ?2
                 AND (n.state IN ('parent_queued','waiting_config','awaiting_reconciliation')
@@ -102,8 +107,11 @@ impl Store {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let rows = {
-            let mut stmt=tx.prepare("SELECT a.attention_id,c.id,c.hat_id,c.title,c.cwd,a.pending_id
+            let mut stmt=tx.prepare("SELECT a.attention_id,c.id,c.hat_id,c.title,c.cwd,a.pending_id,
+                json_extract(e.body,'$.indexed.pending.title')
                 FROM delegation_attention a JOIN sessions c ON c.owner_id = ?1 AND c.id = a.child_id AND c.hat_id = a.hat_id
+                LEFT JOIN pending p ON p.owner_id = ?1 AND p.session_id = c.id AND p.pending_id = a.pending_id
+                LEFT JOIN events e ON e.owner_id = ?1 AND e.session_id = c.id AND e.event_id = p.opened_event_id
                 WHERE a.owner_id = ?1 AND a.state = 'open' AND c.lifecycle <> 'deleted' AND a.attention_id > ?2
                 AND (a.push_run <> ?3 OR a.push_at <= ?4 - 300)
                 AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id = a.hat_id)
@@ -118,18 +126,25 @@ impl Store {
                         cwd: r.get(4)?,
                     },
                     r.get::<_, Option<String>>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
         };
         let cursor = rows.last().map(|r| r.0.clone()).unwrap_or_default();
         let mut notices = Vec::new();
-        for (id, session, pending) in rows {
+        for (id, session, pending, title) in rows {
             let mut notice = if let Some(pending) = pending {
                 crate::notify::notice_for(
                     &PushEdge::QuestionOutsideTurn {
                         pending_id: pending,
-                        title: None,
+                        title: title.and_then(|text| {
+                            crate::store::one_line(
+                                &text,
+                                hennery_proto::rest::TITLE_MAX_CHARS,
+                                hennery_proto::rest::TITLE_MAX_JSON_BYTES,
+                            )
+                        }),
                     },
                     &session,
                 )
@@ -230,21 +245,100 @@ impl Store {
             JOIN sessions c ON c.owner_id = ?1 AND c.id = a.child_id AND c.hat_id = a.hat_id
             WHERE a.owner_id = ?1 AND a.attention_id = ?2 AND a.hat_id = ?3 AND a.state = 'open'
             AND c.lifecycle <> 'deleted'
+            AND (a.pending_id IS NULL OR EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1
+                AND p.session_id = a.child_id AND p.pending_id = a.pending_id AND p.state = 'open'
+                AND NOT EXISTS(SELECT 1 FROM answer_queue q WHERE q.owner_id = ?1 AND q.pending_id = p.pending_id)))
             AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id = a.hat_id))",
             params![self.owner_id(), id, notice.hat_id],
             |r| r.get(0),
         )?)
     }
+    /// Acknowledge a status report without impersonating an answer or retrying
+    /// an uncertain prompt. Questions resolve only through canonical answers.
+    pub fn acknowledge_delegation_attention(&self, id: &str) -> Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let delivery: Option<Option<String>> = tx
+            .query_row(
+                "SELECT a.delivery_id FROM delegation_attention a
+            JOIN sessions c ON c.owner_id = ?1 AND c.id = a.child_id AND c.hat_id = a.hat_id
+            WHERE a.owner_id = ?1 AND a.attention_id = ?2 AND a.state = 'open' AND a.pending_id IS NULL
+            AND c.lifecycle <> 'deleted'
+            AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id = a.hat_id)",
+                params![self.owner_id(), id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(delivery) = delivery else { return Ok(false) };
+        tx.execute(
+            "UPDATE delegation_notices SET state = 'resolved' WHERE owner_id = ?1 AND delivery_id = ?2",
+            params![self.owner_id(), delivery],
+        )?;
+        tx.execute(
+            "UPDATE delegation_attention SET state = 'resolved' WHERE owner_id = ?1 AND attention_id = ?2",
+            params![self.owner_id(), id],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
     pub fn route_push_edge(&self, edge: &Edge, push: &Push) -> Result<()> {
         let conn = self.conn();
-        let delegated: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM session_families WHERE owner_id = ?1 AND child_id = ?2)",
-            params![self.owner_id(), edge.session.id],
-            |r| r.get(0),
-        )?;
-        if !delegated && let Some(notice) = crate::notify::notice_for(&edge.kind, &edge.session) {
+        let delegated: Option<bool> = conn
+            .query_row(
+                "SELECT delegated_child FROM sessions WHERE owner_id = ?1 AND id = ?2 AND lifecycle <> 'deleted'",
+                params![self.owner_id(), edge.session.id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if delegated != Some(false) {
+            return Ok(());
+        }
+        if matches!(edge.kind, PushEdge::TurnEnded(_)) {
+            let origin:Option<String>=conn.query_row("SELECT t.input_origin FROM events e JOIN turns t
+                ON t.owner_id = ?1 AND t.session_id = e.session_id AND t.turn_id = json_extract(e.body,'$.turn_id')
+                WHERE e.owner_id = ?1 AND e.session_id = ?2 AND e.event_id = ?3 AND e.kind = 'turn_ended' AND e.applied = 1",
+                params![self.owner_id(),edge.session.id,edge.source_event_id],|r|r.get(0)).optional()?;
+            if !origin
+                .and_then(|raw| serde_json::from_str::<InputOrigin>(&raw).ok())
+                .is_some_and(|origin| matches!(origin, InputOrigin::Operator {}))
+            {
+                return Ok(());
+            }
+        }
+        if let Some(notice) = crate::notify::notice_for(&edge.kind, &edge.session) {
             push.notify(notice);
         }
         Ok(())
     }
+}
+
+/// Parent deletion removes routing edges, but the immutable delegated identity
+/// survives. New facts still create operator work, coalesced with any incident
+/// preserved during deletion. No deleted parent id or payload is retained.
+pub(crate) fn record_orphan_in(
+    tx: &Transaction<'_>,
+    owner: &str,
+    event: &EventDto,
+    kind: &str,
+    incident: &str,
+    pending: Option<&str>,
+) -> Result<()> {
+    tx.execute(
+        "INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,pending_id,state,incident)
+        SELECT ?1,?2,s.id,s.hat_id,'parent_unavailable',CASE WHEN ?4 = 'question' THEN ?5 END,'open',?6
+        FROM sessions s WHERE s.owner_id = ?1 AND s.id = ?3 AND s.delegated_child = 1 AND s.lifecycle <> 'deleted'
+        AND (?4 <> 'question' OR EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id = s.id
+            AND p.pending_id = ?5 AND p.state = 'open' AND NOT EXISTS(SELECT 1 FROM answer_queue a
+                WHERE a.owner_id = ?1 AND a.pending_id = p.pending_id)))
+        ON CONFLICT(owner_id,child_id,incident) DO NOTHING",
+        params![
+            owner,
+            uuid::Uuid::now_v7().to_string(),
+            event.session_id,
+            kind,
+            pending,
+            incident
+        ],
+    )?;
+    Ok(())
 }

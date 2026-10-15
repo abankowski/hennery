@@ -721,6 +721,7 @@ mod tests {
 
     fn ended(outcome: TurnOutcome) -> Edge {
         Edge {
+            source_event_id: 0,
             kind: PushEdge::TurnEnded(outcome),
             session: EdgeSession {
                 id: "s1".into(),

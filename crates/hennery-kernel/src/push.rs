@@ -862,11 +862,8 @@ impl Push {
         Push::new().0
     }
 
-    /// Queue `notice` for delivery. Never waits. A notice for a tag already
-    /// waiting replaces it there, keeping its place: a device shows one
-    /// notification per tag anyway. A new tag when `NOTICE_QUEUE` are
-    /// waiting is dropped and counted, with a warning at the first drop and
-    /// every power of two after. The log names no notice's text.
+    /// Install the owning module's final admission check. Delivery consults the
+    /// current callback before payload construction and each transport attempt.
     pub fn set_guard(&self, guard: NoticeGuard) {
         *self
             .shared
@@ -875,6 +872,11 @@ impl Push {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = guard;
     }
 
+    /// Queue `notice` for delivery. Never waits. A notice for a tag already
+    /// waiting replaces it there, keeping its place: a device shows one
+    /// notification per tag anyway. A new tag when `NOTICE_QUEUE` are
+    /// waiting is dropped and counted, with a warning at the first drop and
+    /// every power of two after. The log names no notice's text.
     pub fn notify(&self, notice: Notice) {
         let mut queue = self
             .shared

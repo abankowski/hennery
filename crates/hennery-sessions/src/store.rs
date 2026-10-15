@@ -530,6 +530,7 @@ pub struct Ingested {
 /// hat's policy applies (10b-i's review, A3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edge {
+    pub source_event_id: i64,
     pub kind: PushEdge,
     pub session: EdgeSession,
 }
@@ -4194,6 +4195,7 @@ impl Store {
         // The session as this fact left it, for the notice (A3).
         let edge = match edge {
             Some(kind) => Some(Edge {
+                source_event_id: fact_id,
                 kind,
                 session: tx.query_row(
                     "SELECT id, hat_id, title, cwd FROM sessions WHERE id = ?1 AND owner_id = ?2",

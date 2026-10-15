@@ -3,16 +3,19 @@
 CREATE TABLE delegation_attention (
     owner_id TEXT NOT NULL, attention_id TEXT NOT NULL, delivery_id TEXT,
     child_id TEXT NOT NULL, hat_id TEXT NOT NULL, reason TEXT NOT NULL, pending_id TEXT,
-    state TEXT NOT NULL DEFAULT 'standby', operator_epoch INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'standby', operator_epoch INTEGER NOT NULL DEFAULT 0, incident TEXT NOT NULL,
     push_run TEXT NOT NULL DEFAULT '', push_at INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY(owner_id,attention_id),
+    PRIMARY KEY(owner_id,attention_id), UNIQUE(owner_id,child_id,incident),
     FOREIGN KEY(child_id,owner_id) REFERENCES sessions(id,owner_id));
 CREATE INDEX delegation_attention_ready ON delegation_attention(owner_id,state,attention_id);
 CREATE INDEX delegation_attention_child ON delegation_attention(owner_id,child_id);
 CREATE INDEX delegation_notice_deadline ON delegation_notices(owner_id,deadline,state);
 CREATE TRIGGER attention_notice_update AFTER UPDATE OF state ON delegation_notices
 BEGIN
-    UPDATE delegation_attention SET state = 'open',reason = COALESCE(NEW.reason,'operator_required')
+    UPDATE delegation_attention SET state = 'open',reason = COALESCE(NEW.reason,'operator_required'),
+        operator_epoch = CASE WHEN state = 'open' THEN operator_epoch ELSE
+            COALESCE((SELECT MAX(event_id) FROM events WHERE owner_id = NEW.owner_id AND session_id = NEW.root_id
+                AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'),0) END
     WHERE owner_id = NEW.owner_id AND delivery_id = NEW.delivery_id AND NEW.state = 'operator_required'
       AND (NEW.kind <> 'question' OR EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = NEW.owner_id
           AND p.session_id = NEW.child_id AND p.pending_id = NEW.pending_id AND p.state = 'open'
@@ -49,18 +52,13 @@ BEGIN
     UPDATE delegation_attention SET state = 'resolved' WHERE owner_id = NEW.owner_id
         AND child_id = NEW.session_id AND pending_id = NEW.pending_id;
 END;
-CREATE TRIGGER attention_answer AFTER INSERT ON answer_queue
-BEGIN
-    UPDATE delegation_attention SET state = 'resolved' WHERE owner_id = NEW.owner_id
-        AND child_id = NEW.session_id AND pending_id = NEW.pending_id;
-END;
-INSERT INTO delegation_attention(owner_id,attention_id,delivery_id,child_id,hat_id,reason,pending_id,state,operator_epoch)
+INSERT INTO delegation_attention(owner_id,attention_id,delivery_id,child_id,hat_id,reason,pending_id,state,operator_epoch,incident)
 SELECT n.owner_id,n.delivery_id,n.delivery_id,n.child_id,c.hat_id,COALESCE(n.reason,'operator_required'),
     CASE WHEN n.kind = 'question' THEN n.pending_id END,
     CASE WHEN n.state = 'operator_required' THEN 'open'
          WHEN n.state IN ('obsolete','resolved') OR (n.state = 'parent_delivered' AND n.kind <> 'question') THEN 'resolved'
          ELSE 'standby' END,
     COALESCE((SELECT MAX(event_id) FROM events WHERE owner_id = n.owner_id AND session_id = n.root_id
-        AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'),0)
+        AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'),0),n.incident
 FROM delegation_notices n JOIN sessions c ON c.owner_id = n.owner_id AND c.id = n.child_id
 WHERE c.lifecycle <> 'deleted';

@@ -2844,8 +2844,8 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
              SELECT owner_id, 's1', 1, '{}' FROM sessions WHERE id = 's1';
          INSERT INTO delegation_start_budgets(owner_id,caller_id,epoch,starts)
              SELECT owner_id, 's1', 0, 1 FROM sessions WHERE id = 's1';
-         INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason)
-             SELECT owner_id, 'delete-attention', 's1', hat_id, 'test' FROM sessions WHERE id = 's1';
+         INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,incident)
+             SELECT owner_id, 'delete-attention', 's1', hat_id, 'test','delete-attention' FROM sessions WHERE id = 's1';
          INSERT INTO delegation_budgets(owner_id,root_id,epoch,wakes)
              SELECT owner_id, 's1', 0, 1 FROM sessions WHERE id = 's1';
          INSERT INTO delegation_notices(owner_id,delivery_id,child_id,parent_id,root_id,hat_id,source_event_id,

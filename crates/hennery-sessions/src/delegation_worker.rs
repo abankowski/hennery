@@ -8,7 +8,6 @@ struct Cursors {
     notices: String,
     attention: String,
     notifications: String,
-    run: String,
 }
 pub fn after_startup(state: &AppState) {
     let store = state.store.clone();
@@ -31,9 +30,6 @@ pub async fn drain(state: &AppState) -> anyhow::Result<()> {
     drain_page(state, &mut Cursors::default()).await
 }
 async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<()> {
-    if cursors.run.is_empty() {
-        cursors.run = uuid::Uuid::now_v7().to_string();
-    }
     let now = hennery_kernel::secret::unix_now();
     cursors.attention = state
         .store
@@ -41,7 +37,7 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
     cursors.notifications =
         state
             .store
-            .enqueue_delegation_attention(&state.push, &cursors.run, &cursors.notifications, now)?;
+            .enqueue_delegation_attention(&state.push, &state.delegation_run, &cursors.notifications, now)?;
     cursors.answers = state
         .store
         .dispatch_delegation_answers_after(&state.hub, &cursors.answers)?

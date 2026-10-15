@@ -47,6 +47,7 @@ async fn d3b_deadline_worker_exposes_durable_attention_and_opens_the_child_card(
     assert!(notice.url.starts_with(&format!("/sessions/{child}?pending=")));
     assert!(notice.url.contains(&question.pending_id));
     assert!(notice.tag.starts_with("delegation:"));
+    assert!((notices.guard())(&notice));
     assert!(h.state.store.still_open(child, &question.pending_id).unwrap());
     let response = h
         .client
@@ -74,6 +75,50 @@ async fn d3b_deadline_worker_exposes_durable_attention_and_opens_the_child_card(
         .await
         .unwrap();
     assert_eq!(refused.status(), reqwest::StatusCode::CONFLICT);
+    let refused = h
+        .client
+        .post(format!("{}/api/delegation/attention/{id}/acknowledge", h.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        refused.status(),
+        reqwest::StatusCode::CONFLICT,
+        "a status acknowledgement cannot answer a question"
+    );
+    h.state.store.record_close_request(&h.parent).unwrap();
+    let answered = h
+        .client
+        .post(format!(
+            "{}/api/sessions/{child}/pending/{}/answer",
+            h.url, question.pending_id
+        ))
+        .json(&json!({"action":"accept","content":{"name":"operator"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(answered.status(), reqwest::StatusCode::ACCEPTED);
+    assert!(
+        !(notices.guard())(&notice),
+        "operator answers withdraw queued notification attempts"
+    );
+    let report = eventually("completed child report falls back after parent close", async || {
+        h.state
+            .store
+            .operator_attention(None, "")
+            .unwrap()
+            .into_iter()
+            .find(|a| a.pending_id.is_none())
+    })
+    .await;
+    let acknowledged = h
+        .client
+        .post(format!("{}/api/delegation/attention/{}/acknowledge", h.url, report.id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(acknowledged.status(), reqwest::StatusCode::NO_CONTENT);
+    assert!(h.state.store.operator_attention(None, "").unwrap().is_empty());
     h.finish().await;
 }
 
