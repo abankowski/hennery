@@ -86,6 +86,7 @@ async fn a_turn_produces_ordered_outboxed_facts() {
     wait_until(&uplink, |f| !f.is_empty()).await;
 
     assert!(tx.send(SessionCmd::Prompt {
+        plugin_context: None,
         request_id: "r1".into(),
         turn_id: "t1".into(),
         content: vec![json!({"type":"text","text":"hi"})],
@@ -121,6 +122,7 @@ async fn a_repeated_turn_id_is_not_run_twice() {
     let fake = AgentCommand::parse(env!("CARGO_BIN_EXE_hennery-fake-acp")).unwrap();
     let tx = session::start(uplink.clone(), "r0".into(), "s1".into(), fake, std::env::temp_dir());
     let prompt = || SessionCmd::Prompt {
+        plugin_context: None,
         request_id: "r1".into(),
         turn_id: "t1".into(),
         content: vec![json!({"type":"text","text":"hi"})],
@@ -143,6 +145,7 @@ async fn an_empty_prompt_is_rejected_without_starting_a_turn() {
     let tx = session::start(uplink.clone(), "r0".into(), "s1".into(), fake, std::env::temp_dir());
     wait_until(&uplink, |f| !f.is_empty()).await;
     assert!(tx.send(SessionCmd::Prompt {
+        plugin_context: None,
         request_id: "r1".into(),
         turn_id: "t1".into(),
         content: vec![],
@@ -234,6 +237,7 @@ async fn an_invalid_prompt_does_not_consume_its_turn_id() {
 
     // Reject an empty prompt under turn_id "t1"...
     assert!(tx.send(SessionCmd::Prompt {
+        plugin_context: None,
         request_id: "r1".into(),
         turn_id: "t1".into(),
         content: vec![],
@@ -249,6 +253,7 @@ async fn an_invalid_prompt_does_not_consume_its_turn_id() {
 
     // ...then a corrected retry under the SAME turn_id must still run.
     assert!(tx.send(SessionCmd::Prompt {
+        plugin_context: None,
         request_id: "r2".into(),
         turn_id: "t1".into(),
         content: vec![json!({"type":"text","text":"hi"})],
@@ -266,6 +271,7 @@ async fn an_unparseable_prompt_is_rejected_without_starting_a_turn() {
     let tx = session::start(uplink.clone(), "r0".into(), "s1".into(), fake, std::env::temp_dir());
     wait_until(&uplink, |f| !f.is_empty()).await;
     assert!(tx.send(SessionCmd::Prompt {
+        plugin_context: None,
         request_id: "r1".into(),
         turn_id: "t1".into(),
         content: vec![json!({"type":"bogus"})],
@@ -314,6 +320,7 @@ fn slow_script() -> FakeScript {
 
 fn prompt(request_id: &str, turn_id: &str) -> SessionCmd {
     SessionCmd::Prompt {
+        plugin_context: None,
         request_id: request_id.into(),
         turn_id: turn_id.into(),
         content: vec![json!({"type":"text","text":"hi"})],
@@ -1117,6 +1124,7 @@ async fn a_cancel_ends_the_turn_cancelled_and_the_session_stays_attached() {
     assert_eq!(handle.open_turn_id(), None);
     // Still attached: the next prompt runs.
     assert!(handle.send(SessionCmd::Prompt {
+        plugin_context: None,
         request_id: "r2".into(),
         turn_id: "t2".into(),
         content: vec![json!({"type":"text","text":"again"})],

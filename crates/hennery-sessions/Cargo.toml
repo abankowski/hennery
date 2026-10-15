@@ -6,6 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+test-hooks = []
+
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true

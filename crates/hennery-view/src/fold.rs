@@ -134,9 +134,11 @@ pub fn weight(item: &Item) -> usize {
                 .map(|block| match block {
                     StoredBlock::Text { text } => text.len() + 16,
                     StoredBlock::Image { mime_type, sha256, .. } => mime_type.len() + sha256.len() + 24,
+                    StoredBlock::PluginContext { startup } => serde_json::to_vec(startup).map_or(8192, |b| b.len()),
                 })
                 .sum(),
             Body::Message(text) | Body::Thinking(text) => text.text.len(),
+            Body::PluginContext { startup } => serde_json::to_vec(startup).map_or(8192, |b| b.len()),
             Body::ToolCall(call) => tool::weight(call),
             Body::Plan { entries, .. } => entries
                 .iter()
@@ -315,9 +317,38 @@ impl Fold {
         self.run = None;
         self.tools.clear();
         self.plan = None;
+        // Collector-written provenance is data, never inferred from display
+        // labels. D2 also produces typed Parent turns; plug-in context is a
+        // separate block and can never become the outer turn author.
+        if event.body.get("origin").is_some_and(|value| {
+            !matches!(
+                serde_json::from_value::<hennery_proto::plugin::InputOrigin>(value.clone()),
+                Ok(hennery_proto::plugin::InputOrigin::Operator {} | hennery_proto::plugin::InputOrigin::Parent { .. })
+            )
+        }) {
+            self.unrecognised(event, "unsupported_input_origin");
+            return;
+        }
         let content = event.body.get("content").cloned().unwrap_or(Value::Null);
         match serde_json::from_value::<Vec<StoredBlock>>(content) {
             Ok(mut content) => {
+                let mut user = Vec::new();
+                for block in content {
+                    if let StoredBlock::PluginContext { startup } = block {
+                        if startup
+                            .block
+                            .as_ref()
+                            .is_none_or(|block| block.reference_text().is_ok())
+                        {
+                            self.create_ordinal(event, Body::PluginContext { startup });
+                        } else {
+                            self.unrecognised(event, "invalid_plugin_context");
+                        }
+                    } else {
+                        user.push(block)
+                    }
+                }
+                content = user;
                 let mut truncated = false;
                 for block in &mut content {
                     if let StoredBlock::Text { text } = block {

@@ -25,6 +25,7 @@ mod redact;
 mod resolve;
 pub mod session_tools;
 mod shared_files;
+pub mod startup;
 pub mod store;
 pub mod sweep;
 pub mod tool_args;
@@ -43,6 +44,8 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct AppState {
+    #[cfg(feature = "test-hooks")]
+    pub startup_dispatch: Arc<startup::DispatchHold>,
     pub store: Arc<store::Store>,
     /// The kernel's host registry (kernel spec §4).
     pub hosts: Arc<Hosts>,
@@ -78,6 +81,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(store: store::Store, hosts: Hosts, operator: Operator) -> Self {
         Self {
+            #[cfg(feature = "test-hooks")]
+            startup_dispatch: Arc::default(),
             store: Arc::new(store),
             hosts: Arc::new(hosts),
             operator: Arc::new(operator),

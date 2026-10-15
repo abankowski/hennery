@@ -253,6 +253,9 @@ pub struct FakeScript {
     /// (plan 8e decision 11).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub echo_servers: bool,
+    /// Echo the actual ACP content blocks for same-prompt delivery tests.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub echo_prompt: bool,
 }
 
 /// One question the fake asks its client during a prompt, and the chunk it
@@ -330,6 +333,7 @@ impl Default for FakeScript {
             codex_archive_replaces_home: false,
             codex_archive_links_archived: None,
             echo_servers: false,
+            echo_prompt: false,
         }
     }
 }

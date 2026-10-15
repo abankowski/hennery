@@ -56,6 +56,16 @@ const SOURCES: &[(&str, &str, usize)] = &[
         15,
     ),
     (
+        "hennery-gateway/src/plugin/context.rs",
+        include_str!("../../hennery-gateway/src/plugin/context.rs"),
+        4,
+    ),
+    (
+        "hennery-sessions/src/startup.rs",
+        include_str!("../../hennery-sessions/src/startup.rs"),
+        4,
+    ),
+    (
         "hennery-sessions/src/delegation.rs",
         include_str!("../../hennery-sessions/src/delegation.rs"),
         6,
@@ -88,7 +98,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-gateway/src/plugin.rs",
         include_str!("../../hennery-gateway/src/plugin.rs"),
-        41,
+        42,
     ),
     (
         "hennery-kernel/src/operator.rs",

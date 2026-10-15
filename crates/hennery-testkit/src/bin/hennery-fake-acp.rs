@@ -415,6 +415,12 @@ async fn main() -> agent_client_protocol::Result<()> {
                 let forms = forms.clone();
                 let servers = servers.clone();
                 async move |req: PromptRequest, responder, cx| {
+                    if script.echo_prompt {
+                        cx.send_notification(chunk(
+                            &req.session_id,
+                            serde_json::to_string(&req.prompt).expect("prompt JSON"),
+                        ))?;
+                    }
                     if script.echo_servers {
                         let printed = format!("my servers: {}", servers.lock().unwrap());
                         cx.send_notification(chunk(&req.session_id, printed))?;

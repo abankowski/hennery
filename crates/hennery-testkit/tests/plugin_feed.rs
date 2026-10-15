@@ -380,6 +380,9 @@ fn unsupported_production_origins_and_differential_stored_origins_fail_closed() 
     let w = World::new(true);
     w.session("session", "host", &w.hat);
     for origin in [
+        InputOrigin::PluginContext {
+            request_id: "context".into(),
+        },
         InputOrigin::Parent {
             session_id: "parent".into(),
             operation_id: "op".into(),
@@ -422,6 +425,16 @@ fn unsupported_production_origins_and_differential_stored_origins_fail_closed() 
             false,
         ),
         (r#"{"kind":"plugin_context"}"#, false),
+        (r#"{"kind":"plugin_context","request_id":"context"}"#, false),
+        (r#"{"\u006bind":"plugin_context","request_id":"context"}"#, false),
+        (
+            r#"{"kind":"operator","kind":"plugin_context","request_id":"context"}"#,
+            false,
+        ),
+        (
+            r#"{"kind":"plugin_context","kind":"operator","request_id":"context"}"#,
+            false,
+        ),
         (r#"null"#, false),
     ] {
         let body = format!(

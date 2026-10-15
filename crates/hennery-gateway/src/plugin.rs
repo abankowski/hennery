@@ -1,6 +1,7 @@
 //! Generic optional plug-in registration, exposure, and terminal transitions.
 //! The core transaction is always held before opening the control transaction.
 
+mod context;
 pub mod feed;
 pub mod management;
 pub mod recovery;
@@ -347,6 +348,13 @@ impl Control {
         let sealed = crypto::seal(key, &aad, LIFECYCLE_FIELD, input.lifecycle_credential.as_bytes());
         self.with(true, |conn| {
             let tx = conn.transaction()?;
+            if input.startup {
+                let conflict:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM plugin_registrations
+                    WHERE owner_id = ?1 AND hat_id = ?2 AND connection_id <> ?3
+                    AND startup = 1 AND state IN ('active','pending'))",
+                    params![self.owner,hat,input.connection_id],|r|r.get(0))?;
+                ensure!(!conflict,"one startup provider per hat");
+            }
             if let Some(old) = Self::row(&tx, &self.owner, input.connection_id)? {
                 ensure!(old.state == "complete", "old namespace must finish deletion before re-registration");
             }

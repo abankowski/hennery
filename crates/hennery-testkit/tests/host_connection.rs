@@ -412,6 +412,7 @@ async fn hello_reports_live_sessions_with_their_open_turn_and_drops_ended_ones()
     send_frame(
         &mut sink,
         &CollectorFrame::Prompt {
+            plugin_context: None,
             request_id: "r2".into(),
             session_id: "s1".into(),
             turn_id: "t1".into(),
@@ -483,6 +484,7 @@ async fn park_reaches_the_actor_and_frames_for_a_detached_session_are_not_attach
     send_frame(
         &mut sink,
         &CollectorFrame::Prompt {
+            plugin_context: None,
             request_id: "r5".into(),
             session_id: "s1".into(),
             turn_id: "t1".into(),
@@ -824,6 +826,7 @@ async fn a_host_announces_that_it_can_park_take_images_and_serve_projects() {
             Capability::McpServers,
             Capability::CatalogProbe,
             Capability::DelegationConfig,
+            Capability::PluginContext,
         ])
     );
 }
@@ -917,6 +920,7 @@ async fn cancel_turn_reaches_the_actor_and_a_cancel_for_a_detached_session_is_no
     send_frame(
         &mut sink,
         &CollectorFrame::Prompt {
+            plugin_context: None,
             request_id: "r2".into(),
             session_id: "s1".into(),
             turn_id: "t1".into(),
@@ -1216,6 +1220,7 @@ async fn answers_reach_the_actor_and_one_for_a_detached_session_is_not_attached(
     send_frame(&mut sink, &start("r1", "s1")).await;
     read_until(&mut stream, body_is("s1", "session_started")).await;
     let prompt = CollectorFrame::Prompt {
+        plugin_context: None,
         request_id: "r2".into(),
         session_id: "s1".into(),
         turn_id: "t1".into(),

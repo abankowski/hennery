@@ -101,6 +101,13 @@ struct HostConn {
 }
 
 impl HostConn {
+    fn adapt_context(&self, frame: &mut CollectorFrame) {
+        if !self.capabilities.has(Capability::PluginContext)
+            && let CollectorFrame::Prompt { plugin_context, .. } = frame
+        {
+            *plugin_context = None;
+        }
+    }
     /// Whether `frame` may go out on this connection (plan 8c, the lane's
     /// L3): MCP servers only to a host that announced `mcp_servers`, which
     /// would otherwise ignore them unseen, and only for an agent it
@@ -112,6 +119,16 @@ impl HostConn {
             frame,
             CollectorFrame::DelegatedAttach { .. } | CollectorFrame::DelegatedPrompt { .. }
         ) && !self.capabilities.has(Capability::DelegationConfig)
+        {
+            return false;
+        }
+        if matches!(
+            frame,
+            CollectorFrame::Prompt {
+                plugin_context: Some(_),
+                ..
+            }
+        ) && !self.capabilities.has(Capability::PluginContext)
         {
             return false;
         }
@@ -358,14 +375,17 @@ impl Hub {
     /// Send a frame nobody waits for (an answer: its verdict arrives as a
     /// fact, ACP core §4.6) to a host that is connected and reconciled.
     /// `false` if it is not: the frame then goes after its next handshake.
-    pub fn notify(&self, host_id: &str, frame: CollectorFrame) -> bool {
+    pub fn notify(&self, host_id: &str, mut frame: CollectorFrame) -> bool {
         self.hosts
             .lock()
             .expect("hosts lock")
             .get(host_id)
             // Nothing that carries servers goes out unchecked, here either.
-            .filter(|h| h.routable() && h.takes(&frame))
-            .is_some_and(|h| h.tx.send(frame).is_ok())
+            .filter(|h| h.routable())
+            .is_some_and(|h| {
+                h.adapt_context(&mut frame);
+                h.takes(&frame) && h.tx.send(frame).is_ok()
+            })
     }
 
     /// Final transfer check uses the same hello and lock as frame handoff.
@@ -468,7 +488,7 @@ impl Hub {
         request_id: &str,
         completed_by: CompletedBy,
         undo: Option<Undo>,
-        frame: CollectorFrame,
+        mut frame: CollectorFrame,
         timeout: Duration,
     ) -> Result<SessionBody, RequestError> {
         let (tx, mut rx) = oneshot::channel();
@@ -480,6 +500,7 @@ impl Hub {
             let Some(host) = hosts.get(host_id).filter(|h| h.routable()) else {
                 return Err(RequestError::NotConnected);
             };
+            host.adapt_context(&mut frame);
             if !host.takes(&frame) {
                 return Err(RequestError::McpUndeliverable);
             }

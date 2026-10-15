@@ -381,6 +381,7 @@ async fn handshake(
                 Capability::McpServers,
                 Capability::CatalogProbe,
                 Capability::DelegationConfig,
+                Capability::PluginContext,
             ]),
             mcp_isolation: announce.mcp_isolation,
             workspace_roots: announce.workspace_roots,
@@ -889,12 +890,14 @@ fn handle(
             session_id,
             turn_id,
             content,
+            plugin_context,
         } => match live_session(sessions, &session_id) {
             Some(handle)
                 if handle.send(SessionCmd::Prompt {
                     request_id: request_id.clone(),
                     turn_id,
                     content,
+                    plugin_context,
                 }) => {}
             _ => not_attached(uplink, request_id),
         },

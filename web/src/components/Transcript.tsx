@@ -11,6 +11,7 @@ import ItemBoundary from './ItemBoundary'
 import AgentMessage from './items/AgentMessage'
 import Marker from './items/Marker'
 import PlanItem from './items/PlanItem'
+import PluginContext from './items/PluginContext'
 import QuestionCard from './items/QuestionCard'
 import Thinking from './items/Thinking'
 import ToolCall from './items/ToolCall'
@@ -20,6 +21,8 @@ import type { ItemEnv } from './items/types'
 
 export function ItemView({ item, env }: { item: Item; env: ItemEnv }) {
   switch (item.kind) {
+    case 'plugin_context':
+      return <PluginContext item={item} />
     case 'user_turn':
       return <UserTurn item={item} env={env} />
     case 'message':

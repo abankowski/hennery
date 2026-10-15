@@ -37,11 +37,21 @@ export type PluginLease = { namespace_epoch: string, lease_until: number, };
  */
 export type PluginDeletionReceipt = { owner_id: string, hat_id: string, request_id: string, status: ForgetStatus, };
 
-export type InputOrigin = { "kind": "operator", } | { "kind": "parent", session_id: string, operation_id: string, } | { "kind": "child_report", child_id: string, source_event_id: string, delivery_id: string, };
+export type InputOrigin = { "kind": "operator", } | { "kind": "plugin_context", request_id: string, } | { "kind": "parent", session_id: string, operation_id: string, } | { "kind": "child_report", child_id: string, source_event_id: string, delivery_id: string, };
 
 export type SourceRef = { session_id: string, turn_id: string | null, event_id: number, };
 
 export type Provenance = { "kind": "source", origin: InputOrigin, source: SourceRef, } | { "kind": "unverified", };
+
+/**
+ * Collector-written delivery envelope. Source claims inside `context` never
+ * change this outer origin or the separately supplied operator input.
+ */
+export type StartupContext = { request_id: string, connection_id: string, namespace_epoch: string, origin: InputOrigin, context: PluginContext, };
+
+export type StartupStatus = "delivered" | "unsupported" | "unavailable" | "timed_out" | "revoked";
+
+export type StartupRecord = { request_id: string, status: StartupStatus, block?: StartupContext, };
 
 export type ContextEntry = { text: string, source_refs: Array<SourceRef>, provenance: Array<Provenance>, };
 
@@ -189,7 +199,7 @@ export type SessionConfig = { model?: string | null, mode?: string | null, axes?
  * collector never sends a frame that needs a capability to a host that
  * lacks it.
  */
-export type Capability = "projects" | "images" | "park" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "delegation_config";
+export type Capability = "plugin_context" | "projects" | "images" | "park" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "delegation_config";
 
 /**
  * `hello.capabilities`. Deserialized leniently: a capability this build
@@ -574,7 +584,7 @@ mcp_servers?: Array<McpServer>,
  * umbrella §8.5). Absent, the host refuses servers for such an agent
  * (`mcp_isolation_unavailable`): isolation is never lost by omission.
  */
-isolation_waived?: boolean, } | { "type": "prompt", request_id: string, session_id: string, turn_id: string,
+isolation_waived?: boolean, } | { "type": "prompt", request_id: string, session_id: string, turn_id: string, plugin_context?: StartupContext,
 /**
  * ACP ContentBlocks, built by the frontend.
  */
@@ -606,7 +616,7 @@ export type PromptResponse = { turn_id: string, };
  * was sent; an image as the attachment it was stored as, never its bytes.
  * `GET /api/attachments/{sha256}` serves the image.
  */
-export type StoredBlock = { "type": "text", text: string, } | { "type": "image", mimeType: string,
+export type StoredBlock = { "type": "plugin_context", startup: StartupRecord, } | { "type": "text", text: string, } | { "type": "image", mimeType: string,
 /**
  * The SHA-256 of the image's bytes, 64 lowercase hex digits.
  */

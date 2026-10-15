@@ -841,7 +841,23 @@ async fn prompt(
         }
     }
     let turn_id = uuid::Uuid::now_v7().to_string();
-    match state.store.open_prompt(&id, &turn_id, &checked) {
+    let Some(_admission) = state.store.reserve_prompt(&id) else {
+        return error(StatusCode::CONFLICT, "turn_in_progress", "a prompt is being prepared");
+    };
+    let request_id = uuid::Uuid::now_v7().to_string();
+    let mut startup = state
+        .store
+        .mcp()
+        .startup_context(
+            &id,
+            &request_id,
+            state.hub.has_capability(&session.host_id, Capability::PluginContext),
+        )
+        .await;
+    match state
+        .store
+        .open_prompt_with_startup(&id, &turn_id, &checked, &mut startup)
+    {
         Ok(true) => {}
         Ok(false) => {
             return error(
@@ -852,8 +868,9 @@ async fn prompt(
         }
         Err(err) => return internal(err),
     }
-    let request_id = uuid::Uuid::now_v7().to_string();
+    drop(_admission);
     let frame = CollectorFrame::Prompt {
+        plugin_context: startup.and_then(|record| record.block),
         request_id: request_id.clone(),
         session_id: id.clone(),
         turn_id: turn_id.clone(),

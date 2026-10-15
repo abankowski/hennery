@@ -349,9 +349,10 @@ async fn undelivered_turn(State(state): State<AppState>, Path((id, turn_id)): Pa
     };
     // Whole, as stored: a prompt sent again is the one written (the
     // security review's B-4). The prompt route bounded it when it came.
-    let Ok(content) = serde_json::from_str(&content) else {
+    let Ok(mut content): Result<Vec<hennery_proto::rest::StoredBlock>, _> = serde_json::from_str(&content) else {
         return internal(anyhow::anyhow!("turn {turn_id} holds content that is not a prompt's"));
     };
+    content.retain(|block| !matches!(block, hennery_proto::rest::StoredBlock::PluginContext { .. }));
     Json(TurnContent { turn_id, content }).into_response()
 }
 

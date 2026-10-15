@@ -166,13 +166,25 @@ async fn serve(socket: WebSocket, state: AppState, nonce: [u8; 32]) {
     tracing::info!(%host_id, "host connected");
 
     // 2. writer: frames for this host plus keepalive pings.
+    let writer_store = state.store.clone();
+    #[cfg(feature = "test-hooks")]
+    let dispatch_hold = state.startup_dispatch.clone();
+    let startup_supported = capabilities.has(hennery_proto::frames::Capability::PluginContext);
     let writer = tokio::spawn(async move {
         let mut ping = tokio::time::interval(PING_INTERVAL);
         ping.tick().await;
         loop {
             tokio::select! {
                 frame = rx.recv() => match frame {
-                    Some(frame) => if sink.send(text(&frame)).await.is_err() { break },
+                    Some(mut frame) => {
+                        if futures::future::poll_fn(|cx|sink.poll_ready_unpin(cx)).await.is_err(){break}
+                        #[cfg(feature = "test-hooks")]
+                        if matches!(frame,CollectorFrame::Prompt {..}) {dispatch_hold.hold_if_armed().await;}
+                        if writer_store.dispatch_startup(&mut frame,startup_supported,|frame|{
+                            sink.start_send_unpin(text(frame)).map_err(anyhow::Error::new)
+                        }).is_err(){break}
+                        if sink.flush().await.is_err(){break}
+                    },
                     None => break,
                 },
                 _ = ping.tick() => if sink.send(Message::Ping(Default::default())).await.is_err() { break },

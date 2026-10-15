@@ -111,6 +111,7 @@ pub enum SessionCmd {
         request_id: String,
         turn_id: String,
         content: Vec<Value>,
+        plugin_context: Option<hennery_proto::plugin::StartupContext>,
     },
     /// A repeated `start_session` or `resume_session` for an attached
     /// session: re-emit `session_started` with the new request id, never a
@@ -1252,18 +1253,27 @@ impl Actor {
                         return;
                     }
                     Some(command @ SessionCmd::Prompt { .. }) | Some(command @ SessionCmd::FencedPrompt { .. }) => {
-                        let (request_id, turn_id, content, expected) = match command {
-                            SessionCmd::Prompt {request_id,turn_id,content} => (request_id,turn_id,content,None),
-                            SessionCmd::FencedPrompt {request_id,turn_id,content,expected} => (request_id,turn_id,content,Some(expected)),
+                        let (request_id, turn_id, content, expected, plugin_context) = match command {
+                            SessionCmd::Prompt {request_id,turn_id,content,plugin_context} => (request_id,turn_id,content,None,plugin_context),
+                            SessionCmd::FencedPrompt {request_id,turn_id,content,expected} => (request_id,turn_id,content,Some(expected),None),
                             _ => unreachable!(),
                         };
-                        let blocks = match parse_prompt(content) {
+                        let mut blocks = match parse_prompt(content) {
                             Ok(blocks) => blocks,
                             Err(message) => {
                                 self.reject(request_id, "invalid", message);
                                 continue;
                             }
                         };
+                        if let Some(context) = plugin_context {
+                            match context.reference_text() {
+                                Ok(text) => blocks.insert(0, ContentBlock::Text(agent_client_protocol::schema::v1::TextContent::new(text))),
+                                Err(message) => {
+                                    self.reject(request_id, "invalid_context", message.into());
+                                    continue;
+                                }
+                            }
+                        }
                         // ACP: images only to an agent whose `initialize`
                         // offered them (plan 6a, decision 2).
                         if !images && blocks.iter().any(|block| matches!(block, ContentBlock::Image(_))) {
