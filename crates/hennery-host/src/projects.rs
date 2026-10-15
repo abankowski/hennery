@@ -414,6 +414,7 @@ fn refusal_below(fence: &Fence, path: &Path, err: &std::io::Error) -> BrowseErro
 /// it is ready; another connection's reply is dropped by the collector.
 #[derive(Clone)]
 pub struct Probes {
+    pub(crate) catalog: crate::delegation::CatalogProbes,
     lists: Arc<Semaphore>,
     browses: Arc<Semaphore>,
     resolves: Arc<Semaphore>,
@@ -429,6 +430,7 @@ impl Default for Probes {
 impl Probes {
     pub fn with_capacity(limits: Limits, lists: usize, browses: usize) -> Self {
         Self {
+            catalog: crate::delegation::CatalogProbes::default(),
             lists: Arc::new(Semaphore::new(lists)),
             browses: Arc::new(Semaphore::new(browses)),
             resolves: Arc::new(Semaphore::new(MAX_RESOLVES)),

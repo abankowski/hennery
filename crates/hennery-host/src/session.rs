@@ -20,6 +20,7 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::schema::{MaybeUndefined, ProtocolVersion};
 use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, ErrorCode, Responder, UntypedMessage};
+use hennery_proto::delegation_host::{ConfigCompleteness, ConfigEvidence, PromptFence};
 use hennery_proto::frames::{
     ConfigValue, ElicitationAction, HostFrame, Indexed, McpServer, ParkReason, PendingExtract, PendingKind,
     PendingReason, PendingResolution, SessionBody, SessionConfig, TurnOutcome,
@@ -100,6 +101,12 @@ const STATE_KINDS: &[&str] = &[
 /// Messages from the connection task to a session actor.
 #[derive(Debug)]
 pub enum SessionCmd {
+    FencedPrompt {
+        request_id: String,
+        turn_id: String,
+        content: Vec<Value>,
+        expected: PromptFence,
+    },
     Prompt {
         request_id: String,
         turn_id: String,
@@ -249,6 +256,7 @@ pub struct Launch {
 /// The connection task's handle on a session actor.
 #[derive(Clone)]
 pub struct SessionHandle {
+    attach_generation: Option<u64>,
     commands: mpsc::UnboundedSender<SessionCmd>,
     open_turn: Arc<Mutex<Option<String>>>,
     /// Cancelled when the actor's task has finished (its adapter is gone).
@@ -263,6 +271,9 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
+    pub fn attach_generation(&self) -> Option<u64> {
+        self.attach_generation
+    }
     /// The agent's own session id, if known yet (plan 9d B7): a forget for
     /// it is refused while this actor has not ended.
     pub fn agent_session_id(&self) -> Option<String> {
@@ -373,6 +384,38 @@ pub fn resume(
 /// Spawn a session actor for `launch`: `session/new` or `session/load`,
 /// then its config. Otherwise like [`spawn`].
 pub fn launch(uplink: Uplink, launch: Launch, options: SessionOptions) -> SessionHandle {
+    launch_inner(uplink, launch, options, None, None)
+}
+
+pub fn launch_delegated(
+    uplink: Uplink,
+    launch: Launch,
+    options: SessionOptions,
+    attach_generation: u64,
+) -> SessionHandle {
+    let roots = vec![launch.cwd.clone()];
+    launch_delegated_in(uplink, launch, options, attach_generation, roots)
+}
+
+/// The connection supplies its current canonical workspace roots. Rechecked
+/// in the actor immediately before `Adapter::spawn`, after scheduling delays.
+pub fn launch_delegated_in(
+    uplink: Uplink,
+    launch: Launch,
+    options: SessionOptions,
+    attach_generation: u64,
+    roots: Vec<PathBuf>,
+) -> SessionHandle {
+    launch_inner(uplink, launch, options, Some(attach_generation), Some(roots))
+}
+
+fn launch_inner(
+    uplink: Uplink,
+    launch: Launch,
+    options: SessionOptions,
+    attach_generation: Option<u64>,
+    workspace_roots: Option<Vec<PathBuf>>,
+) -> SessionHandle {
     let (tx, rx) = mpsc::unbounded_channel();
     let open_turn = Arc::new(Mutex::new(None));
     let ending = Arc::new(AtomicBool::new(false));
@@ -381,6 +424,9 @@ pub fn launch(uplink: Uplink, launch: Launch, options: SessionOptions) -> Sessio
         Attach::New => None,
     }));
     let actor = Actor {
+        workspace_roots,
+        attach_generation,
+        config_revision: AtomicU64::new(1),
         agent_session_id: agent_session_id.clone(),
         uplink,
         session_id: launch.session_id.clone(),
@@ -401,6 +447,7 @@ pub fn launch(uplink: Uplink, launch: Launch, options: SessionOptions) -> Sessio
         actor.run(launch, rx).await;
     });
     SessionHandle {
+        attach_generation,
         commands: tx,
         open_turn,
         done,
@@ -754,6 +801,9 @@ impl Drop for AcpTask {
 }
 
 struct Actor {
+    workspace_roots: Option<Vec<PathBuf>>,
+    attach_generation: Option<u64>,
+    config_revision: AtomicU64,
     uplink: Uplink,
     session_id: String,
     open_turn: Arc<Mutex<Option<String>>>,
@@ -796,11 +846,26 @@ impl Actor {
     /// stale.
     fn catalogue_extracts(&self) -> Indexed {
         let catalogue = self.catalogue.lock().expect("catalogue lock");
-        if catalogue.current {
+        let mut indexed = if catalogue.current {
             catalogue_extracts(&catalogue.options)
         } else {
             Indexed::default()
-        }
+        };
+        indexed.config_evidence = self.attach_generation.map(|attach_generation| {
+            Box::new(ConfigEvidence {
+                attach_generation,
+                config_revision: self.config_revision.load(Ordering::SeqCst),
+                completeness: if catalogue.current && !catalogue.options.is_empty() {
+                    ConfigCompleteness::Complete
+                } else if catalogue.options.is_empty() {
+                    ConfigCompleteness::Unknown
+                } else {
+                    ConfigCompleteness::Partial
+                },
+                actual: indexed.current_config().unwrap_or_default(),
+            })
+        });
+        indexed
     }
 
     /// This actor is about to end by itself: from now on a start or resume
@@ -893,6 +958,7 @@ impl Actor {
         while let Some(cmd) = commands.recv().await {
             match cmd {
                 SessionCmd::Prompt { request_id, .. }
+                | SessionCmd::FencedPrompt { request_id, .. }
                 | SessionCmd::Restart { request_id }
                 | SessionCmd::Park { request_id }
                 | SessionCmd::Close { request_id }
@@ -934,6 +1000,20 @@ impl Actor {
         // Where the agent's data is resolved from (plan 9d decision 1).
         let agent_env = agent.env.clone();
         let loaded = matches!(attach, Attach::Load { .. });
+        if let Some(roots) = &self.workspace_roots
+            && (self.attach_generation == Some(0)
+                || cwd
+                    .to_str()
+                    .is_none_or(|cwd| crate::delegation::checked_cwd(cwd, roots).is_err()))
+        {
+            return self.start_failed(
+                request_id,
+                StartError {
+                    code: "cwd_unavailable",
+                    message: "delegated workspace unavailable".into(),
+                },
+            );
+        }
         let (mut adapter, io) = match Adapter::spawn(&agent, &cwd) {
             Ok(spawned) => spawned,
             Err(err) => {
@@ -1171,7 +1251,12 @@ impl Actor {
                         adapter.terminate(self.options.kill_grace).await;
                         return;
                     }
-                    Some(SessionCmd::Prompt { request_id, turn_id, content }) => {
+                    Some(command @ SessionCmd::Prompt { .. }) | Some(command @ SessionCmd::FencedPrompt { .. }) => {
+                        let (request_id, turn_id, content, expected) = match command {
+                            SessionCmd::Prompt {request_id,turn_id,content} => (request_id,turn_id,content,None),
+                            SessionCmd::FencedPrompt {request_id,turn_id,content,expected} => (request_id,turn_id,content,Some(expected)),
+                            _ => unreachable!(),
+                        };
                         let blocks = match parse_prompt(content) {
                             Ok(blocks) => blocks,
                             Err(message) => {
@@ -1200,6 +1285,18 @@ impl Actor {
                         // now, not left for this new turn's own reply to
                         // discover (same pattern as the reply arm below).
                         self.send_next_switch(&conn, &agent_session, &switch_tx, &mut configs);
+                        if let Some(expected) = expected {
+                            let current = self.catalogue.lock().expect("catalogue lock");
+                            if self.attach_generation != Some(expected.attach_generation)
+                                || self.config_revision.load(Ordering::SeqCst) != expected.config_revision
+                                || !current.current || current.options.is_empty()
+                                || configs.out.is_some() || configs.orphan.is_some() || !configs.queued.is_empty()
+                                || self.ending.load(Ordering::SeqCst) || self.has_questions()
+                            {
+                                self.reject(request_id, "config_fence", "delegated configuration is not current".into());
+                                continue;
+                            }
+                        }
                         seen_turns.insert(turn_id.clone());
                         self.set_open_turn(Some(turn_id.clone()));
                         self.emit(SessionBody::TurnStarted { request_id, turn_id: turn_id.clone() });
@@ -1496,6 +1593,7 @@ impl Actor {
     /// empty one means the current values are unknown, not that the adapter
     /// has no options (decision 3).
     fn apply_read_back(&self, response: SetSessionConfigOptionResponse) {
+        self.config_revision.fetch_add(1, Ordering::SeqCst);
         let mut catalogue = self.catalogue.lock().expect("catalogue lock");
         if response.config_options.is_empty() {
             catalogue.current = false;
@@ -1848,12 +1946,14 @@ impl Actor {
         if let SessionBody::AcpUpdate { indexed, payload } = &mut body
             && let Some(options) = config_update(payload)
         {
+            self.config_revision.fetch_add(1, Ordering::SeqCst);
             *self.catalogue.lock().expect("catalogue lock") = Catalogue { options, current: true };
             let catalogue = self.catalogue_extracts();
             indexed.config_options = catalogue.config_options;
             indexed.current_model = catalogue.current_model;
             indexed.current_mode = catalogue.current_mode;
             indexed.current_axes = catalogue.current_axes;
+            indexed.config_evidence = catalogue.config_evidence;
         }
         body
     }
@@ -2125,6 +2225,69 @@ async fn negotiate(
             }
         }
     }
+}
+
+/// Discover a runtime's actual initial catalog using a disposable adapter.
+/// No user session, MCP entries, prompt, registry entry or outbox is created.
+/// Questions asked by startup hooks are refused, never sent to an operator.
+pub(crate) async fn probe_catalog(
+    command: &AgentCommand,
+    cwd: PathBuf,
+    profile: Profile,
+    bound: Duration,
+) -> anyhow::Result<Indexed> {
+    let (mut adapter, io) = Adapter::spawn(command, &cwd)?;
+    let result = tokio::time::timeout(bound, async {
+        let (updates_tx, mut updates) = mpsc::unbounded_channel::<Inbound>();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let (_stop_tx, stop_rx) = oneshot::channel::<()>();
+        let transport = ByteStreams::new(io.stdin.compat_write(), io.stdout.compat());
+        let _acp = AcpTask(tokio::spawn(async move {
+            let _ = Client
+                .builder()
+                .name("hennery-catalog-probe")
+                .on_receive_notification(
+                    async move |msg: UntypedMessage, _cx| {
+                        if msg.method == "session/update" {
+                            let _ = updates_tx.send(Inbound::Update(msg.params));
+                        }
+                        Ok(())
+                    },
+                    agent_client_protocol::on_receive_notification!(),
+                )
+                .on_receive_request(
+                    async move |msg: UntypedMessage, responder: Responder<Value>, _cx| {
+                        responder.respond_with_error(agent_client_protocol::Error::method_not_found().data(msg.method))
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_with(transport, async move |conn: ConnectionTo<Agent>| {
+                    let _ = ready_tx.send(conn);
+                    let _ = stop_rx.await;
+                    Ok(())
+                })
+                .await;
+        }));
+        let conn = ready_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("catalog transport unavailable"))?;
+        let mut replay = Replay::default();
+        let mcp = SessionMcp {
+            servers: vec![],
+            meta: profile.session_meta(),
+        };
+        let (_, catalog, _) = negotiate(&conn, cwd, &Attach::New, &mcp, &mut updates, &mut replay)
+            .await
+            .map_err(|_| anyhow::anyhow!("catalog negotiation failed"))?;
+        Ok(if catalog.authoritative {
+            catalogue_extracts(&catalog.options)
+        } else {
+            Indexed::default()
+        })
+    })
+    .await;
+    adapter.terminate(Duration::from_millis(250)).await;
+    result.map_err(|_| anyhow::anyhow!("catalog probe timed out"))?
 }
 
 /// What `session/new` and `session/load` carry besides the cwd (plan 8c):

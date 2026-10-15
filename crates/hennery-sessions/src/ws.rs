@@ -443,6 +443,7 @@ async fn serve(socket: WebSocket, state: AppState, nonce: [u8; 32]) {
             // Probe replies answer the probe of this connection that they
             // name, if it still waits (ACP core §3.3).
             frame @ (HostFrame::Projects { .. }
+            | HostFrame::Catalog { .. }
             | HostFrame::Directory { .. }
             | HostFrame::ResolvedPath { .. }
             | HostFrame::SessionForgotten { .. }) => {
