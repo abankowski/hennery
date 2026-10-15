@@ -1524,3 +1524,161 @@ fn parent_close_receipt_waits_for_confirmed_child_close_and_retry_sends_nothing(
     assert!(rx.try_recv().is_err());
     assert_eq!(w.store.find_session("parent").unwrap().unwrap().lifecycle, "active");
 }
+
+#[test]
+fn deleted_endpoint_scrubs_handed_payload_and_required_config_and_removes_evidence() {
+    let (w, p) = pair();
+    ready(&w);
+    queue(&w, &p, "delete");
+    let (h, mut rx) = connected();
+    assert!(w.store.dispatch_delegated("child", &catalog(), &h).unwrap());
+    take_prompt(&mut rx);
+    let before: (String, String) = raw(&w)
+        .query_row("SELECT payload,required_config FROM session_dispatch_queue", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    assert!(!before.0.is_empty());
+    assert!(before.1.contains("wanted"));
+    // Exercise the deletion hook independently of prior close/settlement hooks.
+    raw(&w)
+        .execute("UPDATE sessions SET lifecycle='deleted' WHERE id='child'", [])
+        .unwrap();
+    let after: (String, String) = raw(&w)
+        .query_row("SELECT payload,required_config FROM session_dispatch_queue", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    assert_eq!(after, (String::new(), "{}".into()));
+    let evidence_count: i64 = raw(&w)
+        .query_row(
+            "SELECT COUNT(*) FROM session_attach_evidence WHERE session_id='child'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(evidence_count, 0);
+}
+
+#[test]
+fn delegated_unattached_close_requires_unchanged_intent_lifecycle_and_presence() {
+    use hennery_sessions::store::Unattached;
+    for (guard, mutation) in [
+        ("intent", "UPDATE sessions SET close_requested=0 WHERE id='child'"),
+        ("lifecycle", "UPDATE sessions SET lifecycle='starting' WHERE id='child'"),
+        ("presence", "UPDATE sessions SET presumed_parked=1 WHERE id='child'"),
+    ] {
+        let (w, _) = pair();
+        w.store.record_close_request("child").unwrap();
+        raw(&w).execute(mutation, []).unwrap();
+        let before = w.store.find_session("child").unwrap().unwrap();
+        let events_before: i64 = raw(&w)
+            .query_row("SELECT COUNT(*) FROM events WHERE session_id='child'", [], |r| r.get(0))
+            .unwrap();
+        assert!(
+            w.store
+                .close_delegated_unattached(
+                    "child",
+                    &Unattached {
+                        lifecycle: "active".into(),
+                        presumed_parked: false
+                    },
+                )
+                .unwrap()
+                .is_empty(),
+            "{guard}"
+        );
+        let after = w.store.find_session("child").unwrap().unwrap();
+        assert_eq!(after.lifecycle, before.lifecycle, "{guard}");
+        assert_eq!(after.close_requested, before.close_requested, "{guard}");
+        assert_eq!(after.presumed_parked, before.presumed_parked, "{guard}");
+        let events_after: i64 = raw(&w)
+            .query_row("SELECT COUNT(*) FROM events WHERE session_id='child'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(events_after, events_before, "{guard}");
+    }
+    let (w, _) = pair();
+    w.store.record_close_request("child").unwrap();
+    w.store
+        .close_delegated_unattached(
+            "child",
+            &Unattached {
+                lifecycle: "active".into(),
+                presumed_parked: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "closed");
+}
+
+#[test]
+fn operator_resume_clears_delegated_close_intent_before_late_unattached_verdict() {
+    use hennery_sessions::store::{ResumeRequest, Unattached};
+    let (w, _) = pair();
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    w.store.record_close_request("child").unwrap();
+    let judged = Unattached {
+        lifecycle: "parked".into(),
+        presumed_parked: false,
+    };
+    assert!(matches!(
+        w.store.request_resume("child", &w.hat).unwrap(),
+        ResumeRequest::Starting { .. }
+    ));
+    assert!(w.store.close_delegated_unattached("child", &judged).unwrap().is_empty());
+    let resumed = w.store.find_session("child").unwrap().unwrap();
+    assert_eq!(resumed.lifecycle, "starting");
+    assert!(!resumed.close_requested);
+}
+
+#[test]
+fn target_pages_bound_progress_and_wrap_without_foreign_or_settled_rows() {
+    let (w, _) = pair();
+    let mut c = raw(&w);
+    let tx = c.transaction().unwrap();
+    for i in 0..133 {
+        let id = if i < 131 {
+            format!("target-{i:03}")
+        } else {
+            format!("hidden-{i}")
+        };
+        let state = if i == 131 {
+            "cancelled"
+        } else if i == 132 {
+            "settled"
+        } else if i % 2 == 0 {
+            "queued"
+        } else {
+            "waiting_config"
+        };
+        tx.execute("INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,activity,created_at,last_event_at) VALUES (?1,?2,'host',?3,'claude','/project','active','idle','0','0')",params![id,w.store.owner_id(),w.hat]).unwrap();
+        tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,request_id) VALUES (?1,'parent',?2,?2,'digest','session_send',?2,'queued',?2)",params![w.store.owner_id(),id]).unwrap();
+        tx.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config,state) VALUES (?1,?2,'parent',?2,1,'fixture','{}',?3)",params![w.store.owner_id(),id,state]).unwrap();
+    }
+    tx.execute_batch("INSERT INTO owners(id,created_at,set_up_at) VALUES ('owner-other',9223372036854775807,9223372036854775807);
+    INSERT INTO hats(id,owner_id,name,colour,created_at) VALUES ('hat-other','owner-other','Other','#64748b',1);
+    INSERT INTO hosts(id,owner_id,name,public_key,platform,host_version,default_hat_id,created_at) VALUES ('host-other','owner-other','Fixture','other-key','linux','0','hat-other',1);
+    INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,activity,created_at,last_event_at) VALUES ('foreign-first','owner-other','host-other','hat-other','claude','/foreign','active','idle','0','0');
+    INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,request_id) VALUES ('owner-other','foreign-first','foreign','foreign-operation','digest','session_send','foreign-first','queued','foreign-request');
+    INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES ('owner-other','foreign-operation','foreign-first','foreign-first',1,'fixture','{}');").unwrap();
+    tx.commit().unwrap();
+    let first = w.store.delegation_targets_after("").unwrap();
+    assert_eq!(first, (0..128).map(|i| format!("target-{i:03}")).collect::<Vec<_>>());
+    let second = w.store.delegation_targets_after(first.last().unwrap()).unwrap();
+    assert_eq!(second, ["target-128", "target-129", "target-130"]);
+    assert!(
+        w.store
+            .delegation_targets_after(second.last().unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(w.store.delegation_targets_after("").unwrap(), first);
+}
