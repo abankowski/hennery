@@ -45,10 +45,13 @@ impl Store {
         Ok(capable && (mode != "isolated" || isolated))
     }
     pub fn delegation_targets(&self) -> Result<Vec<String>> {
+        self.delegation_targets_after("")
+    }
+    pub fn delegation_targets_after(&self, after: &str) -> Result<Vec<String>> {
         let conn = self.conn();
-        let mut stmt=conn.prepare("SELECT DISTINCT target_id FROM session_dispatch_queue WHERE owner_id = ?1 AND state IN ('queued','waiting_config') ORDER BY target_id LIMIT 128")?;
+        let mut stmt=conn.prepare("SELECT DISTINCT target_id FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id > ?2 AND state IN ('queued','waiting_config') ORDER BY target_id LIMIT 128")?;
         Ok(stmt
-            .query_map([self.owner_id()], |r| r.get(0))?
+            .query_map(params![self.owner_id(), after], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?)
     }
     pub fn attach_delegated(&self, target: &str, mcp: McpContext, catalog: &HostCatalog, hub: &Hub) -> Result<bool> {
@@ -104,7 +107,11 @@ impl Store {
         };
         let config: SessionConfig = serde_json::from_str(&required)?;
         if catalog.agent != agent
-            || !crate::delegation_runtime::security_allowed(catalog, &self.execution_policy_in(&tx, &hat)?, &config)
+            || !(new_start
+                && catalog.freshness != hennery_proto::delegation_host::CatalogFreshness::Fresh
+                && config.mode.is_none()
+                && config.axes.is_empty())
+                && !crate::delegation_runtime::security_allowed(catalog, &self.execution_policy_in(&tx, &hat)?, &config)
         {
             return Ok(false);
         }
@@ -119,9 +126,9 @@ impl Store {
         }
         tx.execute("INSERT INTO session_attach_evidence(owner_id,session_id,attach_generation,requested_config,launch_sent)
             VALUES (?1,?2,?3,?4,1) ON CONFLICT(owner_id,session_id) DO UPDATE SET attach_generation = excluded.attach_generation,
-            config_revision = 0,evidence = NULL,launch_sent = 1",params![self.owner_id(),target,i64::try_from(generation)?,required])?;
+            config_revision = 0,evidence = NULL,launch_sent = 1",params![self.owner_id(),target,generation,required])?;
         tx.execute("UPDATE session_dispatch_queue SET state = 'waiting_config' WHERE owner_id = ?1 AND target_id = ?2 AND state IN ('queued','waiting_config')",params![self.owner_id(),target])?;
-        tx.execute("UPDATE session_operations SET state = 'waiting_config' WHERE owner_id = ?1 AND child_id = ?2 AND state IN ('queued','waiting_config')",params![self.owner_id(),target])?;
+        tx.execute("UPDATE session_operations SET state = 'awaiting_reconciliation' WHERE owner_id = ?1 AND child_id = ?2 AND state IN ('queued','waiting_config')",params![self.owner_id(),target])?;
         let committed: i64 = tx.query_row(
             "SELECT COALESCE(MAX(host_seq),0) FROM events WHERE owner_id = ?1 AND session_id = ?2",
             params![self.owner_id(), target],
@@ -149,6 +156,7 @@ impl Store {
         self.mcp().cut(cut);
         // conn owns the shared gate here: close cannot commit in this gap.
         if !self.handoff_delegated(&conn, &source, &host, frame, hub)? {
+            conn.execute("UPDATE session_operations SET state = 'waiting_config' WHERE owner_id = ?1 AND child_id = ?2 AND turn_id IS NULL AND tool IN ('session_spawn','session_send') AND state = 'awaiting_reconciliation'",params![self.owner_id(),target])?;
             // Proven unsent, so allowing a later attempt cannot duplicate work.
             conn.execute(
                 "UPDATE session_attach_evidence SET launch_sent = 0 WHERE owner_id = ?1 AND session_id = ?2",
@@ -234,7 +242,7 @@ impl Store {
                 serde_json::to_string(&origin)?
             ],
         )?;
-        tx.execute("UPDATE session_operations SET turn_id = ?3,request_id = ?2,state = 'awaiting_reconciliation',validated_attach = ?4,validated_config = ?5,validated_policy = ?6 WHERE owner_id = ?1 AND operation_id = ?2",params![self.owner_id(),operation,turn,i64::try_from(generation)?,i64::try_from(evidence.config_revision)?,policy.revision])?;
+        tx.execute("UPDATE session_operations SET turn_id = ?3,request_id = ?2,state = 'awaiting_reconciliation',validated_attach = ?4,validated_config = ?5,validated_policy = ?6 WHERE owner_id = ?1 AND operation_id = ?2",params![self.owner_id(),operation,turn,generation,i64::try_from(evidence.config_revision)?,policy.revision])?;
         tx.execute("UPDATE session_dispatch_queue SET state = 'awaiting_reconciliation' WHERE owner_id = ?1 AND operation_id = ?2",params![self.owner_id(),operation])?;
         let frame = CollectorFrame::DelegatedPrompt {
             request_id: request,
@@ -269,6 +277,9 @@ impl Store {
         Ok(true)
     }
     pub(crate) fn ingest_delegation_in(&self, tx: &Transaction<'_>, session: &str, body: &SessionBody) -> Result<()> {
+        if matches!(body, SessionBody::SessionStarted { .. }) {
+            tx.execute("UPDATE session_operations SET state = 'waiting_config' WHERE owner_id = ?1 AND child_id = ?2 AND turn_id IS NULL AND tool IN ('session_spawn','session_send') AND state = 'awaiting_reconciliation'",params![self.owner_id(),session])?;
+        }
         let indexed = match body {
             SessionBody::SessionStarted { indexed, .. }
             | SessionBody::ConfigApplied { indexed, .. }

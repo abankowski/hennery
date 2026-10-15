@@ -1001,6 +1001,7 @@ pub enum CollectorFrame {
     DelegatedAttach {
         request_id: String,
         session_id: String,
+        #[ts(type = "number")]
         committed_seq: u64,
         agent: String,
         cwd: String,

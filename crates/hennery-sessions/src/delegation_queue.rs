@@ -31,7 +31,14 @@ fn state(value: &str, code: Option<String>) -> OperationState {
         "not_delivered" => OperationState::NotDelivered,
         "cancelled" => OperationState::Cancelled,
         _ => OperationState::Failed {
-            code: code.unwrap_or_else(|| "failed".into()),
+            code: code
+                .filter(|code| {
+                    code.len() <= 128
+                        && code
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                })
+                .unwrap_or_else(|| "failed".into()),
         },
     }
 }
@@ -43,6 +50,14 @@ fn receipt_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OperationReceipt> {
         pending_id: r.get(3)?,
         state: state(&r.get::<_, String>(4)?, r.get(5)?),
     })
+}
+struct QueuedInput<'a> {
+    key: &'a str,
+    digest: &'a str,
+    child: &'a str,
+    text: &'a str,
+    config: &'a SessionConfig,
+    tool: &'a str,
 }
 const RECEIPT: &str = "SELECT operation_id, child_id, turn_id, pending_id, state, code FROM session_operations
     WHERE owner_id = ?1 AND caller_id = ?2 AND operation_key = ?3";
@@ -146,13 +161,16 @@ impl Store {
         &self,
         tx: &Transaction<'_>,
         caller: &SessionToolContext,
-        key: &str,
-        digest: &str,
-        child: &str,
-        text: &str,
-        config: &SessionConfig,
-        tool: &str,
+        input: QueuedInput<'_>,
     ) -> Result<OperationReceipt> {
+        let QueuedInput {
+            key,
+            digest,
+            child,
+            text,
+            config,
+            tool,
+        } = input;
         ensure!(text.len() <= 65536, "invalid_arguments");
         let text = hennery_kernel::redact::text(text).unwrap_or_else(|| text.to_owned());
         let (count,bytes):(i64,i64)=tx.query_row("SELECT COUNT(*), COALESCE(SUM(length(CAST(payload AS BLOB))),0)
@@ -208,7 +226,18 @@ impl Store {
             )
             .optional()?;
         let config = raw.map(|v| serde_json::from_str(&v)).transpose()?.unwrap_or_default();
-        let receipt = self.enqueue_in(&tx, &caller, key, digest, child, text, &config, "session_send")?;
+        let receipt = self.enqueue_in(
+            &tx,
+            &caller,
+            QueuedInput {
+                key,
+                digest,
+                child,
+                text,
+                config: &config,
+                tool: "session_send",
+            },
+        )?;
         tx.commit()?;
         Ok(receipt)
     }
@@ -281,7 +310,18 @@ impl Store {
         // Delivery commits at allocation, but launch is performed by the worker
         // with a fresh descriptor on attach (never put a bearer in the queue).
         let (_, cut) = self.deliver_in(&tx, &child, caller.host_id(), caller.hat_id(), mcp, &ts)?;
-        let receipt = self.enqueue_in(&tx, &caller, key, digest, &child, brief, config, "session_spawn")?;
+        let receipt = self.enqueue_in(
+            &tx,
+            &caller,
+            QueuedInput {
+                key,
+                digest,
+                child: &child,
+                text: brief,
+                config,
+                tool: "session_spawn",
+            },
+        )?;
         tx.execute(
             "UPDATE session_operations SET epoch = ?3 WHERE owner_id = ?1 AND operation_id = ?2",
             params![self.owner_id(), receipt.operation_id, epoch],

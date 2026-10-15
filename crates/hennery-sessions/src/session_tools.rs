@@ -14,7 +14,7 @@ use hennery_proto::{
 };
 use serde_json::Value;
 
-fn unknown_catalog(agent: String) -> HostCatalog {
+pub(crate) fn unknown_catalog(agent: String) -> HostCatalog {
     HostCatalog {
         agent,
         adapter_revision: String::new(),
@@ -40,10 +40,10 @@ pub async fn execute(
         .store
         .session_tool_context(identity, revision, true)?
         .ok_or_else(|| anyhow::anyhow!("session_starting"))?;
-    if let Some(key) = call.operation_key().filter(|_| !matches!(call, ToolCall::Status(_))) {
-        if let Some(receipt) = state.store.delegation_retry(identity, revision, key, &digest)? {
-            return Ok(serde_json::to_value(receipt)?);
-        }
+    if let Some(key) = call.operation_key().filter(|_| !matches!(call, ToolCall::Status(_)))
+        && let Some(receipt) = state.store.delegation_retry(identity, revision, key, &digest)?
+    {
+        return Ok(serde_json::to_value(receipt)?);
     }
     match call {
         ToolCall::Capabilities(args) => {
@@ -99,15 +99,23 @@ pub async fn execute(
             let catalog = state
                 .catalogs
                 .get(state, caller.host_id(), caller.hat_id(), &cwd, agent)
-                .await?;
+                .await
+                .unwrap_or_else(|_| unknown_catalog(agent.to_string()));
             if args.config.model.is_none() && agent == caller.agent() {
                 args.config.model = state
                     .store
                     .find_session(caller.session_id())?
                     .and_then(|s| s.config.model);
             }
-            ensure!(config_offered(&catalog, &args.config), "configuration_unavailable");
-            let mut required = catalog.defaults.clone();
+            let fresh = catalog.freshness == CatalogFreshness::Fresh;
+            if fresh {
+                ensure!(config_offered(&catalog, &args.config), "configuration_unavailable");
+            }
+            let mut required = if fresh {
+                catalog.defaults.clone()
+            } else {
+                Default::default()
+            };
             if args.config.model.is_some() {
                 required.model = args.config.model;
             }
@@ -116,7 +124,8 @@ pub async fn execute(
             }
             required.axes.extend(args.config.axes);
             ensure!(
-                security_allowed(&catalog, &state.store.execution_policy(caller.hat_id())?, &required),
+                (!fresh && required.mode.is_none() && required.axes.is_empty())
+                    || security_allowed(&catalog, &state.store.execution_policy(caller.hat_id())?, &required),
                 "operator_required"
             );
             let mcp = crate::api::mcp_context(state, caller.host_id(), agent)?;
