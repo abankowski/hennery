@@ -8,9 +8,11 @@
 
 ## Execution status (2026-10-15)
 
-Built first on **plan/deleg-d2**, from merged D1/C1 at 37fc7488, then rebased without conflicts onto merged P1 at 256691fe before replay. The tests were observed RED before implementation, including strict decoder contracts, queue/control storage, host configuration fences, HTTP discovery/execution, cold-catalog fallback, bounded waits and missing TypeScript exports. Fresh replay applied all eight nonempty patches, reproduced all 16 expected command exits and matched the complete implementation tree. All six Rust checks passed (2,298 tests), as did the affected web checks (1,784 tests). The copy matrix detected 217 of 218 named mutations; the one surviving redundant UPSERT predicate is retained for parent review. Four-copy load and child-attributed discovery/startup with both actual pinned adapters passed without provider prompts. Full evidence and historical failures are recorded after the tasks. Independent security/task/whole-branch review and Linux/macOS CI remain parent-owned; this plan makes no review approval claim.
+Built first on **plan/deleg-d2**, rebased onto merged P1 at 256691fe before replay. Codex gpt-6-astra reviewed **256691fe..2443592e** on the maintainer's behalf: **APPROVE AFTER AMENDMENTS**, no Critical findings, 126 focused tests passed. The reviewer confirmed the redundant owner UPSERT predicate mutation is **EQUIVALENT**; the predicate stays. Tasks 5–6 below address the two Important findings test-first: committed close/answer event publication and answer pagination with wraparound. The verification record distinguishes original evidence from amendment checks, copy probes, load and a fresh complete replay. Scoped review confirmation and Linux/macOS CI remain parent-owned.
 
-Implementation base: **256691feb9cba161f0c29b14016bc857a4da86e5**. Embedded implementation head: **ef8ccc40d6835b61fe82b40c850e9c097badf8d7**.
+Implementation base: **256691feb9cba161f0c29b14016bc857a4da86e5**. Embedded implementation head: **395fa1401a6c046c0ed7afae27f6248f74e8bde4**.
+
+The replay compares every tracked implementation file with the embedded head. Only this plan and its README index are excluded from that comparison; both documentation files remain exactly at the pinned base during replay. Each patch still has an exact complete staged-tree assertion.
 
 ## Scope
 
@@ -10348,6 +10350,664 @@ Run:
 nix develop -c cargo test -p hennery-testkit --test delegation_mcp --test delegation_tools --test owner_filter --locked # expected exit 0
 ```
 
+
+### Task 5, step 1: test(delegation): specify committed close and answer event delivery
+
+- [x] Observe each regression RED before the fix.
+
+<!-- replay {"subject":"test(delegation): specify committed close and answer event delivery","tree":"353c2bc394ff6ef90aa6dfa3b861d5b974ee5fd6","checks":[["cargo test -p hennery-sessions --test delegation_d2 --locked delegated_unattached_close_records_parent_intent_and_publishes_all_committed_events -- --exact",101],["cargo test -p hennery-testkit --test delegation_tools --locked delegated_parked_close_is_attributed_and_reaches_existing_dashboard_stream -- --exact",101],["cargo test -p hennery-testkit --test delegation_tools --locked queued_parent_answer_reaches_existing_session_stream_before_dispatch -- --exact",101]]} -->
+```diff
+diff --git a/crates/hennery-sessions/tests/delegation_d2.rs b/crates/hennery-sessions/tests/delegation_d2.rs
+index 703fa57c040ec3c0420bec0f56c2896d35cda5c7..7381e3d386a266b0eb139f02522fae77aa652f57 100644
+--- a/crates/hennery-sessions/tests/delegation_d2.rs
++++ b/crates/hennery-sessions/tests/delegation_d2.rs
+@@ -266,6 +266,47 @@ fn answer() -> AnswerRequest {
+     }
+ }
+
++#[test]
++fn delegated_unattached_close_records_parent_intent_and_publishes_all_committed_events() {
++    let (w, p) = pair();
++    pending(&w, "child", 2, "closing-question", PendingKind::Elicitation);
++    let hub = Hub::new();
++    let mut live = hub.subscribe();
++    let before = w.store.max_event_id().unwrap();
++    let accepted = w
++        .store
++        .queue_child_close(&p, 1, "close-events", "digest", "child", &hub)
++        .unwrap();
++    assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "closed");
++    let events = w.store.events("child", before, 100).unwrap();
++    let close = events
++        .iter()
++        .find(|event| event.kind == "operator_closed")
++        .expect("durable close intent");
++    assert_eq!(close.host_seq, None);
++    assert_eq!(
++        close.body["origin"],
++        json!(InputOrigin::Parent {
++            session_id: "parent".into(),
++            operation_id: accepted.operation_id.clone()
++        })
++    );
++    assert!(events.iter().any(|event| event.kind == "pending_cancelled"));
++    let published: Vec<_> = std::iter::from_fn(|| live.try_recv().ok()).collect();
++    assert_eq!(
++        published, events,
++        "every committed close change must wake existing subscribers"
++    );
++    assert_eq!(
++        w.store
++            .queue_child_close(&p, 1, "close-events", "digest", "child", &hub)
++            .unwrap()
++            .operation_id,
++        accepted.operation_id
++    );
++    assert!(live.try_recv().is_err(), "idempotent retry publishes nothing");
++}
++
+ #[test]
+ fn close_intent_at_either_endpoint_cancels_before_prompt_handoff() {
+     for endpoint in ["parent", "child"] {
+diff --git a/crates/hennery-testkit/tests/delegation_tools.rs b/crates/hennery-testkit/tests/delegation_tools.rs
+index bbca877378b8993da2896a3873095d270df21998..323da8bdaaf8b2592361256cdc3e7d2fd864ba3e 100644
+--- a/crates/hennery-testkit/tests/delegation_tools.rs
++++ b/crates/hennery-testkit/tests/delegation_tools.rs
+@@ -18,6 +18,59 @@ use std::{
+
+ const HOST: &str = "delegation-host";
+ const BOUND: Duration = Duration::from_secs(30);
++
++struct LiveSse {
++    response: reqwest::Response,
++    buffered: Vec<u8>,
++}
++impl LiveSse {
++    async fn open(h: &Harness, path: &str, after: Option<i64>) -> Self {
++        let mut request = h.client.get(format!("{}{path}", h.url));
++        if let Some(after) = after {
++            request = request.header("last-event-id", after.to_string());
++        }
++        let response = request.send().await.unwrap();
++        assert_eq!(response.status(), reqwest::StatusCode::OK);
++        Self {
++            response,
++            buffered: Vec::new(),
++        }
++    }
++    async fn next(&mut self) -> (String, Value) {
++        tokio::time::timeout(BOUND, async {
++            loop {
++                while let Some(end) = self.buffered.windows(2).position(|bytes| bytes == b"\n\n") {
++                    let block: Vec<_> = self.buffered.drain(..end + 2).collect();
++                    let block = std::str::from_utf8(&block).unwrap();
++                    let name = block
++                        .lines()
++                        .find_map(|line| line.strip_prefix("event:"))
++                        .map(str::trim);
++                    let data = block.lines().find_map(|line| line.strip_prefix("data:")).map(str::trim);
++                    if let (Some(name), Some(data)) = (name, data) {
++                        return (name.to_owned(), serde_json::from_str(data).unwrap());
++                    }
++                }
++                self.buffered
++                    .extend_from_slice(&self.response.chunk().await.unwrap().expect("live SSE ended"));
++            }
++        })
++        .await
++        .expect("live SSE message before deadline")
++    }
++    async fn matching(&mut self, name: &str, predicate: impl Fn(&Value) -> bool) -> Value {
++        tokio::time::timeout(BOUND, async {
++            loop {
++                let (kind, data) = self.next().await;
++                if kind == name && predicate(&data) {
++                    return data;
++                }
++            }
++        })
++        .await
++        .expect("matching live SSE message before deadline")
++    }
++}
+ struct Harness {
+     _dir: tempfile::TempDir,
+     state: AppState,
+@@ -777,6 +830,102 @@ async fn permission_questions_remain_operator_only_and_elicitation_has_one_answe
+     h.finish().await;
+ }
+
++#[tokio::test]
++async fn delegated_parked_close_is_attributed_and_reaches_existing_dashboard_stream() {
++    let h = Harness::with_worker(script(), None, false).await;
++    let receipt = h.spawn("park-close", json!({})).await;
++    let child = receipt["child_id"].as_str().unwrap();
++    eventually("completed child before parking", async || {
++        hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
++        (h.status(child).await["last_outcome"] == "completed").then_some(())
++    })
++    .await;
++    let (status, body) = h.post(&format!("/api/sessions/{child}/park"), json!({})).await;
++    assert!(status.is_success(), "{body}");
++    eventually("idle genuinely parked child", async || {
++        let session = h.state.store.find_session(child).unwrap().unwrap();
++        (session.lifecycle == "parked" && !session.presumed_parked && session.open_turn_id.is_none()).then_some(())
++    })
++    .await;
++    let page: Value = h
++        .client
++        .get(format!("{}/api/view/sessions", h.url))
++        .send()
++        .await
++        .unwrap()
++        .json()
++        .await
++        .unwrap();
++    let mut dashboard = LiveSse::open(
++        &h,
++        &format!(
++            "/api/stream/sessions?after={}:{}",
++            page["epoch"].as_str().unwrap(),
++            page["revision"].as_i64().unwrap()
++        ),
++        None,
++    )
++    .await;
++    assert_eq!(dashboard.next().await.0, "waiting_changed");
++    let before = h.state.store.max_event_id().unwrap();
++    let arguments = json!({"operation_key":"close-parked","child_id":child});
++    let closed = h.ok("session_close", arguments.clone()).await;
++    let events = h.state.store.events(child, before, 100).unwrap();
++    let close: Vec<_> = events.iter().filter(|event| event.kind == "operator_closed").collect();
++    assert_eq!(close.len(), 1, "one durable close marker for an idle parked child");
++    assert_eq!(
++        close[0].body["origin"],
++        json!({"kind":"parent","session_id":h.parent,"operation_id":closed["operation_id"]})
++    );
++    let summary = dashboard
++        .matching("session_upsert", |summary| {
++            summary["session_id"] == child && summary["lifecycle"] == "closed"
++        })
++        .await;
++    assert_eq!(summary["question_waits"], false);
++    h.ok("session_close", arguments).await;
++    assert_eq!(h.state.store.events(child, before, 100).unwrap().len(), events.len());
++    h.finish().await;
++}
++
++#[tokio::test]
++async fn queued_parent_answer_reaches_existing_session_stream_before_dispatch() {
++    let mut worker = script();
++    worker.asks = vec![FakeAsk::Elicitation];
++    let h = Harness::with_worker(worker, None, false).await;
++    let receipt = h.spawn("answer-stream", json!({})).await;
++    let child = receipt["child_id"].as_str().unwrap();
++    let pending = eventually("ordinary child question", async || {
++        hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
++        h.state.store.open_pending(child).unwrap().into_iter().next()
++    })
++    .await;
++    let last = h.state.store.events(child, 0, 100).unwrap().last().unwrap().event_id;
++    let mut stream = LiveSse::open(&h, &format!("/api/stream/sessions/{child}"), Some(last - 1)).await;
++    stream.matching("event", |event| event["event_id"] == last).await;
++    let mut published = h.state.hub.subscribe();
++    let arguments = json!({"operation_key":"answer-live","child_id":child,"pending_id":pending.pending_id,"action":"accept","content":{"name":"parent"}});
++    let accepted = h.ok("session_answer", arguments.clone()).await;
++    let event = stream
++        .matching("event", |event| event["kind"] == "answer_submitted")
++        .await;
++    assert_eq!(
++        event["body"]["origin"],
++        json!({"kind":"parent","session_id":h.parent,"operation_id":accepted["operation_id"]})
++    );
++    let changed = stream
++        .matching("pending_changed", |item| item["pending_id"] == pending.pending_id)
++        .await;
++    assert_eq!(changed["answered"], true);
++    assert!(changed["delivered"].is_null(), "publication precedes host handoff");
++    let committed = h.state.store.events(child, last, 100).unwrap();
++    assert_eq!(committed.len(), 1);
++    assert_eq!(published.try_recv().unwrap(), committed[0]);
++    h.ok("session_answer", arguments).await;
++    assert!(published.try_recv().is_err(), "retry must not republish the answer");
++    h.finish().await;
++}
++
+ /// Local acceptance only: adapters are supplied explicitly, never installed by
+ /// the test. The dispatch worker is disabled and drained exactly once to attach
+ /// the accepted child; its saved brief is never submitted to the adapter.
+```
+
+Run:
+
+```bash
+nix develop -c cargo test -p hennery-sessions --test delegation_d2 --locked delegated_unattached_close_records_parent_intent_and_publishes_all_committed_events -- --exact # expected exit 101
+nix develop -c cargo test -p hennery-testkit --test delegation_tools --locked delegated_parked_close_is_attributed_and_reaches_existing_dashboard_stream -- --exact # expected exit 101
+nix develop -c cargo test -p hennery-testkit --test delegation_tools --locked queued_parent_answer_reaches_existing_session_stream_before_dispatch -- --exact # expected exit 101
+```
+
+
+### Task 5, step 2: fix(delegation): publish committed parent answer and attributed close changes
+
+- [x] Implement the preceding contract and observe GREEN.
+
+<!-- replay {"subject":"fix(delegation): publish committed parent answer and attributed close changes","tree":"6ba20ab0a57eb522b1a5ab83b61d2e1ec1c52023","checks":[["cargo test -p hennery-sessions --test delegation --test delegation_d2 --locked",0],["cargo test -p hennery-testkit --test delegation_tools --locked",0]]} -->
+```diff
+diff --git a/crates/hennery-sessions/src/delegation_control.rs b/crates/hennery-sessions/src/delegation_control.rs
+index 3668dbb4bac0d6915ffe835a0f357179094c6215..6a224f7f4cde6082e2a3ca3968e9cac6ec6507b4 100644
+--- a/crates/hennery-sessions/src/delegation_control.rs
++++ b/crates/hennery-sessions/src/delegation_control.rs
+@@ -29,6 +29,7 @@ impl Store {
+         revision: i64,
+         digest: &str,
+         input: &DelegatedAnswer<'_>,
++        hub: &Hub,
+     ) -> Result<OperationReceipt> {
+         let DelegatedAnswer {
+             key,
+@@ -74,6 +75,8 @@ impl Store {
+         )?;
+         let receipt = self.receipt_in(&tx, caller.session_id(), key)?.expect("inserted");
+         tx.commit()?;
++        drop(conn);
++        hub.publish(queued.event);
+         Ok(receipt)
+     }
+     pub fn queue_child_close(
+@@ -105,6 +108,21 @@ impl Store {
+         tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,request_id,state)
+             VALUES (?1,?2,?3,?4,?5,'session_close',?6,?4,?7)",params![self.owner_id(),caller.session_id(),key,operation,digest,child,if lifecycle=="closed" {"completed"}else{"awaiting_reconciliation"}])?;
+         tx.execute("UPDATE sessions SET close_requested = 1 WHERE owner_id = ?1 AND id = ?2 AND lifecycle NOT IN ('closed','deleted')",params![self.owner_id(),child])?;
++        let event = if lifecycle != "closed" {
++            Some(crate::store::collector_event(
++                &tx,
++                self.owner_id(),
++                child,
++                "operator_closed",
++                serde_json::json!({"origin": InputOrigin::Parent {
++                    session_id: caller.session_id().into(),
++                    operation_id: operation.clone(),
++                }}),
++                &crate::store::now(),
++            )?)
++        } else {
++            None
++        };
+         let receipt = self.receipt_in(&tx, caller.session_id(), key)?.expect("inserted");
+         tx.commit()?;
+         let handed = hub.notify(
+@@ -115,14 +133,25 @@ impl Store {
+             },
+         );
+         drop(conn);
+-        if !handed || !matches!(lifecycle.as_str(), "active" | "starting") {
++        let closed = if !handed || !matches!(lifecycle.as_str(), "active" | "starting") {
+             self.close_delegated_unattached(
+                 child,
+                 &crate::store::Unattached {
+                     lifecycle: lifecycle.clone(),
+                     presumed_parked: presumed,
+                 },
+-            )?;
++            )
++        } else {
++            Ok(Vec::new())
++        };
++        // Publish after the fallback commits, so a dashboard wake-up observes
++        // its final lifecycle even when closing an idle parked child emits
++        // no additional event. The durable intent is published on error too.
++        if let Some(event) = event {
++            hub.publish(event);
++        }
++        for event in closed? {
++            hub.publish(event);
+         }
+         Ok(receipt)
+     }
+diff --git a/crates/hennery-sessions/src/session_tools.rs b/crates/hennery-sessions/src/session_tools.rs
+index 669ce9a2b188316cd481455f19062229333d22ae..ff451943727928fdbd5970d590d510d4dd57d238 100644
+--- a/crates/hennery-sessions/src/session_tools.rs
++++ b/crates/hennery-sessions/src/session_tools.rs
+@@ -167,6 +167,7 @@ pub async fn execute(
+                     pending: &args.pending_id,
+                     answer: &answer,
+                 },
++                &state.hub,
+             )?)?)
+         }
+         ToolCall::Status(args) => Ok(serde_json::to_value(state.store.child_status(
+diff --git a/crates/hennery-sessions/src/store.rs b/crates/hennery-sessions/src/store.rs
+index db58c68e91fc604f2eb74d520ffe237e865d9323..d851978d810f94e4a442532c63c4198548008218 100644
+--- a/crates/hennery-sessions/src/store.rs
++++ b/crates/hennery-sessions/src/store.rs
+@@ -856,7 +856,7 @@ pub(crate) fn now() -> String {
+ /// Write a collector-originated event (`host_seq` NULL, ACP core §8), for
+ /// a session of `owner`'s only: for any other, or a tombstone (plan 9a
+ /// A1), it fails and writes nothing.
+-fn collector_event(
++pub(crate) fn collector_event(
+     tx: &Transaction<'_>,
+     owner: &str,
+     session_id: &str,
+diff --git a/crates/hennery-sessions/tests/delegation.rs b/crates/hennery-sessions/tests/delegation.rs
+index 3d1dfd0d0e05926002d4c6c2d386637157984344..b3e34e8d768b9e1f651955e82ca57c95bdf42eff 100644
+--- a/crates/hennery-sessions/tests/delegation.rs
++++ b/crates/hennery-sessions/tests/delegation.rs
+@@ -9,6 +9,7 @@ use hennery_kernel::hosts::{Enrollment, Hosts};
+ use hennery_kernel::operator::{Operator, SetupOutcome};
+ use hennery_kernel::secret::unix_now;
+ use hennery_proto::frames::{McpIsolation, McpServer, SessionBody};
++use hennery_sessions::hub::Hub;
+ use hennery_sessions::store::{McpContext, Store};
+ use std::sync::Arc;
+ struct World {
+@@ -580,6 +581,7 @@ fn d2_answers_reuse_the_operator_slot_but_permissions_require_operator() {
+                 pending: "ordinary",
+                 answer: &answer,
+             },
++            &Hub::new(),
+         )
+         .unwrap();
+     assert_eq!(
+@@ -594,7 +596,8 @@ fn d2_answers_reuse_the_operator_slot_but_permissions_require_operator() {
+                     child: "child",
+                     pending: "ordinary",
+                     answer: &answer
+-                }
++                },
++                &Hub::new(),
+             )
+             .unwrap()
+     );
+@@ -613,7 +616,8 @@ fn d2_answers_reuse_the_operator_slot_but_permissions_require_operator() {
+                     child: "child",
+                     pending: "permission",
+                     answer: &answer
+-                }
++                },
++                &Hub::new(),
+             )
+             .unwrap_err()
+             .to_string()
+diff --git a/crates/hennery-sessions/tests/delegation_d2.rs b/crates/hennery-sessions/tests/delegation_d2.rs
+index 7381e3d386a266b0eb139f02522fae77aa652f57..69f79ef547b0d0d75f63b35e9d64e993cb69e61c 100644
+--- a/crates/hennery-sessions/tests/delegation_d2.rs
++++ b/crates/hennery-sessions/tests/delegation_d2.rs
+@@ -559,7 +559,8 @@ fn collector_restart_preserves_receipts_and_operation_key_namespace_across_tools
+                     child: &child,
+                     pending: "missing",
+                     answer: &answer()
+-                }
++                },
++                &Hub::new(),
+             )
+             .unwrap_err()
+             .to_string()
+@@ -929,6 +930,7 @@ fn ordinary_answers_share_one_slot_under_four_worker_race() {
+                                 pending: "question",
+                                 answer: &answer(),
+                             },
++                            &Hub::new(),
+                         ) {
+                             Ok(_) => 1,
+                             Err(e) => {
+@@ -975,6 +977,7 @@ fn parent_close_frees_unhanded_answer_without_stealing_operator_slot() {
+                 pending: "question",
+                 answer: &answer(),
+             },
++            &Hub::new(),
+         )
+         .unwrap();
+     assert!(w.store.answers_to_send("host").unwrap().is_empty());
+@@ -1004,7 +1007,8 @@ fn permissions_are_operator_only_and_status_contains_no_answer_capable_schema()
+                     child: "child",
+                     pending: "permission",
+                     answer: &answer()
+-                }
++                },
++                &Hub::new(),
+             )
+             .unwrap_err()
+             .to_string(),
+@@ -1041,6 +1045,7 @@ fn accepted_answer_is_not_delivered_until_factual_host_verdict_and_survives_sour
+                 pending: "question",
+                 answer: &answer(),
+             },
++            &Hub::new(),
+         )
+         .unwrap();
+     let (h, mut rx) = connected();
+@@ -1430,6 +1435,7 @@ fn disabling_and_reenabling_grant_cancels_queue_without_reviving_old_token() {
+                 pending: "grant-question",
+                 answer: &answer(),
+             },
++            &Hub::new(),
+         )
+         .unwrap();
+     let (h, mut rx) = connected();
+```
+
+Run:
+
+```bash
+nix develop -c cargo test -p hennery-sessions --test delegation --test delegation_d2 --locked # expected exit 0
+nix develop -c cargo test -p hennery-testkit --test delegation_tools --locked # expected exit 0
+```
+
+
+### Task 6, step 1: test(delegation): specify answer page advancement and wraparound
+
+- [x] Observe each regression RED before the fix.
+
+<!-- replay {"subject":"test(delegation): specify answer page advancement and wraparound","tree":"27e6f9f984dd9ee172c24bab3bb77a2b2b148540","checks":[["cargo test -p hennery-testkit --test delegation_tools --locked background_answer_worker_advances_past_held_page_and_wraps_to_repaired_earlier_answer -- --exact",101]]} -->
+```diff
+diff --git a/crates/hennery-testkit/tests/delegation_tools.rs b/crates/hennery-testkit/tests/delegation_tools.rs
+index 323da8bdaaf8b2592361256cdc3e7d2fd864ba3e..28f639d30e6c9141a85a3dd6477778fcb118a6c2 100644
+--- a/crates/hennery-testkit/tests/delegation_tools.rs
++++ b/crates/hennery-testkit/tests/delegation_tools.rs
+@@ -1251,3 +1251,91 @@ async fn background_worker_advances_past_offline_page_and_wraps_to_repaired_earl
+     assert_eq!(h.status(earlier).await["last_outcome"], "completed");
+     h.finish().await;
+ }
++
++#[tokio::test]
++async fn background_answer_worker_advances_past_held_page_and_wraps_to_repaired_earlier_answer() {
++    use rusqlite::params;
++    let mut worker = script();
++    worker.asks = vec![FakeAsk::Elicitation];
++    let h = Harness::with_worker(worker, None, false).await;
++    let earlier = h.spawn("answer-earlier", json!({})).await;
++    let earlier = earlier["child_id"].as_str().unwrap();
++    let later = h.spawn("answer-later", json!({})).await;
++    let later = later["child_id"].as_str().unwrap();
++    let (earlier_pending, later_pending) = eventually("both children asking", async || {
++        hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
++        let earlier = h
++            .state
++            .store
++            .open_pending(earlier)
++            .unwrap()
++            .into_iter()
++            .find(|p| !p.answered)?;
++        let later = h
++            .state
++            .store
++            .open_pending(later)
++            .unwrap()
++            .into_iter()
++            .find(|p| !p.answered)?;
++        Some((earlier, later))
++    })
++    .await;
++    h.ok("session_answer", json!({"operation_key":"earlier-answer","child_id":earlier,"pending_id":earlier_pending.pending_id,"action":"accept","content":{"name":"answer"}})).await;
++    let mut conn = hennery_kernel::db::open(&h.cwd.join("hennery.db")).unwrap();
++    let revision: i64;
++    {
++        let tx = conn.transaction().unwrap();
++        let owner = h.state.store.owner_id();
++        revision = tx.query_row("SELECT accepted_revision FROM session_operations WHERE owner_id=?1 AND caller_id=?2 AND operation_key='earlier-answer'",params![owner,h.parent],|r|r.get(0)).unwrap();
++        // These accepted rows are held by a changed delegation grant. Fixture
++        // pressure bypasses admission limits; both live answers still use real
++        // parent grants, pending records, host actors and ACP traffic.
++        tx.execute("UPDATE session_operations SET operation_id='000-earlier-answer',accepted_revision=?3 WHERE owner_id=?1 AND caller_id=?2 AND operation_key='earlier-answer'",params![owner,h.parent,revision-1]).unwrap();
++        for i in 0..127 {
++            let pending = format!("held-answer-question-{i:04}");
++            let operation = format!("100-held-answer-{i:04}");
++            tx.execute("INSERT INTO pending(pending_id,session_id,turn_id,kind,option_ids,payload,state,opened_at,owner_id) SELECT ?1,session_id,turn_id,kind,option_ids,payload,'open',opened_at,owner_id FROM pending WHERE owner_id=?2 AND pending_id=?3",params![pending,owner,earlier_pending.pending_id]).unwrap();
++            tx.execute("INSERT INTO answer_queue(owner_id,pending_id,session_id,request_id,answer,submitted_at,delegation_handoff) SELECT owner_id,?1,session_id,?2,answer,submitted_at,0 FROM answer_queue WHERE owner_id=?3 AND pending_id=?4",params![pending,operation,owner,earlier_pending.pending_id]).unwrap();
++            tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,pending_id,request_id,state,accepted_revision) VALUES (?1,?2,?3,?3,'fixture','session_answer',?4,?5,?3,'queued',?6)",params![owner,h.parent,operation,earlier,pending,revision-1]).unwrap();
++        }
++        tx.commit().unwrap();
++    }
++    h.ok("session_answer", json!({"operation_key":"later-answer","child_id":later,"pending_id":later_pending.pending_id,"action":"accept","content":{"name":"answer"}})).await;
++    conn.execute("UPDATE session_operations SET operation_id='999-later-answer' WHERE owner_id=?1 AND caller_id=?2 AND operation_key='later-answer'",params![h.state.store.owner_id(),h.parent]).unwrap();
++    assert_eq!(conn.query_row("SELECT COUNT(*) FROM session_operations WHERE owner_id=?1 AND tool='session_answer' AND state='queued' AND operation_id < '999-later-answer'",[h.state.store.owner_id()],|r|r.get::<_,i64>(0)).unwrap(),128);
++    hennery_sessions::delegation_worker::after_startup(&h.state);
++    eventually("eligible answer beyond 128 held answers", async || {
++        (h.state
++            .store
++            .pending_item(&later_pending.pending_id)
++            .unwrap()
++            .unwrap()
++            .delivered
++            == Some(true))
++        .then_some(())
++    })
++    .await;
++    assert_eq!(
++        h.state
++            .store
++            .pending_item(&earlier_pending.pending_id)
++            .unwrap()
++            .unwrap()
++            .delivered,
++        None
++    );
++    conn.execute("UPDATE session_operations SET accepted_revision=?3 WHERE owner_id=?1 AND caller_id=?2 AND operation_key='earlier-answer'",params![h.state.store.owner_id(),h.parent,revision]).unwrap();
++    eventually("repaired earlier answer after cursor wrap", async || {
++        (h.state
++            .store
++            .pending_item(&earlier_pending.pending_id)
++            .unwrap()
++            .unwrap()
++            .delivered
++            == Some(true))
++        .then_some(())
++    })
++    .await;
++    h.finish().await;
++}
+```
+
+Run:
+
+```bash
+nix develop -c cargo test -p hennery-testkit --test delegation_tools --locked background_answer_worker_advances_past_held_page_and_wraps_to_repaired_earlier_answer -- --exact # expected exit 101
+```
+
+
+### Task 6, step 2: fix(delegation): retain independent answer cursor across bounded worker ticks
+
+- [x] Implement the preceding contract and observe GREEN.
+
+<!-- replay {"subject":"fix(delegation): retain independent answer cursor across bounded worker ticks","tree":"a384924c24414263405c0cb6389c24a774d1f0f0","checks":[["cargo test -p hennery-testkit --test delegation_tools --test owner_filter --locked",0]]} -->
+```diff
+diff --git a/crates/hennery-sessions/src/delegation_control.rs b/crates/hennery-sessions/src/delegation_control.rs
+index 6a224f7f4cde6082e2a3ca3968e9cac6ec6507b4..291bf05a9b5a67528ccc53051ca26d388b8b1715 100644
+--- a/crates/hennery-sessions/src/delegation_control.rs
++++ b/crates/hennery-sessions/src/delegation_control.rs
+@@ -355,13 +355,18 @@ impl Store {
+
+ impl Store {
+     pub fn dispatch_delegation_answers(&self, hub: &Hub) -> Result<()> {
++        self.dispatch_delegation_answers_after(hub, "").map(|_| ())
++    }
++    /// Dispatch one bounded page, including held rows in cursor progress. An
++    /// empty page returns `None`, so a persistent caller can wrap to the start.
++    pub fn dispatch_delegation_answers_after(&self, hub: &Hub, after: &str) -> Result<Option<String>> {
+         let mut conn = self.conn();
+         let rows = {
+             let mut stmt=conn.prepare("SELECT o.operation_id,o.caller_id,o.child_id,o.pending_id,o.request_id,o.accepted_revision,a.answer,s.host_id
+             FROM session_operations o JOIN answer_queue a ON a.owner_id = ?1 AND a.pending_id = o.pending_id
+             JOIN sessions s ON s.owner_id = ?1 AND s.id = o.child_id
+-            WHERE o.owner_id = ?1 AND o.tool = 'session_answer' AND o.state = 'queued' AND a.delegation_handoff = 0 AND a.delivered IS NULL LIMIT 128")?;
+-            stmt.query_map([self.owner_id()], |r| {
++            WHERE o.owner_id = ?1 AND o.tool = 'session_answer' AND o.state = 'queued' AND a.delegation_handoff = 0 AND a.delivered IS NULL AND o.operation_id > ?2 ORDER BY o.operation_id LIMIT 128")?;
++            stmt.query_map(params![self.owner_id(), after], |r| {
+                 Ok((
+                     r.get::<_, String>(0)?,
+                     r.get::<_, String>(1)?,
+@@ -375,6 +380,7 @@ impl Store {
+             })?
+             .collect::<rusqlite::Result<Vec<_>>>()?
+         };
++        let next = rows.last().map(|row| row.0.clone());
+         for (operation, source, child, pending, request, revision, answer, host) in rows {
+             let tx = conn.transaction()?;
+             if !self.transfer_in(&tx, &source, &child, revision)? || !hub.is_ready(&host) {
+@@ -400,6 +406,6 @@ impl Store {
+                 tx.commit()?;
+             }
+         }
+-        Ok(())
++        Ok(next)
+     }
+ }
+diff --git a/crates/hennery-sessions/src/delegation_worker.rs b/crates/hennery-sessions/src/delegation_worker.rs
+index 6298414747979dbf212be1e3e356bc0cae0d9724..a8f59dcceb24ce69cf0f5e06b38cea4279d3836f 100644
+--- a/crates/hennery-sessions/src/delegation_worker.rs
++++ b/crates/hennery-sessions/src/delegation_worker.rs
+@@ -2,26 +2,34 @@
+ //! operator attention, then reuse these same transfer/config/close gates.
+ use crate::{AppState, delegation_runtime::checked_cwd};
+ use std::time::Duration;
++#[derive(Default)]
++struct Cursors {
++    prompts: String,
++    answers: String,
++}
+ pub fn after_startup(state: &AppState) {
+     let state = state.clone();
+     tokio::spawn(async move {
+         let mut tick = tokio::time::interval(Duration::from_millis(250));
+-        let mut after = String::new();
++        let mut cursors = Cursors::default();
+         loop {
+             tokio::select! {biased; ()=state.shutdown.cancelled()=>break,_=tick.tick()=>{}}
+-            if let Err(error) = drain_page(&state, &mut after).await {
++            if let Err(error) = drain_page(&state, &mut cursors).await {
+                 tracing::warn!(code=%crate::session_tools::error_code(&error),"delegation dispatch deferred");
+             }
+         }
+     });
+ }
+ pub async fn drain(state: &AppState) -> anyhow::Result<()> {
+-    drain_page(state, &mut String::new()).await
++    drain_page(state, &mut Cursors::default()).await
+ }
+-async fn drain_page(state: &AppState, after: &mut String) -> anyhow::Result<()> {
+-    state.store.dispatch_delegation_answers(&state.hub)?;
+-    let targets = state.store.delegation_targets_after(after)?;
+-    *after = targets.last().cloned().unwrap_or_default();
++async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<()> {
++    cursors.answers = state
++        .store
++        .dispatch_delegation_answers_after(&state.hub, &cursors.answers)?
++        .unwrap_or_default();
++    let targets = state.store.delegation_targets_after(&cursors.prompts)?;
++    cursors.prompts = targets.last().cloned().unwrap_or_default();
+     for target in targets {
+         let Some(session) = state.store.find_session(&target)? else {
+             continue;
+```
+
+Run:
+
+```bash
+nix develop -c cargo test -p hennery-testkit --test delegation_tools --test owner_filter --locked # expected exit 0
+```
+
+
 ## After this plan
 
 D3 adds reverse durable delivery at the **Store::ingest_delegation_in** seam, inside the transaction that applies a factual child event. D2's transfer/evidence/handoff predicates are the shared fenced admission primitives. D3 must add its own reverse-direction durable operation, provenance, wake budget, cancellation/replay, acknowledgement and operator-attention path; it must not infer a notice from a socket send or use operator resume to bypass close intent. D2 deliberately emits no parent notice and no ChildReport activity.
@@ -10358,7 +11018,95 @@ The parent runs independent task, security and whole-branch reviews on the embed
 
 ## Verification record
 
-The implementation was built before embedding. The final branch was rebased without conflicts onto **256691fe** (merged P1); sessions migration **18** follows merged 17, with kernel 13 and gateway 5 unchanged. The final exact replay uses **ef8ccc40** as its implementation head. Independent review has not happened; no PR or CI status is claimed.
+### Review amendments for draft PR 149
+
+Codex gpt-6-astra reviewed **256691fe..2443592e** on the maintainer's behalf: **APPROVE AFTER AMENDMENTS**, no Critical findings; 126 focused tests passed. The two Important findings were answer starvation behind the first 128 held rows, and unrecorded/unpublished delegated close changes plus unpublished queued parent answers.
+
+Both amendments were implemented test-first. The event regressions observed RED exit 101 for the missing durable close marker and a live answer-stream timeout. The valid dashboard RED used the documented epoch/revision anchor; earlier fixture field mistakes were corrected and are not counted as behavioral evidence. GREEN then passed 87 store tests (13 + 74) and 10 HTTP tests; after pagination integration, 11 HTTP tests plus the 3-test owner audit passed. The pagination regression independently reproduced RED exit 101 in the root lane: 128 held answers, then eligible work that never dispatched. Its GREEN also verifies repaired earlier work after cursor wrap.
+
+A delegated close now records the existing close marker with typed parent session/operation provenance in the same transaction as intent. It publishes that committed marker and every fallback close change, with the dashboard reading the final closed lifecycle. Queued ordinary answers publish their committed event before dispatch. Idempotent retries publish nothing. The worker retains separate bounded prompt/answer cursors and wraps each at the end. No wire types, generated files, migration or tool-argument parsing changed.
+
+#### Amendment checks
+
+All six commands ran on final implementation **395fa140** inside the dev shell with scratch HOME/XDG/tool configuration.
+
+| Command | Exit | Passed |
+|---|---:|---:|
+| `cargo fmt --all --check` | 0 | 0 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | 0 | 0 |
+| `cargo clippy -p hennery --locked -- -D warnings` | 0 | 0 |
+| `cargo test --workspace --locked` | 0 | 2302 |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | 0 | 0 |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | 0 | 0 |
+
+Evidence: `.superpowers/sdd/deleg-d2/checks-review/`. No wire/generated file changed against 2443592e, so the conditional web rerun was skipped. Earlier web results remain historical evidence below. No type, test, audit or rule was weakened.
+
+#### Amendment copy probes
+
+Nine independent mutations ran in copies and were caught by behavioral failures (each exit **101**, no compiler failure).
+
+| Mutation | Observed result |
+|---|---|
+| answer-publish | 101, caught |
+| close-intent-publish | 101, caught |
+| close-fallback-publishes | 101, caught |
+| close-intent-record | 101, caught |
+| close-parent-session | 101, caught |
+| close-parent-operation | 101, caught |
+| query-progress | 101, caught |
+| worker-progress | 101, caught |
+| worker-wrap | 101, caught |
+
+The restored event copy passed **84 tests** (74 store + 10 HTTP); the restored pagination copy passed its **1** regression, both exit **0**. The combined manifest now records **227 executed / 226 caught / 1 equivalent**. The one equivalent case is the original UPSERT mutation, independently ruled equivalent rather than rerun or relabelled caught. Copy directories and per-case logs are retained in the cleanup ledger.
+
+#### Amendment load
+
+Both suites passed **four simultaneous copies × three rounds**, all 12 exits 0 per suite.
+
+| Final-source suite | Tests per copy | Total passed |
+|---|---:|---:|
+| Store (including queue/answer/start races and committed close publication) | 74 | 888 |
+| HTTP (including both live SSE regressions and answer worker advance/wrap) | 11 | 132 |
+
+The accepted store run uses the workspace binary rebuilt from 395fa140 (`delegation_d2-35a902e3477d510d`); the HTTP run uses its targeted final-source binary (`delegation_tools-ecc9ea5581687c27`). An earlier load used the preceding event-fix store binary and is not counted toward final-source proof. Logs are `review-store-load-final/` and the HTTP entries in `review-load/`.
+
+#### Complete fresh replay after amendments
+
+Fresh **deleg-d2-replay-5**, pinned to **256691feb9cba161f0c29b14016bc857a4da86e5**, extracted and applied **12 nonempty exact patch blocks** and reproduced **all 23 expected exits** (**11 RED**, **12 GREEN**). Every complete staged tree matched its recorded ID. Every tracked implementation file matched **395fa1401a6c046c0ed7afae27f6248f74e8bde4**; only this plan and its README index were excluded from that comparison, and both documentation files were separately verified unchanged from the pinned base during replay. Final replay head: **57078b3f29935ecf01ea26ff9a6fa6758b30c450**. The target was a private APFS clone made while root compilation was quiescent, never shared.
+
+| Replay step | Command | Expected / actual | Passed |
+|---|---|---:|---:|
+| 1 | `cargo test -p hennery-proto --test delegation_tools --locked` | 101 / 101 | 0 |
+| 1 | `cargo test -p hennery-sessions --test tool_args --locked` | 101 / 101 | 0 |
+| 2 | `cargo test -p hennery-proto --test delegation_tools --locked` | 0 / 0 | 2 |
+| 2 | `cargo test -p hennery-sessions --test tool_args --locked` | 0 / 0 | 7 |
+| 3 | `cargo test -p hennery-testkit --test delegation_host --locked` | 101 / 101 | 0 |
+| 4 | `cargo test -p hennery-testkit --test delegation_host --locked` | 0 / 0 | 15 |
+| 4 | `cargo test -p hennery-host --locked` | 0 / 0 | 199 |
+| 5 | `cargo test -p hennery-sessions --test delegation --test delegation_d2 --locked` | 101 / 101 | 0 |
+| 5 | `cargo test -p hennery-sessions --test owner --test store --locked` | 101 / 101 | 0 |
+| 5 | `cargo test -p hennery-proto --test codegen --locked delegation_wire_dependencies_are_exported_once` | 101 / 101 | 0 |
+| 6 | `cargo test -p hennery-sessions --test delegation --test delegation_d2 --test tool_args --test owner --test store --locked` | 0 / 0 | 202 |
+| 6 | `cargo test -p hennery-testkit --test owner_filter --locked` | 0 / 0 | 3 |
+| 6 | `cargo test -p hennery-proto --test codegen --locked` | 0 / 0 | 10 |
+| 6 | `cargo run -p hennery-proto --bin gen --locked -- --check` | 0 / 0 | 0 |
+| 7 | `cargo test -p hennery-testkit --test delegation_mcp --test delegation_tools --locked` | 101 / 101 | 0 |
+| 8 | `cargo test -p hennery-testkit --test delegation_mcp --test delegation_tools --test owner_filter --locked` | 0 / 0 | 30 |
+| 9 | `cargo test -p hennery-sessions --test delegation_d2 --locked delegated_unattached_close_records_parent_intent_and_publishes_all_committed_events -- --exact` | 101 / 101 | 0 |
+| 9 | `cargo test -p hennery-testkit --test delegation_tools --locked delegated_parked_close_is_attributed_and_reaches_existing_dashboard_stream -- --exact` | 101 / 101 | 0 |
+| 9 | `cargo test -p hennery-testkit --test delegation_tools --locked queued_parent_answer_reaches_existing_session_stream_before_dispatch -- --exact` | 101 / 101 | 0 |
+| 10 | `cargo test -p hennery-sessions --test delegation --test delegation_d2 --locked` | 0 / 0 | 87 |
+| 10 | `cargo test -p hennery-testkit --test delegation_tools --locked` | 0 / 0 | 10 |
+| 11 | `cargo test -p hennery-testkit --test delegation_tools --locked background_answer_worker_advances_past_held_page_and_wraps_to_repaired_earlier_answer -- --exact` | 101 / 101 | 0 |
+| 12 | `cargo test -p hennery-testkit --test delegation_tools --test owner_filter --locked` | 0 / 0 | 14 |
+
+The final documentation update is checked against the exact 12 patch blocks tested by this replay. D3 reverse delivery/operator fallback and D4 family UI/provider acceptance remain outside this amendment. The parent owns scoped confirmation for **2443592e..395fa140**, the final record, and draft PR **149** status: checks, reviewDecision, mergeStateStatus and every unresolved review thread, bots included. No GitHub action was performed by this lane.
+
+The reviewer confirmed the old UPSERT mutation **EQUIVALENT**: conflict key `(owner_id, caller_id, epoch)` already fixes the owner. The explicit predicate remains. This is a recorded review ruling, not a new mutation run or an invented passing test. Scoped confirmation of these amendments remains parent-owned.
+
+### Original implementation evidence (before the amendments)
+
+The implementation was built before embedding. The final branch was rebased without conflicts onto **256691fe** (merged P1); sessions migration **18** follows merged 17, with kernel 13 and gateway 5 unchanged. The original exact replay used **ef8ccc40** as its implementation head. The following is the original verification record, retained separately from the later review amendment evidence above.
 
 ### Fresh replay
 
@@ -10427,9 +11175,9 @@ Initial partial workspace runs stopped at generated output, shared-cut or migrat
 
 ### Copy probes and load
 
-**218 named mutation cases executed: 217 caught, one survivor retained for parent review.** Each caught case produced an assertion/test failure and exit 101; compiler failures are not counted. Mutations ran only in copies and were restored before normal verification. Historical source patterns changed where deletion now removes an entire queue row rather than clearing its payload/config fields; the new cleanup matrix covers the stronger final behavior. The original masked mode survivor is preserved in its historical manifest and independently caught after the fixture correction.
+**218 named mutation cases executed: 217 caught, one equivalent survivor confirmed by independent review.** Each caught case produced an assertion/test failure and exit 101; compiler failures are not counted. Mutations ran only in copies and were restored before normal verification. Historical source patterns changed where deletion now removes an entire queue row rather than clearing its payload/config fields; the new cleanup matrix covers the stronger final behavior. The original masked mode survivor is preserved in its historical manifest and independently caught after the fixture correction.
 
-The one remaining survivor removes the UPSERT clause `WHERE delegation_start_budgets.owner_id = ?1`. The INSERT still binds owner_id and its conflict target is `(owner_id,caller_id,epoch)`; removing that redundant clause did not change the updated row. The production clause remains. The cleanup probe driver correctly exited **1** for **32 caught / 1 survivor**, followed by a passing restored baseline. The parent must review this case; this record makes no independent approval claim.
+The one remaining survivor removes the UPSERT clause `WHERE delegation_start_budgets.owner_id = ?1`. The INSERT still binds owner_id and its conflict target is `(owner_id,caller_id,epoch)`; removing that redundant clause did not change the updated row. The production clause remains. The cleanup probe driver correctly exited **1** for **32 caught / 1 survivor**, followed by a passing restored baseline. Codex gpt-6-astra subsequently confirmed this mutation **EQUIVALENT** on the maintainer’s behalf: the composite conflict key already fixes the owner. The production predicate remains. The historical probe exit and counts are preserved.
 
 | Matrix | Caught / executed |
 |---|---|
@@ -10462,9 +11210,9 @@ On the final root implementation, ran `cargo test -p hennery-testkit --test dele
 
 Both obtained a fresh actual worker catalog, accepted a spawn and attached that child. Each trace's caller_session exactly equals that child_id. Each child has no open turn/outcome/report and **brief_dispatched=false**. These are local startup/discovery checks, not provider inference, credentials or D4 live-matrix acceptance. Final root evidence is `/tmp/deleg-d2-root-live-{claude,codex}.log`; earlier unattributed traces are superseded, not counted as actual-adapter proof.
 
-### Independent review request
+### Original independent review scope
 
-Review **256691fe..ef8ccc40** and this execution record: current owner/hat/host and accepted-revision fences; current live-host handoff; catalog/profile/policy and complete generation-bound configuration evidence; close intent and genuine park; ordinary-answer/operator contention; nullable gone receipts, deletion scrubbing and durable starts counters; InputOrigin::Parent and push/budget suppression; migrations and owner_filter. Explicitly rule on the surviving redundant UPSERT predicate. D3 reverse durable delivery/attention and D4 UI/provider acceptance remain outside this change.
+Review **256691fe..ef8ccc40** and this execution record: current owner/hat/host and accepted-revision fences; current live-host handoff; catalog/profile/policy and complete generation-bound configuration evidence; close intent and genuine park; ordinary-answer/operator contention; nullable gone receipts, deletion scrubbing and durable starts counters; InputOrigin::Parent and push/budget suppression; migrations and owner_filter. The subsequent review confirmed the redundant UPSERT mutation equivalent and requested the two amendments recorded above. D3 reverse durable delivery/attention and D4 UI/provider acceptance remain outside this change.
 
 PR creation, all checks, reviewDecision, mergeStateStatus, unresolved threads (including bots), Linux/macOS CI and merge are parent-owned. No GitHub action was performed by this lane. Retain named replay/probe worktrees and scratch copies for parent cleanup; the ledger lists them.
 
@@ -10689,7 +11437,8 @@ PR creation, all checks, reviewDecision, mergeStateStatus, unresolved threads (i
 | Deletion | delete-budget-read | 101, assertion detected |
 | Deletion | delete-budget-limit | 101, assertion detected |
 | Deletion | delete-budget-read-owner | 101, assertion detected |
-| Deletion | delete-budget-increment-owner | 0, survived; redundant UPSERT predicate, parent review required |
+| Deletion | delete-budget-increment-owner | 0, survived; **EQUIVALENT**, confirmed by Codex gpt-6-astra on the maintainer’s behalf; predicate retained |
+
 
 
 Generated with Claude AI — please review before distribution.
