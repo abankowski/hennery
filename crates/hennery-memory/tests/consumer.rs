@@ -20,6 +20,7 @@ use std::{
     time::Duration,
 };
 struct Remote {
+    inventory_starts: Mutex<Vec<std::time::Instant>>,
     inventory_reads: std::sync::atomic::AtomicUsize,
     inventory_delay_ms: std::sync::atomic::AtomicU64,
     lease_starts: Mutex<Vec<std::time::Instant>>,
@@ -65,6 +66,7 @@ async fn inventory(
 ) -> Json<Value> {
     check_headers(&r, &headers);
     assert_eq!(query.get("limit").map(String::as_str), Some("500"));
+    r.inventory_starts.lock().unwrap().push(std::time::Instant::now());
     r.inventory_reads.fetch_add(1, Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(r.inventory_delay_ms.load(Ordering::SeqCst))).await;
     let index = query
@@ -103,6 +105,7 @@ impl World {
         let key = Arc::new(MasterKey::from_bytes([9; 32]));
         let epoch = "a".repeat(64);
         let remote = Arc::new(Remote {
+            inventory_starts: Default::default(),
             inventory_reads: Default::default(),
             inventory_delay_ms: Default::default(),
             lease_starts: Default::default(),
@@ -890,4 +893,19 @@ async fn injected_context_is_never_reingested_as_a_completed_source() {
             .unwrap(),
         0
     );
+}
+#[tokio::test]
+async fn inventory_pages_are_paced_with_room_for_lease_and_activity_requests() {
+    let w = World::new(60).await;
+    w.remote.status.store(409, Ordering::SeqCst);
+    *w.remote.inventory.lock().unwrap()=(0..4).map(|i|json!({"version":1,"source_ids":[],"next_cursor":if i==3{None}else{Some(format!("inventory:{}",i+1))},"resume_cursor":"paced","watermark":"paced","lease_until":unix_now()+60})).collect();
+    w.poll().await.unwrap();
+    let starts = w.remote.inventory_starts.lock().unwrap();
+    assert_eq!(starts.len(), 4);
+    for pair in starts.windows(2) {
+        assert!(
+            pair[1].duration_since(pair[0]) >= Duration::from_millis(1050),
+            "inventory requests must fit the registration budget"
+        );
+    }
 }

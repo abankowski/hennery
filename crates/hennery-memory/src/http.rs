@@ -45,6 +45,11 @@ struct Call {
 #[serde(deny_unknown_fields)]
 struct Empty {}
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapabilitiesProbe {
+    version: Option<u32>,
+}
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Initialize {
     protocol_version: String,
@@ -280,7 +285,8 @@ async fn rpc(State(service): State<Service>, request: Request) -> Response {
                 "unsupported lifecycle operation"
             );
             service.store.lifecycle_active(&token)?;
-            let _: Empty = object(params)?;
+            let probe: CapabilitiesProbe = object(params)?;
+            anyhow::ensure!(probe.version.is_none_or(|v| v == 1), "unsupported contract version");
             return Ok(json!({"version":1,"activity_v1":true,"forget_v1":true,"startup_context_v1":false}));
         }
         match rpc.method.as_str() {

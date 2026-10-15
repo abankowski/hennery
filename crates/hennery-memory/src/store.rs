@@ -256,6 +256,13 @@ impl Store {
             turns: vec![],
             older_turns: 0,
         };
+        let serialized_bytes = i64::try_from(serde_json::to_vec(&entry)?.len())?;
+        ensure!(
+            bytes
+                .checked_add(serialized_bytes)
+                .is_some_and(|sum| sum <= 64 * 1024 * 1024),
+            "namespace full"
+        );
         put(&tx, &ns.id, &entry)?;
         let result = Remembered {
             id: entry.id,

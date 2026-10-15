@@ -334,3 +334,65 @@ async fn protocol_headers_are_single_supported_values_and_initialize_negotiates(
     let value=w.raw(&w.tool,r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"future","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#).await.json::<Value>().await.unwrap();
     assert_eq!(value["result"]["protocolVersion"], "2025-11-25");
 }
+#[tokio::test]
+async fn c1_versioned_capability_probe_is_supported_but_unknown_versions_are_refused() {
+    let w = World::new().await;
+    let good = w
+        .raw(
+            &w.admin,
+            r#"{"jsonrpc":"2.0","id":1,"method":"hennery_plugin_capabilities","params":{"version":1}}"#,
+        )
+        .await
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(good["result"]["activity_v1"], true);
+    assert_eq!(good["result"]["forget_v1"], true);
+    for params in [
+        r#"{"version":2}"#,
+        r#"{"version":1,"owner":"other"}"#,
+        r#"{"version":1,"version":1}"#,
+    ] {
+        let raw = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"hennery_plugin_capabilities","params":{params}}}"#);
+        assert!(
+            w.raw(&w.admin, &raw)
+                .await
+                .json::<Value>()
+                .await
+                .unwrap()
+                .get("error")
+                .is_some()
+        );
+    }
+}
+#[tokio::test]
+async fn only_one_bearer_without_browser_or_query_transports_selects_a_namespace() {
+    let w = World::new().await;
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_remember","arguments":{"title":"transport fixture","body":"transport-marker","idempotency_key":"transport"}}}"#;
+    let client = reqwest::Client::new();
+    for kind in ["duplicate", "cookie", "query", "query-only"] {
+        let url = if kind.starts_with("query") {
+            format!("{}?namespace=foreign", w.url)
+        } else {
+            w.url.clone()
+        };
+        let mut request = client.post(url).header("content-type", "application/json").body(body);
+        if kind != "query-only" {
+            request = request.bearer_auth(&w.tool);
+        }
+        if kind == "duplicate" {
+            request = request.header("authorization", format!("Bearer {}", w.tool));
+        }
+        if kind == "cookie" {
+            request = request.header("cookie", "session=fixture");
+        }
+        assert_eq!(request.send().await.unwrap().status(), 404, "{kind}");
+    }
+    assert!(
+        w.store
+            .search(&w.tool, &hennery_memory::store::Query::search("transport-marker"))
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+}
