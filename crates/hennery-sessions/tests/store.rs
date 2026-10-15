@@ -376,7 +376,12 @@ fn the_teardown_migration_upgrades_skeleton_turns() {
     {
         let conn = rusqlite::Connection::open(&db).unwrap();
         conn.execute_batch(
-            "DROP TRIGGER events_of_a_tombstone;
+            "DROP TRIGGER family_scope_end;
+             DROP TRIGGER family_scope;
+             DROP TRIGGER family_assignment_immutable;
+             DROP TABLE session_families;
+             DROP INDEX sessions_by_owner_identity;
+             DROP TRIGGER events_of_a_tombstone;
              DROP TRIGGER turns_of_a_tombstone;
              DROP TRIGGER pending_of_a_tombstone;
              DROP TRIGGER answers_of_a_tombstone;
@@ -2460,7 +2465,12 @@ fn the_hat_migration_gives_each_session_its_hosts_default_hat() {
     // migration (version 11) and plan 9a's (version 13) undone too.
     let conn = rusqlite::Connection::open(&db).unwrap();
     conn.execute_batch(
-        "DROP TRIGGER events_of_a_tombstone;
+        "DROP TRIGGER family_scope_end;
+         DROP TRIGGER family_scope;
+         DROP TRIGGER family_assignment_immutable;
+         DROP TABLE session_families;
+         DROP INDEX sessions_by_owner_identity;
+         DROP TRIGGER events_of_a_tombstone;
          DROP TRIGGER turns_of_a_tombstone;
          DROP TRIGGER pending_of_a_tombstone;
          DROP TRIGGER answers_of_a_tombstone;
@@ -2733,6 +2743,7 @@ fn rows_of(conn: &Connection, id: &str, events: &[i64], turns: &[String], hashes
             .unwrap();
         let filter = match table.as_str() {
             "sessions" => format!("id = '{id}'"),
+            "session_families" => format!("child_id = '{id}' OR parent_id = '{id}' OR root_id = '{id}'"),
             "event_attachments" => format!("event_id IN ({})", list(events.iter().map(i64::to_string).collect())),
             "turn_attachments" => format!("turn_id IN ({})", quoted(turns)),
             "attachments" => format!("sha256 IN ({})", quoted(hashes)),
@@ -2785,8 +2796,6 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
     prompt_in(&store, "s1", "t2", vec![image(&b)]);
     prompt_in(&store, "s2", "t9", vec![image(&kept)]);
     store.ingest("s2", 5, &turn_started("t9")).unwrap();
-    store.close_now("s1").unwrap();
-
     let conn = Connection::open(&db).unwrap();
     let ids = |sql: &str, id: &str| -> Vec<String> {
         conn.prepare(sql)
@@ -2805,6 +2814,19 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
         .collect();
     let turns = ids("SELECT turn_id FROM turns WHERE session_id = ?1", "s1");
     let hashes = vec![sha(&a), sha(&b)];
+    // The deletion walk must exercise every new session reference, including
+    // an independently surviving child whose parent/root is being deleted.
+    conn.execute_batch(
+        "INSERT INTO hats(id, owner_id, name, colour, created_at)
+             SELECT 'hat-1', owner_id, 'Family fixture', '#123456', 0 FROM sessions WHERE id = 's1';
+         INSERT INTO sessions(id, host_id, agent, cwd, hat_id, lifecycle, created_at, last_event_at, owner_id)
+             SELECT 'family-child', host_id, agent, cwd, hat_id, 'starting', created_at, last_event_at, owner_id
+             FROM sessions WHERE id = 's1';
+         INSERT INTO session_families(owner_id, child_id, parent_id, root_id, hat_id, created_event_id)
+             SELECT owner_id, 'family-child', 's1', 's1', hat_id, 0 FROM sessions WHERE id = 's1';",
+    )
+    .unwrap();
+    store.close_now("s1").unwrap();
     let before = rows_of(&conn, "s1", &events, &turns, &hashes);
     let walked: Vec<&str> = before.iter().map(|(t, _)| t.as_str()).collect();
     for table in [
@@ -2814,6 +2836,7 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
         "events",
         "pending",
         "session_catalog",
+        "session_families",
         "sessions",
         "turn_attachments",
         "turns",
@@ -2856,6 +2879,13 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
         assert_eq!(*n, left, "{table}: {after:?}");
     }
     assert_eq!(event_kinds(&conn, "s1"), ["session_deleted"]);
+    assert_eq!(
+        conn.query_row("SELECT lifecycle FROM sessions WHERE id = 'family-child'", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap(),
+        "starting"
+    );
     assert!(!has_file(&db, &sha(&a)) && !has_file(&db, &sha(&b)));
     let (s2_events, s2_turns, s2_rows) = s2_before;
     assert_eq!(rows_of(&conn, "s2", &s2_events, &s2_turns, &[sha(&kept)]), s2_rows);

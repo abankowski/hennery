@@ -18,6 +18,7 @@ use hennery_gateway::{
     proxy::{Limits, MAX_REQUEST_BODY, RequestBody, bearer, drain_rejected},
     revocation::Watch,
 };
+use hennery_kernel::json::ApiJson;
 use hennery_proto::{
     delegation::{HatSessionTools, SetSessionTools},
     frames::McpIsolation,
@@ -418,12 +419,8 @@ async fn get_policy(State(state): State<AppState>, axum::extract::Path(hat): axu
 async fn set_policy(
     State(state): State<AppState>,
     axum::extract::Path(hat): axum::extract::Path<String>,
-    request: Result<Json<SetSessionTools>, axum::extract::rejection::JsonRejection>,
+    ApiJson(request): ApiJson<SetSessionTools>,
 ) -> Response {
-    let Json(request) = match request {
-        Ok(request) => request,
-        Err(rejected) => return error(rejected.status(), "invalid", "invalid request"),
-    };
     let Some(store) = state.store.mcp().authenticator() else {
         return no_scope();
     };
