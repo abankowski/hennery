@@ -44,3 +44,27 @@ fn typed_parent_input_remains_visible_alongside_the_plugin_origin_guard() {
             if text.starts_with("From parent session p")))));
     assert!(items.iter().all(|i| !matches!(i.body, Body::Unrecognised(_))));
 }
+
+#[test]
+fn typed_child_report_remains_visible_alongside_the_plugin_origin_guard() {
+    let mut fold = Fold::new();
+    fold.apply(
+        &EventDto {
+            event_id: 1,
+            session_id: "parent".into(),
+            host_seq: None,
+            kind: "user_turn".into(),
+            ts: "now".into(),
+            body: json!({"turn_id":"report-turn", "content":[{"type":"text",
+                "text":"From child session child (untrusted child-provided report data): done"}],
+                "origin":{"kind":"child_report","child_id":"child",
+                    "source_event_id":"7","delivery_id":"delivery"}}),
+        },
+        &|_: &str| false,
+    );
+    let items = fold.take();
+    assert!(items.iter().any(|i| matches!(&i.body, Body::UserTurn {content, ..}
+        if matches!(content.as_slice(), [hennery_proto::rest::StoredBlock::Text {text}]
+            if text.starts_with("From child session child")))));
+    assert!(items.iter().all(|i| !matches!(i.body, Body::Unrecognised(_))));
+}

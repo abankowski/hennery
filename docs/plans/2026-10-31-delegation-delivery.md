@@ -8,6 +8,8 @@
 
 ## Execution status (2026-10-15)
 
+**Current integration:** rebased onto merged C2 **7fe43fbe**; targeted tests, four cloned-copy guard probes and generated-output verification passed. See [C2 rebase integration](#c2-rebase-integration-2026-10-15). Full combined gates are recorded by D3b; prior replay evidence remains historical.
+
 Built first in `plan/deleg-d3` on D2 **89d74bf2**. Initial behavioral tests were observed RED: seven missing-table failures, missing reverse-dispatch APIs, ordinary-parent missing evidence, answer acceptance not obsoleting a question, missing collector failure notices and duplicate late start failure. The plan below embeds the resulting exact source changes. The fresh replay, copy probes, 4×3 load runs and final gates are complete; evidence follows below. Rebased without conflicts onto merged D2 at **a58479c7**, whose tree is identical to the pinned replay base. Independent security/whole-branch review and Linux/macOS CI remain parent-owned; no review approval is claimed.
 
 ## Scope
@@ -2781,5 +2783,78 @@ process.stdout.write(JSON.stringify(summary,null,2)+'\n');
 ```
 
 Re-review requested for **15bd2205..HEAD**, including the symmetric Parent-origin fix. Check that retained turn provenance confers no current authority, purge removes destination history normally, host and collector facts form one loss incident, late facts cannot requeue it, and the upper bound protects an earlier out-of-turn question. The parent owns pushing if SSH refuses, PR #151 checks, reviewDecision, mergeStateStatus and unresolved review threads, bots included. D3b resumes after rebasing onto this amendment; D3b/D4 still block ordinary release.
+
+## C2 rebase integration (2026-10-15)
+
+Rebased unsigned onto merged C2 main **7fe43fbe**. Original commits 542948ae, 15bd2205 and 79304d58 map to **82a435f7**, **9ea880dc** and **d91aa92d** before this integration amendment. Both plugin.rs conflicts preserve D3's server-written destination-turn verification for Parent/ChildReport and C2's explicit PluginContext feed denial. The auto-merged host startup rendering, prompt admission, final websocket dispatch guard and test fixtures were inspected; no C2 implementation was discarded.
+
+C2 introduced no sessions migration. D3a remains migration **19**, leaving D3b **20** available; the entire merged migration prefix is byte-identical to main. Every owner-audit case from both branches survives with at least the stricter minimum, including C2 startup/context sources and the gateway minimum of 42. Retired verified_child_report_in call sites and conflict markers were searched in crates and are absent; the replacement is verified_delegated_input_in.
+
+A semantic integration regression was found: C2's transcript-origin guard accepted Parent but rejected factual ChildReport input. The new test below was run **RED (exit 101)** in the worktree, then the guard explicitly accepted ChildReport while retaining PluginContext denial. Parent display remains covered by C2's unchanged regression. This adds one test; it introduces no timing/concurrency behavior.
+
+All D3a-targeted commands ran inside the dev shell with the existing isolated tool home and exited **0**:
+
+- cargo test -p hennery-sessions --test delegation_d2 --test store --locked: **98 +104 passed**.
+- cargo test -p hennery-testkit --test delegation_host --test delegation_tools --test host_session --test plugin_feed --test owner_filter --test plugin_startup --test plugin_startup_host --locked: **16 +13 +81 +23 +3 +26 +2 passed**, one pre-existing ignored test.
+- cargo test -p hennery-sessions --lib --locked child_report_provenance: **1 passed**.
+- cargo test -p hennery-view --test plugin_origin --locked: **3 passed**.
+- cargo fmt --all --check: clean.
+- Both generators ran without --check to regenerate, with exit 0. All four generated schema/TypeScript files match merged C2 **7fe43fbe** exactly; no generated files were hand-merged and the conditional web gate is unnecessary.
+
+Four guard probes were batched in a single fresh COPY with target/ cloned using **cp -c -R**: remove ChildReport display, remove Parent display, allow PluginContext feed input, and reject retained delegated feed evidence. Each had a successful exact-command baseline, failed its regression with exit 101, and restored GREEN. Source bytes match the restored copy. No full replay or load repetition was run under the operator verification budget. The one full workspace/six-Rust/native-Nix gate set is owned by the final rebased D3b head and recorded in that plan. D3b-only regressions require its implementation and run on that head; the shared D3a suites above run standalone here.
+
+The original embedded plan/replay and prior amendment evidence remain historical at their pinned bases. Current rebase evidence and hashes are in .superpowers/sdd/deleg-d3/rebase-c2/. Review d91aa92d plus this composition amendment; the published fix range and D3b range are reported to the parent. PR #151 checks, reviewDecision, mergeStateStatus and unresolved threads remain parent-owned.
+
+The exact integration changes, already observed RED/GREEN and guard-probed, are:
+
+```diff
+diff --git a/crates/hennery-view/src/fold.rs b/crates/hennery-view/src/fold.rs
+index 6a2e94f5..d9049df3 100644
+--- a/crates/hennery-view/src/fold.rs
++++ b/crates/hennery-view/src/fold.rs
+@@ -323,7 +323,9 @@ impl Fold {
+         if event.body.get("origin").is_some_and(|value| {
+             !matches!(
+                 serde_json::from_value::<hennery_proto::plugin::InputOrigin>(value.clone()),
+-                Ok(hennery_proto::plugin::InputOrigin::Operator {} | hennery_proto::plugin::InputOrigin::Parent { .. })
++                Ok(hennery_proto::plugin::InputOrigin::Operator {}
++                    | hennery_proto::plugin::InputOrigin::Parent { .. }
++                    | hennery_proto::plugin::InputOrigin::ChildReport { .. })
+             )
+         }) {
+             self.unrecognised(event, "unsupported_input_origin");
+diff --git a/crates/hennery-view/tests/plugin_origin.rs b/crates/hennery-view/tests/plugin_origin.rs
+index 2470da81..c997221e 100644
+--- a/crates/hennery-view/tests/plugin_origin.rs
++++ b/crates/hennery-view/tests/plugin_origin.rs
+@@ -44,3 +44,27 @@ fn typed_parent_input_remains_visible_alongside_the_plugin_origin_guard() {
+             if text.starts_with("From parent session p")))));
+     assert!(items.iter().all(|i| !matches!(i.body, Body::Unrecognised(_))));
+ }
++
++#[test]
++fn typed_child_report_remains_visible_alongside_the_plugin_origin_guard() {
++    let mut fold = Fold::new();
++    fold.apply(
++        &EventDto {
++            event_id: 1,
++            session_id: "parent".into(),
++            host_seq: None,
++            kind: "user_turn".into(),
++            ts: "now".into(),
++            body: json!({"turn_id":"report-turn", "content":[{"type":"text",
++                "text":"From child session child (untrusted child-provided report data): done"}],
++                "origin":{"kind":"child_report","child_id":"child",
++                    "source_event_id":"7","delivery_id":"delivery"}}),
++        },
++        &|_: &str| false,
++    );
++    let items = fold.take();
++    assert!(items.iter().any(|i| matches!(&i.body, Body::UserTurn {content, ..}
++        if matches!(content.as_slice(), [hennery_proto::rest::StoredBlock::Text {text}]
++            if text.starts_with("From child session child")))));
++    assert!(items.iter().all(|i| !matches!(i.body, Body::Unrecognised(_))));
++}
+```
 
 Generated with Claude AI — please review before distribution.

@@ -323,7 +323,9 @@ impl Fold {
         if event.body.get("origin").is_some_and(|value| {
             !matches!(
                 serde_json::from_value::<hennery_proto::plugin::InputOrigin>(value.clone()),
-                Ok(hennery_proto::plugin::InputOrigin::Operator {} | hennery_proto::plugin::InputOrigin::Parent { .. })
+                Ok(hennery_proto::plugin::InputOrigin::Operator {}
+                    | hennery_proto::plugin::InputOrigin::Parent { .. }
+                    | hennery_proto::plugin::InputOrigin::ChildReport { .. })
             )
         }) {
             self.unrecognised(event, "unsupported_input_origin");
