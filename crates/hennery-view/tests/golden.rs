@@ -10,7 +10,7 @@ use hennery_view::{Body, Fold, Item, Items, MarkerKind, fold};
 use std::path::PathBuf;
 
 /// The recorded sessions: the pinned adapter's package and version
-/// (`adapters/manifest.json`).
+/// (`crates/hennery-host/manifest.json`).
 const SESSIONS: [&str; 2] = ["claude-agent-acp-0.81.0", "codex-acp-1.13.0"];
 
 /// The prompts each recorded session sent.

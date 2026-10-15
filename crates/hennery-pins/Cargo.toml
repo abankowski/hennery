@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = false
 
 # The adapter manifest's generator (plan 7b): run by hand on a pin bump and
 # by the pin-bump CI job, never by the binary or its tests.

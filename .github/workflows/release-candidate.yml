@@ -162,8 +162,52 @@ jobs:
           retention-days: 90
           if-no-files-found: error
           path: target/distrib/
+  crates:
+    # Channel -> owning job ID: workflow_policy.CHANNEL_JOB_IDS. R4 uses "ghcr".
+    name: crates
+    needs: web-ui
+    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',crates,')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-ui
+          path: web/dist/
+      - name: Isolate package acceptance homes and the MSRV toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/r3-home"
+          for name in HOME CARGO_HOME RUSTUP_HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME npm_config_userconfig npm_config_cache; do
+            case "$name" in
+              HOME) value="$RUNNER_TEMP/r3-home" ;;
+              *) value="$RUNNER_TEMP/r3-home/$name" ;;
+            esac
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+      - name: Prepare and qualify all seven using the already built candidate UI
+        run: |
+          nix develop -c rustup toolchain install 1.88.0 --profile minimal
+          nix develop -c node packaging/prepare-crates.mjs "$RUNNER_TEMP/crates-prepared" "$GITHUB_SHA" "$PWD/web/dist"
+          nix develop -c sh packaging/ci-crates.sh "$RUNNER_TEMP/crates-prepared"
+          mkdir crates-flat
+          nix develop -c node packaging/prepare-crates.mjs --stage "$RUNNER_TEMP/crates-prepared" crates-flat
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-crates
+          retention-days: 90
+          if-no-files-found: error
+          path: crates-flat/
   assemble:
-    needs: archive
+    needs: [archive, crates]
+    if: always() && needs.archive.result == 'success' && (needs.crates.result == 'success' || needs.crates.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -176,6 +220,11 @@ jobs:
         with:
           pattern: candidate-*
           path: candidates
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.crates.result == 'success'
+        with:
+          name: release-crates
+          path: crates-flat
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ github.token }}
@@ -187,6 +236,9 @@ jobs:
           sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
           echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
           python3 packaging/release/assemble.py candidates target/distrib
+          if test -d crates-flat; then
+            nix develop -c node packaging/prepare-crates.mjs --stage crates-flat target/distrib
+          fi
           "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global --output-format=json > target/distrib/dist-manifest.json
           python3 packaging/harden-installer.py target/distrib/hennery-installer.sh
           sh packaging/test-installer.sh target/distrib

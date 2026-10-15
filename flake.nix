@@ -57,6 +57,7 @@
             pkgs.git
             pkgs.gnupg
             pkgs.jq
+            web.nodejs_24
           ];
         };
         devShells.default = pkgs.mkShell {
@@ -66,6 +67,10 @@
             clippy
             rustfmt
             rust-analyzer
+            # R3: pinned binstall acceptance and an isolated MSRV toolchain.
+            actionlint
+            cargo-binstall
+            rustup
             sqlite
             # `webauthn-rs` links OpenSSL (plan 3c).
             openssl

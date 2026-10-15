@@ -26,6 +26,7 @@ let
   common = {
     inherit src;
     strictDeps = true;
+    cargoExtraArgs = "--workspace --no-default-features";
     pname = "hennery";
     inherit (workspace) version;
     nativeBuildInputs = [ pkgs.pkg-config ];
@@ -38,7 +39,7 @@ let
     common
     // {
       inherit cargoArtifacts;
-      cargoExtraArgs = "--locked -p hennery";
+      cargoExtraArgs = "--locked -p hennery --no-default-features";
       # The web UI's build (`nix/web.nix`, plan 7e-ii-b), embedded by the
       # kernel's build script. Without it the build fails rather than embed
       # the placeholder page. The checks below build without it.
@@ -84,7 +85,8 @@ in
       common
       // {
         inherit cargoArtifacts;
-        cargoClippyExtraArgs = "--workspace --all-targets -- -D warnings";
+        # Crane appends these to common.cargoExtraArgs; scope/features occur once.
+        cargoClippyExtraArgs = "--all-targets -- -D warnings";
       }
     );
     # The binary embeds the web UI, not the placeholder: the release

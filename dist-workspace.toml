@@ -13,9 +13,7 @@ ci = "github"
 allow-dirty = ["ci"]
 # Linux musl-static for both architectures, macOS arm64 (distribution §1).
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
-# OpenSSL built in, not linked from the system (distribution §1.1).
-features = ["vendored-openssl"]
-# Only the `hennery` package, so the feature applies to the crate that has it.
+# Per-package features are declared only by the CLI that supports them.
 precise-builds = true
 checksum = "sha256"
 installers = ["shell", "homebrew"]

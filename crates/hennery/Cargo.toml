@@ -4,15 +4,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = ["crates-io"]
+readme = "README.md"
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/build.rs"]
+description = "Self-hosted cockpit for ACP coding agents"
 repository.workspace = true
 homepage.workspace = true
-description = "Self-hosted cockpit for ACP coding agents"
 
 [features]
+default = ["vendored-openssl"]
 # Release builds (plan 7a): build OpenSSL, which `webauthn-rs-core` links,
 # from source and link it statically, so the binary needs no system OpenSSL
-# (distribution spec §1.1). Development and tests use the system one.
+# (distribution spec §1.1). Nix opts out for its system-library build.
 vendored-openssl = ["dep:openssl", "openssl/vendored"]
 
 [dependencies]
@@ -44,6 +47,29 @@ tempfile.workspace = true
 # The supervisor's tests run on a paused clock.
 tokio = { workspace = true, features = ["test-util"] }
 
-# cargo-dist (plan 7a) ships this crate's binary despite `publish = false`.
+# cargo-dist ships the same CLI as the Cargo package.
 [package.metadata.dist]
 dist = true
+# OpenSSL built in for release archives (distribution §1.1).
+features = ["vendored-openssl"]
+
+# Upstream archives only. GNU users receive the qualified musl archives.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/hennery-{ target }.tar.xz"
+bin-dir = "hennery-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"
+disabled-strategies = ["crate-meta-data", "quick-install", "compile"]
+
+# Native binstall cannot enforce this dual-verifier policy. A bridge needs review.
+[package.metadata.hennery-release]
+verification = "external-openpgp-sigstore"
+maintainer-fingerprint = "F26C7F594DFE84D131703AFC23E5A318AE8D2861"
+signer-identity = "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0-alpha.1"
+
+[package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/hennery-x86_64-unknown-linux-musl.tar.xz"
+bin-dir = "hennery-x86_64-unknown-linux-musl/{ bin }"
+
+[package.metadata.binstall.overrides.aarch64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/hennery-aarch64-unknown-linux-musl.tar.xz"
+bin-dir = "hennery-aarch64-unknown-linux-musl/{ bin }"

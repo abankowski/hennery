@@ -285,3 +285,80 @@ jobs:
             publish-boundary.json
             reconciliation.json
             public-path.json
+  crates:
+    needs: [github, authorize]
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_CRATES_ENABLED == 'true'
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      RELEASE_AUDIT_BUCKET: ${{ vars.RELEASE_AUDIT_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AUDIT_WRITE_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AUDIT_WRITE_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Fetch the complete exact held candidate; never rebuild during publication
+        env:
+          RELEASE_BUCKET: ${{ vars.RELEASE_CANDIDATE_BUCKET }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          RECEIPT_VERSION: ${{ inputs.retention_receipt_version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_CANDIDATE_READ_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_CANDIDATE_READ_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+        run: |
+          nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
+          nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signatures
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: crates
+          phase: preflight
+          receipt: crates-preflight.json
+      - name: Verify maintainer approval and exact tagged Sigstore provenance before credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          nix develop .#release -c python3 packaging/release/verify.py --candidate candidate --tag "$TAG" --source-sha "$SOURCE_SHA" --bundle signatures/release.sigstore.jsonl --approval-signature signatures/release-inventory.json.asc
+      - name: Revalidate signed global and channel bytes and public corresponding source before OIDC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+        run: nix develop .#release -c node packaging/publish-crates.mjs --verify candidate "$INVENTORY"
+      - name: Obtain temporary crates.io authority; revoke in the action post step
+        id: cratesio
+        uses: rust-lang/crates-io-auth-action@9c067fc5d5c254b33978fed918cb50c032549d0e # main @ 2026-10-15
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: crates
+          phase: boundary
+          receipt: crates-boundary.json
+      - name: Upload frozen crates in dependency order; renew the live gate at every boundary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.cratesio.outputs.token }}
+        run: nix develop .#release -c node packaging/publish-crates.mjs candidate "$INVENTORY"

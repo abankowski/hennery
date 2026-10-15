@@ -4,7 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = ["crates-io"]
+readme = "README.md"
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/build.rs"]
+description = "Pure display fold for hennery session events"
+
+# The generator is a developer tool, not a release archive or installer.
+[package.metadata.dist]
+dist = false
 
 [dependencies]
 hennery-proto.workspace = true

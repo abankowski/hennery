@@ -1,12 +1,12 @@
 //! `hennery-pins`: lock the adapter pins, and generate or check
-//! `adapters/manifest.json` (distribution spec §3.1). The only code in the
+//! `crates/hennery-host/manifest.json` (distribution spec §3.1). The only code in the
 //! workspace, with the pin-bump CI job, that reaches the npm registry and
 //! nodejs.org.
 //!
 //! - `lock`: write `adapters/<agent>/package.json` from `pins.toml` and let
 //!   npm resolve `package-lock.json` (no scripts, isolated configuration).
 //! - `generate`: the lockfiles + the registry + Node's `SHASUMS256.txt` →
-//!   `adapters/manifest.json`.
+//!   `crates/hennery-host/manifest.json`.
 //! - `check`: generate and compare; never re-resolves.
 //! - `extract`: download every pinned package once, check its size and
 //!   digest, and extract it as a host would, into a temporary directory
@@ -38,9 +38,9 @@ struct Cli {
 enum Command {
     /// Write each adapter's package.json and resolve its package-lock.json.
     Lock,
-    /// Write adapters/manifest.json.
+    /// Write crates/hennery-host/manifest.json.
     Generate(NodeArgs),
-    /// Fail unless adapters/manifest.json is what `generate` would write.
+    /// Fail unless crates/hennery-host/manifest.json is what `generate` would write.
     Check(NodeArgs),
     /// Download, verify and extract every pinned package, as a host would,
     /// into a temporary directory removed at once.
@@ -66,19 +66,20 @@ const CONCURRENCY: usize = 8;
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let adapters = cli.root.join("adapters");
+    let manifest_path = cli.root.join("crates/hennery-host/manifest.json");
     let pins = Pins::parse(&read(&adapters.join("pins.toml"))?)?;
     refuse_npmrc(&adapters)?;
     match cli.command {
         Command::Lock => lock(&adapters, &pins),
         Command::Generate(args) => {
             let manifest = generate(&adapters, &pins, args.node_shasums.as_deref()).await?;
-            std::fs::write(adapters.join("manifest.json"), manifest.to_json())?;
-            eprintln!("wrote {}", adapters.join("manifest.json").display());
+            std::fs::write(manifest_path.clone(), manifest.to_json())?;
+            eprintln!("wrote {}", manifest_path.clone().display());
             Ok(())
         }
         Command::Check(args) => {
             let manifest = generate(&adapters, &pins, args.node_shasums.as_deref()).await?;
-            let path = adapters.join("manifest.json");
+            let path = manifest_path.clone();
             if read(&path)? != manifest.to_json() {
                 bail!(
                     "{} is not what the pins and lockfiles give: run `cargo run -p hennery-pins -- generate`",
@@ -88,7 +89,7 @@ async fn main() -> Result<()> {
             eprintln!("{} matches the pins and lockfiles", path.display());
             Ok(())
         }
-        Command::Extract => extract_all(&Manifest::parse(&read(&adapters.join("manifest.json"))?)?).await,
+        Command::Extract => extract_all(&Manifest::parse(&read(&manifest_path.clone())?)?).await,
     }
 }
 
