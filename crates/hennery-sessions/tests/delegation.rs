@@ -570,12 +570,32 @@ fn d2_answers_reuse_the_operator_slot_but_permissions_require_operator() {
     };
     let receipt = w
         .store
-        .queue_ordinary_answer(&parent, 1, "digest", &hennery_sessions::delegation_control::DelegatedAnswer { key: "answer", child: "child", pending: "ordinary", answer: &answer })
+        .queue_ordinary_answer(
+            &parent,
+            1,
+            "digest",
+            &hennery_sessions::delegation_control::DelegatedAnswer {
+                key: "answer",
+                child: "child",
+                pending: "ordinary",
+                answer: &answer,
+            },
+        )
         .unwrap();
     assert_eq!(
         receipt,
         w.store
-            .queue_ordinary_answer(&parent, 1, "digest", &hennery_sessions::delegation_control::DelegatedAnswer { key: "answer", child: "child", pending: "ordinary", answer: &answer })
+            .queue_ordinary_answer(
+                &parent,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "ordinary",
+                    answer: &answer
+                }
+            )
             .unwrap()
     );
     assert!(matches!(
@@ -584,7 +604,17 @@ fn d2_answers_reuse_the_operator_slot_but_permissions_require_operator() {
     ));
     assert!(
         w.store
-            .queue_ordinary_answer(&parent, 1, "other", &hennery_sessions::delegation_control::DelegatedAnswer { key: "permission", child: "child", pending: "permission", answer: &answer })
+            .queue_ordinary_answer(
+                &parent,
+                1,
+                "other",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "permission",
+                    child: "child",
+                    pending: "permission",
+                    answer: &answer
+                }
+            )
             .unwrap_err()
             .to_string()
             .contains("operator_required")
@@ -599,13 +629,39 @@ fn d2_spawns_are_atomic_independent_and_one_generation() {
     };
     let receipt = w
         .store
-        .queue_spawn(&parent, 1, "digest", &hennery_sessions::delegation_queue::DelegatedLaunch { key: "spawn", agent: "codex", cwd: "/project", brief: "brief", name: Some("worker"), config: &config, mcp: McpContext::NONE })
+        .queue_spawn(
+            &parent,
+            1,
+            "digest",
+            &hennery_sessions::delegation_queue::DelegatedLaunch {
+                key: "spawn",
+                agent: "codex",
+                cwd: "/project",
+                brief: "brief",
+                name: Some("worker"),
+                config: &config,
+                mcp: McpContext::NONE,
+            },
+        )
         .unwrap();
     let child = receipt.child_id.as_ref().unwrap();
     assert_eq!(w.store.find_session(child).unwrap().unwrap().agent, "codex");
     assert_eq!(
         w.store
-            .queue_spawn(&parent, 1, "digest", &hennery_sessions::delegation_queue::DelegatedLaunch { key: "spawn", agent: "codex", cwd: "/project", brief: "brief", name: Some("worker"), config: &config, mcp: McpContext::NONE })
+            .queue_spawn(
+                &parent,
+                1,
+                "digest",
+                &hennery_sessions::delegation_queue::DelegatedLaunch {
+                    key: "spawn",
+                    agent: "codex",
+                    cwd: "/project",
+                    brief: "brief",
+                    name: Some("worker"),
+                    config: &config,
+                    mcp: McpContext::NONE
+                }
+            )
             .unwrap(),
         receipt
     );
@@ -618,7 +674,20 @@ fn d2_spawns_are_atomic_independent_and_one_generation() {
     w.active("other-child");
     assert!(
         w.store
-            .queue_spawn(&child_identity, 1, "digest", &hennery_sessions::delegation_queue::DelegatedLaunch { key: "nested", agent: "claude", cwd: "/project", brief: "brief", name: None, config: &Default::default(), mcp: McpContext::NONE })
+            .queue_spawn(
+                &child_identity,
+                1,
+                "digest",
+                &hennery_sessions::delegation_queue::DelegatedLaunch {
+                    key: "nested",
+                    agent: "claude",
+                    cwd: "/project",
+                    brief: "brief",
+                    name: None,
+                    config: &Default::default(),
+                    mcp: McpContext::NONE
+                }
+            )
             .unwrap_err()
             .to_string()
             .contains("generation_limit")

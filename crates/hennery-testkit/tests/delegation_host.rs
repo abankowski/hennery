@@ -439,20 +439,23 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
         let _ = shutdown_rx.await;
     }));
     let (tcp, _) = listener.accept().await.unwrap();
-    #[allow(clippy::result_large_err)]
-    fn nonce(
-        _: &tokio_tungstenite::tungstenite::handshake::server::Request,
-        mut response: tokio_tungstenite::tungstenite::handshake::server::Response,
-    ) -> Result<
-        tokio_tungstenite::tungstenite::handshake::server::Response,
-        tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
-    > {
-        response
-            .headers_mut()
-            .insert(HELLO_NONCE_HEADER, hex::encode([5u8; 32]).parse().unwrap());
-        Ok(response)
+    struct Nonce;
+    impl tokio_tungstenite::tungstenite::handshake::server::Callback for Nonce {
+        fn on_request(
+            self,
+            _: &tokio_tungstenite::tungstenite::handshake::server::Request,
+            mut response: tokio_tungstenite::tungstenite::handshake::server::Response,
+        ) -> Result<
+            tokio_tungstenite::tungstenite::handshake::server::Response,
+            tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+        > {
+            response
+                .headers_mut()
+                .insert(HELLO_NONCE_HEADER, hex::encode([5u8; 32]).parse().unwrap());
+            Ok(response)
+        }
     }
-    let mut ws = tokio_tungstenite::accept_hdr_async(tcp, nonce).await.unwrap();
+    let mut ws = tokio_tungstenite::accept_hdr_async(tcp, Nonce).await.unwrap();
     async fn read(ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) -> HostFrame {
         tokio::time::timeout(Duration::from_secs(20), async {
             loop {

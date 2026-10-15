@@ -132,14 +132,16 @@ pub async fn execute(
             Ok(serde_json::to_value(state.store.queue_spawn(
                 identity,
                 revision,
-                &args.operation_key,
                 &digest,
-                agent,
-                &cwd,
-                &args.brief,
-                args.name.as_deref(),
-                &required,
-                mcp,
+                &crate::delegation_queue::DelegatedLaunch {
+                    key: &args.operation_key,
+                    agent,
+                    cwd: &cwd,
+                    brief: &args.brief,
+                    name: args.name.as_deref(),
+                    config: &required,
+                    mcp,
+                },
             )?)?)
         }
         ToolCall::Send(args) => Ok(serde_json::to_value(state.store.queue_followup(
@@ -158,11 +160,13 @@ pub async fn execute(
             Ok(serde_json::to_value(state.store.queue_ordinary_answer(
                 identity,
                 revision,
-                &args.operation_key,
                 &digest,
-                &args.child_id,
-                &args.pending_id,
-                &answer,
+                &crate::delegation_control::DelegatedAnswer {
+                    key: &args.operation_key,
+                    child: &args.child_id,
+                    pending: &args.pending_id,
+                    answer: &answer,
+                },
             )?)?)
         }
         ToolCall::Status(args) => Ok(serde_json::to_value(state.store.child_status(
