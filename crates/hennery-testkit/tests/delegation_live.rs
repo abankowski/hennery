@@ -637,10 +637,7 @@ impl Harness {
         let Ok(file) = std::env::var("HENNERY_D4_CAPTURE") else {
             return Ok(());
         };
-        let mut events = self.state.store.events(child, 0, 1000)?;
-        for event in &mut events {
-            scrub_capture(&mut event.body);
-        }
+        let events = scrub_events(self.state.store.events(child, 0, 1000)?);
         let mut text = String::new();
         for event in events {
             text.push_str("event: event\ndata: ");
@@ -1005,6 +1002,19 @@ fn scrub_capture(value: &mut Value) {
     }
 }
 
+fn scrub_events(events: Vec<hennery_proto::rest::EventDto>) -> Vec<hennery_proto::rest::EventDto> {
+    events
+        .into_iter()
+        .filter(|event| {
+            event.body.pointer("/payload/update/sessionUpdate") != Some(&json!("available_commands_update"))
+        })
+        .map(|mut event| {
+            scrub_capture(&mut event.body);
+            event
+        })
+        .collect()
+}
+
 #[test]
 fn captured_acp_removes_headers_and_bearers_before_retention() {
     let mut value = json!({"headers":[{"name":"Authorization","value":"private"}],"nested":{"Authorization":"private","access_token":"private","note":"Bearer private"},"safe":"CHILD_ACCEPTANCE_OK"});
@@ -1025,6 +1035,13 @@ fn recorded_live_schema_answer_preserves_delivery_and_parent_provenance() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
+    assert!(
+        events
+            .iter()
+            .all(|event| event.body.pointer("/payload/update/sessionUpdate")
+                != Some(&json!("available_commands_update"))),
+        "public fixture must exclude this machine's command menu"
+    );
     let items = hennery_view::fold(&events, &|_: &str| false);
     let questions: Vec<_> = items
         .iter()
@@ -1052,6 +1069,24 @@ fn recorded_live_schema_answer_preserves_delivery_and_parent_provenance() {
         ));
     }
     assert!(assistant_text(&events).contains("CHILD_ACCEPTANCE_OK"));
+    let mut menu = events[0].clone();
+    menu.kind = "acp_update".into();
+    menu.body = json!({"payload":{"update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"private personal command menu"}]}}});
+    let public = scrub_events(vec![
+        menu,
+        events
+            .iter()
+            .find(|event| event.kind == "pending_opened")
+            .unwrap()
+            .clone(),
+    ]);
+    assert_eq!(public.len(), 1);
+    assert_eq!(public[0].kind, "pending_opened");
+    assert!(
+        !serde_json::to_string(&public)
+            .unwrap()
+            .contains("private personal command menu")
+    );
 }
 
 fn question_brief(runtime: &str) -> &'static str {
@@ -1187,6 +1222,21 @@ async fn pinned_runtime_provider_authentication() -> Result<()> {
         Ok(())
     }
     .await;
+    let cleanup = h.finish().await;
+    result.and(cleanup)
+}
+
+#[tokio::test]
+#[ignore = "requires explicit pinned adapter and staged auth; starts no provider turn"]
+async fn pinned_runtime_process_token_exposure_without_inference() -> Result<()> {
+    let runtime = runtime("HENNERY_D4_PARENT")?;
+    let h = Harness::new(&runtime, None).await?;
+    let result=async {
+        ensure!(h.state.store.find_session(&h.parent)?.context("attached session")?.open_turn_id.is_none(),"exposure inspection must start no turn");
+        ensure!(!h.state.store.events(&h.parent,0,1000)?.iter().any(|event|event.kind=="user_turn"),"exposure inspection must submit no prompt");
+        println!("{}",json!({"case":"process_token_exposure","runtime":runtime,"provider_inference":false,"processes":process_token_exposure()?}));
+        Ok(())
+    }.await;
     let cleanup = h.finish().await;
     result.and(cleanup)
 }
