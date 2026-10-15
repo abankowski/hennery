@@ -16,6 +16,7 @@ struct World {
     db: std::path::PathBuf,
     store: Store,
     gateway: Arc<GatewayStore>,
+    revocations: hennery_gateway::revocation::Revocations,
     hat: String,
     other: String,
 }
@@ -72,6 +73,7 @@ impl World {
             hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap(),
             Arc::new(hennery_gateway::notify::Silent),
         ));
+        let revocations = runtime.revocations.clone();
         let state = GatewayState { runtime, operator };
         let store = Store::open(&db).unwrap();
         store.set_session_mcp(Arc::new(GatewayMcp::for_collector(&state)));
@@ -82,6 +84,7 @@ impl World {
             db,
             store,
             gateway,
+            revocations,
             hat,
             other: other.id,
         }
@@ -303,6 +306,15 @@ fn automatic_resume_accepts_only_genuinely_parked_and_ready_host() {
         if !host_ready {
             h.unregister("host", h.routable_conn("host").unwrap());
         }
+        let old_hash: String = raw(&w)
+            .query_row(
+                "SELECT token_hash FROM gw_session_tokens WHERE session_id='child'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let old_watch = w.revocations.watch(&old_hash);
+        assert!(!old_watch.token().is_cancelled());
         assert_eq!(
             w.store
                 .attach_delegated("child", McpContext::NONE, &catalog(), &h)
@@ -310,7 +322,9 @@ fn automatic_resume_accepts_only_genuinely_parked_and_ready_host() {
             expected,
             "{lifecycle} {presumed} {close} {host_ready}"
         );
+        assert_eq!(old_watch.token().is_cancelled(), expected);
         if expected {
+            assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "starting");
             assert!(matches!(rx.try_recv().unwrap(), CollectorFrame::DelegatedAttach { .. }));
         } else {
             assert!(rx.try_recv().is_err());
@@ -1423,9 +1437,10 @@ fn evidence_validator_requires_each_independent_proof_field() {
         axes: BTreeMap::from([("effort".into(), ConfigValue::Id("high".into()))]),
     };
     let mut c = catalog();
-    c.security
-        .axes
-        .insert("mode".into(), vec![ConfigValue::Id("default".into())]);
+    c.security.axes.insert(
+        "mode".into(),
+        vec![ConfigValue::Id("default".into()), ConfigValue::Id("plan".into())],
+    );
     let policy = ExecutionPolicy {
         revision: 2,
         allowed: Default::default(),
