@@ -827,3 +827,114 @@ async fn unavailable_prestart_catalog_validates_explicit_model_against_new_child
         h.finish().await;
     }
 }
+
+#[tokio::test]
+async fn background_worker_advances_past_offline_page_and_wraps_to_repaired_earlier_target() {
+    use hennery_proto::frames::McpIsolation;
+    use hennery_sessions::store::McpContext;
+    use rusqlite::params;
+    let h = Harness::with_worker(script(), None, false).await;
+    let later = h.spawn("later-page", json!({})).await;
+    let later = later["child_id"].as_str().unwrap();
+    // Attach once before adding global pressure. Its brief stays queued,
+    // so one later page visit can complete it without first needing a wrap.
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    eventually("later child ready for one dispatch", async || {
+        let s = h.status(later).await;
+        (s["actual"]["model"] == "small").then_some(())
+    })
+    .await;
+    let db = h.cwd.join("hennery.db");
+    let parent = h.state.store.find_session(&h.parent).unwrap().unwrap();
+    let gateway = hennery_gateway::store::GatewayStore::open(&db).unwrap();
+    let identity = gateway.authenticate_session(&h.token).unwrap().unwrap();
+    let revision = identity.delivered_delegation_revision().unwrap();
+    let earlier = "000-earlier-child";
+    let earlier_cwd = h.cwd.join("repairable-workspace");
+    std::fs::create_dir(&earlier_cwd).unwrap();
+    h.state
+        .store
+        .create_delegated_session(
+            &identity,
+            revision,
+            earlier,
+            "worker",
+            earlier_cwd.to_str().unwrap(),
+            McpContext {
+                capable: true,
+                isolation: McpIsolation::ClaudeStrict,
+                rules_name_other_hats: false,
+            },
+            0,
+        )
+        .unwrap()
+        .unwrap();
+    // A directory can disappear after acceptance and before host admission.
+    // Recreating this same path later makes the held target eligible again.
+    std::fs::remove_dir(&earlier_cwd).unwrap();
+    h.state
+        .hosts
+        .register(
+            "offline-backlog",
+            &Enrollment {
+                public_key: HostKey::from_seed([11; 32]).public_key_hex(),
+                name: "offline fixture".into(),
+                host_version: "fixture".into(),
+                platform: "fixture".into(),
+            },
+            0,
+        )
+        .unwrap();
+    let mut conn = hennery_kernel::db::open(&db).unwrap();
+    {
+        let tx = conn.transaction().unwrap();
+        let owner = h.state.store.owner_id();
+        let required = r#"{"model":"small","mode":"default"}"#;
+        tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,accepted_revision) VALUES (?1,?2,'earlier','earlier-operation','fixture','session_spawn',?3,'queued',?4)",params![owner,h.parent,earlier,revision]).unwrap();
+        tx.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES (?1,'earlier-operation',?2,?3,?4,'earlier brief',?5)",params![owner,h.parent,earlier,revision,required]).unwrap();
+        tx.execute("INSERT INTO session_attach_evidence(owner_id,session_id,attach_generation,requested_config) VALUES (?1,?2,1,?3)",params![owner,earlier,required]).unwrap();
+        // Global pressure is fixture data, bypassing per-parent admission caps;
+        // offline rows are skipped before family/launch validation. The two
+        // live targets retain real family grants, host actors and ACP traffic.
+        for i in 0..129 {
+            let id = format!("000-offline-{i:04}");
+            let operation = format!("backlog-{i:04}");
+            tx.execute("INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,created_at,last_event_at) VALUES (?1,?2,'offline-backlog',?3,'worker',?4,'starting','fixture','fixture')",params![id,owner,parent.hat_id,h.cwd.to_str().unwrap()]).unwrap();
+            tx.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,accepted_revision) VALUES (?1,?2,?3,?3,'fixture','session_send',?4,'queued',?5)",params![owner,h.parent,operation,id,revision]).unwrap();
+            tx.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES (?1,?2,?3,?4,?5,'offline brief',?6)",params![owner,operation,h.parent,id,revision,required]).unwrap();
+        }
+        tx.commit().unwrap();
+    }
+    let first_page = h.state.store.delegation_targets_after("").unwrap();
+    assert_eq!(first_page.len(), 128);
+    assert_eq!(first_page[0], earlier);
+    assert!(!first_page.iter().any(|id| id == later));
+    hennery_sessions::delegation_worker::after_startup(&h.state);
+    eventually("later ready child beyond the offline first page", async || {
+        let s = h.status(later).await;
+        s["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["state"]["state"] == "completed")
+            .then_some(())
+    })
+    .await;
+    assert_eq!(
+        h.state.store.find_session(earlier).unwrap().unwrap().lifecycle,
+        "starting"
+    );
+    std::fs::create_dir(&earlier_cwd).unwrap();
+    eventually("earlier repaired child after cursor wrap", async || {
+        let s = h.status(earlier).await;
+        s["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["state"]["state"] == "completed")
+            .then_some(())
+    })
+    .await;
+    assert_eq!(h.status(earlier).await["last_outcome"], "completed");
+    h.finish().await;
+}
