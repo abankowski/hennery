@@ -442,3 +442,46 @@ fn purging_an_old_hat_scrubs_detached_edges_when_both_endpoints_moved() {
         .unwrap();
     assert_eq!(count, 2);
 }
+
+#[test]
+fn d2_followups_are_durable_idempotent_scoped_and_close_fenced() {
+    let w = World::new();
+    let parent = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    w.active("parent");
+    w.start("child", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    w.start("unrelated", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    let mut conn = hennery_kernel::db::open(&w.db).unwrap();
+    let tx = conn.transaction().unwrap();
+    assert!(w.store.bind_family_in(&tx, &parent, 1, "child", 0).unwrap());
+    tx.commit().unwrap();
+    w.active("child");
+    let first = w.store.queue_followup(&parent, 1, "key", "digest", "child", "hello").unwrap();
+    let again = w.store.queue_followup(&parent, 1, "key", "digest", "child", "hello").unwrap();
+    assert_eq!(first, again);
+    assert!(w.store.queue_followup(&parent, 1, "key", "other", "child", "changed").unwrap_err().to_string().contains("operation_conflict"));
+    assert!(w.store.queue_followup(&parent, 1, "bad", "digest", "unrelated", "hidden").is_err());
+    assert_eq!(w.store.delegation_queue_depth("child").unwrap(), (1, 5));
+    w.store.record_close_request("parent").unwrap();
+    assert_eq!(w.store.delegation_queue_depth("child").unwrap(), (0, 0));
+    assert!(w.store.queue_followup(&parent, 1, "late", "digest", "child", "late").is_err());
+}
+
+#[test]
+fn d2_queue_caps_and_policy_changes_cancel_without_reviving() {
+    let w = World::new();
+    let parent = w.start("parent", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    w.active("parent");
+    w.start("child", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    let mut conn = hennery_kernel::db::open(&w.db).unwrap();
+    let tx = conn.transaction().unwrap();
+    assert!(w.store.bind_family_in(&tx, &parent, 1, "child", 0).unwrap());
+    tx.commit().unwrap();
+    for i in 0..32 {
+        w.store.queue_followup(&parent, 1, &format!("key-{i}"), &format!("digest-{i}"), "child", "hello").unwrap();
+    }
+    assert!(w.store.queue_followup(&parent, 1, "overflow", "digest", "child", "hello").unwrap_err().to_string().contains("queue_full"));
+    assert_eq!(w.store.delegation_queue_depth("child").unwrap(), (32, 160));
+    w.gateway.set_session_tools(&w.hat, false).unwrap();
+    w.gateway.set_session_tools(&w.hat, true).unwrap();
+    assert_eq!(w.store.delegation_queue_depth("child").unwrap(), (0, 0));
+}
