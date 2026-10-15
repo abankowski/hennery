@@ -23,6 +23,10 @@ jobs:
           github_access_token: ${{ github.token }}
       - name: Negative gates, recovery, supply chain and workflow graph
         run: nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py'
+      - name: Execute the exact README bootstrap against signed offline releases
+        run: |
+          sh packaging/readme-blocks.sh README.md release-bootstrap > "$RUNNER_TEMP/release-bootstrap.sh"
+          nix develop .#release -c python3 packaging/release/test_bootstrap.py --script "$RUNNER_TEMP/release-bootstrap.sh"
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
         with:
           toolchain: 1.98.1

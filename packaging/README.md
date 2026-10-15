@@ -112,7 +112,10 @@ These need the operator's decision, credentials, or both. None is set up:
   reviewed verifier, not a downloaded replacement. The common
   [verifier](release/verify.py) pins the exact certificate identity to
   `marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<release-tag>`
-  and rejects branch signers. Authenticate the installer before executing it;
+  and rejects branch signers. The [guarded README bootstrap](../README.md#verify-a-release-installer-before-running-it)
+  authenticates the inventory using a full fingerprint checked through main,
+  the maintainer's account keys and keys.openpgp.org, then checks the installer
+  SHA-256 before executing it. No release-supplied verifier or key is its trust anchor;
   its archive verifier requires both the maintainer-approved digest and this identity. Native binstall signature
   support needs a reviewed bridge; no unverified strategy is an accepted path.
 - **The Homebrew tap** (`marcinwadon/homebrew-tap`): the repository and a

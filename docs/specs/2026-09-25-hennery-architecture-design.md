@@ -993,7 +993,8 @@ Platforms v1: Linux amd64/arm64, macOS arm64. Windows via WSL only.
 
 ### 12.2 Channels
 
-GitHub Releases with signed checksums; `curl | sh` installer; Homebrew tap;
+GitHub Releases with a maintainer-signed inventory; verify the installer against
+that inventory before executing it (the guarded README bootstrap); Homebrew tap;
 Docker image for the **collector only** (the host must run on the developer
 machine, next to the repositories and the logged-in agent CLIs); Nix flake.
 

@@ -211,12 +211,41 @@ announcements advance.
 
 ## Consumer verification and recovery
 
+The authenticated bootstrap is the executed
+[README shell block](../README.md#verify-a-release-installer-before-running-it),
+named `release-bootstrap` under the README guardrails. It uses trusted installed
+GnuPG, curl, jq and a SHA-256 tool, not a verifier downloaded from a release.
+First compare full signing fingerprint
+`F26C7F594DFE84D131703AFC23E5A318AE8D2861` through the README on main,
+`https://github.com/marcinwadon.gpg`, and
+`https://keys.openpgp.org/vks/v1/by-fingerprint/F26C7F594DFE84D131703AFC23E5A318AE8D2861`.
+These are independent of release assets. The block fetches each, compares the
+full public signing-subkey fingerprint with installed GnuPG/awk and imports keys
+only into a fresh isolated keyring. Stop if a channel is absent or disagrees;
+the maintainer must publish/confirm these keys before enabling releases. The
+[keyserver API](https://keys.openpgp.org/about/api/) supports lookup by the full
+primary or subkey fingerprint.
+
+Next download `release-inventory.json`, `release-inventory.json.asc` and the
+installer as data. Require successful `gpg --verify` and a pinned `VALIDSIG`,
+extract the unique installer's SHA-256 from the authenticated inventory and check
+it with `sha256sum -c` or `shasum -a 256 -c`. Only then execute the installer.
+It continues to authenticate archives itself. A malicious release cannot replace
+this bootstrap's verifier/key; use the inline commands reviewed on main and
+independently confirm the pin before execution. Release-contained verification
+code is usable only after its own bytes have been authenticated this way.
+
 Every consumer first requires the valid detached maintainer signature over the
 exact inventory, pinned to signing subkey
 `F26C7F594DFE84D131703AFC23E5A318AE8D2861` (primary key
 `1CE2B7354FC6ED5D9DE12DF664C16DED80CCEABA`). Missing, malformed, wrong-key and
-different-inventory signatures refuse even when Sigstore passes. Manual checking
-uses a trusted checkout and the same verifier:
+different-inventory signatures refuse even when Sigstore passes. The helper
+commands below are not the initial bootstrap: first authenticate the inventory
+with installed GnuPG as in the README. Fetch its exact `source_sha` into a clean
+checkout without executing repository code; compare `git rev-parse HEAD` with
+that authenticated SHA and require `git status --porcelain` to be empty before
+running a helper. A tag name or a verifier obtained from a release is insufficient.
+Then use that authenticated source checkout for additional provenance checking:
 
 ```sh
 packaging/hennery-release verify-approval --inventory candidate/release-inventory.json \
