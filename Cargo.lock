@@ -1617,6 +1617,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "hennery-memory"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "hennery-gateway",
+ "hennery-host",
+ "hennery-kernel",
+ "hennery-proto",
+ "hennery-sessions",
+ "hex",
+ "hmac 0.12.1",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "hennery-pins"
 version = "0.1.0-alpha.1"
 dependencies = [
