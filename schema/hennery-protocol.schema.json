@@ -25,6 +25,32 @@
       "description": "`hello.mcp_isolation`: per agent id, how the host isolates its MCP\nservers. An agent left out is not isolated. Deserialized leniently, like\n`Capabilities`: an unknown mechanism counts as `none`, never as isolated\nand never a reason to refuse the `hello`.",
       "type": "object"
     },
+    "AnswerArgs": {
+      "additionalProperties": false,
+      "description": "Answer ordinary elicitation only. ACP permissions remain operator-only.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ElicitationAction"
+        },
+        "child_id": {
+          "type": "string"
+        },
+        "content": true,
+        "operation_key": {
+          "type": "string"
+        },
+        "pending_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_key",
+        "child_id",
+        "pending_id",
+        "action"
+      ],
+      "type": "object"
+    },
     "AnswerRequest": {
       "anyOf": [
         {
@@ -196,6 +222,25 @@
       },
       "type": "array"
     },
+    "CapabilitiesArgs": {
+      "additionalProperties": false,
+      "description": "Caller-host capabilities, scoped to the caller's hat and validated cwd.",
+      "properties": {
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "CapabilitiesResponse": {
       "description": "`GET /api/capabilities` (kernel spec §8): the mode, which decides the\nviews the web UI shows, and the features this collector has switched\non. `features` is an open list: a client ignores a name it does not\nknow.",
       "properties": {
@@ -212,6 +257,39 @@
       "required": [
         "mode",
         "features"
+      ],
+      "type": "object"
+    },
+    "CapabilitiesResult": {
+      "properties": {
+        "catalogs": {
+          "items": {
+            "$ref": "#/$defs/HostCatalog"
+          },
+          "type": "array"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/$defs/DelegationLimits"
+        },
+        "policy": {
+          "$ref": "#/$defs/ExecutionPolicy"
+        },
+        "runtimes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runtimes",
+        "catalogs",
+        "cwd",
+        "policy",
+        "limits"
       ],
       "type": "object"
     },
@@ -247,12 +325,326 @@
           "const": "mcp_servers",
           "description": "A session's MCP servers (plan 8c): the host passes a start's or\nresume's `mcp_servers` into `session/new` / `session/load` with the\nagent's isolation, as `hello.mcp_isolation` reports it, and refuses\nservers it cannot isolate unless the collector waived that\n(`mcp_isolation_unavailable`). A host without it gets no servers.",
           "type": "string"
+        },
+        {
+          "const": "catalog_probe",
+          "description": "Disposable runtime catalog discovery without a user prompt.",
+          "type": "string"
+        },
+        {
+          "const": "delegation_config",
+          "description": "Generation-bound evidence and serialized delegated prompt admission.",
+          "type": "string"
         }
       ]
+    },
+    "CatalogFreshness": {
+      "enum": [
+        "fresh",
+        "stale",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "ChildList": {
+      "properties": {
+        "children": {
+          "items": {
+            "$ref": "#/$defs/ChildSummary"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "children"
+      ],
+      "type": "object"
+    },
+    "ChildQuestion": {
+      "properties": {
+        "answered": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/PendingKind"
+        },
+        "operator_required": {
+          "type": "boolean"
+        },
+        "pending_id": {
+          "type": "string"
+        },
+        "question": {
+          "description": "The display fold's elicitation question. Permissions expose no schema."
+        }
+      },
+      "required": [
+        "pending_id",
+        "kind",
+        "operator_required",
+        "answered"
+      ],
+      "type": "object"
+    },
+    "ChildStatus": {
+      "properties": {
+        "actual": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_outcome": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_report": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/OperationReceipt"
+          },
+          "type": "array"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/ChildQuestion"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requested": {
+          "$ref": "#/$defs/SessionConfig"
+        },
+        "summary": {
+          "$ref": "#/$defs/ChildSummary"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "requested",
+        "questions",
+        "operations",
+        "truncated",
+        "url"
+      ],
+      "type": "object"
+    },
+    "ChildSummary": {
+      "properties": {
+        "activity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "child_id": {
+          "type": "string"
+        },
+        "close_requested": {
+          "type": "boolean"
+        },
+        "lifecycle": {
+          "type": "string"
+        },
+        "queued": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "child_id",
+        "lifecycle",
+        "queued",
+        "close_requested"
+      ],
+      "type": "object"
+    },
+    "CloseArgs": {
+      "additionalProperties": false,
+      "description": "Close one direct child. Does not delete sessions or clean files.",
+      "properties": {
+        "child_id": {
+          "type": "string"
+        },
+        "operation_key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_key",
+        "child_id"
+      ],
+      "type": "object"
     },
     "CollectorFrame": {
       "description": "Collector -> host.",
       "oneOf": [
+        {
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "probe_catalog",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id",
+            "agent",
+            "cwd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A delegated attach uses an independently allocated, nonzero generation.\n`agent_session_id` absent starts a new adapter session; present loads it.",
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "agent_session_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "attach_generation": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "axes": {
+              "additionalProperties": {
+                "$ref": "#/$defs/ConfigValue"
+              },
+              "type": "object"
+            },
+            "committed_seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "hat_id": {
+              "type": "string"
+            },
+            "isolation_waived": {
+              "description": "The collector knowingly delivers to an agent the host cannot isolate\n(the mixed-host fallback's default hat, or a single-hat host,\numbrella §8.5). Absent, the host refuses servers for such an agent\n(`mcp_isolation_unavailable`): isolation is never lost by omission.",
+              "type": "boolean"
+            },
+            "mcp_servers": {
+              "description": "Passed in `session/new` / `session/load`. Only to a host that\nannounced `mcp_servers`.",
+              "items": {
+                "$ref": "#/$defs/McpServer"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "delegated_attach",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id",
+            "session_id",
+            "committed_seq",
+            "agent",
+            "cwd",
+            "hat_id",
+            "attach_generation"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "content": {
+              "items": true,
+              "type": "array"
+            },
+            "expected": {
+              "$ref": "#/$defs/PromptFence"
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "turn_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "delegated_prompt",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id",
+            "session_id",
+            "turn_id",
+            "content",
+            "expected"
+          ],
+          "type": "object"
+        },
         {
           "properties": {
             "collector_version": {
@@ -764,6 +1156,67 @@
         }
       ]
     },
+    "ConfigCompleteness": {
+      "enum": [
+        "complete",
+        "partial",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "ConfigEvidence": {
+      "properties": {
+        "actual": {
+          "$ref": "#/$defs/SessionConfig"
+        },
+        "attach_generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completeness": {
+          "$ref": "#/$defs/ConfigCompleteness"
+        },
+        "config_revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attach_generation",
+        "config_revision",
+        "completeness",
+        "actual"
+      ],
+      "type": "object"
+    },
+    "ConfigFields": {
+      "additionalProperties": false,
+      "description": "Object-only strict decoding/schema adapter for the shared session config.",
+      "properties": {
+        "axes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ConfigValue"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ConfigRequest": {
       "description": "`POST /api/sessions/{id}/config`: switch one config option.",
       "properties": {
@@ -895,6 +1348,46 @@
         "url",
         "hat_id",
         "cred_kind"
+      ],
+      "type": "object"
+    },
+    "DelegationLimits": {
+      "properties": {
+        "children": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "message_bytes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued_bytes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued_prompts": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "starts_per_operator_epoch": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "children",
+        "starts_per_operator_epoch",
+        "queued_prompts",
+        "queued_bytes",
+        "message_bytes"
       ],
       "type": "object"
     },
@@ -1066,6 +1559,33 @@
       "required": [
         "role",
         "text"
+      ],
+      "type": "object"
+    },
+    "ExecutionPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/$defs/ConfigValue"
+              },
+              "type": "array"
+            },
+            "type": "object"
+          },
+          "description": "Runtime -> profile security option id -> explicitly permitted values.",
+          "type": "object"
+        },
+        "revision": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision",
+        "allowed"
       ],
       "type": "object"
     },
@@ -1400,9 +1920,62 @@
       ],
       "type": "object"
     },
+    "HostCatalog": {
+      "properties": {
+        "adapter_revision": {
+          "description": "Opaque digest of the configured adapter command/environment and catalog.",
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "config_options": {
+          "items": true,
+          "type": "array"
+        },
+        "defaults": {
+          "$ref": "#/$defs/SessionConfig"
+        },
+        "freshness": {
+          "$ref": "#/$defs/CatalogFreshness"
+        },
+        "security": {
+          "$ref": "#/$defs/SecurityClassification"
+        }
+      },
+      "required": [
+        "agent",
+        "adapter_revision",
+        "config_options",
+        "defaults",
+        "security",
+        "freshness"
+      ],
+      "type": "object"
+    },
     "HostFrame": {
       "description": "Host -> collector.",
       "oneOf": [
+        {
+          "properties": {
+            "catalog": {
+              "$ref": "#/$defs/HostCatalog"
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "catalog",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id",
+            "catalog"
+          ],
+          "type": "object"
+        },
         {
           "properties": {
             "attached_sessions": {
@@ -1887,6 +2460,17 @@
             "null"
           ]
         },
+        "config_evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Fresh host-produced configuration proof, never retained collector values."
+        },
         "config_options": {
           "description": "The full config catalogue: the adapter's ACP `SessionConfigOption`\nobjects, for the UI. The collector stores it and never reads it.",
           "items": true,
@@ -2027,6 +2611,28 @@
         "session_id",
         "lifecycle"
       ],
+      "type": "object"
+    },
+    "ListArgs": {
+      "additionalProperties": false,
+      "description": "Page direct children only, never owner-wide sessions or grandchildren.",
+      "properties": {
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "LoginRequest": {
@@ -2760,6 +3366,167 @@
       ],
       "type": "object"
     },
+    "OperationReceipt": {
+      "additionalProperties": false,
+      "description": "Durable acceptance/delivery record. Delivery never implies completion.",
+      "properties": {
+        "child_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "pending_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/OperationState"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "state"
+      ],
+      "type": "object"
+    },
+    "OperationState": {
+      "description": "A delegation operation's state, independent of the session lifecycle.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "accepted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "waiting_config",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "queued",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "awaiting_reconciliation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "delivered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "completed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "not_delivered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "state": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "PairingCodeResponse": {
       "description": "201 to `POST /api/hosts/pairing-codes` (kernel spec §4.1): a single-use\ncode for `hennery host join`, shown once.",
       "properties": {
@@ -3446,6 +4213,25 @@
       ],
       "type": "object"
     },
+    "PromptFence": {
+      "properties": {
+        "attach_generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "config_revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attach_generation",
+        "config_revision"
+      ],
+      "type": "object"
+    },
     "PromptRequest": {
       "additionalProperties": false,
       "properties": {
@@ -4016,6 +4802,49 @@
       ],
       "type": "string"
     },
+    "SecurityClassification": {
+      "description": "Profile-owned security axes and their baseline allowed values. `mode`\nmeans `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.\nUnknown profiles require explicit operator configuration on the collector.",
+      "properties": {
+        "axes": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/ConfigValue"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "known": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "known",
+        "axes"
+      ],
+      "type": "object"
+    },
+    "SendArgs": {
+      "additionalProperties": false,
+      "description": "Queue an ordinary follow-up for an owned direct child.",
+      "properties": {
+        "child_id": {
+          "type": "string"
+        },
+        "operation_key": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_key",
+        "child_id",
+        "text"
+      ],
+      "type": "object"
+    },
     "SessionBody": {
       "description": "The body of a sequenced, outboxed session frame.",
       "oneOf": [
@@ -4422,6 +5251,30 @@
       ],
       "type": "object"
     },
+    "SessionConfig": {
+      "description": "Model, mode and the other config axes of a session (ACP core §3.3,\n§4.3): what a start asks for, and what a resume re-applies. `model` and\n`mode` are the values of the adapter's model and mode options; `axes`\nholds every other option, by config id. Flattened into the frames and\nthe start request, so the wire stays `model?, mode?, axes{}`.",
+      "properties": {
+        "axes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ConfigValue"
+          },
+          "type": "object"
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "SessionDetail": {
       "description": "`GET /api/sessions/{id}` (ACP core §9): the list item, as stored, the\nopen turn and the pending requests still open.",
       "properties": {
@@ -4702,6 +5555,27 @@
       ],
       "type": "object"
     },
+    "SetExecutionPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/$defs/ConfigValue"
+              },
+              "type": "array"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "allowed"
+      ],
+      "type": "object"
+    },
     "SetHatLogoRequest": {
       "additionalProperties": false,
       "description": "`PUT /api/hats/{id}/logo` (kernel spec §5.1, §8; plan 4d-B2): a PNG, at\nmost 64 KiB, as standard base64 with its padding and nothing around it\n(no `data:` prefix, no whitespace). The body is at most 96 KiB. Step-up.\nThe collector decodes it and writes it afresh, so what is served is\nnever the upload's bytes. 200 with the `HatItem`.\n\nIts own codes: 400 `invalid_logo` (not base64; not a readable PNG; over\n1024 pixels either way); 413 `logo_too_large` (over 64 KiB, or over 256\nKiB once re-encoded); 413 `body_too_large`; 415 `unsupported_logo` (not\na PNG: the web UI turns an SVG, a WebP or a JPEG into one first); 404\n`not_found`; 409 `hat_purging` (a hat frozen for its purge takes no new\nlogo). `DELETE /api/hats/{id}/logo` (step-up) removes it: 200 with the\n`HatItem`, a frozen hat's too, or 404.",
@@ -4856,6 +5730,43 @@
       ],
       "type": "object"
     },
+    "SpawnArgs": {
+      "additionalProperties": false,
+      "description": "Start one independently configured direct child, without provider fallback.",
+      "properties": {
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "brief": {
+          "type": "string"
+        },
+        "config": {
+          "$ref": "#/$defs/ConfigFields"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation_key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_key",
+        "cwd",
+        "brief",
+        "config"
+      ],
+      "type": "object"
+    },
     "StartSessionRequest": {
       "description": "`POST /api/sessions` (ACP core §9): `{host_id, agent, cwd, model?, mode?, axes?}`.",
       "properties": {
@@ -4902,6 +5813,25 @@
       },
       "required": [
         "session_id"
+      ],
+      "type": "object"
+    },
+    "StatusArgs": {
+      "additionalProperties": false,
+      "description": "Read a direct child's state, optionally selecting one operation receipt.",
+      "properties": {
+        "child_id": {
+          "type": "string"
+        },
+        "operation_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "child_id"
       ],
       "type": "object"
     },

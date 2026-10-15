@@ -1009,6 +1009,7 @@ pub enum CollectorFrame {
         hat_id: String,
         #[serde(flatten)]
         mcp: McpDelivery,
+        #[ts(type = "number")]
         attach_generation: u64,
         agent_session_id: Option<String>,
     },

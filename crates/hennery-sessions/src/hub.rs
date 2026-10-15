@@ -108,6 +108,13 @@ impl HostConn {
     /// lock, against the very connection the frame goes out on, so a host
     /// that reconnects on an older build cannot slip in between.
     fn takes(&self, frame: &CollectorFrame) -> bool {
+        if matches!(
+            frame,
+            CollectorFrame::DelegatedAttach { .. } | CollectorFrame::DelegatedPrompt { .. }
+        ) && !self.capabilities.has(Capability::DelegationConfig)
+        {
+            return false;
+        }
         let Some(mcp) = frame.mcp_delivery() else {
             return true;
         };
@@ -359,6 +366,39 @@ impl Hub {
             // Nothing that carries servers goes out unchecked, here either.
             .filter(|h| h.routable() && h.takes(&frame))
             .is_some_and(|h| h.tx.send(frame).is_ok())
+    }
+
+    /// Final transfer check uses the same hello and lock as frame handoff.
+    pub fn notify_parent_transfer(
+        &self,
+        host_id: &str,
+        source_agent: &str,
+        isolated: bool,
+        frame: CollectorFrame,
+    ) -> bool {
+        self.hosts
+            .lock()
+            .expect("hosts lock")
+            .get(host_id)
+            .filter(|h| {
+                h.routable()
+                    && h.capabilities.has(Capability::McpServers)
+                    && (!isolated || h.mcp_isolation.isolates(source_agent))
+                    && h.takes(&frame)
+            })
+            .is_some_and(|h| h.tx.send(frame).is_ok())
+    }
+
+    /// This live hello map contains every configured runtime, including ones
+    /// with no MCP isolation. It is an inventory, never a model allowlist.
+    pub fn runtime_ids(&self, host_id: &str) -> Vec<String> {
+        self.hosts
+            .lock()
+            .expect("hosts lock")
+            .get(host_id)
+            .filter(|h| h.routable())
+            .map(|h| h.mcp_isolation.0.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Send a request and wait until the outboxed fact carrying `request_id`

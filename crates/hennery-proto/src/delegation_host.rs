@@ -9,7 +9,9 @@ use ts_rs::TS;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct PromptFence {
+    #[ts(type = "number")]
     pub attach_generation: u64,
+    #[ts(type = "number")]
     pub config_revision: u64,
 }
 
@@ -23,7 +25,9 @@ pub enum ConfigCompleteness {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ConfigEvidence {
+    #[ts(type = "number")]
     pub attach_generation: u64,
+    #[ts(type = "number")]
     pub config_revision: u64,
     pub completeness: ConfigCompleteness,
     pub actual: SessionConfig,

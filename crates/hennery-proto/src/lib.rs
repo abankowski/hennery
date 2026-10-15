@@ -5,6 +5,7 @@
 //! ACP payloads travel inside them as raw JSON and are never modelled here.
 
 pub mod delegation_host;
+pub mod delegation_status;
 pub mod frames;
 pub mod paths;
 pub mod plugin;

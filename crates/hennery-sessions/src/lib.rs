@@ -5,6 +5,12 @@ pub mod attachments;
 pub mod builtin;
 pub mod content;
 pub mod delegation;
+pub mod delegation_api;
+pub mod delegation_control;
+pub mod delegation_dispatch;
+pub mod delegation_queue;
+pub mod delegation_runtime;
+pub mod delegation_worker;
 pub mod forget;
 pub mod hats;
 pub mod hosts;
@@ -17,9 +23,11 @@ pub mod projects;
 pub mod push;
 mod redact;
 mod resolve;
+pub mod session_tools;
 mod shared_files;
 pub mod store;
 pub mod sweep;
+pub mod tool_args;
 pub mod view;
 pub mod ws;
 
@@ -64,6 +72,7 @@ pub struct AppState {
     pub sweep_interval: Duration,
     /// The host removals with an attempt in flight (plan 9d B7).
     pub forgets: Arc<forget::InFlight>,
+    pub catalogs: Arc<delegation_runtime::Catalogs>,
 }
 
 impl AppState {
@@ -82,6 +91,7 @@ impl AppState {
             push: Push::detached(),
             sweep_interval: sweep::INTERVAL,
             forgets: Arc::new(forget::InFlight::default()),
+            catalogs: Arc::default(),
         }
     }
 }
@@ -166,6 +176,7 @@ pub async fn serve_all(
 /// the client's address.
 pub fn router(state: AppState) -> Router {
     api::router(state.clone())
+        .merge(delegation_api::router(state.clone()))
         .merge(builtin::policy_router(state.clone()))
         .merge(hosts::router(state.clone()))
         .merge(hats::router(state.clone()))
