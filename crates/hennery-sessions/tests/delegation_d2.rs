@@ -225,8 +225,27 @@ fn d4_deadlines_and_receipts_invalidate_the_child_and_parent_summary() {
         .revision;
     pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
     let before = w.store.max_event_id().unwrap();
-    w.store.refresh_delegation_attention(&Hub::new(), i64::MAX / 2).unwrap();
+    let hub = Hub::new();
+    let mut rings = hub.subscribe();
+    w.store.refresh_delegation_attention(&hub, i64::MAX / 2).unwrap();
     assert!(w.store.max_event_id().unwrap() > before);
+    let mut published = Vec::new();
+    while let Ok(event) = rings.try_recv() {
+        published.push(event);
+    }
+    assert!(
+        published
+            .iter()
+            .any(|event| event.session_id == "child" && event.kind == "family_changed" && event.event_id > before),
+        "committed invalidations wake existing subscribers"
+    );
+    let flushed = w.store.max_event_id().unwrap();
+    w.store.flush_family_changes(&Hub::new()).unwrap();
+    assert_eq!(
+        w.store.max_event_id().unwrap(),
+        flushed,
+        "no duplicate invalidation without a new fact"
+    );
     let changed = w.store.family_changed_after(before).unwrap();
     assert!(changed.contains(&"child".to_string()) && changed.contains(&"parent".to_string()));
     assert!(
