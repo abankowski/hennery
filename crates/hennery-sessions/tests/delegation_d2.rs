@@ -1617,12 +1617,10 @@ fn deleted_endpoint_scrubs_handed_payload_and_required_config_and_removes_eviden
     raw(&w)
         .execute("UPDATE sessions SET lifecycle='deleted' WHERE id='child'", [])
         .unwrap();
-    let after: (String, String) = raw(&w)
-        .query_row("SELECT payload,required_config FROM session_dispatch_queue", [], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
+    let remaining: i64 = raw(&w)
+        .query_row("SELECT COUNT(*) FROM session_dispatch_queue", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(after, (String::new(), "{}".into()));
+    assert_eq!(remaining, 0);
     let evidence_count: i64 = raw(&w)
         .query_row(
             "SELECT COUNT(*) FROM session_attach_evidence WHERE session_id='child'",
@@ -1631,6 +1629,370 @@ fn deleted_endpoint_scrubs_handed_payload_and_required_config_and_removes_eviden
         )
         .unwrap();
     assert_eq!(evidence_count, 0);
+}
+
+fn delete_endpoint(w: &World, id: &str) {
+    use hennery_sessions::store::{Deletion, Unattached};
+    let current = w.store.find_session(id).unwrap().unwrap();
+    assert!(matches!(
+        w.store
+            .delete_session(
+                id,
+                Some(&Unattached {
+                    lifecycle: current.lifecycle,
+                    presumed_parked: current.presumed_parked,
+                })
+            )
+            .unwrap(),
+        Deletion::Done { .. }
+    ));
+}
+
+fn stored_operation(w: &World, operation: &str) -> serde_json::Value {
+    let row: String = raw(w).query_row(
+        "SELECT json_object('owner_id',owner_id,'caller_id',caller_id,'operation_key',operation_key,
+        'operation_id',operation_id,'digest',digest,'tool',tool,'child_id',child_id,'state',state,'code',code,
+        'turn_id',turn_id,'pending_id',pending_id,'request_id',request_id,'accepted_revision',accepted_revision,
+        'epoch',epoch,'validated_attach',validated_attach,'validated_config',validated_config,'validated_policy',validated_policy)
+        FROM session_operations WHERE operation_id=?1",
+        [operation], |r| r.get(0)
+    ).unwrap();
+    serde_json::from_str(&row).unwrap()
+}
+
+#[test]
+fn deleted_target_keeps_only_opaque_gone_dedup_and_spawn_retry_never_allocates() {
+    for prior in ["queued", "delivered", "completed"] {
+        let (w, p) = pair();
+        let accepted = w
+            .store
+            .queue_spawn(
+                &p,
+                1,
+                "digest-private",
+                &hennery_sessions::delegation_queue::DelegatedLaunch {
+                    key: "old-spawn",
+                    agent: "claude",
+                    cwd: "/project/private",
+                    brief: "private brief",
+                    name: Some("private title"),
+                    config: &config("private-model"),
+                    mcp: McpContext::NONE,
+                },
+            )
+            .unwrap();
+        let target = accepted.child_id.as_deref().unwrap();
+        w.active(target);
+        proof(
+            &w,
+            target,
+            2,
+            1,
+            9,
+            ConfigCompleteness::Complete,
+            config("private-model"),
+        );
+        raw(&w)
+            .execute(
+                "UPDATE session_operations SET state=?1,turn_id='private-turn',pending_id='private-question',
+            request_id='private-request',accepted_revision=7,epoch=11,validated_attach=13,validated_config=17,
+            validated_policy=19 WHERE operation_id=?2",
+                params![prior, accepted.operation_id],
+            )
+            .unwrap();
+        let before: (i64, i64) = raw(&w)
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM sessions),
+            (SELECT COUNT(*) FROM session_operations)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        delete_endpoint(&w, target);
+        assert_eq!(
+            stored_operation(&w, &accepted.operation_id),
+            json!({
+                "owner_id":w.store.owner_id(),"caller_id":"parent","operation_key":"old-spawn",
+                "operation_id":accepted.operation_id,"digest":"digest-private","tool":"","child_id":null,
+                "state":"failed","code":"gone","turn_id":null,"pending_id":null,"request_id":null,
+                "accepted_revision":0,"epoch":0,"validated_attach":null,"validated_config":null,"validated_policy":null
+            }),
+            "{prior}"
+        );
+        let gone = receipt(&w, &p, "old-spawn");
+        assert_eq!(gone.operation_id, accepted.operation_id);
+        assert_eq!(gone.child_id, None);
+        assert_eq!(gone.turn_id, None);
+        assert_eq!(gone.pending_id, None);
+        assert_eq!(gone.state, OperationState::Failed { code: "gone".into() });
+        let retry = w
+            .store
+            .queue_spawn(
+                &p,
+                1,
+                "digest-private",
+                &hennery_sessions::delegation_queue::DelegatedLaunch {
+                    key: "old-spawn",
+                    agent: "claude",
+                    cwd: "/project/private",
+                    brief: "private brief",
+                    name: Some("private title"),
+                    config: &config("private-model"),
+                    mcp: McpContext::NONE,
+                },
+            )
+            .unwrap();
+        assert_eq!(retry, gone);
+        assert_eq!(
+            w.store.delegation_retry(&p, 1, "old-spawn", "digest-private").unwrap(),
+            Some(gone)
+        );
+        assert_eq!(
+            w.store
+                .delegation_retry(&p, 1, "old-spawn", "different")
+                .unwrap_err()
+                .to_string(),
+            "operation_conflict"
+        );
+        let after: (i64, i64) = raw(&w)
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM sessions),
+            (SELECT COUNT(*) FROM session_operations)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(after, before);
+        let remaining: (i64, i64, i64) = raw(&w)
+            .query_row(
+                "SELECT
+            (SELECT COUNT(*) FROM session_dispatch_queue WHERE source_id=?1 OR target_id=?1),
+            (SELECT COUNT(*) FROM session_attach_evidence WHERE session_id=?1),
+            (SELECT COUNT(*) FROM session_families WHERE parent_id=?1 OR child_id=?1)",
+                [target],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(remaining, (0, 0, 0));
+        assert_eq!(w.store.find_session("parent").unwrap().unwrap().lifecycle, "active");
+        delete_endpoint(&w, "parent");
+        assert_eq!(
+            raw(&w)
+                .query_row(
+                    "SELECT COUNT(*) FROM session_operations WHERE operation_id=?1",
+                    [&accepted.operation_id],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[test]
+fn deleting_caller_removes_receipts_and_queues_while_child_work_survives() {
+    let (w, p) = pair();
+    ready(&w);
+    let delivered = queue(&w, &p, "delivered");
+    let (h, mut rx) = connected();
+    assert!(w.store.dispatch_delegated("child", &catalog(), &h).unwrap());
+    let (_, turn) = take_prompt(&mut rx);
+    queue(&w, &p, "queued");
+    let unrelated = w.start("unrelated", &w.hat, McpIsolation::ClaudeStrict).unwrap();
+    w.active("unrelated");
+    child(&w, &unrelated, "unrelated-child", &w.hat);
+    let kept = w
+        .store
+        .queue_followup(&unrelated, 1, "kept", "digest", "unrelated-child", "kept private")
+        .unwrap();
+    let kept_row = stored_operation(&w, &kept.operation_id);
+    delete_endpoint(&w, "parent");
+    let child = w.store.find_session("child").unwrap().unwrap();
+    assert_eq!(child.lifecycle, "active");
+    assert_eq!(child.open_turn_id, Some(turn));
+    assert!(!child.close_requested);
+    let remaining: (i64, i64, i64) = raw(&w)
+        .query_row(
+            "SELECT
+        (SELECT COUNT(*) FROM session_operations WHERE caller_id='parent'),
+        (SELECT COUNT(*) FROM session_dispatch_queue WHERE source_id='parent' OR target_id='parent'),
+        (SELECT COUNT(*) FROM session_families WHERE parent_id='parent')",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(remaining, (0, 0, 0));
+    assert_eq!(stored_operation(&w, &kept.operation_id), kept_row);
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT payload FROM session_dispatch_queue WHERE operation_id=?1",
+                [&kept.operation_id],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+        "kept private"
+    );
+    assert!(w.store.delegation_receipt(&p, 1, "delivered").is_err());
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM session_operations WHERE operation_id=?1",
+                [delivered.operation_id],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn only_gone_disposition_allows_retry_without_owned_child_reference() {
+    let (w, p) = pair();
+    let accepted = queue(&w, &p, "opaque");
+    raw(&w)
+        .execute(
+            "UPDATE session_operations SET child_id=NULL WHERE operation_id=?1",
+            [&accepted.operation_id],
+        )
+        .unwrap();
+    for (state, code) in [("queued", "gone"), ("failed", "other")] {
+        raw(&w)
+            .execute(
+                "UPDATE session_operations SET state=?1,code=?2 WHERE operation_id=?3",
+                params![state, code, accepted.operation_id],
+            )
+            .unwrap();
+        assert_eq!(
+            w.store
+                .delegation_retry(&p, 1, "opaque", "opaque")
+                .unwrap_err()
+                .to_string(),
+            "not_found"
+        );
+    }
+    raw(&w)
+        .execute(
+            "UPDATE session_operations SET state='failed',code='gone' WHERE operation_id=?1",
+            [&accepted.operation_id],
+        )
+        .unwrap();
+    let gone = w.store.delegation_retry(&p, 1, "opaque", "opaque").unwrap().unwrap();
+    assert_eq!(gone.child_id, None);
+    assert_eq!(gone.state, OperationState::Failed { code: "gone".into() });
+}
+
+#[test]
+fn deleted_replacement_children_do_not_reset_starts_budget_and_caller_delete_removes_it() {
+    let (w, p) = pair();
+    for i in 0..32 {
+        let accepted = spawn(&w, &p, &format!("deleted-spawn-{i}")).unwrap();
+        delete_endpoint(&w, accepted.child_id.as_deref().unwrap());
+    }
+    assert_eq!(
+        spawn(&w, &p, "33rd-after-delete").unwrap_err().to_string(),
+        "start_budget"
+    );
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT starts FROM delegation_start_budgets WHERE owner_id=?1 AND caller_id='parent' AND epoch=0",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        32
+    );
+    user_turn_with_origin(&w, "parent", 2, "operator", InputOrigin::Operator {});
+    assert!(spawn(&w, &p, "new-operator-epoch").is_ok());
+    let epochs: Vec<(i64, i64)> = {
+        let c = raw(&w);
+        let mut s=c.prepare("SELECT epoch,starts FROM delegation_start_budgets WHERE owner_id=?1 AND caller_id='parent' ORDER BY epoch").unwrap();
+        s.query_map([w.store.owner_id()], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(epochs.len(), 2);
+    assert_eq!(epochs[0], (0, 32));
+    assert!(epochs[1].0 > 0);
+    assert_eq!(epochs[1].1, 1);
+    delete_endpoint(&w, "parent");
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT COUNT(*) FROM delegation_start_budgets WHERE owner_id=?1 AND caller_id='parent'",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn endpoint_deletion_preserves_unrelated_owner_commands_proof_and_budget() {
+    for endpoint in ["parent", "child"] {
+        let (w, p) = pair();
+        ready(&w);
+        queue(&w, &p, "own");
+        spawn(&w, &p, "budget").unwrap();
+        let c = raw(&w);
+        c.execute_batch("INSERT INTO owners(id,created_at,set_up_at) VALUES ('owner-other',9223372036854775807,9223372036854775807);
+        INSERT INTO hats(id,owner_id,name,colour,created_at) VALUES ('hat-other','owner-other','Other','#64748b',1);
+        INSERT INTO hosts(id,owner_id,name,public_key,platform,host_version,default_hat_id,created_at) VALUES ('host-other','owner-other','Fixture','other-key','linux','0','hat-other',1);
+        INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,activity,created_at,last_event_at) VALUES ('parent-other','owner-other','host-other','hat-other','claude','/foreign','active','idle','0','0');
+        INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,activity,created_at,last_event_at) VALUES ('child-other','owner-other','host-other','hat-other','claude','/foreign','starting','idle','0','0');
+        INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,request_id) VALUES ('owner-other','parent-other','foreign-key','foreign-operation','digest','session_send','child-other','queued','foreign-request');
+        INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES ('owner-other','foreign-operation','parent-other','child-other',7,'foreign private brief','{\"model\":\"foreign-model\"}');
+        INSERT INTO session_attach_evidence(owner_id,session_id,attach_generation,config_revision,evidence,requested_config,request_id) VALUES ('owner-other','child-other',7,9,'{\"private\":\"proof\"}','{\"model\":\"foreign-model\"}','foreign-attach');
+        INSERT INTO delegation_start_budgets(owner_id,caller_id,epoch,starts) VALUES ('owner-other','parent-other',0,23);").unwrap();
+        let before = stored_operation(&w, "foreign-operation");
+        delete_endpoint(&w, endpoint);
+        assert_eq!(stored_operation(&w, "foreign-operation"), before);
+        let preserved: (String, String, i64, String, String, i64, i64) = c
+            .query_row(
+                "SELECT q.payload,q.required_config,q.accepted_revision,
+            e.evidence,e.requested_config,e.attach_generation,b.starts FROM session_dispatch_queue q
+            JOIN session_attach_evidence e ON e.owner_id=q.owner_id AND e.session_id=q.target_id
+            JOIN delegation_start_budgets b ON b.owner_id=q.owner_id AND b.caller_id=q.source_id
+            WHERE q.owner_id='owner-other'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            preserved,
+            (
+                "foreign private brief".into(),
+                "{\"model\":\"foreign-model\"}".into(),
+                7,
+                "{\"private\":\"proof\"}".into(),
+                "{\"model\":\"foreign-model\"}".into(),
+                7,
+                23
+            )
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT COUNT(*) FROM delegation_start_budgets WHERE owner_id=?1 AND caller_id='parent'",
+                [w.store.owner_id()],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            i64::from(endpoint == "child")
+        );
+    }
 }
 
 #[test]
