@@ -12,7 +12,7 @@ use hennery_testkit::{FakeAsk, FakeScript, SCRIPT_ENV, sample_config_options};
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -30,6 +30,7 @@ struct Harness {
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     host_task: tokio::task::JoinHandle<anyhow::Result<()>>,
     server_task: tokio::task::JoinHandle<()>,
+    discovery: Arc<Mutex<Vec<Value>>>,
 }
 impl Drop for Harness {
     fn drop(&mut self) {
@@ -81,6 +82,9 @@ async fn eventually<T>(what: &str, mut probe: impl AsyncFnMut() -> Option<T>) ->
 }
 impl Harness {
     async fn new(worker: FakeScript) -> Self {
+        Self::with_worker(worker, None, true).await
+    }
+    async fn with_worker(worker: FakeScript, mut pinned: Option<(AgentCommand, Profile)>, dispatch: bool) -> Self {
         hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().canonicalize().unwrap();
@@ -105,7 +109,30 @@ impl Harness {
             .unwrap();
         let hat = hosts.host(HOST).unwrap().unwrap().default_hat_id;
         let state = AppState::new(Store::open(&db).unwrap(), hosts, Operator::open(&db).unwrap());
-        let client = hennery_testkit::operator_client(&state.operator);
+        let url = format!("http://{addr}");
+        let now = hennery_kernel::secret::unix_now();
+        let setup = state.operator.issue_setup_token(now).unwrap().unwrap();
+        state
+            .operator
+            .set_up(&setup, hennery_testkit::OWNER_PASSWORD, &url, now)
+            .unwrap();
+        let phc = state
+            .operator
+            .verify_password(hennery_testkit::OWNER_PASSWORD)
+            .unwrap()
+            .unwrap();
+        let session = state.operator.open_session("integration", &phc, now).unwrap().unwrap();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::ORIGIN, url.parse().unwrap());
+        headers.insert(
+            reqwest::header::COOKIE,
+            format!("hennery_session={session}").parse().unwrap(),
+        );
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .default_headers(headers)
+            .build()
+            .unwrap();
         let keys = KeySource::from_vars(&cwd, Some("09".repeat(32).into()), None).unwrap();
         let gateway: GatewayState = hennery_gateway::open(
             &db,
@@ -119,8 +146,27 @@ impl Harness {
             .store
             .set_session_mcp(Arc::new(GatewayMcp::for_collector(&gateway)));
         gateway.runtime.store.set_session_tools(&hat, true).unwrap();
-        let router =
-            hennery_sessions::router(state.clone()).merge(hennery_sessions::builtin::router(state.clone(), gateway));
+        let discovery: Arc<Mutex<Vec<Value>>> = Arc::default();
+        let observed = discovery.clone();
+        let builtin = hennery_sessions::builtin::router(state.clone(), gateway).layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let observed = observed.clone();
+                async move {
+                    let (parts, body) = request.into_parts();
+                    let bytes = axum::body::to_bytes(body, hennery_gateway::proxy::MAX_REQUEST_BODY).await.unwrap();
+                    let message: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+                    let response = next.run(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes))).await;
+                    if matches!(message["method"].as_str(), Some("initialize" | "tools/list")) {
+                        let (parts, body) = response.into_parts();
+                        let bytes = axum::body::to_bytes(body, 1024*1024).await.unwrap();
+                        let answer: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+                        observed.lock().unwrap().push(json!({"method":message["method"],"status":parts.status.as_u16(),"tool_count":answer["result"]["tools"].as_array().map(Vec::len)}));
+                        axum::response::Response::from_parts(parts, axum::body::Body::from(bytes))
+                    } else { response }
+                }
+            }
+        ));
+        let router = hennery_sessions::router(state.clone()).merge(builtin);
         let server_task = tokio::spawn(async move {
             axum::serve(
                 listener,
@@ -129,20 +175,28 @@ impl Harness {
             .await
             .unwrap();
         });
-        hennery_sessions::delegation_worker::after_startup(&state);
+        if dispatch {
+            hennery_sessions::delegation_worker::after_startup(&state);
+        }
         let mut cfg = HostConfig::new(format!("ws://{addr}/api/hosts/ws"), HOST, key, cwd.join("host-data"));
         cfg.workspace_roots = vec![cwd.clone()];
         cfg.git = None;
         for (runtime, s) in [("claude", script()), ("worker", worker)] {
-            cfg.agents.insert(runtime.into(), fake(&cwd, runtime, s));
-            cfg.profiles.insert(runtime.into(), Profile::Claude);
+            let (command, profile) = if runtime == "worker" {
+                pinned
+                    .take()
+                    .unwrap_or_else(|| (fake(&cwd, runtime, s), Profile::Claude))
+            } else {
+                (fake(&cwd, runtime, s), Profile::Claude)
+            };
+            cfg.agents.insert(runtime.into(), command);
+            cfg.profiles.insert(runtime.into(), profile);
         }
         let (shutdown, signal) = tokio::sync::oneshot::channel();
         let host_task = tokio::spawn(hennery_host::run_until(cfg, async {
             let _ = signal.await;
         }));
         eventually("ready host", async || state.hub.is_ready(HOST).then_some(())).await;
-        let url = format!("http://{addr}");
         let response = client
             .post(format!("{url}/api/sessions"))
             .json(&json!({"host_id":HOST,"agent":"claude","cwd":cwd}))
@@ -183,6 +237,7 @@ impl Harness {
             shutdown: Some(shutdown),
             host_task,
             server_task,
+            discovery,
         }
     }
     async fn rpc(&self, method: &str, params: Value) -> Value {
@@ -334,6 +389,28 @@ async fn direct_children_only_and_close_does_not_cascade_or_reopen() {
     let b = h.spawn("b", json!({})).await;
     let b = b["child_id"].as_str().unwrap();
     h.done(b, "b").await;
+    let (http, independent) = h
+        .post("/api/sessions", json!({"host_id":HOST,"agent":"claude","cwd":h.cwd}))
+        .await;
+    assert_eq!(http, reqwest::StatusCode::ACCEPTED);
+    let independent = independent["session_id"].as_str().unwrap();
+    let hidden = h.call("session_status", json!({"child_id":independent})).await;
+    assert_eq!(hidden["structuredContent"]["code"], "not_found");
+    let log = std::fs::read_to_string(h.cwd.join("worker-sessions.jsonl")).unwrap();
+    let child_token = log
+        .lines()
+        .rev()
+        .find_map(|line| {
+            let line: Value = serde_json::from_str(line).unwrap();
+            line["params"]["mcpServers"][0]["headers"][0]["value"]
+                .as_str()
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(str::to_owned)
+        })
+        .unwrap();
+    let nested=h.raw.post(format!("{}/mcp/builtin/hennery",h.url)).bearer_auth(child_token).header("accept","application/json")
+        .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_spawn","arguments":{"operation_key":"grandchild","cwd":h.cwd,"brief":"never nest","config":{}}}})).send().await.unwrap().json::<Value>().await.unwrap();
+    assert_eq!(nested["result"]["structuredContent"]["code"], "generation_limit");
     let unrelated = h.call("session_status", json!({"child_id":h.parent})).await;
     assert_eq!(unrelated["structuredContent"]["code"], "not_found");
     let close = h
@@ -520,5 +597,126 @@ async fn permission_questions_remain_operator_only_and_elicitation_has_one_answe
     })
     .await;
     h.done(child, "questions").await;
+    h.finish().await;
+}
+
+/// Local acceptance only: adapters are supplied explicitly, never installed by
+/// the test. The dispatch worker is disabled and drained exactly once to attach
+/// the accepted child; its saved brief is never submitted to the adapter.
+#[tokio::test]
+#[ignore = "requires explicitly supplied pinned adapter; starts no provider turn"]
+async fn pinned_adapter_discovers_seven_tools_and_attaches_one_child_without_inference() {
+    let adapters = PathBuf::from(std::env::var("HENNERY_D2_PINNED_ADAPTER_ROOT").expect("pinned adapter root"));
+    let runtime = std::env::var("HENNERY_D2_RUNTIME").unwrap_or_else(|_| "claude".into());
+    assert!(matches!(runtime.as_str(), "claude" | "codex"));
+    let node = std::env::var("HENNERY_D2_NODE").unwrap_or_else(|_| {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|dir| dir.join("node"))
+            .find(|file| file.is_file())
+            .expect("node in dev shell")
+            .display()
+            .to_string()
+    });
+    hennery_testkit::first_exec(&node);
+    let home = tempfile::tempdir().unwrap();
+    for leaf in ["config", "data", "cache", "claude", "codex", "codex-sqlite"] {
+        std::fs::create_dir(home.path().join(leaf)).unwrap();
+    }
+    let entry = if runtime == "codex" {
+        "@agentclientprotocol/codex-acp/dist/index.js"
+    } else {
+        "@agentclientprotocol/claude-agent-acp/dist/index.js"
+    };
+    let command = AgentCommand {
+        program: node,
+        args: vec![adapters.join(entry).display().to_string()],
+        env: vec![
+            ("HOME".into(), home.path().display().to_string()),
+            (
+                "XDG_CONFIG_HOME".into(),
+                home.path().join("config").display().to_string(),
+            ),
+            ("XDG_DATA_HOME".into(), home.path().join("data").display().to_string()),
+            ("XDG_CACHE_HOME".into(), home.path().join("cache").display().to_string()),
+            (
+                "CLAUDE_CONFIG_DIR".into(),
+                home.path().join("claude").display().to_string(),
+            ),
+            ("CODEX_HOME".into(), home.path().join("codex").display().to_string()),
+            (
+                "CODEX_SQLITE_HOME".into(),
+                home.path().join("codex-sqlite").display().to_string(),
+            ),
+            ("SSL_CERT_FILE".into(), String::new()),
+            ("SSL_CERT_DIR".into(), String::new()),
+            ("CLAUDECODE".into(), String::new()),
+        ],
+    };
+    let mut command = command;
+    let profile = if runtime == "codex" {
+        std::fs::write(
+            home.path().join("codex/auth.json"),
+            serde_json::to_vec(&json!({"OPENAI_API_KEY":"sk-hennery-discovery-fixture"})).unwrap(),
+        )
+        .unwrap();
+        let binary = adapters.join(
+            ".pnpm/@openai+codex@0.155.1-darwin-arm64/node_modules/@openai/codex/vendor/aarch64-apple-darwin/bin/codex",
+        );
+        hennery_testkit::first_exec(binary.to_str().unwrap());
+        command.env.push(("CODEX_PATH".into(), binary.display().to_string()));
+        command
+            .env
+            .push(("OPENAI_API_KEY".into(), "sk-hennery-discovery-fixture".into()));
+        Profile::Codex
+    } else {
+        Profile::Claude
+    };
+    let h = Harness::with_worker(script(), Some((command, profile)), false).await;
+    let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
+    assert_eq!(caps["catalogs"][0]["freshness"], "fresh");
+    let config = if runtime == "codex" {
+        json!({"mode":"read-only"})
+    } else {
+        json!({})
+    };
+    let receipt = h.spawn("pinned-startup", config).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    // This pass sends only DelegatedAttach. With no periodic worker running,
+    // no pass can dispatch the brief after SessionStarted/config evidence.
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    eventually("pinned child active after startup only", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.lifecycle == "active")
+            .map(|_| ())
+    })
+    .await;
+    let trace = eventually("pinned MCP seven-tool discovery", async || {
+        let trace = h.discovery.lock().unwrap().clone();
+        trace
+            .iter()
+            .any(|t| t["method"] == "tools/list" && t["status"] == 200 && t["tool_count"] == 7)
+            .then_some(trace)
+    })
+    .await;
+    assert!(trace.iter().any(|t| t["method"] == "initialize" && t["status"] == 200));
+    assert!(
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .unwrap()
+            .open_turn_id
+            .is_none()
+    );
+    let status = h.status(child).await;
+    assert!(status["last_outcome"].is_null());
+    assert!(status["last_report"].is_null());
+    println!(
+        "{}",
+        json!({"runtime":runtime,"child_attached":true,"brief_dispatched":false,"catalog_freshness":caps["catalogs"][0]["freshness"],"mcp":trace})
+    );
     h.finish().await;
 }
