@@ -56,7 +56,7 @@ fn state(value: &str, code: Option<String>) -> OperationState {
 fn receipt_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OperationReceipt> {
     Ok(OperationReceipt {
         operation_id: r.get(0)?,
-        child_id: Some(r.get(1)?),
+        child_id: r.get(1)?,
         turn_id: r.get(2)?,
         pending_id: r.get(3)?,
         state: state(&r.get::<_, String>(4)?, r.get(5)?),
@@ -124,10 +124,14 @@ impl Store {
             ensure!(stored == digest, "operation_conflict");
             let receipt = self.receipt_in(tx, caller.session_id(), key)?;
             if let Some(receipt) = &receipt {
-                ensure!(
-                    self.owned_child_in(tx, caller, receipt.child_id.as_deref().unwrap_or(""), true)?,
-                    "not_found"
-                );
+                if let Some(child) = receipt.child_id.as_deref() {
+                    ensure!(self.owned_child_in(tx, caller, child, true)?, "not_found");
+                } else {
+                    ensure!(
+                        matches!(&receipt.state, OperationState::Failed { code } if code == "gone"),
+                        "not_found"
+                    );
+                }
             }
             Ok(receipt)
         } else {
@@ -298,8 +302,12 @@ impl Store {
         ensure!(live < MAX_CHILDREN, "child_limit");
         let epoch:i64=tx.query_row("SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1 AND session_id = ?2
             AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'",params![self.owner_id(),caller.session_id()],|r|r.get(0))?;
-        let starts:i64=tx.query_row("SELECT COUNT(*) FROM session_operations WHERE owner_id = ?1 AND caller_id = ?2 AND tool = 'session_spawn' AND epoch = ?3",params![self.owner_id(),caller.session_id(),epoch],|r|r.get(0))?;
+        let starts:i64=tx.query_row("SELECT COALESCE((SELECT starts FROM delegation_start_budgets
+            WHERE owner_id = ?1 AND caller_id = ?2 AND epoch = ?3),0)",params![self.owner_id(),caller.session_id(),epoch],|r|r.get(0))?;
         ensure!(starts < MAX_STARTS, "start_budget");
+        tx.execute("INSERT INTO delegation_start_budgets(owner_id,caller_id,epoch,starts) VALUES (?1,?2,?3,1)
+            ON CONFLICT(owner_id,caller_id,epoch) DO UPDATE SET starts = starts + 1
+            WHERE delegation_start_budgets.owner_id = ?1",params![self.owner_id(),caller.session_id(),epoch])?;
         let child = uuid();
         let ts = now();
         tx.execute(

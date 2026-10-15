@@ -9,13 +9,18 @@ BEGIN SELECT RAISE(ABORT,'immutable delegated identity'); END;
 CREATE TABLE session_operations (
     owner_id TEXT NOT NULL, caller_id TEXT NOT NULL, operation_key TEXT NOT NULL,
     operation_id TEXT NOT NULL, digest TEXT NOT NULL, tool TEXT NOT NULL,
-    child_id TEXT NOT NULL, state TEXT NOT NULL, code TEXT,
+    child_id TEXT, state TEXT NOT NULL, code TEXT,
     turn_id TEXT, pending_id TEXT, request_id TEXT, accepted_revision INTEGER NOT NULL DEFAULT 0,
     epoch INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(owner_id, caller_id, operation_key), UNIQUE(owner_id, operation_id),
     FOREIGN KEY(caller_id, owner_id) REFERENCES sessions(id, owner_id),
     FOREIGN KEY(child_id, owner_id) REFERENCES sessions(id, owner_id));
 CREATE INDEX delegation_operations_child ON session_operations(owner_id, child_id);
+CREATE TABLE delegation_start_budgets (
+    owner_id TEXT NOT NULL, caller_id TEXT NOT NULL, epoch INTEGER NOT NULL,
+    starts INTEGER NOT NULL DEFAULT 0 CHECK(starts >= 0),
+    PRIMARY KEY(owner_id,caller_id,epoch),
+    FOREIGN KEY(caller_id,owner_id) REFERENCES sessions(id,owner_id));
 CREATE TABLE session_dispatch_queue (
     position INTEGER PRIMARY KEY AUTOINCREMENT, owner_id TEXT NOT NULL,
     operation_id TEXT NOT NULL, source_id TEXT NOT NULL, target_id TEXT NOT NULL,
@@ -52,8 +57,16 @@ BEGIN
       AND state IN ('queued','waiting_config');
     UPDATE session_attach_evidence SET evidence = NULL
     WHERE owner_id = NEW.owner_id AND session_id = NEW.id;
-    UPDATE session_dispatch_queue SET payload = '', required_config = '{}'
+    DELETE FROM session_dispatch_queue
     WHERE owner_id = NEW.owner_id AND (source_id = NEW.id OR target_id = NEW.id) AND NEW.lifecycle = 'deleted';
+    DELETE FROM session_operations
+    WHERE owner_id = NEW.owner_id AND caller_id = NEW.id AND NEW.lifecycle = 'deleted';
+    UPDATE session_operations SET child_id = NULL, tool = '', state = 'failed', code = 'gone',
+        turn_id = NULL, pending_id = NULL, request_id = NULL, accepted_revision = 0, epoch = 0,
+        validated_attach = NULL, validated_config = NULL, validated_policy = NULL
+    WHERE owner_id = NEW.owner_id AND child_id = NEW.id AND NEW.lifecycle = 'deleted';
+    DELETE FROM delegation_start_budgets
+    WHERE owner_id = NEW.owner_id AND caller_id = NEW.id AND NEW.lifecycle = 'deleted';
     DELETE FROM session_attach_evidence WHERE owner_id = NEW.owner_id AND session_id = NEW.id AND NEW.lifecycle = 'deleted';
 END;
 CREATE TRIGGER delegation_family_end AFTER UPDATE OF detached ON session_families
