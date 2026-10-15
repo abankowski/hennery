@@ -16,8 +16,10 @@ pub enum Profile {
     /// sent, but an override is unverified (ACP core §6), so the host
     /// reports no isolation.
     ClaudeOwnCli,
-    /// Anything else: a `--agent` command, and Codex until its composed
-    /// `CODEX_HOME` (plan 8h). No `_meta`, no isolation.
+    /// Pinned Codex adapter. Execution modes are known; MCP isolation is not.
+    Codex,
+    /// Anything else, including an arbitrary `--agent` command. No `_meta`,
+    /// no verified security profile and no MCP isolation.
     #[default]
     Generic,
 }
@@ -29,6 +31,7 @@ impl Profile {
         match (name, own_cli) {
             ("claude", false) => Self::Claude,
             ("claude", true) => Self::ClaudeOwnCli,
+            ("codex", false) => Self::Codex,
             _ => Self::Generic,
         }
     }
@@ -37,7 +40,7 @@ impl Profile {
     pub fn mcp_isolation(self) -> McpIsolation {
         match self {
             Self::Claude => McpIsolation::ClaudeStrict,
-            Self::ClaudeOwnCli | Self::Generic => McpIsolation::None,
+            Self::ClaudeOwnCli | Self::Codex | Self::Generic => McpIsolation::None,
         }
     }
 
@@ -57,7 +60,7 @@ impl Profile {
                 );
                 Some(meta)
             }
-            Self::Generic => None,
+            Self::Codex | Self::Generic => None,
         }
     }
 }
@@ -250,7 +253,7 @@ mod tests {
     fn only_the_pinned_claude_with_its_own_cli_is_isolated() {
         assert_eq!(Profile::of_installed("claude", false), Profile::Claude);
         assert_eq!(Profile::of_installed("claude", true), Profile::ClaudeOwnCli);
-        assert_eq!(Profile::of_installed("codex", false), Profile::Generic);
+        assert_eq!(Profile::of_installed("codex", false), Profile::Codex);
         assert_eq!(Profile::Claude.mcp_isolation(), McpIsolation::ClaudeStrict);
         assert_eq!(Profile::ClaudeOwnCli.mcp_isolation(), McpIsolation::None);
         assert_eq!(Profile::Generic.mcp_isolation(), McpIsolation::None);
