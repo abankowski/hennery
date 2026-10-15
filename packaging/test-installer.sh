@@ -1,7 +1,8 @@
 #!/bin/sh
 # The hardened shell installer (distribution spec §2, §9), run against the
 # archives of this build, served from a directory (`file://`):
-#   - each archive of the build is offered, with its SHA-256 embedded;
+#   - each executable archive is offered, with its SHA-256 embedded;
+#     application and third-party source bundles are separate release assets;
 #   - it installs a binary that runs, with `sha256sum` or with `shasum`;
 #   - a checksum mismatch aborts, and installs nothing;
 #   - no SHA-256 tool, an empty checksum, no checksum at all, or a checksum
@@ -32,6 +33,7 @@ arms=$(sed -n 's/^[[:space:]]*"\(hennery-.*\.tar\.xz\)")$/\1/p' "$installer")
 [ -n "$arms" ] || fail "the installer offers no archive"
 count=0
 for archive in $arms; do
+    [ -f "$dist/$archive" ] || fail "the installer offers $archive, and this build has no $archive"
     sum="$dist/$archive.sha256"
     [ -f "$sum" ] || fail "the installer offers $archive, and this build has no $archive.sha256"
     want=$(cut -d ' ' -f 1 "$sum")
@@ -49,6 +51,13 @@ for archive in $arms; do
 done
 built=0
 for archive in "$dist"/*.tar.xz; do
+    [ -f "$archive" ] || continue
+    case "${archive##*/}" in
+        hennery-*-unknown-linux-musl.tar.xz | hennery-*-apple-darwin.tar.xz) ;;
+        *) continue ;;
+    esac
+    printf '%s\n' "$arms" | grep -Fxq "${archive##*/}" ||
+        fail "the installer does not offer ${archive##*/}"
     built=$((built + 1))
 done
 [ "$count" = "$built" ] || fail "the installer offers $count archives, this build made $built"

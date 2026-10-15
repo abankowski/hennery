@@ -32,6 +32,14 @@ def make(pristine, output):
         gate.require(text.count(anchor) == 1, 'cargo-dist archive arm changed')
         text = text.replace(anchor, anchor + '\n            _checksum_style="sha256"\n            _checksum_value="' + sha + '"')
     (output / 'hennery-installer.sh').write_text(text)
+    # A retained candidate also carries application and dependency sources.
+    # These are genuine tarballs, but the installer must never offer them.
+    for name in ['hennery-source', *[target + '-third-party-source' for target in sorted(gate.TARGETS)]]:
+        with tarfile.open(output / (name + '.tar.xz'), 'w:xz') as tar:
+            data = b'source fixture\n'
+            entry = tarfile.TarInfo(name + '/README.md')
+            entry.size = len(data)
+            tar.addfile(entry, io.BytesIO(data))
 
 
 if __name__ == '__main__':
