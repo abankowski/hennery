@@ -720,3 +720,73 @@ async fn pinned_adapter_discovers_seven_tools_and_attaches_one_child_without_inf
     );
     h.finish().await;
 }
+
+// Probe adapters receive no MCP entries; attached children receive the built-in
+// entry. This wrapper removes only the disposable probe's catalog response,
+// leaving the real fake ACP process and attached-child readback unchanged.
+const COLD_CATALOG_ADAPTER: &str = r#"
+const {spawn}=require('node:child_process');
+const readline=require('node:readline');
+const child=spawn(process.argv[2],[],{env:process.env,stdio:['pipe','pipe','inherit']});
+const probes=new Set();
+readline.createInterface({input:process.stdin}).on('line',line=>{
+ const request=JSON.parse(line);
+ if(request.method==='session/new' && request.params.mcpServers.length===0)probes.add(JSON.stringify(request.id));
+ child.stdin.write(line+'\n');
+}).on('close',()=>child.stdin.end());
+readline.createInterface({input:child.stdout}).on('line',line=>{
+ const response=JSON.parse(line);
+ if(probes.has(JSON.stringify(response.id)) && response.result)response.result.configOptions=[];
+ process.stdout.write(JSON.stringify(response)+'\n');
+});
+child.on('exit',code=>process.exit(code??1));
+"#;
+
+#[tokio::test]
+async fn unavailable_prestart_catalog_validates_explicit_model_against_new_child_before_brief() {
+    for clamped in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let wrapper = root.path().join("cold-catalog.cjs");
+        std::fs::write(&wrapper, COLD_CATALOG_ADAPTER).unwrap();
+        let node = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|p| p.join("node"))
+            .find(|p| p.is_file())
+            .unwrap();
+        hennery_testkit::first_exec(node.to_str().unwrap());
+        let mut s = script();
+        if clamped {
+            s.sticky_options = vec!["model".into()];
+        }
+        let mut command = fake(root.path(), "cold", s);
+        command.args = vec![wrapper.display().to_string(), command.program];
+        command.program = node.display().to_string();
+        let h = Harness::with_worker(script(), Some((command, Profile::Claude)), true).await;
+        let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
+        assert_eq!(caps["catalogs"][0]["freshness"], "unknown");
+        assert!(caps["catalogs"][0]["defaults"].get("model").is_none());
+        let receipt = h.spawn("cold-explicit", json!({"model":"large"})).await;
+        let child = receipt["child_id"].as_str().unwrap();
+        if clamped {
+            eventually("cold catalog mismatch held", async || {
+                let s = h.status(child).await;
+                (s["actual"]["model"] == "small" && s["operations"][0]["state"]["state"] == "waiting_config")
+                    .then_some(())
+            })
+            .await;
+            assert!(
+                h.state
+                    .store
+                    .find_session(child)
+                    .unwrap()
+                    .unwrap()
+                    .open_turn_id
+                    .is_none()
+            );
+            assert!(h.status(child).await["last_outcome"].is_null());
+        } else {
+            h.done(child, "cold-explicit").await;
+            assert_eq!(h.status(child).await["actual"]["model"], "large");
+        }
+        h.finish().await;
+    }
+}
