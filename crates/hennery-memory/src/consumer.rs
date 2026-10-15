@@ -52,6 +52,7 @@ impl Drop for FeedConfig {
         self.activity_token.zeroize();
     }
 }
+pub const BACKLOG_DELAY: Duration = Duration::from_millis(2200);
 pub struct Consumer {
     egress: Egress,
     http: reqwest::Client,
@@ -68,7 +69,7 @@ impl Consumer {
     }
     pub async fn poll(&self, store: &Store, key: &MasterKey, id: &str) -> Result<bool> {
         let job = store.job(key, id)?;
-        let result = tokio::time::timeout(Duration::from_secs(30), self.run(store, &job)).await;
+        let result = tokio::time::timeout(Duration::from_secs(20 * 60), self.run(store, &job)).await;
         match result {
             Ok(Ok(more)) => Ok(more),
             _ => {
@@ -82,7 +83,7 @@ impl Consumer {
         url.set_path(path);
         if !post {
             let mut q = url.query_pairs_mut();
-            q.append_pair("limit", "20");
+            q.append_pair("limit", if path == "/api/plugins/inventory" { "500" } else { "20" });
             if let Some(c) = after {
                 q.append_pair("after", c);
             }
@@ -166,21 +167,28 @@ impl Consumer {
                 if e.to_string() != "reset required" {
                     return Err(e);
                 }
+                store.failed(job, true);
                 let mut after = None;
-                let mut pages = 0;
+                let known = store.known_sources(job)?;
+                let mut latest_start;
                 let mut ids = std::collections::BTreeSet::new();
                 let mut marker = None;
                 let mut resume = None;
                 loop {
-                    pages += 1;
-                    ensure!(pages <= 512, "inventory page limit");
+                    if after.is_some() {
+                        tokio::time::sleep(Duration::from_millis(1100)).await;
+                    }
+                    store.ensure_current(job)?;
+                    let page_start = Instant::now();
+                    let page_began = unix_now();
                     let bytes = self
                         .request(job, "/api/plugins/inventory", after.as_deref(), false)
                         .await?;
+                    store.ensure_current(job)?;
                     let page: PluginSourceInventoryPage = serde_json::from_slice(&bytes)?;
                     ensure!(
                         page.version == 1
-                            && page.source_ids.len() <= 20
+                            && page.source_ids.len() <= 500
                             && page.watermark.len() <= 2048
                             && page.resume_cursor.len() <= 2048,
                         "invalid inventory"
@@ -193,12 +201,16 @@ impl Consumer {
                     }
                     marker = Some(page.watermark);
                     resume = Some(page.resume_cursor);
-                    until = until.min(page.lease_until);
+                    until = page.lease_until.min(page_began.saturating_add(60));
+                    check_lease(page_start, until)?;
+                    latest_start = page_start;
                     for id in page.source_ids {
                         ensure!(!id.is_empty() && id.len() <= 256, "invalid source");
-                        ids.insert(id);
+                        if known.contains(&id) {
+                            ids.insert(id);
+                        }
                     }
-                    ensure!(ids.len() <= 10000, "inventory too large");
+
                     let Some(next) = page.next_cursor else {
                         break;
                     };
@@ -208,7 +220,7 @@ impl Consumer {
                     );
                     after = Some(next);
                 }
-                store.inventory(job, ids, resume.context("missing inventory")?, start, until)?;
+                store.inventory(job, ids, resume.context("missing inventory")?, latest_start, until)?;
                 Ok(false)
             }
         }
@@ -466,6 +478,19 @@ impl Store {
         inner.stale.insert(job.id.clone());
         checkpoint(&inner)?;
         inner.lease(job, start, until)
+    }
+    fn ensure_current(&self, job: &Job) -> Result<()> {
+        self.inner.lock().expect("store").live(job)
+    }
+    fn known_sources(&self, job: &Job) -> Result<std::collections::BTreeSet<String>> {
+        let inner = self.inner.lock().expect("store");
+        inner.live(job)?;
+        let mut stmt = inner.db.prepare("SELECT session FROM sources WHERE namespace=?1")?;
+        let ids = stmt
+            .query_map([&job.id], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<std::collections::BTreeSet<_>>>()?;
+        ensure!(ids.len() <= 10000, "local source budget exceeded");
+        Ok(ids)
     }
     fn inventory(
         &self,
@@ -771,6 +796,7 @@ fn validate(item: &PluginActivityItem, epoch: &str) -> Result<()> {
             ensure!(source_refs.contains(source), "invalid provenance");
             match origin {
                 InputOrigin::Operator {} => {}
+                InputOrigin::PluginContext { .. } => anyhow::bail!("injected context is not source material"),
                 InputOrigin::Parent {
                     session_id,
                     operation_id,
@@ -919,11 +945,7 @@ pub async fn worker(store: Arc<Store>, key: Arc<MasterKey>) {
                             let delay = match consumer.poll(&store, &key, &id).await {
                                 Ok(more) => {
                                     backoff = 1;
-                                    if more {
-                                        Duration::from_millis(100)
-                                    } else {
-                                        Duration::from_secs(15)
-                                    }
+                                    if more { BACKLOG_DELAY } else { Duration::from_secs(15) }
                                 }
                                 Err(_) => {
                                     let delay = Duration::from_secs(backoff);

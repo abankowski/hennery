@@ -156,5 +156,5 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
             }
         }
     }
-    assert_eq!(count, [8, 43], "new statements need explicit audit coverage");
+    assert_eq!(count, [8, 44], "new statements need explicit audit coverage");
 }

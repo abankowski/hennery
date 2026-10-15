@@ -144,3 +144,13 @@ fn escaped_entry_cannot_return_an_empty_nonadvancing_page() {
             < 16384
     );
 }
+#[test]
+fn foreign_corpus_never_turns_unmatched_own_entry_into_candidate() {
+    let d = tempfile::tempdir().unwrap();
+    let s = Store::open(&d.path().join("memory.db")).unwrap();
+    let a = s.create("owner-a", "hat-a").unwrap();
+    let b = s.create("owner-b", "hat-b").unwrap();
+    s.remember(&a.tool, memory("a", "orange")).unwrap();
+    s.remember(&b.tool, memory("b", "kiwi")).unwrap();
+    assert!(s.search(&a.tool, &Query::search("kiwi")).unwrap().entries.is_empty());
+}

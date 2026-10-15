@@ -20,6 +20,9 @@ use std::{
     time::Duration,
 };
 struct Remote {
+    inventory_reads: std::sync::atomic::AtomicUsize,
+    inventory_delay_ms: std::sync::atomic::AtomicU64,
+    lease_starts: Mutex<Vec<std::time::Instant>>,
     expected_token: Mutex<String>,
     page: Mutex<Value>,
     inventory: Mutex<Vec<Value>>,
@@ -32,6 +35,7 @@ struct Remote {
 }
 async fn lease(State(r): State<Arc<Remote>>, headers: axum::http::HeaderMap) -> Response {
     check_headers(&r, &headers);
+    r.lease_starts.lock().unwrap().push(std::time::Instant::now());
     if r.status.load(Ordering::SeqCst) == 404 {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -60,9 +64,22 @@ async fn inventory(
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Json<Value> {
     check_headers(&r, &headers);
-    assert_eq!(query.get("limit").map(String::as_str), Some("20"));
-    let index = if query.contains_key("after") { 1 } else { 0 };
-    Json(r.inventory.lock().unwrap()[index].clone())
+    assert_eq!(query.get("limit").map(String::as_str), Some("500"));
+    r.inventory_reads.fetch_add(1, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(r.inventory_delay_ms.load(Ordering::SeqCst))).await;
+    let index = query
+        .get("after")
+        .map(|v| {
+            v.strip_prefix("inventory:")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1)
+        })
+        .unwrap_or(0);
+    let mut value = r.inventory.lock().unwrap()[index].clone();
+    if value.get("version").is_some() {
+        value["lease_until"] = json!(unix_now() + r.lease);
+    }
+    Json(value)
 }
 struct World {
     dir: tempfile::TempDir,
@@ -86,6 +103,9 @@ impl World {
         let key = Arc::new(MasterKey::from_bytes([9; 32]));
         let epoch = "a".repeat(64);
         let remote = Arc::new(Remote {
+            inventory_reads: Default::default(),
+            inventory_delay_ms: Default::default(),
+            lease_starts: Default::default(),
             expected_token: Mutex::new(format!("Bearer hnry_activity_{}", "b".repeat(64))),
             page: Mutex::new(page(vec![], "start")),
             inventory: Mutex::new(vec![]),
@@ -706,4 +726,168 @@ async fn multi_turn_briefs_preserve_each_observation_date() {
     let value = w.s.brief(&w.c.tool, "quotation", None).unwrap();
     let text = value["text"].as_str().unwrap();
     assert!(text.contains("2026-10-15T10:00:00Z") && text.contains("2026-10-16T10:00:00Z"));
+}
+#[tokio::test]
+async fn three_large_pairs_share_one_eight_kibibyte_digest_without_losing_roles_or_evidence() {
+    let w = World::new(60).await;
+    w.set(
+        (0..3)
+            .map(|i| turn("large-pairs", &format!("pair-{i}"), &"x".repeat(8000), op()))
+            .collect(),
+        "large",
+    );
+    w.poll().await.unwrap();
+    let data: String = w
+        .raw()
+        .query_row("SELECT data FROM entries WHERE namespace=?1", [&w.c.namespace], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let note: hennery_memory::store::Entry = serde_json::from_str(&data).unwrap();
+    assert!(note.body.len() <= 8192 && note.truncated);
+    assert_eq!(note.turns.len(), 3);
+    assert_eq!(note.provenance.len(), 3);
+    for turn in note.turns {
+        assert_eq!(turn.excerpts.len(), 2);
+        assert_eq!(turn.excerpts[0].role, hennery_proto::plugin::TextRole::User);
+        assert_eq!(turn.excerpts[1].role, hennery_proto::plugin::TextRole::Assistant);
+        assert!(!turn.source_refs.is_empty());
+    }
+}
+#[tokio::test]
+async fn ten_thousand_source_reset_uses_twenty_bounded_id_pages() {
+    let w = World::new(60).await;
+    w.set(
+        vec![
+            turn("source-09999", "last", "kept-scale-marker", op()),
+            turn("gone", "gone", "removed-scale-marker", op()),
+        ],
+        "before",
+    );
+    w.poll().await.unwrap();
+    w.remote.status.store(409, Ordering::SeqCst);
+    let pages=(0..20).map(|page|json!({"version":1,"source_ids":(page*500..(page+1)*500).map(|i|format!("source-{i:05}")).collect::<Vec<_>>(),"next_cursor":if page==19{None}else{Some(format!("inventory:{}",page+1))},"resume_cursor":"scaled","watermark":"scaled","lease_until":unix_now()+60})).collect();
+    *w.remote.inventory.lock().unwrap() = pages;
+    let began = w.remote.inventory_reads.load(Ordering::SeqCst);
+    w.poll().await.unwrap();
+    assert_eq!(w.remote.inventory_reads.load(Ordering::SeqCst) - began, 20);
+    assert_eq!(w.cursor().as_deref(), Some("scaled"));
+    let notes = w.s.recent(&w.c.tool, &Query::default()).unwrap();
+    assert_eq!(notes.entries.len(), 1);
+    assert!(notes.entries[0].body.contains("kept-scale-marker"));
+    assert!(notes.stale);
+}
+#[tokio::test]
+async fn reset_uses_the_latest_page_lease_and_expiry_never_applies_partial_deletes() {
+    let w = World::new(3).await;
+    w.set(vec![turn("kept", "e", "retained-during-reset", op())], "before");
+    w.poll().await.unwrap();
+    w.remote.status.store(409, Ordering::SeqCst);
+    w.remote.inventory_delay_ms.store(1500, Ordering::SeqCst);
+    *w.remote.inventory.lock().unwrap()=(0..3).map(|i|json!({"version":1,"source_ids":["kept"],"next_cursor":if i==2{None}else{Some(format!("inventory:{}",i+1))},"resume_cursor":"fresh","watermark":"fresh","lease_until":unix_now()+60})).collect();
+    w.poll().await.unwrap();
+    assert_eq!(w.cursor().as_deref(), Some("fresh"));
+    assert_eq!(w.s.recent(&w.c.tool, &Query::default()).unwrap().entries.len(), 1);
+    w.remote.inventory_delay_ms.store(0, Ordering::SeqCst);
+    *w.remote.inventory.lock().unwrap() = vec![
+        json!({"version":1,"source_ids":[],"next_cursor":"inventory:1","resume_cursor":"expired","watermark":"expired","lease_until":unix_now()+60}),
+        json!({"code":"reset_required"}),
+    ];
+    assert!(w.poll().await.is_err());
+    assert_eq!(w.cursor().as_deref(), Some("fresh"));
+    assert_eq!(
+        w.raw()
+            .query_row("SELECT count(*) FROM entries", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    *w.remote.inventory.lock().unwrap() = vec![
+        json!({"version":1,"source_ids":["kept"],"next_cursor":null,"resume_cursor":"restarted","watermark":"restarted","lease_until":unix_now()+60}),
+    ];
+    w.poll().await.unwrap();
+    assert_eq!(w.cursor().as_deref(), Some("restarted"));
+}
+#[tokio::test]
+async fn backlog_pacing_respects_the_registration_request_budget() {
+    let w = World::new(60).await;
+    let mut value = page(vec![], "more");
+    value["has_more"] = json!(true);
+    *w.remote.page.lock().unwrap() = value;
+    let worker = tokio::spawn(hennery_memory::consumer::worker(w.s.clone(), w.key.clone()));
+    tokio::time::timeout(Duration::from_secs(14), async {
+        loop {
+            if w.remote.lease_starts.lock().unwrap().len() >= 4 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("four successful backlog polls");
+    worker.abort();
+    let _ = worker.await;
+    let starts = w.remote.lease_starts.lock().unwrap().clone();
+    for pair in starts.windows(2).take(3) {
+        assert!(
+            pair[1].duration_since(pair[0]) >= Duration::from_millis(2100),
+            "two-request polls must leave room in the sixty-request minute budget"
+        );
+    }
+}
+#[tokio::test]
+async fn reset_denies_reads_while_inventory_is_unfinished() {
+    let w = World::new(60).await;
+    w.set(vec![turn("kept", "e", "held-inventory-marker", op())], "before");
+    w.poll().await.unwrap();
+    w.remote.status.store(409, Ordering::SeqCst);
+    w.remote.inventory_delay_ms.store(1500, Ordering::SeqCst);
+    *w.remote.inventory.lock().unwrap() = vec![
+        json!({"version":1,"source_ids":["kept"],"next_cursor":null,"resume_cursor":"done","watermark":"done","lease_until":unix_now()+60}),
+    ];
+    let s = w.s.clone();
+    let key = w.key.clone();
+    let id = w.c.namespace.clone();
+    let task = tokio::spawn(async move { Consumer::new().unwrap().poll(&s, &key, &id).await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while w.remote.inventory_reads.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(w.s.recent(&w.c.tool, &Query::default()).is_err());
+    assert_eq!(w.cursor().as_deref(), Some("before"));
+    assert_eq!(
+        w.raw()
+            .query_row("SELECT count(*) FROM entries", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    tokio::time::timeout(Duration::from_secs(6), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(w.s.recent(&w.c.tool, &Query::default()).unwrap().stale);
+}
+#[tokio::test]
+async fn injected_context_is_never_reingested_as_a_completed_source() {
+    let w = World::new(60).await;
+    w.set(
+        vec![turn(
+            "s",
+            "context",
+            "not source material",
+            json!({"kind":"plugin_context","request_id":"injected"}),
+        )],
+        "bad",
+    );
+    assert!(w.poll().await.is_err());
+    assert!(w.cursor().is_none());
+    assert_eq!(
+        w.raw()
+            .query_row("SELECT count(*) FROM entries", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
 }
