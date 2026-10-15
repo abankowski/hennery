@@ -214,12 +214,31 @@ fn d4_parent_child_counts_include_parent_handled_waiting_and_status_attention() 
 #[test]
 fn d4_deadlines_and_receipts_invalidate_the_child_and_parent_summary() {
     let (w, p) = pair();
+    w.store.flush_family_changes(&Hub::new()).unwrap();
+    let revision = w
+        .store
+        .family_summary("parent")
+        .unwrap()
+        .unwrap()
+        .family
+        .unwrap()
+        .revision;
     pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
     let before = w.store.max_event_id().unwrap();
     w.store.refresh_delegation_attention(&Hub::new(), i64::MAX / 2).unwrap();
     assert!(w.store.max_event_id().unwrap() > before);
     let changed = w.store.family_changed_after(before).unwrap();
     assert!(changed.contains(&"child".to_string()) && changed.contains(&"parent".to_string()));
+    assert!(
+        w.store
+            .family_summary("parent")
+            .unwrap()
+            .unwrap()
+            .family
+            .unwrap()
+            .revision
+            > revision
+    );
     let s = w.store.family_summary("child").unwrap().unwrap();
     assert_eq!((s.operator_attention, s.parent_handled_questions), (1, 0));
     let hub = Hub::new();
@@ -247,6 +266,32 @@ fn d4_deadlines_and_receipts_invalidate_the_child_and_parent_summary() {
         w.store.submit_answer("child", "ordinary", &answer()).unwrap(),
         AnswerSubmission::Queued(_)
     ));
+}
+
+#[test]
+fn d4_each_parent_routing_state_stays_distinct_until_operator_takeover() {
+    for state in [
+        "parent_queued",
+        "parent_delivered",
+        "waiting_config",
+        "awaiting_reconciliation",
+    ] {
+        let (w, _) = pair();
+        pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
+        raw(&w)
+            .execute("UPDATE delegation_notices SET state=?1 WHERE child_id='child'", [state])
+            .unwrap();
+        let page = w.store.family_page("child", "", 20).unwrap().unwrap();
+        assert_eq!(page.questions[0].handling, state);
+        assert_eq!(
+            (page.summary.operator_attention, page.summary.parent_handled_questions),
+            (0, 1)
+        );
+        assert!(w.store.take_over_child("child", &Hub::new()).unwrap());
+        let page = w.store.family_page("child", "", 20).unwrap().unwrap();
+        assert_eq!(page.questions[0].handling, "operator_required");
+        assert_eq!(page.questions[0].reason.as_deref(), Some("operator_takeover"));
+    }
 }
 
 #[test]

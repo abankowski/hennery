@@ -132,9 +132,9 @@ fn summary_in(conn: &Connection, owner: &str, s: SessionItem) -> Result<SessionS
     )?;
     let revision = conn.query_row(
         "SELECT COALESCE(MAX(e.event_id),0) FROM events e WHERE e.owner_id = ?1
-        AND e.kind='family_changed' AND e.applied=1 AND (e.session_id = ?2 OR EXISTS(
-            SELECT 1 FROM session_families f JOIN sessions c ON c.owner_id = ?1 AND c.id=f.child_id AND c.hat_id = ?3
-            WHERE f.owner_id = ?1 AND f.parent_id = ?2 AND f.hat_id = ?3 AND f.child_id=e.session_id))",
+        AND e.kind='family_changed' AND e.applied=1 AND e.session_id IN (SELECT ?2 UNION ALL
+            SELECT f.child_id FROM session_families f JOIN sessions c ON c.owner_id = ?1 AND c.id=f.child_id AND c.hat_id = ?3
+            WHERE f.owner_id = ?1 AND f.parent_id = ?2 AND f.hat_id = ?3)",
         params![owner, s.session_id, s.hat_id],
         |r| r.get(0),
     )?;
@@ -277,6 +277,7 @@ impl Store {
         tx.execute(
             "UPDATE delegation_notices SET state='operator_required',reason='operator_takeover'
             WHERE owner_id = ?1 AND child_id = ?2 AND (state IN ('parent_queued','waiting_config','awaiting_reconciliation')
+                OR (state='operator_required' AND reason='family_detached')
                 OR (kind='question' AND state='parent_delivered'))",
             params![self.owner_id(), id],
         )?;
