@@ -60,12 +60,17 @@ class ArchivePolicy(unittest.TestCase):
                     for name in names:
                         entry = tarfile.TarInfo(base + '/' + name)
                         if symlink and name == 'hennery':
-                            entry.type, entry.linkname = tarfile.SYMTYPE, base + '/README.md'
+                            entry.type, entry.linkname = tarfile.SYMTYPE, 'README.md'
                             tar.addfile(entry)
                         else:
                             entry.size = 1
                             tar.addfile(entry, io.BytesIO(b'x'))
                 (Path(tmp) / (archive.name + '.sha256')).write_text(gate.digest(archive.read_bytes()) + '  ' + archive.name + '\n')
+                if symlink:
+                    # The link must resolve: removing the regular-file guard
+                    # should fail our refusal assertion, not tarfile's lookup.
+                    with tarfile.open(archive, 'r:xz') as tar:
+                        self.assertEqual(tar.extractfile(base + '/hennery').read(), b'x')
                 with self.assertRaises(gate.Refused):
                     supply.binary_inventory(Path(tmp), ['aarch64-apple-darwin'])
 
