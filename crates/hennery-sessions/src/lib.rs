@@ -6,6 +6,7 @@ pub mod builtin;
 pub mod content;
 pub mod delegation;
 pub mod delegation_api;
+pub mod delegation_attention;
 pub mod delegation_control;
 pub mod delegation_delivery;
 pub mod delegation_delivery_dispatch;

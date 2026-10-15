@@ -373,6 +373,7 @@ const MIGRATIONS: &[&str] = &[
     ",
     include_str!("delegation_schema.sql"),
     include_str!("delegation_delivery.sql"),
+    include_str!("delegation_attention.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records

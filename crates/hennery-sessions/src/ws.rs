@@ -616,8 +616,8 @@ async fn retry_repark(state: AppState, host_id: String) {
 /// Notify the owner of `edge`, which a host fact crossed, if it notifies
 /// (`notify::notice_for`). Queued, never waited on.
 fn notify(state: &AppState, edge: &Edge) {
-    if let Some(notice) = crate::notify::notice_for(&edge.kind, &edge.session) {
-        state.push.notify(notice);
+    if let Err(error) = state.store.route_push_edge(edge, &state.push) {
+        tracing::warn!(code=%crate::session_tools::error_code(&error), "push routing deferred");
     }
 }
 

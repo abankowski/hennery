@@ -91,6 +91,17 @@ pub(crate) fn record_in(tx: &Transaction<'_>, owner: &str, event: &EventDto) -> 
         WHERE delegation_notices.owner_id = ?1 AND json_array_length(delegation_notices.source_events) < 128",
         params![owner,uuid::Uuid::now_v7().to_string(),event.session_id,parent,root,hat,event.event_id,kind,turn,pending,incident,revision,now,
         if disposition.is_some(){"operator_required"}else{"parent_queued"},disposition,required])?;
+    // Reserve attention in the source transaction. Lifecycle/grant triggers
+    // activate this row using UPDATE, preserving the existing SQL owner audit.
+    tx.execute("INSERT INTO delegation_attention(owner_id,attention_id,delivery_id,child_id,hat_id,reason,pending_id,state,operator_epoch)
+        SELECT ?1,n.delivery_id,n.delivery_id,n.child_id,c.hat_id,COALESCE(n.reason,'operator_required'),
+        CASE WHEN n.kind = 'question' THEN n.pending_id END,
+        CASE WHEN n.state = 'operator_required' THEN 'open' ELSE 'standby' END,
+        COALESCE((SELECT MAX(event_id) FROM events WHERE owner_id = ?1 AND session_id = n.root_id
+            AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'),0)
+        FROM delegation_notices n JOIN sessions c ON c.owner_id = ?1 AND c.id = n.child_id
+        WHERE n.owner_id = ?1 AND n.child_id = ?2 AND n.incident = ?3
+        ON CONFLICT(owner_id,attention_id) DO NOTHING",params![owner,event.session_id,incident])?;
     Ok(())
 }
 

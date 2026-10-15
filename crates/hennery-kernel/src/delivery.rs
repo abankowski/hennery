@@ -281,7 +281,7 @@ impl<T: Transport> Delivery<T> {
     pub async fn run(self: Arc<Self>, mut notices: Notices) {
         loop {
             let notice = notices.recv().await;
-            if let Err(err) = self.deliver(&notice).await {
+            if let Err(err) = self.deliver_guarded(&notice, notices.guard()).await {
                 tracing::warn!(tag = %notice.tag, error = %err, "push not delivered");
             }
         }
@@ -291,6 +291,19 @@ impl<T: Transport> Delivery<T> {
     /// once: each subscription's outcome, by its id. Expired subscriptions
     /// are removed first and get nothing; a muted hat gets nothing.
     pub async fn deliver(self: &Arc<Self>, notice: &Notice) -> Result<Vec<(String, Outcome)>> {
+        self.deliver_guarded(notice, Arc::new(|_| true)).await
+    }
+
+    /// Eligibility is checked before payload construction and each transport attempt.
+    /// An attempt admitted before revocation may complete; external copies cannot be recalled.
+    pub async fn deliver_guarded(
+        self: &Arc<Self>,
+        notice: &Notice,
+        guard: crate::push::NoticeGuard,
+    ) -> Result<Vec<(String, Outcome)>> {
+        if !guard(notice) {
+            return Ok(Vec::new());
+        }
         let now = unix_now();
         self.hosts.prune_expired_subscriptions(now)?;
         let Some(payload) = payload_for(notice, self.hosts.push_policy(&notice.hat_id)?) else {
@@ -312,9 +325,16 @@ impl<T: Transport> Delivery<T> {
             let plaintext = plaintext.clone();
             let subject = subject.clone();
             let permits = permits.clone();
+            let guard = guard.clone();
+            let notice = notice.clone();
             sending.spawn(async move {
                 let _permit = permits.acquire_owned().await;
-                let outcome = this.send_one(&sub, &plaintext, urgency, subject.as_deref()).await;
+                let outcome = if guard(&notice) {
+                    this.send_one(&sub, &plaintext, urgency, subject.as_deref(), &notice, &guard)
+                        .await
+                } else {
+                    Outcome::Failed("notification no longer current".into())
+                };
                 (sub.id, outcome)
             });
         }
@@ -333,9 +353,17 @@ impl<T: Transport> Delivery<T> {
 
     /// One subscription's push, retried as `retry` says; its outcome is
     /// recorded on it.
-    async fn send_one(&self, sub: &Subscription, plaintext: &[u8], urgency: &str, subject: Option<&str>) -> Outcome {
+    async fn send_one(
+        &self,
+        sub: &Subscription,
+        plaintext: &[u8],
+        urgency: &str,
+        subject: Option<&str>,
+        notice: &Notice,
+        guard: &crate::push::NoticeGuard,
+    ) -> Outcome {
         let outcome = match self.request(sub, plaintext, urgency, subject) {
-            Ok(request) => self.send_retrying(request).await,
+            Ok(request) => self.send_retrying(request, notice, guard).await,
             Err(err) => {
                 tracing::warn!(id = %sub.id, error = %err, "push not built");
                 Outcome::Failed("could not encrypt to this device".into())
@@ -403,10 +431,13 @@ impl<T: Transport> Delivery<T> {
     /// `Retry-After`, if longer, up to its cap). Any other answer is final.
     /// Each try has `attempt_timeout`, and no retry is made that could not
     /// finish within `budget` of the first.
-    async fn send_retrying(&self, request: PushRequest) -> Outcome {
+    async fn send_retrying(&self, request: PushRequest, notice: &Notice, guard: &crate::push::NoticeGuard) -> Outcome {
         let started = tokio::time::Instant::now();
         let mut delays = self.retry.delays.iter();
         loop {
+            if !guard(notice) {
+                return Outcome::Failed("notification no longer current".into());
+            }
             let sent = tokio::time::timeout(self.retry.attempt_timeout, self.transport.send(request.clone()))
                 .await
                 .unwrap_or(Sent::Timeout);

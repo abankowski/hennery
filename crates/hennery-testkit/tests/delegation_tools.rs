@@ -19,6 +19,64 @@ use std::{
 const HOST: &str = "delegation-host";
 const BOUND: Duration = Duration::from_secs(30);
 
+#[tokio::test]
+async fn d3b_deadline_worker_exposes_durable_attention_and_opens_the_child_card() {
+    let mut worker = script();
+    worker.asks = vec![FakeAsk::Elicitation];
+    let mut h = Harness::with_worker(worker, None, false).await;
+    let spawned = h.spawn("fallback", json!({})).await;
+    let child = spawned["child_id"].as_str().unwrap();
+    let question = eventually("child question", async || {
+        hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+        h.state.store.open_pending(child).unwrap().into_iter().next()
+    })
+    .await;
+    let db = h._dir.path().join("hennery.db");
+    // Force only the persisted deadline; pending callbacks have no timeout.
+    hennery_kernel::db::open(&db)
+        .unwrap()
+        .execute(
+            "UPDATE delegation_notices SET deadline = 0 WHERE owner_id = ?1 AND child_id = ?2",
+            rusqlite::params![h.state.store.owner_id(), child],
+        )
+        .unwrap();
+    let (push, mut notices) = hennery_kernel::push::Push::new();
+    h.state.push = push;
+    hennery_sessions::delegation_worker::after_startup(&h.state);
+    let notice = tokio::time::timeout(BOUND, notices.recv()).await.unwrap();
+    assert!(notice.url.starts_with(&format!("/sessions/{child}?pending=")));
+    assert!(notice.url.contains(&question.pending_id));
+    assert!(notice.tag.starts_with("delegation:"));
+    assert!(h.state.store.still_open(child, &question.pending_id).unwrap());
+    let response = h
+        .client
+        .get(format!("{}/api/delegation/attention", h.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let rows: Value = response.json().await.unwrap();
+    assert_eq!(rows[0]["child_id"], child);
+    assert_eq!(rows[0]["reason"], "handling_deadline");
+    let denied = h
+        .raw
+        .get(format!("{}/api/delegation/attention", h.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let id = rows[0]["id"].as_str().unwrap();
+    let refused = h
+        .client
+        .post(format!("{}/api/delegation/attention/{id}/rearm", h.url))
+        .json(&json!({"operator_turn_id":"unknown"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), reqwest::StatusCode::CONFLICT);
+    h.finish().await;
+}
+
 struct LiveSse {
     response: reqwest::Response,
     buffered: Vec<u8>,

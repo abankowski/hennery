@@ -819,7 +819,11 @@ struct Queue {
     read: bool,
 }
 
+/// Modules may revoke queued notification attempts without changing delivery policy.
+pub type NoticeGuard = std::sync::Arc<dyn Fn(&Notice) -> bool + Send + Sync>;
+
 struct Shared {
+    guard: std::sync::RwLock<NoticeGuard>,
     queue: std::sync::Mutex<Queue>,
     ready: tokio::sync::Notify,
 }
@@ -847,6 +851,7 @@ impl Push {
                 ..Queue::default()
             }),
             ready: tokio::sync::Notify::new(),
+            guard: std::sync::RwLock::new(std::sync::Arc::new(|_| true)),
         });
         (Push { shared: shared.clone() }, Notices { shared })
     }
@@ -862,6 +867,14 @@ impl Push {
     /// notification per tag anyway. A new tag when `NOTICE_QUEUE` are
     /// waiting is dropped and counted, with a warning at the first drop and
     /// every power of two after. The log names no notice's text.
+    pub fn set_guard(&self, guard: NoticeGuard) {
+        *self
+            .shared
+            .guard
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = guard;
+    }
+
     pub fn notify(&self, notice: Notice) {
         let mut queue = self
             .shared
@@ -889,6 +902,14 @@ impl Push {
 }
 
 impl Notices {
+    /// Reads the current guard on every attempt, including when installed after run starts.
+    pub fn guard(&self) -> NoticeGuard {
+        let shared = self.shared.clone();
+        std::sync::Arc::new(move |notice| {
+            (shared.guard.read().unwrap_or_else(std::sync::PoisonError::into_inner))(notice)
+        })
+    }
+
     /// The next notice, oldest tag first; waits for one.
     pub async fn recv(&mut self) -> Notice {
         let shared = self.shared.clone();
