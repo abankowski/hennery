@@ -8,23 +8,33 @@
 
 ## Execution status
 
-The earlier REJECT fixes were pushed at `55e8f998`. Re-confirmation accepted requirements 1–4 and 6–11 and identified an unsigned-tag/exact-certificate bypass for an agent holding the maintainer's SSH key. Original `55e8f998` maps to `22180bc7` after rebasing onto `256691fe`; the amendment range is `22180bc7..HEAD`, with implementation through `9ac2d200` and this record/strengthened regression following. The **maintainer decision, 2026-10-15**, makes a hardware-backed inventory signature the root of release trust. This amendment implements it; independent re-review and maintainer-only setup remain. No approval or publication is claimed.
+**Bootstrap re-confirmation: CONFIRMED by the parent; PR #145 ready for review.** Subsequent Linux CI failed in `installers` and `refusal-tests` on both Ubuntu architectures: the restricted no-gh tool directory already held system `gpg`, then attempted to add the offline fixture under the same name. The current CI repair reserves `gpg`/`jq` for the offline fixtures. Duplicate system tool names are accepted only if the existing entry is a symlink resolving to the same binary (`-ef`, covering merged `/usr/bin` and `/bin`); conflicts refuse without replacement. There is no forced symlink overwrite. This repair is folded into the owning original `9aa573ca` commit, so descendant SHAs change; older SHA ranges below are historical anchors, not new review claims. Publication remains disabled.
 
-- Test-first RED: new approval tests failed against the missing implementation; the binstall wrong-maintainer metadata case failed a real assertion. Installer trust cases were RED on the old installer, followed by wrong-repository/schema RED tests. Fixes retain exact-tag provenance and signed-tag checks.
-- Final rebased release suite, including the strengthened original-bypass regression: **89 passed**, exit 0; candidate/publish/refusal/Nix `actionlint` exit 0. Log `/tmp/dist-r1-touch-final-proof.log`.
+- CI regression RED: three new tool-directory cases, **two actual assertion failures** against the old script, including the exact Linux `gpg: File exists` failure; `/tmp/dist-r1-tools-red.log`. GREEN: **3 passed**, exit 0, `/tmp/dist-r1-tools-green.log`. Same-binary aliases succeed; conflicting named binaries refuse and preserve the first link.
+- CI repair verification: complete release suite **96 passed**, exit 0; two additional COPY-only mutations fail actual assertions (fixture reservation removed, conflicting binary accepted), both probes succeed, no error-only failure counted; `/tmp/dist-r1-tools-suite.log`. The real pinned cargo-dist mixed-candidate round-trip passed **all 20 installer groups and three formula hashes**, **exit 0**; `/tmp/dist-r1-tools-roundtrip.log`. All staged implementation bytes were compared with the tested COPY before fixup; the updated plan authenticates **81 source blocks**. These current results supersede the historical 93-test count below; prior bootstrap/replay evidence remains unchanged. Native Linux reruns and complete PR status stay parent-owned.
+
+### Confirmed bootstrap evidence before the CI repair
+
+The earlier REJECT fixes were pushed at `55e8f998`, mapped to `22180bc7` after rebasing onto `256691fe`. Re-confirmation of `22180bc7..a81b5f98` confirmed the hardware-root enforcement in the file, OCI, installer, publisher and channel paths, refusals, CI-refusing signer and honest touch documentation, but did **not** confirm bootstrap trust: an unauthenticated downloaded verifier or installer could replace its own checks. The current amendment is **`a81b5f98..HEAD`**: `3777f0b5` corrects the import-refusal probe and `0140410d` implements the executed, independently keyed README bootstrap; this record follows. The **parent ruling, 2026-10-15**, below requires verify-then-run. Independent re-review and maintainer-only setup remain. No approval or publication is claimed.
+
+- Current test-first RED: the new bootstrap tests failed **11 actual assertions** against the previous README, which had no guarded bootstrap; `/tmp/dist-r1-bootstrap-red.log`. The corrected import probe was RED when its explicit import-failure guard was removed in a COPY, because it actually executed beyond failed import, not because a diagnostic changed; child evidence is retained under `.superpowers/sdd/bootstrap-import/` in `dist-r1-bootstrap-probe` and the integrated probe was rerun below.
+- Current release suite: **93 passed**, exit 0. Exact README block extracted with `packaging/readme-blocks.sh` and executed via `test_bootstrap.py --script`: **4 test methods / 29 positive, refusal and guard cases passed**, exit 0. Real disposable OpenPGP signing subkeys exercise both `sha256sum` and `shasum`; only HTTPS transport is doubled, with exact origins/paths and no network fallback. Tampered installer/inventory, another imported valid signing key, missing/malformed signature, mismatching main/account/keyserver pins and a signed wrong tag refuse before any installer marker. Required refusals also run under an enclosing conditional that suppresses shell errexit. Log `/tmp/dist-r1-bootstrap-suite.log`. Candidate/publish/refusal/Nix `actionlint` exit 0 in the same run.
+- Current README guard tests: **25 passed, 0 failed, 0 ignored**, exit 0, with the new named block registered to its actual workflow runner; `cargo fmt --all --check` exit 0. Log `/tmp/dist-r1-bootstrap-readme-2.log`. The initial formatting check failed and was fixed to rustfmt's tuple layout. An initial positive fixture hit macOS's GnuPG socket-path length bound; shorter fixture TMPDIR fixed the cause, and both real hash-tool paths now succeed. No product check, test or rule was weakened. Grep of README, packaging and docs after removing the obsolete guidance has no unauthenticated pipe-to-shell instructions.
 - Six Rust checks after rebasing: **all six exit 0**, full workspace **2188 passed, 0 failed, 0 ignored** across 146 result rows. Logs `/tmp/dist-r1-touch-after-ui-rust-{0..5}.log`, summary `/tmp/dist-r1-touch-after-ui-rust-summary.log`. The first rebased run exited 101 at the PWA web test (404 instead of 200): ignored `web/dist` still held the previous base's UI. Locked `pnpm --dir web install --frozen-lockfile` and `pnpm --dir web build` exited 0, the targeted web test passed all 11, then all six Rust checks were rerun successfully. No source/test/rule was weakened. UI-refresh log `/tmp/dist-r1-touch-ui-refresh.log`; targeted regression `/tmp/dist-r1-touch-ui-regression.log`. A preliminary run before rebase also exited 0 for all six; its logs are `/tmp/dist-r1-touch-rust-{0..5}.log` and `/tmp/dist-r1-touch-rust-summary.log`.
 - Real mixed pinned cargo-dist round-trip: **20 installer groups and three formula digests passed**, exit 0, with three executable archives and four real source tarballs. Log `/tmp/dist-r1-touch-final-roundtrip.log`. Offline verifier doubles make no claim of public signature or hardware/platform qualification.
-- Final COPY probes: **84 distinct mutations killed through actual assertions**: 60 previous guards on the final tree, 11 hardware-root guards/integrations and 13 integrated installer guards. No ERROR/KeyError-only failure counted. Logs `/tmp/dist-r1-touch-previous-probes.log`, `/tmp/dist-r1-touch-final-proof.log`, `/tmp/dist-r1-touch-installer-probes.log` and each retained COPY result. The strengthened unsigned-tag/valid-looking-attestation regression was also RED against the actual original `55e8f998` verifier in a COPY: it accepted the otherwise valid candidate without hardware approval; `/tmp/dist-r1-touch-original-verifier-red.log`.
+- Current COPY probes: **93 distinct mutations killed through actual assertions**: 60 previous guards, 11 hardware-root guards/integrations, 13 integrated installer guards and nine bootstrap gates. No ERROR/KeyError-only or wording-only failure is counted. Logs `/tmp/dist-r1-bootstrap-{previous,hardware,installer,new}-probes.log`, orchestration `/tmp/dist-r1-bootstrap-probes-summary.log`, all exits 0. The previous import probe's wording-only evidence is superseded by actual import-attempt/non-execution assertions under suppressed errexit. Nine bootstrap mutations cover signature validation, exact signing subkey, both hash-tool refusals, all three independent channels, execution ordering and requested tag. Earlier strengthened unsigned-tag/valid-looking-attestation regression was also RED against the actual original `55e8f998` verifier in a COPY; `/tmp/dist-r1-touch-original-verifier-red.log`.
 - Actual OpenPGP verification is covered with a disposable software key: matching pin/bytes succeeds, another pin and changed inventory fail. This tests cryptography, never a hardware-touch claim. Historical commit `3b7b5f2d2af8821f4617afb08ba1dc766c5b9f14` was rechecked with `git log --show-signature` and raw verification in an isolated public-only keyring: signing fingerprint `F26C7F594DFE84D131703AFC23E5A318AE8D2861`, primary `1CE2B7354FC6ED5D9DE12DF664C16DED80CCEABA`, exit 0; `/tmp/dist-r1-touch-history.log`. No real private key or YubiKey was used.
-- **Fresh replay:** clean `dist-r1-replay-8` at `256691fe` extracted **74 code blocks**, passed every task check including **89** final release tests, and matched **744 tracked files** byte-for-byte and mode-for-mode, exit 0; `/tmp/dist-r1-touch-replay-8.log`. Replay actionlint also exited 0. The final execution-only record is copied back and all 744 files compared again before commit.
+- **Fresh replay:** replay 9 passed every task check including all 93 release tests, then its exact hash assertion caught premature termination on an indented four-backtick fence inside an embedded historical plan. The generator now selects a fence longer than every embedded run, and extraction requires the same unindented fence. Hash/size/byte checks remain enforced. Replay 9 is retained as failed evidence. Clean `dist-r1-replay-10` at `256691fe` extracted **80 source blocks**, passed every task check including **93 release tests**, and matched **745 tracked files** byte-for-byte and mode-for-mode, **exit 0**; `/tmp/dist-r1-bootstrap-replay-10.log`. Replay actionlint and the separately extracted README block's **four methods / 29 cases** both exited **0**; `/tmp/dist-r1-bootstrap-replay-10-acceptance.log`. The final execution-only record was copied back and all **745 files** compared again, **exit 0**, before commit.
 
-Prior construction logs/probes and replay trees 1–7 remain historical evidence, including the explicitly withdrawn error-only original probe claims. The fresh replay is `dist-r1-replay-8`; helper `dist-r1-touch-installer` and all COPY roots remain for parent cleanup. Global/key settings, actual physical touch, registry pushes and public-path acceptance are maintainer-only and were not performed. All channel switches remain disabled.
+The six Rust checks and mixed installer round-trip above are evidence from the prior hardware-root amendment, not rerun claims for this docs/bootstrap-test amendment. Current requested checks are the release suite, actionlint and README tests. Prior construction logs/probes and replay trees 1–9 remain historical evidence, including the explicitly withdrawn error-only original probe claims. Current helpers `dist-r1-bootstrap-probe` and `dist-r1-touch-installer`, COPY roots `review-probes-bootstrap-final-1`, `touch-probes-bootstrap-final-1`, `touch-installer-probes-bootstrap-final-1`, `bootstrap-probes-1`, and all historical copies remain for parent cleanup. Global/key settings, actual physical touch, registry pushes, live public-key-channel availability and public-path acceptance are maintainer-only and were not performed. All channel switches remain disabled.
 
 ## Scope
 
 R1 provides the protected platform boundary and auditable in-job gates, held candidate/recovery semantics, exact file/installer/image signer policy, notices/SPDX/source/build identity, hardened installer and tagged-flake support, native workflow definitions and release-process docs. R3 supplies versioned crates/metadata and R4 final OCI payloads and protected jobs. Their integration must satisfy the common contract before enablement. First alpha stays GitHub-only. Homebrew publication, Intel macOS/GNU archives/native repositories/notarization/public caches/R6 modules retain their design gates.
 
 ## Decisions
+
+0a. **Verify-then-run bootstrap — parent ruling, 2026-10-15.** Users pin full signing-subkey fingerprint `F26C7F594DFE84D131703AFC23E5A318AE8D2861`, corroborated through at least two channels independent of release assets: README on main, `https://github.com/marcinwadon.gpg` and keys.openpgp.org. The executable guarded README procedure conservatively fetches and compares all three, fails on absence/disagreement, uses installed GnuPG in an isolated public keyring, downloads the inventory/signature/installer as data, requires `gpg --verify` plus the exact `VALIDSIG` pin, then checks the unique installer SHA-256 against the authenticated inventory with `sha256sum -c` or `shasum -a 256 -c`. Only authenticated installer bytes execute; the installer continues archive verification. A release-supplied key/verifier cannot establish trust. Manual helper use starts only after installed-GnuPG bootstrap and a clean source checkout at the authenticated inventory's exact commit. All obsolete unauthenticated installer-pipe guidance is removed, including historical specs/plan text. The maintainer must publish and independently confirm account/keyserver keys before enablement; offline fixture tests do not claim those live channels are populated.
 
 0. **Hardware inventory approval — maintainer, 2026-10-15.** Anyone without the physical signing authority, including an agent using the maintainer's SSH push key, must be unable to authorize new accepted release bytes. At approval time the maintainer signs the exact canonical frozen `release-inventory.json` digest set with OpenPGP signing subkey `F26C7F594DFE84D131703AFC23E5A318AE8D2861` on the YubiKey. The public `.asc` is an external sidecar and release asset, not a payload in its own digest set. Local `packaging/hennery-release sign-approval` invokes `gpg --detach-sign` and refuses CI; it never exports private keys or supplies unattended PINs. Every verifier and publication gate requires the valid signature and exact digest binding in addition to Sigstore. Signed tags remain defense in depth. One-time `ykman openpgp keys set-touch sig on` requests each touch; `cached-fixed` permits a 15-second signing window and cannot be disabled without deleting the private key. Prefer `on`, protect/remove the hardware and ensure no accessible software copy undermines the boundary. The settings audit records explicit maintainer confirmation of policy/fingerprint, honestly not a remote hardware check. Trusted bootstrap must authenticate verifier/installer code independently. Native binstall remains disabled; external metadata requires both the pinned maintainer and exact Sigstore identity. OCI verification requires the signed global inventory and matching `ghcr-index.json` digest. Missing/malformed/other-key/different-inventory signatures refuse even under a valid exact-tag attestation. [Yubico policies](https://docs.yubico.com/software/yubikey/tools/ykman/OpenPGP_Commands.html).
 
@@ -42,7 +52,7 @@ R1 provides the protected platform boundary and auditable in-job gates, held can
 - Never publish, log into registries, mint tokens, push release tags or change external settings in this child. The parent owns GitHub/PR/check/review actions. The settings audit and negative push are future maintainer-only tools, never run here with real credentials.
 - Plain `nix develop -c` from the named worktree; release Python/tools use `.#release`, and Rust plus Python probes use the build shell plus one-off Python. Scratch HOME/XDG/config/cache/CARGO_HOME; no shared Cargo target and no real operator data.
 - Pinned actions, timeouts, no restored candidate caches; least ordinary token permissions. All publishing credentials remain platform-protected environment secrets. No broad administration policy reader in CI.
-- Personal git identity, unsigned Conventional Commits, staged-byte checks and diff hygiene. Push only the owned branch with the parent's exact lease on original `55e8f99834be1896ab8ace41df17f4db64de2f0d`.
+- Personal git identity, unsigned Conventional Commits, staged-byte checks and diff hygiene. Push only the owned branch with the parent's exact lease on `24d8b6c824398e6462632e09b7e8b493f01fa61f`.
 - Retain scratch trees; no global/project memory writes. The parent files cross-project lessons and cleans up.
 
 ## Review focus
@@ -52,7 +62,6 @@ Re-review hardware-root enforcement at every consumer/publication boundary, exac
 ## File structure and extraction
 
 Exact final source follows. Each `r1:file` block gives task, path, decoded SHA-256, byte length, file mode and encoding. Executable/source code is verbatim UTF-8; the one upstream licence with original trailing whitespace is base64 so its bytes remain exact without weakening whitespace checks. The plan itself is replay input, not recursively embedded. Count extracted blocks, run task tests, and compare every tracked byte/mode. After adding only the execution record, copy the plan and compare again.
-
 - Task 1: `.github/actions/release-gate/action.yml`
 - Task 1: `.github/release-branch-policy.json`
 - Task 1: `.github/release-environment.example.json`
@@ -107,11 +116,14 @@ Exact final source follows. Each `r1:file` block gives task, path, decoded SHA-2
 - Task 3: `packaging/release/test_archives.py`
 - Task 3: `packaging/release/test_hardener.py`
 - Task 3: `packaging/release/test_installer_archives.py`
+- Task 3: `packaging/release/test_installer_tools.py`
 - Task 3: `packaging/test-installer.sh`
 - Task 4: `.github/workflows/nix.yml`
 - Task 4: `.github/workflows/release-candidate.yml`
 - Task 4: `.github/workflows/release-publish.yml`
 - Task 4: `.github/workflows/release-tests.yml`
+- Task 4: `README.md`
+- Task 4: `crates/hennery/tests/readme.rs`
 - Task 4: `dist-workspace.toml`
 - Task 4: `flake.nix`
 - Task 4: `nix/package.nix`
@@ -120,12 +132,16 @@ Exact final source follows. Each `r1:file` block gives task, path, decoded SHA-2
 - Task 4: `packaging/release/publish.py`
 - Task 4: `packaging/release/refresh_manifest.py`
 - Task 4: `packaging/release/test_approval.py`
+- Task 4: `packaging/release/test_bootstrap.py`
 - Task 4: `packaging/release/test_publish.py`
 - Task 4: `packaging/release/test_workflows.py`
 - Task 4: `packaging/release/workflow_policy.py`
 - Task 4: `rust-toolchain.toml`
 - Task 5: `docs/README.md`
+- Task 5: `docs/plans/2026-10-07-release-build.md`
 - Task 5: `docs/release-process.md`
+- Task 5: `docs/specs/2026-09-25-hennery-architecture-design.md`
+- Task 5: `docs/specs/2026-09-26-distribution-design.md`
 - Task 5: `packaging/README.md`
 
 ## Task 1: Platform policy, signed tags, authenticated approval and retention
@@ -11098,7 +11114,7 @@ if __name__ == '__main__':
 
 ### File `packaging/release/test_hardener.py`
 
-<!-- r1:file task=3 path=packaging/release/test_hardener.py sha256=17cf1b2bbe2c58838543bf1cf87a0f046d761afe0599d03c2567d0474ba8c4dd bytes=7129 mode=644 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/release/test_hardener.py sha256=d27664dfe69c6b21a590b49eea8a910361a299c111e4eeecb0eaec92338acb7c bytes=7619 mode=644 encoding=utf8 -->
 ````python
 import importlib.util
 from pathlib import Path
@@ -11132,6 +11148,7 @@ class Hardener(unittest.TestCase):
             (tools / 'gpg').write_text('''#!/bin/sh
 for arg in "$@"; do
     if [ "$arg" = --import ]; then
+        printf called > "$TEST_ROOT/gpg-import-called"
         [ "$HENNERY_TEST_SIGNATURE" != import-failed ] || exit 1
         exit 0
     fi
@@ -11162,7 +11179,7 @@ err() { echo "$*" >&2; exit 1; }
 run() {
 local _dir="$TEST_ROOT/$HENNERY_TEST_SIGNATURE" _file="$TEST_ROOT/archive" _artifact_name=hennery-test.tar.xz
 APP_VERSION=1.2.3
-''' + block + '\nprintf authenticated > "$TEST_ROOT/authenticated"\n}\nrun\n')
+''' + block + '\nprintf authenticated > "$TEST_ROOT/authenticated"\n}\n# Conditional callers suppress errexit inside functions; refusal must be explicit.\nif run; then exit 0; else exit 1; fi\n')
             env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'], TEST_ROOT=str(root),
                        HENNERY_ATTESTATION_BUNDLE=str(root / 'bundle'), HENNERY_RELEASE_INVENTORY=str(root / 'inventory'),
                        HENNERY_RELEASE_SIGNATURE=str(root / 'signature'))
@@ -11173,6 +11190,7 @@ APP_VERSION=1.2.3
                     (root / 'signature').write_bytes(raw)
                     (root / 'authenticated').unlink(missing_ok=True)
                     (root / 'gpg-called').unlink(missing_ok=True)
+                    (root / 'gpg-import-called').unlink(missing_ok=True)
                     if case == 'different-inventory':
                         (root / 'inventory').write_bytes(raw + b' ')
                     elif case == 'missing':
@@ -11203,7 +11221,9 @@ APP_VERSION=1.2.3
                     else:
                         self.assertNotEqual(result.returncode, 0, 'valid-looking tag attestation bypassed ' + case)
                         self.assertFalse((root / 'authenticated').exists())
-                        self.assertIn('maintainer', result.stderr)
+                        if case == 'import-failed':
+                            self.assertTrue((root / 'gpg-import-called').exists(), 'the import must actually be attempted')
+                            self.assertFalse((root / 'gpg-called').exists(), 'failed import must refuse before signature verification')
                         if case in ('missing', 'empty-signature', 'missing-inventory'):
                             self.assertFalse((root / 'gpg-called').exists(), 'missing input must be refused before invoking gpg')
 
@@ -11285,9 +11305,82 @@ if __name__ == '__main__':
     unittest.main()
 ````
 
+### File `packaging/release/test_installer_tools.py`
+
+<!-- r1:file task=3 path=packaging/release/test_installer_tools.py sha256=b615397c3f0ae2caab4f9ac8a6e82e984f35b787232228b95dbc8dcd72fdf5ba bytes=3530 mode=644 encoding=utf8 -->
+````python
+"""Exercise restricted installer tool directories, including merged /usr bins."""
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class InstallerTools(unittest.TestCase):
+    def fixture(self, root, *, conflicting=False, missing_gh=False):
+        source = (ROOT / 'packaging/test-installer.sh').read_text()
+        functions = source[source.index('# tools <dir>'):source.index('# copy <name>')]
+        self.assertEqual(functions.count('for from in /usr/bin /bin; do'), 1)
+        functions = functions.replace('for from in /usr/bin /bin; do',
+                                      'for from in "$scratch/first" "$scratch/second"; do')
+        for name in ('first', 'second', 'verifier-tools'):
+            (root / name).mkdir()
+        for name in ('system-gpg', 'other-gpg', 'system-jq'):
+            (root / name).write_text(name + '\n')
+        for directory in ('first', 'second'):
+            target = 'other-gpg' if conflicting and directory == 'second' else 'system-gpg'
+            (root / directory / 'gpg').symlink_to(root / target)
+            (root / directory / 'jq').symlink_to(root / 'system-jq')
+            (root / directory / 'gh').symlink_to(root / 'system-gpg')
+        for name in ('gpg', 'jq'):
+            (root / 'verifier-tools' / name).write_text('offline ' + name + '\n')
+        if missing_gh:
+            start = source.index('tools "$scratch/no-gh-tools"')
+            setup = source[start:source.index('(PATH="$scratch/no-gh-tools"', start)]
+        else:
+            setup = 'tools "$scratch/no-gh-tools" gh\n'
+        script = 'set -eu\nfail() { printf "%s\\n" "$*" >&2; exit 1; }\n'
+        script += 'scratch=$1\n' + functions + setup + 'printf ready > "$scratch/ready"\n'
+        return subprocess.run(['sh', '-c', script, 'installer-tools', str(root)],
+                              capture_output=True, text=True)
+
+    def test_missing_gh_setup_reserves_the_offline_signer_when_system_gpg_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self.fixture(root, missing_gh=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((root / 'ready').exists())
+            for name in ('gpg', 'jq'):
+                self.assertTrue((root / 'no-gh-tools' / name).samefile(root / 'verifier-tools' / name))
+            self.assertFalse((root / 'no-gh-tools' / 'gh').exists())
+
+    def test_duplicate_tool_names_resolving_to_the_same_binary_are_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self.fixture(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((root / 'ready').exists())
+            self.assertTrue((root / 'no-gh-tools' / 'gpg').is_symlink())
+            self.assertTrue((root / 'no-gh-tools' / 'gpg').samefile(root / 'system-gpg'))
+
+    def test_duplicate_tool_names_with_different_binaries_refuse_without_replacement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self.fixture(root, conflicting=True)
+            self.assertNotEqual(result.returncode, 0, 'conflicting binary was silently accepted')
+            self.assertFalse((root / 'ready').exists())
+            self.assertTrue((root / 'no-gh-tools' / 'gpg').samefile(root / 'system-gpg'))
+
+
+if __name__ == '__main__':
+    unittest.main()
+````
+
 ### File `packaging/test-installer.sh`
 
-<!-- r1:file task=3 path=packaging/test-installer.sh sha256=ac9c190e058a28449bba526ce6e8a0245e207e46cac1a5ab80d878502c7adca6 bytes=15358 mode=755 encoding=utf8 -->
+<!-- r1:file task=3 path=packaging/test-installer.sh sha256=5b09c3dc4ea1f9481f5a892aa7f0f5fdea9476c37c6d0fe27e7e62014feb9e30 bytes=15699 mode=755 encoding=utf8 -->
 ````sh
 #!/bin/sh
 # The hardened shell installer (distribution spec §2, §9), run against the
@@ -11438,6 +11531,17 @@ refused() {
 }
 
 # tools <dir> <excluded>...: every command of /usr/bin and /bin but these.
+link_tool() {
+    _link_source=$1
+    _link_destination=$2
+    if [ -e "$_link_destination" ] || [ -L "$_link_destination" ]; then
+        [ -L "$_link_destination" ] && [ "$_link_destination" -ef "$_link_source" ] ||
+            fail "conflicting tool link: $_link_destination"
+    else
+        ln -s "$_link_source" "$_link_destination" || fail "cannot link tool: $_link_destination"
+    fi
+}
+
 tools() {
     dir=$1
     shift
@@ -11448,7 +11552,7 @@ tools() {
             for excluded in "$@"; do
                 [ "$name" = "$excluded" ] && continue 2
             done
-            [ -e "$dir/$name" ] || ln -s "$tool" "$dir/$name"
+            link_tool "$tool" "$dir/$name"
         done
     done
 }
@@ -11627,11 +11731,9 @@ echo 'ok: signed inventory must approve the exact archive bytes'
 
 (export HENNERY_TEST_SIGNER_REF=refs/heads/main; refused branch-signer "$dist" 'refusing an archive without valid release-tag provenance')
 echo 'ok: branch signer identity cannot authorize installation'
-tools "$scratch/no-gh-tools" gh
-ln -s "$scratch/verifier-tools/gpg" "$scratch/no-gh-tools/gpg"
-if [ ! -e "$scratch/no-gh-tools/jq" ]; then
-    ln -s "$scratch/verifier-tools/jq" "$scratch/no-gh-tools/jq"
-fi
+tools "$scratch/no-gh-tools" gh gpg jq
+link_tool "$scratch/verifier-tools/gpg" "$scratch/no-gh-tools/gpg"
+link_tool "$scratch/verifier-tools/jq" "$scratch/no-gh-tools/jq"
 (PATH="$scratch/no-gh-tools" VERIFIER_TOOLS="$scratch/no-gh-tools" && refused missing-verifier "$dist" 'GitHub CLI is required')
 echo 'ok: missing signature verifier refuses installation'
 ````
@@ -11655,7 +11757,7 @@ Use the copied-tree harness below; every counted mutation must fail an actual as
 
 ### Step 1: RED / contract
 
-The old publisher is RED on reconcile then upload (FileExistsError) and on publishing before assets are attached. Require verified bundle reuse, draft-only upload and immutable publication. Workflow regressions reject branch publication/admin policy tokens and require tag verification before storage. Static lint supplements platform enforcement only.
+The old publisher is RED on reconcile then upload (FileExistsError) and on publishing before assets are attached. Require verified bundle reuse, draft-only upload and immutable publication. Workflow regressions reject branch publication/admin policy tokens and require tag verification before storage. Static lint supplements platform enforcement only. The bootstrap tests first fail actual assertions when the named README block is absent. Require the exact guarded block with real disposable signing subkeys and both SHA-256 tools; tampering, wrong pins/signatures and missing signatures must refuse before execution, including under suppressed errexit.
 
 ### Step 2: Exact implementation
 
@@ -12278,7 +12380,7 @@ jobs:
 
 ### File `.github/workflows/release-tests.yml`
 
-<!-- r1:file task=4 path=.github/workflows/release-tests.yml sha256=5b5863ddecdeef7d209c16aa2fd4a474f2ed1d105f258ff5d8b41e9779195bb6 bytes=1629 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=.github/workflows/release-tests.yml sha256=9090fd2a09cd503bcc05164faf4c7e885c0d2c3cf8d594784bcd17019635ecbd bytes=1955 mode=644 encoding=utf8 -->
 ````yaml
 name: release-tests
 on:
@@ -12305,6 +12407,10 @@ jobs:
           github_access_token: ${{ github.token }}
       - name: Negative gates, recovery, supply chain and workflow graph
         run: nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py'
+      - name: Execute the exact README bootstrap against signed offline releases
+        run: |
+          sh packaging/readme-blocks.sh README.md release-bootstrap > "$RUNNER_TEMP/release-bootstrap.sh"
+          nix develop .#release -c python3 packaging/release/test_bootstrap.py --script "$RUNNER_TEMP/release-bootstrap.sh"
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
         with:
           toolchain: 1.98.1
@@ -12318,6 +12424,1403 @@ jobs:
       - name: Actionlint
         run: nix develop .#release -c actionlint .github/workflows/release-candidate.yml .github/workflows/release-publish.yml .github/workflows/release-tests.yml
 ````
+
+### File `README.md`
+
+<!-- r1:file task=4 path=README.md sha256=150bfc6791e0e879a1d59f5d133dad2367f5855def28aa973367c513470d4ef2 bytes=18534 mode=644 encoding=utf8 -->
+````markdown
+# hennery
+
+hennery is a self-hosted cockpit for coding agents. It lets one developer drive
+[Agent Client Protocol](https://agentclientprotocol.com) (ACP) sessions — Claude
+Code, Codex, or any other ACP adapter — running on any of their machines, from a
+single browser tab or a phone. It also includes an MCP gateway: connect a
+server once, then choose its hat and the hosts whose sessions may use it.
+
+hennery never proxies agent licences. You bring your own subscriptions and log in
+to each agent CLI on your own machines; hennery only drives the sessions.
+
+## Status
+
+**Early testing.** hennery is ready for early testers who build it from
+source. There are no published releases, installers or images yet, and stored
+data may not survive an upgrade: expect things to change.
+
+What works:
+
+- **Sessions from the browser.** The collector serves its web UI from the
+  binary. From it you start Claude Code and Codex sessions on a connected,
+  paired machine, prompt them, answer their permission requests, and park
+  and resume them.
+- **Hats.** Path rules put each session in a hat by its project directory,
+  for organising sessions and choosing their MCP servers.
+- **MCP servers.** Connect a server with a static token or OAuth through the
+  gateway, or configure local stdio servers for a host and hat, on the **MCP** screen.
+
+Known limitations:
+
+- One owner per collector. Setup requires a password; it also offers a
+  passkey, which you can use to sign in afterwards.
+- Web Push is built on the collector, but the web UI has no subscribe
+  button yet.
+- Codex sessions get hennery MCP servers only in the host's default hat, without per-hat isolation, and also load the user's own `~/.codex` MCP servers; other hats get none, until per-hat isolation lands.
+- Hosts support verified `wss://`; the public proxy deployment and separate
+  client rate-limit budgets are still pending. Restrict public ingress until
+  those deployment checks are complete.
+- The designs are in [`docs/specs/`](docs/specs/) and the plans in
+  [`docs/plans/`](docs/plans/); [`docs/README.md`](docs/README.md) lists
+  them.
+
+## Verify a release installer before running it
+
+Releases are not published yet; this procedure is for when publication is enabled.
+Until then, use the source quickstart below. You need trusted, already installed
+`curl`, GnuPG, `jq`, and either `sha256sum` or `shasum` (plus `gh` for the
+installer's archive verification).
+
+The release signing subkey's **full fingerprint** is
+**`F26C7F594DFE84D131703AFC23E5A318AE8D2861`**. Confirm it through channels
+independent of any release: this [README on main](https://github.com/marcinwadon/hennery/blob/main/README.md),
+the [maintainer's account keys](https://github.com/marcinwadon.gpg), and
+[keys.openpgp.org](https://keys.openpgp.org/vks/v1/by-fingerprint/F26C7F594DFE84D131703AFC23E5A318AE8D2861).
+The block below fetches all three and requires the full fingerprint to match.
+Stop if a source is unavailable or disagrees; never use a key or verifier
+supplied alongside a release as the trust anchor. Review these commands from
+main and compare the fingerprint independently before running them.
+
+Set `release_tag` to the published version you intend to install. The block
+downloads public data into a private temporary directory, verifies the inventory
+with an isolated keyring, and checks the installer's SHA-256 against that signed
+inventory. Only then does it run the installer, which authenticates the archives
+with the maintainer signature and exact-tag Sigstore provenance. Keep the printed
+directory for inspection. Verification uses installed tools; only the
+authenticated installer is executed.
+
+<!-- check: release-bootstrap -->
+```sh
+(
+set -eu
+release_fingerprint=F26C7F594DFE84D131703AFC23E5A318AE8D2861
+release_tag=v0.1.0-alpha.1
+release_dir=$(mktemp -d "${TMPDIR:-/tmp}/hennery-release.XXXXXXXX") || exit 1
+printf 'Release verification directory: %s\n' "$release_dir"
+mkdir "$release_dir/keyring" || exit 1
+chmod 0700 "$release_dir/keyring" || exit 1
+release_fetch() {
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$1" -o "$2" || exit 1
+}
+release_gpg() {
+    gpg --batch --no-options --homedir "$release_dir/keyring" --no-autostart --no-auto-key-retrieve "$@"
+}
+release_fetch https://raw.githubusercontent.com/marcinwadon/hennery/refs/heads/main/README.md "$release_dir/main-readme"
+grep -F -- "$release_fingerprint" "$release_dir/main-readme" >/dev/null || exit 1
+release_fetch https://github.com/marcinwadon.gpg "$release_dir/github.asc"
+release_fetch "https://keys.openpgp.org/vks/v1/by-fingerprint/$release_fingerprint" "$release_dir/keyserver.asc"
+for release_source in github keyserver; do
+    release_gpg --with-colons --with-subkey-fingerprint --show-keys "$release_dir/$release_source.asc" > "$release_dir/$release_source.fingerprints" || exit 1
+    awk -F: -v fp="$release_fingerprint" '$1 == "fpr" && $10 == fp { found=1 } END { exit !found }' "$release_dir/$release_source.fingerprints" || exit 1
+done
+release_gpg --import "$release_dir/github.asc" "$release_dir/keyserver.asc" || exit 1
+release_url="https://github.com/marcinwadon/hennery/releases/download/$release_tag"
+for release_file in release-inventory.json release-inventory.json.asc hennery-installer.sh; do
+    release_fetch "$release_url/$release_file" "$release_dir/$release_file"
+done
+cd "$release_dir" || exit 1
+release_gpg --status-fd 1 --verify release-inventory.json.asc release-inventory.json > inventory-status || exit 1
+awk -v fp="$release_fingerprint" '
+    $1 == "[GNUPG:]" && $2 == "VALIDSIG" { count++; if ($3 != fp) bad=1 }
+    $1 == "[GNUPG:]" && $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYEXPIRED|SIGEXPIRED|KEYREVOKED|NO_PUBKEY|NODATA|FAILURE|ERROR)$/ { bad=1 }
+    END { exit !(count == 1 && !bad) }
+' inventory-status || exit 1
+release_sha=$(jq -er --arg tag "$release_tag" '
+    if .schema != 1 or .repository != "marcinwadon/hennery" or .tag != $tag then error("wrong release inventory") else
+        [.artifacts[] | select(.name == "hennery-installer.sh")] |
+        if length != 1 then error("installer missing or duplicated") else .[0].sha256 end |
+        if type == "string" and test("^[0-9a-f]{64}$") then . else error("invalid installer digest") end
+    end' release-inventory.json) || exit 1
+printf '%s  hennery-installer.sh\n' "$release_sha" > installer.sha256 || exit 1
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c installer.sha256 || exit 1
+elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c installer.sha256 || exit 1
+else
+    printf 'A SHA-256 tool is required\n' >&2
+    exit 1
+fi
+sh ./hennery-installer.sh
+)
+```
+
+## Quickstart
+
+Build with [Nix](https://nixos.org/download/) with flakes enabled, or use
+[Build without Nix](#build-without-nix) below. On every machine that runs
+agents, you need the CLI for each agent you want to use
+already logged in with your own subscription. The flake supports Apple
+Silicon macOS, and x86_64 and aarch64 Linux.
+The bundled CLIs are not added to your `PATH`. After `up` or `host join`
+installs the runtime, run `hennery doctor` on each agent machine. Check 4,
+**logged in**, reports whether each agent is logged in and prints a fix when
+it is not; doctor does not log in for you.
+
+### 1. Build
+
+Get the source:
+
+<!-- check: clone -->
+```sh
+git clone https://github.com/marcinwadon/hennery.git
+cd hennery
+```
+
+Build the web UI, then the binary, which embeds it. The dev shell brings
+Rust, Node and pnpm; with direnv, `direnv allow` once and leave out the
+`nix develop -c` prefixes. `HENNERY_WEB_REQUIRE=1` makes the build fail if
+the web UI was not built first, instead of embedding a placeholder page.
+
+<!-- check: build -->
+```sh
+nix develop -c pnpm --dir web install --frozen-lockfile
+nix develop -c pnpm --dir web build
+HENNERY_WEB_REQUIRE=1 nix develop -c cargo build --release --locked -p hennery
+export PATH="$PWD/target/release:$PATH"
+```
+
+Or let Nix build the whole package:
+
+<!-- check: nix -->
+```sh
+nix build
+./result/bin/hennery --version
+```
+
+The binary is then `result/bin/hennery`; put that directory on your `PATH`
+instead.
+
+#### Build without Nix
+
+Prerequisites (plus Git to get the source above):
+
+- **Linux:** a C compiler, `make` and `perl` (including its core modules).
+- **macOS:** Xcode Command Line Tools; macOS supplies `perl`.
+- **Both:** Rust via [rustup](https://rustup.rs/) (latest stable, the
+  toolchain CI uses), and Node 24 with its `npm`/`npx` on `PATH`.
+
+From the source directory, build the web UI with the flake's pinned pnpm
+12.3.4 through `npx`, without installing pnpm globally. OpenSSL is built
+and linked into the binary; no system OpenSSL is needed.
+
+<!-- check: build-without-nix -->
+```sh
+npx --yes pnpm@12.3.4 --dir web install --frozen-lockfile
+npx --yes pnpm@12.3.4 --dir web build
+HENNERY_WEB_REQUIRE=1 cargo build --release --locked -p hennery --features vendored-openssl
+export PATH="$PWD/target/release:$PATH"
+```
+
+Continue with step 2 below. Starting hennery, setup, `doctor` and agent
+logins are the same for both builds.
+
+### 2. Start
+
+<!-- check: up -->
+```sh
+hennery up
+```
+
+`hennery up` runs the collector and a host for this machine, and pairs the
+two. It listens on `http://127.0.0.1:7117` and keeps its data in
+`~/Library/Application Support/hennery` (macOS) or `$XDG_DATA_HOME/hennery`,
+by default `~/.local/share/hennery` (Linux). The first start downloads Node
+and the managed adapter set, including its bundled agent CLIs.
+
+On its first start it writes a one-time setup link, valid for an hour, to
+`collector/setup-url` in the data directory until setup, and prints the link
+when running in a terminal. Open that link: by default it uses
+`http://localhost:7117`, which is the browser origin to keep using. Choose
+and confirm a password of at least 12 characters, check **Public URL** and
+**Default hat**, then press **Set up**. You are signed in; add a passkey or
+press **Skip** (or **Continue** if passkeys are unavailable). Back up
+`collector/master.key` together with `collector/hennery.db`: the gateway's
+credentials cannot be read without it.
+If the setup link has expired, `hennery admin setup-url` prints a fresh one.
+
+### 3. Pair another machine
+
+With a verified HTTPS front end, use the public `https://` origin printed by
+**Hosts → Add host**: the host enrolls over HTTPS and runs over WSS. System
+roots are the default. `host join --ca-cert <file>` imports a private CA for
+this collector only and saves it; browsers and adapters need their own trust
+configuration. Use `hennery doctor` to check TLS, health and the host upgrade.
+
+To move an existing tunnel pairing, park its sessions and stop the host
+service, then use `hennery host transport set <https-origin> --system-roots`
+(or `--ca-cert <file>`) with the existing host data directory. This verifies
+the existing identity and preserves its key, roots, CLI settings and outbox.
+Restarting the host parks adapters; resume sessions normally afterwards.
+For CA rotation, save an old-plus-new CA bundle, restart, renew the server,
+then save a bundle without the old CA and restart again. Leaf renewal under
+the same CA needs no host restart. A `DurabilityUncertain` save means the new
+settings are visible but may not survive a crash: inspect the saved endpoint
+and repeat the explicit save after storage is healthy.
+
+An uncertain enrollment blocks `join`, `run` and `up`. Follow doctor's attempt
+id: inspect the collector's Hosts list, revoke any entry created by that
+attempt, then use the explicit enrollment archive action before joining
+again. Archiving preserves the journal and key locally; it cannot confirm a
+remote revoke. Automatic pairing remains suppressed after an archive.
+
+The SSH tunnel remains an optional deployment choice. On the other machine,
+open it with
+`ssh -N -L 7117:127.0.0.1:7117 <collector-machine>`; replace
+`<collector-machine>` with your SSH destination. Keep this terminal open
+while pairing and while `hennery host run` runs. If local port 7117 is
+already in use, choose another local port in the tunnel and join command.
+
+For browser access over HTTPS, a reverse proxy on the collector's machine
+can serve `up` at an `https://` address, including its host WebSocket. If `up` is already running,
+stop it with Ctrl-C and restart it with that address before setup:
+
+<!-- check: up-public -->
+```sh
+hennery up --public-url https://hennery.example
+```
+
+Already set up at `localhost`? Then `--public-url` is ignored: move it
+with `hennery admin reset-public-url` (see [Recovery](#recovery)), and from
+then on open hennery at the new address, since the old one is refused.
+With a same-machine reverse proxy, all remote clients share the loopback
+rate-limit budget, so exposing the collector lets anyone lock out password
+sign-in by submitting wrong passwords.
+
+In the web UI, **Hosts → Add host** shows a pairing code, valid for ten
+minutes, after asking for your password again if a fresh step-up is needed.
+Its printed command uses the public URL; when choosing the tunnel, adapt it to the
+`http://127.0.0.1` address as below. Build hennery on the other machine and
+run the join command in another terminal (it also downloads the runtime).
+In this block, `7117` is a placeholder for the tunnel's local port, and
+`ABCD-EFGH` is a placeholder for the code shown by **Add host**. Replace
+them with your port and code; leave the code out to type it instead and
+keep it out of shell history. Keep the `http://127.0.0.1` scheme and host:
+
+<!-- check: join -->
+```sh
+hennery host join http://127.0.0.1:7117 ABCD-EFGH
+```
+
+<!-- check: host-run -->
+```sh
+hennery host run
+```
+
+`host run` uses the saved `ws://127.0.0.1:<port>/api/hosts/ws` URL, including
+when it reconnects. Keep the same tunnel port available on future runs.
+
+### 4. Start a session
+
+**New session**: pick a connected host, an agent and a project directory, then
+**Start session**, and type your first prompt.
+Unless workspace roots are configured, the project list is empty: use
+**Browse** under the host user's home, or pass `--workspace-root <directory>`
+to `up` or `host run` to list repositories under that root. The flag is
+repeatable.
+
+### 5. Connect an MCP server
+
+For a remote server with a static token, open **MCP → Add connection**.
+Fill in **Name**, **Slug**, **Server URL** and **Hat**; choose **Token** under
+**Authentication**, and set **Header** and **Prefix** as the server requires
+(the prefix includes any trailing space). Press **Create**, then enter the
+**Token** and press **Save token**. Under **Hosts whose sessions get it**,
+tick the hosts to use it; each tick saves immediately. Where delivery is
+supported, sessions in that hat on those hosts receive it as
+`hennery-<slug>` at their next start or resume.
+The status stays **Not used yet** until traffic goes through it.
+Use an HTTPS server URL; **Internal network** permits plain HTTP only to
+internal addresses (loopback included), for a server you run there.
+
+For a local stdio server, use **MCP → Local MCP servers**. Choose **Host**
+and **Hat**, then **Add local server**. Fill in **Server name** and
+**Command** (on that host); use **Add argument** for each argument and
+**Add environment variable** for secrets. Press **Review local servers**,
+check the commands, then **Save local servers**. Saving replaces the whole
+set for that host and hat, including removals, at the next start or resume.
+Environment values cannot be read back from hennery.
+
+Agents without per-hat isolation receive hennery MCP servers only in the
+host's default hat. Check the delivery prediction beside the host or on
+**New session** for the agent you chose; the session reports what it was
+given at its last start or resume.
+This default-hat restriction also applies to Claude with `--use-cli`.
+
+These actions may ask you to confirm your password again.
+
+#### OAuth
+
+In **MCP → Add connection**, fill in the connection fields and choose
+**OAuth: automatic registration** under **Authentication** if the vendor
+supports dynamic registration, or **OAuth: pre-registered client** if you
+register the client yourself. Press **Create**. OAuth addresses must use
+HTTPS, or HTTP to this machine.
+
+The vendor must allow hennery's redirect URI:
+`<public_url>/api/mcp/oauth/callback`, using the collector's configured
+browser origin as `public_url`. The exact URI is shown in the pre-registered
+add/edit form and client settings beside **Register this redirect URI at the vendor:**
+For a pre-registered client, enter **Client ID**, then choose
+**Public client (no secret)** or **Set a new secret** under **Client secret action**.
+Enter **Client secret** if you chose **Set a new secret**. Press **Save client**.
+Saved secrets are write-only and cannot be read back from hennery.
+
+Click **Connect** or **Reconnect** when offered to open the vendor consent
+popup. If popups are blocked, use **Open vendor sign-in**. Return to hennery
+after consent. If a fresh confirmation is required before authorization,
+the popup closes and you confirm your password in the main window (or use
+**Confirm with passkey** if offered). Then follow the card and click
+**Connect** or **Reconnect** again if offered; authorization is not retried
+automatically.
+
+The card shows the gateway's last report, with **Status recorded** and
+**Last checked**. **Probe now** requests a report;
+it does not establish live health, and **Working** is a recorded status.
+**May need sign-in** (`needs_auth`) calls for **Reconnect**; read the
+gateway note, since an authorization-server outage can also cause this state.
+
+## Recovery
+
+Run these on the collector's machine while hennery runs, as the user that
+runs it; each asks for confirmation on the terminal. For a collector not in
+the default place, give `--data-dir <dir>` right after `admin`.
+
+- **A forgotten password:** set a new one. It signs out every browser session and
+  removes every passkey.
+
+  <!-- check: reset-password -->
+  ```sh
+  hennery admin reset-password
+  ```
+
+- **The collector moved** (another address, or behind a proxy): every
+  sign-in and change is refused with `origin_mismatch` until hennery knows
+  the address the browser now uses. Give it that origin: `https://`, or
+  `http://` to a loopback address, with no path. It signs out every browser
+  session; passkeys stop working if the host name changes, and are then
+  removed.
+
+  <!-- check: reset-public-url -->
+  ```sh
+  hennery admin reset-public-url https://hennery.example
+  ```
+
+## Licence
+
+hennery is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+````
+
+### File `crates/hennery/tests/readme.rs`
+
+<!-- r1:file task=4 path=crates/hennery/tests/readme.rs sha256=d4284e41a8e15ecd97c1c3b599e8c9c61448d209bdbd938528ed3d6bc76693cb bytes=37940 mode=644 encoding=utf8 -->
+`````rust
+//! The README's shell examples (plan 4f). Every one is a fenced block with
+//! a name (`packaging/readme-blocks.sh`), and every name is run: here, or by
+//! a workflow, which these tests check names it.
+//!
+//! The blocks run here run as written, through `sh -c`, with this build's
+//! binary first on `PATH` as `hennery`, each in a scratch home of its own
+//! (a machine of its own), never the real one. Only these differ from a
+//! tester's machine, and the plan records why:
+//! - `HENNERY_LISTEN=127.0.0.1:0`: `up` listens on a free port, not 7117;
+//! - the adapter mirrors point at a port nothing listens on, so nothing is
+//!   downloaded: `host join` pairs and then fails on the download;
+//! - only the join block's explicitly marked port and code placeholders
+//!   are replaced; its documented scheme and host must remain unchanged.
+//!   The local listener stands in for the SSH tunnel's forwarded endpoint.
+
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// Where the managed runtime would be fetched from: nothing listens there.
+const OFFLINE: &str = "http://127.0.0.1:1/";
+/// The owner's password at setup.
+const PASSWORD: &str = "correct horse battery";
+/// The password `reset-password` sets.
+const NEW_PASSWORD: &str = "a new password, typed twice";
+/// The README's example public address.
+const EXAMPLE_URL: &str = "https://hennery.example";
+/// The README's example pairing code.
+const EXAMPLE_CODE: &str = "ABCD-EFGH";
+/// The README's explicitly marked tunnel-port placeholder.
+const EXAMPLE_PORT: u16 = 7117;
+
+/// Every block name in the README, in order, with what runs it.
+const BLOCKS: [(&str, Runner); 11] = [
+    (
+        "release-bootstrap",
+        Runner::Workflow("release-tests.yml", "refusal-tests"),
+    ),
+    ("clone", Runner::Workflow("ci.yml", "readme")),
+    ("build", Runner::Workflow("ci.yml", "readme")),
+    ("nix", Runner::Workflow("nix.yml", "flake")),
+    ("build-without-nix", Runner::Workflow("ci.yml", "readme-without-nix")),
+    ("up", Runner::Here),
+    ("up-public", Runner::Here),
+    ("join", Runner::Here),
+    ("host-run", Runner::Here),
+    ("reset-password", Runner::Here),
+    ("reset-public-url", Runner::Here),
+];
+
+#[derive(Clone, Copy, Debug)]
+enum Runner {
+    /// A test in this file.
+    Here,
+    /// This workflow's job, through `readme-blocks.sh README.md <name>`.
+    Workflow(&'static str, &'static str),
+}
+
+fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// `readme-blocks.sh <file> <arg>`: its exit status, output and errors.
+fn blocks(file: &Path, arg: &str) -> (Option<i32>, String, String) {
+    let out = Command::new("sh")
+        .arg(repo().join("packaging/readme-blocks.sh"))
+        .arg(file)
+        .arg(arg)
+        .env_remove("README_BLOCKS_AWK")
+        .output()
+        .unwrap();
+    (
+        out.status.code(),
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
+}
+
+/// The README's block `name`.
+fn block(name: &str) -> String {
+    let (status, out, err) = blocks(&repo().join("README.md"), name);
+    assert_eq!(status, Some(0), "{err}");
+    out
+}
+
+/// Replace only the port and code the README explicitly marks as
+/// placeholders. Never repair an unsupported URL by changing its origin.
+fn pairing_script(script: &str, readme: &str, port: u16, code: &str) -> String {
+    assert!(readme.contains(&format!("`{EXAMPLE_PORT}` is a placeholder")));
+    assert!(readme.contains(&format!("`{EXAMPLE_CODE}` is a placeholder")));
+    let address = |command: &str| {
+        reqwest::Url::parse(command.split_whitespace().nth(3).expect("join URL")).expect("join URL parses")
+    };
+    let before = address(script);
+    assert_eq!(
+        before.scheme(),
+        "http",
+        "pairing substitution must not hide a scheme change"
+    );
+    assert_eq!(
+        before.host_str(),
+        Some("127.0.0.1"),
+        "pairing substitution must not hide a host change"
+    );
+    assert_eq!(before.port(), Some(EXAMPLE_PORT));
+    let port_placeholder = format!(":{EXAMPLE_PORT}");
+    assert_eq!(script.matches(&port_placeholder).count(), 1, "{script}");
+    assert_eq!(script.matches(EXAMPLE_CODE).count(), 1, "{script}");
+    let substituted = script
+        .replace(&port_placeholder, &format!(":{port}"))
+        .replace(EXAMPLE_CODE, code);
+    let after = address(&substituted);
+    assert_eq!(after.scheme(), before.scheme(), "substitution changed the scheme");
+    assert_eq!(after.host_str(), before.host_str(), "substitution changed the host");
+    substituted
+}
+
+#[test]
+fn pairing_substitution_only_changes_marked_port_and_code() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    assert_eq!(
+        pairing_script(&block("join"), &readme, 12345, "EFGH-IJKL"),
+        "hennery host join http://127.0.0.1:12345 EFGH-IJKL\n"
+    );
+    for unmarked in ["`7117` is an example", "`ABCD-EFGH` is an example"] {
+        let original = unmarked.replace("is an example", "is a placeholder");
+        let changed = readme.replace(&original, unmarked);
+        assert!(std::panic::catch_unwind(|| pairing_script(&block("join"), &changed, 12345, "EFGH-IJKL")).is_err());
+    }
+}
+
+#[test]
+fn pairing_substitution_cannot_hide_a_scheme_change() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let changed = block("join").replace("http://", "https://");
+    assert!(std::panic::catch_unwind(|| pairing_script(&changed, &readme, 12345, "EFGH-IJKL")).is_err());
+}
+
+#[test]
+fn pairing_substitution_cannot_hide_a_host_change() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let changed = block("join").replace("127.0.0.1", "localhost");
+    assert!(std::panic::catch_unwind(|| pairing_script(&changed, &readme, 12345, "EFGH-IJKL")).is_err());
+}
+
+/// A scratch file holding `text`, removed on drop.
+struct Fixture(PathBuf);
+
+impl Fixture {
+    fn new(text: &str) -> Self {
+        let file = tempfile::Builder::new().suffix(".md").tempfile().unwrap();
+        let (_, path) = file.keep().unwrap();
+        std::fs::write(&path, text).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// `readme-blocks.sh` on a file holding `text`.
+fn blocks_of(text: &str, arg: &str) -> (Option<i32>, String, String) {
+    let fixture = Fixture::new(text);
+    blocks(&fixture.0, arg)
+}
+
+/// The script's refusal of `text`: exit 1, and `message` said.
+fn refused(text: &str, message: &str) {
+    let (status, out, err) = blocks_of(text, "--list");
+    assert_eq!(status, Some(1), "out: {out}\nerr: {err}");
+    assert!(err.contains(message), "{err}");
+}
+
+#[test]
+fn a_named_block_is_printed_without_its_indent() {
+    let text = "# t\n\n- a step:\n\n  <!-- check: one -->\n  ```sh\n  echo one\n    echo nested\n  ```\n\n<!-- check: two -->\n```sh title=x\necho two\n```\n";
+    assert_eq!(
+        blocks_of(text, "one"),
+        (Some(0), "echo one\n  echo nested\n".into(), String::new())
+    );
+    assert_eq!(blocks_of(text, "two"), (Some(0), "echo two\n".into(), String::new()));
+    assert_eq!(blocks_of(text, "--list"), (Some(0), "one\ntwo\n".into(), String::new()));
+}
+
+/// The languages that are not shell, in any case, need no tag.
+#[test]
+fn a_block_in_a_language_that_is_not_shell_needs_no_tag() {
+    for info in [
+        "toml", "json", "jsonc", "yaml", "yml", "rust", "ts", "tsx", "js", "html", "css", "diff", "mermaid", "TOML",
+    ] {
+        let text = format!("```{info}\nkey = 1\n```\n\n<!-- check: one -->\n```sh\necho one\n```\n");
+        assert_eq!(
+            blocks_of(&text, "--list"),
+            (Some(0), "one\n".into(), String::new()),
+            "{info}"
+        );
+    }
+}
+
+#[test]
+fn a_shell_block_without_a_tag_is_refused() {
+    refused(
+        "text\n\n```sh\necho hi\n```\n",
+        "a shell block without a <!-- check: <name> --> line",
+    );
+}
+
+/// Fail closed: a block neither `sh` nor a language that is not shell is
+/// refused, tagged or not.
+#[test]
+fn any_other_block_is_refused() {
+    for info in [
+        "",
+        "SH",
+        "bash",
+        "shell",
+        "console",
+        "zsh",
+        "fish",
+        "text",
+        "shell-session",
+        "{.sh}",
+    ] {
+        refused(&format!("```{info}\necho hi\n```\n"), &format!("a block in \"{info}\""));
+        refused(
+            &format!("<!-- check: one -->\n```{info}\necho hi\n```\n"),
+            &format!("a block in \"{info}\""),
+        );
+    }
+}
+
+#[test]
+fn a_tag_must_be_just_before_a_shell_block() {
+    refused(
+        "<!-- check: one -->\n\n```sh\necho one\n```\n",
+        "the tag one is not followed by a shell block",
+    );
+    refused("<!-- check: one -->\n", "the tag one is not followed by a shell block");
+    refused(
+        "<!-- check: one -->\n```toml\nk = 1\n```\n",
+        "the tag one is on a block in toml",
+    );
+}
+
+#[test]
+fn a_malformed_tag_is_refused() {
+    for tag in [
+        "<!-- check: --list -->",
+        "<!-- check: Up -->",
+        "<!--check: up-->",
+        "<!-- check:up -->",
+    ] {
+        refused(&format!("{tag}\n```sh\necho a\n```\n"), "a malformed tag");
+    }
+}
+
+#[test]
+fn a_name_used_twice_is_refused() {
+    refused(
+        "<!-- check: one -->\n```sh\necho a\n```\n<!-- check: one -->\n```sh\necho b\n```\n",
+        "the name one is used twice",
+    );
+}
+
+#[test]
+fn a_block_never_closed_is_refused() {
+    refused("<!-- check: one -->\n```sh\necho a\n", "a block never closed");
+}
+
+#[test]
+fn a_tilde_fence_is_refused() {
+    refused("~~~sh\necho a\n~~~\n", "a ~~~ fence");
+    refused("> ~~~sh\n> echo a\n> ~~~\n", "a ~~~ fence");
+}
+
+#[test]
+fn a_fence_in_a_block_quote_is_refused() {
+    refused("> ```sh\n> echo a\n> ```\n", "a fence in a block quote");
+}
+
+#[test]
+fn a_fence_indented_with_a_tab_is_refused() {
+    refused("-\n\t```sh\n\techo a\n\t```\n", "a fence indented with a tab");
+    refused("-\n  \t```sh\n  \techo a\n  \t```\n", "a fence indented with a tab");
+}
+
+#[test]
+fn a_fence_of_more_backticks_is_refused() {
+    refused("````sh\necho a\n````\n", "a fence of more than three backticks");
+}
+
+#[test]
+fn a_carriage_return_is_refused() {
+    refused("<!-- check: one -->\r\n```sh\r\necho a\r\n```\r\n", "a carriage return");
+}
+
+#[test]
+fn a_missing_name_is_refused() {
+    let (status, out, err) = blocks_of("<!-- check: one -->\n```sh\necho a\n```\n", "two");
+    assert_eq!((status, out.as_str()), (Some(1), ""));
+    assert!(err.contains("no block named two"), "{err}");
+}
+
+#[test]
+fn wrong_arguments_exit_2() {
+    let out = Command::new("sh")
+        .arg(repo().join("packaging/readme-blocks.sh"))
+        .arg(repo().join("README.md"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("usage:"));
+}
+
+#[test]
+fn an_unreadable_file_exits_2() {
+    let (status, _, err) = blocks(Path::new("/nonexistent-hennery-test/README.md"), "--list");
+    assert_eq!(status, Some(2));
+    assert!(err.contains("cannot read"), "{err}");
+}
+
+/// awk failing is not mistaken for a broken file (1) or bad arguments (2).
+#[test]
+fn a_failing_awk_exits_3() {
+    let awk = Fixture::new("#!/bin/sh\nexit 2\n");
+    std::fs::set_permissions(&awk.0, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+    let readme = Fixture::new("<!-- check: one -->\n```sh\necho a\n```\n");
+    let out = Command::new("sh")
+        .arg(repo().join("packaging/readme-blocks.sh"))
+        .arg(&readme.0)
+        .arg("--list")
+        .env("README_BLOCKS_AWK", &awk.0)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("awk failed (exit status 2)"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The repository's workflow jobs use two-space indentation. Limit a
+/// runner check to its named job, ignoring comments and other jobs.
+fn workflow_job(workflow: &str, job: &str) -> String {
+    let header = format!("\n  {job}:\n");
+    let (_, body) = workflow
+        .split_once(&header)
+        .unwrap_or_else(|| panic!("no workflow job {job}"));
+    body.lines()
+        .take_while(|line| {
+            !line.starts_with("  ")
+                || line.starts_with("   ")
+                || line.trim().is_empty()
+                || line.trim_start().starts_with('#')
+        })
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every block of the README has a runner: these tests, or a workflow
+/// that runs the script on it.
+#[test]
+fn every_readme_block_is_run() {
+    let (status, names, err) = blocks(&repo().join("README.md"), "--list");
+    assert_eq!(status, Some(0), "{err}");
+    let expected: Vec<&str> = BLOCKS.iter().map(|(name, _)| *name).collect();
+    assert_eq!(names.lines().collect::<Vec<_>>(), expected);
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    pairing_script(&block("join"), &readme, 12345, "EFGH-IJKL");
+    let here = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/readme.rs")).unwrap();
+    for (name, runner) in BLOCKS {
+        if let Runner::Here = runner {
+            assert!(
+                here.contains(&format!("block(\"{name}\")")),
+                "no test here runs the block {name}"
+            );
+        }
+        if let Runner::Workflow(file, job) = runner {
+            let workflow = std::fs::read_to_string(repo().join(".github/workflows").join(file)).unwrap();
+            let workflow = workflow_job(&workflow, job);
+            assert!(
+                workflow.contains(&format!("readme-blocks.sh README.md {name} ")),
+                "{file}'s {job} job does not run the block {name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_non_nix_build_runs_on_both_platforms_without_nix() {
+    let workflow = std::fs::read_to_string(repo().join(".github/workflows/ci.yml")).unwrap();
+    let job = workflow_job(&workflow, "readme-without-nix");
+    assert!(job.contains("os: [ubuntu-latest, macos-latest]"), "{job}");
+    assert!(job.contains("runs-on: ${{ matrix.os }}"), "{job}");
+    assert!(job.contains("timeout-minutes: 60"), "{job}");
+    assert!(job.contains("toolchain: stable"), "{job}");
+    assert!(job.contains("node-version: 24"), "{job}");
+    assert!(
+        !job.contains("install-nix-action") && !job.contains("nix develop"),
+        "{job}"
+    );
+    // Extraction alone must not count as running the block. Its PATH
+    // export and the UI check must execute in the same shell on each OS.
+    assert!(
+        job.contains("readme-blocks.sh README.md build-without-nix > \"$RUNNER_TEMP/build-without-nix.sh\""),
+        "{job}"
+    );
+    assert!(
+        job.contains(
+            "cat >> \"$RUNNER_TEMP/build-without-nix.sh\" <<'CHECK'\n          sh packaging/check-web-ui.sh \"$(command -v hennery)\"\n          CHECK"
+        ),
+        "{job}"
+    );
+    assert!(job.contains("sh -eux \"$RUNNER_TEMP/build-without-nix.sh\""), "{job}");
+}
+
+// ---------------------------------------------------------------------
+// The blocks run here.
+
+/// A scratch machine: a home under `/tmp` (short, for the admin socket's
+/// path), removed on drop.
+struct Machine {
+    home: PathBuf,
+}
+
+impl Machine {
+    fn new(name: &str) -> Self {
+        let home = PathBuf::from(format!("/tmp/hennery-readme-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        Self { home }
+    }
+
+    /// The platform's data directory under this home (distribution §8).
+    fn data(&self) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            self.home.join("Library/Application Support/hennery")
+        } else {
+            self.home.join(".local/share/hennery")
+        }
+    }
+
+    /// `sh -c script` on this machine, with `hennery` on `PATH`.
+    fn sh(&self, script: &str) -> Command {
+        let bin = Path::new(env!("CARGO_BIN_EXE_hennery")).parent().unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin.to_path_buf()];
+        paths.extend(std::env::split_paths(&path));
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(script).current_dir(&self.home);
+        for (var, _) in std::env::vars_os() {
+            if var.to_string_lossy().starts_with("HENNERY_") {
+                cmd.env_remove(var);
+            }
+        }
+        cmd.env("PATH", std::env::join_paths(paths).unwrap())
+            .env("HOME", &self.home)
+            .env("XDG_DATA_HOME", self.home.join(".local/share"))
+            .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env("XDG_STATE_HOME", self.home.join(".local/state"))
+            .env("XDG_CACHE_HOME", self.home.join(".cache"))
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("CODEX_HOME")
+            .env_remove("CODEX_SQLITE_HOME")
+            .env("HENNERY_NPM_REGISTRY", OFFLINE)
+            .env("HENNERY_NODE_MIRROR", OFFLINE)
+            .env("HENNERY_LISTEN", "127.0.0.1:0");
+        cmd
+    }
+
+    /// `script` started in a process group of its own, its output in
+    /// `<home>/<log>`.
+    fn start(&self, script: &str, log: &str) -> Group {
+        let log = self.home.join(log);
+        let child = self
+            .sh(script)
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(std::fs::File::create(&log).unwrap())
+            .stderr(std::fs::File::create(log.with_extension("err")).unwrap())
+            .spawn()
+            .unwrap();
+        Group { child, log }
+    }
+}
+
+impl Drop for Machine {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.home);
+    }
+}
+
+/// A long-running block's process group: killed on drop.
+struct Group {
+    child: std::process::Child,
+    log: PathBuf,
+}
+
+impl Group {
+    fn pgid(&self) -> i32 {
+        self.child.id() as i32
+    }
+
+    fn output(&self) -> String {
+        let out = std::fs::read_to_string(&self.log).unwrap_or_default();
+        let err = std::fs::read_to_string(self.log.with_extension("err")).unwrap_or_default();
+        format!("{out}{err}")
+    }
+
+    /// Wait for `what` to hold, failing with the group's output after 60 s.
+    fn wait_until(&mut self, what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !done() {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                panic!("it exited ({status}) before {what}:\n{}", self.output());
+            }
+            assert!(Instant::now() < deadline, "no {what} within 60 s:\n{}", self.output());
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// The collector's address, from its "collector listening" line.
+    fn listening(&mut self) -> String {
+        let mut address = String::new();
+        let log = self.log.clone();
+        self.wait_until("collector listening", || {
+            let text = strip_ansi(&complete_lines(&log));
+            match text
+                .lines()
+                .filter(|line| line.contains("collector listening"))
+                .find_map(|line| line.split_whitespace().find_map(|f| f.strip_prefix("address=")))
+            {
+                Some(found) => {
+                    address = found.to_string();
+                    true
+                }
+                None => false,
+            }
+        });
+        address
+    }
+
+    /// Every process started under this group's shell, as far down as they
+    /// go: `up` starts its children in process groups of their own.
+    fn processes(&self) -> Vec<i32> {
+        let mut all = vec![self.pgid()];
+        let mut next = 0;
+        while next < all.len() {
+            // pgrep: 0 found, 1 none; anything else, or no pgrep at all,
+            // must not pass as "none" (the children would be left behind).
+            let out = Command::new("pgrep")
+                .args(["-P", &all[next].to_string()])
+                .output()
+                .expect("run pgrep");
+            assert!(matches!(out.status.code(), Some(0 | 1)), "pgrep failed: {out:?}");
+            all.extend(
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter_map(|line| line.trim().parse::<i32>().ok()),
+            );
+            next += 1;
+        }
+        all
+    }
+
+    /// Whether any of `pids` is still running.
+    fn any_alive(pids: &[i32]) -> bool {
+        // SAFETY: kill(2) with signal 0 only checks the process exists.
+        pids.iter().any(|&pid| unsafe { libc::kill(pid, 0) } == 0)
+    }
+
+    /// SIGTERM to the group, as Ctrl-C's SIGINT would be: it and every
+    /// process under it must be gone within 20 s.
+    fn stop(&mut self) {
+        let mut pids = self.processes();
+        // SAFETY: kill(2) on this test's own process group.
+        unsafe { libc::kill(-self.pgid(), libc::SIGTERM) };
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            // Once the shell is reaped its id may be another's: stop asking.
+            if let Ok(Some(_)) = self.child.try_wait() {
+                pids.retain(|&pid| pid != self.pgid());
+            }
+            if !Self::any_alive(&pids) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "still running 20 s after SIGTERM:\n{}",
+                self.output()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
+impl Drop for Group {
+    /// Kill everything under the shell while it runs, and wait until it is
+    /// gone, so that nothing writes into the machine's home after it is
+    /// removed. A shell already reaped (after `stop`, or one that exited)
+    /// is left alone: its id may be another's.
+    fn drop(&mut self) {
+        if !matches!(self.child.try_wait(), Ok(None)) {
+            return;
+        }
+        let pids = self.processes();
+        for &pid in &pids {
+            // SAFETY: kill(2) on processes this test started.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+        let _ = self.child.wait();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Self::any_alive(&pids[1..]) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+/// The complete lines of `log`: a line still being written could end
+/// mid-port.
+fn complete_lines(log: &Path) -> String {
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    match text.rfind('\n') {
+        Some(end) => text[..=end].to_string(),
+        None => String::new(),
+    }
+}
+
+/// `line` without terminal colour codes (`ESC [ … m`).
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// One HTTP/1.1 request to `listen`: the status and the whole response.
+fn request(listen: &str, method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> (u16, String) {
+    let mut stream = TcpStream::connect(listen).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {listen}\r\nConnection: close\r\n");
+    for (name, value) in headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    if !body.is_empty() {
+        head.push_str("Content-Type: application/json\r\n");
+    }
+    head.push_str(&format!("Content-Length: {}\r\n\r\n{body}", body.len()));
+    stream.write_all(head.as_bytes()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let status = response.split(' ').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (status, response)
+}
+
+/// The `hennery_session` cookie a response sets.
+fn session_of(response: &str) -> String {
+    response
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            let value = value.trim().strip_prefix("hennery_session=")?;
+            name.eq_ignore_ascii_case("set-cookie")
+                .then(|| value.split(';').next().unwrap().to_string())
+        })
+        .unwrap_or_else(|| panic!("no session cookie: {response}"))
+}
+
+/// What the setup page does: the link's token, a password and the origin
+/// the browser is at. The owner's session.
+fn set_up(listen: &str, setup_url: &str, origin: &str) -> String {
+    let token = setup_url.trim_end().rsplit_once('#').unwrap().1;
+    let body = serde_json::json!({ "token": token, "password": PASSWORD, "public_url": origin }).to_string();
+    let (status, response) = request(listen, "POST", "/api/setup", &[("Origin", origin)], &body);
+    assert_eq!(status, 201, "{response}");
+    session_of(&response)
+}
+
+/// Sign in with `password` from `origin`: the status.
+fn log_in(listen: &str, origin: &str, password: &str) -> u16 {
+    let body = serde_json::json!({ "password": password }).to_string();
+    request(listen, "POST", "/api/auth/login", &[("Origin", origin)], &body).0
+}
+
+/// `GET /api/hosts` with `session`: the status and the hosts.
+fn hosts(listen: &str, session: &str) -> (u16, Vec<serde_json::Value>) {
+    let cookie = format!("hennery_session={session}");
+    let (status, response) = request(listen, "GET", "/api/hosts", &[("Cookie", &cookie)], "");
+    let body = response.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+    let hosts = serde_json::from_str::<Vec<serde_json::Value>>(body).unwrap_or_default();
+    (status, hosts)
+}
+
+/// The setup link `up` wrote, once it has.
+fn setup_url(group: &mut Group, machine: &Machine) -> String {
+    let file = machine.data().join("collector/setup-url");
+    let mut url = String::new();
+    group.wait_until("the setup link", || {
+        url = std::fs::read_to_string(&file).unwrap_or_default();
+        url.contains('#')
+    });
+    url.trim_end().to_string()
+}
+
+/// `cmd`'s output, failing the test if it runs longer than `limit`.
+fn output_within(cmd: &mut Command, limit: Duration) -> std::process::Output {
+    let child = cmd
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id() as i32;
+    let (done, waited) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(child.wait_with_output());
+    });
+    match waited.recv_timeout(limit) {
+        Ok(out) => out.unwrap(),
+        Err(_) => {
+            // SAFETY: kill(2) on this test's own process group, still running.
+            unsafe { libc::kill(-pid, libc::SIGKILL) };
+            panic!("still running after {limit:?}");
+        }
+    }
+}
+
+/// A command on a terminal, its process group killed on drop: a test that
+/// fails mid-prompt leaves nothing waiting on the terminal.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        // Only while it runs: once reaped, its id may be another's.
+        if let Ok(None) = self.0.try_wait() {
+            // SAFETY: kill(2) on this test's own process group.
+            unsafe { libc::kill(-(self.0.id() as i32), libc::SIGKILL) };
+            let _ = self.0.wait();
+        }
+    }
+}
+
+/// Run `script` with a terminal on its standard input and error, as a
+/// person would: each `(prompt, answer)` answered once `prompt` shows. Its
+/// exit status, its standard output, and what the terminal showed.
+fn on_a_terminal(machine: &Machine, script: &str, answers: &[(&str, &str)]) -> (ExitStatus, String, String) {
+    let (mut master, mut slave) = (0, 0);
+    // SAFETY: openpty(3) into two descriptors, with no name, settings or size.
+    let made = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(made, 0, "openpty: {}", std::io::Error::last_os_error());
+    // SAFETY: both descriptors were just opened, and are owned here alone.
+    let (master, slave) = unsafe { (std::fs::File::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+    let mut child = KillOnDrop(
+        machine
+            .sh(script)
+            .process_group(0)
+            .stdin(Stdio::from(slave.try_clone().unwrap()))
+            .stderr(Stdio::from(slave))
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let child = &mut child.0;
+    let shown = Arc::new(Mutex::new(String::new()));
+    let reader = {
+        let shown = shown.clone();
+        let mut master = master.try_clone().unwrap();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = master.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                shown.lock().unwrap().push_str(&String::from_utf8_lossy(&buf[..n]));
+            }
+        })
+    };
+    let mut writer = master;
+    let mut seen = 0;
+    for (prompt, answer) in answers {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let text = shown.lock().unwrap().clone();
+            if let Some(at) = text[seen..].find(prompt) {
+                seen += at + prompt.len();
+                break;
+            }
+            if let Ok(Some(status)) = child.try_wait() {
+                panic!("it exited ({status}) before asking {prompt:?}:\n{text}");
+            }
+            assert!(Instant::now() < deadline, "no {prompt:?} within 30 s:\n{text}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        writer.write_all(format!("{answer}\n").as_bytes()).unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() > deadline {
+            panic!("still running after 30 s:\n{}", shown.lock().unwrap());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let mut stdout = String::new();
+    child.stdout.take().unwrap().read_to_string(&mut stdout).unwrap();
+    drop(writer);
+    // The reader ends at the terminal's end, once no process holds it;
+    // not joined, so a descriptor some grandchild kept cannot hang the test.
+    drop(reader);
+    let shown = shown.lock().unwrap().clone();
+    (status, stdout, shown)
+}
+
+/// The admin command calls this time-aware method: a live link is reused,
+/// but at its expiry it mints and writes a fresh one without a restart.
+#[test]
+fn an_expired_setup_link_is_reissued_as_the_readme_says() {
+    use hennery_kernel::operator::{Operator, SETUP_TOKEN_TTL_SECS, SetupOutcome};
+
+    let dir = tempfile::tempdir().unwrap();
+    let operator = Operator::open(&dir.path().join("hennery.db")).unwrap();
+    let origin = "http://localhost:7117";
+    let now = 1000;
+    let old = operator.announce_setup(dir.path(), origin, now).unwrap().unwrap();
+    let expiry = now + SETUP_TOKEN_TTL_SECS;
+    let live = operator.setup_link(dir.path(), origin, expiry - 1).unwrap().unwrap();
+    assert!(live.url == old.url, "a live link was replaced");
+    let fresh = operator.setup_link(dir.path(), origin, expiry).unwrap().unwrap();
+    assert!(fresh.url != old.url, "the expired link was reused");
+    assert!(
+        std::fs::read_to_string(&fresh.file).unwrap().trim_end() == fresh.url,
+        "the setup-url file does not hold the fresh link"
+    );
+    let old_token = old.url.rsplit_once('#').unwrap().1;
+    let fresh_token = fresh.url.rsplit_once('#').unwrap().1;
+    assert_eq!(
+        operator.set_up(old_token, PASSWORD, origin, expiry).unwrap(),
+        SetupOutcome::InvalidToken
+    );
+    assert!(matches!(
+        operator.set_up(fresh_token, PASSWORD, origin, expiry).unwrap(),
+        SetupOutcome::Done { .. }
+    ));
+}
+
+/// Quickstart step 2 and the recovery commands: `hennery up` writes a setup
+/// link that sets the collector up; `reset-password` sets a password that
+/// signs in where the old one no longer does; `reset-public-url` moves the
+/// origin sign-ins are accepted from.
+#[test]
+fn up_and_the_recovery_commands_work_as_the_readme_says() {
+    let machine = Machine::new("up");
+    let mut up = machine.start(&block("up"), "up.log");
+    let listen = up.listening();
+    let link = setup_url(&mut up, &machine);
+    // The link's origin is the browser's, and the one sign-ins come from.
+    let port = listen.rsplit_once(':').unwrap().1;
+    let origin = format!("http://localhost:{port}");
+    assert!(link.starts_with(&format!("{origin}/setup#")), "{link}");
+    let setup_command = output_within(&mut machine.sh("hennery admin setup-url"), Duration::from_secs(60));
+    assert!(setup_command.status.success(), "setup-url command failed");
+    assert!(
+        String::from_utf8(setup_command.stdout).unwrap().trim_end() == link,
+        "setup-url did not print the live link"
+    );
+    let session = set_up(&listen, &link, &origin);
+    assert_eq!(hosts(&listen, &session).0, 200);
+
+    let (status, stdout, shown) = on_a_terminal(
+        &machine,
+        &block("reset-password"),
+        &[
+            ("New password: ", NEW_PASSWORD),
+            ("The same again: ", NEW_PASSWORD),
+            ("Type yes to go on: ", "yes"),
+        ],
+    );
+    assert!(status.success(), "{status}: {stdout}\n{shown}");
+    assert!(
+        stdout.starts_with("The password is reset; 1 session(s) signed out"),
+        "{stdout}"
+    );
+    assert!(!shown.contains(NEW_PASSWORD), "the password was echoed: {shown}");
+    assert_eq!(hosts(&listen, &session).0, 401, "the old session still works");
+    assert_eq!(log_in(&listen, &origin, PASSWORD), 401);
+    assert_eq!(log_in(&listen, &origin, NEW_PASSWORD), 204);
+
+    let script = block("reset-public-url");
+    assert!(script.contains(EXAMPLE_URL), "{script}");
+    let (status, stdout, shown) = on_a_terminal(&machine, &script, &[("Type yes to go on: ", "yes")]);
+    assert!(status.success(), "{status}: {stdout}\n{shown}");
+    assert!(
+        stdout.starts_with(&format!("public_url is now {EXAMPLE_URL};")),
+        "{stdout}"
+    );
+    assert_eq!(log_in(&listen, EXAMPLE_URL, NEW_PASSWORD), 204);
+    assert_eq!(
+        log_in(&listen, &origin, NEW_PASSWORD),
+        403,
+        "the old origin is still accepted"
+    );
+
+    up.stop();
+}
+
+/// Quickstart step 3: `up --public-url` sets up at that address, and the
+/// join block, given only a tunnel port and a code from "Add host", pairs
+/// another machine whose `host run` reconnects through the saved URL.
+#[test]
+fn pairing_another_machine_works_as_the_readme_says() {
+    let collector = Machine::new("collector");
+    let script = block("up-public");
+    assert!(script.contains(EXAMPLE_URL), "{script}");
+    let mut up = collector.start(&script, "up.log");
+    let listen = up.listening();
+    let link = setup_url(&mut up, &collector);
+    assert!(link.starts_with(&format!("{EXAMPLE_URL}/setup#")), "{link}");
+    let session = set_up(&listen, &link, EXAMPLE_URL);
+    up.wait_until("up's own host", || hosts(&listen, &session).1.len() == 1);
+
+    // "Add host": what the Hosts screen mints, just after setup.
+    let cookie = format!("hennery_session={session}");
+    let (status, response) = request(
+        &listen,
+        "POST",
+        "/api/hosts/pairing-codes",
+        &[("Origin", EXAMPLE_URL), ("Cookie", &cookie)],
+        "",
+    );
+    assert_eq!(status, 201, "{response}");
+    let body = response.split_once("\r\n\r\n").unwrap().1;
+    let code = serde_json::from_str::<serde_json::Value>(body).unwrap()["code"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let other = Machine::new("other");
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let port = listen.rsplit_once(':').unwrap().1.parse().unwrap();
+    let join = pairing_script(&block("join"), &readme, port, &code);
+    let out = output_within(other.sh(&join).stdin(Stdio::null()), Duration::from_secs(60));
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    // Paired; then, offline, the adapters' download fails, and only that.
+    assert!(stdout.contains("paired as host-"), "{stdout}\n{stderr}");
+    assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
+    assert!(stderr.contains("but the adapter runtime was not installed"), "{stderr}");
+
+    let mut host = other.start(&block("host-run"), "host.log");
+    host.wait_until("both hosts connected", || {
+        let listed = hosts(&listen, &session).1;
+        listed.len() == 2 && listed.iter().all(|h| h["connected"] == true)
+    });
+    host.stop();
+    up.wait_until("the stopped host disconnected", || {
+        let listed = hosts(&listen, &session).1;
+        listed.len() == 2 && listed.iter().filter(|h| h["connected"] == true).count() == 1
+    });
+    // A later run reads the saved loopback URL, without a URL override.
+    let mut host = other.start(&block("host-run"), "host-restarted.log");
+    host.wait_until("the restarted host connected through its saved URL", || {
+        let listed = hosts(&listen, &session).1;
+        listed.len() == 2 && listed.iter().all(|h| h["connected"] == true)
+    });
+    host.stop();
+    up.stop();
+}
+`````
 
 ### File `dist-workspace.toml`
 
@@ -13000,6 +14503,162 @@ class Approval(unittest.TestCase):
 if __name__ == '__main__': unittest.main()
 ````
 
+### File `packaging/release/test_bootstrap.py`
+
+<!-- r1:file task=4 path=packaging/release/test_bootstrap.py sha256=2ab1d9462f2434c3bcdddf7fd24153c1fe1edaa631276e1ed29597dd3741b0fd bytes=9073 mode=644 encoding=utf8 -->
+````python
+"""Run the exact guarded README shell block against real OpenPGP fixtures."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+FINGERPRINT = 'F26C7F594DFE84D131703AFC23E5A318AE8D2861'
+SCRIPT = None
+
+
+def documented_script():
+    environment = dict(os.environ)
+    environment.pop('README_BLOCKS_AWK', None)
+    result = subprocess.run(['sh', str(ROOT / 'packaging/readme-blocks.sh'), str(ROOT / 'README.md'), 'release-bootstrap'], env=environment, capture_output=True, text=True)
+    if result.returncode:
+        raise AssertionError('README must contain the guarded release-bootstrap block: ' + result.stderr)
+    if SCRIPT is not None:
+        assert SCRIPT.read_text() == result.stdout, 'workflow must execute the exact README block'
+    return result.stdout
+
+
+class Bootstrap(unittest.TestCase):
+    def test_documented_bootstrap_is_guarded_and_runs_no_release_verifier(self):
+        script = documented_script()
+        self.assertEqual(script.count('release_fingerprint=' + FINGERPRINT), 1)
+        self.assertNotIn('verify.py', script)
+        self.assertNotIn('maintainer.asc', script)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory(prefix='r1-bootstrap-')
+        cls.root = Path(cls.temp.name)
+        cls.keyring = cls.root / 'signing'; cls.keyring.mkdir(mode=0o700)
+        cls.environment = dict(os.environ, GNUPGHOME=str(cls.keyring))
+        cls.keys = []
+        cls.primary = []
+        for name in ('approved', 'another'):
+            cls.gpg('--quick-generate-key', 'R1 disposable ' + name, 'ed25519', 'cert', '1d')
+            listing = cls.gpg('--with-colons', '--list-keys', 'R1 disposable ' + name).stdout
+            primary = next(line.split(':')[9] for line in listing.splitlines() if line.startswith('fpr:'))
+            cls.primary.append(primary)
+            cls.gpg('--quick-add-key', primary, 'ed25519', 'sign', '1d')
+            listing = cls.gpg('--with-colons', '--with-subkey-fingerprint', '--list-keys', primary).stdout
+            cls.keys.append([line.split(':')[9] for line in listing.splitlines() if line.startswith('fpr:')][-1])
+        cls.public = cls.gpg('--armor', '--export', cls.primary[0]).stdout
+        cls.other_public = cls.gpg('--armor', '--export', cls.primary[1]).stdout
+
+    @classmethod
+    def tearDownClass(cls):
+        subprocess.run(['gpgconf', '--kill', 'gpg-agent'], env=cls.environment, check=True, capture_output=True)
+        cls.temp.cleanup()
+
+    @classmethod
+    def gpg(cls, *arguments):
+        return subprocess.run(['gpg', '--batch', '--pinentry-mode', 'loopback', '--passphrase', '', *arguments], env=cls.environment, check=True, capture_output=True, text=True)
+
+    def run_fixture(self, case, hash_tool='sha256sum', conditional=False):
+        import hashlib
+        root = self.root / (case + '-' + hash_tool + ('-conditional' if conditional else '')); root.mkdir()
+        release = root / 'release'; release.mkdir()
+        installer = b'#!/bin/sh\nprintf executed > "$INSTALL_MARKER"\n'
+        (release / 'hennery-installer.sh').write_bytes(installer)
+        inventory = {'schema': 1, 'repository': 'marcinwadon/hennery', 'tag': 'v0.1.0-alpha.1',
+                     'artifacts': [{'name': 'hennery-installer.sh', 'sha256': hashlib.sha256(installer).hexdigest(), 'size': len(installer)}]}
+        if case == 'wrong-release-tag': inventory['tag'] = 'v9.9.9'
+        raw = (json.dumps(inventory, sort_keys=True, separators=(',', ':'))+'\n').encode()
+        (release / 'release-inventory.json').write_bytes(raw)
+        self.gpg('--armor', '--local-user', self.keys[1 if case == 'wrong-key-signature' else 0] + '!', '--output', str(release / 'release-inventory.json.asc'), '--detach-sign', str(release / 'release-inventory.json'))
+        if case == 'tampered-installer': (release / 'hennery-installer.sh').write_bytes(installer + b'# tampered\n')
+        if case == 'tampered-inventory': (release / 'release-inventory.json').write_bytes(raw + b' ')
+        if case == 'missing-signature': (release / 'release-inventory.json.asc').unlink()
+        if case == 'malformed-signature': (release / 'release-inventory.json.asc').write_text('malformed')
+        (release / 'github.asc').write_text(self.other_public if case == 'wrong-github-key' else self.public + self.other_public)
+        (release / 'keyserver.asc').write_text(self.other_public if case == 'wrong-keyserver-key' else self.public)
+        (release / 'main-readme').write_text('maintainer signing fingerprint: ' + ('0'*40 if case == 'wrong-main-pin' else self.keys[0]) + '\n')
+        tools = root / 'tools'; tools.mkdir()
+        # Only transport is replaced. Origins/paths are those in the README;
+        # unknown URLs fail and can never fall through to the network.
+        (tools / 'curl').write_text('#!' + sys.executable + '\n' + '''import os,sys
+from pathlib import Path
+args=sys.argv[1:]
+assert args[args.index('--proto')+1]=='=https'
+assert args[args.index('--proto-redir')+1]=='=https'
+url=next(arg for arg in args if arg.startswith('https://'))
+base='https://github.com/marcinwadon/hennery/releases/download/v0.1.0-alpha.1/'
+names={'https://raw.githubusercontent.com/marcinwadon/hennery/refs/heads/main/README.md':'main-readme',
+       'https://github.com/marcinwadon.gpg':'github.asc',
+       'https://keys.openpgp.org/vks/v1/by-fingerprint/'+os.environ['FIXTURE_FINGERPRINT']:'keyserver.asc'}
+names.update({base+name:name for name in ['release-inventory.json','release-inventory.json.asc','hennery-installer.sh']})
+if url not in names: sys.exit(99)
+path=Path(os.environ['FIXTURE_RELEASE'])/names[url]
+if not path.is_file(): sys.exit(22)
+Path(args[args.index('-o')+1]).write_bytes(path.read_bytes())
+'''); (tools / 'curl').chmod(0o755)
+        for tool in ('gpg','awk','grep','jq','mktemp','mkdir','chmod','sh',hash_tool):
+            executable = shutil.which(tool); self.assertIsNotNone(executable, tool)
+            (tools / tool).symlink_to(executable)
+        script = documented_script()
+        # The only substitution: a disposable key in place of the production
+        # literal pin. Never substitute schemes, hosts, commands or a verifier.
+        pin = 'release_fingerprint=' + FINGERPRINT
+        self.assertEqual(script.count(pin), 1)
+        script = script.replace(pin, 'release_fingerprint=' + self.keys[0])
+        if conditional:
+            # An enclosing conditional suppresses shell errexit. The exact
+            # README commands must still refuse before executing the payload.
+            script = 'if ' + script + 'then exit 0; else exit 1; fi\n'
+        path = root / 'bootstrap.sh'; path.write_text(script)
+        home = root / 'home'; home.mkdir()
+        marker = root / 'executed'
+        # Keep GnuPG's public-keyring socket path within macOS's Unix-socket
+        # bound; case names must not accidentally become refusal mechanisms.
+        env = dict(os.environ, PATH=str(tools), HOME=str(home), GNUPGHOME=str(home/'unused'), TMPDIR=str(self.root), INSTALL_MARKER=str(marker), FIXTURE_RELEASE=str(release), FIXTURE_FINGERPRINT=self.keys[0])
+        result = subprocess.run([str(tools/'sh'), str(path)], env=env, cwd=root, capture_output=True, text=True)
+        return result, marker
+
+    def test_positive_with_each_documented_sha256_tool(self):
+        for tool in ('sha256sum','shasum'):
+            with self.subTest(tool=tool):
+                result, marker = self.run_fixture('valid',tool)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertEqual(marker.read_text(),'executed')
+
+    def test_tampering_wrong_key_or_missing_signature_never_executes_installer(self):
+        for tool in ('sha256sum','shasum'):
+            for case in ('tampered-installer','tampered-inventory','wrong-key-signature','missing-signature','malformed-signature','wrong-github-key','wrong-keyserver-key','wrong-main-pin','wrong-release-tag'):
+                with self.subTest(case=case,tool=tool):
+                    result, marker = self.run_fixture(case,tool)
+                    self.assertNotEqual(result.returncode,0,'bootstrap accepted '+case)
+                self.assertFalse(marker.exists(),'installer executed for '+case)
+
+    def test_refusals_do_not_depend_on_shell_errexit(self):
+        for tool in ('sha256sum','shasum'):
+            for case in ('tampered-installer','tampered-inventory','wrong-key-signature','missing-signature'):
+                with self.subTest(case=case,tool=tool):
+                    result, marker = self.run_fixture(case,tool,conditional=True)
+                    self.assertNotEqual(result.returncode,0,'conditional bootstrap accepted '+case)
+                    self.assertFalse(marker.exists(),'installer executed for '+case)
+
+
+if __name__ == '__main__':
+    import argparse
+    parser=argparse.ArgumentParser();parser.add_argument('--script',type=Path)
+    SCRIPT=parser.parse_args().script
+    unittest.main(argv=[sys.argv[0]])
+````
+
 ### File `packaging/release/test_publish.py`
 
 <!-- r1:file task=4 path=packaging/release/test_publish.py sha256=a42f3c48612f0dc2a0f30b86ca8dfc99ee003845dd6639e2341f748e9cab6edd bytes=8424 mode=644 encoding=utf8 -->
@@ -13429,6 +15088,8 @@ Set scratch tool homes first, then run:
 ```sh
 nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py'
 nix develop .#release -c actionlint .github/workflows/release-candidate.yml .github/workflows/release-publish.yml .github/workflows/release-tests.yml .github/workflows/nix.yml
+sh packaging/readme-blocks.sh README.md release-bootstrap > "$TMPDIR/release-bootstrap.sh"
+nix develop .#release -c python3 packaging/release/test_bootstrap.py --script "$TMPDIR/release-bootstrap.sh"
 ```
 
 ### Step 4: COPY probe / staged bytes / commit
@@ -13446,7 +15107,7 @@ Read actual logs, run the six Rust checks, actionlint, release suite and real mi
 
 ### File `docs/README.md`
 
-<!-- r1:file task=5 path=docs/README.md sha256=e95bf30138765d6ed3748615ae9a3de09e61107e99b1a7dad8d338d17bb3a281 bytes=52060 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=docs/README.md sha256=e56b04c5bee4e01884daa3a9cfd5e6a508b5c1b9ba4344971d2555c1300d9024 bytes=52025 mode=644 encoding=utf8 -->
 ````markdown
 # hennery design documents
 
@@ -13566,7 +15227,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [WSS transport and diagnostics (W1)](plans/2026-10-26-wss-transport.md) — built and replayed on `8bb29904`; the maintainer-delegated review returned APPROVE AFTER AMENDMENTS, all three implemented and folded into their tasks. Draft PR #139 awaits scoped re-review, Linux/macOS CI and real-adapter/MCP acceptance; W2 remains deferred.
    - [Session-bound MCP and family identity (D1)](plans/2026-10-27-delegation-mcp.md) — collector-local opt-in MCP delivery, generation-bound grants, shared identity and immutable scoped family storage; built first, exact fresh replay and guard/load evidence recorded. Actual pinned Claude/Codex discovery passed. Maintainer-delegated review returned APPROVE; its one cycle-fixture Minor is corrected and independently probed. Linux/macOS CI remains parent-owned; tools, durable delivery and UI follow in D2–D4.
 
-   - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — amended after re-confirmation with the maintainer's hardware-backed inventory approval as the trust root. All verifiers and publishers require the pinned detached signature plus exact-tag Sigstore provenance; signed tags remain defense in depth. Rebased onto `256691fe`; checks, COPY probes and fresh replay are recorded in the plan. Re-review and maintainer-only setup remain; publication is disabled.
+   - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — hardware-backed inventory approval plus the executed verify-then-run README bootstrap, re-confirmed by the parent. The Linux CI tool-directory collision is repaired with duplicate-name/conflict regressions; checks, COPY probes and fresh replay evidence are recorded in the plan. PR #145 awaits review and CI; maintainer-only setup remains and publication is disabled.
 
 ## Maintainer decisions (2026-09-27)
 
@@ -13591,9 +15252,1933 @@ Every open design decision is resolved; the specs carry the details.
 _Generated with Claude AI — please review before distribution._
 ````
 
+### File `docs/plans/2026-10-07-release-build.md`
+
+<!-- r1:file task=5 path=docs/plans/2026-10-07-release-build.md sha256=fb3cbe6995f7b4202165382236c9fef31c7762307551062c0e4a7ae4e71fc5ba bytes=104486 mode=644 encoding=utf8 -->
+`````markdown
+# Release build (plan 7a) Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ] `) syntax for tracking.
+
+**Goal:** What a hennery release ships is built and checked on every pull request, and published nowhere (distribution spec §1, §1.1, §2, §4.1):
+- one `hennery` binary per platform: Linux x86_64 and aarch64 musl-static, macOS arm64, with OpenSSL (which `webauthn-rs-core` links) compiled in;
+- cargo-dist's archives with their `.sha256`, `sha256.sum`, the shell installer and the Homebrew formula;
+- the installer refusing an archive it cannot check, as §2 asks and cargo-dist's own does not;
+- the collector's container image, from the same musl binary, started and found healthy;
+- `hennery collector healthcheck`, which the image's `HEALTHCHECK` runs;
+- macOS CI's OpenSSL named, not left to the runner image.
+
+Nothing here publishes. No tag trigger, no release, no registry push, no attestation: those need the operator (packaging/README.md).
+
+**Architecture:**
+- **Cargo** (`Cargo.toml`, `crates/hennery/Cargo.toml`): the `hennery` crate's `vendored-openssl` feature turns on `openssl/vendored`, which builds OpenSSL from source (`openssl-src`) and links it statically. Only release builds enable it; development, tests and `ci.yml` keep the system OpenSSL. The `dist` profile (`release`, thin LTO) and the metadata cargo-dist needs.
+- **CLI** (`crates/hennery`): `collector` gains a subcommand, `collector healthcheck`, in `healthcheck.rs`: `GET /healthz` over plain TCP to the first listen address (a wildcard one over loopback), 2 s per step, exit 0 on a 200, else 1 with the reason on standard error.
+- **cargo-dist** (`dist-workspace.toml`): targets, the feature, the installers and the tap configured; only its build half wired up.
+- **CI** (`.github/workflows/build.yml`, new): per target, on a native runner, `dist build`, then the archive's contents and the binary's linkage checked, the binary run, and on Linux run on Alpine and built into the image, which is started and checked. Then the installers: the installer hardened and tested on Linux and on macOS, the formula's checksums checked. Everything uploaded as workflow artifacts, kept a week.
+- **Packaging scripts** (`packaging/`): `check-linkage.sh`, `check-archive.sh`, `install-dist.sh` (cargo-dist at a pinned SHA-256), `harden-installer.py`, `test-installer.sh`, `check-formula.sh`, `smoke-image.sh`, and a README.
+- **Image** (`Dockerfile`, `.dockerignore`): the spec's Dockerfile, plus the data directory owned by the image's user.
+
+**Tech Stack:** Rust (edition 2024, MSRV 1.88); cargo-dist 0.30.4; GitHub Actions (`ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-latest`); `musl-tools`; Docker with BuildKit; distroless `static-debian13`. One new crate edge, no new crate version: `openssl = "=0.10.81"` (already in the tree through `webauthn-rs-core`) as an optional dependency of `hennery`, and its `vendored` feature pulls in `openssl-src` 300.6.1+3.6.3 (OpenSSL 3.6.3). `Cargo.lock` changes once, in Task 1.
+
+**Spec:** [`docs/specs/2026-09-26-distribution-design.md`](../specs/2026-09-26-distribution-design.md), these sections:
+- §1: "`hennery collector healthcheck` | Exit 0/1 against `/healthz` (containers)"; "Platforms v1: Linux x86_64 and aarch64, macOS aarch64."
+- §1.1: "The `hennery` binary is musl-static on Linux (rustls, no system OpenSSL; `webauthn-rs` needs OpenSSL, built vendored and static). One Linux binary per architecture runs anywhere, including Alpine."
+- §2: cargo-dist, "version pinned in `dist-workspace.toml`", producing "per-archive `.sha256`, a combined `sha256.sum`, a `dist-manifest.json`, a shell installer and a Homebrew formula"; "macOS arm64 builds on a native runner; Linux musl builds for both architectures"; the installer "refuses to continue when no SHA-256 tool is available rather than skipping the check"; attestations; the tap.
+- §3.3: the Claude CLI is never redistributed, "not in release archives, container images, Homebrew bottles or public Nix caches".
+- §4.1: the Dockerfile; "The volume must be local storage"; `/healthz` and `/readyz`; "The image contains no Node and no adapters."
+- §9: "Installer: checksum mismatch aborts; missing SHA-256 tool aborts; musl/glibc detection."
+
+And the umbrella [`docs/specs/2026-09-25-hennery-architecture-design.md`](../specs/2026-09-25-hennery-architecture-design.md) §12.1–§12.2: one binary; GitHub Releases with a signed inventory and verify-before-execution installer (amended by the 2026-10-15 release-foundation ruling); Homebrew tap; Docker image for the **collector only**; Nix flake; no self-update.
+
+It builds on the "After this plan" sections of the executed plans, [passkeys 3c](2026-10-05-passkeys.md) above all. Every anchor below was taken from `main` at `fbacde8`, which merged PR #20. Where the code and a spec disagree, the code wins, and the plan says so.
+
+**Status:** executed 2026-10-02 (see "Execution status"); amended after the security review. The security review of 2026-10-02 (binding on the maintainer's behalf) approved with amendments: A1–A5 and A7 taken, A6 taken but for the dependency-update bot (decision 14), O1–O4 taken, O5 and O6 recorded (see "Decisions", "After this plan").
+
+Every code block below was built and tested in a scratch copy of `fbacde8`, one commit per task (and Task 2's tests alone), and generated from those commits. Linux, the image and the installers were built and checked by the `build` workflow on the draft PR #24. The plan was then replayed from its own text, task by task, onto a fresh copy of `fbacde8`:
+- each block applied exactly as "Reading the steps" says, and `Cargo.lock` regenerated by Task 1's `cargo build`;
+- after Task 2's Step 1 the tree matched the scratch's tests-only commit, and after each task the scratch's task commit, byte for byte;
+- after every task the replay ran fmt, both clippy runs, the workspace tests and the codegen check.
+
+The replay matched every tree and passed every check of every task. It ended with 546 tests, up from 538 on `fbacde8`. Per task: 538, 546, 546, 546. The timing-sensitive tests (the healthcheck's unit tests, with their 300 ms budgets, and the two CLI tests) ran as four copies of each binary at once, three rounds: all 24 passed.
+
+The revert-probes were run, each on its task's code:
+- Task 1: a build without the feature fails `check-linkage.sh` on its OpenSSL.
+- Task 2: all five, each caught by its named test (the read-timeout one by a hang, stopped after 10 s; the trickle one after 39 s).
+- Task 3: on an installer that `dist build --artifacts=global` made here from the three archives of CI run 36933449065. Each of the four hardening replacements left out alone, the `shasum` branch removed, an archive's embedded checksum removed, a `.sha256` missing, a one-archive formula, and the archive check given the wrong target: every one fails at its named check. The first round left the unknown-style replacement uncaught, and the `unknown` case was added.
+- Task 4, in CI: without `-m 0700` (run 36938993887), both Linux jobs fail with `FAIL: the data directory is 65532:65532 755, not 65532:65532 700`.
+
+A5's check found one bug before any probe. The Dockerfile as first written (`COPY --from=data --chmod=0700` of the directory itself) made a 0755 directory, which the collector warned about (run 36937844513). Decision 7 has the fix. The amended code then passed every job (run 36938522235): both archives' checks, the image's five checks on each architecture, and the installer's eight on Linux and on macOS.
+
+## Execution status (2026-10-02)
+
+**Executed** on branch `exec/release-build`, pushed as `feat/release-build` (PR #24), on `main` at `f139bd0`. The plan's anchors are `fbacde8`'s; `main` moved on by eight PRs before execution, none touching this plan's lines, and every block applied to `f139bd0` as written. Each task was done by one implementer and then reviewed (opus). Every review approved; Task 1's after one fix round. A whole-branch review followed ("ready after the listed fixes"), then one fix wave and its scoped re-review. Deviations and fixes:
+
+| Area | As built | Why |
+|---|---|---|
+| `check-linkage.sh` (Task 1 review, Important) | It refuses a path that is not a file, captures `readelf`'s and `otool`'s output before grepping it, and on macOS requires `otool -L`'s first line to be `<path>:` | As planned it passed a missing or unreadable binary: `readelf … \| grep` takes grep's status, and `otool -L` exits 0 on a file that is not Mach-O (the implementer found the second). A wrong path in Task 3's workflow would have printed `ok` |
+| The `dtolnay/rust-toolchain` pin's comment (Task 1 review) | `# master @ 2026-09-12`, in `ci.yml` and `build.yml` | `2026-10-02` was the day it was pinned, not the commit's date |
+| Task 3, Step 4's `Expected:` | The grep matches `build.yml`'s line 6 at Task 3, line 7 from Task 4 | Task 3's header is one line shorter. The plan's text, not the file, was off |
+| `build.yml`'s header and the archive step (final review) | "the `hennery` binary, its licence and its README, nothing else"; the step is "Holds the binary, its licence and README only" | It said "the binary alone", which `check-archive.sh` contradicts |
+| `test-installer.sh` (final review) | It unsets `HENNERY_INSTALL_DIR` and `CARGO_DIST_FORCE_INSTALL_DIR`, and fails when the installer offers fewer archives than the build made | Either variable would install outside the scratch and make "left a binary" vacuous; an installer missing the arm64 archive, which no job installs, would have passed. Both revert-probed under `sh` and `dash` on real archives: `FAIL: the installer offers 2 archives, this build made 3` |
+| `packaging/README.md` (final review) | Two bullets: third-party licence notices before the first release (the archives carry only hennery's LICENSE, the image none); the image's port is changed with `HENNERY_LISTEN`, not `--listen` | The vendored OpenSSL and the crates' licences need their notices once anything ships; the `HEALTHCHECK` reads `HENNERY_LISTEN` |
+
+The CI-bound revert-probes (Task 3, Step 7; Task 4, Step 7) were not run again in execution: they ran during planning on the same scripts and Dockerfile (runs 36933449065's artifacts and 36938993887), and the fix wave's change to `test-installer.sh` was probed on its own. Every local probe of Tasks 1 and 2 was run again, each caught by its named test.
+
+Deferred minors (each triaged by the final review as "keep deferred"):
+- `check-linkage.sh`: `otool`'s header lines for a universal binary would read as foreign libraries; a missing argument gets the shell's own message.
+- `collector healthcheck`: a status line ended by EOF rather than CRLF is parsed; the 256-byte cap is soft (up to 511 bytes read, a CRLF past 256 accepted); a read timeout reports the OS error, not the budget; a host-name listen address is resolved outside the budget, first address only; the `config.toml` source and the default address have no end-to-end test; `config.toml` is read even when the address is given (as the collector reads it); a just-closed port reused by another test could, rarely, make two tests pass the wrong way; `Instant + Duration` overflows on a huge budget, which nothing passes.
+- `sha256.sum` is not checked; the hardening covers the `sha256` style only (the test requires `sha256` for every archive); `stable`, `macos-latest` and the image's cargo float, and the archive build restores a cache (both before publishing, "After this plan"); `cancel-in-progress` also cancels runs on `main`.
+- `test-installer.sh` (the fix wave's re-review): with no archive in the directory, the shell leaves the `*.tar.xz` glob literal and counts one. Not reachable as a false pass: every offered archive needs its `.sha256` beside it, and the first case installs it.
+- `smoke-image.sh`: a failed `stat` or `inspect` exits without its `FAIL:` line; the anonymous volume outlives the run (`rm -f` without `-v`); the "other users" check was never seen failing in the image, since the `stat` check fails first; `docker export` reads the container's filesystem, not the image alone; native Linux Docker is assumed; the container name uses `$$`.
+
+Tests: 558 in the workspace, 8 more than `f139bd0`'s 550. Rebased before merge onto `1e5245c` (PR #39, plan 6a), where `Cargo.toml`'s new dev profiles and `docs/README.md`'s new lines were kept beside this plan's: 624, every check passing. CI on the rebased branch: PR #24's last run, every job green, its `ok:` lines read from the logs as in Tasks 3 and 4.
+
+## Scope
+
+Plan 7 (distribution) is split into five parts, each its own PR:
+- **7a, this plan:** the release build;
+- **7b:** the managed runtime and pinned adapters (§3);
+- **7c:** services, the supervisor's restart policy and `host.lock` (§5.2, §6, §8);
+- **7d:** `doctor` (§7);
+- **7e:** the Nix package and modules (§4.3).
+
+7b and 7c run in parallel with this plan. None of them touches the files of another's tasks except `crates/hennery/src/main.rs`, where each adds its own subcommand.
+
+The earlier plans hand 7a these:
+- **3c, "After this plan":** "OpenSSL in the release build: `webauthn-rs-core` links it. Plan 7's static (musl) build needs it vendored (`openssl`'s `vendored` feature) or built in." (Task 1)
+- **3c, the same:** "CI's OpenSSL: … macOS relies on Homebrew's `openssl@3` in the image; if a future image lacks it, add `brew install openssl@3` to the workflow." (Task 1)
+- **3b-ii and 3c:** "The Linux side is compile-unverified here … CI's `ubuntu-latest` job is their first run." The musl build is a second Linux build of every crate, against another libc (Task 3).
+
+That is **4 tasks**:
+1. OpenSSL built in, and the linkage check;
+2. `hennery collector healthcheck`;
+3. the release archives and the installers, built and checked in CI;
+4. the collector image.
+
+**In:**
+- the `vendored-openssl` feature and macOS CI's OpenSSL step (Task 1);
+- `collector healthcheck` (Task 2);
+- cargo-dist's configuration, the `build` workflow's archives and installers, the hardened installer and its test (Task 3);
+- the `Dockerfile`, the image's smoke test, the packaging README (Task 4).
+
+**Out** (see "After this plan"):
+- **publishing:** GitHub Releases, attestations, the Homebrew tap, GHCR. Operator.
+- the README's install instructions, which name a release;
+- the frontend in the pre-build hook (§2): the frontend is plan 4's;
+- a multi-arch image manifest, which only a registry push needs;
+- the per-archive SBOM or any other artifact the spec does not name.
+
+## Decisions this plan makes where the spec is silent
+
+1. **cargo-dist's build half only; its publishing workflow is not committed.**
+   - `dist generate` writes a `release.yml` that runs on every version tag, creates a GitHub Release, uploads to it and attests (`id-token: write`). The brief forbids all of that without the operator. So `dist-workspace.toml` holds the configuration a release would use, with `allow-dirty = ["ci"]` so that `dist` does not ask for its workflow. The repository's own `build.yml` runs the same `dist build` calls on the same runners.
+   - Evidence: `dist plan --output-format=json` on this configuration gives the matrix `build.yml` copies: `macos-14` for `aarch64-apple-darwin`, `ubuntu-22.04-arm` for `aarch64-unknown-linux-musl` and `ubuntu-22.04` for `x86_64-unknown-linux-musl`, with `sudo apt-get install musl-tools` on both Linux runners. `build.yml` takes the 24.04 images and `macos-latest`, as `ci.yml` does.
+   - Alternatives: commit `release.yml` with publishing turned off (cargo-dist has no setting that keeps it from creating the release on a tag); build with plain `cargo` (the archives, the installer and `sha256.sum` would then not be cargo-dist's, and the release would build them differently).
+   - Cost if wrong: the operator runs `dist generate` and keeps the steps packaging/README.md lists.
+2. **OpenSSL is vendored for macOS too, not only for musl** (§1.1 names Linux).
+   - Built without it, the macOS binary links Homebrew's `libssl.3.dylib` in CI and Nix's here (Task 1, Step 1), and fails to start on a Mac without that file, which is every Mac the curl installer is for. macOS ships no OpenSSL to link instead.
+   - Alternatives: Homebrew's `openssl@3` as a dependency of the formula (the curl installer would still ship a binary that does not start).
+   - Cost if wrong: about 2 MB more binary, and three minutes more build.
+3. **A feature of the `hennery` crate, not of the kernel or the workspace.**
+   - Vendoring is a choice about how the shipped binary is packaged. The kernel keeps linking whatever OpenSSL `openssl-sys` finds. Every workspace build and test (`ci.yml`, the dev shell) is as before.
+   - Because only `hennery` has the feature, `dist build` must build that package alone: `precise-builds = true`. Without it, `dist` runs `cargo build --workspace --features vendored-openssl`, which fails with "none of the selected packages contains this feature" (seen in the scratch).
+   - Alternatives: `openssl-sys`'s environment (`OPENSSL_STATIC`, `OPENSSL_DIR`) in each job, which needs a static OpenSSL on every runner first.
+   - Cost if wrong: one line moved.
+4. **cargo-dist's installer is hardened by rewriting what it generates.** (amended after the security review of 2026-10-02: A1, A2, O2)
+   - §2 and §9: the installer "refuses to continue when no SHA-256 tool is available rather than skipping the check". cargo-dist 0.30.4's does skip it (`skipping sha256 checksum verification (it requires the 'sha256sum' command)`, then `return 0`), and also when the archive has no checksum, an empty one, or a style it does not know.
+   - `harden-installer.py` replaces those four branches with `err` (which exits 1). Where `sha256sum` is missing it first tries `shasum -a 256` (macOS's `/usr/bin/shasum`, and Perl's on Linux): the refusal is for a machine with neither (O2). Each replaced text must occur exactly once, or the script fails, and the build with it. A cargo-dist upgrade that changes them cannot quietly ship an installer that skips the check again. A failed run leaves the file as it was.
+   - The checksums themselves are cargo-dist's: embedded in the installer when the global build is given each archive's `dist-manifest.json` (Task 3 keeps them in the artifact for that). Without a manifest, the installer embeds none for that archive. Seen in the scratch, where it then said "no checksums to verify" and installed. That case is now an error too.
+   - `test-installer.sh` checks that every archive the installer offers has a `sha256` checksum embedded, equal to the archive's `.sha256` (A1). It then tests each refusal: a mismatch, no tool, an empty checksum, no checksum, an unknown style (A2); and installs with `sha256sum`, and with `shasum` alone. It runs on Linux x86_64 and on macOS (O4). Each refusal was revert-probed on its own.
+   - Alternatives: an installer of our own (its platform detection, PATH editing and receipt to maintain); a cargo-dist fork; leaving the gap (§2 broken).
+   - Cost if wrong: the hardening is undone, and §2's guarantee with it, by deleting one step.
+5. **The installer puts `hennery` in `~/.local/bin`** (`install-path`).
+   - cargo-dist's default is `CARGO_HOME` (`~/.cargo/bin`), odd for anyone who is not a Rust developer. §6.3's example unit runs `/home/me/.local/bin/hennery`. 7c's `service install` writes the absolute path it finds, wherever that is.
+   - Cost if wrong: one configuration line, before the first release.
+6. **`collector healthcheck` speaks HTTP/1.1 over a plain TCP stream, to the first listen address.**
+   - The address: `--listen`, `HENNERY_LISTEN`, `listen` in the data directory's `config.toml` (when `--data-dir` or `HENNERY_DATA_DIR` names one), else `127.0.0.1:7117`, as for `collector`. Only the first is probed: every listener serves the same routes (kernel §7). A wildcard address (`0.0.0.0`, `[::]`, the image's) is probed over loopback.
+   - The whole check (connect, write, every read) has one 2 s budget, inside the image's `--timeout=3s`: each call gets what is left of it (O1). Only the status line is read, up to its CRLF, at most 256 bytes. A collector that accepts and never answers fails the check, and so does a peer that trickles bytes, rather than Docker killing it. Only a `200` status line passes. `/healthz`, not `/readyz`, as §1 says: the database's health is `/readyz`'s.
+   - Its flags are its own. `collector --data-dir x healthcheck` is refused (`args_conflicts_with_subcommands`), so a flag meant for the collector cannot look as if it was used.
+   - No HTTP client: `hennery` has none of its own (`reqwest` is the host's), and one line read is all that counts. The request goes out in one `write_all`, the lesson of 3c's CLI failure under load.
+   - Alternatives: `curl` in the image (distroless has none); a `/readyz` check (a slow database would restart a container that is up).
+   - Cost if wrong: a flag or a path, behind the image's `HEALTHCHECK`.
+7. **The image's data directory exists in the image, owned by 65532 and 0700.** (amended after the security review: A5)
+   - §4.1's Dockerfile has `VOLUME ["/var/lib/hennery"]` and `USER 65532:65532`, but no such directory in distroless. Docker would then make the volume root's, and the collector could not write to it.
+   - Distroless has no shell. A stage of the same base's `:debug` variant (busybox) makes the directory 0700 (`mkdir -m 0700`), and `COPY --from=data --chown=65532:65532 /out/var/lib/ /var/lib/` merges its parent into the image's `/var/lib`, so the directory keeps its mode. Docker copies an image directory's owner and mode into a new volume.
+   - Copying the directory itself with `--chmod=0700`, as first written, does not work: `COPY` of a directory copies what it holds, and makes the target 0755 whatever `--chmod` says. A5's check caught it on the first CI run after the review (the collector warned "the data directory is readable by other users").
+   - `smoke-image.sh` runs the image with the anonymous volume this makes. It checks that the volume's directory is `65532:65532 700` (`sudo stat` on the host), that the collector logged no warning about it, and that the collector serves and answers on its admin socket, which lives in that directory. `smoke-image.sh` also reads the image's own layer (`docker export`): `/var/lib/hennery` 65532's and 0700, `/var/lib` still root's. Revert-probed in CI without `-m 0700` (Task 4, Step 7).
+   - Alternatives: an empty directory in the build context (the workflow would have to make it); `WORKDIR` (root's).
+   - Cost if wrong: a volume the collector cannot write. The smoke test catches it.
+8. **cargo-dist is installed in CI from its release archive, checked against a SHA-256 kept in the repository** (`install-dist.sh`; the parent's review of the draft PR, confirmed by the security review).
+   - Do not execute an unauthenticated downloaded installer, which would run whatever script that URL serves that day. Not Nix in CI, which needs its own installer run first, and minutes per job.
+   - The digests were read from the release's `.sha256` files on 2026-10-02 and checked against a download of the macOS archive here. A replaced asset now fails the build.
+   - Cost if wrong: a cargo-dist bump changes three digests and one version.
+9. **The `build` workflow runs on every pull request and every push to `main`, not only on demand.**
+   - The musl build is the only build against another libc, and a lane can add a dependency or a `libc` call that breaks it (3b-ii's `close_range` note). It is caught on that lane's PR, not at the first release.
+   - Cost: three runners for about five minutes per PR, beside `ci.yml`; `concurrency` cancels a superseded run.
+10. **macOS CI's OpenSSL:** installed if missing, and pointed at with `OPENSSL_DIR`.
+    - 3c's note asked for `brew install openssl@3` "if a future image lacks it". `brew list … || brew install …` costs nothing while the image has it. `OPENSSL_DIR` keeps `openssl-sys` from finding another one first.
+11. **What counts as "runs anywhere":**
+    - On Linux, no `NEEDED` entry and no program interpreter (`readelf`), and the binary runs on the runner (glibc) and on Alpine (musl).
+    - On macOS, every library under `/usr/lib` or `/System/Library` (`otool -L`).
+    - §9's "musl/glibc detection" in the installer is moot for the binary: cargo-dist offers each Linux runner only the musl-static archive (`x86_64-unknown-linux-musl-static` in the installer). The host's glibc requirement (§1.1) is `doctor`'s (7d).
+12. **Workflow artifacts, kept seven days, are the only output.**
+    - On a public repository, any signed-in user can download them. They hold the AGPL `hennery` binary, its installer and formula, never an adapter (§3.3).
+13. **Third-party actions are pinned by commit, images by their multi-arch index digest.** (the security review: A3, A4)
+    - `dtolnay/rust-toolchain@02cb101…` (its `master` on 2026-10-02; `@stable` is a branch, so `toolchain: stable` is named) and `Swatinem/rust-cache@6323deb…` (`v2.9.2`), in `build.yml` and in `ci.yml`, which this plan edits anyway. GitHub's own actions stay on their major tags, as before.
+    - `gcr.io/distroless/static-debian13:debug` and `:nonroot`, `alpine:3` and the `docker/dockerfile:1` frontend, each `tag@sha256:<index digest>`. The digests were read on 2026-10-02 with `crane digest`. An index digest, not a platform's, so the one line serves both runners.
+    - A cache written by a compromised action in a `main` run could be restored by a later workflow. That is why both cache-writing actions are pinned, and why a future `release.yml` restores no cache (After this plan).
+    - The toolchain itself (`stable`) is not pinned in CI. A release pins it (After this plan).
+14. **No dependency-update bot is switched on.** (the security review's A6, in part)
+    - The review asked for Dependabot updates of `cargo` (`openssl-src` above all), the actions and the images. A bot opens pull requests on the operator's repository, on its own schedule, for every lane to rebase over. That is the operator's to switch on, so it is recorded (packaging/README.md, After this plan) rather than committed.
+    - The re-confirmation accepted this on one condition, now a gate in "After this plan": before the first release, the operator switches on Dependabot alerts (no pull requests) or commits `dependabot.yml`. Until then the pins are bumped by hand.
+    - The rest of A6 is taken: packaging/README.md says how an OpenSSL fix reaches users (an `openssl-src` bump and a release, never the system's OpenSSL), and that 3.6's end of support must be checked before the first release.
+
+## Global Constraints
+
+- Rust edition 2024, `rust-version = "1.88"`; licence `AGPL-3.0-only`; crates are `publish = false`.
+- After every task these pass:
+  - `nix develop -c cargo fmt --all --check` (`max_width = 120`);
+  - `cargo clippy --workspace --all-targets --locked -- -D warnings`;
+  - `cargo clippy -p hennery --locked -- -D warnings` (test hooks off);
+  - `cargo test --workspace --locked`;
+  - `cargo run -p hennery-proto --bin gen -- --check`.
+- **Nothing publishes.** No workflow may have a tag trigger, `contents: write`, `id-token: write`, `attestations: write`, `packages: write`, a release, a registry push or an attestation. Check before every push: `grep -nE "tags:|contents: write|id-token|attestations:|packages:|gh release|docker push|attest" .github/workflows/*.yml` prints only `build.yml`'s header comment.
+- **No adapter in any artifact** (§3.3): no job downloads, builds or uploads an adapter or an npm package.
+- **Third-party tools in CI are pinned:** cargo-dist by version and SHA-256 (`install-dist.sh`); third-party actions by commit; images by multi-arch index digest; GitHub's own actions by major tag (decision 13).
+- **Linux is CI's.** Only macOS can be built here, and there is no container runtime. The musl archives, the Alpine run and the image are proven by the `build` workflow's first run, not locally.
+- **`Cargo.lock` changes once,** in Task 1, by one `cargo build -p hennery` without `--locked`. Every other command runs `--locked`.
+- No global installs: tooling comes from the flake dev shell; cargo-dist locally from `nix shell nixpkgs#cargo-dist`.
+- Commits follow Conventional Commits and use the repository's own identity (gmail, unsigned). Push the feature branch after every completed task; never push `main`.
+
+## Review Focus
+
+These are the inputs most likely to bite a real user that the obvious tests would not exercise, most likely first. Each is pinned by the named check.
+
+1. **A Mac without Homebrew's OpenSSL** (every curl-installer user).
+   - Expected: the macOS binary starts. It links only `/usr/lib` and `/System/Library`.
+   - Pinned by: Task 1 `check-linkage.sh`, run on every archive by Task 3. Revert-probed on a build without the feature, which links `libssl.3.dylib`.
+2. **A machine with no `sha256sum`** (a minimal container, an old Mac).
+   - Expected: the installer checks with `shasum -a 256` if it has that, and refuses, installing nothing, if it has neither. cargo-dist's own skips the check with a message.
+   - Pinned by: Task 3 `test-installer.sh`'s "installs with shasum alone" and "no SHA-256 tool aborts", on Linux and on macOS. Revert-probed: without the hardening it installs unchecked; without the `shasum` branch it refuses where it could check.
+3. **The image with Docker's own anonymous volume** (`docker run` with no `-v`).
+   - Expected: the collector, as 65532, writes its database there and answers. A volume Docker makes on a path the image lacks is root's.
+   - Pinned by: Task 4 `smoke-image.sh`: `collector healthcheck`, an admin request over the socket in the volume, and Docker's health status.
+4. **The healthcheck run as the image runs it:** only `HENNERY_LISTEN=0.0.0.0:8080` and `HENNERY_DATA_DIR` set, no flags.
+   - Expected: it probes `127.0.0.1:8080`; 0 while the collector serves, 1 once it is gone or hangs, within Docker's 3 s.
+   - Pinned by: Task 2 `the_healthcheck_passes_while_the_collector_serves_and_fails_once_it_stops` (both ways of naming the address), `a_wildcard_listen_address_is_probed_over_loopback` and `a_collector_that_never_answers_is_unhealthy_within_the_timeout`.
+5. **A musl binary on a musl system** (Alpine) and on a glibc one.
+   - Expected: it runs on both, with no loader and no shared library.
+   - Pinned by: Task 3's "Runs" and "Runs on Alpine (musl)" steps, and `check-linkage.sh`'s `NEEDED` and interpreter checks.
+
+## File structure
+
+| Path | Responsibility | Task |
+|---|---|---|
+| `Cargo.toml`, `crates/hennery/Cargo.toml`, `Cargo.lock` | `openssl` and the `vendored-openssl` feature; the `dist` profile and metadata | 1, 3 |
+| `.github/workflows/ci.yml` | macOS's OpenSSL step; its actions pinned | 1 |
+| `packaging/check-linkage.sh` (new) | A release binary links nothing outside the system | 1 |
+| `crates/hennery/src/healthcheck.rs` (new), `crates/hennery/src/main.rs` | `collector healthcheck` | 2 |
+| `crates/hennery/tests/cli.rs` | The healthcheck against a real collector; the CLI's refusals | 2 |
+| `dist-workspace.toml` (new) | cargo-dist's configuration | 3 |
+| `packaging/install-dist.sh`, `harden-installer.py`, `test-installer.sh`, `check-archive.sh`, `check-formula.sh` (new) | cargo-dist pinned; the installer hardened and tested; the archives' contents and the formula's checksums | 3 |
+| `.github/workflows/build.yml` (new) | The archives, the installers and the image, built and checked | 3, 4 |
+| `Dockerfile`, `.dockerignore` (new), `.gitignore` | The collector image; its staged binary | 4 |
+| `packaging/smoke-image.sh`, `packaging/README.md` (new) | The image's check; what is built and what publishing needs | 4 |
+
+All commands run from the repository root inside the dev shell (`nix develop -c …`, or direnv). Work on a feature branch off `main` (e.g. `feat/release-build`). Each task leaves the workspace compiling, clippy-clean and green.
+
+**Reading the steps:** each code block is preceded by exactly one of these instructions, and it means exactly this:
+- "Create `path`:" makes a new file with the block (and a final newline).
+- "Replace the whole of `path` with:" overwrites the file with the block (and a final newline).
+- "Append to `path`:" adds a blank line, then the block, at the end of the file.
+- "In `path`, replace:" is followed by a block that occurs **exactly once** in the file at that point, as whole lines (earlier blocks of the same task already applied, in order), then "with:" and its replacement.
+
+Other "Run:" lines only check or regenerate: `cargo build -p hennery` rewrites `Cargo.lock`. They change no other file. Scripts under `packaging/` are made executable (`chmod +x`) where they are created. The plan was replayed exactly this way, from its own text, onto `fbacde8`.
+
+---
+
+### Task 1: OpenSSL built in, and the linkage check
+
+**Files:**
+- Modify: `Cargo.toml` (`openssl` in `[workspace.dependencies]`), `crates/hennery/Cargo.toml` (the feature), `Cargo.lock`, `.github/workflows/ci.yml` (macOS's OpenSSL step; the actions pinned)
+- Create: `packaging/check-linkage.sh`
+
+**Interfaces:**
+- Produces:
+  - the `hennery` crate's feature `vendored-openssl`, which Task 3's `dist-workspace.toml` enables for every archive;
+  - `packaging/check-linkage.sh <binary>`: exit 0 when the binary links nothing outside the system, else 1 with what it links. Task 3's workflow runs it on every archive.
+
+There is no Rust to test here. The check is the script, run on two builds: without the feature, which must fail it on its OpenSSL, and with it, which must not name OpenSSL. A release build made in the dev shell links Nix's `libiconv` on macOS (the toolchain's), so the script fails it too, on that line only. CI's toolchain is not Nix's, and Task 3's workflow is where the script must pass.
+
+- [ ] **Step 1: The linkage check**
+
+  Create `packaging/check-linkage.sh`:
+
+  ```sh
+  #!/bin/sh
+  # A release binary must run on a machine without our build's libraries
+  # (distribution spec §1.1): on Linux it is fully static (no `NEEDED` entry,
+  # no interpreter); on macOS it links only the system's own libraries, not
+  # Homebrew's or Nix's OpenSSL (plan 7a).
+  #
+  # Usage: check-linkage.sh <binary>
+  set -eu
+
+  binary=$1
+  case "$(uname -s)" in
+  Linux)
+      if readelf -d "$binary" | grep -q NEEDED; then
+          readelf -d "$binary"
+          echo "FAIL: $binary links shared libraries" >&2
+          exit 1
+      fi
+      if readelf -l "$binary" | grep -q "Requesting program interpreter"; then
+          readelf -l "$binary"
+          echo "FAIL: $binary needs a dynamic loader" >&2
+          exit 1
+      fi
+      ;;
+  Darwin)
+      # Every line after the first names a library; only the system's count.
+      foreign=$(otool -L "$binary" | tail -n +2 | grep -v -E '^[[:space:]]+/(usr/lib|System/Library)/' || true)
+      if [ -n "$foreign" ]; then
+          otool -L "$binary"
+          echo "FAIL: $binary links libraries outside the system:" >&2
+          echo "$foreign" >&2
+          exit 1
+      fi
+      ;;
+  *)
+      echo "FAIL: no linkage check for $(uname -s)" >&2
+      exit 1
+      ;;
+  esac
+  echo "ok: $binary links nothing outside the system"
+  ```
+
+  Run: `chmod +x packaging/check-linkage.sh && nix develop -c cargo build -p hennery --locked && sh packaging/check-linkage.sh target/debug/hennery`
+  Expected: FAIL. The output lists `libssl.3.dylib` and `libcrypto.3.dylib` from `/nix/store/…-openssl-3.6.4/lib/`, and `libiconv.2.dylib`, after `FAIL: target/debug/hennery links libraries outside the system:`.
+
+- [ ] **Step 2: The feature**
+
+  In `Cargo.toml`, replace:
+
+  ```toml
+  webauthn-authenticator-rs = { version = "=0.5.5", features = ["softpasskey"] }
+  ```
+
+  with:
+
+  ```toml
+  webauthn-authenticator-rs = { version = "=0.5.5", features = ["softpasskey"] }
+  # The release build only (plan 7a): `webauthn-rs-core` links OpenSSL, built
+  # from source and linked statically there (distribution spec §1.1).
+  openssl = "=0.10.81"
+  ```
+
+  In `crates/hennery/Cargo.toml`, replace:
+
+  ```toml
+  publish.workspace = true
+
+  [dependencies]
+  ```
+
+  with:
+
+  ```toml
+  publish.workspace = true
+
+  [features]
+  # Release builds (plan 7a): build OpenSSL, which `webauthn-rs-core` links,
+  # from source and link it statically, so the binary needs no system OpenSSL
+  # (distribution spec §1.1). Development and tests use the system one.
+  vendored-openssl = ["dep:openssl", "openssl/vendored"]
+
+  [dependencies]
+  ```
+
+  In `crates/hennery/Cargo.toml`, replace:
+
+  ```toml
+  libc = "0.2"
+  ```
+
+  with:
+
+  ```toml
+  libc = "0.2"
+  openssl = { workspace = true, optional = true }
+  ```
+
+  Run: `nix develop -c cargo build -p hennery`
+  Expected: `Finished`. `git diff --stat Cargo.lock` shows `11 +++++++++++`: `openssl` under `hennery`'s dependencies, `openssl-src` under `openssl-sys`'s, and the `openssl-src` 300.6.1+3.6.3 package.
+
+  Run: `nix develop -c cargo tree --locked --target x86_64-unknown-linux-musl -p hennery --features vendored-openssl -i openssl-src -e normal,build | head -3`
+  Expected: `openssl-src v300.6.1+3.6.3`, then `[build-dependencies]` and `└── openssl-sys v0.9.117`. The musl target, which cannot be built here, gets the vendored build.
+
+- [ ] **Step 3: The feature takes OpenSSL out of the binary**
+
+  Run: `nix develop -c cargo build --release -p hennery --locked --features vendored-openssl && otool -L target/release/hennery`
+  Expected: two libraries, `/nix/store/…-libiconv-115.100.1/lib/libiconv.2.dylib` and `/usr/lib/libSystem.B.dylib`; no `libssl` or `libcrypto`. (Three minutes from a cold target: OpenSSL is compiled.)
+
+  Run: `sh packaging/check-linkage.sh target/release/hennery`
+  Expected: FAIL, naming `libiconv.2.dylib` alone: the dev shell's toolchain, not the feature (see above).
+
+- [ ] **Step 4: macOS CI names its OpenSSL; its actions are pinned**
+
+  In `.github/workflows/ci.yml`, replace:
+
+  ```yaml
+        - uses: dtolnay/rust-toolchain@stable
+          with:
+            components: clippy, rustfmt
+        - uses: Swatinem/rust-cache@v2
+        # `webauthn-rs` links OpenSSL (plan 3c). macOS finds Homebrew's
+        # `openssl@3` on its own; ubuntu needs the headers and pkg-config.
+        - name: OpenSSL headers (ubuntu)
+          if: runner.os == 'Linux'
+          run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+  ```
+
+  with:
+
+  ```yaml
+        - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-10-02
+          with:
+            toolchain: stable
+            components: clippy, rustfmt
+        - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        # `webauthn-rs` links OpenSSL (plan 3c): the system's for these checks.
+        # Release builds build their own (`vendored-openssl`, build.yml).
+        - name: OpenSSL headers (ubuntu)
+          if: runner.os == 'Linux'
+          run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+        # Named rather than left to the image (plan 7a): installed if a future
+        # image lacks it, and pointed at, so no other OpenSSL is picked up.
+        - name: OpenSSL (macOS)
+          if: runner.os == 'macOS'
+          run: |
+            brew list openssl@3 > /dev/null 2>&1 || brew install openssl@3
+            echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+  ```
+
+  CI's macOS job is this step's proof: its log shows `OPENSSL_DIR: /opt/homebrew/opt/openssl@3` in the later steps' environment. The two third-party actions are pinned by commit (decision 13): `dtolnay/rust-toolchain`'s `stable` is a branch, so the toolchain is now named with `toolchain:`; `6323deb` is `Swatinem/rust-cache`'s `v2.9.2`, which its `v2` tag points at today.
+
+- [ ] **Step 5: The checks**
+
+  Run the five checks of "Global Constraints".
+  Expected: all pass; the workspace's test count is unchanged (the clippy runs and the tests do not enable the feature).
+
+  Run: `nix develop -c cargo clippy -p hennery --locked --features vendored-openssl -- -D warnings`
+  Expected: `Finished`, no warning.
+
+- [ ] **Step 6: Commit**
+
+  ```bash
+  git add Cargo.toml Cargo.lock crates/hennery/Cargo.toml .github/workflows/ci.yml packaging/check-linkage.sh
+  git diff --cached --stat
+  git -c commit.gpgsign=false commit -m "build(release): build OpenSSL into release binaries, and check what they link"
+  ```
+
+---
+
+### Task 2: `hennery collector healthcheck`
+
+**Files:**
+- Create: `crates/hennery/src/healthcheck.rs`
+- Modify: `crates/hennery/src/main.rs` (the subcommand)
+- Test: `crates/hennery/tests/cli.rs`, and `healthcheck.rs`'s unit tests
+
+**Interfaces:**
+- Consumes: `config::FileConfig::load(&Path) -> Result<FileConfig>` and `FileConfig::listen(&self, &[String]) -> Result<Vec<String>>`; `main::listen_addresses(&[String]) -> Result<Vec<String>>` (the default `127.0.0.1:7117` when empty).
+- Produces:
+  - `hennery collector healthcheck [--listen ADDR]… [--data-dir DIR]`, with `HENNERY_LISTEN` and `HENNERY_DATA_DIR` as their variables: exit 0, or 1 with `unhealthy: <why>` on standard error. Task 4's `HEALTHCHECK` runs it with no flags.
+  - `healthcheck::probe_address(&str) -> Result<SocketAddr>`, `healthcheck::check(SocketAddr, Duration) -> Result<()>` (the `Duration` is the whole check's budget), `healthcheck::TIMEOUT` (2 s).
+  - `collector` with no subcommand is unchanged: it still requires `--data-dir`.
+
+- [ ] **Step 1: The failing tests**
+
+  Append to `crates/hennery/tests/cli.rs`:
+
+  ```rust
+  /// `hennery collector healthcheck` (distribution spec §1, §4.1), as the
+  /// image's `HEALTHCHECK` runs it: the address from `--listen` or
+  /// `HENNERY_LISTEN` (the image sets the variable), with `HENNERY_DATA_DIR`
+  /// set too. 0 while the collector serves, 1 once it is gone.
+  #[test]
+  fn the_healthcheck_passes_while_the_collector_serves_and_fails_once_it_stops() {
+      let dir = scratch_dir("healthcheck");
+      let _cleanup = RemoveDir(dir.clone());
+      let data = dir.join("collector");
+      let log = dir.join("collector.log");
+      let collector = Command::new(env!("CARGO_BIN_EXE_hennery"))
+          .args(["collector", "--listen", "127.0.0.1:0"])
+          .arg("--data-dir")
+          .arg(&data)
+          .stdout(std::fs::File::create(&log).unwrap())
+          .stderr(std::fs::File::create(log.with_extension("err")).unwrap())
+          .spawn()
+          .unwrap();
+      let mut collector = KillTree::new(collector, &log);
+      let address = collector.listening();
+      let healthcheck = |how: &dyn Fn(&mut Command)| {
+          let mut command = Command::new(env!("CARGO_BIN_EXE_hennery"));
+          command
+              .args(["collector", "healthcheck"])
+              .env_remove("HENNERY_LISTEN")
+              .env_remove("HENNERY_DATA_DIR");
+          how(&mut command);
+          command.output().unwrap()
+      };
+      let by_flag = |command: &mut Command| {
+          command.arg("--listen").arg(&address);
+      };
+      let by_environment = |command: &mut Command| {
+          command.env("HENNERY_LISTEN", &address).env("HENNERY_DATA_DIR", &data);
+      };
+      for (how, set) in [
+          ("--listen", &by_flag as &dyn Fn(&mut Command)),
+          ("HENNERY_LISTEN", &by_environment),
+      ] {
+          let out = healthcheck(set);
+          assert!(
+              out.status.success(),
+              "{how}: {:?} {}",
+              out.status,
+              String::from_utf8_lossy(&out.stderr)
+          );
+      }
+      drop(collector);
+      for (how, set) in [
+          ("--listen", &by_flag as &dyn Fn(&mut Command)),
+          ("HENNERY_LISTEN", &by_environment),
+      ] {
+          let out = healthcheck(set);
+          assert_eq!(
+              out.status.code(),
+              Some(1),
+              "{how}: {}",
+              String::from_utf8_lossy(&out.stderr)
+          );
+          assert!(
+              String::from_utf8_lossy(&out.stderr).contains("unhealthy"),
+              "{how}: {}",
+              String::from_utf8_lossy(&out.stderr)
+          );
+      }
+  }
+
+  /// `collector` still needs its data directory; `collector healthcheck`
+  /// takes none of the collector's own flags.
+  #[test]
+  fn the_collector_without_a_data_dir_or_with_the_healthcheck_and_its_flags_is_refused() {
+      let run = |args: &[&str]| {
+          Command::new(env!("CARGO_BIN_EXE_hennery"))
+              .args(args)
+              .env_remove("HENNERY_DATA_DIR")
+              .env_remove("HENNERY_LISTEN")
+              .output()
+              .unwrap()
+      };
+      let out = run(&["collector"]);
+      assert_eq!(out.status.code(), Some(2));
+      assert!(String::from_utf8_lossy(&out.stderr).contains("--data-dir"));
+      let out = run(&["collector", "--data-dir", "/nonexistent", "healthcheck"]);
+      assert_eq!(out.status.code(), Some(2), "{}", String::from_utf8_lossy(&out.stderr));
+  }
+  ```
+
+  Run: `nix develop -c cargo test -p hennery --locked --test cli healthcheck`
+  Expected: FAIL. `the_healthcheck_passes_while_the_collector_serves_and_fails_once_it_stops` panics at `--listen: exit status: 2` (`error: unexpected argument 'healthcheck' found`). `the_collector_without_a_data_dir_or_with_the_healthcheck_and_its_flags_is_refused` already passes, for the wrong reason: `healthcheck` is an unexpected argument, which exits 2 too. From Step 4 it exits 2 because the subcommand cannot be used with `--data-dir`; Step 5's last probe shows the test holding that.
+
+- [ ] **Step 2: The health check**
+
+  Create `crates/hennery/src/healthcheck.rs`:
+
+  ```rust
+  //! `hennery collector healthcheck` (distribution spec §1, §4.1): exit 0 when
+  //! the collector answers `GET /healthz` with 200, else 1. It is the
+  //! container image's `HEALTHCHECK`: the image is distroless, with no shell,
+  //! `curl` or `wget`, so the binary checks itself.
+
+  use anyhow::{Context, Result, anyhow, bail};
+  use std::io::{Read, Write};
+  use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, ToSocketAddrs};
+  use std::time::{Duration, Instant};
+
+  /// The whole check's budget, inside the image's `--timeout=3s`, so a hung
+  /// collector is reported by this check and not by Docker killing it.
+  pub const TIMEOUT: Duration = Duration::from_secs(2);
+
+  /// The longest status line read: the answer's status line is all that counts.
+  const MAX_STATUS_LINE: usize = 256;
+
+  /// Where to reach a collector listening on `listen`: a wildcard address
+  /// (`0.0.0.0`, `[::]`) is reached over loopback, as `up`'s host reaches it.
+  pub fn probe_address(listen: &str) -> Result<SocketAddr> {
+      let mut address = listen
+          .to_socket_addrs()
+          .with_context(|| format!("listen address {listen}"))?
+          .next()
+          .with_context(|| format!("listen address {listen} resolves to nothing"))?;
+      match address.ip() {
+          IpAddr::V4(ip) if ip.is_unspecified() => address.set_ip(Ipv4Addr::LOCALHOST.into()),
+          IpAddr::V6(ip) if ip.is_unspecified() => address.set_ip(Ipv6Addr::LOCALHOST.into()),
+          _ => {}
+      }
+      Ok(address)
+  }
+
+  /// `Ok` when `GET /healthz` at `address` answers 200 within `timeout`, all
+  /// of it (connect, write and every read); else why not.
+  pub fn check(address: SocketAddr, timeout: Duration) -> Result<()> {
+      let deadline = Instant::now() + timeout;
+      // What is left of the budget; none left is a failure, not a zero timeout
+      // (which the socket calls refuse).
+      let left = || {
+          deadline
+              .checked_duration_since(Instant::now())
+              .filter(|left| !left.is_zero())
+              .ok_or_else(|| anyhow!("{address} did not answer GET /healthz within {timeout:?}"))
+      };
+      let mut stream = TcpStream::connect_timeout(&address, left()?).with_context(|| format!("connect to {address}"))?;
+      stream.set_write_timeout(Some(left()?))?;
+      // One write: the whole request, so the collector never sees half of one.
+      stream
+          .write_all(format!("GET /healthz HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").as_bytes())
+          .with_context(|| format!("send to {address}"))?;
+      // The status line only, up to its CRLF: a peer trickling bytes cannot
+      // keep the check past its budget, since every read gets what is left.
+      let mut line = Vec::new();
+      let mut buf = [0u8; MAX_STATUS_LINE];
+      loop {
+          stream.set_read_timeout(Some(left()?))?;
+          let n = stream.read(&mut buf).with_context(|| format!("read from {address}"))?;
+          line.extend_from_slice(&buf[..n]);
+          if let Some(end) = line.windows(2).position(|pair| pair == b"\r\n") {
+              line.truncate(end);
+              break;
+          }
+          if n == 0 || line.len() > MAX_STATUS_LINE {
+              break;
+          }
+      }
+      let status = String::from_utf8_lossy(&line);
+      match status.split(' ').nth(1) {
+          Some("200") => Ok(()),
+          _ => bail!("{address} answered {status:?} to GET /healthz"),
+      }
+  }
+
+  #[cfg(test)]
+  mod tests {
+      use super::*;
+      use std::net::TcpListener;
+
+      #[test]
+      fn a_wildcard_listen_address_is_probed_over_loopback() {
+          assert_eq!(
+              probe_address("0.0.0.0:8080").unwrap(),
+              "127.0.0.1:8080".parse().unwrap()
+          );
+          assert_eq!(probe_address("[::]:8080").unwrap(), "[::1]:8080".parse().unwrap());
+          assert_eq!(
+              probe_address("100.64.0.7:7117").unwrap(),
+              "100.64.0.7:7117".parse().unwrap()
+          );
+      }
+
+      #[test]
+      fn a_listen_address_without_a_port_is_refused() {
+          assert!(probe_address("127.0.0.1").is_err());
+      }
+
+      /// A server that reads one request and answers `answer`, or nothing.
+      fn answering(answer: &'static str) -> SocketAddr {
+          let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+          let address = listener.local_addr().unwrap();
+          std::thread::spawn(move || {
+              let (mut stream, _) = listener.accept().unwrap();
+              let mut request = [0u8; 1024];
+              let _ = stream.read(&mut request);
+              let _ = stream.write_all(answer.as_bytes());
+          });
+          address
+      }
+
+      #[test]
+      fn only_a_200_is_healthy() {
+          let ok = answering("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok");
+          check(ok, TIMEOUT).unwrap();
+          let unavailable = answering("HTTP/1.1 503 Service Unavailable\r\n\r\n");
+          let err = check(unavailable, TIMEOUT).unwrap_err();
+          assert!(format!("{err:#}").contains("503"), "{err:#}");
+          let garbage = answering("200 nonsense");
+          assert!(check(garbage, TIMEOUT).is_err());
+      }
+
+      #[test]
+      fn nothing_listening_is_unhealthy() {
+          let address = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+          // The listener is dropped: nothing listens there now.
+          assert!(check(address, TIMEOUT).is_err());
+      }
+
+      /// A peer that sends a byte at a time, each well inside any one read's
+      /// timeout, still fails the check once the whole budget is spent.
+      #[test]
+      fn an_answer_trickled_byte_by_byte_is_unhealthy_within_the_timeout() {
+          let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+          let address = listener.local_addr().unwrap();
+          std::thread::spawn(move || {
+              let (mut stream, _) = listener.accept().unwrap();
+              let mut request = [0u8; 1024];
+              let _ = stream.read(&mut request);
+              for byte in b"HTTP/1.1 200 OK".iter().cycle() {
+                  if stream.write_all(&[*byte]).is_err() {
+                      return;
+                  }
+                  std::thread::sleep(Duration::from_millis(50));
+              }
+          });
+          let started = std::time::Instant::now();
+          assert!(check(address, Duration::from_millis(300)).is_err());
+          assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+      }
+
+      #[test]
+      fn a_collector_that_never_answers_is_unhealthy_within_the_timeout() {
+          let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+          let address = listener.local_addr().unwrap();
+          // Accepted by the kernel's backlog, never read or answered.
+          let started = std::time::Instant::now();
+          assert!(check(address, Duration::from_millis(300)).is_err());
+          assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+          drop(listener);
+      }
+  }
+  ```
+
+- [ ] **Step 3: The subcommand**
+
+  In `crates/hennery/src/main.rs`, replace:
+
+  ```rust
+  mod config;
+  mod inherit;
+  ```
+
+  with:
+
+  ```rust
+  mod config;
+  mod healthcheck;
+  mod inherit;
+  ```
+
+  In `crates/hennery/src/main.rs`, replace:
+
+  ```rust
+      /// Run the collector.
+      Collector(CollectorArgs),
+  ```
+
+  with:
+
+  ```rust
+      /// Run the collector.
+      Collector(CollectorCli),
+  ```
+
+  In `crates/hennery/src/main.rs`, replace:
+
+  ```rust
+  #[derive(Args, Clone)]
+  struct CollectorArgs {
+  ```
+
+  with:
+
+  ```rust
+  /// `collector` runs the collector; `collector healthcheck` checks one.
+  #[derive(Args)]
+  #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+  struct CollectorCli {
+      #[command(subcommand)]
+      command: Option<CollectorCommand>,
+      #[command(flatten)]
+      run: Option<CollectorArgs>,
+  }
+
+  #[derive(Subcommand)]
+  enum CollectorCommand {
+      /// Exit 0 if the collector answers `/healthz`, else 1 (for containers).
+      Healthcheck(HealthcheckArgs),
+  }
+
+  #[derive(Args)]
+  struct HealthcheckArgs {
+      /// The collector's listen address, as for `collector`: the first one
+      /// given is checked, a wildcard one over loopback. Else `listen` in
+      /// `config.toml`, else 127.0.0.1:7117.
+      #[arg(long = "listen", env = "HENNERY_LISTEN", value_delimiter = ',')]
+      listen: Vec<String>,
+      /// Where `config.toml` is read from, when no address is given.
+      #[arg(long, env = "HENNERY_DATA_DIR")]
+      data_dir: Option<PathBuf>,
+  }
+
+  #[derive(Args, Clone)]
+  struct CollectorArgs {
+  ```
+
+  In `crates/hennery/src/main.rs`, replace:
+
+  ```rust
+          Command::Collector(args) => run_collector(args).await.map(|()| std::process::ExitCode::SUCCESS),
+  ```
+
+  with:
+
+  ```rust
+          Command::Collector(CollectorCli {
+              command: Some(CollectorCommand::Healthcheck(args)),
+              ..
+          }) => Ok(collector_healthcheck(args)),
+          Command::Collector(CollectorCli {
+              run: Some(args),
+              command: None,
+          }) => run_collector(args).await.map(|()| std::process::ExitCode::SUCCESS),
+          Command::Collector(CollectorCli {
+              run: None,
+              command: None,
+          }) => unreachable!("clap requires --data-dir when no subcommand is given"),
+  ```
+
+  In `crates/hennery/src/main.rs`, replace:
+
+  ```rust
+  async fn run_collector(args: CollectorArgs) -> Result<()> {
+  ```
+
+  with:
+
+  ```rust
+  /// `collector healthcheck`: 0 if healthy, else 1 and why, on standard
+  /// error (Docker keeps it in the container's health log).
+  fn collector_healthcheck(args: HealthcheckArgs) -> std::process::ExitCode {
+      let checked = (|| {
+          let file = match &args.data_dir {
+              Some(dir) => config::FileConfig::load(dir)?,
+              None => config::FileConfig::default(),
+          };
+          let addresses = listen_addresses(&file.listen(&args.listen)?)?;
+          healthcheck::check(healthcheck::probe_address(&addresses[0])?, healthcheck::TIMEOUT)
+      })();
+      match checked {
+          Ok(()) => std::process::ExitCode::SUCCESS,
+          Err(err) => {
+              eprintln!("unhealthy: {err:#}");
+              std::process::ExitCode::FAILURE
+          }
+      }
+  }
+
+  async fn run_collector(args: CollectorArgs) -> Result<()> {
+  ```
+
+- [ ] **Step 4: The tests pass**
+
+  Run: `nix develop -c cargo test -p hennery --locked healthcheck`
+  Expected: PASS, 6 unit tests (`healthcheck::tests::…`) and the 2 CLI tests.
+
+  Run: `nix develop -c cargo run -q -p hennery -- collector healthcheck --listen 127.0.0.1:1; echo $?`
+  Expected: `unhealthy: connect to 127.0.0.1:1: Connection refused (os error 61)` (Linux: 111), then `1`.
+
+- [ ] **Step 5: Revert-probes**
+
+  Each, applied alone to the task's tree, must fail the named test; restore after each.
+  - `probe_address` without its wildcard arms (`match` reduced to `_ => {}`): `a_wildcard_listen_address_is_probed_over_loopback`.
+  - `check` accepting any status (`Some("200") => Ok(())` becomes `_ => Ok(())`, the `bail!` arm removed): `only_a_200_is_healthy`, and `the_healthcheck_passes_…_and_fails_once_it_stops` does not (nothing answers once the collector stops, so the connect fails first). That is why the unit test exists.
+  - `check` without its read timeout (`stream.set_read_timeout(Some(left()?))?;` removed): `a_collector_that_never_answers_is_unhealthy_within_the_timeout` hangs, since the listener accepts and never answers. Stop it after 10 s.
+  - Each read given the whole budget instead of what is left (`Some(left()?)` becomes `Some(timeout)` in the read loop): `an_answer_trickled_byte_by_byte_is_unhealthy_within_the_timeout` fails its elapsed-time assertion: each read then waits out a whole byte's arrival until 256 bytes have come (39 s here).
+  - `args_conflicts_with_subcommands = true` removed: `the_collector_without_a_data_dir_or_with_the_healthcheck_and_its_flags_is_refused`.
+
+- [ ] **Step 6: The checks**
+
+  Run the five checks of "Global Constraints".
+  Expected: all pass, 8 more tests in the workspace (546, from 538).
+
+- [ ] **Step 7: Commit**
+
+  ```bash
+  git add crates/hennery/src/healthcheck.rs crates/hennery/src/main.rs crates/hennery/tests/cli.rs
+  git diff --cached --stat
+  git -c commit.gpgsign=false commit -m "feat(cli): add collector healthcheck for the container image"
+  ```
+
+---
+
+### Task 3: The release archives and the installers, built and checked in CI
+
+**Files:**
+- Create: `dist-workspace.toml`, `packaging/install-dist.sh`, `packaging/harden-installer.py`, `packaging/test-installer.sh`, `packaging/check-archive.sh`, `packaging/check-formula.sh`, `.github/workflows/build.yml`
+- Modify: `Cargo.toml` (`repository`, `homepage`, the `dist` profile), `crates/hennery/Cargo.toml` (the same, a `description`, `[package.metadata.dist]`)
+
+**Interfaces:**
+- Consumes: Task 1's `vendored-openssl` and `check-linkage.sh`.
+- Produces:
+  - the `build` workflow's `archive` job, per target (matrix `target`, `runner`), with the unpacked binary's path in `$BINARY` for later steps. Task 4 adds its image steps there, after "Runs on Alpine (musl)", and an `image` key to the two Linux entries.
+  - workflow artifacts `archive-<target>` (the archive, its `.sha256`, its `dist-manifest.json`) and `installers` (`hennery-installer.sh`, hardened; `hennery.rb`; `sha256.sum`).
+  - `test-installer.sh <dir>`, `check-formula.sh <dir>`, `check-archive.sh <archive> <target>`: exit 0 with `ok:` lines, else 1 with `FAIL:`.
+
+The tests here are scripts that CI runs. Every archive exists only once CI has built it: the installer embeds the checksum of each archive whose `dist-manifest.json` the global build is given, and needs all three to pass `test-installer.sh`. So the revert-probes (Step 7) run here on the artifacts of the PR's run.
+
+- [ ] **Step 1: cargo-dist's configuration**
+
+  Create `dist-workspace.toml`:
+
+  ```toml
+  # cargo-dist (distribution spec §2). Only its build half is wired up: the
+  # `build` workflow runs `dist build` and keeps what it makes as workflow
+  # artifacts (plan 7a). Publishing (GitHub Releases, the Homebrew tap, the
+  # attestations) is the operator's to switch on: `dist generate` would write
+  # a workflow that publishes on every version tag, so that workflow is not
+  # committed, and `allow-dirty` stops `dist` from asking for it.
+  [workspace]
+  members = ["cargo:."]
+
+  [dist]
+  cargo-dist-version = "0.30.4"
+  ci = "github"
+  allow-dirty = ["ci"]
+  # Linux musl-static for both architectures, macOS arm64 (distribution §1).
+  targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
+  # OpenSSL built in, not linked from the system (distribution §1.1).
+  features = ["vendored-openssl"]
+  # Only the `hennery` package, so the feature applies to the crate that has it.
+  precise-builds = true
+  checksum = "sha256"
+  installers = ["shell", "homebrew"]
+  tap = "marcinwadon/homebrew-tap"
+  install-path = "~/.local/bin"
+  install-updater = false
+  github-attestations = true
+  ```
+
+  In `Cargo.toml`, replace:
+
+  ```toml
+  publish = false
+  ```
+
+  with:
+
+  ```toml
+  publish = false
+  repository = "https://github.com/marcinwadon/hennery"
+  homepage = "https://github.com/marcinwadon/hennery"
+  ```
+
+  Append to `Cargo.toml`:
+
+  ```toml
+  # Release archives (plan 7a): `dist build` builds with this profile.
+  [profile.dist]
+  inherits = "release"
+  lto = "thin"
+  ```
+
+  In `crates/hennery/Cargo.toml`, replace:
+
+  ```toml
+  publish.workspace = true
+  ```
+
+  with:
+
+  ```toml
+  publish.workspace = true
+  repository.workspace = true
+  homepage.workspace = true
+  description = "Self-hosted cockpit for ACP coding agents"
+  ```
+
+  Append to `crates/hennery/Cargo.toml`:
+
+  ```toml
+  # cargo-dist (plan 7a) ships this crate's binary despite `publish = false`.
+  [package.metadata.dist]
+  dist = true
+  ```
+
+  Run: `nix shell nixpkgs#cargo-dist nixpkgs#cargo nixpkgs#rustc -c dist plan 2>&1 | grep -v WARN | grep -E "hennery-|installer|sha256.sum|\.rb"`
+  Expected: the three archives (`hennery-aarch64-apple-darwin.tar.xz`, `hennery-aarch64-unknown-linux-musl.tar.xz`, `hennery-x86_64-unknown-linux-musl.tar.xz`), each with its `.sha256`, and `hennery-installer.sh`, `hennery.rb`, `sha256.sum`. It does not ask for a `release.yml` (`allow-dirty`).
+
+- [ ] **Step 2: cargo-dist, pinned**
+
+  Create `packaging/install-dist.sh`:
+
+  ```sh
+  #!/bin/sh
+  # Install cargo-dist for a CI job: the pinned release's archive for this
+  # runner, checked against the SHA-256 written here (not one fetched beside
+  # it), so a replaced release asset fails the build instead of running.
+  #
+  # Usage: install-dist.sh <directory to put `dist` in>
+  set -eu
+
+  version=0.30.4 # dist-workspace.toml's `cargo-dist-version`
+  case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64)
+      target=x86_64-unknown-linux-gnu
+      sha256=f7bd986e758d0d47c6995aaf92f26d093635c7cd69581ed9e2451b618ea98098
+      ;;
+  Linux-aarch64)
+      target=aarch64-unknown-linux-gnu
+      sha256=79aa478537011e0cd4f5dd79e02f28b2b87788966d241fc605c6fe23b9e74e83
+      ;;
+  Darwin-arm64)
+      target=aarch64-apple-darwin
+      sha256=c8b8f3163e5e4dd5a9cc5455957043a00bfee7d446489e4f8a4db6f2d5af1ab1
+      ;;
+  *)
+      echo "install-dist: no pinned cargo-dist for $(uname -s)-$(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+
+  bin=$1
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+  archive="$scratch/cargo-dist.tar.xz"
+  curl --proto '=https' --tlsv1.2 -sSfL -o "$archive" \
+      "https://github.com/axodotdev/cargo-dist/releases/download/v$version/cargo-dist-$target.tar.xz"
+  echo "$sha256  $archive" | shasum -a 256 -c -
+  tar -xJf "$archive" -C "$scratch"
+  mkdir -p "$bin"
+  install -m 0755 "$scratch/cargo-dist-$target/dist" "$bin/dist"
+  "$bin/dist" --version
+  ```
+
+  Run: `chmod +x packaging/install-dist.sh && sh packaging/install-dist.sh "$(mktemp -d)"`
+  Expected: `…/cargo-dist.tar.xz: OK`, then `cargo-dist 0.30.4`.
+
+- [ ] **Step 3: The installer hardened, and the checks of what is built**
+
+  Create `packaging/harden-installer.py`:
+
+  ```python
+  #!/usr/bin/env python3
+  """Make cargo-dist's shell installer refuse to install what it cannot check.
+
+  The distribution spec (§2) asks the installer to refuse to continue when no
+  SHA-256 tool is available, rather than skipping the check. cargo-dist's
+  installer (0.30.4) skips it, with a message, in four places: no `sha256sum`,
+  no checksum for the archive, an archive with no checksum style, and a style
+  it does not know. Each is replaced by an error. Where `sha256sum` is missing,
+  `shasum -a 256` (macOS's, and Perl's) is tried before refusing. Every
+  replaced text must occur exactly once: a cargo-dist upgrade that changes the
+  installer fails this script, and so the build, instead of shipping an
+  installer that skips the check again.
+
+  Usage: harden-installer.py <path to hennery-installer.sh>  (edited in place)
+  """
+
+  import sys
+
+  REFUSE_UNCHECKED = (
+      'err "refusing to install an archive whose checksum cannot be checked; '
+      'install sha256sum or shasum and run the installer again"'
+  )
+
+  REPLACEMENTS = [
+      (
+          # No `sha256sum`: `shasum`, else no SHA-256 tool at all.
+          '''            if ! check_cmd sha256sum; then
+                  say "skipping sha256 checksum verification (it requires the 'sha256sum' command)"
+                  return 0
+              fi
+              _calculated_checksum="$(sha256sum -b "$_file" | awk '{printf $1}')"''',
+          '''            if check_cmd sha256sum; then
+                  _calculated_checksum="$(sha256sum -b "$_file" | awk '{printf $1}')"
+              elif check_cmd shasum; then
+                  _calculated_checksum="$(shasum -a 256 -b "$_file" | awk '{printf $1}')"
+              else
+                  '''
+          + REFUSE_UNCHECKED
+          + '''
+              fi''',
+      ),
+      (
+          # A checksum style it does not know.
+          '''        *)
+              say "skipping unknown checksum style: $_checksum_style"
+              return 0
+              ;;''',
+          '''        *)
+              '''
+          + REFUSE_UNCHECKED
+          + '''
+              ;;''',
+      ),
+      (
+          # An empty checksum for the archive.
+          '''    if [ -z "$_checksum_value" ]; then
+          return 0
+      fi''',
+          '''    if [ -z "$_checksum_value" ]; then
+          '''
+          + REFUSE_UNCHECKED
+          + '''
+      fi''',
+      ),
+      (
+          # An archive with no checksum at all.
+          '''    else
+          say "no checksums to verify"
+      fi''',
+          '''    else
+          '''
+          + REFUSE_UNCHECKED
+          + '''
+      fi''',
+      ),
+  ]
+
+
+  def harden(text: str) -> str:
+      for old, new in REPLACEMENTS:
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"harden-installer: expected one copy of this text, found {count}:\n{old}"
+              )
+          text = text.replace(old, new)
+      return text
+
+
+  def main() -> None:
+      if len(sys.argv) != 2:
+          raise SystemExit(__doc__)
+      path = sys.argv[1]
+      with open(path, encoding="utf-8") as f:
+          text = f.read()
+      # Before the file is opened for writing: a failure leaves it as it was.
+      hardened = harden(text)
+      with open(path, "w", encoding="utf-8") as f:
+          f.write(hardened)
+
+
+  if __name__ == "__main__":
+      main()
+  ```
+
+  Create `packaging/test-installer.sh`:
+
+  ```sh
+  #!/bin/sh
+  # The hardened shell installer (distribution spec §2, §9), run against the
+  # archives of this build, served from a directory (`file://`):
+  #   - every archive's SHA-256 is embedded in it, and is the archive's;
+  #   - it installs a binary that runs, with `sha256sum` or with `shasum`;
+  #   - a checksum mismatch aborts, and installs nothing;
+  #   - no SHA-256 tool, an empty checksum, no checksum at all, or a checksum
+  #     style it does not know aborts, and installs nothing.
+  # HOME and XDG_CONFIG_HOME point into a scratch directory, so nothing outside
+  # it is written.
+  #
+  # Usage: test-installer.sh <directory holding hennery-installer.sh and every
+  # archive with its .sha256>
+  set -eu
+
+  dist=$(cd "$1" && pwd)
+  installer="$dist/hennery-installer.sh"
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+
+  fail() {
+      echo "FAIL: $*" >&2
+      exit 1
+  }
+
+  # Every archive the installer offers has its checksum embedded, and it is the
+  # one cargo-dist wrote beside that archive.
+  arms=$(sed -n 's/^[[:space:]]*"\(hennery-.*\.tar\.xz\)")$/\1/p' "$installer")
+  [ -n "$arms" ] || fail "the installer offers no archive"
+  count=0
+  for archive in $arms; do
+      sum="$dist/$archive.sha256"
+      [ -f "$sum" ] || fail "the installer offers $archive, and this build has no $archive.sha256"
+      want=$(cut -d ' ' -f 1 "$sum")
+      case "$want" in
+      *[!0-9a-f]* | "") fail "$sum holds no SHA-256" ;;
+      esac
+      [ "${#want}" = 64 ] || fail "$sum holds no SHA-256"
+      # The installer's case for this archive, up to its `;;`.
+      arm=$(awk -v name="\"$archive\")" '$1 == name { on = 1 } on { print } on && $1 == ";;" { exit }' "$installer")
+      printf '%s\n' "$arm" | grep -qx '[[:space:]]*_checksum_style="sha256"' ||
+          fail "the installer has no sha256 checksum for $archive"
+      printf '%s\n' "$arm" | grep -qx "[[:space:]]*_checksum_value=\"$want\"" ||
+          fail "the installer's checksum for $archive is not the archive's"
+      count=$((count + 1))
+  done
+  echo "ok: the installer embeds each of its $count archives' SHA-256"
+
+  # run_installer <download dir> <install dir> <log>: the installer's exit status.
+  run_installer() {
+      mkdir -p "$scratch/home"
+      status=0
+      HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/.config" \
+          HENNERY_DOWNLOAD_URL="file://$1" HENNERY_UNMANAGED_INSTALL="$2" \
+          sh "$1/hennery-installer.sh" >"$3" 2>&1 || status=$?
+      return "$status"
+  }
+
+  # refused <name> <download dir> <message>: the installer, run on <download
+  # dir>, fails with <message> and leaves no binary.
+  refused() {
+      if run_installer "$2" "$scratch/$1" "$scratch/$1.log"; then
+          cat "$scratch/$1.log"
+          fail "$1: installed"
+      fi
+      grep -q "$3" "$scratch/$1.log" || {
+          cat "$scratch/$1.log"
+          fail "$1: failed for another reason"
+      }
+      [ ! -e "$scratch/$1/hennery" ] || fail "$1: left a binary"
+  }
+
+  # tools <dir> <excluded>...: every command of /usr/bin and /bin but these.
+  tools() {
+      dir=$1
+      shift
+      mkdir "$dir"
+      for from in /usr/bin /bin; do
+          for tool in "$from"/*; do
+              name=$(basename "$tool")
+              for excluded in "$@"; do
+                  [ "$name" = "$excluded" ] && continue 2
+              done
+              [ -e "$dir/$name" ] || ln -s "$tool" "$dir/$name"
+          done
+      done
+  }
+
+  # copy <name>: a download directory with the installer and the archives.
+  copy() {
+      mkdir "$scratch/$1"
+      cp "$installer" "$dist"/*.tar.xz "$scratch/$1/"
+      echo "$scratch/$1"
+  }
+
+  UNCHECKED="refusing to install an archive whose checksum cannot be checked"
+
+  # A good install.
+  run_installer "$dist" "$scratch/good" "$scratch/good.log" || {
+      cat "$scratch/good.log"
+      fail "the installer failed on its own archives"
+  }
+  "$scratch/good/hennery" --version || fail "the installed binary does not run"
+  echo "ok: installs a binary that runs"
+
+  # With `shasum` and no `sha256sum`.
+  tools "$scratch/shasum-tools" sha256sum
+  # In a subshell: an assignment before a function call may outlive it.
+  (PATH="$scratch/shasum-tools" && run_installer "$dist" "$scratch/shasum" "$scratch/shasum.log") || {
+      cat "$scratch/shasum.log"
+      fail "the installer failed with shasum alone"
+  }
+  "$scratch/shasum/hennery" --version >/dev/null || fail "the binary installed with shasum does not run"
+  echo "ok: installs with shasum alone"
+
+  # A checksum mismatch: the same archives, one byte longer each.
+  tampered=$(copy tampered-download)
+  for archive in "$tampered"/*.tar.xz; do
+      printf 'x' >>"$archive"
+  done
+  refused tampered "$tampered" "checksum mismatch"
+  echo "ok: a checksum mismatch aborts"
+
+  # No SHA-256 tool at all.
+  tools "$scratch/no-tools" sha256sum shasum
+  (PATH="$scratch/no-tools" && refused unchecked "$dist" "$UNCHECKED")
+  echo "ok: no SHA-256 tool aborts"
+
+  # An empty checksum.
+  empty=$(copy empty-download)
+  sed 's/^\([[:space:]]*_checksum_value=\)".*"$/\1""/' "$installer" >"$empty/hennery-installer.sh"
+  refused empty "$empty" "$UNCHECKED"
+  echo "ok: an empty checksum aborts"
+
+  # No checksum at all.
+  none=$(copy none-download)
+  grep -v '^[[:space:]]*_checksum_style=' "$installer" >"$none/hennery-installer.sh"
+  refused none "$none" "$UNCHECKED"
+  echo "ok: no checksum aborts"
+
+  # A checksum style the installer does not know.
+  unknown=$(copy unknown-download)
+  sed 's/^\([[:space:]]*_checksum_style=\)"sha256"$/\1"md5"/' "$installer" >"$unknown/hennery-installer.sh"
+  refused unknown "$unknown" "$UNCHECKED"
+  echo "ok: an unknown checksum style aborts"
+  ```
+
+  Create `packaging/check-archive.sh`:
+
+  ```sh
+  #!/bin/sh
+  # A release archive holds the `hennery` binary, its licence and its README,
+  # and nothing else (distribution spec §3.3): never an adapter, nor the Claude
+  # CLI, which hennery does not redistribute.
+  #
+  # Usage: check-archive.sh <archive.tar.xz> <target>
+  set -eu
+
+  archive=$1
+  dir="hennery-$2"
+  listed=$(tar -tJf "$archive" | sort)
+  expected=$(printf '%s\n' "$dir/" "$dir/LICENSE" "$dir/README.md" "$dir/hennery" | sort)
+  if [ "$listed" != "$expected" ]; then
+      echo "FAIL: $archive holds:" >&2
+      echo "$listed" >&2
+      echo "and should hold exactly:" >&2
+      echo "$expected" >&2
+      exit 1
+  fi
+  echo "ok: $archive holds the binary, its licence and its README alone"
+  ```
+
+  Create `packaging/check-formula.sh`:
+
+  ```sh
+  #!/bin/sh
+  # The Homebrew formula names every archive of this build with the archive's
+  # own SHA-256, on the line after its URL.
+  #
+  # Usage: check-formula.sh <directory holding hennery.rb and every archive's
+  # .sha256>
+  set -eu
+
+  dist=$1
+  formula="$dist/hennery.rb"
+  count=0
+  for sum in "$dist"/*.tar.xz.sha256; do
+      archive=$(basename "$sum" .sha256)
+      want=$(cut -d ' ' -f 1 "$sum")
+      got=$(awk -v archive="/$archive\"" 'found { print; exit } $1 == "url" && index($2, archive) { found = 1 }' "$formula")
+      case "$got" in
+      *"sha256 \"$want\""*) ;;
+      *)
+          echo "FAIL: $formula does not give $archive its SHA-256 ($want): $got" >&2
+          exit 1
+          ;;
+      esac
+      count=$((count + 1))
+  done
+  urls=$(grep -c '^[[:space:]]*url "' "$formula")
+  if [ "$urls" != "$count" ]; then
+      echo "FAIL: $formula names $urls archives, this build made $count" >&2
+      exit 1
+  fi
+  echo "ok: the formula gives each of its $count archives its SHA-256"
+  ```
+
+  Run: `chmod +x packaging/harden-installer.py packaging/test-installer.sh packaging/check-archive.sh packaging/check-formula.sh`
+
+- [ ] **Step 4: The workflow**
+
+  Create `.github/workflows/build.yml`:
+
+  ```yaml
+  # Release artifacts, built the way a release builds them (distribution spec
+  # §2, plan 7a), and checked: Linux musl-static for both architectures and
+  # macOS arm64, the shell installer and the Homebrew formula.
+  #
+  # This workflow publishes nothing. It has no tag trigger, no release, no
+  # registry push, no attestation, and only `contents: read`. What it builds
+  # stays a workflow artifact, kept for a week. Publishing is the operator's
+  # to switch on (packaging/README.md).
+  #
+  # The archives hold the `hennery` binary alone, which `check-archive.sh`
+  # asserts. No job here downloads, builds or uploads an adapter: the Claude CLI
+  # is never redistributed (distribution spec §3.3).
+  #
+  # Third-party actions are pinned by commit, images by digest, cargo-dist by
+  # SHA-256 (`install-dist.sh`); GitHub's own actions by major tag. Workflow
+  # artifacts are never promoted to a release (packaging/README.md).
+  name: build
+
+  on:
+    push:
+      branches: [main]
+    pull_request:
+    workflow_dispatch:
+
+  permissions:
+    contents: read
+
+  concurrency:
+    group: build-${{ github.ref }}
+    cancel-in-progress: true
+
+  jobs:
+    # One archive per target, each on a native runner.
+    archive:
+      strategy:
+        fail-fast: false
+        matrix:
+          include:
+            - target: x86_64-unknown-linux-musl
+              runner: ubuntu-24.04
+            - target: aarch64-unknown-linux-musl
+              runner: ubuntu-24.04-arm
+            - target: aarch64-apple-darwin
+              runner: macos-latest
+      runs-on: ${{ matrix.runner }}
+      steps:
+        - uses: actions/checkout@v4
+          with:
+            persist-credentials: false
+        - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-10-02
+          with:
+            toolchain: stable
+            targets: ${{ matrix.target }}
+        - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+          with:
+            key: ${{ matrix.target }}
+        # `musl-gcc` builds the C parts (OpenSSL, SQLite, ring) for musl.
+        - name: musl tools (Linux)
+          if: runner.os == 'Linux'
+          run: sudo apt-get update && sudo apt-get install -y musl-tools
+        - name: Install dist
+          run: |
+            sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+            echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
+        - name: Build the archive
+          run: |
+            dist build --artifacts=local --target=${{ matrix.target }} --print=linkage --output-format=json > dist-manifest.json
+            cp dist-manifest.json "target/distrib/${{ matrix.target }}-dist-manifest.json"
+        - name: Unpack the binary
+          run: |
+            mkdir -p unpacked
+            tar -xJf "target/distrib/hennery-${{ matrix.target }}.tar.xz" -C unpacked
+            echo "BINARY=$PWD/unpacked/hennery-${{ matrix.target }}/hennery" >> "$GITHUB_ENV"
+        - name: Holds the binary alone
+          run: sh packaging/check-archive.sh "target/distrib/hennery-${{ matrix.target }}.tar.xz" ${{ matrix.target }}
+        - name: Links nothing outside the system
+          run: sh packaging/check-linkage.sh "$BINARY"
+        - name: Runs
+          run: |
+            "$BINARY" --version
+            "$BINARY" collector --help > /dev/null
+        - name: Runs on Alpine (musl)
+          if: runner.os == 'Linux'
+          run: docker run --rm -v "$BINARY:/hennery:ro" alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 /hennery --version
+        - uses: actions/upload-artifact@v4
+          with:
+            name: archive-${{ matrix.target }}
+            retention-days: 7
+            if-no-files-found: error
+            path: |
+              target/distrib/hennery-${{ matrix.target }}.tar.xz
+              target/distrib/hennery-${{ matrix.target }}.tar.xz.sha256
+              target/distrib/${{ matrix.target }}-dist-manifest.json
+
+    # What spans the archives: the installer (their checksums embedded), the
+    # Homebrew formula, and `sha256.sum`.
+    installers:
+      needs: archive
+      runs-on: ubuntu-24.04
+      steps:
+        - uses: actions/checkout@v4
+          with:
+            persist-credentials: false
+        - name: Install dist
+          run: |
+            sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+            echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
+        - uses: actions/download-artifact@v4
+          with:
+            pattern: archive-*
+            path: target/distrib/
+            merge-multiple: true
+        - name: Build the installers
+          run: dist build --artifacts=global
+        # cargo-dist's installer skips the check without `sha256sum`; the spec
+        # wants it to refuse (packaging/harden-installer.py).
+        - name: Harden the installer
+          run: python3 packaging/harden-installer.py target/distrib/hennery-installer.sh
+        - name: The installer installs, and refuses what it cannot check
+          run: sh packaging/test-installer.sh target/distrib
+        - name: The formula names every archive's SHA-256
+          run: sh packaging/check-formula.sh target/distrib
+        - uses: actions/upload-artifact@v4
+          with:
+            name: installers
+            retention-days: 7
+            if-no-files-found: error
+            path: |
+              target/distrib/hennery-installer.sh
+              target/distrib/hennery.rb
+              target/distrib/sha256.sum
+
+    # The same installer, on macOS: its own `sha256sum` and `shasum`, its own
+    # archive.
+    installer-macos:
+      needs: installers
+      runs-on: macos-latest
+      steps:
+        - uses: actions/checkout@v4
+          with:
+            persist-credentials: false
+        - uses: actions/download-artifact@v4
+          with:
+            pattern: archive-*
+            path: target/distrib/
+            merge-multiple: true
+        - uses: actions/download-artifact@v4
+          with:
+            name: installers
+            path: target/distrib/
+        - name: The installer installs, and refuses what it cannot check
+          run: sh packaging/test-installer.sh target/distrib
+  ```
+
+  Run: `grep -nE "tags:|contents: write|id-token|attestations:|packages:|gh release|docker push|attest" .github/workflows/*.yml`
+  Expected: only `.github/workflows/build.yml:7:# registry push, no attestation, and only `contents: read`. What it builds`, its comment.
+
+- [ ] **Step 5: The checks**
+
+  Run the five checks of "Global Constraints".
+  Expected: all pass; the test count is Task 2's.
+
+- [ ] **Step 6: Commit, push, and the workflow's run**
+
+  ```bash
+  git add Cargo.toml crates/hennery/Cargo.toml dist-workspace.toml packaging/install-dist.sh packaging/harden-installer.py packaging/test-installer.sh packaging/check-archive.sh packaging/check-formula.sh .github/workflows/build.yml
+  git diff --cached --stat
+  git -c commit.gpgsign=false commit -m "build(release): build the release archives and installers in CI, and publish nothing"
+  git push origin feat/release-build
+  ```
+
+  Open the PR (a draft until Task 4), and read the `build` run's job logs, not only its status:
+  - each `archive` job prints `ok: …hennery-<target>.tar.xz holds the binary, its licence and its README alone`, `ok: …/hennery links nothing outside the system` and `hennery 0.0.0`, and the Linux ones `hennery 0.0.0` again from Alpine;
+  - `installers` and `installer-macos` print `test-installer.sh`'s eight `ok:` lines, the first `ok: the installer embeds each of its 3 archives' SHA-256`; `installers` then `ok: the formula gives each of its 3 archives its SHA-256`.
+
+- [ ] **Step 7: Revert-probes, on the run's artifacts**
+
+  The run's archives, and an installer built from them here, unhardened:
+
+  ```bash
+  RUN=<the build run's id, from `gh run list --branch feat/release-build`>
+  A=$(mktemp -d) && gh run download "$RUN" --repo marcinwadon/hennery -D "$A"
+  rm -rf target/distrib && mkdir -p target/distrib && cp "$A"/archive-*/* target/distrib/
+  nix shell nixpkgs#cargo-dist nixpkgs#cargo nixpkgs#rustc -c dist build --artifacts=global
+  P=$(mktemp -d) && cp target/distrib/*.tar.xz target/distrib/*.tar.xz.sha256 target/distrib/hennery.rb "$P"/
+  cp target/distrib/hennery-installer.sh "$P/unhardened.sh"
+  ```
+
+  (`gh` as fleet rules run it, with the personal account's token.) Each probe below, applied alone, must fail at the named check; `sh packaging/test-installer.sh "$P"` with the fully hardened installer (`cp "$P/unhardened.sh" "$P/hennery-installer.sh" && python3 packaging/harden-installer.py "$P/hennery-installer.sh"`) passes all eight first.
+  - Each of `harden-installer.py`'s four replacements left out in turn (`REPLACEMENTS.pop(i)` in a copy of the script, run on `unhardened.sh`):
+    - the first (no `sha256sum`): `FAIL: unchecked: installed`;
+    - the second (an unknown style): `FAIL: unknown: installed`;
+    - the third (an empty checksum): `FAIL: empty: installed`;
+    - the fourth (no checksum): `FAIL: none: installed`.
+  - The `elif check_cmd shasum` branch removed from the first replacement's text: `FAIL: the installer failed with shasum alone`.
+  - One archive's `_checksum_style` and `_checksum_value` lines deleted from its case of the hardened installer: `FAIL: the installer has no sha256 checksum for hennery-x86_64-unknown-linux-musl.tar.xz`.
+  - One archive's `.sha256` removed from `$P`: `FAIL: the installer offers hennery-aarch64-apple-darwin.tar.xz, and this build has no hennery-aarch64-apple-darwin.tar.xz.sha256`.
+  - `check-formula.sh` on `$P` with the formula of a one-archive build (`dist build --artifacts=global` given only the macOS manifest): `FAIL: …hennery.rb does not give hennery-aarch64-apple-darwin.tar.xz its SHA-256`.
+  - `check-archive.sh` given another target's name than the archive's: `FAIL: … holds:`.
+
+---
+
+### Task 4: The collector image
+
+**Files:**
+- Create: `Dockerfile`, `.dockerignore`, `packaging/smoke-image.sh`, `packaging/README.md`
+- Modify: `.gitignore` (`/dist/`), `.github/workflows/build.yml` (the image steps)
+
+**Interfaces:**
+- Consumes: Task 2's `collector healthcheck`; Task 3's `archive` job and `$BINARY`.
+- Produces: the image `hennery-collector:ci` inside the Linux `archive` jobs, built from `dist/linux-<amd64|arm64>/hennery` and checked by `packaging/smoke-image.sh <image>`. It is not pushed or uploaded.
+
+No container runtime is available here, so the image is proven by the workflow alone: the `archive` job's "The image starts and is healthy" step, on both architectures.
+
+- [ ] **Step 1: The image**
+
+  Create `Dockerfile`:
+
+  ```dockerfile
+  # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+  # The collector's image (distribution spec §4.1): the released musl binary,
+  # the same bytes as the archive, on distroless static (CA roots and a
+  # non-root user, no shell). No Node and no adapters: hosts run next to the
+  # repositories, never in this image. The `build` workflow stages the binary
+  # at `dist/linux-<arch>/hennery` (plan 7a). Every image is pinned by its
+  # multi-arch index digest, the tag beside it for the reader.
+
+  # The data directory, owned by the image's user. A volume Docker creates on
+  # a path the image lacks would be root's, and the collector, running as
+  # 65532, could not write it. Distroless has no shell to make it with, so a
+  # stage of the same base's debug variant (busybox) does, 0700. Its parent is
+  # copied, not the directory: `COPY` of a directory copies what it holds, and
+  # makes the target with a mode of its own, whatever `--chmod` says.
+  FROM gcr.io/distroless/static-debian13:debug@sha256:07148a6899406df51906b183f581cf66e5b05fd51aca438bdf1d3998df566961 AS data
+  RUN ["/busybox/mkdir", "-p", "-m", "0700", "/out/var/lib/hennery"]
+
+  FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+  ARG TARGETARCH
+  COPY --chmod=0755 dist/linux-${TARGETARCH}/hennery /usr/local/bin/hennery
+  COPY --from=data --chown=65532:65532 /out/var/lib/ /var/lib/
+  ENV HENNERY_DATA_DIR=/var/lib/hennery HENNERY_LISTEN=0.0.0.0:8080
+  # Local storage only: SQLite's locking is unreliable on network filesystems.
+  VOLUME ["/var/lib/hennery"]
+  USER 65532:65532
+  EXPOSE 8080
+  HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD ["/usr/local/bin/hennery", "collector", "healthcheck"]
+  ENTRYPOINT ["/usr/local/bin/hennery"]
+  CMD ["collector"]
+  ```
+
+  Create `.dockerignore`:
+
+  ```
+  # The image takes only the staged binary (see Dockerfile).
+  *
+  !dist/
+  ```
+
+  In `.gitignore`, replace:
+
+  ```
+  /.superpowers/
+  ```
+
+  with:
+
+  ```
+  /.superpowers/
+  /dist/
+  ```
+
+- [ ] **Step 2: The image's check**
+
+  Create `packaging/smoke-image.sh`:
+
+  ```sh
+  #!/bin/sh
+  # The collector image starts and is healthy (distribution spec §4.1, §9):
+  # run with the anonymous volume its `VOLUME` makes, as its own user, the
+  # collector must find that directory its own (65532, 0700), write it, answer
+  # `collector healthcheck`, and be reported healthy by Docker's own
+  # `HEALTHCHECK`. Reading the volume's directory on the host needs `sudo`.
+  #
+  # Usage: smoke-image.sh <image>
+  set -eu
+
+  image=$1
+  name="hennery-smoke-$$"
+  trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+
+  fail() {
+      docker logs "$name" >&2 || true
+      echo "FAIL: $*" >&2
+      exit 1
+  }
+
+  # Docker's checks start one interval after the start: shortened here.
+  docker run -d --name "$name" --health-interval=2s "$image" >/dev/null
+
+  # The healthcheck itself, as the HEALTHCHECK runs it (no shell in the image).
+  healthy=0
+  for _ in $(seq 1 30); do
+      if docker exec "$name" /usr/local/bin/hennery collector healthcheck; then
+          healthy=1
+          break
+      fi
+      sleep 1
+  done
+  [ "$healthy" = 1 ] || fail "collector healthcheck never passed"
+  echo "ok: collector healthcheck passes"
+
+  # The database is in the volume, so the collector could write it.
+  docker exec "$name" /usr/local/bin/hennery admin hosts >/dev/null ||
+      fail "the admin socket in the data directory does not answer"
+  volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/hennery"}}{{.Source}}{{end}}{{end}}' "$name")
+  [ -n "$volume" ] || fail "no volume at /var/lib/hennery"
+  mode=$(sudo stat -c '%u:%g %a' "$volume")
+  [ "$mode" = "65532:65532 700" ] || fail "the data directory is $mode, not 65532:65532 700"
+  # The collector warns when it finds its data directory open to others.
+  if docker logs "$name" 2>&1 | grep -q "other users"; then
+      fail "the collector warned about its data directory's permissions"
+  fi
+  echo "ok: the data directory is the collector's (65532:65532 700)"
+
+  status=
+  for _ in $(seq 1 30); do
+      status=$(docker inspect --format '{{.State.Health.Status}}' "$name")
+      [ "$status" = healthy ] && break
+      sleep 1
+  done
+  [ "$status" = healthy ] || fail "Docker reports the container $status"
+  echo "ok: Docker reports the container healthy"
+
+  # In the image itself: the directory is 65532's and 0700, and its parent is
+  # still root's (`COPY --from=data … /var/lib/` merges into the existing one).
+  listing=$(docker export "$name" | tar -tvf - | grep -E ' var/lib/(hennery/)?$' || true)
+  printf '%s\n' "$listing" | grep -Eq '^drwx------ +65532/65532 .* var/lib/hennery/$' ||
+      fail "the image's /var/lib/hennery is not 65532's and 0700: $listing"
+  printf '%s\n' "$listing" | grep -Eq '^drwxr-xr-x +0/0 .* var/lib/$' ||
+      fail "the image's /var/lib is not root's and 0755: $listing"
+  echo "ok: the image's /var/lib/hennery is 65532's and 0700, /var/lib root's"
+
+  user=$(docker inspect --format '{{.Config.User}}' "$image")
+  [ "$user" = 65532:65532 ] || fail "the image runs as $user"
+  echo "ok: the image runs as 65532:65532"
+  ```
+
+  Run: `chmod +x packaging/smoke-image.sh`
+
+- [ ] **Step 3: The workflow builds and checks it**
+
+  In `.github/workflows/build.yml`, replace:
+
+  ```yaml
+  # macOS arm64, the shell installer and the Homebrew formula.
+  ```
+
+  with:
+
+  ```yaml
+  # macOS arm64, the shell installer, the Homebrew formula and the collector
+  # image.
+  ```
+
+  In `.github/workflows/build.yml`, replace:
+
+  ```yaml
+            - target: x86_64-unknown-linux-musl
+              runner: ubuntu-24.04
+            - target: aarch64-unknown-linux-musl
+              runner: ubuntu-24.04-arm
+  ```
+
+  with:
+
+  ```yaml
+            - target: x86_64-unknown-linux-musl
+              runner: ubuntu-24.04
+              image: amd64
+            - target: aarch64-unknown-linux-musl
+              runner: ubuntu-24.04-arm
+              image: arm64
+  ```
+
+  In `.github/workflows/build.yml`, replace:
+
+  ```yaml
+          run: docker run --rm -v "$BINARY:/hennery:ro" alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 /hennery --version
+  ```
+
+  with:
+
+  ```yaml
+          run: docker run --rm -v "$BINARY:/hennery:ro" alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 /hennery --version
+        - name: Build the collector image
+          if: runner.os == 'Linux'
+          run: |
+            mkdir -p "dist/linux-${{ matrix.image }}"
+            cp "$BINARY" "dist/linux-${{ matrix.image }}/hennery"
+            docker build -t hennery-collector:ci .
+        - name: The image starts and is healthy
+          if: runner.os == 'Linux'
+          run: sh packaging/smoke-image.sh hennery-collector:ci
+  ```
+
+- [ ] **Step 4: What is built, and what publishing needs**
+
+  Create `packaging/README.md`:
+
+  ````markdown
+  # Release builds
+
+  What a hennery release would ship is built by the `build` workflow
+  (`.github/workflows/build.yml`) on every pull request and every push to
+  `main` (distribution spec §2, plan 7a). It is checked, then kept as workflow
+  artifacts for a week. **Nothing is published:** there are no releases yet.
+
+  | Artifact | Built by | Checked by |
+  |---|---|---|
+  | `hennery-x86_64-unknown-linux-musl.tar.xz`, `hennery-aarch64-unknown-linux-musl.tar.xz` | `dist build`, natively on each architecture, with `musl-gcc` | `check-archive.sh` (the binary, its licence and README, nothing else); `check-linkage.sh` (no shared library, no loader); runs on the runner and on Alpine |
+  | `hennery-aarch64-apple-darwin.tar.xz` | `dist build` on macOS arm64 | `check-archive.sh`; `check-linkage.sh` (system libraries only); runs |
+  | `hennery-installer.sh` | `dist build --artifacts=global`, then `harden-installer.py` | `test-installer.sh`, on Linux x86_64 and on macOS |
+  | `hennery.rb` (Homebrew formula) | `dist build --artifacts=global` | `check-formula.sh` |
+  | `sha256.sum` | `dist build --artifacts=global` | — |
+  | the collector image, one architecture per Linux runner | `docker build` of `Dockerfile` on the staged musl binary | `smoke-image.sh` |
+
+  Every archive builds with the `vendored-openssl` feature
+  (`dist-workspace.toml`). OpenSSL, which `webauthn-rs-core` links, is then
+  compiled in from source. Without it, the macOS binary would load Homebrew's
+  `libssl` and fail on a Mac without it, and a static musl build would not
+  link at all (distribution §1.1). Development and `ci.yml` use the system
+  OpenSSL.
+
+  Third-party actions are pinned by commit, every image by its multi-arch
+  digest, and cargo-dist by the SHA-256 in `install-dist.sh`.
+
+  ## OpenSSL
+
+  The release binaries carry their own OpenSSL: 3.6.3, from `openssl-src`
+  300.6.1+3.6.3 in `Cargo.lock`. Updating the system's OpenSSL does not
+  reach them. An OpenSSL fix reaches users only when `openssl-src` is bumped
+  in `Cargo.lock` and a new release is made. `webauthn-rs` passes what a
+  browser sends (attestation and assertion data) through it, so OpenSSL's
+  advisories are this project's to follow.
+
+  OpenSSL 3.6 is not a long-term-support line. Check its end of support
+  against openssl.org's release strategy before the first release, and move
+  to a supported line if it ends first.
+
+  ## Locally
+
+  The dev shell's toolchain links Nix's `libiconv` on macOS, so a local
+  release build is for trying out, not for handing on; `check-linkage.sh` says
+  so. Linux archives and the image are built in CI only.
+
+  ```sh
+  nix develop -c cargo build --profile dist -p hennery --features vendored-openssl
+  sh packaging/check-linkage.sh target/dist/hennery
+  ```
+
+  ## Publishing is the operator's
+
+  These need the operator's decision, credentials, or both. None is set up:
+
+  - **GitHub Releases.** `dist generate` writes a `release.yml` that builds the
+    same archives and creates a release on every version tag. It is not
+    committed (`allow-dirty = ["ci"]` in `dist-workspace.toml`). Committed, it
+    must:
+    - keep this workflow's checks: `check-archive.sh`, `check-linkage.sh`,
+      `test-installer.sh`, `check-formula.sh`;
+    - run `harden-installer.py` before the installer is uploaded, and before
+      it is attested;
+    - pin every action by commit;
+    - restore no Actions cache (no `rust-cache`), since anything a `main`
+      workflow runs can write one;
+    - build with a pinned toolchain (`rust-toolchain.toml`).
+
+    The `build` workflow's artifacts are never promoted to a release: a pull
+    request's are built from code nobody has reviewed yet.
+  - **Artifact attestations** (`github-attestations = true`): they need
+    `id-token: write` and `attestations: write`, and they write to the public
+    Sigstore log. The README's "verified install" (`gh attestation verify
+    hennery-installer.sh --repo marcinwadon/hennery`) is documented with the
+    first release.
+  - **The Homebrew tap** (`marcinwadon/homebrew-tap`): the repository and a
+    token allowed to push to it.
+  - **The image on GHCR:** `packages: write`, one multi-arch manifest from
+    the per-architecture images, and its provenance attestation. Its docs
+    should say: publish the port on loopback behind a TLS proxy
+    (`-p 127.0.0.1:8080:8080`); read the setup link with
+    `docker exec … hennery admin setup-url`, not from `docker logs` (with
+    `docker run -t` the link itself is logged); a bind mount keeps the host's
+    owner, so it must belong to 65532.
+  - **Dependency updates** (Dependabot, or another bot): for `openssl-src`
+    above all, the pinned actions and the image digests. It opens pull
+    requests on its own schedule, so it is the operator's to switch on.
+  - **Fork pull requests:** require approval before their workflows run.
+
+  ---
+
+  _Generated with Claude AI — please review before distribution._
+  ````
+
+  Run: `grep -nE "tags:|contents: write|id-token|attestations:|packages:|gh release|docker push|attest" .github/workflows/*.yml`
+  Expected: only `build.yml`'s line 7, its comment.
+
+- [ ] **Step 5: The checks**
+
+  Run the five checks of "Global Constraints".
+  Expected: all pass; the test count is Task 2's.
+
+- [ ] **Step 6: Commit, push, and the workflow's run**
+
+  ```bash
+  git add Dockerfile .dockerignore .gitignore packaging/smoke-image.sh packaging/README.md .github/workflows/build.yml
+  git diff --cached --stat
+  git -c commit.gpgsign=false commit -m "build(release): build the collector image in CI and check it starts healthy"
+  git push origin feat/release-build
+  ```
+
+  Read both Linux `archive` jobs' logs: after `naming to docker.io/library/hennery-collector:ci`, `smoke-image.sh` prints `ok: collector healthcheck passes`, `ok: the data directory is the collector's (65532:65532 700)`, `ok: Docker reports the container healthy`, `ok: the image's /var/lib/hennery is 65532's and 0700, /var/lib root's`, `ok: the image runs as 65532:65532`.
+
+- [ ] **Step 7: Revert-probe, in CI**
+
+  The image's `data` stage is the one fix §4.1's Dockerfile needed (decision 7), and only CI can build the image. Push one probe commit that removes `"-m", "0700", ` from the `data` stage's `mkdir`, and read the run:
+  - Expected: both Linux `archive` jobs fail at "The image starts and is healthy" with `FAIL: the data directory is 65532:65532 755, not 65532:65532 700`.
+
+  Then drop the probe commit (`git reset --hard HEAD~1`, `git push --force-with-lease origin feat/release-build`) and see the next run pass.
+
+---
+
+## After this plan
+
+**Publishing, the operator's** (packaging/README.md has the list):
+- **A version and a tag.** The workspace is `0.0.0`. The first release needs a version, and `dist generate`'s `release.yml`, which (A7):
+  - keeps this plan's checks: `check-archive.sh`, `check-linkage.sh`, `test-installer.sh`, `check-formula.sh`;
+  - runs `harden-installer.py` before the installer is uploaded or attested;
+  - pins every action by commit;
+  - restores no Actions cache;
+  - builds with a pinned toolchain (`rust-toolchain.toml`).
+
+  The `build` workflow's artifacts are never promoted to a release.
+- **Attestations** (`github-attestations = true` is set): `id-token: write`, `attestations: write`, the public Sigstore log. The README's "verified install" with `gh attestation verify` comes with the first release.
+- **The Homebrew tap:** the repository `marcinwadon/homebrew-tap` and a token that may push to it.
+- **GHCR:** `packages: write`, a multi-arch manifest from the two per-architecture images, and its provenance attestation.
+- **Third-party licence notices** (the final review): the archives carry only hennery's LICENSE, and the image none. Before the first release, generate the notices for the Rust crates and the vendored OpenSSL (Apache-2.0), e.g. with cargo-about, ship them in each archive and in the image, and update `check-archive.sh`'s list and `.dockerignore`.
+- **The toolchain:** CI builds with `stable` from `dtolnay/rust-toolchain`. A release should pin it (`rust-toolchain.toml`) so a rebuilt release is the same build.
+- **OpenSSL:** 3.6.3 is vendored. Check 3.6's end of support before the first release (A6). Follow OpenSSL's advisories: a fix needs an `openssl-src` bump and a release.
+- **Before the first release, a gate** (the re-confirmation's note on decision 14): Dependabot *alerts* switched on (a repository setting that opens no pull request), or a committed `dependabot.yml`. Until then nothing says when the vendored OpenSSL or a pinned image needs a security fix, and the pinned commits and digests are bumped by hand.
+- **Approval for fork pull requests' workflows** (O6): a repository setting, the operator's.
+- **The image's docs** (O5): loopback port behind a TLS proxy; the setup link from `docker exec … hennery admin setup-url`, not `docker logs`; a bind mount must belong to 65532.
+
+**For the other parts of plan 7:**
+- **7b (managed runtime):** no artifact of this workflow may ever hold an adapter set. The pin-bump job is 7b's, as is its live e2e gate, which needs logged-in agents in CI (an operator item).
+- **7c (services):** the installer's path is `~/.local/bin/hennery` (decision 5); units resolve the absolute path at install time.
+- **7d (doctor):** check 2's glibc ≥ 2.28 for a host (§1.1), since the musl binary runs on musl systems that cannot run a host (decision 11). Check 11, another `hennery` earlier on PATH: a Homebrew and a curl install can both exist.
+- **Handed over by the debt lane (2026-10-02):** Linux `close_range(3, ~0, 0)` in the adapter spawn's `pre_exec`, with today's loop as the fallback, and a test that descriptors from 3 up are closed in the adapter on Linux. It needs ubuntu CI to be revert-probed; a follow-up of plan 7, not of 7a.
+- **7e (Nix):** the flake's package is built by crane, not cargo-dist; it needs `vendored-openssl` off and nixpkgs' OpenSSL instead, or the feature on and `perl` in the build.
+
+**Plan 4 (frontend):** §2's "frontend build runs in the pre-build hook and is embedded". Once it exists, `dist build` must build it first: `build.rs` or a `github-build-setup` step, in `build.yml` and in a future `release.yml`.
+
+**Not tested here:**
+- **Linux, Docker and the image:** only CI's runs prove them, on PR #24 (run 36945200671: both `archive` jobs for Linux, the image's five checks on each architecture, the installer's eight on Linux and on macOS, the formula's).
+- **The installer on Linux arm64:** `test-installer.sh` runs on x86_64 Linux and on macOS, not on an arm64 Linux runner.
+- **The Homebrew formula:** `check-formula.sh` checks its checksums; it names release URLs that do not exist yet, so `brew install` of it is untested.
+- **`collector healthcheck` against a TLS listener:** none exists; the collector serves plain HTTP behind a proxy (kernel §7).
+- **A volume that is a bind mount:** Docker copies nothing into one, so its owner is the host's. The image's docs, with publishing, must say so (O5).
+
+**Spec amendments** (distribution spec):
+- decision 2: §1.1: OpenSSL is vendored for macOS too;
+- decision 4: §2: the installer is cargo-dist's, hardened: the four cases that now refuse, and `shasum` where `sha256sum` is missing;
+- decision 5: §4.2: the installer's directory is `~/.local/bin`;
+- decision 6: §1: `collector healthcheck`'s address (flags, variables, `config.toml`), its 2 s budget for the whole check, and only a 200 passing;
+- decision 7: §4.1: the Dockerfile's `data` stage;
+- decision 13: §4.1: the Dockerfile's images pinned by digest;
+- decision 11: §9: "musl/glibc detection" means the musl-static archive on every Linux;
+- §2: the build half, without publishing, in `build.yml`; publishing is the operator's.
+
+---
+
+_Generated with Claude AI — please review before distribution._
+`````
+
 ### File `docs/release-process.md`
 
-<!-- r1:file task=5 path=docs/release-process.md sha256=73d3d649a0983d16d94f83944bb9d5983d73e06bc3d36931c7aa4456ce66ee9c bytes=19981 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=docs/release-process.md sha256=cd588282d94210cbbeffdd978bf61ce2049cfe9256af4ba8aaf6bec5566348e8 bytes=21991 mode=644 encoding=utf8 -->
 ````markdown
 # Release process
 
@@ -13808,12 +17393,41 @@ announcements advance.
 
 ## Consumer verification and recovery
 
+The authenticated bootstrap is the executed
+[README shell block](../README.md#verify-a-release-installer-before-running-it),
+named `release-bootstrap` under the README guardrails. It uses trusted installed
+GnuPG, curl, jq and a SHA-256 tool, not a verifier downloaded from a release.
+First compare full signing fingerprint
+`F26C7F594DFE84D131703AFC23E5A318AE8D2861` through the README on main,
+`https://github.com/marcinwadon.gpg`, and
+`https://keys.openpgp.org/vks/v1/by-fingerprint/F26C7F594DFE84D131703AFC23E5A318AE8D2861`.
+These are independent of release assets. The block fetches each, compares the
+full public signing-subkey fingerprint with installed GnuPG/awk and imports keys
+only into a fresh isolated keyring. Stop if a channel is absent or disagrees;
+the maintainer must publish/confirm these keys before enabling releases. The
+[keyserver API](https://keys.openpgp.org/about/api/) supports lookup by the full
+primary or subkey fingerprint.
+
+Next download `release-inventory.json`, `release-inventory.json.asc` and the
+installer as data. Require successful `gpg --verify` and a pinned `VALIDSIG`,
+extract the unique installer's SHA-256 from the authenticated inventory and check
+it with `sha256sum -c` or `shasum -a 256 -c`. Only then execute the installer.
+It continues to authenticate archives itself. A malicious release cannot replace
+this bootstrap's verifier/key; use the inline commands reviewed on main and
+independently confirm the pin before execution. Release-contained verification
+code is usable only after its own bytes have been authenticated this way.
+
 Every consumer first requires the valid detached maintainer signature over the
 exact inventory, pinned to signing subkey
 `F26C7F594DFE84D131703AFC23E5A318AE8D2861` (primary key
 `1CE2B7354FC6ED5D9DE12DF664C16DED80CCEABA`). Missing, malformed, wrong-key and
-different-inventory signatures refuse even when Sigstore passes. Manual checking
-uses a trusted checkout and the same verifier:
+different-inventory signatures refuse even when Sigstore passes. The helper
+commands below are not the initial bootstrap: first authenticate the inventory
+with installed GnuPG as in the README. Fetch its exact `source_sha` into a clean
+checkout without executing repository code; compare `git rev-parse HEAD` with
+that authenticated SHA and require `git status --porcelain` to be empty before
+running a helper. A tag name or a verifier obtained from a release is insufficient.
+Then use that authenticated source checkout for additional provenance checking:
 
 ```sh
 packaging/hennery-release verify-approval --inventory candidate/release-inventory.json \
@@ -13886,9 +17500,1795 @@ assets/tags/crate/image versions. Revoke affected credentials where appropriate.
 Generated with Claude AI — please review before distribution.
 ````
 
+### File `docs/specs/2026-09-25-hennery-architecture-design.md`
+
+<!-- r1:file task=5 path=docs/specs/2026-09-25-hennery-architecture-design.md sha256=c4fc659cf6fa3069b5b04ddc0f243a48dd4c4d9b8a8e3b7061c632feac6689ef bytes=64174 mode=644 encoding=utf8 -->
+````markdown
+# hennery — product architecture (umbrella spec)
+
+- **Date:** 2026-09-25
+- **Status:** Draft. Amended 2026-10-01 so that it agrees with what plans A
+  to 2 (sessions) and 3a to 3c (pairing, operator auth, `owner_id`, passkeys)
+  built; the subsystem specs carry the details.
+- **Scope:** the whole product at the level of processes, protocols, state
+  ownership, trust boundaries and module seams. Each subsystem gets its own
+  spec that refines this one; where they disagree, this document wins until it
+  is amended. Detailed catalogues (frames, tables, endpoints) live only in the
+  subsystem specs; this document points to them instead of repeating them:
+  [ACP core](2026-09-26-acp-core-design.md),
+  [MCP gateway](2026-09-26-mcp-gateway-design.md),
+  [kernel](2026-09-26-kernel-design.md),
+  [frontend](2026-09-26-frontend-design.md),
+  [distribution](2026-09-26-distribution-design.md).
+- **Language:** Rust (decided 2026-09-26, §9.1). The frontend is TypeScript.
+
+Throughout, "the predecessor" means an earlier private prototype of the same
+idea that ran for several months on one developer's machines. It is the source
+of most of the hard rules below; each rule names the failure it prevents.
+
+---
+
+## 1. What hennery is
+
+hennery is a self-hosted, open-source cockpit for coding agents. One developer
+drives [Agent Client Protocol](https://agentclientprotocol.com) (ACP) sessions
+running on any of their machines from a browser or phone: start a session in a
+project, watch the transcript live, answer the agent's permission requests and
+questions, resume it tomorrow on another device.
+
+Two equally important modules ship in one binary:
+
+1. **ACP core** — hosts, sessions, transcripts, permissions, push.
+2. **MCP gateway** — authorize an MCP integration once, centrally, and decide
+   which hosts and projects may use it. Also runnable on its own
+   (`hennery gateway`) with no hosts and no ACP.
+
+### 1.1 Product principles
+
+- **Self-hosted, single operator per installation (v1).** No SaaS, no
+  multi-tenancy, no billing. Every persisted row nevertheless carries
+  `owner_id`, so teams can be added later without a schema rewrite.
+- **Bring your own agent.** Users log in to each agent CLI themselves
+  (`claude /login`, `codex login`). hennery never proxies, pools or stores agent
+  licences.
+- **Vendor-neutral.** ACP is an open protocol. Claude (`claude-agent-acp`) and
+  Codex (`codex-acp`) are first-class; any ACP adapter can be added by config.
+- **Small by default, scales out.** The minimum deployment is one machine
+  running both roles. The same code serves one collector and many hosts.
+
+### 1.2 v1 scope
+
+In:
+
+- Host pairing, listing, revocation.
+- Starting a session: host → project (recents, plus browsing under configured
+  workspace roots) → agent → model / mode / effort.
+- Live transcript: markdown, tool calls with input and output, thinking,
+  plan/steps.
+- Permission requests and elicitation (multiple-choice forms, e.g. the agent's
+  "ask the user" tool), with **delivery acknowledgement** (§6.8).
+- Cancel, resume, park, close; recovery after a host reconnect.
+- Session delete and per-hat purge (§6.10).
+- Image attachments in prompts; slash commands.
+- Session list sorted by time with day headers; search across all sessions.
+- Mobile-first PWA with **Web Push** — "the agent asks, I answer from my
+  phone" is a core loop, not a nicety.
+- Hats (§8) as an isolation boundary.
+- The MCP gateway module (§10).
+- An optional, generic plug-in activity/startup contract (§1.2.1), consumed
+  by a separately installed reference memory plug-in.
+
+Later (the design must not preclude them — see §15): observed sessions,
+Changes tab, worktree per session, workflows, config explorer, LLM
+auto-naming.
+
+Never part of hennery: the predecessor's chat-app orchestrator, task hub and
+similar personal automation.
+
+### 1.2.1 Optional memory amendment (2026-10-14)
+
+The operator pulls cross-session memory forward from §15's original v2 row
+(line 1072 at `0fe663b`), with an explicit constraint: **memory is an opt-in
+plug-in, not an embedded feature forced on every user**. The reference
+implementation ships in this repository as a separate executable/crate with
+its own store. Other external MCP memory servers remain valid choices.
+
+Core supplies existing per-hat MCP connections/mounts and a minimal generic,
+explicitly granted session-activity feed, revocation/deletion lifecycle and
+optional startup-context contribution. It owns no memory tables, note worker,
+model configuration or Memory screen. An installation without a plug-in gets
+no extra tools/context, optional control database or background model work.
+
+The [memory plug-in design](2026-10-14-memory-design.md) proposes that contract,
+the separate reference implementation, scoped legacy import, and integration
+with plan 9 purge. The operator permits local purge with explicitly unconfirmed
+external deletion and a maximum 60-second reference-service lease; this is no
+claim of immediate external erasure. Technical amendments remain subject to
+review. This amendment authorises the scope, not
+an implementation claim or a relaxation of hats. It also narrows frontend
+§13's exclusion: memory UI belongs to the optional service, not the core app.
+
+---
+
+## 2. Glossary
+
+| Term | Meaning |
+|---|---|
+| **Collector** | The central process. Canonical state, REST + SSE API, static UI, WebSocket endpoint for hosts, MCP gateway module. |
+| **Host** | A process on a developer machine. Dials out to the collector, spawns ACP adapters, owns nothing canonical. |
+| **Adapter** | An ACP agent subprocess (`claude-agent-acp`, `codex-acp`, …) speaking JSON-RPC over stdio. |
+| **Session** | One agent conversation. Belongs to exactly one host and exactly one hat. |
+| **Hat** | An isolation boundary (a client, a secret project, …). §8. |
+| **Control frame** | A hennery-defined message between host and collector. |
+| **ACP payload** | An ACP message carried verbatim inside a hennery `session` frame. |
+| **Connection** | An upstream MCP server configured in the gateway, with its credential. |
+| **Mount** | A grant that lets sessions on a host (in the connection's hat), or a standalone client, use a connection. |
+| **Principal** | Whoever presents an MCP client token to the gateway: a session (one token per session) or a standalone client. |
+
+---
+
+## 3. Topology and processes
+
+### 3.1 Hub-and-spoke (chosen)
+
+```
+ browser / PWA ──HTTPS (REST + SSE)──┐
+                                     ▼
+                              ┌──────────────┐    upstream MCP servers
+                              │  collector   │◄──►(OAuth / PAT, HTTPS)
+                              │  SQLite      │
+                              │  gateway mod │◄── agents' MCP clients
+                              └──────▲───────┘    (/mcp/<slug>, token in
+                                     │             Authorization header)
+                                     │ WebSocket (host dials out)
+                 ┌───────────────────┼───────────────────┐
+             ┌───┴───┐           ┌───┴───┐           ┌───┴───┐
+             │ host  │           │ host  │           │ host  │
+             │adapters│          │adapters│          │adapters│
+             └───────┘           └───────┘           └───────┘
+```
+
+- **Collector** holds canonical state in SQLite: session timelines, hosts,
+  hats and path rules, gateway connections and grants, push subscriptions,
+  accounts. It serves REST + SSE and the embedded static UI, accepts hosts over
+  WebSocket, and contains the MCP gateway as a module with **no dependency on
+  session code** (§9).
+- **Host** dials *out* to the collector over WebSocket, so it works behind NAT
+  and needs no inbound port. It spawns adapters as subprocesses, implements the
+  client side of ACP (terminal, filesystem, permission and elicitation
+  callbacks), and enumerates projects under its configured workspace roots. It
+  never writes agent config files.
+
+### 3.2 Rejected topologies
+
+- **Host-centric federation** (each host is its own server; the UI aggregates).
+  Push notifications, the gateway, the unified session list and search still
+  need a centre. You end up building hub-and-spoke anyway, with state scattered
+  across machines and no single thing to back up.
+- **Browser talks directly to each host.** Breaks behind NAT, needs TLS and auth
+  on every host, has nowhere to send push from while the tab is closed, and
+  leaves the gateway without a home.
+
+### 3.3 All-in-one: one binary, two processes
+
+`hennery up` runs the collector and a host as **two child processes of a small
+supervisor**, talking over a local WebSocket with exactly the same frames as a
+remote host.
+
+Why two processes: adapters live exactly as long as the host process that
+spawned them. If collector and host shared a process, every collector upgrade
+or crash would kill every running agent. With two processes, the collector can
+restart freely; the host keeps running, buffers frames in its outbox (§5.6) and
+reconnects.
+
+Why the same frames, never in-process function calls: otherwise the single-
+machine path becomes the only tested one and the multi-host path rots. One
+code path, exercised by every installation.
+
+Honest limit: **upgrading the binary restarts the host too**, and a host
+restart parks every session (§6.6). Sessions are resumable, not
+uninterrupted. The upgrade path is a restart through the service manager;
+until it happens, hennery warns (Hosts view, `doctor`) that a restart is needed
+(distribution §5.3).
+
+The all-in-one host is paired automatically over the local channel (§7.6) —
+the operator never sees an enrollment code for it.
+
+---
+
+## 4. Data model sketch
+
+Indicative, not a schema: which tables exist and who owns them. Columns are
+defined in the owning subsystem spec. Every table has `owner_id` (`owners`
+names it in `id`; migration bookkeeping has none).
+
+| Table | Owner | Notes |
+|---|---|---|
+| `owners`, `password_credentials`, `passkeys`, `auth_sessions` | kernel §1.1 | Exactly one owner in v1. |
+| `hosts`, `pairing_codes` | kernel §1.1 | Per-host credential (§7.6). |
+| `hats`, `hat_path_rules` | kernel §5.1 | A default hat exists from setup (§8.2). |
+| `settings`, `project_recents`, `push_subscriptions`, `hat_push_policies`, `purged_hats` | kernel §1.1 | `settings` includes `public_url`; recents are per (host, hat). |
+| `sessions` | ACP core §8 | `source_kind` = `acp` in v1; reserves room for `observed`. |
+| `events` | ACP core §8 | Global monotonic `event_id`; unique on `(session_id, host_seq)`; collector-originated events have `host_seq` NULL. |
+| `turns`, `pending`, `answer_queue` | ACP core §8 | Pending states: open / delivered / cancelled. |
+| `attachments`, `event_attachments` | ACP core §8 | Content-addressed files in the data directory, not BLOBs. |
+| `session_catalog`, `host_agent_catalog`, `plans` | ACP core §8 | Filled from host extracts only. |
+| `gw_connections`, `gw_credentials`, `gw_oauth_clients` | gateway §2 | A connection belongs to exactly one hat; credentials encrypted at rest (§10.1). |
+| `gw_mounts` | gateway §2 | (connection, host); the hat comes from the connection. |
+| `gw_session_tokens` | gateway §2 | One token per session, stored as a hash. |
+| `gw_clients`, `gw_client_pins` | gateway §2 | Standalone clients and their pinned connections. |
+| `gw_stdio_servers` | gateway §3.4 | Local stdio MCP servers per (host, hat). |
+
+---
+
+## 5. Host ↔ collector protocol
+
+### 5.1 Transport and encoding
+
+- **WebSocket, JSON frames.** Protobuf was rejected: ACP itself is JSON-RPC
+  described by a JSON Schema, so a binary encoding would add a second
+  serialization world and a translation layer for no measurable gain at these
+  message rates. JSON is also debuggable with `websocat`.
+
+### 5.2 Two layers: control frames and verbatim ACP
+
+The frame catalogue is defined once, in [ACP core §3.3](2026-09-26-acp-core-design.md#33-frame-catalogue).
+The principles:
+
+1. **Control frames** are hennery's own, with hennery's own schema: requests from
+   the collector, the handshake, acks, rejections and probe responses.
+2. **ACP payloads** (`session/update`, `session/request_permission`,
+   `elicitation/create`, …) travel **verbatim** inside the body of a `session`
+   frame.
+3. **State-bearing facts travel on the outboxed, sequenced `session` stream**
+   (session started, turn started and ended, a request opened or resolved,
+   config applied, answer result, parked, closed, …), never only as a
+   correlated response. Correlated responses exist only for rejections and
+   for connection-scoped probes. A request that changes state is completed when
+   the collector ingests the fact that carries its `request_id`.
+
+ACP *requests* from the adapter to the host (permission, elicitation) become
+pending requests with a host-minted, globally unique `pending_id`; the
+operator's answer comes back as a control frame carrying that id, and the host
+completes the pending ACP call. `request_id` means request/response
+correlation only.
+
+A `session` frame carries only what the collector needs to store, index and
+route: `session_id`, `seq`, a body `kind`, and a closed set of **typed
+extracts** the host fills (activity, title, pending request and its option ids,
+commands, config catalogue, plan, …). The collector never parses the ACP
+payload itself.
+
+Only two components understand ACP shapes: the **host**, which runs ACP, and the
+**view layer** (`hennery-view`), which folds stored ACP into display items for
+every client ([client view spec](2026-10-02-client-view-design.md)). The view
+layer only reads: ingest, storage and the raw events routes never parse the
+ACP payload, and raw events stay stored and served verbatim.
+
+*Rejected, then amended (2026-10-02):* this section first rejected any
+collector-side interpretation of ACP. In the predecessor the collector decoded
+ACP updates into its own event types, and a whole update kind (the agent's
+plan/step list) was dropped for months before anyone noticed, because nothing
+failed — it simply never arrived. With three clients planned (web, a Rust
+terminal UI, a Swift app), the fold moved to one place on the collector. The
+predecessor's failure is answered by two rules that hold wherever the fold
+runs: an update the fold does not recognise becomes a visible `unrecognised`
+item carrying its raw JSON, and golden tests over recorded real adapter output
+fail on any shape change.
+
+### 5.3 Hello and versioning
+
+The first frame from a host is `hello`: protocol version, host version, host
+id and proof of possession (§5.9), capabilities, agents, workspace roots and
+the sessions it still has attached. Its fields and the handshake that follows
+(`hello_ack` → resend → `resend_complete`) are defined in ACP core §3.3 and
+§5.1. The protocol version appears only in `hello` / `hello_ack`, never per
+frame.
+
+- `protocol_version` is `MAJOR.MINOR`. Minor versions are additive only.
+- The collector accepts hosts whose protocol **major** is its own (M) or the
+  previous one (M−1). Anything else is **rejected loudly**: a `hello_error`
+  frame naming both versions, a log line, and a visible "incompatible host"
+  state in the Hosts view. Never a silent half-working connection.
+- **Unknown frame types** are logged with a warning (rate-limited) and ignored.
+  They are never silently lost and never crash the connection.
+- `capabilities` lists the known features (ACP core §3.3). An entry the
+  collector does not know is skipped, never a reason to refuse the `hello`.
+  The collector does not send a frame a host's capabilities do not cover, and
+  the UI hides features the host lacks.
+- The collector reconciles the host's sessions (parks missing ones, ends their
+  turns, cancels their pending requests) only after `resend_complete`, so facts
+  still in the outbox are never overtaken by a guess.
+
+### 5.4 One source of truth for message types
+
+Every control frame and REST payload is defined once, as Rust types (tagged
+`serde` enums for frame kinds). From them are generated: a JSON Schema
+(`schemars`), the frontend's TypeScript types (`ts-rs`; `specta` was evaluated and emits a wrong shape for internally tagged enums), and
+round-trip contract tests. The generated artefacts are checked in, and CI fails
+if regenerating them produces a diff.
+
+Dispatch is **exhaustive by construction**: frames are an enum and handlers a
+`match` without a wildcard arm, so adding a frame type without a handler is a
+compile error, not a test failure.
+
+*Rejected:* schema-first (JSON Schema or TypeSpec as the source, Rust generated
+from it). Generators for Rust handle tagged unions poorly, which is exactly the
+shape most of these types have; making Rust the source keeps the unions native
+and still gives every other consumer a schema.
+
+*Rejected:* hand-written types per layer. In the predecessor one message shape
+was hand-mirrored across four layers, and a result frame was missing from the
+collector's dispatch while every test stayed green — the tests passed because
+they got their expected error from a timeout, not from the missing handler.
+
+### 5.5 Sequence numbers, acks, idempotent ingest
+
+- The host stamps every `session` frame with a **per-session monotonic
+  `seq`**, assigned when the frame enters the outbox.
+- Collector ingest is **idempotent on `(session_id, seq)`**: a duplicate is
+  acknowledged and discarded; the same `seq` with a different payload is
+  stored as a conflict, never silently dropped.
+- The collector acknowledges with `ack {session_id, ack_seq}`, where `ack_seq`
+  is the highest seq it has committed for that session, after the commit
+  (commits are grouped, at most every 50 ms). The host deletes frames with
+  `seq ≤ ack_seq` from its outbox.
+- `hello_ack` reports the collector's highest committed seq per attached
+  session; a host whose own counter is lower (outbox lost) fast-forwards past
+  it.
+- `seq` exists only for host → collector delivery. It is **not** the browser's
+  cursor; the collector assigns its own global `event_id` on ingest (§11.2).
+
+### 5.6 Outbox on disk
+
+The host writes every outgoing `session` frame to a small on-disk outbox
+(embedded SQLite) before sending. A host crash or upgrade restart therefore
+leaves no gap in the transcript: on reconnect everything unacknowledged is
+resent.
+
+The outbox is bounded (default 64 MiB, configurable). **State-bearing frames
+are never dropped.** On overflow the host drops only ACP updates carrying
+message or thought chunks (then large tool outputs), oldest first, and puts a
+`transcript_gap {from_seq, to_seq}` frame in their place, which the UI renders
+visibly. Loss is allowed only if it is visible. Details, including chunk
+coalescing, in ACP core §5.5.
+
+### 5.7 Requests, timeouts and disconnects
+
+Collector requests carry a `request_id`. The collector applies a per-kind
+timeout that, for state-changing requests, is at least the WebSocket read
+deadline. When the host connection drops, every in-flight HTTP waiter for that
+host fails at once with "host disconnected; delivery unknown", and the
+affected start or turn is marked **awaiting reconciliation** — never failed —
+until the host's resend and `hello` settle it (ACP core §3.4). A timeout on a
+live connection is answered the same way and drops that connection, so the
+timed-out request reconciles at the next handshake; the collector owns every
+request's deadline. A response for an unknown or expired `request_id` is
+logged and dropped.
+
+### 5.8 Liveness
+
+Both sides send WebSocket pings (default every 15 s) and enforce read deadlines
+(default 45 s). A connection that misses its deadline is closed and the host
+reconnects with exponential backoff and jitter.
+
+*Rejected:* relying on TCP to notice a dead peer. In the predecessor the lack of
+keepalives meant a laptop going to sleep left a half-open connection for
+minutes; the host reconnected with fresh state while the collector still routed
+to the dead connection, and every session on that machine was lost at once.
+
+### 5.9 Host identity on the wire
+
+The host authenticates each connection with its per-host credential (§7.6)
+inside `hello` (`host_id` plus a proof of possession of its private key over a
+collector-supplied nonce). A revoked host is rejected with a distinct error so
+`hennery doctor` can say "this host was revoked" rather than "connection failed".
+
+A host has at most **one live connection**. A second connection for the same
+host id is rejected with a distinct error, never silently superseding the
+first; the collector closes the older connection only if it has missed its
+liveness deadline. On the host side an exclusive lock on the data directory
+stops a second `hennery host run`.
+
+---
+
+## 6. Sessions
+
+### 6.1 Who is canonical for what
+
+| State | Canonical owner |
+|---|---|
+| Everything displayed: timeline, status, title, hat, pending requests | Collector |
+| The agent's own conversation memory | The adapter (via its CLI's session store) |
+| Attached sessions, in-flight requests, outbox | Host (operational only) |
+
+`session/load` exists only to **re-attach the agent** to its memory. It is never
+used to rebuild the timeline; the collector already has it.
+
+### 6.2 Replay suppression lives in the host
+
+When an adapter loads a session it replays the whole conversation as
+`session/update` notifications. The host knows it initiated the load, so the
+**host** suppresses those notifications until the load call returns; they never
+enter the outbox.
+
+*Rejected:* the collector detecting and discarding replays. In the predecessor
+the collector had to guess; until it did, every resume duplicated the entire
+transcript and appended a spurious "session started" event, and it took a
+dedicated fix plus a database cleanup across dozens of sessions.
+
+### 6.3 Status: two axes
+
+**Lifecycle:** `starting → active → parked → closed`, plus `failed`.
+
+- `starting` — adapter spawning / `session/new` in flight.
+- `active` — adapter attached on a connected host.
+- `parked` — no adapter the collector can reach; resumable. Reached by idle
+  reap, host restart or explicit park (adapter known to be released), or by the
+  host being offline longer than the threshold (adapter *presumed* gone). The
+  presumed case is reconciled on reconnect: if the host still holds the
+  adapter, the session returns to `active` and its pending requests stay open
+  (§6.6).
+- `closed` — **only by explicit operator action.** Nothing closes a session
+  automatically. Closed is resumable too; it means "I am done with this".
+- `failed` — could not start or re-attach; the reason is stored and shown. The
+  timeline stays readable.
+
+**Activity** (meaningful only when `active`): `running | idle | blocked`.
+
+- `blocked` = a running turn waits on at least one pending permission or
+  elicitation. This is what triggers Web Push and the blocked marker in lists.
+  A question the agent asks outside a turn is pending too, but leaves the
+  activity alone (ACP core §4.2); it notifies "needs your answer" like a
+  blocked turn (ACP core §10; operator decision 2026-10-02).
+
+*Rejected:* one flat status enum. The predecessor mixed "what the adapter is
+doing" with "whether the adapter exists" in one field, which produced states
+like "running but not live" that no view could display honestly.
+
+### 6.4 Session source kind
+
+`session.source_kind` is `acp` in v1. Observed sessions (terminal sessions
+captured via hooks and transcript tailing) are a later **second source kind**:
+same session table, same timeline, same hats; a different producer that has no
+adapter and therefore no prompt/permission capability. Anything that assumes
+"every session can be prompted" must check the source kind's capabilities, not
+the kind name.
+
+### 6.5 Pending requests
+
+- A permission or elicitation request has **no timeout**. A question asked at
+  night waits until morning.
+- It is cancelled only when the turn is cancelled, the session is parked or
+  closed, the adapter is lost (host restart, adapter crash), or the agent
+  withdraws the question itself, and the cancellation is shown explicitly on
+  the card ("the agent is no longer waiting — resume to continue").
+- The idle reaper **never** parks a session with a pending request open, in a
+  turn or not (ACP core §4.7).
+
+### 6.6 Failure scenarios
+
+| Event | Behaviour |
+|---|---|
+| WebSocket drops, host process survives | In-flight HTTP calls fail with "delivery unknown". Host reconnects; `hello` lists attached sessions; the outbox is resent; after `resend_complete` the collector reconciles. Sessions stay `active`, pending requests stay open. |
+| Collector restarts | Same as above from the host's side. Nothing is parked; `starting` sessions are reconciled on the host's next handshake. |
+| Host restarts (crash, upgrade, reboot) | Adapters die with it. After `resend_complete`, sessions that had a turn in flight get a `turn_ended{interrupted}` synthesised by the collector (the restarted host cannot emit it; a turn that never started becomes `turn_not_delivered`); all previously attached sessions become `parked`. Pending requests become `cancelled` with a visible reason. Resume = `session/load`. |
+| Host offline longer than the offline threshold (default 10 min, configurable) | Collector marks its sessions `parked` with a visible "host offline" note (presumed, not reported). On reconnect, `hello.attached_sessions` is authoritative: sessions whose adapter is still attached go `parked → active` without a resume, pending requests intact; the rest stay `parked`. |
+| Idle (default 30 min, configurable, never mid-turn, never with a pending request open) | Host's reaper releases the adapter; session becomes `parked`. |
+| `session/load` fails | Session becomes `failed` with a readable reason (e.g. the agent CLI has no record of that session). |
+| Adapter crashes mid-turn | Host emits `turn_ended{interrupted}` and parks the session; the scrubbed stderr tail is attached for diagnosis. |
+
+`turn_ended{interrupted}` is the only representation of an interrupted turn.
+The host emits it whenever it can observe the interruption (adapter exit,
+close or park mid-turn); the collector synthesises it only for a started turn
+the host can no longer end: a host restart, a started turn the host no longer
+reports after a full resend, an open turn released when the session detaches,
+is resumed or its host is revoked (ACP core §4.2, §4.4, §5.3). A turn the agent never
+saw becomes `turn_not_delivered` instead.
+
+### 6.7 Resume and park
+
+- **Resume** of a `parked`, `closed` or `failed` session: the collector
+  re-resolves the session's hat from its path and refuses the resume if it no
+  longer matches (the operator must re-assign explicitly, §8.2); then the host
+  spawns the adapter, calls `session/load` with replay suppression, re-applies
+  the stored model, then the other config axes, then the mode (model first:
+  switching model can clamp the available modes), and reports the resulting
+  configuration. The stored values are what the agent last reported, not what
+  was once asked for. The collector stores what the host reports after the
+  switch, never the pre-switch catalogue. A switch that does not take is a
+  visible note, never a failed start or resume (ACP core §4.3).
+- **Park** is available explicitly (a button and an API call); it is also what
+  the reaper does.
+- **Prompt or config** on a session that is not attached (parked, or its host
+  offline) is refused with `not_attached`; the UI offers resume. A prompt to an
+  `active` session whose host has just gone, or is not yet reconciled, gets
+  `host_offline` instead (ACP core §9).
+
+### 6.8 Delivery acknowledgement for answers
+
+An answer to a permission or elicitation travels collector → host → adapter.
+The HTTP 202 to the browser proves only that the collector accepted it: the
+collector stores it in a durable answer queue keyed by the request's
+`pending_id` and delivers it now, or when the host reconnects. The host knows
+whether an adapter callback was actually waiting for it, and reports
+`answer_result{delivered}` on the outboxed stream. Cards show "answered" only
+after `delivered: true`. An answer to a request that is no longer open is
+refused (409).
+
+When verdicts for the same request reach several clients (phone and desktop),
+the fold over them is monotonic: `delivered` sticks and a later
+`delivered: false` must not overwrite it.
+
+### 6.9 One adapter process per session
+
+The host spawns a separate adapter process for every session (decided
+2026-09-26).
+
+- A crash, hang or memory leak affects one session, never its neighbours.
+- Per-hat isolation needs no extra machinery: Codex's isolation is per process
+  (a hennery-owned composed `CODEX_HOME`), Claude's is per session (a strict-MCP
+  flag), and both fit a process-per-session model directly (see
+  [the spike](../spikes/2026-09-25-per-session-mcp.md)).
+- The idle reaper (§6.6) is what bounds memory: an idle session's process is
+  released and the session parks.
+
+*Rejected:* one adapter process per hat (or per agent) serving many sessions.
+It saves memory but a single fault takes every session in the group down, and
+it would need per-session isolation that Codex does not offer inside one
+process.
+
+### 6.10 Delete and purge
+
+Closing keeps everything. Deleting is separate and explicit, and requires
+step-up authentication (§7.3):
+
+- **Delete a session** removes its events, attachments, turns, pending
+  requests and queued answers (ACP core §4.10). A tombstone with no content
+  remains, so a host that still runs the session is told to close it. Backups
+  taken before the delete keep its data. The agent's own transcript on its
+  host is removed too, best effort, and what could not be is reported and
+  retried (ACP core §4.10).
+- **Purge a hat** removes all of its sessions, its gateway connections with
+  their grants, and its path rules; hosts delete their composed agent homes for
+  that hat on their next connection (kernel §5.5).
+
+Both exist in v1 because a hat can hold a client's data that must be removable
+on request.
+
+---
+
+## 7. Authentication and pairing
+
+### 7.1 Why built in
+
+Delegating everything to an external identity provider was rejected: a
+single-machine install must work without one. Built-in auth is the only login
+path in v1; OIDC and identity from a fronting proxy are deferred (§15).
+
+*Rejected for v1:* a trusted-proxy mode that honours an identity header from a
+configured proxy address. With a proxy on loopback (the common setup), any
+local process can send that header, so header identity is forgeable. A later
+version may accept **signed** assertions only (e.g. a Cloudflare Access JWT).
+
+### 7.2 Bootstrap
+
+On first start with an empty database the collector creates the owner, with no
+login method, and a **one-time setup link** (random token, expires, single use)
+to complete the owner account. It prints the full link only when stdout is a
+terminal; otherwise it logs only the path of the file that holds it (kernel
+§3.1). There is no default password and no "first visitor becomes admin"
+window. A lost password is reset on the collector's machine with `hennery admin
+reset-password`, which also removes every passkey (kernel §4.2).
+
+### 7.3 Operator login
+
+- Password (argon2id) and **passkeys** (WebAuthn), passkeys as the primary path.
+- Session cookie: `HttpOnly`, `Secure` (unless `public_url` is a loopback
+  `http://` origin), `SameSite=Strict`.
+- **Step-up authentication** (a fresh passkey or password check within the
+  last 5 minutes) for: minting pairing codes, creating or editing gateway
+  connection URLs and credentials, local stdio server configuration,
+  registering or revoking passkeys, revoking hosts or sessions, deleting
+  sessions, purging hats, and changing `public_url` (kernel §3.4).
+- OIDC is deferred.
+
+### 7.4 Request authentication
+
+Every API call is authenticated — there is no "open on the LAN" mode.
+State-changing browser requests require a matching `Origin` (a missing
+`Origin` is rejected); browser `GET`s, on which browsers send no `Origin`,
+are checked with `Sec-Fetch-Site`; the few
+routes authenticated otherwise (host WebSocket, enrollment, the MCP proxy, the
+OAuth callback, health checks) are listed with their mechanism in kernel §3.3.
+Every HTML response carries a strict Content-Security-Policy (kernel §7).
+Every row carries `owner_id` and every query filters by it.
+
+*Rejected:* an unauthenticated LAN mode. The predecessor left the dashboard API
+open on the local network; fine for one person's network, indefensible for a
+product others install.
+
+### 7.5 `public_url` and TLS
+
+- `public_url` is a **required** setting: MCP OAuth callbacks, passkeys (RP id
+  and origin) and push notification links are built from it. Changing it
+  invalidates OAuth client registrations, and removes the passkeys when the
+  host name changes (a port or scheme move keeps them; kernel §3.2); Settings
+  warns before saving, needs step-up, and ends every session with the
+  change. A collector moved after setup, or a wrong value saved in Settings,
+  is re-pointed without a browser by `hennery admin reset-public-url` (kernel
+  §4.2), which does the same.
+- Web Push on iOS works only from an installed PWA over HTTPS, and push is core,
+  so **v1 requires TLS** for anything but `localhost`.
+- Supported topologies, all documented:
+  1. `localhost` — a secure context; desktop push works.
+  2. Tailscale — `tailscale serve` provides HTTPS.
+  3. Reverse proxy (Caddy, nginx) terminating TLS.
+- No built-in ACME in v1.
+
+### 7.6 Host pairing
+
+1. Operator clicks **Add host**; collector creates a one-time code (short, single
+   use, default TTL 10 min).
+2. On the machine: `hennery host join https://collector.example CODE`.
+3. The host generates a keypair, sends the public key with the code; the
+   collector registers a **per-host credential** and returns the host id.
+4. Hosts are listable, renameable and **individually revocable**. A revoked
+   host's adapters keep running until it next connects; it is then told it is
+   revoked and stops them.
+
+Wrong codes are rate-limited per client address. Pairing is idempotent: a host
+whose existing key the collector still accepts is not paired again. The
+all-in-one host is paired automatically over the local channel. A revoked host
+pairs again with `host join`, under a new key and id; its old outbox is kept
+aside (kernel §4.1). *Built so far (W1):* HTTPS enrollment and WSS share native
+roots or a collector-only private CA. Transport changes preserve identity;
+uncertain enrollment is durably journaled and blocks automatic re-enrollment.
+Plaintext aliases apply only to two validated loopback endpoints. Public proxy
+attribution and deployment verification remain W2; see the
+[WSS design](2026-10-14-wss-design.md).
+
+*Rejected:* one shared fleet token. In the predecessor a single token
+authenticated every machine: impossible to revoke one laptop, and anyone holding
+it could impersonate any host.
+
+---
+
+## 8. Hats — an isolation boundary
+
+### 8.1 What a hat is
+
+A hat is anything whose data must not leak out of it: a client, a single secret
+project, a side project. It is **an isolation boundary, not an organisational
+filter**. Declared in the collector: `{id, name, theme (colour, logo)}`.
+
+*Rejected:* hats as a UI filter only (the predecessor's model). A filter hides
+rows from the operator; it does nothing about a session in client A being handed
+client B's integrations, which is the actual risk.
+
+### 8.2 Resolving a session's hat
+
+- Every host has a **default hat**, so no session is ever hat-less. Setup
+  creates one hat (named by the operator, e.g. "Personal") and assigns the
+  all-in-one host to it.
+- Mixed hosts use **path rules**: `path prefix → hat`, per host.
+  - Matched by **path segment**, not substring: `~/Projects/acme-infra` must not
+    match a rule for `~/Projects/acme`.
+  - **Longest prefix wins**: `~/Projects/acme/secret/**` beats
+    `~/Projects/acme/**`.
+  - Paths are canonicalised **on the host** (absolute, symlinks resolved,
+    `.`/`..` removed, no trailing slash) before matching (kernel §5.2).
+- Sequence at start: the host resolves the typed path to its canonical form →
+  the collector matches the rules → the hat is **stored on the session** with
+  the canonical path → the session starts. Changing rules later does not
+  re-bucket history.
+- On resume the hat is re-resolved; if it differs from the stored one, the
+  resume is refused with a clear error until the operator re-assigns the
+  session explicitly.
+- Re-assigning a session is allowed only while it is parked, with a warning,
+  and is logged as a timeline event.
+- No "shared" hat in v1.
+
+### 8.3 What isolation covers
+
+Isolation applies to what sessions, agents and data flows can reach — **not** to
+the operator's view. The single operator sees all hats; the "All" view stays.
+
+- A session in hat A must not be able to use hat B's MCP connections,
+  plug-in activity, memory or startup context (§1.2.1).
+- A gateway connection belongs to **exactly one hat**. The same vendor in two
+  hats is two connections with **separate OAuth grants**.
+- Gateway client tokens are minted **per session** for that session's (host,
+  hat), stored only as hashes and revoked when the session parks, closes or
+  loses its adapter, or its host is revoked. The gateway derives scope from the
+  token at request time, never from anything the client claims.
+
+Side channels that must respect the boundary:
+
+- Project picker recents are filtered by hat.
+- Push notification content is minimal by default (session name, no transcript
+  excerpt), configurable per hat, including a generic title that omits the
+  session name.
+- Optional plug-in LLM features, and later core LLM features, configure their
+  LLM endpoint per hat; no implicit cross-hat credential or provider fallback.
+
+Hats also drive UI filtering, theming and per-hat push muting.
+
+### 8.4 Threat model and limits
+
+Hats prevent **accidental** cross-hat exposure through hennery's own channels:
+which MCP connections an agent is offered, which recents and context it sees,
+what a push notification reveals.
+
+Hats do **not** sandbox agents. Every adapter on a host runs as the same OS user
+as the host and has shell access. A misbehaving or prompt-injected agent in hat
+A can read anything that user can read — including the host's data directory
+(the outbox with other hats' transcripts, the host credential, other hats'
+composed agent homes) and other projects on disk. It can also read other
+sessions' gateway tokens from the process list, because the Claude adapter
+passes MCP servers to its CLI on the command line (gateway §3.2); per-session
+tokens limit that to live sessions.
+
+**The collector is in the same position in the default install.** `hennery up`
+runs the collector as the same OS user as every agent, so any agent can read
+`master.key`, `hennery.db` (every transcript and every encrypted grant) and use
+`admin.sock`. hennery says so plainly: whenever the gateway holds credentials
+for more than one hat, run the collector as a separate OS user or in a
+container (the Docker image), and `hennery up` warns in that situation (kernel
+§10). Destructive admin-socket commands additionally require interactive
+confirmation on a terminal.
+
+**Agent configuration outside hennery.** Per-session isolation (§8.5) covers MCP
+servers only. Each Claude session still loads the user's own `~/.claude`
+configuration — `CLAUDE.md` and its imports, auto-memory, hooks, skills and
+plugins — and Codex loads the global `AGENTS.md` and any `notify` command.
+These are accidental cross-hat channels outside hennery's control in v1; v1
+documents them rather than offering a per-hat switch (decided 2026-09-27,
+ACP core §15).
+
+A hat that needs strong isolation belongs on **its own host**: a separate OS
+user, container or machine, paired as a separate host whose default hat is that
+hat. The documentation says this plainly, next to the hat settings.
+
+### 8.5 Mixed hosts and agent MCP config
+
+Agents read MCP servers from their own config, which is **one file per user**
+for both Claude Code and Codex; a global entry would be offered to every hat on
+that host. hennery therefore passes MCP servers **per session over ACP**
+(measured in [the spike](../spikes/2026-09-25-per-session-mcp.md); ACP core §6):
+
+- **Claude:** a strict-MCP flag on every `session/new` / `session/load` keeps
+  the session to the servers hennery passes.
+- **Codex:** a hennery-owned composed `CODEX_HOME` per hat. Whether several Codex
+  processes can safely share its state is unmeasured, so until a live gate
+  measures it **Codex on a mixed host uses the fallback**.
+- **Generic adapters, and any agent with an adapter override** (custom
+  command, custom CLI path): the fallback, unless the operator explicitly
+  accepts unverified isolation.
+
+**Fallback:** on a mixed host, sessions in the host's default hat get the
+default hat's mounts; sessions in other hats run without gateway MCP servers,
+and the UI says so on the mount grid and at session start. Isolation is never
+silently weakened to make a feature work.
+
+---
+
+## 9. Module boundaries
+
+Three modules plus a shared kernel. Dependencies point one way.
+
+```
+        ┌──────────────┐  SessionMcp   ┌──────────────┐
+        │   ACP core   │──────────────►│ MCP gateway  │
+        │ sessions,    │ (trait defined│ connections, │
+        │ host protocol│  by gateway)  │ OAuth, proxy,│
+        │ push triggers│               │ renderers    │
+        └──────┬───────┘               └──────┬───────┘
+               ▼                              ▼
+        ┌──────────────────────────────────────────────┐
+        │ kernel: auth, hosts & pairing, hats, storage, │
+        │ config, push delivery, outbound HTTP policy,  │
+        │ purge hook, message types, HTTP server        │
+        └──────────────────────────────────────────────┘
+        hennery binary: CLI (incl. `hennery mcp apply`), supervisor, wiring
+```
+
+- **ACP core** (`hennery-host`, `hennery-sessions`) owns sessions, the host
+  protocol, push triggers and the session UI. It obtains a session's MCP
+  servers through the `SessionMcp` trait, which the gateway defines and
+  implements (ACP core §1). The dependency points sessions → gateway.
+- **MCP gateway** (`hennery-gateway`) owns connections, credentials, OAuth, the
+  proxy, per-session tokens, manifests and the config renderers. It imports
+  nothing from ACP core and needs three interfaces (§10.2).
+- **Kernel** (`hennery-kernel`) owns operator auth, hosts and pairing, hats and
+  path rules, storage, configuration, generated types, the HTTP server, the
+  outbound HTTP (egress) policy used by the gateway and by push, push delivery,
+  and the hat purge hook that sessions and the gateway implement.
+- **The `hennery` binary** owns the CLI (including the `hennery mcp apply` wiring
+  for the gateway's renderers), the supervisor, the managed runtime and service
+  installation.
+
+The test that the boundary holds: `hennery gateway` (standalone) builds and runs
+with the ACP core absent from its wiring. In Rust this is a Cargo workspace
+where the gateway crate does not depend on the ACP-core crates.
+
+### 9.1 Implementation language: Rust
+
+Decided 2026-09-26. The reasons are specific to hennery, not general:
+
+- **Both protocols have official Rust SDKs**: `agent-client-protocol` for ACP
+  and `rmcp` for MCP.
+- **Most domain types are tagged unions** — frames, credential kinds, the two
+  status axes. Native enums plus exhaustive `match` turn the predecessor's
+  worst class of bug (a frame with no handler, tests still green) into a
+  compile error (§5.4).
+- The rest is standard ground: `tokio` for subprocesses and I/O, `axum` for
+  HTTP/SSE and the streaming proxy, a WebSocket crate, SQLite
+  (`rusqlite`, bundled, one writer thread), `webauthn-rs`, `argon2`,
+  `chacha20poly1305`, `web-push-native`, `rmcp` (planned for OAuth and the
+  gateway's liveness probe; as built, plan 8f hand-writes both on the
+  kernel's egress clients, gateway §4, as the proxy is) and `rust-embed`.
+  Static binaries for Linux (musl) and macOS arm64 are routine.
+
+Costs accepted: slower compiles and a steeper start with async Rust
+(cancellation, `Send` bounds, streaming lifetimes).
+
+*Rejected:* Go. It fits the I/O-glue shape well and the predecessor is written
+in it, but hennery is a rewrite, not a port, and Go needs codegen plus a linter
+to approximate the exhaustiveness Rust gives for free.
+
+Versions and exact usage are pinned in the subsystem specs and plans.
+
+---
+
+## 10. MCP gateway
+
+Refined in its own spec. This section fixes the boundary and the invariants.
+
+**Operator experience: one place.** The operator adds every MCP integration
+once, in the MCP view, and for each one ticks which hosts receive it; every
+host is listed for every connection, because a mixed host isolates per session.
+That is the whole mental model. Everything below — the connection's hat,
+per-session client tokens, manifests, renderers — is machinery that turns those
+ticks into agent sessions; the operator never handles tokens or config files by
+hand.
+
+### 10.1 What it owns
+
+- **Connections:** `slug`, label, upstream URL, hat, credential (PAT or OAuth),
+  tool allowlist.
+  - Static tokens (PATs, API keys) are preferred where a vendor offers them:
+    no refresh, no expiry probe, fewer moving parts.
+- **OAuth per the MCP authorization spec:** protected-resource metadata
+  discovery, dynamic client registration, PKCE as a public client, single-flight
+  refresh per connection, liveness probe via a real `initialize` handshake.
+- **Proxy** at `/mcp/<slug>`, with the client token in the `Authorization`
+  header (never in the URL, which leaks into logs and transcripts):
+  - One upstream session per downstream MCP session (`Mcp-Session-Id` passes
+    through; the gateway keeps no session table).
+  - Streaming responses (SSE) are forwarded incrementally: the first chunk must
+    reach the client before the upstream finishes writing (for an event
+    stream, every chunk that ends an event; gateway §5.3). A buffering proxy
+    works on every short response and fails on the first long one.
+  - An upstream `401` becomes `502 upstream_auth`. A `401` is never passed
+    through, and `WWW-Authenticate` is stripped; otherwise the agent's MCP
+    client starts its own per-machine OAuth flow, which is exactly what the
+    gateway exists to prevent.
+  - `sampling` and `elicitation` are not forwarded in v1 (the gateway does not
+    advertise them upstream).
+  - Unknown token or unmounted connection → `404`, not `403` (don't confirm
+    existence).
+  - Responses carry `X-Content-Type-Options: nosniff` and only JSON or SSE
+    content types.
+- **Outbound requests** (proxy, OAuth discovery, registration and token calls)
+  never follow redirects and reach only public addresses unless a connection
+  is explicitly marked "internal network" (the kernel's egress policy, kernel
+  §7.1).
+- **Local stdio MCP servers** per (host, hat), configured in the same view and
+  passed to sessions on that host as ACP stdio entries, not proxied
+  (gateway §3.4).
+- **Credentials encrypted at rest** with a master key generated on first run
+  (0600 file in the data directory, or supplied via an environment variable).
+
+The documentation states plainly: **the gateway is a single point of compromise
+for every integration it holds.** Hats limit what one session's token can
+reach; they do not protect against compromise of the collector itself, and in
+the default install every agent runs as the collector's OS user (§8.4).
+
+### 10.2 Interfaces it needs from the rest
+
+| Interface | Full product | Standalone `hennery gateway` |
+|---|---|---|
+| `ClientIdentity` (token → principal) | a session token → "session S on host X, hat H" | a manually created client |
+| `MountPolicy` (principal → connections) | connections of hat H mounted on host X | the connections pinned to the client |
+| `Notifier` (credential expired / failing) | Web Push + UI badge | log line and optional webhook |
+
+In full mode the `hennery` binary wires implementations backed by gateway and
+kernel tables; `hennery-sessions` reaches the gateway only through `SessionMcp`
+(§9).
+
+### 10.3 Manifests and renderers
+
+**hennery sessions receive their MCP servers per session over ACP**, computed by
+the gateway for the session's (host, hat) — including a freshly minted
+per-session token in the `Authorization` header — and passed in `session/new` /
+`session/load` (spike; gateway §3.2). Agent config files are not involved, and
+no host ever renders MCP entries into agent config in v1.
+
+For standalone mode and terminal sessions started outside hennery, the gateway
+emits a **manifest** per standalone client (`[{name, url, headers}]`) and the
+CLI renders it into agent config: `hennery mcp apply --client claude|codex`, with
+the client token read from a file, an environment variable or stdin (never a
+command-line flag).
+
+Renderer rules:
+
+- Write `~/.claude.json` / `~/.codex/config.toml` entries hennery owns; **never
+  touch entries it does not own** (ownership marked in a way that survives the
+  agent rewriting the file).
+- A semantic no-op leaves the file byte-identical.
+- The token travels in a header entry, never in the URL.
+
+v1 renderers: **Claude Code and Codex**. Other agents get a generic "copy this
+JSON snippet" export.
+
+Mount changes take effect in the agent's **next** session, because agents read
+MCP config at session start. The UI says so. `notifications/tools/list_changed`
+is deferred.
+
+### 10.4 Standalone mode
+
+`hennery gateway` = gateway + operator auth + a small UI for connections and
+clients. No hosts, no ACP, no sessions. Same binary, same frontend with views
+gated by collector capabilities.
+
+---
+
+## 11. Collector ↔ browser API
+
+### 11.1 REST
+
+Resource-oriented JSON over HTTPS, types generated from the Rust message types (§5.4).
+Mutations that reach a host answer `202` once the collector has ingested the
+fact that completes them, with its outcome in the body: the session started,
+the turn started, the cancelled turn's real outcome, parked or closed, the
+catalogue after a switch. If the connection dropped or the request timed out
+after sending, the answer is 503 `delivery_unknown`; the fact, if it happened,
+still arrives and applies. Every viewer also gets the change over SSE. Answers
+return once durably queued; their verdict follows over SSE. Endpoints are listed in the subsystem specs.
+Timelines page from the tail (`before=`) or forward (`after=`); the session view
+opens at the tail.
+
+### 11.2 SSE and resumption
+
+- **Every state change first writes an events row**, which receives a
+  **global monotonic `event_id`**. Every SSE message carries the `event_id`
+  that caused it as its `id:`, and clients reconnect with
+  `Last-Event-ID: <event_id>` for idempotent catch-up.
+- Two stream shapes: a **list stream** (session metadata changes across all
+  sessions, used by the session list) and a **session stream** (full events for
+  one session).
+- The session stream resumes directly from the events table, with no catch-up
+  limit. The list stream resumes within a 24-hour window; beyond it the server
+  tells the client to refetch the snapshot instead of silently skipping.
+
+*Rejected:* using the host's per-session `seq` as the SSE cursor. It is only
+unique within one session, so a multi-session stream cannot resume from it.
+
+---
+
+## 12. Distribution
+
+Refined in its own spec.
+
+### 12.1 One binary, subcommands
+
+| Command | Purpose |
+|---|---|
+| `hennery up` | All-in-one: supervisor + collector + host. |
+| `hennery collector` | Collector only. |
+| `hennery host join <url> [<code>]` | Pair this machine (the code from stdin when left out). |
+| `hennery host run` | Run a paired host. |
+| `hennery host adapters update` | Move to the adapter set pinned by the installed release. |
+| `hennery gateway` | Standalone MCP gateway. |
+| `hennery mcp apply --client <agent>` | Render a standalone client's gateway manifest into an agent config (token from a file, the environment or stdin). |
+| `hennery service install --role up\|host\|collector` | Write a launchd agent (macOS) or one systemd user unit per role (Linux; warns about `loginctl enable-linger`). |
+| `hennery doctor` | Diagnose: agent CLIs present and logged in, adapters start, collector reachable, credentials valid, restart pending after an upgrade. |
+
+Platforms v1: Linux amd64/arm64, macOS arm64. Windows via WSL only.
+
+### 12.2 Channels
+
+GitHub Releases with a maintainer-signed inventory; verify the installer against
+that inventory before executing it (the guarded README bootstrap); Homebrew tap;
+Docker image for the **collector only** (the host must run on the developer
+machine, next to the repositories and the logged-in agent CLIs); Nix flake.
+
+No self-update: package managers and images handle updates.
+
+### 12.3 Managed Node runtime and pinned adapters
+
+On `host join` (and `adapters update`) the host downloads a **pinned Node
+runtime and pinned adapter versions** into its own data directory, verifying
+checksums.
+
+*Rejected:* requiring a system Node. Agent CLIs increasingly ship as native
+binaries, so Node may not be installed at all, and version-manager PATH setups
+(nvm, fnm, …) are frequently invisible to a service process.
+
+- A hennery release **is** a tested adapter set. The pin also decides what model
+  aliases such as `opus` resolve to, so it is a product decision, not a detail.
+- Every pin bump passes a **live e2e gate** in CI (§14).
+- Advanced override: a custom adapter command in config — also the door for any
+  other ACP agent. An overridden agent drops to the mixed-host fallback (§8.5)
+  unless the operator accepts unverified isolation.
+- After a binary upgrade a host keeps using its installed adapter set, warns
+  that the pinned set differs, and switches at its next start (before accepting sessions) or on
+  `hennery host adapters update` (distribution §3.2).
+- The pins and their hashes live in one manifest compiled into the binary;
+  the host fetches each package tarball from the npm registry and verifies it
+  (distribution §3). Nothing runs npm on the user's machine.
+- The adapters bundle their own agent CLI; they need only the user's login
+  state. hennery does not perform logins. `hennery doctor` checks login state
+  non-interactively; "Authentication required" from an adapter always means the
+  agent on that machine is not logged in, and doctor says so in those words.
+- **The Claude adapter's bundled CLI is proprietary ("All rights reserved"),
+  so hennery never redistributes it**: no release archive, image or public cache
+  contains it; every host downloads it itself.
+
+### 12.4 Backups
+
+Backup = a copy of the collector data directory: SQLite database, prompt
+attachments, the gateway master key, and the Web Push (VAPID) key pair
+generated on first run. Without the master key, encrypted gateway credentials
+are unrecoverable; without the VAPID keys, every push subscription must be
+re-created. Both facts are documented next to the backup instructions.
+
+---
+
+## 13. Frontend
+
+- React + TypeScript + Vite, built to static files **embedded in the binary**
+  (works offline, no CDN).
+- Control-frame and REST types generated from the Rust message types (§5.4); session event
+  payloads typed with the official ACP SDK.
+- Realtime via SSE resuming from `event_id` (§11.2).
+- **Views (v1):**
+  - **Sessions** — time-sorted, day headers, search across all sessions,
+    parked/closed filters, `blocked` marker.
+  - **Session** — transcript, composer (text, images, slash commands),
+    permission and elicitation cards, model/mode/effort bar, resume / cancel /
+    park / close / delete.
+  - **New session** — host, project (recents + browse), agent, model/mode/effort.
+  - **Hosts** — pair, rename, revoke, versions, doctor results, online/offline.
+  - **MCP** — the single place to add integrations: connections, OAuth
+    Connect, per connection the hosts that receive it (all hosts listed;
+    clients instead of hosts in standalone mode), and local stdio servers per
+    (host, hat).
+  - **Hats** — declare hats, path rules per host, purge a hat.
+  - **Settings** — account, passkeys, push devices, `public_url`.
+- `gateway` mode shows only MCP and Settings: one app, views gated by collector
+  capabilities.
+- Mobile-first PWA; Web Push on `blocked`, on a question outside a turn and on
+  turn end (ACP core §10).
+- Markdown pipeline order is load-bearing:
+  `remark-gfm → remark-breaks → rehype-sanitize → rehype-highlight`, with
+  unknown code languages ignored rather than thrown. Raw HTML in agent output
+  is not parsed; it renders as text. Highlighting output is trusted only
+  because it runs after sanitization, and the page's Content-Security-Policy
+  forbids inline scripts regardless.
+- Neutral, original visual identity; hats supply colour and a logo, served as
+  an image after server-side sanitization.
+
+---
+
+## 14. Testing strategy
+
+| Layer | What | Why |
+|---|---|---|
+| Protocol | Contract tests generated from the schema: every frame round-trips. Exhaustive dispatch is a compile-time property; CI fails on a diff in regenerated schema/TS types, and every cargo step runs `--locked`. | Hand-mirrored shapes drift silently (§5.4). |
+| Transport parity | The same scenarios run over the in-memory pipe and a real WebSocket. | One code path must stay tested in both deployments (§3.3). |
+| Session behaviour | Deterministic **fake ACP adapter**: scripted replies, permissions, elicitation, replay on `session/load`. Scenarios: WS drop, collector restart, host restart, reconciliation only after `resend_complete`, seq fast-forward, seq conflict, outbox resend, outbox overflow → gap without losing state frames, reaper vs. blocked, answer queued while offline, answer delivered vs. dropped. Full list in ACP core §12. | Every failure row in §6.6 gets a test. |
+| Live e2e gate | Real `claude-agent-acp` and `codex-acp` on every adapter pin bump: start, prompt, tool call, permission, elicitation, resume, per-session MCP isolation, and whether the gateway token is visible in the process list (recorded, gateway §3.2). | In the predecessor only a live call caught a wrongly shaped capability that the SDK silently discarded; unit tests asserted our JSON against our own assumption. |
+| Gateway | Streaming test (first chunk arrives before upstream finishes; must fail, not hang, on a buffering proxy). Fake OAuth server: discovery, DCR, PKCE, refresh, single-flight, 401 → 502, flow cookie binding. Egress policy: redirects refused, private and metadata addresses denied. Renderer tests on real Claude and Codex config files: foreign entries untouched, no-op is byte-identical. | Each is a known failure class. |
+| Hats | **Negative tests**: a hat-A session token requesting a hat-B connection gets 404; a revoked session token gets 404; hat-B recents never appear for hat A; resume refused when the hat no longer matches. Table-driven path-rule resolution (segment match, longest prefix, normalisation). | Isolation is only real if its violation is tested. |
+| Auth | Setup link single use and expiry, printed only to a terminal; revoked host rejected distinctly; second host connection rejected; `Origin` rules per route; step-up required on every listed action; CSP header on every HTML response. | |
+| Frontend | Component tests (vitest). **Playwright** on main flows: setup → pair host → start session → permission → push. | jsdom cannot verify layout, focus or real rendering. |
+| Guards | **Revert probe**: every guard is shown to fail its test when removed, with both runs recorded in the PR. | A test nobody watched fail may pass for the wrong reason. |
+
+External-binary tests (git, adapters) skip cleanly when the binary is absent so
+hermetic package builds stay green.
+
+---
+
+## 15. Deferred / out of scope
+
+| Item | Status | What the v1 design reserves |
+|---|---|---|
+| Observed (terminal) sessions | Later | `session.source_kind`; capability checks by source (§6.4). |
+| Memory / cross-session context | Optional plug-in, pulled forward 2026-10-14 (§1.2.1) | Separate service/store; generic opt-in activity/startup contract, per-hat scope and optional per-hat model credentials. No embedded memory. |
+| Changes tab (git diff since session start) | Later | Host capability flag; base commit recordable at start. |
+| Worktree per session | Later | Session `cwd` is already per session. |
+| Workflows / saved kickoffs | Later | — |
+| Config explorer | Later | Host capability flag. |
+| LLM auto-naming | Later | `title` is already host- or operator-set. |
+| OIDC login | Later | Auth module seam next to passkeys. |
+| Identity from a fronting proxy | Later | Signed assertions only (e.g. a Cloudflare Access JWT); never a bare header (§7.1). |
+| Host-side rendering of MCP entries into agent config | Not v1 | `hennery mcp apply` with a standalone client covers terminal use. |
+| Teams / multiple operators | Later | `owner_id` on every row, named by every query; v1 binds the owner per component when it opens, teams take it from the request (kernel §1). |
+| Built-in ACME | Not v1 | Reverse proxy / Tailscale documented instead. |
+| Windows native | Not v1 | WSL. |
+| MCP `tools/list_changed`, sampling, elicitation forwarding | Not v1 | — |
+| Self-update | Never | Package managers. |
+| Chat-app orchestrator, task hub | Never | — |
+
+---
+
+## 16. Open questions
+
+Resolved since the first draft:
+
+- *Per-project / per-session MCP config* — measured in
+  [the spike](../spikes/2026-09-25-per-session-mcp.md): hennery sessions receive
+  MCP servers per session over ACP (Claude with a strict-MCP flag, Codex with a
+  composed `CODEX_HOME`, pending the concurrency gate below). See gateway §3.2,
+  ACP core §6 and §8.5 here.
+- *Implementation language* — Rust (§9.1).
+- *ACP Rust SDK coverage* — use the crate's connection engine with raw payload
+  handlers (ACP core §2.4).
+- *Host proof of possession* — Ed25519 signature over a collector nonce
+  (ACP core §3.5).
+- *Symlinked paths* — canonicalised on the host before any matching
+  (kernel §5.2).
+
+Decided by the maintainer on 2026-09-27 (details in the subsystem specs):
+
+- *Per-hat "isolate agent user config"* — documentation only in v1 (§8.4,
+  ACP core §15).
+- *`master.key`* — a file, not an OS keystore entry (kernel §10).
+- *Headless macOS* — a logged-in user is required in v1; *"use my own CLI"*
+  is an advanced install option (distribution §13).
+- *Attachments* — no size cap in v1; *VAPID contact* — optional, derived from
+  `public_url`; *listeners* — several allowed, browser access bound to
+  `public_url`; *static-token headers* — name plus optional prefix.
+
+Still open — measurements, not decisions:
+
+1. **Concurrent Codex processes sharing a composed home** — Codex on mixed
+   hosts stays on the fallback until a live gate measures it (§8.5).
+2. Transcript windowing threshold (frontend §15), vendor token behaviour over
+   days and the `GET` SSE channel (gateway §13) — measured once the code
+   exists.
+
+---
+
+## 17. Next steps
+
+1. Operator review of the umbrella and subsystem specs (all drafts).
+2. Implementation plans, starting with the walking skeleton
+   (`docs/plans/`).
+
+---
+
+_Generated with Claude AI — please review before distribution._
+````
+
+### File `docs/specs/2026-09-26-distribution-design.md`
+
+<!-- r1:file task=5 path=docs/specs/2026-09-26-distribution-design.md sha256=33dd486b31785427e016961e0be275fdf84343683edb4dab3012f513a30dd474 bytes=32322 mode=644 encoding=utf8 -->
+````markdown
+# hennery — distribution (subsystem spec)
+
+- **Date:** 2026-09-26
+- **Status:** Draft. Amended 2026-10-01 to the parts of `hennery up`, `host
+  join`, `host run` and `hennery admin` that plans 3a and 3b-ii built; the
+  rest (runtime, services, doctor, releases) is still design.
+- **Refines:** [architecture spec](2026-09-25-hennery-architecture-design.md) §3.3
+  (all-in-one supervisor) and §12 (distribution).
+- **Evidence:** measured on macOS arm64 on 2026-09-26: a lockfile-driven
+  adapter install without npm, both adapters answering ACP `initialize` under a
+  downloaded Node 24, non-interactive login checks, and the contents and
+  licences of the adapter packages. "D-n" marks a predecessor lesson (§12).
+
+---
+
+## 1. What ships
+
+One binary, `hennery`:
+
+| Command | Purpose |
+|---|---|
+| `hennery up` | All-in-one: supervisor running a collector and a host (§5) |
+| `hennery collector` | Collector only (full mode) |
+| `hennery gateway` | Collector in gateway-only mode |
+| `hennery host join <url> [<code>]` | Pair this machine (the code from stdin when left out) and install its runtime (§3) |
+| `hennery host run` | Run a paired host; exits 78 (`EX_CONFIG`) once it is revoked, but 0 when launchd runs it as the host service (§5.2); either way it records the revoke |
+| `hennery host adapters update` / `rollback` | Switch to the adapter set pinned by this binary / back to the previous one |
+| `hennery mcp apply --client claude\|codex` | Render a standalone client's gateway manifest into agent config; token from `--token-file`, `HENNERY_MCP_TOKEN` or stdin, never a flag (gateway spec §3.3) |
+| `hennery service install\|uninstall\|status [--role up\|host\|collector]` | launchd / systemd user service, one per role (§6) |
+| `hennery doctor` | Diagnose (§7) |
+| `hennery admin setup-url\|reset-password\|reset-public-url <url>\|hosts\|pairing-code` | Recovery over the collector's admin socket (kernel spec §4.2); `--data-dir` is the collector's or `hennery up`'s |
+| `hennery backup`, `hennery restore` | Via the collector's admin socket (kernel spec §9) |
+| `hennery collector healthcheck` | Exit 0/1 against `/healthz` (containers) |
+
+Platforms v1: Linux x86_64 and aarch64, macOS aarch64. Windows through WSL2
+(with systemd enabled) only.
+
+### 1.1 Libc policy
+
+- **The `hennery` binary is musl-static on Linux** (rustls, no system OpenSSL;
+  `webauthn-rs` needs OpenSSL, built vendored and static). One Linux binary per
+  architecture runs anywhere, including Alpine.
+- **A host needs glibc ≥ 2.28** because the managed Node runtime and the
+  Claude adapter's bundled CLI are glibc builds. musl-based systems can run the
+  collector (and the Docker image) but not a host in v1; `doctor` says so.
+- **NixOS hosts** need `programs.nix-ld.enable` for the managed runtime, or use
+  the Nix-provided adapters (§4.3).
+- **The host refuses before it installs a set**, judging as `doctor`'s check 2
+  does and with the same fixes:
+  - **Refused:** glibc's loader is missing, is NixOS's stub or musl's, or its
+    `--version` banner (else `getconf GNU_LIBC_VERSION`, never on NixOS) gives
+    a glibc older than 2.28.
+  - **Not refused:** a loader that says nothing readable, or doesn't answer
+    within 2 s. One example is nix-ld run without its environment.
+
+---
+
+## 2. Release pipeline
+
+- **Tooling:** `cargo-dist` (version pinned in `dist-workspace.toml`), producing
+  GitHub Releases with per-archive `.sha256`, a combined `sha256.sum`, a
+  `dist-manifest.json`, a shell installer and a Homebrew formula.
+  - The frontend build (pnpm + Vite) runs in the pre-build hook and is embedded
+    in the binary.
+  - macOS arm64 builds on a native runner; Linux musl builds for both
+    architectures.
+- **Homebrew:** a tap owned by the project (`<owner>/homebrew-tap`), installed
+  as `brew install <owner>/tap/hennery`. Not Homebrew core (see §11 on name
+  collisions).
+- **Signing:** GitHub artifact attestations (keyless, Sigstore, public
+  transparency log) for every archive, `sha256.sum`, the installer script and
+  the container image. **Maintainer amendment, 2026-10-15:** a detached OpenPGP
+  signature over the immutable inventory is the release trust root, using the
+  maintainer's hardware-backed signing subkey; no private signing key enters CI.
+- **User verification:**
+  - Default: the executed [README verify-then-run procedure](../../README.md#verify-a-release-installer-before-running-it).
+    Confirm full signing fingerprint `F26C7F594DFE84D131703AFC23E5A318AE8D2861`
+    through release-independent channels (README on main, the maintainer's
+    published account keys, keys.openpgp.org). Fetch public keys separately from
+    releases; require the full pin, not a short key ID.
+  - Download the inventory, its detached signature and installer. Use installed
+    GnuPG to authenticate the inventory in an isolated keyring, require the
+    pinned signer, check the installer's SHA-256 against the signed digest set,
+    then run it. The installer requires SHA-256, maintainer authorization and
+    exact-tag Sigstore provenance for archives. Neither a release-supplied
+    verifier/key nor an unauthenticated installer can bootstrap trust.
+- **No self-update.** Package managers and images update the binary (§5.3 for
+  what happens to running sessions).
+
+---
+
+## 3. Managed runtime and adapters
+
+### 3.1 The adapter manifest
+
+One JSON manifest per hennery release, **compiled into the binary**, generated by
+CI and read by both the host and the Nix flake:
+
+```jsonc
+{
+  "schema": 1,
+  "node": {
+    "version": "24.x.y",
+    "platforms": {
+      "darwin-arm64":  { "url": "https://nodejs.org/dist/…tar.xz", "sha256": "…" },
+      "linux-x64":     { "url": "…", "sha256": "…" },
+      "linux-arm64":   { "url": "…", "sha256": "…" }
+    }
+  },
+  "adapters": {
+    "claude": {
+      "package": "@agentclientprotocol/claude-agent-acp", "version": "…",
+      "entry": "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+      "platforms": {
+        "linux-x64-gnu": [ { "path": "node_modules/…", "url": "https://registry.npmjs.org/…tgz",
+                             "integrity": "sha512-…" } ]
+      }
+    },
+    "codex": { "…": "…" }
+  }
+}
+```
+
+- Each platform lists exactly the tarballs that platform needs, with the
+  registry's `sha512` integrity. Platform packages are selected at pin time
+  using the registry's `os`, `cpu` **and `libc`** fields (npm lockfiles drop
+  `libc`; a naive installer would download both glibc and musl variants of the
+  Claude CLI, ~230 MB extra).
+- **Pin-bump CI job** (on a manifest change only):
+  1. resolve an exact-version lockfile for each adapter;
+  2. `npm audit signatures` (registry signatures; provenance where published);
+  3. verify Node's `SHASUMS256.txt.sig` with the Node release keyring and copy
+     the per-platform SHA-256 into the manifest;
+  4. write per-platform file lists;
+  5. run the live e2e gates (ACP core §12) on every platform.
+
+  The Node signature is checked in CI, not at runtime: the runtime trusts the
+  digests compiled into the attested hennery binary.
+
+### 3.2 Install on the host
+
+- Performed by `hennery host join` and `hennery host adapters update`; progress is
+  shown and resumable.
+- **Node:** download the pinned archive, verify SHA-256, extract only
+  `bin/node` into `<data>/runtimes/node-<version>-<platform>/`.
+- **Adapters:** for each tarball of this platform: download (registry URL
+  overridable to a mirror; hashes always from the manifest), verify the SHA-512
+  integrity, extract to its lockfile path with the `package/` prefix stripped.
+- **Extraction safety:** reject absolute paths, `..` components, and symlinks
+  resolving outside the target; preserve the executable bit.
+- **No install scripts run** (neither adapter has any; the installer would
+  refuse a manifest entry that required one).
+- **First runs on macOS:** once a set is installed, each native program of
+  its bundled CLIs (`claude`, `codex`, `rg`) is run once (`--version`, at
+  most 90 s each, with a progress line). A new program's first run waits for
+  Gatekeeper's online check, which the machine runs one at a time and which
+  is slow when DNS is bad. Done here, that wait is not under a session's
+  start limit. A failure is only a progress line. Elsewhere nothing is run.
+- **Layout:** `<data>/adapters/sets/<manifest-hash>/` plus an atomically swapped
+  `current` symlink. Each adapter process is started from the **absolute path of
+  its set**, never through `current`, so an update never changes files under a
+  running session. The previous set is kept for `rollback`; older sets are
+  deleted once no adapter process uses them.
+- **After a binary upgrade** the host keeps using its installed set and warns
+  (Hosts view, `doctor`) that it differs from the set pinned by the new binary.
+  On the next host start (which always begins with no attached sessions) it
+  installs the pinned set before accepting sessions; `hennery host adapters
+  update` does the same on demand and leaves running sessions on their old set.
+- **Disk budget:** roughly 700 MB per set on Linux x64 (the bundled agent CLIs
+  are most of it); about 1.5 GB for two sets plus Node. `join` checks free space
+  first.
+- **Launch:** `<data>/runtimes/node-…/bin/node <set>/<entry>`, environment as in
+  ACP core §2.3 and §6.
+
+### 3.3 Licensing constraint
+
+The Claude adapter's platform package contains Anthropic's CLI binary under
+"All rights reserved" terms. **hennery never redistributes it**: not in release
+archives, container images, Homebrew bottles or public Nix caches. Every host
+downloads it from the npm registry itself, which is what §3.2 does. The ACP
+adapters and the Codex CLI are Apache-2.0; they are handled the same way for
+uniformity.
+
+---
+
+## 4. Other channels
+
+### 4.1 Docker (collector only)
+
+Built from the released musl binaries (same bytes as the GitHub release),
+multi-arch, pushed to GHCR with a provenance attestation.
+
+```dockerfile
+FROM gcr.io/distroless/static-debian13:nonroot
+ARG TARGETARCH
+COPY --chmod=0755 dist/linux-${TARGETARCH}/hennery /usr/local/bin/hennery
+ENV HENNERY_DATA_DIR=/var/lib/hennery HENNERY_LISTEN=0.0.0.0:8080
+VOLUME ["/var/lib/hennery"]
+USER 65532:65532
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD ["/usr/local/bin/hennery", "collector", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/hennery"]
+CMD ["collector"]
+```
+
+- Distroless static provides CA roots (outbound OAuth and Web Push) and a
+  non-root user; no shell.
+- The volume must be local storage (SQLite locking is unreliable on network
+  filesystems). Documented.
+- `/healthz` (process up) and `/readyz` (the database answers within 2 s;
+  migrations run before any listener) for orchestrators.
+- The image contains no Node and no adapters.
+
+### 4.2 Verified shell installer and Homebrew
+
+Both install only the `hennery` binary. `hennery host join` then installs the
+runtime (§3.2), so the installer never touches the npm registry.
+
+### 4.3 Nix flake
+
+- **Rust:** `crane` (`buildDepsOnly` for caching; clippy/test/audit as flake
+  checks; crate hashes come from `Cargo.lock`, so no per-system vendor hash),
+  toolchain pinned through an overlay.
+- **Frontend:** a separate derivation (`nix/web.nix`, plan 7e-ii-b) on the
+  flake's `nixpkgs-web`, the dev shell's Node 24 and pnpm, with the pnpm major
+  pinned (`pnpm_12`). Its dependencies come from `fetchPnpmDeps` with
+  **`fetcherVersion = 4`**, the only version that fetcher takes for pnpm 11 and
+  newer. The fetcher installs with `--force`, which fetches every platform's
+  optional packages whatever `supportedArchitectures` says, so there is no
+  `pnpm-workspace.yaml` and the dependency hash is the same on every system:
+  verified on aarch64-darwin and x86_64-linux; aarch64-linux is built by no CI
+  runner. A change to `web/pnpm-lock.yaml` needs a new hash
+  (`sh packaging/update-web-hash.sh`). Under pnpm 12 the fetcher's fixup breaks
+  on package files that are not strict JSON, so `nix/web.nix` drops the store's
+  unpacked `v11/links` before it. The package passes the output to `build.rs`
+  via `HENNERY_WEB_DIST`, with `HENNERY_WEB_REQUIRE=1`, so a Nix build fails
+  rather than embed the placeholder page; a flake check greps the binary for
+  the placeholder's marker. A plain `cargo build` embeds `web/dist`, or the
+  placeholder without it (kernel §7).
+  *(D-1: the predecessor pinned a pnpm fetcher version that current nixpkgs
+  removed, and kept a second, older nixpkgs input to stay on it.)*
+- **Adapters:** the flake reads the same manifest (`builtins.fromJSON`),
+  fetches each tarball for the system with `fetchurl { url; hash = integrity; }`
+  and unpacks them, then wraps with nixpkgs' Node 24. On Linux the Claude CLI
+  gets `autoPatchelfHook` (to be verified). The Claude adapter derivation is
+  marked `unfree` so no public cache ever holds it. *(D-2: the predecessor's
+  adapters were network-fetching fixed-output derivations with one hand-kept
+  hash per system and no lockfile, so a transitive release could break the hash
+  at any time.)*
+- NixOS/home-manager modules: `services.hennery.{collector,host}` with
+  `adapters.source = "nix" | "managed"` (default `nix` on NixOS).
+
+---
+
+## 5. The all-in-one supervisor (`hennery up`)
+
+### 5.1 Processes
+
+`hennery up` runs as a small supervisor with two children: `hennery collector` and
+`hennery host run`. They communicate only over the collector's normal WebSocket
+(umbrella §3.3). On first start (no pairing in the host's directory) the
+supervisor creates one pipe and gives its write end to the collector child and
+its read end to the host child, as inherited descriptors: the code passes
+between the two children only, never on a command line or in the environment,
+and the supervisor never reads it (kernel spec §4.2). Pairing is idempotent:
+an existing pairing gets no pipe, and no code is minted.
+
+`hennery up` binds every listen address itself (flags, `HENNERY_LISTEN`, else
+the collector's `config.toml`) before touching its data directory, so a taken
+port starts no child, and hands each socket to the collector child as an
+inherited descriptor; the collector accepts there only a listening TCP socket,
+each once. The host child is given the collector's current loopback URL (the
+first address loopback reaches). `up --public-url` is handed on to the
+collector.
+
+At start `hennery up` checks whether gateway credentials exist for more than one
+hat while the collector shares its OS user with the host child, and warns if so
+(kernel spec §10).
+
+Before its first child, `hennery up` makes one more pipe, the parent pipe, and
+holds its write end for as long as it runs; every child it starts, restarts
+included, inherits the read end (descriptor 12, `--parent-fd`). However `up`
+dies (SIGKILL, OOM, a panic), each child reads end-of-file and stops as on
+SIGTERM: the host stops its adapters and parks its sessions, the collector
+closes its listeners and admin socket. A child still running 20 s later exits
+outright. So a killed `up` leaves no child holding the port or `host.lock`
+against its relaunch (plan 7c-iii). Under systemd, `KillMode=mixed` stops the
+unit's remaining processes anyway; the pipe matters most under launchd.
+
+### 5.2 Restart policy
+
+- A crashed child is restarted with exponential backoff (1 s → 60 s); ten
+  crashes in five minutes stop restarts for that child and are reported by
+  `hennery service status` and `doctor`.
+- A host child that exits 78 (revoked) is not restarted: `up` logs which files
+  to remove to pair it again, and keeps the collector serving the operator and
+  remote hosts.
+- **A host run by its own service is not restarted after a revoke either:**
+  - **systemd:** the host unit carries `RestartPreventExitStatus=78` (§6.3).
+  - **launchd** has no per-exit-code switch: `KeepAlive = {SuccessfulExit =
+    false}` restarts any non-zero exit. So a revoked host that launchd runs as
+    the host service exits 0 instead. `up`'s child keeps 78 under a launchd
+    `up` too.
+  - **The record:** every revoked host also writes `revoked` in its data
+    directory, holding the host id, the collector and the time.
+    `hennery service status` and doctor's check 10 read it, and say to pair
+    again with `hennery host join <public URL>`, then start the service.
+  - **Staleness:** the record counts only while its host id is the pairing's.
+    A re-pair stores another id, which retires it.
+- Both children run in their own process groups, so a terminal's Ctrl-C
+  reaches only the supervisor. The supervisor handles SIGINT like SIGTERM and
+  forwards it: host first (it flushes its outbox, closes adapters; sessions
+  will be parked), then the collector.
+
+*Built so far:* no restarts. A collector exit, any other host exit or a signal
+ends `up`.
+
+### 5.3 Upgrades
+
+- **The upgrade path is a service-manager restart** (`launchctl kickstart -k`,
+  `systemctl --user restart`). Package managers do not
+  restart user services by themselves, so after an upgrade the running
+  processes keep the old binary; hennery detects that the binary on disk differs
+  from the running version and warns that a restart is needed (Hosts view,
+  `doctor`). There is no binary-watching logic.
+- Restarting `hennery up` restarts both children, and a host restart parks every
+  session; the sessions are resumable, not uninterrupted (umbrella §3.3
+  "honest limit").
+- Protocol compatibility (collector accepts host protocol majors M and M−1,
+  umbrella §5.3) makes it safe to upgrade the collector and remote hosts at
+  different times.
+
+---
+
+## 6. Service installation
+
+`hennery service install` writes and loads a per-user service for the chosen
+role (`up` on a single machine, `host` on additional machines, `collector` for
+a dedicated collector).
+
+### 6.1 PATH capture
+
+Services do not inherit the login shell's PATH, but agents run `sh`, `git`,
+language toolchains and MCP stdio servers through it. *(D-3: in the predecessor
+a service PATH without a shell made every tool call fail with exit −1, which
+looked like the agent silently ignoring tools.)*
+
+- At install time hennery runs the user's login shell non-interactively
+  (`"$SHELL" -l -i -c env`, stdin from `/dev/null`, timeout 10 s) and reads
+  `PATH` from the output (not `echo $PATH`, which is a list in fish).
+- Short-lived entries are replaced by stable ones: fnm's per-shell
+  `fnm_multishells/<pid>` directories, nvm's current-version directory, etc.
+  become the version manager's default alias or shim directory.
+- `/usr/bin:/bin` (and `/usr/sbin:/sbin` on macOS) are always appended.
+- The result is written to an env file (systemd) or the plist (launchd) and the
+  location is printed. `doctor` re-captures and warns on drift.
+- **The shell is recorded beside the PATH, as `SHELL`.** It is recorded on
+  every install: the account's login shell, or the one `--shell` names, which
+  must be an absolute path and is refused before it is run.
+  - `doctor` runs that same shell again. When it is not the account's, its fix
+    names both, since either `--shell` or a `chsh` since may be the cause.
+  - The host's agents get it as `SHELL`, as launchd and systemd would give the
+    account's. Agents that honour `$SHELL` run the shell their PATH came from
+    (Claude Code uses it when it is bash or zsh).
+  - A `chsh` reaches the service, and its agents, only when the service is
+    installed again.
+  - A service file written before the shell was recorded falls back to the
+    account's shell; one whose `SHELL` is not an absolute path is passed on
+    as it stands, but `doctor` does not run it.
+
+The agent nesting variables (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
+`CLAUDE_CODE_SSE_PORT`) are never written to the service environment, and the
+host strips them at every adapter spawn regardless.
+
+### 6.2 macOS (launchd user agent)
+
+`~/Library/LaunchAgents/dev.hennery.<role>.plist`: `RunAtLoad`,
+`KeepAlive = {SuccessfulExit = false}`, `ThrottleInterval = 10`,
+`LimitLoadToSessionType = Aqua`, `EnvironmentVariables.PATH` and `SHELL` from §6.1,
+stdout/stderr to `~/Library/Logs/hennery/<role>.log` (crash output only; hennery
+writes its own size-capped rotating log, `hennery-<process>.log` beside it, §8).
+Loaded with `launchctl bootstrap
+gui/$UID`, restarted with `launchctl kickstart -k`.
+
+A revoked host service makes one start per login, refused by the collector. It
+then exits 0 and stays down (§5.2): the plist keeps restarting after a failure
+(a network down at start), so it cannot be told to stop on the revoke's code.
+
+`Aqua` means the host runs only while the user has a GUI login session, which
+is also when the login keychain (where Claude keeps its credentials) is
+unlocked. A headless Mac therefore needs a logged-in user; `doctor` checks
+agent login under the service environment and reports the keychain case
+explicitly (behaviour to be confirmed on a machine rebooted without login).
+
+### 6.3 Linux (systemd user unit)
+
+One unit per role, each written with the correct subcommand and the
+**absolute path of the binary resolved at install time** (Homebrew, the
+installer's directory, a Nix profile):
+
+| Role | Unit | `ExecStart` |
+|---|---|---|
+| `up` | `hennery.service` | `<abs path>/hennery up` |
+| `host` | `hennery-host.service` | `<abs path>/hennery host run` |
+| `collector` | `hennery-collector.service` | `<abs path>/hennery collector` |
+
+Example (`hennery-host.service`):
+
+```ini
+[Unit]
+Description=hennery host
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=exec
+ExecStart=/home/me/.local/bin/hennery host run
+EnvironmentFile=-%h/.config/hennery/service.env
+Environment=HENNERY_SERVICE=systemd
+Restart=on-failure
+RestartPreventExitStatus=78
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+- `KillMode=mixed` lets the host stop its adapters itself (flush outbox, kill
+  process groups) before systemd kills the rest.
+- If the binary later moves (a different package manager), `doctor` reports
+  that the unit points at a missing or different binary.
+- **Linger:** without it the host stops at logout and does not start at boot.
+  `service install` checks `loginctl show-user $USER -p Linger` and, if `no`,
+  prints `loginctl enable-linger $USER` (it may need privileges) instead of
+  running it.
+- **WSL:** systemd runs only with `[boot] systemd=true` in `/etc/wsl.conf`;
+  detected and explained.
+
+---
+
+## 7. `hennery doctor`
+
+Each check reports `ok | warn | fail` and a one-sentence fix. Account details
+are never printed (only "logged in" and the method).
+
+| # | Check |
+|---|---|
+| 1 | Binary version, embedded manifest hash; Node and the current adapter set present and matching their digests |
+| 2 | Platform: glibc ≥ 2.28 (fail on musl hosts), kernel ≥ 4.18, NixOS without nix-ld (fail, with the fix) |
+| 3 | Adapters start: spawn each exactly as the host would (same env, PATH, stripped nesting variables, absolute set path), `initialize` within 20 s, version equals the pin |
+| 4 | Logged in: the adapter's `_auth/status_update`, else the bundled CLI's `claude auth status` / `codex login status` (exit 0/1) — **under the service's environment** |
+| 5 | Service PATH: `sh` and `git` present, `rg` optional; volatile entries; drift from the login shell |
+| 6 | Nesting variables set in the current environment (warn) |
+| 7 | Collector: DNS, TCP, TLS, certificate matches `public_url`; `http://` only on loopback; WebSocket `hello` accepted (revoked → "re-pair with `hennery host join`"; `bad_proof`, an unknown host → "remove `host.key` and `host.toml`, then `hennery host join`") |
+| 8 | Clock skew against the collector's `Date` header (warn > 30 s, fail > 5 min) |
+| 9 | Disk: free space for two adapter sets and the outbox; current outbox size; recent transcript gaps; `outbox.db.orphaned-*` kept from earlier identities |
+| 10 | Service: installed, active, pointing at this binary; linger on Linux; only one role installed per machine; restart needed after an upgrade (running version ≠ binary on disk); a host service whose host was revoked fails, from its `revoked` record (§5.2), with the re-pair as the fix |
+| 11 | Another `hennery` earlier on PATH (name collision, §11) |
+| 12 | Adapter set: installed set differs from the one pinned by this binary (warn, with `hennery host adapters update`) |
+| 13 | Bundled vs terminal CLI: the pinned bundled `claude`/`codex` version compared with the one on the user's PATH; warn on a large gap (sessions resumed from the terminal may meet an unexpected format) |
+| 14 | Single instance: no other host process holds `host.lock` in this data directory |
+| 15 | Collector isolation: gateway credentials for more than one hat while the collector shares its OS user with agents (warn, kernel spec §10) |
+| 16 | Collector listeners: every configured address bound; `public_url` reaches one of them or a reverse proxy (warn, kernel spec §7) |
+| 17 | CLI overrides (`--use-cli`): the operator's CLI version against the pinned one (warn on a gap, §13) |
+| 18 | The collector's secret files, `vapid.key` and `master.key`, judged by their metadata alone, never read, as the collector takes them and in its order: a regular file, not a symlink; no group or other bits; owned by the collector directory's owner and readable by it; for `master.key`, one name only; 32 bytes. Each way the collector would refuse one fails, with its fix. A file not made yet is fine, but once `hennery.db` exists a missing one warns: a new `vapid.key` breaks every push subscription, and a missing `master.key` stops a collector with stored gateway credentials. One that can't be looked at warns (run doctor as the collector's user). `hennery backup` carries both (kernel §9) |
+
+The host runs checks 3–4, 9, 12 and 13 on demand (`probe_agents`) and reports
+them to the collector, so the Hosts view shows them without a terminal.
+
+---
+
+## 8. Data directories and logs
+
+| | Linux | macOS |
+|---|---|---|
+| Data | `$XDG_DATA_HOME/hennery` | `~/Library/Application Support/hennery` |
+| Logs | `$XDG_STATE_HOME/hennery/log` | `~/Library/Logs/hennery` |
+| Service env | `~/.config/hennery/service.env` | in the plist |
+
+`HENNERY_DATA_DIR` overrides the data directory (containers, tests).
+
+**With no `--data-dir` or variable**, a command takes the data directory above:
+- `up` and `collector` take it as their root, since they make or run an install.
+- `admin` takes the one installed `up` or collector service's directory, else
+  the default.
+- `host join`, `host run` and `host adapters` take the one installed host
+  service's directory, else the default as a dedicated host's own.
+  `host join <url> <code>` then `service install --role host` therefore work as
+  typed.
+- A default that isn't a host's is refused, naming `--data-dir`:
+  - `up`'s root (installed, or `collector/` or `host/` in the default) makes
+    `host join` and `host run` refuse, since `up` pairs and runs its own host.
+    `host adapters` takes its `host/` instead.
+  - A collector's directory makes every host command refuse, as does an
+    installed collector service on it.
+  - `up` and `collector` refuse a default that holds another role's install:
+    `up` takes only an empty directory or its own layout, and `collector` only
+    an empty directory or a collector's.
+  - Several installed services leave no directory to take: `admin` and the host
+    commands then refuse, naming `--data-dir`.
+
+Logs rotate at 10 MiB × 5 files: the file being written and four rotated ones (`.1` to
+`.4`). Only a run by a service (`HENNERY_SERVICE`, which both units set) logs to
+these files, one per process: `hennery-up.log`, `hennery-collector.log`,
+`hennery-host.log` (0600, in a 0700 directory of the user's own), beside
+launchd's `<role>.log`, which then gets crash output only; under systemd the
+journal does too. `HENNERY_LOG_DIR` names another directory (absolute; a
+relative one refuses the start). A directory that cannot be used falls back to
+standard error at `warn`, saying why there. A terminal run, a container and the
+other commands log to standard output (plan 7c-iii). A collector and a host on the same machine (`hennery up`)
+share the data directory, in two subdirectories: `<data>/collector` and
+`<data>/host`.
+
+**Host data directory:**
+
+| Entry | Purpose |
+|---|---|
+| `host.key` | Ed25519 key seed from pairing, hex (0600, written through a temporary file and a rename; a readable one is used with a warning) |
+| `host.key.pending` | A key being enrolled; renamed to `host.key` once paired |
+| `host.toml` | Collector WebSocket URL, host id, workspace roots, agent overrides (so far the first two) |
+| `outbox.db` | Outbox (ACP core §5.5) |
+| `outbox.db.orphaned-<id>` | Outbox of an earlier identity, moved aside at a re-pair, kept for inspection, never read |
+| `runtimes/` | Managed Node (§3.2) |
+| `adapters/` | Adapter sets (§3.2) |
+| `codex-home/` | Composed `CODEX_HOME` per hat (ACP core §6) |
+| `host.lock` | Exclusive lock; a second `hennery host run` refuses to start |
+
+The host data directory is created 0700. The collector's data directory is
+described in the kernel spec §1.
+
+---
+
+## 9. Testing
+
+- Installer: checksum mismatch aborts; missing SHA-256 tool aborts; musl/glibc
+  detection.
+- Runtime install: digest mismatch aborts and leaves the previous set intact;
+  extraction rejects traversal and escaping symlinks; interrupted download
+  resumes; `current` swap is atomic; a running adapter keeps its set across an
+  update; rollback.
+- Manifest generator: `libc` filtering; a platform missing a package fails the
+  job.
+- Supervisor: child crash backoff and give-up; pairing code passed only
+  through inherited descriptors; no re-pairing when the existing key is
+  accepted; a revoked all-in-one host leaves the collector serving; after a
+  restart on another port the host reconnects under its old id; agents
+  inherit neither the pairing pipe nor an operator secret.
+- Upgrade: a replaced binary triggers the "restart needed" warning and nothing
+  else; a host keeps its adapter set until its next start or
+  `adapters update`.
+- Service install: PATH capture from bash, zsh and fish; volatile entry
+  replacement; one unit per role with the absolute binary path and the right
+  subcommand; generated units validated (`systemd-analyze verify`,
+  `plutil -lint`).
+- Host lock: a second `hennery host run` on the same data directory refuses.
+- Doctor: each check's failure path with fixtures.
+- Nix: flake checks build the binary and the adapter derivation on Linux and
+  macOS in CI.
+
+---
+
+## 10. Out of scope
+
+Windows native builds; system-wide (root) services; automatic linger
+enablement; a public binary cache for adapter packages; self-update.
+
+---
+
+## 11. Name check
+
+Checked 2026-09-27:
+
+- No package named `hennery` exists on crates.io, npm, PyPI, Homebrew (formula
+  or cask) or nixpkgs.
+- GitHub has only a handful of small, inactive repositories named hennery, none
+  in this niche. The `hennery` account name is taken, so the project lives
+  under the maintainer's account.
+- Crates, if ever published, use the `hennery-*` prefix the workspace already
+  uses. `doctor` still warns when another `hennery` precedes ours on PATH.
+
+---
+
+## 12. Predecessor lessons referenced
+
+| Id | Lesson | Rule |
+|---|---|---|
+| D-1 | Pinned pnpm fetcher version removed upstream | §4.3 |
+| D-2 | Network FODs with per-system hashes and no lockfile | §3.1, §4.3 |
+| D-3 | Service PATH without a shell broke every tool call | §6.1 |
+
+## 13. Open questions
+
+None open. Resolved by the maintainer on 2026-09-27:
+
+1. **Headless macOS hosts** — "requires a logged-in user" is accepted for v1
+   (§6.2). Headless deployments use Linux or the container image.
+2. **"Use my own CLI"** — offered as an **advanced** install option, not the
+   default. `--use-cli claude=<path>` (and `codex=<path>`) on `hennery host
+   join` or `hennery host adapters update` records the override in `host.toml`
+   and skips downloading that CLI, saving most of the ~700 MB set. The installer and the host's
+   Hosts page say plainly that the agent loses the pin's guarantee and, on a
+   mixed host, drops to the MCP fallback unless the operator accepts
+   unverified isolation (ACP core §6). `doctor` reports the CLI's version
+   against the pinned one (check 17).
+````
+
 ### File `packaging/README.md`
 
-<!-- r1:file task=5 path=packaging/README.md sha256=8f003eceb279c5994a248d9ff0a787cfd630a229cace91b8208822bd2ecdcb6a bytes=8283 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=packaging/README.md sha256=6c1a8e39361253428500dc59681125d179c27fd5c10907fd1e5613fb3babc982 bytes=8570 mode=644 encoding=utf8 -->
 ````markdown
 # Release builds
 
@@ -14004,7 +19404,10 @@ These need the operator's decision, credentials, or both. None is set up:
   reviewed verifier, not a downloaded replacement. The common
   [verifier](release/verify.py) pins the exact certificate identity to
   `marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<release-tag>`
-  and rejects branch signers. Authenticate the installer before executing it;
+  and rejects branch signers. The [guarded README bootstrap](../README.md#verify-a-release-installer-before-running-it)
+  authenticates the inventory using a full fingerprint checked through main,
+  the maintainer's account keys and keys.openpgp.org, then checks the installer
+  SHA-256 before executing it. No release-supplied verifier or key is its trust anchor;
   its archive verifier requires both the maintainer-approved digest and this identity. Native binstall signature
   support needs a reviewed bridge; no unverified strategy is an accepted path.
 - **The Homebrew tap** (`marcinwadon/homebrew-tap`): the repository and a
@@ -14048,6 +19451,7 @@ nix develop -c cargo clippy -p hennery --locked -- -D warnings
 nix develop -c cargo test --workspace --locked
 nix develop -c cargo run -p hennery-proto --bin gen --locked -- --check
 nix develop -c cargo run -p hennery-view --bin gen-view --locked -- --check
+nix develop -c cargo test -p hennery --test readme --locked
 ```
 
 ### Step 4: COPY probe / staged bytes / commit
@@ -14088,7 +19492,7 @@ plan=Path('docs/plans/2026-10-28-release-foundation.md')
 assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=destination,text=True).strip()==base
 assert not subprocess.check_output(['git','status','--porcelain'],cwd=destination,text=True).strip(), 'replay worktree must be fresh'
 raw=(source/plan).read_bytes()
-blocks=list(re.finditer(rb'<!-- r1:(file|patch) task=(\d+) path=(\S+) sha256=([0-9a-f]{64}) bytes=(\d+) mode=([0-7]+) encoding=(utf8|base64) -->\n````[^\n]*\n(.*?)````\n',raw,re.S))
+blocks=list(re.finditer(rb'<!-- r1:(file|patch) task=(\d+) path=(\S+) sha256=([0-9a-f]{64}) bytes=(\d+) mode=([0-7]+) encoding=(utf8|base64) -->\n(?P<fence>`{4,})[^\n]*\n(.*?)^(?P=fence)\n',raw,re.S|re.M))
 assert blocks, 'zero extracted blocks is not a replay'
 (destination/plan).write_bytes(raw)
 paths=[];task=0
@@ -14099,7 +19503,7 @@ def verify(number):
         print(f'task {number} {pattern}: exit {result.returncode}\n'+result.stdout+result.stderr,flush=True)
         if result.returncode:raise SystemExit(result.returncode)
 for block in blocks:
-    kind,number,name,sha,size,mode,encoding,body=block.groups()
+    kind,number,name,sha,size,mode,encoding,fence,body=block.groups()
     number=int(number);name=name.decode();size=int(size)
     assert number>=task and 1<=number<=5
     if task and number!=task:verify(task)
@@ -14142,7 +19546,7 @@ Only copied files are changed. External calls in selected tests are mocked.
 import ast
 from pathlib import Path
 import shutil,subprocess,sys
-root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/review-probes-touch-final-1';base.mkdir(exist_ok=False)
+root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/review-probes-bootstrap-final-1';base.mkdir(exist_ok=False)
 G='test_gate.Gates.';S='test_settings.Settings.';T='test_tag_signature.TagSignature.';P='test_publish.';W='test_workflows.Workflows.'
 cases=[]
 def guard(file,message,test):cases.append((file,message,test))
@@ -14249,7 +19653,7 @@ Eleven additional mutations. All edits occur only in fresh COPIES; choose a fres
 import ast
 from pathlib import Path
 import shutil,subprocess,sys
-root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/touch-probes-final-2';base.mkdir(exist_ok=False)
+root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/touch-probes-bootstrap-final-1';base.mkdir(exist_ok=False)
 A='test_approval.Approval.'
 cases=[
  ('approval.py','malformed maintainer',A+'test_missing_malformed_other_key_and_different_inventory_refused'),
@@ -14285,7 +19689,7 @@ print(f'{len(cases)+len(manual)} hardware-root COPY mutations failed real assert
 
 ### Installer hardware COPY probes
 
-Thirteen additional mutations against the integrated final hardener. External signing and attestation use explicit doubles; real jq checks the signed digest-set selection.
+Thirteen additional mutations against the integrated final hardener, including actual import refusal under suppressed errexit. External signing and attestation use explicit doubles; real jq checks the signed digest-set selection.
 
 ```python
 import os
@@ -14294,7 +19698,7 @@ import shutil
 import subprocess
 
 root = Path.cwd()
-base = root / '.superpowers/sdd/release-foundation/touch-installer-probes-1'
+base = root / '.superpowers/sdd/release-foundation/touch-installer-probes-bootstrap-final-1'
 base.mkdir()
 mutations = [
     ('schema', '.schema != 1 or ', ''),
@@ -14327,10 +19731,42 @@ for name, old, new in mutations:
 print('13 COPY probes fail real assertions; production tree unmodified', flush=True)
 ```
 
+### Independent bootstrap COPY probes
+
+Nine additional mutations against the actual README block. Disposable signing subkeys exercise real GnuPG and both SHA-256 tools; exact-origin offline transport fixtures never contact a release. Every counted failure is an assertion of refusal or non-execution, never an import/runtime error or wording match. Choose a fresh COPY root on repetition.
+
+```python
+"""Only copied README blocks are mutated; every failure must be an assertion."""
+from pathlib import Path
+import shutil,subprocess,sys
+root=Path.cwd();base=root/'.superpowers/sdd/release-foundation/bootstrap-probes-1';base.mkdir(exist_ok=False)
+pincheck='    awk -F: -v fp="$release_fingerprint" \'$1 == "fpr" && $10 == fp { found=1 } END { exit !found }\' "$release_dir/$release_source.fingerprints" || exit 1'
+verify='release_gpg --status-fd 1 --verify release-inventory.json.asc release-inventory.json > inventory-status || exit 1'
+cases=[
+ ('inventory-authentication',verify,'printf \'[GNUPG:] VALIDSIG %s\\n\' "$release_fingerprint" > inventory-status'),
+ ('signing-subkey-pin','if ($3 != fp) bad=1','if (0) bad=1'),
+ ('sha256sum-refusal','sha256sum -c installer.sha256 || exit 1','sha256sum -c installer.sha256'),
+ ('shasum-refusal','shasum -a 256 -c installer.sha256 || exit 1','shasum -a 256 -c installer.sha256'),
+ ('main-pin','grep -F -- "$release_fingerprint" "$release_dir/main-readme" >/dev/null || exit 1',':'),
+ ('github-independent-pin',pincheck,'    if [ "$release_source" != github ]; then\n'+pincheck+'\n    fi'),
+ ('keyserver-independent-pin',pincheck,'    if [ "$release_source" != keyserver ]; then\n'+pincheck+'\n    fi'),
+ ('no-early-execution',verify,'sh ./hennery-installer.sh\n'+verify),
+ ('requested-release-tag','.tag != $tag','false'),
+]
+for name,old,new in cases:
+ d=base/name;shutil.copytree(root/'packaging',d/'packaging',ignore=shutil.ignore_patterns('__pycache__'));shutil.copyfile(root/'README.md',d/'README.md')
+ p=d/'README.md';s=p.read_text();assert s.count(old)==1,(name,s.count(old));p.write_text(s.replace(old,new))
+ r=subprocess.run([sys.executable,'-m','unittest','discover','-s','packaging/release','-p','test_bootstrap.py'],cwd=d,capture_output=True,text=True)
+ log=r.stdout+r.stderr;(d/'probe.log').write_text(log)
+ assert r.returncode and 'FAIL:' in log and 'ERROR:' not in log and 'KeyError' not in log,(name,log)
+ print('ASSERTION FAILURE: '+name,flush=True)
+print(f'{len(cases)} bootstrap COPY mutations killed by actual refusals/non-execution assertions',flush=True)
+```
+
 ## After this plan
 
-- Parent independent re-review of platform/security/whole branch; collect complete PR checks, reviewDecision, mergeStateStatus and unresolved threads. No self-approval.
-- Maintainer-only setup: physical signing-subkey touch policy, no accessible software copy, local inventory signing/public sidecar, honest audit confirmation, actual reviewer ID, tag deployment policy, the two owner/immutable rulesets, immutable releases, environment-only App/token secrets, GHCR package Actions READ and real negative push, crates.io exact workflow+environment, held bucket/IAM/retention/audit principals. None was configured here.
+- Parent independent re-review of platform/security/whole branch and authenticated bootstrap; collect complete PR checks, reviewDecision, mergeStateStatus and unresolved threads. No self-approval.
+- Maintainer-only setup: publish/corroborate the full signing fingerprint through main, account keys and keys.openpgp.org before enablement; physical signing-subkey touch policy, no accessible software copy, local inventory signing/public sidecar, honest audit confirmation, actual reviewer ID, tag deployment policy, the two owner/immutable rulesets, immutable releases, environment-only App/token secrets, GHCR package Actions READ and real negative push, crates.io exact workflow+environment, held bucket/IAM/retention/audit principals. None was configured here.
 - R3/R4 migration to the shared tagged interface and final metadata/payload contract. Confirm the binstall external-only bridge default and permitted dedicated GHCR credential kind; upstream capability gaps remain explicit and channels stay off until qualified.
 - Native Linux/macOS CI and logged-in agent/service/platform floors, current advisory/licence/asset/corresponding-source/static OpenSSL review, then explicit per-channel publication approval and public install acceptance.
 - No announcements or moving aliases before the whole approved set is healthy; preserve source/rollback artifacts and compatibility/backup obligations. Parent cleans historical replay/helper/scratch trees; no memory narratives were written.
