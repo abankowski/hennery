@@ -8,11 +8,11 @@
 
 **Tech stack:** Existing Rust/rusqlite/axum/hennery-view and React/TypeScript/Vite service worker. No dependency, migration, generated DTO, PushPayload or answer-protocol change.
 
-**Spec:** [Phone design](../specs/2026-10-14-phone-design.md) §§6–7 and 10; [client view](../specs/2026-10-02-client-view-design.md) §§3–4; [frontend](../specs/2026-09-26-frontend-design.md) §§6.3, 9–10. Builds on [P1](2026-10-26-phone-pwa.md) and [4e-ii-b](2026-10-24-web-mcp-oauth.md), especially their After this plan handoffs. Base: `256691fe` (P1 included).
+**Spec:** [Phone design](../specs/2026-10-14-phone-design.md) §§6–7 and 10; [client view](../specs/2026-10-02-client-view-design.md) §§3–4; [frontend](../specs/2026-09-26-frontend-design.md) §§6.3, 9–10. Builds on [P1](2026-10-26-phone-pwa.md) and [4e-ii-b](2026-10-24-web-mcp-oauth.md), especially their After this plan handoffs. Original implementation/replay base: `256691fe` (P1 included). Current record base: `191aa71b` (P1, W2 and R1 included); the unchanged six patches also apply to this base.
 
 ## Execution status
 
-Built first in `plan/phone-p2`. The exact patches below are extracted from the built files; fresh replay and final verification are recorded in Task 4. Independent review and installed-device/vendor acceptance remain parent-owned. This is not release approval.
+Built, embedded and verified in `plan/phone-p2`, originally from `256691fe`; rebased onto `e36e66c8` after W2 and `191aa71b` after R1. Current implementation commits: `0ba5e081`, `7edf7502`, `37a4f714` and `cd13dcb1`; embedded plan commit `3e61cf6f`. The original fresh replay extracted six patches / 33 implementation files and finished GREEN. Codex gpt-6-astra, on the maintainer's behalf, reviewed `256691fe..27114645`: **APPROVE AFTER AMENDMENTS**. The two reproduced races and duplicate-probe quality amendment are addressed below; the parent reports scoped re-confirmation **CONFIRMED**. Amended fresh replay-5 finished GREEN: six extracted patches / 33 files, every task RED then GREEN, all six Rust gates, the full web gate and eight embedded PWA cases; the whole source tree matches. Detailed evidence is recorded in Task 4. Linux/macOS CI and installed-device/vendor acceptance remain parent-owned. Current base 191aa71b passed every requested post-rebase gate (see below). Stopped for parent PR/CI handling; this is not release approval.
 
 ## Scope
 
@@ -24,14 +24,14 @@ Out: lock-screen approval/text submission, an offline answer outbox, another SSE
 
 1. **Settled operator default:** tap opens the live card; answers happen in the authenticated app. Existing Origin, ownership and durable-queue semantics decide all mutations.
 2. **One snapshot:** the owner/session existence check, pending row, opened event, version and group use one guarded DEFERRED transaction. A writer can commit between reads while the reader retains its original snapshot. HTTP, SSE outside-tail construction and overlay all call this accessor. Serialization and sends happen after it returns.
-3. **Ready-document ownership:** a dedicated MessageChannel binds attempt id, canonical target and a 2-second lease; the worker waits at most 500 ms for the acknowledgement and re-enumerates the exact client before navigating. Edits, interactions and API mutations cannot start during a granted lease. Failure releases the lease; expiry bounds a lost worker. Exact-target focus needs no readiness and never navigates.
+3. **Ready-document ownership:** a dedicated MessageChannel binds attempt id, canonical target and a 2-second lease; the worker waits at most 500 ms for the acknowledgement and re-enumerates the exact client before navigating. Edits, interactions and API mutations cannot start during a granted lease. Before calling navigate, a second bound acknowledgement promotes the prepared lease to navigation ownership. The client/document and deadline are rechecked immediately before that call. Ownership then lasts until navigate actually settles: racing its promise against a timeout does not cancel document replacement. Prepared leases expire; a pending navigation stays fenced even beyond expiry and requires manual reload if it never settles. Exact-target focus needs no readiness and never navigates.
 4. **Conservative input retention:** a document that has been edited/interacted with stays dirty until it closes, including unmounted drafts/images. This can open an extra window after edits were later cleared, but avoids declaring an in-memory draft safe by inspecting only currently mounted fields. Ordinary non-standalone Chromium windows acknowledge separately opening targets, covered by the browser gate. Every existing same-origin document must be accounted for; standalone, unknown or unresponsive contexts receive a non-destructive in-app link hint instead. The hint's explicit link uses a native blank target with noopener/noreferrer, preserving the current document rather than switching its SPA route. Its touch target is at least 44 px, asserted by the browser gate. Actual installed-app reuse remains a manual acceptance gate.
 5. **Bounded old cards:** keep up to 256 old question items outside loaded groups; each uses the Rust view caps. A newer item wins regardless of HTTP/SSE arrival order, and paging joins a pin once. Session removal invalidates an in-flight read. A linked delivered/withdrawn card is revealed even above the rendered tail; a late event never activates an option or steals typing.
 6. **Ambiguous sends:** preserve form input; read the current bounded question before exposing an explicit retry. Failed recovery offers Refresh question. No reconnect or refresh replays a POST. Delivered verdicts remain monotonic. An API retry after step-up retains mutation ownership until its response is read.
-7. **Gateway:** after notification display, only a validated /mcp target sends the two-field v1 hint. The app checks its active registration, coalesces through McpScope.refresh, retains hidden dirty state and reads on visibility/focus. Timer reads alone pause during consent. Hints never patch a status or invoke authorization/probes.
+7. **Gateway:** after notification display, only a validated /mcp target sends the two-field v1 hint. The app checks its active registration, coalesces through McpScope.refresh, retains hidden dirty state and reads on visibility/focus. An invalidation during a GET advances the epoch and marks it dirty, suppressing the stale publication and retaining exactly one follow-up after success or failure. Timer reads alone pause during consent. Hints never patch a status or invoke authorization/probes.
 8. **Browser gate repair:** the existing MCP focus assertion failed reproducibly at both widths. Capture the pre-dialog control in App before inert blurs it; StepUpDialog returns there. The existing browser assertion is retained, and jsdom is not used to claim inert/focus layout proof. This small accessibility correction was needed to complete the unchanged web gate.
 
-These implementation choices require the parent's independent security/task review; none is labelled independently approved here.
+The parent supplied the independent review above. The parent reports the amendments independently **CONFIRMED**; no self-approval is claimed.
 
 ## Global constraints
 
@@ -95,7 +95,7 @@ Apply each fenced **diff** verbatim with git apply, in order. Save the fence bod
 
 ## Task 1: Coherent question snapshots and producer links
 
-- [ ] Step 1: add the tests.
+- [x] Step 1: add the tests.
 
 ```diff
 diff --git a/crates/hennery-sessions/src/store.rs b/crates/hennery-sessions/src/store.rs
@@ -105,7 +105,7 @@ index b2c5fa95..c5335af4 100644
 @@ -4645,6 +4645,65 @@ mod tests {
      use hennery_kernel::hosts::{EnrollOutcome, Enrollment, Hosts};
      use hennery_kernel::operator::{Operator, SetupOutcome};
- 
+
 +    #[test]
 +    fn question_snapshot_retains_state_and_version_when_answer_commits_between_reads() {
 +        let dir = tempfile::tempdir().unwrap();
@@ -175,7 +175,7 @@ index e82aa1e6..4e545206 100644
 @@ -339,6 +339,34 @@ fn session(store: &Store) -> EdgeSession {
      (&store.find_session("s1").unwrap().unwrap()).into()
  }
- 
+
 +#[test]
 +fn question_urls_encode_both_ids_and_completion_keeps_the_legacy_target() {
 +    let store = Store::open_in_memory().unwrap();
@@ -214,7 +214,7 @@ index e82aa1e6..4e545206 100644
 -        ("/sessions/s1", "s1", "hat-1")
 +        ("/sessions/s1?pending=p1", "s1", "hat-1")
      );
- 
+
      let finished = notice_for(&PushEdge::TurnEnded(TurnOutcome::Completed), &s).unwrap();
 diff --git a/crates/hennery-testkit/tests/owner_filter.rs b/crates/hennery-testkit/tests/owner_filter.rs
 index fde5c510..69745bcf 100644
@@ -249,7 +249,7 @@ index 643941dd..9c2a4692 100644
 @@ -611,6 +611,98 @@ fn question(collector: &Collector, session: &str, pending_id: &str, turn: &str)
      event
  }
- 
+
 +#[tokio::test]
 +async fn question_lookup_is_owned_bounded_and_matches_the_live_overlay() {
 +    let c = Collector::start().await;
@@ -371,7 +371,7 @@ cargo test -p hennery-sessions --lib question_snapshot --locked
 cargo test -p hennery-testkit --test view question_lookup --locked
 ```
 
-- [ ] Step 2: add the feature.
+- [x] Step 2: add the feature.
 
 ```diff
 diff --git a/crates/hennery-sessions/src/notify.rs b/crates/hennery-sessions/src/notify.rs
@@ -394,7 +394,7 @@ index 89ddc5d5..83d89a8a 100644
          tag: session.id.clone(),
      })
  }
- 
+
 +fn encoded_id(id: &str) -> String {
 +    id.bytes()
 +        .map(|byte| match byte {
@@ -414,7 +414,7 @@ index c5335af4..4f17298c 100644
 @@ -4491,6 +4491,77 @@ impl Store {
          )?)
      }
- 
+
 +    /// A bounded question with its state, version and group from one read
 +    /// snapshot. Explicitly DEFERRED: readers must allow independent WAL
 +    /// writers to commit without changing the snapshot they already read.
@@ -519,7 +519,7 @@ index 5520a32e..f50279af 100644
 @@ -131,6 +132,14 @@ fn not_found() -> Response {
      error(StatusCode::NOT_FOUND, "not_found", "no such session")
  }
- 
+
 +async fn question_card(State(state): State<AppState>, Path((id, pending_id)): Path<(String, String)>) -> Response {
 +    match stored_question(&state.store, &id, &pending_id) {
 +        Ok(Some(item)) => Json(item).into_response(),
@@ -580,11 +580,11 @@ index 5520a32e..f50279af 100644
 -    }))
 +    store.question_snapshot(id, pending_id)
  }
- 
+
  /// Whether a pending id is one the fold makes an item of: not empty, and
 ```
 
-- [ ] Step 3: verify GREEN, inspect staged bytes, commit and push the task; request independent review from the parent.
+- [x] Step 3: verify GREEN, inspect staged bytes, commit and push the task; request independent review from the parent.
 
 ```sh
 cargo test -p hennery-sessions --lib --test push_edges --locked
@@ -593,11 +593,11 @@ cargo test -p hennery-testkit --test view --test reconcile --test owner_filter -
 
 ## Task 2: Worker navigation, ownership and gateway invalidation
 
-- [ ] Step 1: add the tests.
+- [x] Step 1: add the tests.
 
 ```diff
 diff --git a/web/e2e/push-fixture.ts b/web/e2e/push-fixture.ts
-index 84ae0f96..c30f7e68 100644
+index 84ae0f96..4fa27600 100644
 --- a/web/e2e/push-fixture.ts
 +++ b/web/e2e/push-fixture.ts
 @@ -6,6 +6,8 @@ import { runInNewContext } from 'node:vm'
@@ -606,13 +606,13 @@ index 84ae0f96..c30f7e68 100644
  import { testLocks } from '../src/test-locks'
 +import type { AppWindow, Windows } from '../src/pwa/navigation'
 +import { MessageChannel as WorkerMessageChannel } from 'node:worker_threads'
- 
+
  export async function mockPush(context: BrowserContext) {
    await context.addInitScript(() => {
 @@ -37,8 +39,8 @@ export async function mockPush(context: BrowserContext) {
    })
  }
- 
+
 -export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void } = {}) {
 -  type Event = { data?: { text(): string }; oldSubscription?: PushSubscription | null; newSubscription?: PushSubscription | null; request?: Request; respondWith?(promise: Promise<Response>): void; waitUntil(promise: Promise<unknown>): void }
 +export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { origin?: string; clients?: Windows; pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void } = {}) {
@@ -640,7 +640,7 @@ index 84ae0f96..c30f7e68 100644
      push: (text: string | null) => dispatch('push', text === null ? {} : { data: { text: () => text } }),
      change: (oldSubscription: PushSubscription | null, newSubscription: PushSubscription | null) => dispatch('pushsubscriptionchange', { oldSubscription, newSubscription }),
      handles(request: Request) {
-@@ -82,3 +86,42 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
+@@ -82,3 +86,49 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
      },
    }
  }
@@ -661,9 +661,16 @@ index 84ae0f96..c30f7e68 100644
 +        const port = transfer?.[0] as MessagePort | undefined
 +        if (port) port.onmessage = event => { void page.evaluate(data => {
 +          const ports = (window as unknown as { __notificationPorts?: Map<string, MessagePort> }).__notificationPorts
-+          const m = data as { id: string }
-+          ports?.get(m.id)?.postMessage(data)
-+        }, event.data).catch(() => {}) }
++          const m = data as { id: string; kind: string }, channel = ports?.get(m.id)
++          if (!channel) return null
++          if (m.kind === 'navigation_start') return new Promise<unknown>(resolve => {
++            channel.onmessage = event => resolve(event.data)
++            channel.postMessage(data)
++          })
++          channel.postMessage(data)
++          if (m.kind === 'navigation_release') { ports?.delete(m.id); channel.close() }
++          return null
++        }, event.data).then(reply => { if (reply) port.postMessage(reply) }).catch(() => {}) }
 +        void page.evaluate(async ({ message, hasPort }) => {
 +          const registration = await navigator.serviceWorker.ready
 +          const m = message as { id: string }
@@ -684,13 +691,45 @@ index 84ae0f96..c30f7e68 100644
 +  }
 +}
 diff --git a/web/src/components/McpScope.test.tsx b/web/src/components/McpScope.test.tsx
-index 0f5849f4..22006437 100644
+index 0f5849f4..ac3379e7 100644
 --- a/web/src/components/McpScope.test.tsx
 +++ b/web/src/components/McpScope.test.tsx
-@@ -7,6 +7,30 @@ import { json } from '../test-server'
+@@ -5,8 +5,62 @@ import { ClientContext } from '../app-client'
+ import { connection } from '../test-fixtures'
+ import { json } from '../test-server'
  import McpScope, { McpBadge, useMcpScope } from './McpScope'
- 
++import { deferred } from '../test-locks'
+
  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
++it.each(['succeeds', 'fails'])('retains push invalidation during consent when an older deferred GET %s, with one follow-up', async outcome => {
++  vi.useFakeTimers()
++  const service = new EventTarget(), active = {} as ServiceWorker
++  Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: Object.assign(service, { getRegistration: async () => ({ active }) }) })
++  const old = deferred<Response>(), current = deferred<Response>()
++  const fetch = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise)
++  const client = new Client({ fetch, navigate: vi.fn(), stepUp: vi.fn(), here: () => ({ pathname: '/mcp', search: '' }) })
++  const view = render(<ClientContext.Provider value={client}><McpScope active><Control /><McpBadge /></McpScope></ClientContext.Provider>)
++  try {
++    fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
++    expect(fetch).toHaveBeenCalledTimes(1)
++    await act(async () => {
++      for (let i = 0; i < 3; i++) service.dispatchEvent(new MessageEvent('message', { source: active, data: { version: 1, kind: 'mcp_invalidated' } }))
++    })
++    expect(fetch).toHaveBeenCalledTimes(1)
++    await act(async () => old.resolve(outcome === 'succeeds' ? json(200, [connection({ label: 'Stale ok', status: 'ok' })]) : json(500, { code: 'unavailable', message: 'old read failed' })))
++    expect(fetch).toHaveBeenCalledTimes(2)
++    expect(screen.getByRole('status')).toHaveTextContent('No report')
++    await act(async () => current.resolve(json(200, [connection({ label: 'Current auth', status: 'needs_auth' })])))
++    expect(screen.getByText('Current auth', { exact: true })).toBeVisible()
++    expect(screen.getByText('1 need attention', { exact: true })).toBeVisible()
++    await act(async () => { await vi.advanceTimersByTimeAsync(120000) })
++    expect(fetch).toHaveBeenCalledTimes(2)
++  } finally {
++    old.resolve(json(200, [])); current.resolve(json(200, [])); view.unmount()
++    // @ts-expect-error restore missing browser API
++    delete navigator.serviceWorker
++  }
++})
 +it('active-worker relay reads through the shared reader during consent, coalesces, and defers while hidden', async () => {
 +  const service = new EventTarget(), active = {} as ServiceWorker
 +  Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: Object.assign(service, { getRegistration: async () => ({ active }) }) })
@@ -702,7 +741,7 @@ index 0f5849f4..22006437 100644
 +  const hint = (source = active, data: unknown = { version: 1, kind: 'mcp_invalidated' }) => service.dispatchEvent(new MessageEvent('message', { source, data }))
 +  await act(async () => { hint({} as ServiceWorker); hint(active, { version: 2, kind: 'mcp_invalidated' }); hint(active, { version: 1, kind: 'answer' }) })
 +  expect(fetch).toHaveBeenCalledTimes(1)
-+  await act(async () => { hint(); hint(); hint() })
++  await act(async () => { hint() })
 +  expect(fetch).toHaveBeenCalledTimes(2)
 +  expect(screen.getByText('Current', { exact: true })).toBeVisible()
 +  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
@@ -720,10 +759,10 @@ index 0f5849f4..22006437 100644
    const client = new Client({ fetch: fetch as typeof globalThis.fetch, navigate: vi.fn(), stepUp: vi.fn(), here: () => ({ pathname: '/mcp', search: '' }) })
 diff --git a/web/src/pwa/navigation.test.ts b/web/src/pwa/navigation.test.ts
 new file mode 100644
-index 00000000..8527ad37
+index 00000000..cdb05a0d
 --- /dev/null
 +++ b/web/src/pwa/navigation.test.ts
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,200 @@
 +import { afterEach, expect, it, vi } from 'vitest'
 +import { NavigationGate, clickNotification, listenForNavigation, navigationGate, type AppWindow } from './navigation'
 +import { Client } from '../api/client'
@@ -778,7 +817,10 @@ index 00000000..8527ad37
 +    const m = message as { kind: string; id: string; target: string; until: number }
 +    if (m.kind !== 'navigation_prepare') return
 +    const port = transfer![0] as MessagePort
-+    port.onmessage = e => { if (e.data.kind === 'navigation_release') gate.release(e.data.id) }
++    port.onmessage = e => {
++      if (e.data.kind === 'navigation_release') gate.release(e.data.id)
++      if (e.data.kind === 'navigation_start') port.postMessage({ ...e.data, kind: 'navigation_started', started: gate.begin(e.data.id) })
++    }
 +    port.postMessage({ ...m, version: 1, kind: 'navigation_ready', ready: gate.reserve(m.id, m.target, m.until), separate: false })
 +  })
 +  return { client, gate }
@@ -818,6 +860,48 @@ index 00000000..8527ad37
 +  release([client]); await clicking
 +  expect(client.navigate).not.toHaveBeenCalled()
 +  expect(gate.edit()).toBe(true)
++})
++it.each(['commits', 'fails', 'rejects'])('keeps the actual document fenced until a delayed navigation %s', async outcome => {
++  channels(); vi.useFakeTimers()
++  window.history.replaceState(null, '', '/sessions/old')
++  const service = new EventTarget(), active = {} as ServiceWorker
++  Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: Object.assign(service, { getRegistration: async () => ({ active }) }) })
++  const stop = listenForNavigation(vi.fn()), settled = deferred()
++  const client = windowClient('/sessions/old'), next = windowClient('/sessions/new')
++  let committed = false, finished = false
++  client.postMessage.mockImplementation((data, transfer) => {
++    service.dispatchEvent(new MessageEvent('message', { source: active, data, ports: transfer as MessagePort[] }))
++  })
++  client.navigate.mockImplementation(async () => {
++    await settled.promise
++    if (outcome === 'rejects') throw new Error('Navigation failed')
++    if (outcome === 'fails') return null
++    committed = true
++    return next
++  })
++  const clients = { matchAll: async () => [client], openWindow: vi.fn() }
++  const clicking = clickNotification('/sessions/new', clients, 'https://app.example').then(() => { finished = true })
++  try {
++    await vi.advanceTimersByTimeAsync(0)
++    expect(client.navigate).toHaveBeenCalledOnce()
++    await vi.advanceTimersByTimeAsync(2500)
++    expect(navigationGate.blocked()).toBe(true)
++    expect(navigationGate.edit()).toBe(false)
++    expect(() => navigationGate.mutation()).toThrow('Opening a notification')
++    expect(finished).toBe(false)
++    expect(committed).toBe(false)
++    settled.resolve(); await clicking
++    await vi.advanceTimersByTimeAsync(0)
++    expect(navigationGate.blocked()).toBe(false)
++    navigationGate.mutation()()
++    expect(committed).toBe(outcome === 'commits')
++    expect(next.focus).toHaveBeenCalledTimes(outcome === 'commits' ? 1 : 0)
++  } finally {
++    settled.resolve(); await clicking; await vi.advanceTimersByTimeAsync(0)
++    stop()
++    // @ts-expect-error restore missing browser API
++    delete navigator.serviceWorker
++  }
 +})
 +it('a cold click opens the validated target and never trusts a forged absolute URL', async () => {
 +  const clients = { matchAll: async () => [], openWindow: vi.fn(async () => null) }
@@ -898,7 +982,7 @@ index 8ea44e2d..f53f5ee9 100644
 @@ -10,6 +10,29 @@ import { Client } from '../api/client'
  beforeAll(async () => { await build() })
  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
- 
+
 +it('the emitted click handler closes the notice and focuses an exact target without reloading', async () => {
 +  const client = { id: 'app', url: 'https://app.example/sessions/s?pending=p', focus: vi.fn(async () => {}), navigate: vi.fn(), postMessage: vi.fn() }
 +  const close = vi.fn()
@@ -933,7 +1017,7 @@ Run inside the dev shell; each command must be seen RED before Step 2:
 pnpm --dir web test src/pwa/navigation.test.ts src/components/McpScope.test.tsx
 ```
 
-- [ ] Step 2: add the feature.
+- [x] Step 2: add the feature.
 
 ```diff
 diff --git a/web/src/App.tsx b/web/src/App.tsx
@@ -945,11 +1029,11 @@ index b0dedf92..88a61a26 100644
  import PwaStatus from './components/PwaStatus'
  import { completeLogout } from './pwa/logout'
 +import NotificationNavigation from './components/NotificationNavigation'
- 
+
  interface Waiting {
    resolve: () => void
 @@ -18,8 +19,13 @@ interface Waiting {
- 
+
  export default function App({ fetchImpl }: { fetchImpl?: typeof fetch }) {
    const [waiting, setWaiting] = useState<Waiting | null>(null)
 +  const focusBeforeStepUp = useRef<HTMLElement | null>(null)
@@ -987,18 +1071,18 @@ index e72326d1..488bdf90 100644
  import { ApiFailure, Unauthenticated, retryAfterSeconds } from './errors'
  import { loginHref } from './next'
 +import { navigationGate } from '../pwa/navigation'
- 
+
  export interface ClientDeps {
    fetch: typeof fetch
 @@ -53,12 +54,15 @@ export class Client {
- 
+
    /** A fresh confirmation without resending a request (OAuth needs a new click). */
    async confirm(): Promise<void> {
 -    await this.stepUpOnce()
 +    const finish = navigationGate.mutation()
 +    try { await this.stepUpOnce() } finally { finish() }
    }
- 
+
    /** `method path` with a JSON body, answered as JSON (`undefined` for an
     *  empty answer). */
    async request<T>(method: string, path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
@@ -1018,10 +1102,10 @@ index e72326d1..488bdf90 100644
      })
 +    } finally { finish() }
    }
- 
+
    private async networkAttempt<T>(method: string, path: string, body: unknown, options: RequestOptions, read: (response: Response) => Promise<T>): Promise<T> {
 diff --git a/web/src/components/McpScope.tsx b/web/src/components/McpScope.tsx
-index 9011ae4e..01a8a38d 100644
+index 9011ae4e..f8da5bf1 100644
 --- a/web/src/components/McpScope.tsx
 +++ b/web/src/components/McpScope.tsx
 @@ -22,6 +22,7 @@ export default function McpScope({ children, active }: { children: ReactNode; ac
@@ -1032,12 +1116,48 @@ index 9011ae4e..01a8a38d 100644
    const pending = useRef<Promise<McpConnectionItem[]> | null>(null)
    const controller = useRef(new AbortController())
    const refresh = useCallback((): Promise<McpConnectionItem[]> => {
-@@ -55,12 +56,22 @@ export default function McpScope({ children, active }: { children: ReactNode; ac
+@@ -29,16 +30,22 @@ export default function McpScope({ children, active }: { children: ReactNode; ac
+     const signal = controller.current.signal
+     const task = (async () => {
+       let rows: McpConnectionItem[] = []
+-      do {
+-        dirty.current = false
+-        const observed = epoch.current
+-        rows = await connections(client, signal)
+-        if (!signal.aborted && observed === epoch.current) { setData(rows); setError(null) }
+-      } while (dirty.current && !signal.aborted)
+-      return rows
++      try {
++        do {
++          dirty.current = false
++          const observed = epoch.current
++          try {
++            rows = await connections(client, signal)
++            if (!signal.aborted && observed === epoch.current) { setData(rows); setError(null) }
++          } catch (err) {
++            if (err instanceof Unauthenticated || !dirty.current || signal.aborted) throw err
++          }
++        } while (dirty.current && !signal.aborted)
++        return rows
++      } finally { if (controller.current.signal === signal) pending.current = null }
+     })()
+     pending.current = task
+-    void task.catch(err => { if (!signal.aborted && !(err instanceof Unauthenticated)) setError(messageOf(err)) }).finally(() => { if (pending.current === task) pending.current = null })
++    void task.catch(err => { if (!signal.aborted && !(err instanceof Unauthenticated)) setError(messageOf(err)) })
+     return task
+   }, [client])
+   const publish: Scope['set'] = useCallback(value => {
+@@ -55,12 +62,27 @@ export default function McpScope({ children, active }: { children: ReactNode; ac
      return () => { controller.current.abort(); epoch.current++ }
    }, [refresh])
    useEffect(() => {
 -    const read = () => { void refresh().catch(() => {}) }
-+    const read = () => { pushDirty.current = false; void refresh().catch(() => {}) }
++    const read = () => {
++      // A pending GET may have captured the state before this invalidation.
++      // Retain one follow-up and keep that older result from being published.
++      epoch.current++; dirty.current = true; pushDirty.current = false
++      void refresh().catch(() => {})
++    }
      const visible = () => { if (document.visibilityState === 'visible') read() }
 +    let live = true
 +    const relay = async (event: MessageEvent<unknown>) => {
@@ -1081,14 +1201,14 @@ index 71950e7f..35377661 100644
    onCancel: () => void
 +  returnTo?: HTMLElement | null
  }
- 
+
 -export default function StepUpDialog({ onDone, onCancel }: Props) {
 +export default function StepUpDialog({ onDone, onCancel, returnTo }: Props) {
    const client = useClient()
    const [ceremony, setCeremony] = useState<PasskeyCeremony | null>(null)
    const [password, setPassword] = useState('')
 @@ -39,10 +40,10 @@ export default function StepUpDialog({ onDone, onCancel }: Props) {
- 
+
    // Focus moves into the dialog and back where it was when it closes.
    useEffect(() => {
 -    const before = document.activeElement as HTMLElement | null
@@ -1097,7 +1217,7 @@ index 71950e7f..35377661 100644
      return () => before?.focus?.()
 -  }, [])
 +  }, [returnTo])
- 
+
    const withPasskey = async () => {
      if (!ceremony) return
 diff --git a/web/src/main.tsx b/web/src/main.tsx
@@ -1109,29 +1229,29 @@ index 42e6f40c..93d10ede 100644
  import './index.css'
  import { registerWorker } from './pwa/lifecycle'
 +import { watchNavigationEdits } from './pwa/navigation'
- 
+
 +watchNavigationEdits()
  void registerWorker()
- 
+
  createRoot(document.getElementById('root')!).render(
 diff --git a/web/src/pwa/navigation.ts b/web/src/pwa/navigation.ts
 new file mode 100644
-index 00000000..682ac124
+index 00000000..9e5a2e10
 --- /dev/null
 +++ b/web/src/pwa/navigation.ts
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,182 @@
 +import { notificationTarget } from './notification'
 +import { appRoute } from './shell'
 +
 +const LEASE_MS = 2000
-+type Lease = { id: string; target: string; until: number }
++type Lease = { id: string; target: string; until: number; navigating?: boolean }
 +/** Conservative: an edited document stays dirty until it closes. This also
 + * protects drafts whose controls were unmounted, and images held in memory. */
 +export class NavigationGate {
 +  private dirty = false
 +  private mutations = 0
 +  private lease: Lease | null = null
-+  private frozen(now: number) { return this.lease !== null && this.lease.until > now }
++  private frozen(now: number) { return this.lease !== null && (this.lease.navigating === true || this.lease.until > now) }
 +  edit(now = Date.now()): boolean {
 +    if (this.frozen(now)) return false
 +    this.dirty = true
@@ -1149,6 +1269,18 @@ index 00000000..682ac124
 +    return true
 +  }
 +  release(id: string) { if (this.lease?.id === id) this.lease = null }
++  begin(id: string, now = Date.now()): boolean {
++    if (!this.lease || this.lease.id !== id || this.lease.until <= now) return false
++    this.lease.navigating = true
++    return true
++  }
++  expire(id: string): boolean {
++    // Once navigate() may have an effect, only its settlement can release
++    // ownership. A deadline cannot cancel a browser navigation.
++    if (this.lease?.id === id && this.lease.navigating) return false
++    this.release(id)
++    return true
++  }
 +  blocked(now = Date.now()) { return this.frozen(now) }
 +}
 +export const navigationGate = new NavigationGate()
@@ -1171,7 +1303,7 @@ index 00000000..682ac124
 +  } catch { return null }
 +}
 +type Reply = { version: 1; kind: 'navigation_ready'; id: string; target: string; until: number; ready: boolean; separate: boolean }
-+async function ready(client: AppWindow, target: string): Promise<{ reply: Reply; release(): void } | null> {
++async function ready(client: AppWindow, target: string): Promise<{ reply: Reply; begin(): Promise<boolean>; release(): void } | null> {
 +  const id = crypto.randomUUID(), until = Date.now() + LEASE_MS
 +  const channel = new MessageChannel()
 +  const release = () => { channel.port1.postMessage({ version: 1, kind: 'navigation_release', id }); channel.port1.close() }
@@ -1182,7 +1314,16 @@ index 00000000..682ac124
 +      if (!r || r.version !== 1 || r.kind !== 'navigation_ready' || r.id !== id || r.target !== target || r.until !== until || typeof r.ready !== 'boolean' || typeof r.separate !== 'boolean') return
 +      clearTimeout(timer)
 +      if (Date.now() >= until) { release(); resolve(null) }
-+      else resolve({ reply: r as Reply, release })
++      else resolve({ reply: r as Reply, release, begin: () => new Promise<boolean>(started => {
++        const deadline = setTimeout(() => started(false), Math.max(0, until - Date.now()))
++        channel.port1.onmessage = event => {
++          const m = event.data
++          if (!m || m.version !== 1 || m.kind !== 'navigation_started' || m.id !== id || m.target !== target || m.until !== until || typeof m.started !== 'boolean') return
++          clearTimeout(deadline)
++          started(m.started && Date.now() < until)
++        }
++        channel.port1.postMessage({ version: 1, kind: 'navigation_start', id, target, until })
++      }) })
 +    }
 +    try { client.postMessage({ version: 1, kind: 'navigation_prepare', id, target, until }, [channel.port2]) }
 +    catch { clearTimeout(timer); release(); resolve(null) }
@@ -1208,11 +1349,12 @@ index 00000000..682ac124
 +      // closed meanwhile. Ownership covers this exact client/document URL.
 +      const current = (await clients.matchAll({ type: 'window', includeUncontrolled: false })).find(c => c.id === client.id && c.url === client.url)
 +      if (!current || Date.now() >= consent.reply.until) continue
-+      let timer: ReturnType<typeof setTimeout> | undefined
-+      const navigated = await Promise.race([
-+        current.navigate(target),
-+        new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), Math.max(0, consent.reply.until - Date.now())) }),
-+      ]).finally(() => clearTimeout(timer))
++      if (!await consent.begin()) continue
++      const owned = (await clients.matchAll({ type: 'window', includeUncontrolled: false })).find(c => c.id === client.id && c.url === client.url)
++      if (!owned || Date.now() >= consent.reply.until) continue
++      // Do not race this promise against expiry: timing out does not cancel
++      // its eventual document replacement. The page holds until settlement.
++      const navigated = await owned.navigate(target)
 +      if (navigated) { await navigated.focus().catch(() => {}); return }
 +    } catch { /* Release and offer the bounded fallback. */ }
 +    finally { consent.release() }
@@ -1246,14 +1388,21 @@ index 00000000..682ac124
 +    const allowed = appTarget(location.href, location.origin) !== null
 +    const ready = allowed && navigationGate.reserve(m.id, m.target, m.until)
 +    const id = m.id
-+    port.onmessage = e => { if (e.data?.version === 1 && e.data?.kind === 'navigation_release' && e.data?.id === id) { navigationGate.release(id); port.close() } }
++    port.onmessage = e => {
++      const data = e.data
++      if (data?.version !== 1 || data?.id !== id) return
++      if (data.kind === 'navigation_release') { navigationGate.release(id); port.close() }
++      if (data.kind === 'navigation_start' && data.target === m.target && data.until === m.until) {
++        port.postMessage({ version: 1, kind: 'navigation_started', id, target: m.target, until: m.until, started: ready && navigationGate.begin(id) })
++      }
++    }
 +    // Chromium's ordinary browser windows have separately opening targets,
 +    // exercised by the browser gate. Standalone and unknown platforms keep
 +    // the in-app hint: their OS may reuse the installed browsing context.
 +    const standalone = window.matchMedia?.('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true
 +    const separate = !standalone && /(?:Chrome|Chromium)\//.test(navigator.userAgent)
 +    port.postMessage({ version: 1, kind: 'navigation_ready', id, target: m.target, until: m.until, ready, separate })
-+    setTimeout(() => { navigationGate.release(id); port.close() }, Math.max(0, m.until - Date.now()))
++    setTimeout(() => { if (navigationGate.expire(id)) port.close() }, Math.max(0, m.until - Date.now()))
 +  }
 +  navigator.serviceWorker.addEventListener('message', message)
 +  return () => { live = false; navigator.serviceWorker.removeEventListener('message', message) }
@@ -1280,7 +1429,7 @@ index 6355d379..92896715 100644
 @@ -1,15 +1,24 @@
  import type { PushPayload } from '../generated/protocol'
  const neutral: PushPayload = { title: 'hennery needs your attention', body: 'Open hennery to check the current state.', url: '/sessions', tag: 'hennery-attention' }
- 
+
 -// Canonical literal paths only. P2 owns card targeting and window navigation.
 +// One canonical encoding prevents URL/route/query decoders disagreeing.
 +function idPart(encoded: string): boolean {
@@ -1314,7 +1463,7 @@ index 1e29a3ee..47ec3c0f 100644
  import { subscriptionBody } from './src/pwa/subscription'
  import { withPushOwnership } from './src/pwa/ownership'
 +import { clickNotification } from './src/pwa/navigation'
- 
+
  self.addEventListener('install', (event) => {
    event.waitUntil(installShell(caches, fetch, __PRECACHE__, __BUILD_ID__, crypto.randomUUID()))
 @@ -35,6 +36,14 @@ self.addEventListener('push', (event) => {
@@ -1342,7 +1491,7 @@ index 1e29a3ee..47ec3c0f 100644
 +})
 ```
 
-- [ ] Step 3: verify GREEN, inspect staged bytes, commit and push the task; request independent review from the parent.
+- [x] Step 3: verify GREEN, inspect staged bytes, commit and push the task; request independent review from the parent.
 
 ```sh
 pnpm --dir web typecheck
@@ -1352,7 +1501,7 @@ pnpm --dir web build
 
 ## Task 3: Bounded live cards and mobile answer recovery
 
-- [ ] Step 1: add the tests.
+- [x] Step 1: add the tests.
 
 ```diff
 diff --git a/web/e2e/pwa.spec.ts b/web/e2e/pwa.spec.ts
@@ -1380,7 +1529,7 @@ index 88412e65..79c8d196 100644
 @@ -165,6 +166,124 @@ test('mixed digest install fails, preserving the old offline shell; a complete n
    } finally { await context.close(); await proxy.stop(); await a.stop(); await b.stop() }
  })
- 
+
 +for (const width of [1280, 390]) test(`notification click reaches the live card and preserves busy input at ${width}px`, async ({ browser }) => {
 +  const context = await browser.newContext({ viewport: { width, height: 844 }, serviceWorkers: 'allow' })
 +  try {
@@ -1508,7 +1657,7 @@ index f3d23339..b6d3f508 100644
 +++ b/web/src/screens/Session.answer.test.tsx
 @@ -66,6 +66,16 @@ beforeEach(() => {
  })
- 
+
  describe('SessionView answering', () => {
 +  it('a pending link reveals a delivered card above the rendered tail', async () => {
 +    window.history.replaceState(null, '', '/sessions/s1?pending=p1')
@@ -1529,7 +1678,7 @@ index 6d065de4..73967dc5 100644
 +++ b/web/src/store/items.test.ts
 @@ -17,6 +17,22 @@ function loaded(items: Item[], older = false): ItemsState {
  }
- 
+
  describe('itemsReducer', () => {
 +  it('pins an older linked question, fences HTTP/SSE in both orders and deduplicates paging', () => {
 +    const question = (version: number) => ({ ...message('question:p', 'old', version, '2020-01-01T00:00:00Z'), kind: 'question' } as Item)
@@ -1551,26 +1700,43 @@ index 6d065de4..73967dc5 100644
      const state = loaded([message('a', 't1'), message('b', 't2')], true)
      expect(ids(state)).toEqual(['a', 'b'])
 diff --git a/web/src/store/useAnswer.test.ts b/web/src/store/useAnswer.test.ts
-index 65ae7973..ec28db9c 100644
+index 65ae7973..fb68ed64 100644
 --- a/web/src/store/useAnswer.test.ts
 +++ b/web/src/store/useAnswer.test.ts
-@@ -38,6 +38,23 @@ function use(t: ReturnType<typeof routed>, initial: Props) {
+@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
+ import type { Item } from '../generated/view'
+ import { json, routed } from '../test-stream'
+ import { AnswerBook, useAnswering, useHostAway } from './useAnswer'
++import { deferred } from '../test-locks'
+
+ const TS = '2026-10-02T10:00:00.000Z'
+ const msg = (id: string): Item => ({ id, version: 1, ts: TS, turn_id: 't1', kind: 'message', text: id }) as Item
+@@ -38,6 +39,32 @@ function use(t: ReturnType<typeof routed>, initial: Props) {
  }
- 
+
  describe('useAnswering', () => {
 +  it('refreshes after an ambiguous answer without resending or dropping the draft', async () => {
-+    let finish!: (response: Response) => void
-+    const t = routed(call => call.method === 'POST' ? Promise.reject(new TypeError('network lost')) : new Promise<Response>(resolve => { finish = resolve }))
++    const refreshed = deferred()
++    const t = routed(async call => {
++      if (call.method === 'POST') throw new TypeError('network lost')
++      await refreshed.promise
++      return json({ ...q, version: 2, answered: true, answerable: false })
++    })
 +    const book = new AnswerBook(t.client, 's1')
 +    const q = question('p') as Extract<Item, { kind: 'question' }>
 +    book.updateDraft(q.id, () => ({ note: 'kept' }))
 +    const answering = book.answer(q, { option_id: 'a' })
 +    await waitFor(() => expect(t.calls.some(c => c.path.endsWith('/questions/p'))).toBe(true))
 +    expect(book.localOf(q.id)?.phase).toBe('checking')
-+    await book.answer(q, { option_id: 'a' })
-+    expect(t.calls.filter(c => c.method === 'POST')).toHaveLength(1)
-+    finish(json({ ...q, version: 2, answered: true, answerable: false }))
-+    await answering
++    const duplicate = book.answer(q, { option_id: 'a' })
++    try {
++      // Assert before awaiting either answer: a missing guard must fail on
++      // the extra POST, rather than hang behind the deferred refresh.
++      expect(t.calls.filter(c => c.method === 'POST')).toHaveLength(1)
++    } finally {
++      refreshed.resolve()
++      await Promise.all([answering, duplicate])
++    }
 +    expect(book.localOf(q.id)?.phase).toBe('sent')
 +    expect(book.draftOf(q.id)).toEqual({ note: 'kept' })
 +    expect(t.calls.filter(c => c.method === 'POST')).toHaveLength(1)
@@ -1587,12 +1753,12 @@ index e4d7bbdb..594e5d50 100644
  import { json, liveStream, routed, type Call, type LiveStream } from '../test-stream'
  import { useSessionItems } from './useSessionItems'
 +import { deferred } from '../test-locks'
- 
+
  // A session id that needs encoding in a path.
  const ID = 's/1 x'
 @@ -56,6 +57,32 @@ afterEach(() => {
  })
- 
+
  describe('useSessionItems', () => {
 +  it.each(['http-first', 'sse-first', 'removed'])('fences a bounded old-card read against the stream: %s', async order => {
 +    const response = deferred<Response>()
@@ -1631,7 +1797,7 @@ Run inside the dev shell; each command must be seen RED before Step 2:
 pnpm --dir web test src/store/items.test.ts src/store/useAnswer.test.ts src/store/useSessionItems.test.ts src/screens/Session.answer.test.tsx
 ```
 
-- [ ] Step 2: add the feature.
+- [x] Step 2: add the feature.
 
 ```diff
 diff --git a/web/src/api/view.ts b/web/src/api/view.ts
@@ -1645,9 +1811,9 @@ index 848e1654..5893533f 100644
 -import type { ItemPage, SummaryPage, TurnContent } from '../generated/view'
 +import type { Item, ItemPage, SummaryPage, TurnContent } from '../generated/view'
  import type { SessionCatalog, SessionDetail } from '../generated/protocol'
- 
+
  const enc = encodeURIComponent
- 
+
 +export function questionCard(client: Client, id: string, pending: string): Promise<Item> {
 +  return client.request<Item>('GET', `/api/view/sessions/${enc(id)}/questions/${enc(pending)}`)
 +}
@@ -1730,7 +1896,7 @@ index 3521c6b6..daaf7043 100644
 +  const start = windowStart(items, pin, size, pending)
    const visible = useMemo(() => (start === 0 ? items : items.slice(start)), [items, start])
    const firstHeld = useRef<string | undefined>(undefined)
- 
+
 @@ -230,7 +232,26 @@ export default function SessionView({ id, summary, awaitSummary = false, tail =
    const s = useSessionItems(id, timing)
    const mcp = useMcpDelivery(id, summary?.lifecycle, Math.max(0, s.loads - 1))
@@ -1767,10 +1933,10 @@ index 3521c6b6..daaf7043 100644
 +  const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion)
    const announcement = useAnnouncement(answers)
    const hostAway = useHostAway(answers)
- 
+
 @@ -331,7 +352,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail =
    }
- 
+
    return (
 -    <div className="session">
 +    <div className="session" ref={questionRegion}>
@@ -1802,7 +1968,7 @@ index 13c5b6b1..f230b830 100644
 --- a/web/src/store/items.ts
 +++ b/web/src/store/items.ts
 @@ -15,6 +15,8 @@ import { foldVerdict } from '../lib/delivery'
- 
+
  export interface ItemsState {
    items: Item[]
 +  /** Bounded question reads whose groups have not been paged in. */
@@ -1816,10 +1982,10 @@ index 13c5b6b1..f230b830 100644
    | { type: 'upsert'; item: Item }
 +  | { type: 'pin'; item: Item }
    | { type: 'removed'; id: string }
- 
+
 -export const EMPTY_ITEMS: ItemsState = { items: [], older: false, epoch: '', revision: 0 }
 +export const EMPTY_ITEMS: ItemsState = { items: [], pinned: [], older: false, epoch: '', revision: 0 }
- 
+
  /** Whether `value` has what the store reads of an item. */
  export function isItem(value: unknown): value is Item {
 @@ -92,14 +95,19 @@ export function itemsReducer(state: ItemsState, action: ItemsAction): ItemsState
@@ -1895,10 +2061,10 @@ index c831a939..4e29ce32 100644
      readonly sessionId: string,
 +    private readonly onQuestion?: (item: Item) => void,
    ) {}
- 
+
    subscribe = (listener: () => void): (() => void) => {
 @@ -78,6 +81,7 @@ export class AnswerBook {
- 
+
    /** Change the draft of the question `id`, from the one held now. */
    updateDraft(id: string, next: (draft: Draft) => Draft) {
 +    if (!navigationGate.edit()) return
@@ -1906,7 +2072,7 @@ index c831a939..4e29ce32 100644
      const draft = next(held)
      if (draft === held) return
 @@ -102,7 +106,8 @@ export class AnswerBook {
- 
+
    /** Send `body` as the answer to `item`, unless one is in flight already. */
    async answer(item: Question, body: AnswerRequest): Promise<void> {
 -    if (this.inFlight.has(item.id)) return
@@ -1942,7 +2108,7 @@ index c831a939..4e29ce32 100644
 +      this.set(item.id, err instanceof ApiFailure && err.status === 404 ? { phase: 'gone', version: item.version } : { phase: 'uncertain', version: item.version })
      }
    }
- 
+
 @@ -201,9 +223,10 @@ export function useAnswering(
    loading: boolean,
    loads: number,
@@ -1974,7 +2140,7 @@ index 6aaeb8e2..ebde1854 100644
    loads: number
 +  questionError: string | null
  }
- 
+
  const INITIAL: SessionItemsSnapshot = {
 @@ -117,6 +118,7 @@ const INITIAL: SessionItemsSnapshot = {
    resynced: false,
@@ -1982,20 +2148,20 @@ index 6aaeb8e2..ebde1854 100644
    loads: 0,
 +  questionError: null,
  }
- 
+
  /** `JSON.parse`, or `undefined` for text that is not JSON. */
 @@ -154,6 +156,7 @@ export class SessionItemsController {
    private readonly limit: () => number | undefined
    private readonly timing: Timing
    private readonly backoff: ResyncBackoff
 +  private questionSeq = 0
- 
+
    constructor(client: Client, id: string, limit: () => number | undefined, timing: Partial<Timing> = {}) {
      this.client = client
 @@ -211,6 +214,27 @@ export class SessionItemsController {
    /** The session was deleted from here: as a `session_removed`. */
    markRemoved = (): void => this.gone()
- 
+
 +  mergeQuestion = (item: Item): void => {
 +    if (!this.snapshot.removed && item.kind === 'question') this.apply({ type: 'pin', item })
 +  }
@@ -2021,7 +2187,7 @@ index 6aaeb8e2..ebde1854 100644
    setCatalog = (catalog: SessionCatalog): void => {
      this.catalogSeq++
 @@ -351,11 +375,14 @@ export class SessionItemsController {
- 
+
  export interface SessionItems extends Omit<SessionItemsSnapshot, 'store'> {
    items: Item[]
 +  pinned: Item[]
@@ -2033,7 +2199,7 @@ index 6aaeb8e2..ebde1854 100644
 +  loadQuestion: (pending: string) => Promise<void>
 +  mergeQuestion: (item: Item) => void
  }
- 
+
  export function useSessionItems(id: string, timing?: Partial<Timing>): SessionItems {
 @@ -376,5 +403,5 @@ export function useSessionItems(id: string, timing?: Partial<Timing>): SessionIt
    }, [controller])
@@ -2044,7 +2210,7 @@ index 6aaeb8e2..ebde1854 100644
  }
 ```
 
-- [ ] Step 3: verify GREEN, inspect staged bytes, commit and push the task; request independent review from the parent.
+- [x] Step 3: verify GREEN, inspect staged bytes, commit and push the task; request independent review from the parent.
 
 ```sh
 pnpm --dir web typecheck
@@ -2054,11 +2220,11 @@ pnpm --dir web build
 
 ## Task 4: verification, replay and installed-iOS acceptance
 
-- [ ] Extract/apply the six patches to a FRESH directory at `256691fe`. Assert extracted files > 0. Run each RED then GREEN phase above. Compare every implementation file and the final changed-file set byte for byte with the built tree. Use its own Cargo target.
-- [ ] Run the six Rust checks: cargo fmt --all --check; cargo clippy --workspace --all-targets --locked -- -D warnings; cargo clippy -p hennery --locked -- -D warnings; cargo test --workspace --locked; cargo run -p hennery-proto --bin gen --locked -- --check; cargo run -p hennery-view --bin gen-view --locked -- --check.
-- [ ] Run pnpm --dir web install --frozen-lockfile, typecheck, test and build. Build hennery/testkit binaries, then CI=1 pnpm --dir web e2e. The e2e entry embeds the ordinary and update builds. Both 1280 px and 390 px phone-loop checks must run. Inspect their screenshots.
-- [ ] Run revert-probes in a copy: snapshot boundary/DEFERRED behavior; session and pending owner filters; pending/session association with a phantom same-id event elsewhere; overlay replacement; pending URL selection/encoding; exact focus/no reload, readiness, lease recheck, dirty and mutation gates, active-worker source, separate/cold open, navigate/focus/close; gateway relay/source/hidden deferral; lifecycle fence, both item-version fences, duplicate answer and ambiguous recovery. Every probe must fail a relevant test. Retain original misses and strengthen their fixtures; never report INERT as BITE.
-- [ ] Record the real commands, exit statuses, counts, replay extraction/tree comparison and open manual gates below. Update docs/README.md, commit as docs(plan): record the execution of plan P2, and push. Stop for the parent's reviews.
+- [x] Extract/apply the six patches to a FRESH directory at `256691fe`. Assert extracted files > 0. Run each RED then GREEN phase above. Compare every implementation file and the final changed-file set byte for byte with the built tree. Use its own Cargo target.
+- [x] Run the six Rust checks: cargo fmt --all --check; cargo clippy --workspace --all-targets --locked -- -D warnings; cargo clippy -p hennery --locked -- -D warnings; cargo test --workspace --locked; cargo run -p hennery-proto --bin gen --locked -- --check; cargo run -p hennery-view --bin gen-view --locked -- --check.
+- [x] Run pnpm --dir web install --frozen-lockfile, typecheck, test and build. Build hennery/testkit binaries, then CI=1 pnpm --dir web e2e. The e2e entry embeds the ordinary and update builds. Both 1280 px and 390 px phone-loop checks must run. Inspect their screenshots.
+- [x] Run revert-probes in a copy: snapshot boundary/DEFERRED behavior; session and pending owner filters; pending/session association with a phantom same-id event elsewhere; overlay replacement; pending URL selection/encoding; exact focus/no reload, readiness, lease recheck, dirty and mutation gates, active-worker source, separate/cold open, navigate/focus/close; gateway relay/source/hidden deferral; lifecycle fence, both item-version fences, duplicate answer and ambiguous recovery. Every probe must fail a relevant test. Retain original misses and strengthen their fixtures; never report INERT as BITE.
+- [x] Record the real commands, exit statuses, counts, replay extraction/tree comparison and open manual gates below. Update docs/README.md, commit as docs(plan): record the execution of plan P2, and push. Stop for the parent's reviews.
 
 ### Maintainer's installed-iOS acceptance checklist
 
@@ -2072,7 +2238,7 @@ Record date, hardware, OS/browser versions (minimum iOS/iPadOS 16.4+ where avail
 | Permission/device | Fresh step-up followed by a fresh Enable tap, grant and matching server row; denial and OS re-enable | Not run |
 | Real push/privacy | Background/locked phone receives real vendor push for permission, outside-turn, completion/failure and gateway attention; default/generic/details/muted policy verified without retaining secret content | Not run |
 | Warm/cold/login links | Wrong-session window, app closed, expired login, another hat, old card beyond tail, delivered/withdrawn/deleted target; default tap works without actions | Not run |
-| Input/OS context reuse | Exact-target tap never reloads with question text, composer text, images and an answer in flight; another target leaves these untouched via a separate window or deferred hint; verify actual installed-app reuse | Not run |
+| Input/OS context reuse | Exact-target tap never reloads with question text, composer text, images and an answer in flight; another target leaves these untouched via a separate window or deferred hint; verify actual installed-app reuse; stalled navigation accepts no new input or mutation until settlement, with manual reload for a navigation that never settles | Not run |
 | Mobile answers | Permission, single/multi select, custom text exclusivity, text and unsupported forms; real keyboard and safe areas keep card/composer Send reachable; no digit shortcut approval; queued to actual delivered verdict | Not run |
 | Races/outages | Concurrent desktop answer, duplicate taps, host away then reconnect, collector unreachable and ambiguous send; input retained, live refresh before explicit retry and no automatic resend | Not run |
 | Revocation | Disable/re-enable; desktop removal and reopen does not recreate a row; mobile sign-out and remote login revocation end rows/streams; an old notice requires login | Not run |
@@ -2082,10 +2248,127 @@ Record date, hardware, OS/browser versions (minimum iOS/iPadOS 16.4+ where avail
 
 ### Evidence and limitations
 
-Execution results are recorded after replay. Mock service composition proves the producer/worker/app logic, not APNs/vendor transport or an OS cold launch. The existing encrypted Rust delivery fixture verifies encryption/VAPID/privacy/retry; the page PushManager mock and emitted-worker OS event harness are separate explicit boundaries. No real vendor subscription is redirected to a loopback mock. The acceptance table stays open until the maintainer runs it.
+The following original-execution evidence describes the reviewed `256691fe..27114645` tree. Amendment results are recorded separately below. All commands below ran inside plain nix develop; spawned processes used scratch homes/data and no inherited SSL_CERT_FILE/SSL_CERT_DIR. No dependencies, lockfile, migrations or generated DTOs changed. Independent review has been requested from the parent, not performed by this implementer.
+
+| Verification command | Result |
+|---|---|
+| cargo fmt --all --check | Exit 0 in built tree and fresh replay |
+| cargo clippy --workspace --all-targets --locked -- -D warnings | Exit 0 in both |
+| cargo clippy -p hennery --locked -- -D warnings | Exit 0 in both |
+| cargo test --workspace --locked | Exit 0; 2,189 passed in each tree |
+| cargo run -p hennery-proto --bin gen --locked -- --check | Exit 0 in both |
+| cargo run -p hennery-view --bin gen-view --locked -- --check | Exit 0 in both |
+| pnpm --dir web install --frozen-lockfile | Exit 0 in both |
+| pnpm --dir web typecheck | Exit 0 in both |
+| pnpm --dir web test | Exit 0; 1,813 tests / 101 files in both final trees |
+| pnpm --dir web build | Exit 0 in both |
+| cargo build -p hennery -p hennery-testkit --bins --locked | Exit 0; browser gate embeds both ordinary and update variants |
+| CI=1 pnpm --dir web e2e | Exit 0; 94 passed, 11 existing skips |
+| CI=1 pnpm --dir web e2e --project=pwa | Final built tree and fresh replay exit 0; 8 passed each, including 1280 px and 390 px |
+
+The full 94-case browser gate preceded the final native hint-link/touch-target refinement; the final eight-case PWA reruns cover that refinement on the exact frozen source. The full unchanged Chromium portion was not repeated after that refinement. The existing MCP focus-return checks first failed reproducibly at both widths; capturing focus before inert fixed the cause, and the unchanged isolated MCP suite passed 12/12 before the full gate. The relay test originally observed a startup refresh; it now waits for the initial current-document read to settle, suppresses focus/visibility fallback and timers, then observes exactly one additional shared-reader request. An 18 px hint target was seen RED before using the existing banner/button styling; final browser checks assert at least 44 px. Both final screenshots were visually inspected, including Send reachability, retained text and the delivered card.
+
+Fresh replay-4 was created from the base in a new directory with its own target, scratch HOME/XDG/tool configuration and local Cargo locks. The harness extracted the plan itself: six diff fences and 33 files, not cached source patches. Task 1 snapshot/HTTP tests failed before the feature, then session 65 + push 17 and HTTP/reconcile/owner 57 + 78 + 3 passed. Task 2 tests failed before its feature, then 1,807 tests / 101 files passed. Task 3 tests failed before its feature, then 1,813 / 101 passed. All final Rust checks and embedded PWA cases then passed. The 33 files and changed-file set matched byte for byte. Staging the replay produced tree 5e47c926d9a22d1d05acc7eaeaab1eb4452e1f9a, identical to the entire pre-documentation implementation tree at 428502da.
+
+The replay harness initially stopped after successful task phases because an unbounded inventory included scratch package metadata and exceeded its stdout buffer. Restricting that inventory to crates/web allowed the same freshly applied source to finish all gates; its extraction and task RED/GREEN evidence were retained. Earlier replay-1 through replay-3 are partial/superseded evidence because subsequent test and hint refinements changed the expected source; none is counted as final proof. Markdown cleanup removed 49 space-only diff-context lines. A separate fresh doc-replay-1 applied all six cleaned fences and matched the same 33 files exactly; no implementation bytes changed. Final recorded-plan extraction in fresh doc-replay-2 also reproduced the same whole source tree.
+
+Revert-probes ran only in a scratch copy. Each mutation failed a relevant test: **25 browser + 8 native = 33 final BITE results**. The original question/session-association probe was INERT; the HTTP fixture was strengthened with a phantom same-id pending event in another owned session, and the rerun was BITE. Both outcomes remain in the logs. No INERT result is counted as caught.
+
+| Probe group | Final caught mutations |
+|---|---|
+| Snapshot and ownership (8) | Snapshot boundary; DEFERRED reader; session owner; question owner; pending/session association; canonical overlay replacement; pending URL; encoded URL |
+| Worker/navigation (15) | Exact focus; no reload; readiness; lease recheck; edit lock; mutation lock; dirty document; mutation busy; active-worker source; cold/separate open; navigate; focus after navigate; click target; close notification; native hint separate context |
+| Gateway (3) | Relay emission; active-worker source; hidden deferral |
+| Cards/answers/encoding (7) | Session lifecycle; pin version; page version; duplicate answer; ambiguous refresh; canonical encoding; awaited step-up retry ownership |
+
+Logs and harnesses remain in the gitignored .superpowers/sdd/phone-p2 ledger. Root full-suite logs use the phone-p2 prefix under /tmp; replay-4-results.log, replay-4-tree-match.log, source-tree-match.log and doc-replay-1.log and doc-replay-2.log retain extraction/status/tree evidence. Probe results retain the initial miss and all final catches. Scratch source directories retained for parent cleanup: /tmp/phone-p2-probe-1, replay-1 through replay-4 and doc-replay-1 through doc-replay-2 under this ledger. Their compiled targets were cleaned after completion; the implementation worktree keeps its target for review. No test servers or workers from this lane remain running.
+
+Mock service composition proves the producer/worker/app logic, not APNs/vendor transport or an OS cold launch. The existing encrypted Rust delivery fixture verifies encryption/VAPID/privacy/retry; the page PushManager mock and emitted-worker OS event harness are separate explicit boundaries. No real vendor subscription is redirected to a loopback mock. The acceptance table stays open until the maintainer runs it.
+
+### Review amendments and amended verification
+
+Codex gpt-6-astra, on the maintainer's behalf, reviewed the original 256691fe..27114645 tree: **APPROVE AFTER AMENDMENTS**. The parent reported no further blocker in snapshot coherence, owner/session filtering, step-up ownership, durable answering, relay payload trust or CSP. The two Important races and duplicate-answer probe quality were amended as follows. Scoped re-confirmation was pending at this checkpoint; the parent has since reported **CONFIRMED** (see the W2 rebase record below). No self-approval is claimed.
+
+| Amendment | Deterministic regression and result |
+|---|---|
+| Navigation outlives its prepared lease | Production listener plus deferred navigate and fake clock: after 2.5 s, commit/null/rejection cases all failed RED because the document was no longer fenced. A second port-bound start acknowledgement now promotes ownership before the actual call, with another client/document/deadline check. Prepared readiness still expires; navigation ownership blocks edits and mutations until the actual promise settles. All three cases pass and prove release after commit or definite failure. A promise that never settles remains fenced, with manual reload as recovery. |
+| Push invalidation overlaps an old GET | A deferred GET captured before three trusted hints, while consent pauses timers: both successful and failed old reads were RED on one GET instead of two. Invalidation now advances the epoch and retains one dirty follow-up; stale results are not published. An older failure also drains the retained invalidation. Both cases pass, show current needs_auth and no extra periodic read during consent. The former immediate-read relay case now isolates one hint; burst/coalescing coverage moved into these stronger deferred cases. |
+| Duplicate-answer probe assertion | The second answer is started without awaiting it; POST count is asserted before either answer can be held by the deferred refresh. Finally releases and drains both calls. Removing the in-flight guard in a copy fails directly on POST count 2 versus 1, rather than a test timeout. |
+
+The final targeted run passed 38 tests. Both race regressions were observed RED against the original production modules before the fixes. In fresh probe-amendments-2, reverting each production module to the reviewed version reproduced its assertion failure; removing the duplicate guard reproduced the POST-count failure. **Three amendment probes: BITE, exit 1, expected assertion verified, no timeout.** All 33 copy files were restored to their tested bytes afterward. The original duplicate timeout is superseded as semantic proof; the earlier probe records remain historical evidence, not a claim that their quality was sufficient.
+
+| Amended-tree verification | Result |
+|---|---|
+| pnpm --dir web install --frozen-lockfile | Exit 0 in root and fresh replay |
+| pnpm --dir web typecheck | Exit 0 in root and fresh replay |
+| pnpm --dir web test | Exit 0; 1,818 tests / 101 files in each final tree |
+| pnpm --dir web build | Exit 0 in both |
+| pnpm --dir web e2e --project=pwa | Exit 0; 8 passed in root (CI=1) and 8 in fresh replay, including 1280 px and 390 px; both embedded worker variants built from their own tree |
+| cargo fmt --all --check | Fresh replay exit 0 |
+| cargo clippy --workspace --all-targets --locked -- -D warnings | Fresh replay exit 0 |
+| cargo clippy -p hennery --locked -- -D warnings | Fresh replay exit 0 |
+| cargo test --workspace --locked | Fresh replay exit 0; 2,189 passed |
+| cargo run -p hennery-proto --bin gen --locked -- --check | Fresh replay exit 0 |
+| cargo run -p hennery-view --bin gen-view --locked -- --check | Fresh replay exit 0 |
+
+Fresh replay-5 extracted the amended plan's six fences into a new base directory, with its own target and scratch HOME/XDG/tool configuration. Task 1 tests were RED then passed 65 + 17 and 3 + 78 + 57. Task 2 was RED then passed 1,812 web tests; Task 3 was RED then passed 1,818. Both web phases passed typecheck/build. All final gates above passed. The 33 implementation bytes and changed-file set matched. Its staged whole source tree 2f1fd992ac253c54eff1270aceef2a01ff269d66 equals amended implementation commit 71e1bee8. Final decision/checklist/record edits leave the six extracted fences unchanged.
+
+The fixes and their regressions are folded into owning Task 2 commit ccbdb4b7; the duplicate test correction is folded into Task 3 commit 71e1bee8. Autosquash preserved every tested implementation digest. Staged bytes were checked against the tested tree; no copy-probe mutation entered the branch. Final SSH push uses an exact lease on 2711464555ffbe9723da926e10a7b55d10574dda.
+
+Amendment evidence lives in the ledger: replay-5-results.log, replay-5-tree-match.log, amendments-source-tree-match.log, amendments-final-probes.log and its three assertion logs, plus the source digest inventory. Root logs are /tmp/phone-p2-navigation-red.log, /tmp/phone-p2-relay-red.log, /tmp/phone-p2-amendments-green.log, /tmp/phone-p2-amendments-web-final.log and /tmp/phone-p2-amendments-pwa.log. Original 94-pass / 11-existing-skip full-browser evidence remains historical; the full Chromium project was not rerun for these amendments. Current PWA browser coverage is recorded separately above. Installed-iOS, live vendor delivery and pinned real-adapter acceptance remain Not run.
+
+Additional retained source copies: replay-5 and probe-amendments-1 through probe-amendments-2 inside the ledger. Replay-5's compiled target is cleaned after verification; source and logs remain for parent review. No deployment or live acceptance is implied.
+
+### W2 rebase and current verification
+
+Base at the W2 checkpoint: **e36e66c8** (W2 merged). The parent reports the amendment re-confirmation **CONFIRMED** and PR #148 ready with 15/15 green at fa7c564f. Those checks describe the preceding head; checks, reviewDecision, mergeStateStatus and unresolved threads on the rebased head remain parent-owned.
+
+Rebased plan/phone-p2 onto origin/main with signing disabled. No conflicts occurred. Both P2 and W2 entries in docs/README.md are retained, with the W2 entry unchanged from main. All 33 P2 implementation digests are unchanged. W2 touched CI, Cargo and the flake, so all requested gates were rerun inside the updated dev shell, with scratch HOME/XDG/tool configuration and SSL_CERT_FILE/SSL_CERT_DIR removed for spawned binaries.
+
+| Post-rebase command | Result |
+|---|---|
+| cargo fmt --all --check | Exit 0 |
+| cargo clippy --workspace --all-targets --locked -- -D warnings | Exit 0 |
+| cargo clippy -p hennery --locked -- -D warnings | Exit 0 |
+| cargo test --workspace --locked | Exit 0; 2,221 passed, including W2's real Caddy/nginx idle/renewal/reload cases |
+| cargo run -p hennery-proto --bin gen --locked -- --check | Exit 0 |
+| cargo run -p hennery-view --bin gen-view --locked -- --check | Exit 0 |
+| pnpm --dir web install --frozen-lockfile | Exit 0 |
+| pnpm --dir web typecheck | Exit 0 |
+| pnpm --dir web test | Exit 0; 1,818 passed / 101 files |
+| pnpm --dir web build | Exit 0 |
+| CI=1 pnpm --dir web e2e --project=pwa | Exit 0; 8 passed, including 1280 px and 390 px; embedded ordinary and update binaries built |
+
+A fresh source-only rebase-replay-1 extracted the unchanged six plan fences onto e36e66c8: 33 implementation files match byte for byte, and the whole staged source tree 27bc964627f45efc704dddcfa83a02042efe37bd equals rebased implementation commit 1a474c3b. The earlier task RED/GREEN replay evidence is preserved separately; this source-only check does not claim another task-by-task runtime replay. Current runtime gates are the post-rebase commands above. The source copy is retained without a compiled target.
+
+Evidence: rebase-results.log and rebase-source-replay.log in the ledger, plus /tmp/phone-p2-rebase-*.log. Staged bytes and author hygiene were checked before the SSH push, using an exact lease on fa7c564f70f182e0ce538b5e3c66b4d12ca8222b. No requested verification was skipped. Installed-iOS/vendor/pinned-adapter acceptance remains manual; no deployment is implied.
+
+### R1 rebase and current verification
+
+Current record base: **191aa71b** (release foundation R1 merged). The parent reports #148 green at 4cf6637d before this rebase; the new head's full PR status remains parent-owned. Amendment re-confirmation remains **CONFIRMED**.
+
+Rebased plan/phone-p2 onto origin/main with signing disabled, without conflicts. Both P2 and R1 docs/README.md entries are retained; the R1 and W2 entries are byte-identical to main. All 33 P2 implementation digests are unchanged. Because R1 changed workflows, packaging and the dev shell, every requested gate was rerun in that updated shell, using scratch HOME/XDG/tool configuration and clearing SSL_CERT_FILE/SSL_CERT_DIR for spawned binaries.
+
+| Post-R1 command | Result |
+|---|---|
+| cargo fmt --all --check | Exit 0 |
+| cargo clippy --workspace --all-targets --locked -- -D warnings | Exit 0 |
+| cargo clippy -p hennery --locked -- -D warnings | Exit 0 |
+| cargo test --workspace --locked | Exit 0; 2,223 passed |
+| cargo run -p hennery-proto --bin gen --locked -- --check | Exit 0 |
+| cargo run -p hennery-view --bin gen-view --locked -- --check | Exit 0 |
+| pnpm --dir web install --frozen-lockfile | Exit 0 |
+| pnpm --dir web typecheck | Exit 0 |
+| pnpm --dir web test | Exit 0; 1,818 passed / 101 files |
+| pnpm --dir web build | Exit 0 |
+| CI=1 pnpm --dir web e2e --project=pwa | Exit 0; 8 passed at 1280/390 px, including both embedded worker variants |
+
+A fresh source-only r1-replay-1 applied the six extracted plan fences to 191aa71b. All 33 files matched, and whole staged source tree 441fe7a1200123a552f7334278ccd9422753b574 equals rebased source commit cd13dcb1. This source-only check is separate from the earlier task RED/GREEN replay; the current runtime evidence is the complete post-R1 gate above. The copy is retained without a compiled target.
+
+Evidence: ledger r1-results.log and r1-source-replay.log, plus /tmp/phone-p2-r1-*.log. Earlier W2 and amendment logs are preserved. Staged bytes and author hygiene were checked before SSH push with an exact lease on 4cf6637d3a09a798d3ebe4eda4e7c8da89845ae8. No requested gate was skipped. Installed-iOS/vendor/pinned-adapter acceptance remains manual; no release or deployment is implied.
 
 ## After this plan
 
-The parent runs independent per-task, security and whole-branch review, opens the PR, checks Linux/macOS CI and resolves review threads. Keep the early-tester release gate. Installed-iOS/vendor and pinned real-adapter acceptance stay open above; no deployment or live acceptance is implied. Full Settings and standalone gateway delivery remain their original lanes. Consider replacing conservative document-dirty tracking only with independently verified per-draft ownership that protects unmounted forms and images.
+The parent reports review and amendment re-confirmation CONFIRMED. The parent checks the rebased PR head's Linux/macOS CI, reviewDecision, mergeStateStatus and unresolved threads before merging. Keep the early-tester release gate. Installed-iOS/vendor and pinned real-adapter acceptance stay open above; no deployment or live acceptance is implied. Full Settings and standalone gateway delivery remain their original lanes. Consider replacing conservative document-dirty tracking only with independently verified per-draft ownership that protects unmounted forms and images.
 
 Generated with Claude AI — please review before distribution.
