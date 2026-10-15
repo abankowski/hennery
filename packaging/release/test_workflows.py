@@ -95,7 +95,10 @@ class Workflows(unittest.TestCase):
         data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
         for phase in ('preflight', 'boundary'):
             changed = copy.deepcopy(data)
-            steps = changed['jobs']['github']['steps']
+            # Isolate phase completeness from the independent credential-order
+            # guards. Removing this guard must fail our assertion, not a later
+            # gates['phase'] lookup with KeyError.
+            steps = [s for s in changed['jobs']['github']['steps'] if s.get('uses') == './.github/actions/release-gate']
             changed['jobs']['github']['steps'] = [s for s in steps if s.get('with', {}).get('phase') != phase]
             with self.assertRaises(ValueError):
                 workflow_policy.check(changed, 'release-publish.yml')
