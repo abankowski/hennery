@@ -363,6 +363,9 @@ async fn initial_brief_waits_for_new_child_configuration_readback() {
         (s["operations"][0]["state"]["state"] == "waiting_config" && s["actual"]["model"] == "small").then_some(())
     })
     .await;
+    // Exercise the real release path after evidence exists. Sampling the
+    // initial waiting state alone would race the periodic worker's next pass.
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
     let state = h.status(child).await;
     assert_eq!(state["requested"]["model"], "large");
     assert_eq!(state["actual"]["model"], "small");
@@ -460,6 +463,14 @@ async fn direct_children_only_and_close_does_not_cascade_or_reopen() {
         )
         .await;
     assert_eq!(send["isError"], true);
+    let full = h.ok("session_list", json!({"limit":100})).await;
+    let ids: std::collections::BTreeSet<_> = full["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["child_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [a, b].into_iter().collect());
     let page = h.ok("session_list", json!({"limit":1})).await;
     assert_eq!(page["children"].as_array().unwrap().len(), 1);
     let cursor = page["next_cursor"].as_str().unwrap();
@@ -798,6 +809,7 @@ async fn unavailable_prestart_catalog_validates_explicit_model_against_new_child
                     .then_some(())
             })
             .await;
+            hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
             assert!(
                 h.state
                     .store
