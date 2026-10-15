@@ -40,7 +40,7 @@ pub async fn execute(
         .store
         .session_tool_context(identity, revision, true)?
         .ok_or_else(|| anyhow::anyhow!("session_starting"))?;
-    if let Some(key) = call.operation_key() {
+    if let Some(key) = call.operation_key().filter(|_| !matches!(call, ToolCall::Status(_))) {
         if let Some(receipt) = state.store.delegation_retry(identity, revision, key, &digest)? {
             return Ok(serde_json::to_value(receipt)?);
         }
