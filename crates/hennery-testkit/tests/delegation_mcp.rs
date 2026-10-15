@@ -930,3 +930,51 @@ async fn standard_client_icons_are_typed_data_and_positional_icons_are_refused()
         StatusCode::BAD_REQUEST
     );
 }
+
+#[tokio::test]
+async fn tool_deadline_bounds_an_unanswered_host_probe_and_reclaims_request_permit() {
+    use hennery_proto::frames::CollectorFrame;
+    use std::time::Duration;
+    let h = Harness::with_limits(
+        hennery_gateway::proxy::Limits::new(1, 32, Duration::from_secs(1), Duration::from_millis(50))
+            .with_answer_timeout(Duration::from_millis(50)),
+    )
+    .await;
+    let capabilities = Capabilities(vec![Capability::McpServers, Capability::ResolvePath]);
+    h.state
+        .hosts
+        .record_hello("host", "fixture", &capabilities, unix_now())
+        .unwrap();
+    let previous = h.state.hub.routable_conn("host").unwrap();
+    h.state.hub.unregister("host", previous);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let registered = h
+        .state
+        .hub
+        .register(
+            "host",
+            tx,
+            capabilities,
+            AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect()),
+        )
+        .unwrap();
+    h.state.hub.mark_ready("host", registered.conn_id);
+    h.state
+        .store
+        .ingest(
+            "session",
+            1,
+            &hennery_proto::frames::SessionBody::session_started("start", "adapter"),
+        )
+        .unwrap();
+    let (probe,call)=tokio::join!(
+        tokio::time::timeout(Duration::from_secs(2),rx.recv()),
+        tokio::time::timeout(Duration::from_secs(2),h.rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_capabilities","arguments":{}}})))
+    );
+    assert!(matches!(probe.unwrap().unwrap(), CollectorFrame::ResolvePath { .. }));
+    let call = call.expect("tool deadline must bound a stalled host probe");
+    assert_eq!(call["result"]["isError"], true);
+    assert_eq!(call["result"]["structuredContent"]["code"], "request_timeout");
+    let ping = h.rpc(json!({"jsonrpc":"2.0","id":2,"method":"ping"})).await;
+    assert_eq!(ping["result"], json!({}));
+}
