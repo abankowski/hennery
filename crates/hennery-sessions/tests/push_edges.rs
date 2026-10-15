@@ -360,7 +360,7 @@ fn only_blocked_finished_and_failed_notify() {
     assert_eq!(blocked.detail.as_deref(), Some("Run cargo test"));
     assert_eq!(
         (blocked.url.as_str(), blocked.tag.as_str(), blocked.hat_id.as_str()),
-        ("/sessions/s1", "s1", "hat-1")
+        ("/sessions/s1?pending=p1", "s1", "hat-1")
     );
 
     let finished = notice_for(&PushEdge::TurnEnded(TurnOutcome::Completed), &s).unwrap();

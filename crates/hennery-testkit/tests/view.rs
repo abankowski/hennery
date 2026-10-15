@@ -611,6 +611,53 @@ fn question(collector: &Collector, session: &str, pending_id: &str, turn: &str) 
     event
 }
 
+#[tokio::test]
+async fn question_lookup_is_owned_bounded_and_matches_the_live_overlay() {
+    let c = Collector::start().await;
+    c.session(&c.owner(), "s");
+    c.session(&c.owner(), "elsewhere");
+    c.other_owner("foreign");
+    let opened = question(&c, "s", "p1", "outside");
+    let path = "/api/view/sessions/s/questions/p1";
+    let response = c.client().get(c.url(path)).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let before: Item = response.json().await.unwrap();
+    assert_eq!(before.version, opened.event_id);
+    assert_eq!(before.turn_id, None);
+    let Body::Question(q) = &before.body else { panic!() };
+    assert!(q.answerable);
+    for path in [
+        "/api/view/sessions/elsewhere/questions/p1",
+        "/api/view/sessions/foreign/questions/p1",
+        "/api/view/sessions/unknown/questions/p1",
+        "/api/view/sessions/s/questions/unknown",
+    ] {
+        assert_eq!(
+            c.client().get(c.url(path)).send().await.unwrap().status(),
+            404,
+            "{path}"
+        );
+    }
+    assert_eq!(
+        c.client()
+            .post(c.url("/api/sessions/s/pending/p1/answer"))
+            .json(&json!({"option_id":"allow"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        202
+    );
+    let after: Item = c.client().get(c.url(path)).send().await.unwrap().json().await.unwrap();
+    assert!(after.version > before.version);
+    let Body::Question(q) = &after.body else { panic!() };
+    assert!(q.answered && !q.answerable);
+    assert_eq!(
+        c.page("s", "").await.items.iter().find(|i| i.id == after.id),
+        Some(&after)
+    );
+}
+
 /// A session with a turn, whose page has been read: the stream's anchor.
 async fn opened(collector: &Collector, session: &str) -> String {
     collector.session(&collector.owner(), session);

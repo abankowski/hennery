@@ -4491,6 +4491,77 @@ impl Store {
         )?)
     }
 
+    /// A bounded question with its state, version and group from one read
+    /// snapshot. Explicitly DEFERRED: readers must allow independent WAL
+    /// writers to commit without changing the snapshot they already read.
+    pub fn question_snapshot(&self, session_id: &str, pending_id: &str) -> Result<Option<hennery_view::Item>> {
+        self.question_snapshot_between(session_id, pending_id, || {})
+    }
+
+    fn question_snapshot_between(
+        &self,
+        session_id: &str,
+        pending_id: &str,
+        between: impl FnOnce(),
+    ) -> Result<Option<hennery_view::Item>> {
+        use hennery_view::{Body, Item, Question, group_key, question_id};
+        if [session_id, pending_id]
+            .iter()
+            .any(|id| id.is_empty() || id.len() > hennery_view::cap::ID_MAX_BYTES)
+        {
+            return Ok(None);
+        }
+        let mut conn = self.view_conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
+        let owned: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sessions WHERE id = ?1 AND owner_id = ?2 AND lifecycle != 'deleted')",
+            [session_id, &self.owner],
+            |r| r.get(0),
+        )?;
+        if !owned {
+            return Ok(None);
+        }
+        let record = tx
+            .query_row(
+                &format!("SELECT {PENDING_COLUMNS} WHERE p.pending_id = ?1 AND p.session_id = ?2 AND p.owner_id = ?3"),
+                [pending_id, session_id, &self.owner],
+                PendingRow::read,
+            )
+            .optional()?
+            .map(PendingRow::item)
+            .transpose()?;
+        let Some(record) = record else { return Ok(None) };
+        between();
+        let opened = tx
+            .query_row(PENDING_OPENED_AT, [session_id, pending_id, &self.owner], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .optional()?;
+        let version: Option<i64> =
+            tx.query_row(PENDING_LAST_EVENT, [session_id, pending_id, &self.owner], |r| r.get(0))?;
+        let (Some((opened, ts)), Some(version)) = (opened, version) else {
+            return Ok(None);
+        };
+        let group = tx
+            .query_row(
+                "SELECT event_id, json_extract(body, '$.turn_id') FROM events
+             WHERE session_id = ?1 AND kind = 'user_turn' AND event_id <= ?2 AND applied = 1 AND owner_id = ?3
+             ORDER BY event_id DESC LIMIT 1",
+                params![session_id, opened, self.owner],
+                |r| Ok((r.get::<_, i64>(0)?, text(r.get(1)?))),
+            )
+            .optional()?;
+        let item = Item {
+            id: question_id(pending_id),
+            version,
+            ts,
+            turn_id: group.map(|(start, turn)| group_key(start, turn.as_deref())),
+            body: Body::Question(Question::from_pending(&record)),
+        };
+        tx.commit()?;
+        Ok(Some(item))
+    }
+
     /// One question of the session, whatever its state: by its id, the
     /// session's and the owner's (the review's A-8).
     pub fn session_pending(&self, session_id: &str, pending_id: &str) -> Result<Option<PendingItem>> {
@@ -4644,6 +4715,65 @@ mod tests {
     use super::*;
     use hennery_kernel::hosts::{EnrollOutcome, Enrollment, Hosts};
     use hennery_kernel::operator::{Operator, SetupOutcome};
+
+    #[test]
+    fn question_snapshot_retains_state_and_version_when_answer_commits_between_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let store = Store::open(&db).unwrap();
+        let mut writer = Connection::open(&db).unwrap();
+        writer
+            .execute(
+                "INSERT INTO sessions(id,host_id,agent,cwd,lifecycle,created_at,last_event_at,owner_id)
+            VALUES ('s','h','fake','/tmp','active','t','t',?1)",
+                [store.owner_id()],
+            )
+            .unwrap();
+        writer
+            .execute(
+                "INSERT INTO pending(pending_id,session_id,kind,option_ids,payload,state,opened_at,owner_id)
+            VALUES ('p','s','permission','[]','{}','open','t',?1)",
+                [store.owner_id()],
+            )
+            .unwrap();
+        writer
+            .execute(
+                "INSERT INTO events(session_id,kind,body,ts,applied,owner_id)
+            VALUES ('s','pending_opened','{\"pending_id\":\"p\"}','t',1,?1)",
+                [store.owner_id()],
+            )
+            .unwrap();
+        let before = store
+            .question_snapshot_between("s", "p", || {
+                let tx = writer.transaction().unwrap();
+                tx.execute(
+                    "INSERT INTO answer_queue(pending_id,session_id,request_id,answer,submitted_at,owner_id)
+                VALUES ('p','s','r','{}','t',?1)",
+                    [store.owner_id()],
+                )
+                .unwrap();
+                tx.execute(
+                    "INSERT INTO events(session_id,kind,body,ts,applied,owner_id)
+                VALUES ('s','answer_submitted','{\"pending_id\":\"p\"}','t',1,?1)",
+                    [store.owner_id()],
+                )
+                .unwrap();
+                tx.commit().unwrap();
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(before.version, 1);
+        let hennery_view::Body::Question(q) = before.body else {
+            panic!()
+        };
+        assert!(q.answerable && !q.answered);
+        let after = store.question_snapshot("s", "p").unwrap().unwrap();
+        assert_eq!(after.version, 2);
+        let hennery_view::Body::Question(q) = after.body else {
+            panic!()
+        };
+        assert!(!q.answerable && q.answered);
+    }
 
     /// A page of events reads a range of `events_by_session` in order: no
     /// scan of the session's other rows and no sort (smoke test #1, F2).
