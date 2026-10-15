@@ -958,3 +958,178 @@ async fn removing_only_the_startup_permission_discards_a_cached_result() {
         })
         .unwrap();
 }
+
+#[tokio::test]
+async fn review_pre_assignment_source_must_not_be_verified_in_new_hat() {
+    let w = World::new(true).await;
+    let hosts = Hosts::open(&w.path).unwrap();
+    let hennery_kernel::hats::HatChange::Done(other) = hosts.create_hat("Other", None, 2).unwrap() else {
+        panic!("hat");
+    };
+    w.sessions
+        .create_session("moving", "host", "fake", "/scratch/project", &other.id, None)
+        .unwrap();
+    w.sessions
+        .ingest(
+            "moving",
+            1,
+            &SessionBody::SessionStarted {
+                request_id: "start-moving".into(),
+                agent_session_id: "agent-moving".into(),
+                indexed: Indexed::default(),
+                agent_home: None,
+            },
+        )
+        .unwrap();
+    assert!(
+        w.sessions
+            .open_turn(
+                "moving",
+                "old-turn",
+                &[json!({"type":"text","text":"statement from the prior hat"})]
+            )
+            .unwrap()
+    );
+    let events = w
+        .sessions
+        .ingest(
+            "moving",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "old-request".into(),
+                turn_id: "old-turn".into(),
+            },
+        )
+        .unwrap();
+    let old_event = events.iter().find(|e| e.kind == "user_turn").unwrap().event_id;
+    w.sessions
+        .ingest(
+            "moving",
+            3,
+            &SessionBody::TurnEnded {
+                turn_id: "old-turn".into(),
+                outcome: TurnOutcome::Completed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    w.sessions.close_now("moving").unwrap();
+    assert!(matches!(
+        w.sessions.reassign_hat("moving", &w.hat).unwrap(),
+        hennery_sessions::store::Reassign::Done(_)
+    ));
+    let page = w.sessions.activity_page(&w.token, None, 20).unwrap();
+    assert!(
+        page.items
+            .iter()
+            .all(|item| !matches!(item.body, hennery_proto::plugin::ActivityBody::CompletedTurn { .. }))
+    );
+    let source = json!({"session_id":"moving","turn_id":"old-turn","event_id":old_event});
+    *w.remote.result.lock().unwrap() = Some(
+        json!({"entries":[{
+        "text":"statement from the prior hat", "source_refs":[source.clone()],
+        "provenance":[{"kind":"source","origin":{"kind":"operator"},"source":source}]
+    }], "generated_at":"now", "truncated":false})
+        .to_string(),
+    );
+    let mut record = w.runtime.startup_context("s", "request", true).await;
+    w.commit(&mut record);
+    assert_eq!(
+        record.unwrap().block.unwrap().context.entries[0].provenance,
+        vec![Provenance::Unverified {}],
+        "the old hat's event must not become verified evidence in the new hat"
+    );
+}
+
+#[tokio::test]
+async fn revoked_target_host_blocks_context_at_commit_with_another_live_mount() {
+    revoked_target_host_with_another_live_mount(true).await;
+}
+
+#[tokio::test]
+async fn revoked_target_host_blocks_context_at_dispatch_with_another_live_mount() {
+    revoked_target_host_with_another_live_mount(false).await;
+}
+
+async fn revoked_target_host_with_another_live_mount(before_commit: bool) {
+    let w = World::with_registration(true, false).await;
+    let hosts = Hosts::open(&w.path).unwrap();
+    hosts
+        .register(
+            "other-host",
+            &Enrollment {
+                public_key: hennery_host::identity::HostKey::from_seed([28; 32]).public_key_hex(),
+                name: "Other fixture".into(),
+                host_version: "0.0.0".into(),
+                platform: "test".into(),
+            },
+            1,
+        )
+        .unwrap();
+    w.runtime
+        .store
+        .replace_mounts(&w.id, &["host".into(), "other-host".into()])
+        .unwrap();
+    let key = MasterKey::from_bytes([6; 32]);
+    let fingerprint = w.runtime.store.plugin_fingerprint(&w.id).unwrap();
+    w.runtime
+        .store
+        .register_plugin(
+            RegistrationInput {
+                connection_id: &w.id,
+                lifecycle_credential: "lifecycle-only",
+                activity: true,
+                startup: true,
+                capabilities: PluginCapabilities {
+                    version: 1,
+                    activity_v1: true,
+                    forget_v1: true,
+                    startup_context_v1: true,
+                },
+            },
+            &key,
+            &fingerprint,
+            1,
+        )
+        .unwrap();
+    let mut record = w.runtime.startup_context("s", "request", true).await;
+    if before_commit {
+        assert!(matches!(
+            hosts.revoke("host", unix_now()).unwrap(),
+            hennery_kernel::hosts::Revoke::Revoked
+        ));
+    }
+    w.commit(&mut record);
+    assert_eq!(
+        record.as_ref().unwrap().status,
+        if before_commit {
+            StartupStatus::Revoked
+        } else {
+            StartupStatus::Delivered
+        }
+    );
+    assert_eq!(record.as_ref().unwrap().block.is_none(), before_commit);
+    if !before_commit {
+        assert!(matches!(
+            hosts.revoke("host", unix_now()).unwrap(),
+            hennery_kernel::hosts::Revoke::Revoked
+        ));
+    }
+    let mut frame = w.frame(&record);
+    w.sessions
+        .dispatch_startup(&mut frame, true, |frame| {
+            assert!(
+                matches!(
+                    frame,
+                    CollectorFrame::Prompt {
+                        plugin_context: None,
+                        ..
+                    }
+                ),
+                "revoked target host received context at dispatch"
+            );
+            Ok(())
+        })
+        .unwrap();
+}

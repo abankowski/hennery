@@ -87,6 +87,16 @@ impl Control {
                 Ok(row.grant.hat_id)
             })?
             .context("startup control missing")?;
+        // scope_live may be kept alive by a different mounted host. Check
+        // this session's actual host under the same gate at both boundaries.
+        let target_live: bool = core.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions s JOIN hosts h
+             ON h.owner_id = ?1 AND h.id = s.host_id
+             WHERE s.owner_id = ?1 AND s.id = ?2 AND h.revoked_at IS NULL)",
+            params![self.owner, session],
+            |r| r.get(0),
+        )?;
+        ensure!(target_live, "startup target host revoked");
         self.admit_in(core, &block.connection_id, session, &hat)
     }
 }

@@ -12,7 +12,7 @@
 
 ## Execution status
 
-**Implemented and locally verified**, on `plan/plugin-c2`, through `a99da88e`. Both task commits are pushed. Parent-owned security, task and whole-branch reviews and Linux/macOS CI remain pending; no review approval is claimed. The fresh replay reconstructed task 1 and the complete implementation exactly. This record distinguishes local full gates, fresh reconstruction, live initialization and provider inference.
+**Implemented and locally verified**, on `plan/plugin-c2`. Original tasks run through `a99da88e`; the security amendment below fixes both findings from the parent review of `3442d264` and awaits re-review. Parent-owned security, task and whole-branch reviews and Linux/macOS CI remain pending; no review approval is claimed. The fresh replay reconstructed task 1 and the complete implementation exactly. This record distinguishes local full gates, fresh reconstruction, live initialization and provider inference.
 
 ## Scope
 
@@ -3459,14 +3459,14 @@ Run `cargo test -p hennery-testkit --test plugin_startup --test plugin_startup_h
 
 ## Replay harness
 
-Save this code as `.superpowers/sdd/plugin-c2/replay.cjs`, then run it inside the dev shell, from the lane root. It requires a fresh replay directory and exactly four nonempty patch blocks. It restores the base, applies tests and feature steps in order, watches RED and GREEN, and checks every tracked file against both task trees. Source mtimes are refreshed before reusing cloned build artifacts; targets are independent. The named-lane full gates and this fresh reconstruction are reported separately.
+Save this code as `.superpowers/sdd/plugin-c2/replay.cjs`, then run it inside the dev shell, from the lane root. It requires a fresh replay directory and reads the first four nonempty patch blocks, reconstructing the original implementation. The security amendment has its own replay below. It restores the base, applies tests and feature steps in order, watches RED and GREEN, and checks every tracked file against both task trees. Source mtimes are refreshed before reusing cloned build artifacts; targets are independent. The named-lane full gates and this fresh reconstruction are reported separately.
 
 ```javascript
 const fs=require('fs'),path=require('path'),crypto=require('crypto'),{spawnSync}=require('child_process');
 const lane=process.cwd(),root=path.resolve('.superpowers/sdd/plugin-c2'),plan=fs.readFileSync('docs/plans/2026-10-30-plugin-startup.md','utf8');
 const base='191aa71b7ac044d708c1849e491e9813fc47f53c',task1='6c2b11d8';
 const finalTree=plan.match(/\*\*Implementation tree:\*\* `([0-9a-f]{40})`/)[1];
-const blocks=[...plan.matchAll(/```diff\n([\s\S]*?)```/g)].map(m=>m[1]);
+const blocks=[...plan.matchAll(/```diff\n([\s\S]*?)```/g)].slice(0,4).map(m=>m[1]);
 if(blocks.length!==4||blocks.some(b=>!b.includes('diff --git')))throw new Error('expected four nonempty patches');
 const tree=path.join(root,process.argv[2]||'replay-3');fs.mkdirSync(tree);
 const logdir=path.join(root,path.basename(tree)+'-logs');fs.mkdirSync(logdir,{recursive:true});
@@ -3499,6 +3499,318 @@ check('proto-generated','cargo',['run','-p','hennery-proto','--bin','gen','--loc
 check('view-generated','cargo',['run','-p','hennery-view','--bin','gen-view','--locked','--','--check']);
 compare(finalTree);
 fs.writeFileSync(path.join(root,'replay-result.json'),JSON.stringify({blocks:blocks.length,filePatches:blocks.reduce((n,b)=>n+(b.match(/^diff --git/gm)||[]).length,0),task1Files,finalFiles,finalTree,results},null,2)+'\n');
+```
+
+## Task 3: Security review amendment
+
+The security review requested two corrections on top of `3442d264`. A provider mounted on two hosts could retain aggregate live scope after the target host was revoked. Source verification could also authenticate a user event from before its session's latest hat reassignment, despite the C1 feed excluding that event.
+
+**Security amendment implementation tree:** `07b140c652fb527198b342b7386e7232658d94f8`
+
+### Step 1: Reproduce both delivery boundaries and reassigned source evidence
+
+Apply the regression patch first. The separate host tests assert the commit verdict as well as final dispatch. The source test uses the real close/reassign path and confirms C1's feed excludes the old event.
+
+```diff
+diff --git a/crates/hennery-testkit/tests/plugin_startup.rs b/crates/hennery-testkit/tests/plugin_startup.rs
+index 626a31e0..7e35ff8c 100644
+--- a/crates/hennery-testkit/tests/plugin_startup.rs
++++ b/crates/hennery-testkit/tests/plugin_startup.rs
+@@ -958,3 +958,178 @@ async fn removing_only_the_startup_permission_discards_a_cached_result() {
+         })
+         .unwrap();
+ }
++
++#[tokio::test]
++async fn review_pre_assignment_source_must_not_be_verified_in_new_hat() {
++    let w = World::new(true).await;
++    let hosts = Hosts::open(&w.path).unwrap();
++    let hennery_kernel::hats::HatChange::Done(other) = hosts.create_hat("Other", None, 2).unwrap() else {
++        panic!("hat");
++    };
++    w.sessions
++        .create_session("moving", "host", "fake", "/scratch/project", &other.id, None)
++        .unwrap();
++    w.sessions
++        .ingest(
++            "moving",
++            1,
++            &SessionBody::SessionStarted {
++                request_id: "start-moving".into(),
++                agent_session_id: "agent-moving".into(),
++                indexed: Indexed::default(),
++                agent_home: None,
++            },
++        )
++        .unwrap();
++    assert!(
++        w.sessions
++            .open_turn(
++                "moving",
++                "old-turn",
++                &[json!({"type":"text","text":"statement from the prior hat"})]
++            )
++            .unwrap()
++    );
++    let events = w
++        .sessions
++        .ingest(
++            "moving",
++            2,
++            &SessionBody::TurnStarted {
++                request_id: "old-request".into(),
++                turn_id: "old-turn".into(),
++            },
++        )
++        .unwrap();
++    let old_event = events.iter().find(|e| e.kind == "user_turn").unwrap().event_id;
++    w.sessions
++        .ingest(
++            "moving",
++            3,
++            &SessionBody::TurnEnded {
++                turn_id: "old-turn".into(),
++                outcome: TurnOutcome::Completed,
++                stop_reason: None,
++                error: None,
++            },
++        )
++        .unwrap();
++    w.sessions.close_now("moving").unwrap();
++    assert!(matches!(
++        w.sessions.reassign_hat("moving", &w.hat).unwrap(),
++        hennery_sessions::store::Reassign::Done(_)
++    ));
++    let page = w.sessions.activity_page(&w.token, None, 20).unwrap();
++    assert!(
++        page.items
++            .iter()
++            .all(|item| !matches!(item.body, hennery_proto::plugin::ActivityBody::CompletedTurn { .. }))
++    );
++    let source = json!({"session_id":"moving","turn_id":"old-turn","event_id":old_event});
++    *w.remote.result.lock().unwrap() = Some(
++        json!({"entries":[{
++        "text":"statement from the prior hat", "source_refs":[source.clone()],
++        "provenance":[{"kind":"source","origin":{"kind":"operator"},"source":source}]
++    }], "generated_at":"now", "truncated":false})
++        .to_string(),
++    );
++    let mut record = w.runtime.startup_context("s", "request", true).await;
++    w.commit(&mut record);
++    assert_eq!(
++        record.unwrap().block.unwrap().context.entries[0].provenance,
++        vec![Provenance::Unverified {}],
++        "the old hat's event must not become verified evidence in the new hat"
++    );
++}
++
++#[tokio::test]
++async fn revoked_target_host_blocks_context_at_commit_with_another_live_mount() {
++    revoked_target_host_with_another_live_mount(true).await;
++}
++
++#[tokio::test]
++async fn revoked_target_host_blocks_context_at_dispatch_with_another_live_mount() {
++    revoked_target_host_with_another_live_mount(false).await;
++}
++
++async fn revoked_target_host_with_another_live_mount(before_commit: bool) {
++    let w = World::with_registration(true, false).await;
++    let hosts = Hosts::open(&w.path).unwrap();
++    hosts
++        .register(
++            "other-host",
++            &Enrollment {
++                public_key: hennery_host::identity::HostKey::from_seed([28; 32]).public_key_hex(),
++                name: "Other fixture".into(),
++                host_version: "0.0.0".into(),
++                platform: "test".into(),
++            },
++            1,
++        )
++        .unwrap();
++    w.runtime
++        .store
++        .replace_mounts(&w.id, &["host".into(), "other-host".into()])
++        .unwrap();
++    let key = MasterKey::from_bytes([6; 32]);
++    let fingerprint = w.runtime.store.plugin_fingerprint(&w.id).unwrap();
++    w.runtime
++        .store
++        .register_plugin(
++            RegistrationInput {
++                connection_id: &w.id,
++                lifecycle_credential: "lifecycle-only",
++                activity: true,
++                startup: true,
++                capabilities: PluginCapabilities {
++                    version: 1,
++                    activity_v1: true,
++                    forget_v1: true,
++                    startup_context_v1: true,
++                },
++            },
++            &key,
++            &fingerprint,
++            1,
++        )
++        .unwrap();
++    let mut record = w.runtime.startup_context("s", "request", true).await;
++    if before_commit {
++        assert!(matches!(
++            hosts.revoke("host", unix_now()).unwrap(),
++            hennery_kernel::hosts::Revoke::Revoked
++        ));
++    }
++    w.commit(&mut record);
++    assert_eq!(
++        record.as_ref().unwrap().status,
++        if before_commit {
++            StartupStatus::Revoked
++        } else {
++            StartupStatus::Delivered
++        }
++    );
++    assert_eq!(record.as_ref().unwrap().block.is_none(), before_commit);
++    if !before_commit {
++        assert!(matches!(
++            hosts.revoke("host", unix_now()).unwrap(),
++            hennery_kernel::hosts::Revoke::Revoked
++        ));
++    }
++    let mut frame = w.frame(&record);
++    w.sessions
++        .dispatch_startup(&mut frame, true, |frame| {
++            assert!(
++                matches!(
++                    frame,
++                    CollectorFrame::Prompt {
++                        plugin_context: None,
++                        ..
++                    }
++                ),
++                "revoked target host received context at dispatch"
++            );
++            Ok(())
++        })
++        .unwrap();
++}
+```
+
+Run `cargo test -p hennery-testkit --test plugin_startup revoked_target_host_blocks_context --locked` and `cargo test -p hennery-testkit --test plugin_startup review_pre_assignment_source --locked`. Both must fail with test assertions before adding the guards.
+
+### Step 2: Gate the actual target host and the current assignment's evidence
+
+The shared validator executes in the existing gated core transaction at prompt commit and synchronous socket dispatch. It now requires the session's actual host to remain unrevoked. Source verification requires an event ID after the latest applied `hat_reassigned` for the cited source session, scoped by owner, matching C1's cutoff. The new statement is included in `owner_filter`; no migration or protocol type changes are required.
+
+```diff
+diff --git a/crates/hennery-gateway/src/plugin/context.rs b/crates/hennery-gateway/src/plugin/context.rs
+index 156bdfbc..861b2db3 100644
+--- a/crates/hennery-gateway/src/plugin/context.rs
++++ b/crates/hennery-gateway/src/plugin/context.rs
+@@ -87,6 +87,16 @@ impl Control {
+                 Ok(row.grant.hat_id)
+             })?
+             .context("startup control missing")?;
++        // scope_live may be kept alive by a different mounted host. Check
++        // this session's actual host under the same gate at both boundaries.
++        let target_live: bool = core.query_row(
++            "SELECT EXISTS(SELECT 1 FROM sessions s JOIN hosts h
++             ON h.owner_id = ?1 AND h.id = s.host_id
++             WHERE s.owner_id = ?1 AND s.id = ?2 AND h.revoked_at IS NULL)",
++            params![self.owner, session],
++            |r| r.get(0),
++        )?;
++        ensure!(target_live, "startup target host revoked");
+         self.admit_in(core, &block.connection_id, session, &hat)
+     }
+ }
+diff --git a/crates/hennery-sessions/src/startup.rs b/crates/hennery-sessions/src/startup.rs
+index 957d5e59..d8260e13 100644
+--- a/crates/hennery-sessions/src/startup.rs
++++ b/crates/hennery-sessions/src/startup.rs
+@@ -88,6 +88,8 @@ pub(crate) fn prepare_in(
+                         AND target.id = ?2 AND target.hat_id = s.hat_id
+                         WHERE e.owner_id = ?1 AND e.session_id = ?3 AND e.event_id = ?4
+                         AND e.kind = 'user_turn' AND e.applied = 1 AND s.lifecycle <> 'deleted'
++                        AND e.event_id > COALESCE((SELECT max(a.event_id) FROM events a WHERE a.owner_id = ?1
++                            AND a.session_id = s.id AND a.kind = 'hat_reassigned' AND a.applied = 1),0)
+                         AND EXISTS(SELECT 1 FROM gw_mounts m JOIN hosts h ON h.owner_id = ?1 AND h.id = m.host_id
+                             WHERE m.owner_id = ?1 AND m.connection_id = ?5 AND m.host_id = s.host_id AND h.revoked_at IS NULL)",
+                         params![store.owner_id(),session,source.session_id,source.event_id,block.connection_id],|r|r.get(0)).optional()?;
+diff --git a/crates/hennery-testkit/tests/owner_filter.rs b/crates/hennery-testkit/tests/owner_filter.rs
+index 8419b4ec..881a05b6 100644
+--- a/crates/hennery-testkit/tests/owner_filter.rs
++++ b/crates/hennery-testkit/tests/owner_filter.rs
+@@ -38,7 +38,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
+     (
+         "hennery-gateway/src/plugin/context.rs",
+         include_str!("../../hennery-gateway/src/plugin/context.rs"),
+-        3,
++        4,
+     ),
+     (
+         "hennery-sessions/src/startup.rs",
+```
+
+Run the targeted startup, host, feed, typed-bounds, view and owner audit suites; then all six Rust checks. In a separate source copy, bypass each new guard in isolation and require its regression to fail. Repeat the startup race suite in four concurrent copies for three rounds. Preserve the two-guard change without rebasing until D2 has merged and the parent asks.
+
+### Fresh amendment replay harness
+
+Run this harness in the lane dev shell with a fresh directory name under the ledger, for example `node .superpowers/sdd/plugin-c2/security-replay.cjs security-replay-1`. It extracts the two amendment patches from this plan, reconstructs `3442d264` in a new directory with independent compiled artifacts, observes both RED commands, applies the guards, compares all tracked bytes to the amendment implementation tree, and runs the targeted GREEN suites. The earlier four-patch harness continues to reconstruct the original implementation.
+
+```javascript
+const fs = require('fs'), path = require('path'), crypto = require('crypto'), {spawnSync} = require('child_process');
+const lane = process.cwd(), root = path.resolve('.superpowers/sdd/plugin-c2');
+const plan = fs.readFileSync('docs/plans/2026-10-30-plugin-startup.md', 'utf8');
+const blocks = [...plan.matchAll(/```diff\n([\s\S]*?)```/g)].slice(4).map(m => m[1]);
+if (blocks.length !== 2 || blocks.some(b => !b.includes('diff --git'))) throw Error('expected two amendment patches');
+const expected = plan.match(/\*\*Security amendment implementation tree:\*\* `([0-9a-f]{40})`/)[1];
+const tree = path.join(root, process.argv[2]);
+fs.mkdirSync(tree);
+const logs = tree + '-logs'; fs.mkdirSync(logs);
+function cmd(program, args, cwd = tree, input) {
+  const r = spawnSync(program, args, {cwd, input, maxBuffer: 64 * 1024 * 1024});
+  if (r.status !== 0) throw Error(program + ': ' + r.stderr);
+  return r.stdout;
+}
+cmd('tar', ['-x', '-C', tree], lane, cmd('git', ['archive', '3442d264'], lane));
+cmd('git', ['init', '-q']);
+cmd(process.platform === 'darwin' ? '/bin/cp' : 'cp', [
+  ...(process.platform === 'darwin' ? ['-cR'] : ['--reflink=auto', '-R']), path.join(lane, 'target'), path.join(tree, 'target')
+], lane);
+function touch(dir) {
+  for (const e of fs.readdirSync(dir, {withFileTypes: true})) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) touch(p);
+    else if (e.name.endsWith('.rs') || e.name === 'Cargo.toml') fs.utimesSync(p, new Date(), new Date());
+  }
+}
+touch(path.join(tree, 'crates'));
+const results = [];
+function test(name, args, red = false) {
+  const r = spawnSync('cargo', args, {cwd: tree, encoding: 'utf8', timeout: 600000, maxBuffer: 64 * 1024 * 1024});
+  const log = (r.stdout || '') + (r.stderr || '') + '\nEXIT=' + r.status + '\n';
+  fs.writeFileSync(path.join(logs, name + '.log'), log);
+  if (red ? r.status !== 101 || !/test result: FAILED/.test(log) : r.status !== 0) throw Error(name + ' unexpected result ' + r.status);
+  results.push({name, exit: r.status, red}); console.log(name + ' EXIT=' + r.status);
+}
+cmd('git', ['apply', '-'], tree, blocks[0]);
+test('host-red', ['test', '-p', 'hennery-testkit', '--test', 'plugin_startup', 'revoked_target_host_blocks_context', '--locked'], true);
+test('source-red', ['test', '-p', 'hennery-testkit', '--test', 'plugin_startup', 'review_pre_assignment_source', '--locked'], true);
+cmd('git', ['apply', '-'], tree, blocks[1]);
+let files = 0;
+for (const entry of cmd('git', ['ls-tree', '-r', expected], lane).toString().trim().split('\n')) {
+  const [meta, file] = entry.split('\t'), [mode, type, hash] = meta.split(' '), full = path.join(tree, file);
+  if (type !== 'blob') throw Error('unexpected tree entry');
+  const stat = fs.lstatSync(full), bytes = stat.isSymbolicLink() ? Buffer.from(fs.readlinkSync(full)) : fs.readFileSync(full);
+  if (crypto.createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex') !== hash) throw Error('tree mismatch ' + file);
+  if (mode === '100755' && !(stat.mode & 0o111)) throw Error('mode mismatch ' + file);
+  files++;
+}
+test('green', ['test', '-p', 'hennery-testkit', '--test', 'plugin_startup', '--test', 'plugin_startup_host', '--test', 'owner_filter', '--test', 'plugin_feed', '--locked']);
+fs.writeFileSync(path.join(logs, 'result.json'), JSON.stringify({blocks: blocks.length, filePatches: blocks.reduce((n, b) => n + (b.match(/^diff --git/gm) || []).length, 0), files, expected, results}, null, 2) + '\n');
+console.log('TREE MATCH ' + expected + ' FILES=' + files);
 ```
 
 ## After this plan
@@ -3621,5 +3933,34 @@ The parent opens the PR and checks Linux/macOS CI, reviewDecision, mergeStateSta
 
 Retained scratch source copies: `probe-1`, `replay-1`, `replay-2`, `replay-3`, under the lane ledger. Compiled scratch targets are cleaned; the main lane target remains for review.
 
+
+### Security review amendment record
+
+The first security review returned CHANGES. Both findings were reproduced locally before modifying the guards. Three regressions were added from the reviewer's patch: target-host revocation before commit, target-host revocation before dispatch, and source evidence predating a real hat reassignment. The host tests use a second live mount so aggregate provider scope remains live.
+
+The shared gated validator now checks the actual target host at both delivery boundaries. The provenance query applies the latest applied source-session reassignment cutoff, matching C1's feed. The additional SQL statement raises the owner audit floor from three to four. No schema, protocol, generated TypeScript, dependency or migration changes were made. No rebase was performed while awaiting D2.
+
+| Verification command / exercise | Result from output |
+|---|---|
+| Host regression command before fixes | exit 101; 0 passed, 2 failed |
+| Reassignment regression command before fixes | exit 101; 0 passed, 1 failed |
+| `cargo test -p hennery-testkit --test plugin_startup --test plugin_startup_host --test owner_filter --test plugin_feed --locked` | exit 0; 26 + 1 + 3 + 21 tests |
+| `cargo test -p hennery-proto -p hennery-kernel --test plugin_startup --locked` | exit 0; 2 + 3 tests |
+| `cargo test -p hennery-view --test plugin_origin --locked` | exit 0; 1 test |
+| `cargo fmt --all --check` | exit 0 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | exit 0 |
+| `cargo clippy -p hennery --locked -- -D warnings` | exit 0 |
+| `cargo test --workspace --locked` | exit 0; 2,253 passed |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | exit 0 |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | exit 0 |
+| Fresh amendment replay | two extracted diff blocks / four file patches; host and source commands RED, targeted suites GREEN; exact 767-file implementation tree match before the amendment record update |
+| Copy-only host guard bypass, commit boundary | exit 101; 1 regression failed |
+| Copy-only host guard bypass, dispatch boundary | exit 101; 1 regression failed |
+| Copy-only reassignment cutoff removal | exit 101; 1 regression failed |
+| Four concurrent copies × three rounds, startup and host binaries | 24 runs, 324 test executions, all exit 0 |
+
+Evidence is under `.superpowers/sdd/plugin-c2/`: `security-red-final-*.log`, `security-green-*.log`, `security-full-*.log`, `security-replay-1-logs/`, `security-probe-1-logs/` and `security-load/`. The new probes ran solely in `security-probe-1`; no probe mutation was made in the lane. These two fresh source copies are retained for the parent; their compiled targets are cleaned. Original task evidence above remains historical and is not replaced by amendment results.
+
+The web gate was not repeated because generated types and all web code are unchanged in this amendment; the original web gate remains recorded above. Provider prompts and Linux CI were not run by the lane. Parent re-review should focus on `3442d264..HEAD`: actual target-host revocation under the shared gate, source-session assignment isolation, and the three regression assertions. This is a request for independent security/task review, not an approval claim. The parent still owns PR checks, reviewDecision, mergeStateStatus and unresolved threads, bots included.
 
 Generated with Claude AI — please review before distribution.

@@ -88,6 +88,8 @@ pub(crate) fn prepare_in(
                         AND target.id = ?2 AND target.hat_id = s.hat_id
                         WHERE e.owner_id = ?1 AND e.session_id = ?3 AND e.event_id = ?4
                         AND e.kind = 'user_turn' AND e.applied = 1 AND s.lifecycle <> 'deleted'
+                        AND e.event_id > COALESCE((SELECT max(a.event_id) FROM events a WHERE a.owner_id = ?1
+                            AND a.session_id = s.id AND a.kind = 'hat_reassigned' AND a.applied = 1),0)
                         AND EXISTS(SELECT 1 FROM gw_mounts m JOIN hosts h ON h.owner_id = ?1 AND h.id = m.host_id
                             WHERE m.owner_id = ?1 AND m.connection_id = ?5 AND m.host_id = s.host_id AND h.revoked_at IS NULL)",
                         params![store.owner_id(),session,source.session_id,source.event_id,block.connection_id],|r|r.get(0)).optional()?;
