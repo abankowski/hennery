@@ -561,7 +561,11 @@ async fn a_host_start_installs_the_pinned_set_and_launches_from_its_absolute_pat
     // The pinned Claude is isolated; Codex is not, until plan 8h.
     use hennery_host::profile::Profile;
     assert_eq!(prepared.agents.profiles["claude"], Profile::Claude);
-    assert_eq!(prepared.agents.profiles["codex"], Profile::Generic);
+    assert_eq!(prepared.agents.profiles["codex"], Profile::Codex);
+    assert_eq!(
+        prepared.agents.profiles["codex"].mcp_isolation(),
+        hennery_proto::frames::McpIsolation::None
+    );
     // Plan 9d decision 9: a forget's app-server is the set's bundled Codex,
     // `<node> <set>/codex/<the pinned launcher>`, once the set has it.
     assert!(
