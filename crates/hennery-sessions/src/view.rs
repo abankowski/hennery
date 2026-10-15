@@ -226,8 +226,6 @@ async fn summaries(State(state): State<AppState>, Query(params): Query<ListParam
     }
 }
 
-/// A list item as a summary: `waiting` holds the sessions with an open
-/// question.
 /// `GET /api/view/sessions/{id}`'s query.
 #[derive(Deserialize)]
 struct PageParams {
