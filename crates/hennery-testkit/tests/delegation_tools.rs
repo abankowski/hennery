@@ -490,9 +490,10 @@ async fn permission_questions_remain_operator_only_and_elicitation_has_one_answe
             .unwrap()
             .answered
     );
+    let elicitation_path = format!("/api/sessions/{child}/pending/{}/answer", elicitation.pending_id);
     let (parent,operator)=tokio::join!(
         h.call("session_answer",json!({"operation_key":"parent-answer","child_id":child,"pending_id":elicitation.pending_id,"action":"accept","content":{"name":"parent"}})),
-        h.post(&format!("/api/sessions/{child}/pending/{}/answer",elicitation.pending_id),json!({"action":"accept","content":{"name":"operator"}}))
+        h.post(&elicitation_path,json!({"action":"accept","content":{"name":"operator"}}))
     );
     let parent_won = parent["isError"] == false;
     let operator_won = operator.0 == reqwest::StatusCode::ACCEPTED;
