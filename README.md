@@ -40,6 +40,86 @@ Known limitations:
   [`docs/plans/`](docs/plans/); [`docs/README.md`](docs/README.md) lists
   them.
 
+## Verify a release installer before running it
+
+Releases are not published yet; this procedure is for when publication is enabled.
+Until then, use the source quickstart below. You need trusted, already installed
+`curl`, GnuPG, `jq`, and either `sha256sum` or `shasum` (plus `gh` for the
+installer's archive verification).
+
+The release signing subkey's **full fingerprint** is
+**`F26C7F594DFE84D131703AFC23E5A318AE8D2861`**. Confirm it through channels
+independent of any release: this [README on main](https://github.com/marcinwadon/hennery/blob/main/README.md),
+the [maintainer's account keys](https://github.com/marcinwadon.gpg), and
+[keys.openpgp.org](https://keys.openpgp.org/vks/v1/by-fingerprint/F26C7F594DFE84D131703AFC23E5A318AE8D2861).
+The block below fetches all three and requires the full fingerprint to match.
+Stop if a source is unavailable or disagrees; never use a key or verifier
+supplied alongside a release as the trust anchor. Review these commands from
+main and compare the fingerprint independently before running them.
+
+Set `release_tag` to the published version you intend to install. The block
+downloads public data into a private temporary directory, verifies the inventory
+with an isolated keyring, and checks the installer's SHA-256 against that signed
+inventory. Only then does it run the installer, which authenticates the archives
+with the maintainer signature and exact-tag Sigstore provenance. Keep the printed
+directory for inspection. Verification uses installed tools; only the
+authenticated installer is executed.
+
+<!-- check: release-bootstrap -->
+```sh
+(
+set -eu
+release_fingerprint=F26C7F594DFE84D131703AFC23E5A318AE8D2861
+release_tag=v0.1.0-alpha.1
+release_dir=$(mktemp -d "${TMPDIR:-/tmp}/hennery-release.XXXXXXXX") || exit 1
+printf 'Release verification directory: %s\n' "$release_dir"
+mkdir "$release_dir/keyring" || exit 1
+chmod 0700 "$release_dir/keyring" || exit 1
+release_fetch() {
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$1" -o "$2" || exit 1
+}
+release_gpg() {
+    gpg --batch --no-options --homedir "$release_dir/keyring" --no-autostart --no-auto-key-retrieve "$@"
+}
+release_fetch https://raw.githubusercontent.com/marcinwadon/hennery/refs/heads/main/README.md "$release_dir/main-readme"
+grep -F -- "$release_fingerprint" "$release_dir/main-readme" >/dev/null || exit 1
+release_fetch https://github.com/marcinwadon.gpg "$release_dir/github.asc"
+release_fetch "https://keys.openpgp.org/vks/v1/by-fingerprint/$release_fingerprint" "$release_dir/keyserver.asc"
+for release_source in github keyserver; do
+    release_gpg --with-colons --with-subkey-fingerprint --show-keys "$release_dir/$release_source.asc" > "$release_dir/$release_source.fingerprints" || exit 1
+    awk -F: -v fp="$release_fingerprint" '$1 == "fpr" && $10 == fp { found=1 } END { exit !found }' "$release_dir/$release_source.fingerprints" || exit 1
+done
+release_gpg --import "$release_dir/github.asc" "$release_dir/keyserver.asc" || exit 1
+release_url="https://github.com/marcinwadon/hennery/releases/download/$release_tag"
+for release_file in release-inventory.json release-inventory.json.asc hennery-installer.sh; do
+    release_fetch "$release_url/$release_file" "$release_dir/$release_file"
+done
+cd "$release_dir" || exit 1
+release_gpg --status-fd 1 --verify release-inventory.json.asc release-inventory.json > inventory-status || exit 1
+awk -v fp="$release_fingerprint" '
+    $1 == "[GNUPG:]" && $2 == "VALIDSIG" { count++; if ($3 != fp) bad=1 }
+    $1 == "[GNUPG:]" && $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYEXPIRED|SIGEXPIRED|KEYREVOKED|NO_PUBKEY|NODATA|FAILURE|ERROR)$/ { bad=1 }
+    END { exit !(count == 1 && !bad) }
+' inventory-status || exit 1
+release_sha=$(jq -er --arg tag "$release_tag" '
+    if .schema != 1 or .repository != "marcinwadon/hennery" or .tag != $tag then error("wrong release inventory") else
+        [.artifacts[] | select(.name == "hennery-installer.sh")] |
+        if length != 1 then error("installer missing or duplicated") else .[0].sha256 end |
+        if type == "string" and test("^[0-9a-f]{64}$") then . else error("invalid installer digest") end
+    end' release-inventory.json) || exit 1
+printf '%s  hennery-installer.sh\n' "$release_sha" > installer.sha256 || exit 1
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c installer.sha256 || exit 1
+elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c installer.sha256 || exit 1
+else
+    printf 'A SHA-256 tool is required\n' >&2
+    exit 1
+fi
+sh ./hennery-installer.sh
+)
+```
+
 ## Quickstart
 
 Build with [Nix](https://nixos.org/download/) with flakes enabled, or use

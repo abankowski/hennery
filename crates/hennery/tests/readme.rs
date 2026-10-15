@@ -36,7 +36,11 @@ const EXAMPLE_CODE: &str = "ABCD-EFGH";
 const EXAMPLE_PORT: u16 = 7117;
 
 /// Every block name in the README, in order, with what runs it.
-const BLOCKS: [(&str, Runner); 11] = [
+const BLOCKS: [(&str, Runner); 12] = [
+    (
+        "release-bootstrap",
+        Runner::Workflow("release-tests.yml", "refusal-tests"),
+    ),
     ("clone", Runner::Workflow("ci.yml", "readme")),
     ("build", Runner::Workflow("ci.yml", "readme")),
     ("nix", Runner::Workflow("nix.yml", "flake")),

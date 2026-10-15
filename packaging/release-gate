@@ -1,0 +1,13 @@
+#!/bin/sh
+# R1 v1: one channel per validation, with live platform evidence and held audit.
+set -eu
+case "${1:-}" in
+    github|crates|ghcr|homebrew) channel=$1; shift ;;
+    *) echo 'usage: packaging/release-gate <github|crates|ghcr|homebrew> --candidate DIR --inventory-sha256 HEX --phase preflight|boundary --receipt FILE' >&2; exit 2 ;;
+esac
+for argument do
+    case "$argument" in
+        --channel|--channel=*) echo 'release refused: channel is the first positional argument' >&2; exit 2 ;;
+    esac
+done
+exec python3 "$(dirname "$0")/release/gate.py" --channel "$channel" "$@"

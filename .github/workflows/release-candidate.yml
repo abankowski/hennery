@@ -1,0 +1,260 @@
+name: release-candidate
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Annotated approved release tag; candidate creation only
+        required: true
+        type: string
+      channels:
+        description: Comma-separated channels; first alpha is github only
+        default: github
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-candidate-${{ github.event.inputs.tag || github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  tag-signature:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Verify pinned maintainer signature and exact candidate SHA before storage credentials
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: nix develop .#release -c python3 packaging/release/tag_signature.py --tag "$RELEASE_TAG" --source-sha "$GITHUB_SHA"
+  web-ui:
+    needs: tag-signature
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Build the UI once from the pinned lock
+        run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-ui
+          retention-days: 90
+          if-no-files-found: error
+          path: web/dist/
+  archive:
+    needs: web-ui
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            image: amd64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            image: arm64
+          - target: aarch64-apple-darwin
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Annotated tag, exact source and workspace version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          test "$(git cat-file -t "$RELEASE_TAG")" = tag
+          source_sha=$(git rev-parse "$RELEASE_TAG^{commit}")
+          test "$source_sha" = "$(git rev-parse HEAD)"
+          echo "RELEASE_SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
+          python3 -c 'import os,tomllib; from pathlib import Path; v=tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]; assert os.environ["RELEASE_TAG"] == "v"+v'
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: 1.98.1
+          targets: ${{ matrix.target }}
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Native build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-ui
+          path: web/dist/
+      - name: Pinned dist and source and licence inputs
+        run: |
+          sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+          echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
+          nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web licenses list --json > frontend-licences.json'
+          cargo metadata --locked --all-features --filter-platform '${{ matrix.target }}' --format-version=1 > cargo-metadata.json
+          nix develop .#release -c python3 packaging/release/supply.py materials --output release-materials \
+            --source-sha "$RELEASE_SOURCE_SHA" --target '${{ matrix.target }}' \
+            --cargo-metadata cargo-metadata.json --frontend-licences frontend-licences.json
+      - name: Current advisory databases; findings stop candidate creation
+        run: |
+          nix develop .#release -c cargo-audit audit --file Cargo.lock --db "$RUNNER_TEMP/release-advisories" --json > release-materials/rust-advisories.json
+          git -C "$RUNNER_TEMP/release-advisories" rev-parse HEAD > release-materials/rust-advisory-revision.txt
+          nix develop .#web -c pnpm --dir web audit --json > release-materials/web-advisories.json
+      - name: Build fresh final archive with notices
+        env:
+          HENNERY_WEB_REQUIRE: '1'
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          i=json.load(open('release-materials/build-identity.json'))
+          for key, field in [('HENNERY_BUILD_SOURCE_SHA','source_sha'),('HENNERY_BUILD_UI_SHA256','ui_sha256'),('HENNERY_BUILD_MANIFEST_SHA256','adapter_manifest_sha256')]:
+              print(key+'='+i[field])
+          PY
+      - name: Archive and content acceptance
+        env:
+          HENNERY_WEB_REQUIRE: '1'
+        run: |
+          dist build --artifacts=local --target='${{ matrix.target }}' --print=linkage --output-format=json > target-manifest.json
+          archive='hennery-${{ matrix.target }}'
+          mkdir -p unpacked
+          tar -xJf "target/distrib/$archive.tar.xz" -C unpacked
+          cp release-materials/THIRD-PARTY-NOTICES.txt "unpacked/$archive/"
+          tar -cJf "target/distrib/$archive.tar.xz" -C unpacked "$archive"
+          (cd target/distrib && shasum -a 256 "$archive.tar.xz" > "$archive.tar.xz.sha256")
+          sh packaging/check-archive.sh "target/distrib/$archive.tar.xz" '${{ matrix.target }}' --notices
+          binary="$PWD/unpacked/$archive/hennery"
+          sh packaging/check-linkage.sh "$binary"
+          sh packaging/check-web-ui.sh "$binary"
+          "$binary" --version
+          cp target-manifest.json 'target/distrib/${{ matrix.target }}-dist-manifest.json'
+          python3 packaging/release/refresh_manifest.py 'target/distrib/${{ matrix.target }}-dist-manifest.json' "target/distrib/$archive.tar.xz"
+          cp release-materials/* target/distrib/
+          python3 - <<'PY' > target/distrib/builder.json
+          import json,os,platform,subprocess
+          print(json.dumps({'os':platform.platform(),'runner_image':os.environ.get('ImageVersion'),'rust':subprocess.check_output(['rustc','-vV'],text=True),'sdk':subprocess.getoutput('xcrun --show-sdk-version') if platform.system()=='Darwin' else subprocess.getoutput('ldd --version')}))
+          PY
+      - name: Alpine executable and collector image smoke
+        if: runner.os == 'Linux'
+        env:
+          IMAGE_ARCH: ${{ matrix.image }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          binary="$PWD/unpacked/hennery-$TARGET/hennery"
+          docker run --rm -v "$binary:/hennery:ro" alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 /hennery --version
+          mkdir -p "dist/linux-$IMAGE_ARCH"
+          cp "$binary" "dist/linux-$IMAGE_ARCH/hennery"
+          docker build -t hennery-collector:candidate .
+          sh packaging/smoke-image.sh hennery-collector:candidate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: candidate-${{ matrix.target }}
+          retention-days: 90
+          if-no-files-found: error
+          path: target/distrib/
+  assemble:
+    needs: archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: candidate-*
+          path: candidates
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Assemble global inputs; never silently merge conflicting materials
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_CHANNELS: ${{ github.event.inputs.channels || 'github' }}
+        run: |
+          sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+          echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
+          python3 packaging/release/assemble.py candidates target/distrib
+          "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global --output-format=json > target/distrib/dist-manifest.json
+          python3 packaging/harden-installer.py target/distrib/hennery-installer.sh
+          sh packaging/test-installer.sh target/distrib
+          sh packaging/check-formula.sh target/distrib
+          git show HEAD:CHANGELOG.md > target/distrib/release-notes.md
+          git archive --format=tar --prefix=hennery-source/ HEAD | xz > target/distrib/hennery-source.tar.xz
+          python3 packaging/release/supply.py freeze --output target/distrib \
+            --source-sha "$(git rev-parse HEAD)" --tag "$RELEASE_TAG" --channels "$RELEASE_CHANNELS" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" > inventory-sha256.txt
+          cat inventory-sha256.txt >> "$GITHUB_STEP_SUMMARY"
+          echo 'Candidate still needs Object Lock retention and channel acceptance before approval.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: target/distrib/
+  installer:
+    needs: assemble
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Native installer positives and refusals
+        run: sh packaging/test-installer.sh candidate
+  retain:
+    needs: [assemble, installer, tag-signature]
+    if: vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true'
+    environment: release-staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Retain exact versions under compliance retention and legal hold
+        env:
+          RELEASE_BUCKET: ${{ vars.RELEASE_CANDIDATE_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_CANDIDATE_STAGE_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_CANDIDATE_STAGE_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+        run: |
+          inventory=$(sha256sum candidate/release-inventory.json | cut -d' ' -f1)
+          nix develop .#release -c python3 packaging/release/retention.py stage \
+            --candidate candidate --bucket "$RELEASE_BUCKET" --inventory-sha256 "$inventory" --receipt retention-receipt.json
+          echo "Held candidate inventory: $inventory" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: retention-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: retention-receipt.json

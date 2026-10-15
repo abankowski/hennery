@@ -30,7 +30,7 @@ Nothing here publishes. No tag trigger, no release, no registry push, no attesta
 - §4.1: the Dockerfile; "The volume must be local storage"; `/healthz` and `/readyz`; "The image contains no Node and no adapters."
 - §9: "Installer: checksum mismatch aborts; missing SHA-256 tool aborts; musl/glibc detection."
 
-And the umbrella [`docs/specs/2026-09-25-hennery-architecture-design.md`](../specs/2026-09-25-hennery-architecture-design.md) §12.1–§12.2: one binary; "GitHub Releases with signed checksums; `curl | sh` installer; Homebrew tap; Docker image for the **collector only**; Nix flake"; no self-update.
+And the umbrella [`docs/specs/2026-09-25-hennery-architecture-design.md`](../specs/2026-09-25-hennery-architecture-design.md) §12.1–§12.2: one binary; GitHub Releases with a signed inventory and verify-before-execution installer (amended by the 2026-10-15 release-foundation ruling); Homebrew tap; Docker image for the **collector only**; Nix flake; no self-update.
 
 It builds on the "After this plan" sections of the executed plans, [passkeys 3c](2026-10-05-passkeys.md) above all. Every anchor below was taken from `main` at `fbacde8`, which merged PR #20. Where the code and a spec disagree, the code wins, and the plan says so.
 
@@ -151,7 +151,7 @@ That is **4 tasks**:
    - Alternatives: an empty directory in the build context (the workflow would have to make it); `WORKDIR` (root's).
    - Cost if wrong: a volume the collector cannot write. The smoke test catches it.
 8. **cargo-dist is installed in CI from its release archive, checked against a SHA-256 kept in the repository** (`install-dist.sh`; the parent's review of the draft PR, confirmed by the security review).
-   - Not `curl … | sh` of its installer, which would run whatever script that URL serves that day. Not Nix in CI, which needs its own installer run first, and minutes per job.
+   - Do not execute an unauthenticated downloaded installer, which would run whatever script that URL serves that day. Not Nix in CI, which needs its own installer run first, and minutes per job.
    - The digests were read from the release's `.sha256` files on 2026-10-02 and checked against a download of the macOS archive here. A replaced asset now fails the build.
    - Cost if wrong: a cargo-dist bump changes three digests and one version.
 9. **The `build` workflow runs on every pull request and every push to `main`, not only on demand.**

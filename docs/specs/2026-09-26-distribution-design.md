@@ -69,14 +69,21 @@ Platforms v1: Linux x86_64 and aarch64, macOS aarch64. Windows through WSL2
   collisions).
 - **Signing:** GitHub artifact attestations (keyless, Sigstore, public
   transparency log) for every archive, `sha256.sum`, the installer script and
-  the container image. No long-lived signing key held by a single maintainer.
+  the container image. **Maintainer amendment, 2026-10-15:** a detached OpenPGP
+  signature over the immutable inventory is the release trust root, using the
+  maintainer's hardware-backed signing subkey; no private signing key enters CI.
 - **User verification:**
-  - Default: `curl --proto '=https' --tlsv1.2 -LsSf <release>/hennery-installer.sh | sh`
-    (HTTPS plus the checksums embedded in the installer; the installer refuses
-    to continue when no SHA-256 tool is available rather than skipping the
-    check).
-  - Verified: download the installer, `gh attestation verify hennery-installer.sh
-    --repo <owner>/hennery`, then run it. Documented in the README.
+  - Default: the executed [README verify-then-run procedure](../../README.md#verify-a-release-installer-before-running-it).
+    Confirm full signing fingerprint `F26C7F594DFE84D131703AFC23E5A318AE8D2861`
+    through release-independent channels (README on main, the maintainer's
+    published account keys, keys.openpgp.org). Fetch public keys separately from
+    releases; require the full pin, not a short key ID.
+  - Download the inventory, its detached signature and installer. Use installed
+    GnuPG to authenticate the inventory in an isolated keyring, require the
+    pinned signer, check the installer's SHA-256 against the signed digest set,
+    then run it. The installer requires SHA-256, maintainer authorization and
+    exact-tag Sigstore provenance for archives. Neither a release-supplied
+    verifier/key nor an unauthenticated installer can bootstrap trust.
 - **No self-update.** Package managers and images update the binary (§5.3 for
   what happens to running sessions).
 
@@ -205,7 +212,7 @@ CMD ["collector"]
   migrations run before any listener) for orchestrators.
 - The image contains no Node and no adapters.
 
-### 4.2 curl installer and Homebrew
+### 4.2 Verified shell installer and Homebrew
 
 Both install only the `hennery` binary. `hennery host join` then installs the
 runtime (§3.2), so the installer never touches the npm registry.

@@ -5,6 +5,14 @@ What a hennery release would ship is built by the `build` workflow
 `main` (distribution spec §2, plan 7a). It is checked, then kept as workflow
 artifacts for a week. **Nothing is published:** there are no releases yet.
 
+R1 adds separate, disabled-by-default candidate and publication workflows.
+They rebuild at the approved tag, add notices/SBOM/source, retain exact candidate
+versions, and bind protected-environment approval to inventory/run attempts.
+The [release process](../docs/release-process.md) lists maintainer setup and the
+[shared gate interface](release/README.md) is the R3/R4 integration contract.
+The original `build` workflow remains a qualification probe; its artifacts are
+never promoted to a release.
+
 | Artifact | Built by | Checked by |
 |---|---|---|
 | `hennery-x86_64-unknown-linux-musl.tar.xz`, `hennery-aarch64-unknown-linux-musl.tar.xz` | `dist build`, natively on each architecture, with `musl-gcc` | `check-archive.sh` (the binary, its licence and README, nothing else); `check-linkage.sh` (no shared library, no loader); runs on the runner and on Alpine |
@@ -82,8 +90,8 @@ These need the operator's decision, credentials, or both. None is set up:
 
 - **GitHub Releases.** `dist generate` writes a `release.yml` that builds the
   same archives and creates a release on every version tag. It is not
-  committed (`allow-dirty = ["ci"]` in `dist-workspace.toml`). Committed, it
-  must:
+  committed (`allow-dirty = ["ci"]` in `dist-workspace.toml`). Any generated
+  replacement for R1's explicit gated workflows must:
   - keep this workflow's checks: `check-archive.sh`, `check-linkage.sh`,
     `test-installer.sh`, `check-formula.sh`;
   - run `harden-installer.py` before the installer is uploaded, and before
@@ -95,14 +103,25 @@ These need the operator's decision, credentials, or both. None is set up:
 
   The `build` workflow's artifacts are never promoted to a release: a pull
   request's are built from code nobody has reviewed yet.
-- **Artifact attestations** (`github-attestations = true`): they need
-  `id-token: write` and `attestations: write`, and they write to the public
-  Sigstore log. The README's "verified install" (`gh attestation verify
-  hennery-installer.sh --repo marcinwadon/hennery`) is documented with the
-  first release.
+- **Artifact attestations** (`github-attestations = true`): protected release-tag
+  jobs need OIDC/attestation authority and write to the public Sigstore log.
+  Neither repository-only nor exact-tag Sigstore verification authorizes a
+  release by itself. The common verifier first requires the detached
+  `release-inventory.json.asc` from the pinned hardware-backed maintainer key
+  over the exact inventory digest set. Its trusted public key comes from the
+  reviewed verifier, not a downloaded replacement. The common
+  [verifier](release/verify.py) pins the exact certificate identity to
+  `marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<release-tag>`
+  and rejects branch signers. The [guarded README bootstrap](../README.md#verify-a-release-installer-before-running-it)
+  authenticates the inventory using a full fingerprint checked through main,
+  the maintainer's account keys and keys.openpgp.org, then checks the installer
+  SHA-256 before executing it. No release-supplied verifier or key is its trust anchor;
+  its archive verifier requires both the maintainer-approved digest and this identity. Native binstall signature
+  support needs a reviewed bridge; no unverified strategy is an accepted path.
 - **The Homebrew tap** (`marcinwadon/homebrew-tap`): the repository and a
   token allowed to push to it.
-- **The image on GHCR:** `packages: write`, one multi-arch manifest from
+- **The image on GHCR:** a dedicated credential held only in `release`, with
+  this repository's package Actions access READ, one multi-arch manifest from
   the per-architecture images, and its provenance attestation. Its docs
   should say: publish the port on loopback behind a TLS proxy
   (`-p 127.0.0.1:8080:8080`); read the setup link with
@@ -112,7 +131,10 @@ These need the operator's decision, credentials, or both. None is set up:
   not `--listen` on the command, because the `HEALTHCHECK` reads
   `HENNERY_LISTEN`.
 - **Third-party licence notices:** the archives carry only hennery's
-  `LICENSE`, and the image none. Before the first release, generate the
+  `LICENSE` in the original `build` probe, and its image none. R1's candidates
+  generate target-specific notices, SPDX and corresponding-source bundles;
+  their immutable supplemental licence texts need maintainer review. Before
+  the first release, review the
   notices for the Rust crates and the vendored OpenSSL (Apache-2.0), e.g.
   with `cargo-about`; ship them in each archive and in the image; and
   update `check-archive.sh`'s exact list and the `.dockerignore`.

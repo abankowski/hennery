@@ -87,7 +87,9 @@ jobs:
       - name: The README's build block
         run: |
           sh packaging/readme-blocks.sh README.md build > "$RUNNER_TEMP/build.sh"
-          echo 'sh packaging/check-web-ui.sh "$(command -v hennery)"' >> "$RUNNER_TEMP/build.sh"
+          cat >> "$RUNNER_TEMP/build.sh" <<'SH'
+          sh packaging/check-web-ui.sh "$(command -v hennery)"
+          SH
           sh -eux "$RUNNER_TEMP/build.sh"
 
   # The alternative README build: no Nix, no global pnpm install and no
@@ -183,7 +185,11 @@ jobs:
       # macOS has no network namespaces (`sandbox-exec` is deprecated), so its
       # tests run with the network: ubuntu is where a leak is caught.
       - name: Real proxy binaries for the deployment gate
-        run: nix develop -c sh -c 'dirname "$(command -v caddy)"; dirname "$(command -v nginx)"' >> "$GITHUB_PATH"
+        run: |
+          nix develop -c sh >> "$GITHUB_PATH" <<'SH'
+          dirname "$(command -v caddy)"
+          dirname "$(command -v nginx)"
+          SH
       - name: Tests
         run: |
           if [ "$RUNNER_OS" != Linux ]; then

@@ -1,0 +1,287 @@
+name: release-publish
+run-name: Release inventory ${{ inputs.inventory_sha256 }} from ${{ inputs.tag }}
+on:
+  workflow_dispatch:
+    inputs:
+      inventory_sha256:
+        description: Frozen candidate inventory SHA-256
+        required: true
+        type: string
+      maintainer_signature:
+        description: Armored hardware-backed detached signature over the exact frozen inventory
+        required: true
+        type: string
+      settings_audit_sha256:
+        description: SHA-256 of the maintainer local settings audit
+        required: true
+        type: string
+      settings_audit:
+        description: Canonical maintainer audit JSON, fresh for this completed candidate
+        required: true
+        type: string
+      source_sha:
+        description: Exact qualified source commit
+        required: true
+        type: string
+      tag:
+        description: Protected annotated release tag
+        required: true
+        type: string
+      channels:
+        description: Approved sorted JSON channel array
+        required: true
+        type: string
+      targets:
+        description: Approved sorted JSON target array
+        required: true
+        type: string
+      candidate:
+        description: JSON candidate run_id and run_attempt
+        required: true
+        type: string
+      retention_receipt_version:
+        description: Exact S3 version of the held retention receipt
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: release-publish-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  approval-tuple:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Display exact approval binding for this run attempt
+        run: python3 packaging/release/approval_summary.py
+  authorize:
+    needs: approval-tuple
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag)
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE_AUDIT_BUCKET: ${{ vars.RELEASE_AUDIT_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AUDIT_WRITE_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AUDIT_WRITE_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run_attempt: ${{ steps.authorized.outputs.run_attempt }}
+      inventory_sha256: ${{ steps.authorized.outputs.inventory_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      # AWS read access is restricted to held candidate versions; it conveys
+      # no registry/release authority. No write token is given to candidate code.
+      - name: Fetch exact held candidate
+        env:
+          RELEASE_BUCKET: ${{ vars.RELEASE_CANDIDATE_BUCKET }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          RECEIPT_VERSION: ${{ inputs.retention_receipt_version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_CANDIDATE_READ_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_CANDIDATE_READ_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+        run: |
+          nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
+          nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: github
+          phase: preflight
+          receipt: authorize-preflight.json
+      - name: Publish the validated credential-issuance binding
+        id: authorized
+        env:
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+        run: |
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo "inventory_sha256=$INVENTORY" >> "$GITHUB_OUTPUT"
+  sign:
+    needs: authorize
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256
+    environment:
+      name: release
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE_AUDIT_BUCKET: ${{ vars.RELEASE_AUDIT_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AUDIT_WRITE_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AUDIT_WRITE_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      # AWS read access is restricted to held candidate versions; it conveys
+      # no registry/release authority. No write token is given to candidate code.
+      - name: Fetch exact held candidate
+        env:
+          RELEASE_BUCKET: ${{ vars.RELEASE_CANDIDATE_BUCKET }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          RECEIPT_VERSION: ${{ inputs.retention_receipt_version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_CANDIDATE_READ_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_CANDIDATE_READ_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+        run: |
+          nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
+          nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: github
+          phase: preflight
+          receipt: sign-preflight.json
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: github
+          phase: boundary
+          receipt: sign-boundary.json
+      - name: Attest final bytes, including signed inventory and SPDX files
+        id: attest
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: candidate/*
+      - name: Preserve downloadable Sigstore bundle and approval receipts
+        run: |
+          mkdir signatures
+          python3 - <<'PYAPPROVAL'
+          import json, os
+          from pathlib import Path
+          Path('signatures/release-inventory.json.asc').write_text(json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['inputs']['maintainer_signature'])
+          PYAPPROVAL
+          cp '${{ steps.attest.outputs.bundle-path }}' signatures/release.sigstore.jsonl
+          cp sign-preflight.json sign-boundary.json retention-receipt.json signatures/
+          nix develop .#release -c python3 - <<'PY'
+          import os,sys
+          from pathlib import Path
+          sys.path.insert(0,'packaging/release')
+          import retention
+          retention.audit(Path('signatures/release-inventory.json.asc'), os.environ['RELEASE_AUDIT_BUCKET'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
+          retention.audit(Path('signatures/release.sigstore.jsonl'), os.environ['RELEASE_AUDIT_BUCKET'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: signatures/
+  github:
+    needs: [sign, authorize]
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GITHUB_ENABLED == 'true'
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE_AUDIT_BUCKET: ${{ vars.RELEASE_AUDIT_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AUDIT_WRITE_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AUDIT_WRITE_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Fetch exact held candidate
+        env:
+          RELEASE_BUCKET: ${{ vars.RELEASE_CANDIDATE_BUCKET }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          RECEIPT_VERSION: ${{ inputs.retention_receipt_version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_CANDIDATE_READ_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_CANDIDATE_READ_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+        run: |
+          nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
+          nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signatures
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: github
+          phase: preflight
+          receipt: publish-preflight.json
+      - name: Reconcile every existing remote byte before any upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: nix develop .#release -c python3 packaging/release/publish.py reconcile --candidate candidate --signatures signatures --output reconciliation.json
+      - name: Obtain short-lived publication authority after preflight
+        id: publication-token
+        uses: actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42 # v2.1.4
+        with:
+          app-id: ${{ vars.RELEASE_PUBLISH_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PUBLISH_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: hennery
+          permission-contents: write
+          permission-actions: read
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: github
+          phase: boundary
+          receipt: publish-boundary.json
+      - name: Publish only verified missing bytes; verify upload responses by fetch/hash
+        env:
+          GH_TOKEN: ${{ steps.publication-token.outputs.token }}
+          RELEASE_PUBLICATION_ENABLED: ${{ vars.RELEASE_PUBLICATION_ENABLED }}
+        run: nix develop .#release -c python3 packaging/release/publish.py upload --candidate candidate --signatures signatures --output public-path.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: publication-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            publish-preflight.json
+            publish-boundary.json
+            reconciliation.json
+            public-path.json
