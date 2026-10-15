@@ -123,6 +123,8 @@ slice); everything else is design. The maintainer's decisions are recorded below
 
    - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — hardware-backed inventory approval plus the executed verify-then-run README bootstrap, re-confirmed by the parent. The Linux CI tool-directory collision is repaired with duplicate-name/conflict regressions. Rebased onto W2 at `e36e66c8`; post-rebase checks, COPY probes and fresh replay evidence are recorded in the plan. PR #145 awaits review and CI; maintainer-only setup remains and publication is disabled.
 
+   - [Crates.io and cargo-binstall (R3)](plans/2026-10-28-crates-io.md) — seven self-contained production crates, licence/frontend notice and complete-source gates, offline registry installs with embedded UI, Rust 1.88 and pinned binstall acceptance; thirteen embedded patches replayed through seven exact code trees. Publication remains disabled pending R1 adapter integration and parent review; Linux/macOS PR qualification and maintainer-only bootstrap/trusted publishing follow.
+
 ## Maintainer decisions (2026-09-27)
 
 Every open design decision is resolved; the specs carry the details.
