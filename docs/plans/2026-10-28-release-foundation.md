@@ -1,12 +1,21 @@
 # R1 — release foundation implementation plan
 
 - **Date:** 2026-10-15; filename assigned by the distribution brief.
-- **Base:** `256691feb9cba161f0c29b14016bc857a4da86e5`, requested current main; includes the merged distribution design and subsequent completed work.
+- **Base:** `e36e66c8b1790a6b1555e04b7fb0c34bf34d3e1d`, requested current main including W2. Earlier base/replay records below are historical.
 - **Branch:** `plan/dist-r1`.
 - **Design:** [distribution and releases](../specs/2026-10-15-distribution-release-design.md), with the binding parent ruling below.
 - **Process:** built first, RED regressions, fixes, COPY-only guard probes, exact embedded files, fresh replay and recorded command output. Independent approval belongs to the parent.
 
 ## Execution status
+
+### Rebase onto W2
+
+Rebased `plan/dist-r1` from original tip `06360c39` onto `origin/main` at `e36e66c8`, using signing-disabled rebase/continue. The sole conflict was the README guard registry: preserve W2's public join example and R1's release bootstrap, for **12 guarded blocks**. Workflow proxy PATH setup, the CLI's host test dependency and Caddy/nginx in the build shell are preserved alongside R1's release shell and tagged source identity. All workflow actionlint initially found two SC2016 warnings in `ci.yml`; quoted heredocs preserve deferred expansion in the appended build check and inner Nix proxy shell, without any diagnostic suppression or rule change. Both exact heredocs executed successfully against scratch output and real proxy binaries; `/tmp/dist-r1-w2-workflow.log`, exit **0**.
+
+- Current release suite **96 passed**, **exit 0**; actionlint on **all seven workflows**, **exit 0**; `/tmp/dist-r1-w2-release-final.log`. The initial combined run passed all 96 tests but exited 1 on the two actionlint warnings; `/tmp/dist-r1-w2-release.log`. No diagnostic was suppressed.
+- Current pinned cargo-dist mixed-candidate round-trip: **20 installer groups and three formula hashes passed**, **exit 0**; `/tmp/dist-r1-w2-roundtrip.log`. Real executables remain tiny acceptance fixtures, not native platform qualification.
+- Current Rust checks: fmt, workspace/all-target clippy, CLI clippy, full workspace tests and both generator checks **all six exit 0**. Workspace **2220 passed, 0 failed, 0 ignored**, across **150 result rows**; `/tmp/dist-r1-w2-rust-summary.log`, individual logs `/tmp/dist-r1-w2-rust-{0..5}.log`. W2's two real proxy idle/reload cases passed their deliberate runs beyond the 120-second recipe idle timeout. No source/test/type/rule was weakened, and no stale UI refresh was needed because this base changed no web assets.
+- Current fresh replay: clean `dist-r1-replay-11` at **`e36e66c8`** extracted **82 source blocks**, passed every task check including **96 release tests**, and matched **756 tracked files** byte-for-byte and mode-for-mode, **exit 0**; `/tmp/dist-r1-w2-replay-11.log`. Actionlint on all seven replayed workflows also exited **0**; `/tmp/dist-r1-w2-replay-actionlint.log`. Final execution-only record copied back and all **756 tracked bytes/modes** compared again, **exit 0**; `/tmp/dist-r1-w2-final-compare.log`. Staged bytes are checked against this final replay before commit. Earlier counts and bases below are historical evidence. Retain replay 11 and `installer-w2-roundtrip-1` alongside the historical evidence for parent cleanup.
 
 **Bootstrap re-confirmation: CONFIRMED by the parent; PR #145 ready for review.** Subsequent Linux CI failed in `installers` and `refusal-tests` on both Ubuntu architectures: the restricted no-gh tool directory already held system `gpg`, then attempted to add the offline fixture under the same name. The current CI repair reserves `gpg`/`jq` for the offline fixtures. Duplicate system tool names are accepted only if the existing entry is a symlink resolving to the same binary (`-ef`, covering merged `/usr/bin` and `/bin`); conflicts refuse without replacement. There is no forced symlink overwrite. This repair is folded into the owning original `9aa573ca` commit, so descendant SHAs change; older SHA ranges below are historical anchors, not new review claims. Publication remains disabled.
 
@@ -52,7 +61,7 @@ R1 provides the protected platform boundary and auditable in-job gates, held can
 - Never publish, log into registries, mint tokens, push release tags or change external settings in this child. The parent owns GitHub/PR/check/review actions. The settings audit and negative push are future maintainer-only tools, never run here with real credentials.
 - Plain `nix develop -c` from the named worktree; release Python/tools use `.#release`, and Rust plus Python probes use the build shell plus one-off Python. Scratch HOME/XDG/config/cache/CARGO_HOME; no shared Cargo target and no real operator data.
 - Pinned actions, timeouts, no restored candidate caches; least ordinary token permissions. All publishing credentials remain platform-protected environment secrets. No broad administration policy reader in CI.
-- Personal git identity, unsigned Conventional Commits, staged-byte checks and diff hygiene. Push only the owned branch with the parent's exact lease on `24d8b6c824398e6462632e09b7e8b493f01fa61f`.
+- Personal git identity, unsigned Conventional Commits, staged-byte checks and diff hygiene. Push only the owned branch with the parent's exact lease on `06360c39039f69514cef68f079c4dc423a1b9332`.
 - Retain scratch trees; no global/project memory writes. The parent files cross-project lessons and cleans up.
 
 ## Review focus
@@ -118,6 +127,7 @@ Exact final source follows. Each `r1:file` block gives task, path, decoded SHA-2
 - Task 3: `packaging/release/test_installer_archives.py`
 - Task 3: `packaging/release/test_installer_tools.py`
 - Task 3: `packaging/test-installer.sh`
+- Task 4: `.github/workflows/ci.yml`
 - Task 4: `.github/workflows/nix.yml`
 - Task 4: `.github/workflows/release-candidate.yml`
 - Task 4: `.github/workflows/release-publish.yml`
@@ -2121,7 +2131,7 @@ mod tests {
 
 ### File `crates/hennery/src/main.rs`
 
-<!-- r1:file task=2 path=crates/hennery/src/main.rs sha256=86fe8cb49aabd03575926304d44a10a82a1c0b87dc36cad07d964f8e3438657b bytes=76438 mode=644 encoding=utf8 -->
+<!-- r1:file task=2 path=crates/hennery/src/main.rs sha256=25e4c5388839a09d5259a79506a54aadcb1f7c2d687b3d12862fea68ab68fb48 bytes=76622 mode=644 encoding=utf8 -->
 ````rust
 //! The `hennery` binary (distribution spec §1): collector, host (join and
 //! run) and an all-in-one mode. Hosts authenticate with the key they paired
@@ -2708,7 +2718,11 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
         hennery_sessions::router(state.clone())
             .merge(hennery_sessions::builtin::router(state.clone(), gateway.clone()))
             .merge(hennery_gateway::api::router(gateway))
-            .merge(hennery_gateway::proxy::router(proxy)),
+            .merge(hennery_gateway::proxy::router(proxy))
+            .layer(axum::middleware::from_fn(
+                hennery_kernel::client_address::resolve_request,
+            ))
+            .layer(axum::Extension(file.proxy_policy()?)),
         state.shutdown.clone(),
     )
     .await;
@@ -11761,6 +11775,224 @@ The old publisher is RED on reconcile then upload (FileExistsError) and on publi
 
 ### Step 2: Exact implementation
 
+### File `.github/workflows/ci.yml`
+
+<!-- r1:file task=4 path=.github/workflows/ci.yml sha256=7315404161d58e43bc8b2240e5c73a7c55365bd7f55fa762cf5249c8e40306f1 bytes=9356 mode=644 encoding=utf8 -->
+````yaml
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A pull request's superseded run is cancelled. Outside pull requests
+  # (pushes to main, manual runs) every commit is a group of its own: a
+  # shared group would let a newer pending run replace an older one even
+  # without cancel-in-progress, so no run there is ever cancelled.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The web UI (plan 4b): its types, unit tests and build, then the browser
+  # checks against the binary it is embedded in. Node, pnpm, the Rust
+  # toolchain and Chromium all come from the flake's dev shell.
+  web:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      HENNERY_WEB_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: web
+      - name: Install
+        run: nix develop -c pnpm --dir web install --frozen-lockfile
+      - name: Types
+        run: nix develop -c pnpm --dir web typecheck
+      - name: Unit tests
+        run: nix develop -c pnpm --dir web test
+      - name: Build
+        run: nix develop -c pnpm --dir web build
+      - name: The binary, with the UI embedded, and the fake agent
+        run: nix develop -c cargo build -p hennery -p hennery-testkit --bins --locked
+      - name: Browser checks
+        run: nix develop -c pnpm --dir web e2e
+        env:
+          CI: "1"
+
+  # The README's quickstart (plan 4f): its clone and build blocks, run as
+  # written, by name (`packaging/readme-blocks.sh`). The rest of its blocks
+  # run in `crates/hennery/tests/readme.rs`, which checks every name has a
+  # runner. No job-wide HENNERY_WEB_REQUIRE: the build block sets it itself.
+  readme:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: readme
+      # The clone is of `main`, not of this change: it checks the address
+      # and the directory, and the build below runs on this checkout.
+      - name: The README's clone block
+        run: |
+          sh packaging/readme-blocks.sh README.md clone > "$RUNNER_TEMP/clone.sh"
+          scratch=$(mktemp -d)
+          (cd "$scratch" && sh -eux "$RUNNER_TEMP/clone.sh" && test -f hennery/Cargo.toml)
+          rm -rf "$scratch"
+      # Its last line puts the binary on PATH, for the checks after it.
+      - name: The README's build block
+        run: |
+          sh packaging/readme-blocks.sh README.md build > "$RUNNER_TEMP/build.sh"
+          cat >> "$RUNNER_TEMP/build.sh" <<'SH'
+          sh packaging/check-web-ui.sh "$(command -v hennery)"
+          SH
+          sh -eux "$RUNNER_TEMP/build.sh"
+
+  # The alternative README build: no Nix, no global pnpm install and no
+  # system OpenSSL. Run the documented block on both supported OSes.
+  readme-without-nix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: readme-without-nix
+      - name: Vendored OpenSSL build tools (ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential perl
+      - name: Vendored OpenSSL build tools (macOS)
+        if: runner.os == 'macOS'
+        run: xcode-select -p && cc --version && make --version && perl -v
+      # Run the UI check in the same shell as the block's PATH export.
+      - name: The README's build without Nix block
+        run: |
+          sh packaging/readme-blocks.sh README.md build-without-nix > "$RUNNER_TEMP/build-without-nix.sh"
+          cat >> "$RUNNER_TEMP/build-without-nix.sh" <<'CHECK'
+          sh packaging/check-web-ui.sh "$(command -v hennery)"
+          CHECK
+          sh -eux "$RUNNER_TEMP/build-without-nix.sh"
+
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # Every build here embeds the real UI, built first (plan 4b): the
+    # kernel's build script fails without it.
+    env:
+      HENNERY_WEB_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: The web UI
+        run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build'
+      # `webauthn-rs` links OpenSSL (plan 3c): the system's for these checks.
+      # Release builds build their own (`vendored-openssl`, build.yml).
+      - name: OpenSSL headers (ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+      # Named rather than left to the image (plan 7a): installed if a future
+      # image lacks it, and pointed at, so no other OpenSSL is picked up.
+      - name: OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew list openssl@3 > /dev/null 2>&1 || brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+      # `hennery service install` captures the login shell's PATH; its tests
+      # run bash, zsh and fish (plan 7c), and must not skip here.
+      - name: Login shells (ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y zsh fish
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Clippy on the shipped binary (test-hooks off)
+        run: cargo clippy -p hennery --locked -- -D warnings
+      # On Linux the tests run with no network but loopback: built first,
+      # while the network is there, then run in a network namespace of their
+      # own whose only link is `lo`. A test that reaches a registry, or any
+      # host but 127.0.0.1 and ::1, fails here instead of passing on whatever
+      # answers (plan 7b's review found one that reached npm). They run as the
+      # runner's own user again (`setpriv`), so permission checks still bite,
+      # with the environment kept and the hard RLIMIT_NOFILE raised past the
+      # adapter's closing loop's cap (`MAX_CLOSED_FD`, 65536, the runner's own
+      # hard limit), so the test of `close_range` can hold a descriptor past
+      # it (it asserts it ran, under `CI`).
+      # macOS has no network namespaces (`sandbox-exec` is deprecated), so its
+      # tests run with the network: ubuntu is where a leak is caught.
+      - name: Real proxy binaries for the deployment gate
+        run: |
+          nix develop -c sh >> "$GITHUB_PATH" <<'SH'
+          dirname "$(command -v caddy)"
+          dirname "$(command -v nginx)"
+          SH
+      - name: Tests
+        run: |
+          if [ "$RUNNER_OS" != Linux ]; then
+            cargo test --workspace --locked
+            exit 0
+          fi
+          cargo test --workspace --locked --no-run
+          sudo --preserve-env env "PATH=$PATH" "HOME=$HOME" unshare --net -- sh -c '
+            ip link set lo up
+            exec prlimit --nofile=65536:1048576 -- setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups -- cargo test --workspace --locked --offline
+          '
+        env:
+          # On ubuntu the PATH-capture and unit-lint tests fail rather than
+          # skip when a shell or `systemd-analyze` is missing.
+          HENNERY_REQUIRE_SHELLS: ${{ runner.os == 'Linux' && 'bash,zsh,fish' || '' }}
+          HENNERY_REQUIRE_SYSTEMD_ANALYZE: ${{ runner.os == 'Linux' && '1' || '' }}
+      - name: Generated files are up to date
+        run: cargo run -p hennery-proto --bin gen --locked -- --check
+      - name: Generated view types are up to date
+        run: cargo run -p hennery-view --bin gen-view --locked -- --check
+````
+
 ### File `.github/workflows/nix.yml`
 
 <!-- r1:file task=4 path=.github/workflows/nix.yml sha256=928d49b2a1205e369130621fb89695f0b2a757ef4978092d0bc982b99a69859e bytes=2006 mode=644 encoding=utf8 -->
@@ -12427,7 +12659,7 @@ jobs:
 
 ### File `README.md`
 
-<!-- r1:file task=4 path=README.md sha256=150bfc6791e0e879a1d59f5d133dad2367f5855def28aa973367c513470d4ef2 bytes=18534 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=README.md sha256=7e66c13cf28e088b81c3f6551e6249e433c58b6e8274ec6f6ff3d050b7d65334 bytes=20717 mode=644 encoding=utf8 -->
 ````markdown
 # hennery
 
@@ -12464,8 +12696,8 @@ Known limitations:
 - Web Push is built on the collector, but the web UI has no subscribe
   button yet.
 - Codex sessions get hennery MCP servers only in the host's default hat, without per-hat isolation, and also load the user's own `~/.codex` MCP servers; other hats get none, until per-hat isolation lands.
-- Hosts support verified `wss://`; the public proxy deployment and separate
-  client rate-limit budgets are still pending. Restrict public ingress until
+- Hosts support verified `wss://`; exact trusted proxy peers provide separate
+  client rate-limit budgets. Public adapter/MCP acceptance is pending. Restrict ingress until
   those deployment checks are complete.
 - The designs are in [`docs/specs/`](docs/specs/) and the plans in
   [`docs/plans/`](docs/plans/); [`docs/README.md`](docs/README.md) lists
@@ -12689,9 +12921,45 @@ hennery up --public-url https://hennery.example
 Already set up at `localhost`? Then `--public-url` is ignored: move it
 with `hennery admin reset-public-url` (see [Recovery](#recovery)), and from
 then on open hennery at the new address, since the old one is refused.
-With a same-machine reverse proxy, all remote clients share the loopback
-rate-limit budget, so exposing the collector lets anyone lock out password
-sign-in by submitting wrong passwords.
+For the collector's machine configuration, set `proxy_client_ip_peers` to
+only the proxy's exact backend connection IP (for these loopback recipes,
+`["127.0.0.1"]`) in `<collector-data>/config.toml`, then restart the
+collector. It is an address budget policy, never login authority. A missing
+header falls back to the TCP peer, so local `up` enrollment still works;
+without this setting all clients behind the proxy share its limiter budget.
+A typo, CIDR, hostname, port, duplicate, unspecified/multicast address, or
+more than eight peers fails configuration. IPv4-mapped peers are normalized.
+
+Use the [tested Caddy/nginx recipes](packaging/proxy/README.md). The final
+same-machine proxy must overwrite every `Hennery-Client-IP` instance from
+its actual connection peer; standard forwarding headers grant nothing.
+Restrict backend access, preserve Origin and the upgrade nonce, and apply
+edge connection/request caps. A trusted loopback peer also trusts local
+processes to assert budget addresses. Healthy HTTPS alone cannot establish
+header stripping or two separate client budgets; doctor says so.
+
+The fixture deployment gate covers both recipes and W1 recovery through
+them. Public acceptance with both pinned real adapters and mounted MCP is
+still pending; keep ingress restricted to a trusted population until the
+[public deployment gate](packaging/proxy/README.md#public-deployment-gate)
+is recorded. Tailscale Serve needs its own attribution qualification; if
+it cannot overwrite an authenticated client address, use a trusted VPN
+population and retain the shared-budget limitation.
+
+With that HTTPS origin configured, **Hosts → Add host** supplies the remote
+pairing command. Here `hennery.example` is a public-join placeholder for your
+collector's DNS name, `443` is a public-join placeholder for its HTTPS port,
+and `ABCD-EFGH` is a public-join placeholder for the displayed code. Replace
+only those values; retain `https://`. Omitting the code reads it from stdin.
+
+<!-- check: join-public -->
+```sh
+hennery host join https://hennery.example:443 ABCD-EFGH
+```
+
+Run the host block below after pairing. It saves and reconnects through
+`wss://<your-origin>/api/hosts/ws`, validating the same server name and roots.
+The tunnel command below remains an optional fallback.
 
 In the web UI, **Hosts → Add host** shows a pairing code, valid for ten
 minutes, after asking for your password again if a fresh step-up is needed.
@@ -12713,8 +12981,9 @@ hennery host join http://127.0.0.1:7117 ABCD-EFGH
 hennery host run
 ```
 
-`host run` uses the saved `ws://127.0.0.1:<port>/api/hosts/ws` URL, including
-when it reconnects. Keep the same tunnel port available on future runs.
+`host run` uses the saved WSS endpoint for HTTPS pairings. A tunnel pairing
+uses `ws://127.0.0.1:<port>/api/hosts/ws`; keep that tunnel port available
+on future runs. Transport failures never authorize a fresh pairing.
 
 ### 4. Start a session
 
@@ -12819,7 +13088,7 @@ hennery is licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
 ### File `crates/hennery/tests/readme.rs`
 
-<!-- r1:file task=4 path=crates/hennery/tests/readme.rs sha256=d4284e41a8e15ecd97c1c3b599e8c9c61448d209bdbd938528ed3d6bc76693cb bytes=37940 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=crates/hennery/tests/readme.rs sha256=e94dca2c12e17c39887de545eeb9a6ddec400fb7202dc92000c0c5ee3d3f4838 bytes=43772 mode=644 encoding=utf8 -->
 `````rust
 //! The README's shell examples (plan 4f). Every one is a fenced block with
 //! a name (`packaging/readme-blocks.sh`), and every name is run: here, or by
@@ -12859,7 +13128,7 @@ const EXAMPLE_CODE: &str = "ABCD-EFGH";
 const EXAMPLE_PORT: u16 = 7117;
 
 /// Every block name in the README, in order, with what runs it.
-const BLOCKS: [(&str, Runner); 11] = [
+const BLOCKS: [(&str, Runner); 12] = [
     (
         "release-bootstrap",
         Runner::Workflow("release-tests.yml", "refusal-tests"),
@@ -12870,6 +13139,7 @@ const BLOCKS: [(&str, Runner); 11] = [
     ("build-without-nix", Runner::Workflow("ci.yml", "readme-without-nix")),
     ("up", Runner::Here),
     ("up-public", Runner::Here),
+    ("join-public", Runner::Here),
     ("join", Runner::Here),
     ("host-run", Runner::Here),
     ("reset-password", Runner::Here),
@@ -13292,6 +13562,8 @@ impl Machine {
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.home.join(".local/state"))
             .env("XDG_CACHE_HOME", self.home.join(".cache"))
+            .env_remove("SSL_CERT_FILE")
+            .env_remove("SSL_CERT_DIR")
             .env_remove("CLAUDE_CONFIG_DIR")
             .env_remove("CODEX_HOME")
             .env_remove("CODEX_SQLITE_HOME")
@@ -13820,6 +14092,135 @@ fn pairing_another_machine_works_as_the_readme_says() {
     host.stop();
     up.stop();
 }
+
+/// Every changed byte must be an explicitly documented placeholder; HTTPS
+/// cannot be repaired into HTTP by the harness.
+fn public_pairing_script(script: &str, readme: &str, port: u16, code: &str) -> String {
+    for placeholder in ["`hennery.example`", "`443`", "`ABCD-EFGH`"] {
+        assert!(readme.contains(&format!("{placeholder} is a public-join placeholder")));
+    }
+    assert_eq!(script, "hennery host join https://hennery.example:443 ABCD-EFGH\n");
+    script
+        .replace("hennery.example:443", &format!("localhost:{port}"))
+        .replace("ABCD-EFGH", code)
+}
+#[test]
+fn public_pairing_placeholders_cannot_hide_protocol_or_unmarked_changes() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    let script = block("join-public");
+    assert_eq!(
+        public_pairing_script(&script, &readme, 12345, "EFGH-IJKL"),
+        "hennery host join https://localhost:12345 EFGH-IJKL\n"
+    );
+    for original in ["https://", "hennery.example", "443", "ABCD-EFGH"] {
+        let changed = script.replace(original, "unexpected");
+        assert!(std::panic::catch_unwind(|| public_pairing_script(&changed, &readme, 12345, "EFGH-IJKL")).is_err());
+    }
+    for original in ["`hennery.example`", "`443`", "`ABCD-EFGH`"] {
+        let changed = readme.replace(&format!("{original} is a public-join placeholder"), "unmarked");
+        assert!(std::panic::catch_unwind(|| public_pairing_script(&script, &changed, 12345, "EFGH-IJKL")).is_err());
+    }
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn public_join_shell_block_pairs_runs_and_reconnects_over_wss() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery"));
+    for kind in ["caddy", "nginx"] {
+        let collector = Machine::new(&format!("public-collector-{kind}"));
+        let data = collector.data().join("collector");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("config.toml"), "proxy_client_ip_peers = ['127.0.0.1']\n").unwrap();
+        let mut up = collector.start(&block("up-public"), "up.log");
+        let listen = up.listening();
+        let link = setup_url(&mut up, &collector);
+        let session = set_up(&listen, &link, EXAMPLE_URL);
+        let cookie = format!("hennery_session={session}");
+        let (status, response) = request(
+            &listen,
+            "POST",
+            "/api/hosts/pairing-codes",
+            &[("Origin", EXAMPLE_URL), ("Cookie", &cookie)],
+            "",
+        );
+        assert_eq!(status, 201, "{response}");
+        let code =
+            serde_json::from_str::<serde_json::Value>(response.split_once("\r\n\r\n").unwrap().1).unwrap()["code"]
+                .as_str()
+                .unwrap()
+                .to_string();
+        let ca = hennery_testkit::tls::TestCa::new();
+        let mut proxy =
+            hennery_testkit::reverse_proxy::RecipeProxy::start(kind, listen.parse().unwrap(), &ca, &collector.home)
+                .await;
+        let other = Machine::new(&format!("public-host-{kind}"));
+        let roots = other.home.join("fixture-roots.pem");
+        std::fs::write(&roots, &ca.pem).unwrap();
+        let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+        let script = public_pairing_script(&block("join-public"), &readme, proxy.port(), &code);
+        let mut join = other.sh(&script);
+        join.env("SSL_CERT_FILE", &roots);
+        let out = tokio::task::spawn_blocking(move || output_within(&mut join, Duration::from_secs(60)))
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("paired as host-"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("but the adapter runtime was not installed"));
+        let hostdir = other.data();
+        let paired = hennery_host::identity::Paired::read(&hostdir).unwrap().unwrap();
+        assert_eq!(
+            paired.collector_url,
+            format!("wss://localhost:{}/api/hosts/ws", proxy.port())
+        );
+        let mut host = start_with_roots(&other, &block("host-run"), "host.log", &roots);
+        host.wait_until("two hosts connected", || {
+            hosts(&listen, &session)
+                .1
+                .iter()
+                .filter(|h| h["connected"] == true)
+                .count()
+                == 2
+        });
+        proxy.renew_and_reload(&ca).await;
+        host.stop();
+        let mut restarted = start_with_roots(&other, &block("host-run"), "host-restarted.log", &roots);
+        restarted.wait_until("restarted WSS host", || {
+            hosts(&listen, &session)
+                .1
+                .iter()
+                .filter(|h| h["connected"] == true)
+                .count()
+                == 2
+        });
+        restarted.stop();
+        // Configuration must reach the binary's outer layer, before Origin/auth.
+        let (status, _) = request(
+            &listen,
+            "POST",
+            "/api/auth/login",
+            &[("Hennery-Client-IP", "not-an-ip")],
+            "invalid json",
+        );
+        assert_eq!(status, 400);
+        up.stop();
+    }
+}
+
+fn start_with_roots(machine: &Machine, script: &str, name: &str, roots: &Path) -> Group {
+    let log = machine.home.join(name);
+    let child = machine
+        .sh(script)
+        .env("SSL_CERT_FILE", roots)
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(std::fs::File::create(&log).unwrap())
+        .stderr(std::fs::File::create(log.with_extension("err")).unwrap())
+        .spawn()
+        .unwrap();
+    Group { child, log }
+}
 `````
 
 ### File `dist-workspace.toml`
@@ -13855,7 +14256,7 @@ github-attestations = true
 
 ### File `flake.nix`
 
-<!-- r1:file task=4 path=flake.nix sha256=cadb436432f0bbece5178aca36bc72aa9709ab80904c0e8e9bbdf02c411f4bcd bytes=3355 mode=644 encoding=utf8 -->
+<!-- r1:file task=4 path=flake.nix sha256=536b7fd0bcdc827927b91632d0d35cc98cb5919fb022cfb6afc93e5cea034963 bytes=3462 mode=644 encoding=utf8 -->
 ````nix
 {
   description = "hennery: self-hosted cockpit for ACP coding agents";
@@ -13933,6 +14334,9 @@ github-attestations = true
             bashInteractive
             zsh
             fish
+            # Execute the shipped same-machine TLS proxy recipes (W2).
+            caddy
+            nginx
           ] ++ webTools;
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           # Playwright uses the flake's browsers, never a download of its own.
@@ -15087,7 +15491,7 @@ Set scratch tool homes first, then run:
 
 ```sh
 nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py'
-nix develop .#release -c actionlint .github/workflows/release-candidate.yml .github/workflows/release-publish.yml .github/workflows/release-tests.yml .github/workflows/nix.yml
+nix develop .#release -c actionlint .github/workflows/*.yml
 sh packaging/readme-blocks.sh README.md release-bootstrap > "$TMPDIR/release-bootstrap.sh"
 nix develop .#release -c python3 packaging/release/test_bootstrap.py --script "$TMPDIR/release-bootstrap.sh"
 ```
@@ -15107,7 +15511,7 @@ Read actual logs, run the six Rust checks, actionlint, release suite and real mi
 
 ### File `docs/README.md`
 
-<!-- r1:file task=5 path=docs/README.md sha256=e56b04c5bee4e01884daa3a9cfd5e6a508b5c1b9ba4344971d2555c1300d9024 bytes=52025 mode=644 encoding=utf8 -->
+<!-- r1:file task=5 path=docs/README.md sha256=98623e0965e83350ae7db3666496d869a3e171146f038cde991f3f92d23c0007 bytes=52518 mode=644 encoding=utf8 -->
 ````markdown
 # hennery design documents
 
@@ -15224,10 +15628,12 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [Delete and purge: the design record (plan 9)](plans/2026-10-21-delete-and-purge-design-record.md) — why plan 9 was built as it was: the decisions and the security reviews' amendments for 9a–9c and 9d, the operator's delegated decisions (the parent, 2026-10-02), and the evidence on Claude's and Codex's own session storage (claude-agent-acp 0.81.0, codex-acp 1.13.0, Codex 0.155.1) to re-read at a pin bump.
    - [Generic plug-in contract (C1)](plans/2026-10-26-plugin-contract.md) — generic owner/hat registration, completed activity with typed provenance, exposure bindings and durable deletion lifecycle; built first and replayed on merged design main (40 blocks, exact tree match). The PR #140 flake investigation fixed writer-registry identity lifetime test-first and rebased onto W1 main `26cc3cca`; current verification and historical replay are distinguished in its execution record. Parent re-review and Linux/macOS CI remain pending.
 
-   - [WSS transport and diagnostics (W1)](plans/2026-10-26-wss-transport.md) — built and replayed on `8bb29904`; the maintainer-delegated review returned APPROVE AFTER AMENDMENTS, all three implemented and folded into their tasks. Draft PR #139 awaits scoped re-review, Linux/macOS CI and real-adapter/MCP acceptance; W2 remains deferred.
+   - [WSS transport and diagnostics (W1)](plans/2026-10-26-wss-transport.md) — merged as #139; verified HTTPS/WSS transport, private-CA trust, durable enrollment recovery, migration and diagnostics. Its record preserves the build/review history; public real-adapter/MCP acceptance is carried into W2.
+
+   - [Proxy attribution and public deployment (W2)](plans/2026-10-27-wss-proxy.md) — built and replayed on `256691fe`: exact trusted peers across all limiter charges/clears, executed proxy/HTTPS README recipes and W1 recovery gates. PR #147 maintainer-delegated review returned APPROVE AFTER AMENDMENTS; its one request-cap coverage Minor is implemented, removal-probed and locally checked. Scoped re-confirmation, Linux/macOS CI and live public-adapter/MCP acceptance remain pending.
    - [Session-bound MCP and family identity (D1)](plans/2026-10-27-delegation-mcp.md) — collector-local opt-in MCP delivery, generation-bound grants, shared identity and immutable scoped family storage; built first, exact fresh replay and guard/load evidence recorded. Actual pinned Claude/Codex discovery passed. Maintainer-delegated review returned APPROVE; its one cycle-fixture Minor is corrected and independently probed. Linux/macOS CI remains parent-owned; tools, durable delivery and UI follow in D2–D4.
 
-   - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — hardware-backed inventory approval plus the executed verify-then-run README bootstrap, re-confirmed by the parent. The Linux CI tool-directory collision is repaired with duplicate-name/conflict regressions; checks, COPY probes and fresh replay evidence are recorded in the plan. PR #145 awaits review and CI; maintainer-only setup remains and publication is disabled.
+   - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — hardware-backed inventory approval plus the executed verify-then-run README bootstrap, re-confirmed by the parent. The Linux CI tool-directory collision is repaired with duplicate-name/conflict regressions. Rebased onto W2 at `e36e66c8`; post-rebase checks, COPY probes and fresh replay evidence are recorded in the plan. PR #145 awaits review and CI; maintainer-only setup remains and publication is disabled.
 
 ## Maintainer decisions (2026-09-27)
 
@@ -19487,7 +19893,7 @@ parser.add_argument('--source',type=Path,required=True)
 parser.add_argument('--destination',type=Path,required=True)
 args=parser.parse_args()
 source=args.source.resolve();destination=args.destination.resolve()
-base='256691feb9cba161f0c29b14016bc857a4da86e5'
+base='e36e66c8b1790a6b1555e04b7fb0c34bf34d3e1d'
 plan=Path('docs/plans/2026-10-28-release-foundation.md')
 assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=destination,text=True).strip()==base
 assert not subprocess.check_output(['git','status','--porcelain'],cwd=destination,text=True).strip(), 'replay worktree must be fresh'
