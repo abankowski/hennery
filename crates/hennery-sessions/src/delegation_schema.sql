@@ -43,8 +43,9 @@ ALTER TABLE answer_queue ADD COLUMN delegation_handoff INTEGER NOT NULL DEFAULT 
 CREATE TRIGGER delegation_endpoint_end AFTER UPDATE OF close_requested,lifecycle,hat_id ON sessions
 WHEN NEW.close_requested = 1 OR NEW.lifecycle IN ('closed','deleted','failed') OR NEW.hat_id <> OLD.hat_id
 BEGIN
-    UPDATE session_operations SET state = 'cancelled', code = 'endpoint_unavailable'
-    WHERE owner_id = NEW.owner_id AND state IN ('accepted','queued','waiting_config')
+    UPDATE session_operations SET state = CASE WHEN NEW.lifecycle = 'failed' AND child_id = NEW.id THEN 'failed' ELSE 'cancelled' END,
+        code = CASE WHEN NEW.lifecycle = 'failed' AND child_id = NEW.id THEN COALESCE(NEW.failure_reason,'start_failed') ELSE 'endpoint_unavailable' END
+    WHERE owner_id = NEW.owner_id AND (state IN ('accepted','queued','waiting_config') OR (state = 'awaiting_reconciliation' AND turn_id IS NULL AND tool IN ('session_spawn','session_send')))
       AND (caller_id = NEW.id OR child_id = NEW.id);
     UPDATE session_dispatch_queue SET state = 'cancelled', payload = ''
     WHERE owner_id = NEW.owner_id AND (source_id = NEW.id OR target_id = NEW.id)
@@ -60,7 +61,7 @@ WHEN NEW.detached = 1
 BEGIN
     UPDATE session_operations SET state = 'cancelled', code = 'family_detached'
     WHERE owner_id = NEW.owner_id AND caller_id = NEW.parent_id AND child_id = NEW.child_id
-      AND state IN ('accepted','queued','waiting_config');
+      AND (state IN ('accepted','queued','waiting_config') OR (state = 'awaiting_reconciliation' AND turn_id IS NULL AND tool IN ('session_spawn','session_send')));
     UPDATE session_dispatch_queue SET state = 'cancelled', payload = ''
     WHERE owner_id = NEW.owner_id AND source_id = NEW.parent_id AND target_id = NEW.child_id
       AND state IN ('queued','waiting_config');
@@ -68,7 +69,7 @@ END;
 CREATE TRIGGER delegation_grant_end AFTER UPDATE OF revision ON hat_session_tools
 BEGIN
     UPDATE session_operations SET state = 'cancelled', code = 'grant_changed'
-    WHERE owner_id = NEW.owner_id AND state IN ('accepted','queued','waiting_config')
+    WHERE owner_id = NEW.owner_id AND (state IN ('accepted','queued','waiting_config') OR (state = 'awaiting_reconciliation' AND turn_id IS NULL AND tool IN ('session_spawn','session_send')))
       AND caller_id IN (SELECT id FROM sessions WHERE owner_id = NEW.owner_id AND hat_id = NEW.hat_id);
     UPDATE session_dispatch_queue SET state = 'cancelled', payload = ''
     WHERE owner_id = NEW.owner_id AND accepted_revision <> NEW.revision

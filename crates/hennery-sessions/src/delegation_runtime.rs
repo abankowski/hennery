@@ -20,12 +20,15 @@ pub(crate) fn same_hat_in(tx: &Transaction<'_>, owner: &str, host: &str, hat: &s
         matches!(hennery_kernel::hats::session_hat_in(tx,owner,host,cwd)?,Some(hennery_kernel::hats::SessionHat::Decided(resolution)) if resolution.hat_id==hat),
     )
 }
+type CatalogKey = (String, String, String, String, String, u64);
+type CatalogCache = BTreeMap<CatalogKey, (Instant, HostCatalog)>;
 #[derive(Default)]
 pub struct Catalogs {
-    cache: Mutex<BTreeMap<(String, String, String, String, String, u64), (Instant, HostCatalog)>>,
+    cache: Mutex<CatalogCache>,
 }
 impl Catalogs {
     pub async fn get(&self, state: &AppState, host: &str, hat: &str, cwd: &str, agent: &str) -> Result<HostCatalog> {
+        state.store.catalog_scope(host, hat, cwd)?;
         ensure!(
             state.hub.has_capability(host, Capability::CatalogProbe),
             "catalog_unavailable"
@@ -49,7 +52,14 @@ impl Catalogs {
         // A single bounded disposable probe at a time also deduplicates identical
         // cold requests. The probe has its own timeout and the host its own cap.
         let mut cache = self.cache.lock().await;
-        cache.retain(|_, (when, _)| when.elapsed() < Duration::from_secs(30));
+        cache.retain(|_, (when, catalog)| {
+            when.elapsed()
+                < Duration::from_secs(if catalog.freshness == CatalogFreshness::Fresh {
+                    30
+                } else {
+                    5
+                })
+        });
         if let Some((_, catalog)) = cache.get(&key) {
             return Ok(catalog.clone());
         }
@@ -76,9 +86,11 @@ impl Catalogs {
             "catalog_unavailable"
         );
         ensure!(state.hub.routable_conn(host) == Some(connection), "catalog_stale");
-        if catalog.freshness == CatalogFreshness::Fresh {
-            cache.insert(key, (Instant::now(), catalog.clone()));
-        }
+        state.store.catalog_scope(host, hat, cwd)?;
+        let mut value = serde_json::to_value(catalog)?;
+        hennery_kernel::redact::value(&mut value);
+        let catalog: HostCatalog = serde_json::from_value(value)?;
+        cache.insert(key, (Instant::now(), catalog.clone()));
         Ok(catalog)
     }
 }
@@ -171,7 +183,8 @@ pub fn evidence_satisfies(
     catalog: &HostCatalog,
     policy: &ExecutionPolicy,
 ) -> bool {
-    evidence.attach_generation == generation
+    catalog.freshness == CatalogFreshness::Fresh
+        && evidence.attach_generation == generation
         && evidence.config_revision > 0
         && evidence.completeness == ConfigCompleteness::Complete
         && required
@@ -189,6 +202,21 @@ pub fn evidence_satisfies(
         && security_allowed(catalog, policy, &evidence.actual)
 }
 impl crate::store::Store {
+    pub fn catalog_scope(&self, host: &str, hat: &str, cwd: &str) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let eligible: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM hosts WHERE owner_id = ?1 AND id = ?2 AND revoked_at IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM purged_hats WHERE owner_id = ?1 AND hat_id = ?3)",
+            params![self.owner_id(), host, hat],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            eligible && same_hat_in(&tx, self.owner_id(), host, hat, cwd)?,
+            "not_found"
+        );
+        Ok(())
+    }
     pub fn execution_policy(&self, hat: &str) -> Result<ExecutionPolicy> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -239,5 +267,45 @@ impl crate::store::Store {
         let policy = self.execution_policy_in(&tx, hat)?;
         tx.commit()?;
         Ok(policy)
+    }
+}
+
+impl crate::store::Store {
+    /// Cold discovery may be unavailable. Only current-generation complete
+    /// host evidence can upgrade the attached child's own catalog for release.
+    pub fn attached_delegation_catalog(&self, session: &str, prestart: &HostCatalog) -> Result<HostCatalog> {
+        if prestart.freshness == CatalogFreshness::Fresh {
+            return Ok(prestart.clone());
+        }
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let row: Option<(i64, String, Option<String>)> = tx
+            .query_row(
+                "SELECT e.attach_generation,e.evidence,c.config_options FROM session_attach_evidence e
+            JOIN sessions s ON s.owner_id = ?1 AND s.id = e.session_id
+            LEFT JOIN session_catalog c ON c.owner_id = ?1 AND c.session_id = s.id
+            WHERE e.owner_id = ?1 AND e.session_id = ?2 AND e.evidence IS NOT NULL
+            AND s.lifecycle = 'active' AND s.close_requested = 0 AND s.presumed_parked = 0",
+                params![self.owner_id(), session],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((generation, raw, options)) = row else {
+            return Ok(prestart.clone());
+        };
+        let evidence: ConfigEvidence = serde_json::from_str(&raw)?;
+        if evidence.attach_generation != u64::try_from(generation)?
+            || evidence.completeness != ConfigCompleteness::Complete
+        {
+            return Ok(prestart.clone());
+        }
+        let mut actual = prestart.clone();
+        actual.defaults = evidence.actual;
+        actual.config_options = options
+            .map(|raw| serde_json::from_str(&raw))
+            .transpose()?
+            .unwrap_or_default();
+        actual.freshness = CatalogFreshness::Fresh;
+        Ok(actual)
     }
 }

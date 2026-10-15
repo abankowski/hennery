@@ -391,7 +391,7 @@ async fn handle(
                 )
             } else {
                 match tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
+                    state.limits.answer_timeout.min(std::time::Duration::from_secs(30)),
                     crate::session_tools::execute(
                         &state.app,
                         &identity,

@@ -2538,7 +2538,7 @@ impl Store {
             ],
         )?;
         let body = json!({ "pending_id": pending_id, "request_id": request_id, "answer": answer, "origin": origin });
-        let event = collector_event(&tx, &self.owner, session_id, "answer_submitted", body, &ts)?;
+        let event = collector_event(tx, &self.owner, session_id, "answer_submitted", body, &ts)?;
         Ok(AnswerSubmission::Queued(Box::new(QueuedAnswer {
             event,
             host_id,
@@ -2618,8 +2618,8 @@ impl Store {
         self.open_turn_with(session_id, turn_id, content, &[])
     }
 
-    /// C1's typed production boundary. Delegation producers are not enabled
-    /// until D3; accepting their wire types here would manufacture authority.
+    /// Public callers may produce Operator input only. The internal durable
+    /// dispatcher writes Parent provenance with its verified operation mapping.
     pub fn open_turn_with_origin(
         &self,
         session_id: &str,
@@ -3175,6 +3175,21 @@ impl Store {
     pub fn close_now(&self, session_id: &str) -> Result<Vec<EventDto>> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let mcp = self.mcp();
+        let (events, cut) = close_in(&tx, &self.owner, mcp.as_ref(), session_id)?;
+        commit_then_cut(tx, mcp.as_ref(), cut)?;
+        Ok(events)
+    }
+
+    /// A delegated close judged unreachable must not tear down a newer
+    /// operator resume which deliberately cleared that close intent.
+    pub fn close_delegated_unattached(&self, session_id: &str, expected: &Unattached) -> Result<Vec<EventDto>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let eligible:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = ?2 AND close_requested = 1 AND lifecycle = ?3 AND presumed_parked = ?4)",params![self.owner,session_id,expected.lifecycle,expected.presumed_parked],|r|r.get(0))?;
+        if !eligible {
+            return Ok(Vec::new());
+        }
         let mcp = self.mcp();
         let (events, cut) = close_in(&tx, &self.owner, mcp.as_ref(), session_id)?;
         commit_then_cut(tx, mcp.as_ref(), cut)?;
@@ -3778,9 +3793,8 @@ impl Store {
                         )
                         .optional()?;
                     if let Some(content) = content {
-                        // Only the authenticated operator producer exists in
-                        // C1. This event is collector-written, never copied
-                        // from an ACP payload or inferred from prompt text.
+                        // Origin belongs to the reserved turn, written by an
+                        // authenticated operator or verified parent dispatcher.
                         let raw_origin: String = tx.query_row(
                             "SELECT input_origin FROM turns WHERE owner_id = ?1 AND turn_id = ?2",
                             params![self.owner, turn_id],
