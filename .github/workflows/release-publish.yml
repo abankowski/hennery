@@ -48,9 +48,63 @@ jobs:
           persist-credentials: false
       - name: Display exact approval binding for this run attempt
         run: python3 packaging/release/approval_summary.py
-  sign:
+  authorize:
     needs: approval-tuple
     if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE_AUDIT_BUCKET: ${{ vars.RELEASE_AUDIT_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AUDIT_WRITE_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AUDIT_WRITE_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run_attempt: ${{ steps.authorized.outputs.run_attempt }}
+      inventory_sha256: ${{ steps.authorized.outputs.inventory_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      # AWS read access is restricted to held candidate versions; it conveys
+      # no registry/release authority. No write token is given to candidate code.
+      - name: Fetch exact held candidate
+        env:
+          RELEASE_BUCKET: ${{ vars.RELEASE_CANDIDATE_BUCKET }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          RECEIPT_VERSION: ${{ inputs.retention_receipt_version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_CANDIDATE_READ_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_CANDIDATE_READ_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+        run: |
+          nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
+          nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_POLICY_READ_TOKEN || github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: github
+          phase: preflight
+          receipt: authorize-preflight.json
+      - name: Publish the validated credential-issuance binding
+        id: authorized
+        env:
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+        run: |
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo "inventory_sha256=$INVENTORY" >> "$GITHUB_OUTPUT"
+  sign:
+    needs: authorize
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256
     environment:
       name: release
       url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -129,8 +183,8 @@ jobs:
           if-no-files-found: error
           path: signatures/
   github:
-    needs: sign
-    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && vars.RELEASE_GITHUB_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: [sign, authorize]
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_GITHUB_ENABLED == 'true'
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30

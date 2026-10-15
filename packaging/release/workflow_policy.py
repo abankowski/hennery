@@ -7,21 +7,58 @@ import sys
 import yaml
 
 
+CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
+
+
 def privileged(job):
     return any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
         s.get('uses', '').startswith('actions/create-github-app-token@') or 'publish.py upload' in s.get('run', '')
         for s in job.get('steps', []))
 
 
+def environment_name(job):
+    environment = job.get('environment')
+    return environment.get('name') if isinstance(environment, dict) else environment
+
+
+def writer(name, job):
+    # Protected-environment secrets can be publication credentials even when
+    # the ordinary job token is read-only (for example crates.io bootstrap).
+    return privileged(job) or (environment_name(job) == 'release' and name != 'authorize')
+
+
 def check(data, name):
-    for key, job in data.get('jobs', {}).items():
+    jobs = data.get('jobs', {})
+    writers = [j for key, j in jobs.items() if writer(key, dict(j, permissions=j.get('permissions', data.get('permissions', {}))))]
+    if writers:
+        authorization = jobs.get('authorize', {})
+        effective = dict(authorization, permissions=authorization.get('permissions', data.get('permissions', {})))
+        if not authorization or privileged(effective) or authorization.get('environment') != 'release':
+            raise ValueError('a protected read-only authorization job must precede credential issuance')
+        proof = [s.get('with', {}).get('phase') for s in authorization.get('steps', []) if s.get('uses') == './.github/actions/release-gate']
+        if proof != ['preflight']:
+            raise ValueError('credential authorization must run the live preflight gate')
+    for key, job in jobs.items():
         if 'uses' in job:
             raise ValueError(f'{name}/{key}: reusable jobs need explicit authority review; put the gate inside the protected callee')
         if not job.get('timeout-minutes'):
             raise ValueError(f'{name}/{key}: timeout required')
         permissions = job.get('permissions', data.get('permissions', {}))
         effective = dict(job, permissions=permissions)
-        if privileged(effective):
+        if job.get('continue-on-error') not in (None, False):
+            raise ValueError('release jobs cannot ignore failures')
+        for step in job.get('steps', []):
+            if step.get('uses') == './.github/actions/release-gate' and (step.get('if') is not None or step.get('continue-on-error') not in (None, False)):
+                raise ValueError('release gates must run unconditionally and stop on failure')
+        if writer(key, effective):
+            needs = job.get('needs', [])
+            needs = [needs] if isinstance(needs, str) else needs
+            if 'authorize' not in needs:
+                raise ValueError('writer must depend on protected credential authorization')
+            condition = ' '.join(job.get('if', '').split())
+            allowed = {CREDENTIAL_CONDITION} | {CREDENTIAL_CONDITION + " && vars.RELEASE_" + channel + "_ENABLED == 'true'" for channel in ('GITHUB', 'CRATES', 'GHCR', 'HOMEBREW')}
+            if condition not in allowed:
+                raise ValueError('credential issuance must match the authorized inventory and current run attempt')
             env = job.get('environment')
             if (env.get('name') if isinstance(env, dict) else env) != 'release':
                 raise ValueError(f'{name}/{key}: protected release environment required')
@@ -60,7 +97,7 @@ def check_repository(root):
     for path in paths:
         data = yaml.safe_load(path.read_text())
         authority = any(privileged(dict(job, permissions=job.get('permissions', data.get('permissions', {}))))
-                        or 'uses' in job for job in data.get('jobs', {}).values())
+                        or environment_name(job) == 'release' or 'uses' in job for job in data.get('jobs', {}).values())
         # Read-only legacy qualification jobs retain their existing style.
         # Every writer/signer or reusable indirection is checked, whatever
         # the filename: a generated release.yml cannot bypass this policy.

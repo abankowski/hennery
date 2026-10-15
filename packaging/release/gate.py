@@ -235,7 +235,7 @@ def receipt_outside_candidate(candidate, receipt):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--candidate', required=True, type=Path)
     parser.add_argument('--inventory-sha256', required=True)
     parser.add_argument('--channel', required=True, choices=sorted(CHANNELS))
@@ -262,6 +262,7 @@ def main():
     snapshot = GitHub(os.environ['GH_TOKEN']).evidence(inventory, context)
     receipt = validate(inventory, args.inventory_sha256, args.candidate, context, snapshot)
     receipt['phase'] = args.phase
+    receipt['channel'] = args.channel
     # Never replace an audit receipt. Store with candidate in the retained archive.
     with args.receipt.open('xb') as output:
         output.write(canonical(receipt))

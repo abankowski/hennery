@@ -24,6 +24,15 @@ this script/composite interface; a separate arbitrary publisher workflow is
 refused. Reusable job wrappers must not obscure the callee's authority; the
 current static policy refuses unreviewed reusable job indirection.
 
+Before any writer job starts, protected read-only `authorize` validates the
+held candidate and authenticated review, then publishes trusted outputs
+`run_attempt` and `inventory_sha256`. Every writer (including a read-only job
+using protected publication secrets) must directly `needs: authorize` and use
+`workflow_policy.CREDENTIAL_CONDITION`, optionally followed by the exact channel
+switch. A rerun cannot reuse an earlier attempt's successful authorization.
+This controls job-level token/secret issuance, including GHCR; it never replaces
+the writer's own two gates. No conditional or failure-ignoring gate is accepted.
+
 Inside each publishing or signing job:
 
 1. Use `environment: release`, run from trusted `main`, and download the exact
@@ -52,12 +61,57 @@ Inside each publishing or signing job:
    enabled channel and public-path acceptance has completed. No automatic code
    releases holds or deletes old candidates.
 
-The executable CLI is `python3 packaging/release/gate.py --candidate DIR
---inventory-sha256 HEX --channel CHANNEL --phase preflight --receipt FILE`.
+The one public adapter is `packaging/release-gate CHANNEL --candidate DIR
+--inventory-sha256 HEX --phase preflight --receipt FILE`, run inside
+`nix develop .#release -c`. The composite delegates to this same executable.
 `phase` is `preflight` or `boundary`; channel is `github`, `crates`, `ghcr` or
-`homebrew`. Exit 0 means this validation passed. Any missing/malformed evidence,
-network failure or refusal exits nonzero and must stop the job. The CLI never
+`homebrew`. Exit 0 means the live validation **and immutable audit write** passed;
+stdout is the approval challenge. The new local receipt records the canonical
+binding, authenticated approver, decision, phase and channel. Every invocation
+needs a unique receipt basename, including repeated per-crate/image boundaries.
+Missing/malformed evidence, network/audit failure or refusal exits nonzero and
+must stop the job. There is no success/approval token to cache. The adapter never
 accepts offline evidence. Unit tests call the pure validator with fixtures.
+
+Inputs supplied by the job are the full retained candidate path, root inventory
+digest, channel, phase and receipt path. Platform variables
+`GITHUB_REPOSITORY`, `GITHUB_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`,
+`GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` must retain their platform values. The
+event file supplies the exact manual dispatch fields above. `GH_TOKEN` can only
+read live policy/check/review records; `RELEASE_AUDIT_BUCKET` and the storage-only
+AWS principal permit held receipt writes. Artifact/env approval IDs, source
+claims and publisher IDs are never authority. Missing protected settings fail
+closed; a policy reader may need additional read-only administration access.
+
+Materialize once per job using the exact-version retention fetch in
+`release-publish.yml`: read `candidates/<root-digest>/retention-receipt.json`
+at the explicitly dispatched S3 version, then run `retention.py fetch`. The
+adapter validates the complete, unchanged flat root directory each time;
+channel-only Actions artifacts and an extracted OCI working tree are not that
+directory. Keep extraction/work products and receipts outside it.
+
+### Migration of the parallel R3/R4 integration points
+
+These branches were inspected with `git show origin/plan/dist-r3` and
+`git show origin/plan/dist-r4` before fixing this interface. They stay disabled
+until the parent reviews their final integration into the common orchestrator.
+
+| Consumer | Required adaptation |
+| --- | --- |
+| R3 `publish-crates.yml` and `publish-crates.mjs` | Replace `materialize`/`verify --channel crates-io` calls with the held fetch above and `packaging/release-gate crates` using the full retained root, root digest, explicit phase and fresh receipt. Carry `crates-inventory.json` inside the global frozen inventory; the R3 verifier checks its own approved channel digest and crate/source/version contracts on every boundary. The root digest is never the crates-only digest. |
+| R4 `ghcr-gate.sh` and `ghcr-publish.yml` | Replace `packaging/r1-ghcr-gate upload\|sign` with `packaging/release-gate ghcr`: `preflight` before credentials and `boundary` before every upload/sign. `upload` and `sign` are operations, not adapter phases. Materialize the full held root; extract the inventory-bound OCI tar outside it and independently verify the platform/index/binary digests before each operation. |
+
+There is no `packaging/r1-ghcr-gate` alias or alternate approval-ID protocol.
+Map the old `R1_*`/`INVENTORY_SHA256` bindings to the trusted common dispatch;
+the gate authenticates it rather than trusting these duplicate environment
+claims. R3/R4 final jobs use environment `release`, direct `needs: authorize`,
+the exact current inventory/attempt condition above and channel switches
+`RELEASE_CRATES_ENABLED`/`RELEASE_GHCR_ENABLED`. Existing separate reusable
+publish wrappers are integration sketches: move the final jobs into the common
+manual orchestrator, with the same gates inside every protected writer/signing
+job. The channel's own remote reconciliation and image/crate checks remain
+mandatory. Any proposed reusable-job expansion needs explicit authority-graph
+review before the policy accepts it.
 
 The maintainer approves the canonical binding tuple printed in the run summary.
 The environment review comment must be exactly `approve-release-v1:<hash>`, where

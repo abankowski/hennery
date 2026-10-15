@@ -126,7 +126,20 @@ new dispatch so the summary reflects the current attempt. After any rejected rev
 fresh dispatch; R1 conservatively refuses a run whose environment review history
 contains a rejection, without guessing ordering or silently ignoring withdrawal.
 
-Each protected job fetches exact held versions, checks the actual bytes and
+The protected read-only `authorize` job first fetches held bytes and validates
+this record with no publication/OIDC authority. Writer jobs may start only when
+its inventory and attempt outputs match this dispatch and current attempt. This
+precedes GitHub's job-level write-token/secret issuance; retrying only a writer
+with a stale authorization skips it before credentials. Use rerun-all or a new
+dispatch to authorize the new attempt. The in-job gates are still mandatory.
+
+All channels use the executable `packaging/release-gate <channel>` and protected
+environment `release`; its full inputs, outputs and R3/R4 migration are in the
+[gate contract](../packaging/release/README.md). The root inventory digest binds
+channel metadata as well as payloads. A channel-specific digest or approval ID
+alone cannot authorize publication.
+
+Each protected writer job fetches exact held versions, checks the actual bytes and
 revalidates live tag, environment/rules, exact-SHA checks and approval. Only after
 preflight does it obtain publication credentials. It repeats validation at the
 signing/upload boundary; the uploader revalidates for **each** public write.

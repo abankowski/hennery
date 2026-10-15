@@ -29,6 +29,56 @@ class Workflows(unittest.TestCase):
             with self.assertRaises(ValueError):
                 workflow_policy.check_repository(root)
 
+    def test_credentials_cannot_start_without_current_bound_authorization(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for kind in ('missing-authorize', 'missing-auth-gate', 'old-attempt-condition', 'ignored-authorize-dependency', 'or-bypass'):
+            changed = copy.deepcopy(data)
+            if kind == 'missing-authorize':
+                changed['jobs'].pop('authorize')
+            elif kind == 'missing-auth-gate':
+                changed['jobs']['authorize']['steps'] = [s for s in changed['jobs']['authorize']['steps'] if s.get('uses') != './.github/actions/release-gate']
+            elif kind == 'old-attempt-condition':
+                changed['jobs']['sign']['if'] = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == 'refs/heads/main'"
+            elif kind == 'ignored-authorize-dependency':
+                changed['jobs']['sign']['needs'] = 'approval-tuple'
+            else:
+                changed['jobs']['sign']['if'] += ' || true'
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                workflow_policy.check(changed, 'release-publish.yml')
+
+    def test_authorization_job_is_protected_and_has_no_publication_authority(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for field, value in [('environment', None), ('permissions', {'contents': 'write'}), ('permissions', {'id-token': 'write'})]:
+            changed = copy.deepcopy(data)
+            changed['jobs']['authorize'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                workflow_policy.check(changed, 'release-publish.yml')
+
+    def test_gate_cannot_be_skipped_or_ignore_failure(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        for name in ('authorize', 'sign', 'github'):
+            for field, value in [('if', 'false'), ('continue-on-error', True)]:
+                changed = copy.deepcopy(data)
+                step = next(s for s in changed['jobs'][name]['steps'] if s.get('uses') == './.github/actions/release-gate')
+                step[field] = value
+                with self.subTest(job=name, field=field), self.assertRaises(ValueError):
+                    workflow_policy.check(changed, 'release-publish.yml')
+
+    def test_read_only_job_with_release_secrets_still_requires_authorization(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        data['jobs']['bootstrap-crates'] = {
+            'runs-on': 'ubuntu-24.04', 'timeout-minutes': 10, 'environment': 'release',
+            'permissions': {'contents': 'read'}, 'steps': [{'run': 'echo protected credential job'}],
+        }
+        with self.assertRaises(ValueError):
+            workflow_policy.check(data, 'release-publish.yml')
+
+    def test_authorization_job_cannot_ignore_failures(self):
+        data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
+        data['jobs']['authorize']['continue-on-error'] = True
+        with self.assertRaises(ValueError):
+            workflow_policy.check(data, 'release-publish.yml')
+
     def test_each_privileged_job_requires_environment(self):
         for workflow in (ROOT / '.github/workflows').glob('release-*.yml'):
             data = yaml.safe_load(workflow.read_text())
