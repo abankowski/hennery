@@ -583,7 +583,7 @@ impl SessionConfig {
 pub struct Indexed {
     /// Fresh host-produced configuration proof, never retained collector values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config_evidence: Option<crate::delegation_host::ConfigEvidence>,
+    pub config_evidence: Option<Box<crate::delegation_host::ConfigEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
     /// On a `session_info_update` that names a title: the title the agent
