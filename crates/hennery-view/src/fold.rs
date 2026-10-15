@@ -318,11 +318,12 @@ impl Fold {
         self.tools.clear();
         self.plan = None;
         // Collector-written provenance is data, never inferred from display
-        // labels. Only the operator producer is supported on this path.
+        // labels. D2 also produces typed Parent turns; plug-in context is a
+        // separate block and can never become the outer turn author.
         if event.body.get("origin").is_some_and(|value| {
             !matches!(
                 serde_json::from_value::<hennery_proto::plugin::InputOrigin>(value.clone()),
-                Ok(hennery_proto::plugin::InputOrigin::Operator {})
+                Ok(hennery_proto::plugin::InputOrigin::Operator {} | hennery_proto::plugin::InputOrigin::Parent { .. })
             )
         }) {
             self.unrecognised(event, "unsupported_input_origin");

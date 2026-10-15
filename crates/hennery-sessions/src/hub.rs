@@ -124,7 +124,10 @@ impl HostConn {
         }
         if matches!(
             frame,
-            CollectorFrame::Prompt { plugin_context: Some(_), .. }
+            CollectorFrame::Prompt {
+                plugin_context: Some(_),
+                ..
+            }
         ) && !self.capabilities.has(Capability::PluginContext)
         {
             return false;
