@@ -2,7 +2,8 @@
 
 > Execute one task at a time, preserve the ledger and request independent parent
 > review. Every File block is the complete final file; the plan itself is not
-> recursively embedded. Build first, observe RED, then replay fresh.
+> recursively embedded. Initial construction was replayed before review; amendments use targeted
+> tests and cloned COPY probes under the verification budget, without full replay.
 
 **Goal:** Produce collector-only linux/amd64 and linux/arm64 OCI images from
 unchanged release musl binaries, with labels, licences, binary/base SBOMs,
@@ -29,10 +30,85 @@ held storage and common verifier; default for Rust. No global installs.
 §4.6 and §5, [7a](2026-10-07-release-build.md), merged
 [R1 plan](2026-10-28-release-foundation.md), [release process](../release-process.md)
 and [gate contract](../../packaging/release/README.md). Original base `14a754b6`;
-current base **`191aa71b`**, as requested after R1 merged. House structure follows
+current base **`cbd002b0`**, after R3 #144 merged and the parent requested rebase. House structure follows
 plan 3c. The fleet parent assigned this future-dated plan path on 2026-10-15.
 
-## Execution status (2026-10-15)
+## Execution status (2026-10-16)
+
+**Finding 4 integrated after R3 merged; scoped re-review and native Docker CI
+remain parent-owned. Nothing published or enabled.** Rebased `plan/dist-r4`
+from parent head `ba416796` onto exact main **`cbd002b0`**, with signing disabled
+at every rebase step. The rebased review baseline is **`62ad3c00`**; the scoped
+finding-4 range starts there. Full lease/rebase audit starts at `ba416796`.
+
+R3's channel-aware job evidence and `CHANNEL_JOB_IDS` registry remain unchanged.
+The explicit candidate aggregate has **job ID `ghcr`, display name `ghcr`**,
+without a matrix, after `assemble`. It downloads the frozen candidate, binds its
+source/tag to the requested commit, checks complete inventory/executable/OCI
+bytes, then accepts the retained index through loopback. Retention depends on
+it: selected GHCR must succeed; only an unselected channel may skip. `always()`
+allows the GitHub-only retention path after the optional aggregate is skipped.
+
+`accept` performs candidate data checks before approval. The publishing path
+still calls `qualify`: pinned maintainer approval is verified first, then both
+paths use the same `inspect_candidate` data checks. Signed channel selection,
+candidate/OCI Sigstore checks before credentials/uploads, every attachment
+boundary, digest-only image publication and post-upload verification survive.
+
+Conflict resolutions preserve full R3 crates candidate/publication jobs, its
+reserved-name ownership checks, crate credential detector and Node24 release
+tool. They also preserve R4's registry/bundle credential detector, ORAS tool,
+signature conditions and both documentation entries. The registry-remapping test
+removes the old owner before registering its replacement, preserving uniqueness
+now that the actual GHCR owner exists. Staged bytes were checked against source
+snapshots before each manual continuation. No test, type or rule was weakened.
+
+**Six regressions observed RED** before implementing the aggregate: acceptance
+entry point/source binding, changed frozen payload, exact job graph/retention,
+aggregate command ordering, selected channel qualification and GitHub-only skips.
+All now pass. Gate tests execute the production R3 evidence code against the
+actual merged workflow. Missing/skipped/failed/cancelled selected GHCR refuses;
+successful registered GHCR and GitHub-only skipped channels qualify.
+
+Current validation, all final exits **0**:
+
+| Command / evidence | Result |
+|---|---|
+| `nix develop .#image -c python3 -m unittest discover -s packaging/tests -v` | **173 passed** |
+| `nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py' -v` | **130 passed**, R1/R3 plus GHCR selection policy |
+| `nix develop -c node --test packaging/*.test.mjs` | **82 passed**, 0 failed/skipped |
+| Updated aggregate / credential targeted tests | **32 passed**, including actual accept CLI and retention truth table |
+| Actionlint all **8 workflows**, shellcheck **8 image/release/crate scripts**, production workflow policy | **0** |
+| `cargo fmt --all --check` | **0**, Nix default shell |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | **0**, Nix default shell |
+| `cargo clippy -p hennery --locked -- -D warnings` | **0**, Nix default shell |
+| `cargo test --workspace --locked` | **2,376 passed, 0 failed, 1 ignored**, 161 result groups, Nix default shell |
+| Both locked proto/view generator `--check` commands | **0**, Nix default shell |
+| `nix flake check -L` | **0**, native package/clippy/fmt/audit/embedded-UI checks |
+
+**21 scoped mutations caught, 0 missed**, each with an actual assertion failure
+in the single guard-family COPY `r3-aggregate-probe-1`. Its `target/` was first
+APFS-cloned with `cp -c -R target <copy>/target`; targets are never shared.
+The source/tag guard, acceptance CLI/data checks, publication signature, literal
+job registry, dependencies, selected/unselected outcomes, retention, both
+credential detectors and signed publisher selection were probed. Every mutation
+was restored in that COPY. Staged/committed code must match its tested bytes.
+
+**No full replay for this amendment**, per the operator verification budget.
+The 32 complete file blocks below are refreshed and checked against current
+files, not represented as a newly replayed tree. Historical replay 17 and its
+23-probe set belong to `ba416796`. The six Rust checks and full native Nix check
+above were run once because this rebase conflicted and touched hotspots. No load
+run: new tests are deterministic data/graph checks, with no timing/concurrency
+behavior change. CI remains the Linux/macOS and actual Docker check of record.
+
+Logs: `.superpowers/sdd/r4/r3-{aggregate-red,aggregate-final-target,r4-suite,release-suite,packaging-suite,lint,nix-check}.log`,
+`r3-aggregate-copy-probes.log`, and `/tmp/dist-r4-r3-*.log`. Retained scratch:
+`r3-rebase-task2`, `r3-rebase-task3`, `r3-rebase-task5`,
+`r3-aggregate-probe-1`; earlier replay/probe copies remain for parent cleanup.
+
+## Earlier execution status (2026-10-15, historical)
+
 
 **Review amendments 1–3 implemented; R3 integration (finding 4) deferred by parent. Scoped review and native CI
 remain parent-owned. Nothing published or enabled.** Rebased `plan/dist-r4`
@@ -166,16 +242,16 @@ registry creation or credential-kind enablement is authorized.
 
 ## Reading the steps
 
-Each File block replaces its entire path. Start from `191aa71b`; preserve base
+Each current File block replaces its entire path on `cbd002b0`; preserve base
 file modes and create new source files as 0644. Existing shell script modes remain
 0755. No patch fragments or deleted orphan workflows need reconstruction: those
-workflows do not exist in this base. Count nonzero blocks and compare bytes/modes
-at every task; metadata-only record changes are copied back after verification.
+workflows do not exist in this base. The current amendment compares the nonzero blocks to tested code; it does
+not rerun the historical replay under the operator verification budget.
 
 ## Task 1: Collector contract and retained OCI verifier
 
 - [x] Tests observed RED, implementation and COPY probes.
-- [x] Exact final source below; fresh replay recorded.
+- [x] Current complete source checked against tested bytes; initial replay is historical.
 - [ ] Parent scoped review and native Docker acceptance.
 
 Run the OCI and smoke/parser contract files in the image shell. These tests use transport/process doubles; they do not start Docker.
@@ -957,6 +1033,7 @@ COPY --chmod=0444 dist/linux-${TARGETARCH}/binary.spdx.json /usr/share/doc/henne
             pkgs.git
             pkgs.gnupg
             pkgs.jq
+            web.nodejs_24
             pkgs.oras
           ];
         };
@@ -972,6 +1049,10 @@ COPY --chmod=0444 dist/linux-${TARGETARCH}/binary.spdx.json /usr/share/doc/henne
             clippy
             rustfmt
             rust-analyzer
+            # R3: pinned binstall acceptance and an isolated MSRV toolchain.
+            actionlint
+            cargo-binstall
+            rustup
             sqlite
             # `webauthn-rs` links OpenSSL (plan 3c).
             openssl
@@ -1344,7 +1425,7 @@ END {
 ## Task 2: Native candidate/index builds and loopback CI
 
 - [x] Tests observed RED, implementation and COPY probes.
-- [x] Exact final source below; fresh replay recorded.
+- [x] Current complete source checked against tested bytes; initial replay is historical.
 - [ ] Parent scoped review and native Docker acceptance.
 
 Run command-boundary tests and `test_ghcr_candidate.Candidate` with `PYTHONPATH=packaging/tests`, plus actionlint on build/release-candidate and shellcheck on image scripts. The common consumer/workflow tests are completed in Task 3.
@@ -1541,6 +1622,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import sys
 import tarfile
 import unittest
 from unittest.mock import patch
@@ -1627,6 +1709,32 @@ class ReleaseFixture(CandidateFixtures):
 
 
 class Candidate(ReleaseFixture, unittest.TestCase):
+    def test_candidate_acceptance_binds_exact_source_and_tag_before_approval(self):
+        helper = self.assembled()
+        self.assertTrue(hasattr(helper, 'accept'), 'the aggregate must accept frozen OCI without publishing authority')
+        for revision, version in [('b' * 40, self.version), (self.revision, '0.2.0')]:
+            with self.subTest(revision=revision, version=version), self.assertRaisesRegex(gate.Refused, 'candidate source/tag'):
+                helper.accept(self.candidate, self.work, revision, version)
+        accepted = helper.accept(self.candidate, self.work, self.revision, self.version)
+        self.assertEqual(accepted, json.loads((self.candidate / 'ghcr-index.json').read_bytes()))
+        self.assertFalse((self.work / 'release-inventory.json.asc').exists())
+        result = subprocess.run([sys.executable, str(PACKAGING / 'ghcr-candidate.py'), 'accept',
+            str(self.candidate), str(self.root / 'cli-acceptance'), self.revision, self.version],
+            text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), accepted)
+
+    def test_candidate_acceptance_refuses_changed_frozen_payload(self):
+        helper = self.assembled()
+        self.assertTrue(hasattr(helper, 'accept'), 'the aggregate must verify frozen OCI bytes')
+        payload = self.candidate / 'ghcr-oci-layout.tar'
+        raw = payload.read_bytes()
+        changed = raw.replace(b'1.0.0', b'1.0.1', 1)
+        self.assertNotEqual(changed, raw)
+        payload.write_bytes(changed)
+        with self.assertRaisesRegex(gate.Refused, 'candidate digest'):
+            helper.accept(self.candidate, self.work, self.revision, self.version)
+
     def test_native_output_freezes_index_platforms_and_binary_identity(self):
         helper = self.assembled()
         descriptor = json.loads((self.candidate / 'ghcr-index.json').read_bytes())
@@ -1858,16 +1966,49 @@ class Orchestrator(unittest.TestCase):
             self.assertEqual(len(logins), 1 if name == 'ghcr' else 0)
             if logins: self.assertEqual(logins[0]['env']['GHCR_TOKEN'], '${{ secrets.GHCR_PUBLISH_TOKEN }}')
 
-    def test_github_only_candidates_have_no_skipped_optional_channel_job(self):
+    def test_candidate_channels_have_registered_aggregate_jobs_and_retention_guard(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
-        self.assertEqual(set(workflow['jobs']), {'tag-signature', 'web-ui', 'archive', 'assemble', 'installer', 'retain'})
-        for name, job in workflow['jobs'].items():
-            if name != 'retain':
-                self.assertNotIn('if', job, name + ' must qualify GitHub-only candidates too')
-        # Channel selection belongs to steps; no candidate-level skipped GHCR job
-        # is introduced for R1's generic selected-channel job policy to classify.
-        assemble = workflow['jobs']['assemble']
-        self.assertTrue(any('ghcr' in str(step.get('if', '')) for step in assemble['steps']))
+        self.assertEqual(set(workflow['jobs']), {'tag-signature', 'web-ui', 'archive', 'crates', 'assemble', 'ghcr', 'installer', 'retain'})
+        import workflow_policy
+        try:
+            bindings = workflow_policy.candidate_channel_jobs(workflow)
+        except ValueError as error:
+            self.fail('the shipped candidate graph must satisfy the reserved registry: ' + str(error))
+        self.assertEqual(bindings, {'crates': 'crates', 'ghcr': 'ghcr'})
+        aggregate = workflow['jobs']['ghcr']
+        self.assertEqual(aggregate['name'], 'ghcr')
+        self.assertEqual(aggregate['needs'], 'assemble')
+        self.assertNotIn('strategy', aggregate)
+        self.assertIn(",ghcr,", aggregate['if'])
+        retain = workflow['jobs']['retain']
+        self.assertIn('ghcr', retain['needs'])
+        for text in ['always()', "needs.ghcr.result == 'success'", "needs.ghcr.result == 'skipped'", '!contains(']:
+            self.assertIn(text, retain['if'])
+        selection = "contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')"
+        def retained(selected, outcome, enabled=True, failed=None):
+            expression = retain['if'].replace(selection, str(selected)).replace('always()', 'True')
+            expression = expression.replace('vars.RELEASE_CANDIDATE_STORAGE_ENABLED', repr('true' if enabled else 'false'))
+            for name in ['assemble', 'installer', 'tag-signature', 'ghcr']:
+                status = outcome if name == 'ghcr' else ('failure' if name == failed else 'success')
+                expression = expression.replace('needs.' + name + '.result', repr(status))
+            return eval(expression.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not '), {'__builtins__': {}})
+        self.assertTrue(retained(False, 'skipped'))
+        self.assertTrue(retained(True, 'success'))
+        for selected in [False, True]:
+            for outcome in ['failure', 'cancelled']:
+                self.assertFalse(retained(selected, outcome))
+            self.assertFalse(retained(selected, 'success', enabled=False))
+            for failed in ['assemble', 'installer', 'tag-signature']:
+                self.assertFalse(retained(selected, 'success', failed=failed))
+        self.assertFalse(retained(True, 'skipped'))
+
+    def test_aggregate_verifies_frozen_oci_before_loopback_acceptance(self):
+        workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
+        self.assertIn('ghcr', workflow['jobs'])
+        commands = '\n'.join(s.get('run', '') for s in workflow['jobs']['ghcr']['steps'])
+        self.assertIn('ghcr-candidate.py accept', commands)
+        self.assertIn('test-image-registry.sh', commands)
+        self.assertLess(commands.index('ghcr-candidate.py accept'), commands.index('test-image-registry.sh'))
 
     def test_real_candidate_freezes_oci_payloads_before_global_inventory(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
@@ -1876,6 +2017,38 @@ class Orchestrator(unittest.TestCase):
         assemble = '\n'.join(s.get('run', '') for s in workflow['jobs']['assemble']['steps'])
         self.assertIn('ghcr-candidate.py assemble', assemble)
         self.assertLess(assemble.index('ghcr-candidate.py assemble'), assemble.index('supply.py freeze'))
+
+
+class CandidateGate(unittest.TestCase):
+    def fixture(self):
+        from test_platform import Platform
+        fixture = Platform()
+        self.addCleanup(fixture.doCleanups)
+        workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
+        import workflow_policy
+        self.assertEqual(workflow_policy.candidate_channel_jobs(workflow).get('ghcr'), 'ghcr')
+        return fixture, workflow
+
+    def test_selected_ghcr_requires_successful_job_in_the_actual_candidate_workflow(self):
+        fixture, workflow = self.fixture()
+        jobs = [fixture.job(name, 'skipped' if name == 'crates' else 'success') for name in workflow['jobs']]
+        try:
+            fixture.candidate_evidence(['github', 'ghcr'], jobs, workflow=workflow)
+        except gate.Refused as error:
+            self.fail('the registered successful GHCR aggregate must qualify: ' + str(error))
+        for conclusion in [None, 'skipped', 'failure', 'cancelled']:
+            changed = [j for j in jobs if j['name'] != 'ghcr']
+            if conclusion is not None: changed.append(fixture.job('ghcr', conclusion))
+            with self.subTest(conclusion=conclusion), self.assertRaises(gate.Refused):
+                fixture.candidate_evidence(['github', 'ghcr'], changed, workflow=workflow)
+
+    def test_github_only_accepts_both_registered_channel_jobs_skipped(self):
+        fixture, workflow = self.fixture()
+        jobs = [fixture.job(name, 'skipped' if name in ('crates', 'ghcr') else 'success') for name in workflow['jobs']]
+        try:
+            fixture.candidate_evidence(['github'], jobs, workflow=workflow)
+        except gate.Refused as error:
+            self.fail('GitHub-only candidate must pass with unselected channels skipped: ' + str(error))
 
 
 if __name__ == '__main__':
@@ -2146,12 +2319,10 @@ def metadata(path, raw):
             output.write(raw)
 
 
-def qualify(candidate, expected, work, inputs):
-    candidate, work = Path(candidate), Path(work)
+def inspect_candidate(candidate, work, raw):
+    # Data qualification is shared by the unprivileged aggregate and the
+    # publishing verifier. Only qualify() authenticates publication authority.
     gate.require(not work.resolve().is_relative_to(candidate.resolve()), 'OCI working directory must be outside immutable candidate')
-    raw = (candidate / 'release-inventory.json').read_bytes()
-    proof = approval.verify_dispatch(candidate, inputs)
-    gate.require(proof['inventory_sha256'] == gate.digest(raw) == expected, 'signed inventory digest mismatch')
     inventory = gate.strict_json(raw)
     gate.verify_files(inventory, candidate)
     gate.require('ghcr' in inventory['channels'] and set(TARGETS.values()) <= set(inventory['targets']), 'signed inventory needs GHCR and both Linux targets')
@@ -2169,6 +2340,24 @@ def qualify(candidate, expected, work, inputs):
     metadata(work / 'verified.json', gate.canonical(actual))
     metadata(work / 'binary-sha256.json', gate.canonical(binaries))
     metadata(work / 'index-digest.txt', (actual['digest'] + '\n').encode())
+    return actual
+
+
+def accept(candidate, work, revision, version):
+    candidate, work = Path(candidate), Path(work)
+    raw = (candidate / 'release-inventory.json').read_bytes()
+    inventory = gate.strict_json(raw)
+    gate.require(inventory['source_sha'] == revision and inventory['tag'] == 'v' + version,
+                 'candidate source/tag mismatch')
+    return inspect_candidate(candidate, work, raw)
+
+
+def qualify(candidate, expected, work, inputs):
+    candidate, work = Path(candidate), Path(work)
+    raw = (candidate / 'release-inventory.json').read_bytes()
+    proof = approval.verify_dispatch(candidate, inputs)
+    gate.require(proof['inventory_sha256'] == gate.digest(raw) == expected, 'signed inventory digest mismatch')
+    actual = inspect_candidate(candidate, work, raw)
     metadata(work / 'release-inventory.json.asc', inputs['maintainer_signature'].encode())
     return actual
 
@@ -2183,9 +2372,14 @@ def main():
     check = sub.add_parser('qualify')
     check.add_argument('candidate', type=Path); check.add_argument('inventory_sha256')
     check.add_argument('work', type=Path)
+    acceptance = sub.add_parser('accept')
+    acceptance.add_argument('candidate', type=Path); acceptance.add_argument('work', type=Path)
+    acceptance.add_argument('revision'); acceptance.add_argument('version')
     args = parser.parse_args()
     if args.command == 'assemble':
         result = assemble(args.candidate, args.work, args.natives, args.revision, args.version)
+    elif args.command == 'accept':
+        result = accept(args.candidate, args.work, args.revision, args.version)
     else:
         inputs = gate.strict_json(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())['inputs']
         result = qualify(args.candidate, args.inventory_sha256, args.work, inputs)
@@ -2633,8 +2827,52 @@ jobs:
           retention-days: 90
           if-no-files-found: error
           path: target/distrib/
+  crates:
+    # Channel -> owning job ID: workflow_policy.CHANNEL_JOB_IDS. R4 uses "ghcr".
+    name: crates
+    needs: web-ui
+    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',crates,')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-ui
+          path: web/dist/
+      - name: Isolate package acceptance homes and the MSRV toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/r3-home"
+          for name in HOME CARGO_HOME RUSTUP_HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME npm_config_userconfig npm_config_cache; do
+            case "$name" in
+              HOME) value="$RUNNER_TEMP/r3-home" ;;
+              *) value="$RUNNER_TEMP/r3-home/$name" ;;
+            esac
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+      - name: Prepare and qualify all seven using the already built candidate UI
+        run: |
+          nix develop -c rustup toolchain install 1.88.0 --profile minimal
+          nix develop -c node packaging/prepare-crates.mjs "$RUNNER_TEMP/crates-prepared" "$GITHUB_SHA" "$PWD/web/dist"
+          nix develop -c sh packaging/ci-crates.sh "$RUNNER_TEMP/crates-prepared"
+          mkdir crates-flat
+          nix develop -c node packaging/prepare-crates.mjs --stage "$RUNNER_TEMP/crates-prepared" crates-flat
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-crates
+          retention-days: 90
+          if-no-files-found: error
+          path: crates-flat/
   assemble:
-    needs: archive
+    needs: [archive, crates]
+    if: always() && needs.archive.result == 'success' && (needs.crates.result == 'success' || needs.crates.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -2647,6 +2885,11 @@ jobs:
         with:
           pattern: candidate-*
           path: candidates
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.crates.result == 'success'
+        with:
+          name: release-crates
+          path: crates-flat
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')
         with:
@@ -2663,6 +2906,9 @@ jobs:
           sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
           echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
           python3 packaging/release/assemble.py candidates target/distrib
+          if test -d crates-flat; then
+            nix develop -c node packaging/prepare-crates.mjs --stage crates-flat target/distrib
+          fi
           "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global --output-format=json > target/distrib/dist-manifest.json
           python3 packaging/harden-installer.py target/distrib/hennery-installer.sh
           sh packaging/test-installer.sh target/distrib
@@ -2689,6 +2935,31 @@ jobs:
           retention-days: 90
           if-no-files-found: error
           path: target/distrib/
+  # Registered by workflow_policy.CHANNEL_JOB_IDS: ghcr -> ghcr.
+  ghcr:
+    name: ghcr
+    needs: assemble
+    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Verify the frozen GHCR payload, then accept the retained index through loopback
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          nix develop .#image -c python3 packaging/ghcr-candidate.py accept candidate image-acceptance "$GITHUB_SHA" "${RELEASE_TAG#v}"
+          nix develop .#image -c sh packaging/test-image-registry.sh image-acceptance/layout
   installer:
     needs: assemble
     strategy:
@@ -2709,8 +2980,8 @@ jobs:
       - name: Native installer positives and refusals
         run: sh packaging/test-installer.sh candidate
   retain:
-    needs: [assemble, installer, tag-signature]
-    if: vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true'
+    needs: [assemble, installer, tag-signature, ghcr]
+    if: always() && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')))
     environment: release-staging
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -2748,7 +3019,7 @@ jobs:
 ## Task 3: Gated GHCR publication, signing and deployment guidance
 
 - [x] Tests observed RED, implementation and COPY probes.
-- [x] Exact final source below; fresh replay recorded.
+- [x] Current complete source checked against tested bytes; initial replay is historical.
 - [ ] Parent scoped review and native Docker acceptance.
 
 Run all R4 contracts, all R1 release contracts, actionlint on every workflow and shellcheck on all seven relevant scripts. The production workflow checker must pass the whole repository. Six Rust checks and fresh replay/probes are recorded below.
@@ -3635,6 +3906,9 @@ class Workflow(unittest.TestCase):
                         'nix develop .#release -c python3 packaging/ghcr-verify.py publish']:
             job = {'permissions': {'contents': 'read', 'packages': 'read'}, 'steps': [{'run': command}]}
             with self.subTest(command=command): self.assertTrue(workflow_policy.privileged(job))
+        for action in ['actions/create-github-app-token@fixture', 'rust-lang/crates-io-auth-action@fixture']:
+            job = {'permissions': {'contents': 'read'}, 'steps': [{'uses': action}]}
+            with self.subTest(action=action): self.assertTrue(workflow_policy.privileged(job))
 
     def test_lint_reference_is_not_a_registry_writer(self):
         job = {'permissions': {'contents': 'read'}, 'steps': [{'run':
@@ -4117,15 +4391,69 @@ from pathlib import Path
 import re
 import sys
 
-import yaml
 
 
 CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
+# Channel -> owning YAML job ID. The literal API display name is the channel.
+# R4's name is reserved now; selection refuses until its owning job exists.
+CHANNEL_JOB_IDS = {'crates': 'crates', 'ghcr': 'ghcr'}
+
+
+def load_workflow(raw):
+    # Most release helpers use only the stdlib parts of gate/workflow_policy.
+    # The signed-workflow binding always needs the pinned parser and refuses
+    # explicitly when it is unavailable; there is no permissive fallback.
+    try:
+        import yaml
+    except ImportError as error:
+        raise ValueError('workflow parser unavailable; run inside nix develop .#release') from error
+
+    class UniqueSafeLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            self.flatten_mapping(node)
+            seen = set()
+            for key_node, _ in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                if key in seen:
+                    raise ValueError('duplicate workflow YAML key')
+                seen.add(key)
+            return super().construct_mapping(node, deep=deep)
+
+    try:
+        data = yaml.load(raw, Loader=UniqueSafeLoader)
+    except yaml.YAMLError as error:
+        raise ValueError('invalid workflow YAML') from error
+    if not isinstance(data, dict):
+        raise ValueError('workflow mapping required')
+    return data
+
+
+def candidate_channel_jobs(data):
+    """Bind job API names to owning IDs in the exact candidate workflow."""
+    jobs = data.get('jobs')
+    if not isinstance(jobs, dict) or not jobs:
+        raise ValueError('candidate job identity: jobs mapping required')
+    seen = set()
+    for job_id, job in jobs.items():
+        if not isinstance(job_id, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', job_id) or not isinstance(job, dict):
+            raise ValueError('candidate job identity: invalid job ID or definition')
+        display = job.get('name', job_id)
+        if not isinstance(display, str) or not display or '${{' in display:
+            raise ValueError('candidate job identity: names must be literal strings')
+        if display in seen:
+            raise ValueError('candidate job identity: display name collision')
+        seen.add(display)
+        if display in CHANNEL_JOB_IDS and CHANNEL_JOB_IDS[display] != job_id:
+            raise ValueError('candidate job identity: reserved name belongs to another job ID')
+        for channel, owner in CHANNEL_JOB_IDS.items():
+            if job_id == owner and (display != channel or 'strategy' in job):
+                raise ValueError('candidate job identity: channel owner requires its literal name and no matrix')
+    return {channel: owner for channel, owner in CHANNEL_JOB_IDS.items() if owner in jobs}
 
 
 def privileged(job):
     return any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
-        s.get('uses', '').startswith('actions/create-github-app-token@') or
+        s.get('uses', '').startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) or
         'publish.py upload' in s.get('run', '') or
         re.search(r'(?m)(?:^|[|;&])\s*(?:nix\s+develop\s+\S+\s+-c\s+)?(?:(?:ba)?sh\s+|python3\s+)?(?:packaging/ghcr-publish\.sh|packaging/ghcr-verify\.py\s+publish|docker\s+login)(?:\s|$)', s.get('run', ''))
         for s in job.get('steps', []))
@@ -4143,6 +4471,8 @@ def writer(name, job):
 
 
 def check(data, name):
+    if name == 'release-candidate.yml':
+        candidate_channel_jobs(data)
     jobs = data.get('jobs', {})
     writers = [j for key, j in jobs.items() if writer(key, dict(j, permissions=j.get('permissions', data.get('permissions', {}))))]
     if writers:
@@ -4185,7 +4515,7 @@ def check(data, name):
             gates = {s['with']['phase']: i for i, s in enumerate(steps) if s.get('uses') == './.github/actions/release-gate'}
             for i, step in enumerate(steps):
                 uses, run = step.get('uses', ''), step.get('run', '')
-                if uses.startswith('actions/create-github-app-token@') and not gates['preflight'] < i < gates['boundary']:
+                if uses.startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) and not gates['preflight'] < i < gates['boundary']:
                     raise ValueError('publication credentials must be acquired after preflight and before revalidation')
                 if (uses.startswith('actions/attest') or 'publish.py upload' in run) and not gates['boundary'] < i:
                     raise ValueError('signing/upload must follow boundary revalidation')
@@ -4211,7 +4541,7 @@ def check_repository(root):
     if not {'release-candidate.yml', 'release-publish.yml', 'release-tests.yml'} <= {p.name for p in paths}:
         raise ValueError('candidate, publish and negative-test workflows required')
     for path in paths:
-        data = yaml.safe_load(path.read_text())
+        data = load_workflow(path.read_text())
         authority = any(privileged(dict(job, permissions=job.get('permissions', data.get('permissions', {}))))
                         or environment_name(job) == 'release' or 'uses' in job for job in data.get('jobs', {}).values())
         # Read-only legacy qualification jobs retain their existing style.
@@ -4245,6 +4575,65 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class Workflows(unittest.TestCase):
+    def candidate(self):
+        return yaml.safe_load((ROOT / '.github/workflows/release-candidate.yml').read_text())
+
+    def test_reserved_channel_names_belong_only_to_their_job_ids(self):
+        for channel in ('crates','ghcr'):
+            data=self.candidate()
+            data['jobs'].pop(channel,None)
+            data['jobs']['licence-review']={'name':channel,'timeout-minutes':5,'steps':[{'run':'exit 1'}]}
+            with self.subTest(channel=channel), self.assertRaisesRegex(ValueError,'candidate job identity'):
+                workflow_policy.check(data,'release-candidate.yml')
+
+    def test_candidate_job_names_cannot_be_dynamic_or_collide(self):
+        for display in ('archive',"${{ 'ghcr' }}",'${{ matrix.name }}',None,42):
+            data=self.candidate()
+            data['jobs']['licence-review']={'name':display,'timeout-minutes':5,'steps':[{'run':'exit 1'}]}
+            with self.subTest(display=display), self.assertRaisesRegex(ValueError,'candidate job identity'):
+                workflow_policy.check(data,'release-candidate.yml')
+
+    def test_candidate_job_identity_requires_a_valid_jobs_mapping(self):
+        for jobs in (None,{},[],{'ordinary':None},{'ordinary.name':{}},{True:{}}):
+            with self.subTest(jobs=jobs),self.assertRaisesRegex(ValueError,'candidate job identity'):
+                workflow_policy.check({'jobs':jobs},'release-candidate.yml')
+
+    def test_channel_owner_has_literal_own_name_and_no_matrix(self):
+        for channel in ('crates','ghcr'):
+            for changed in ({},{'name':channel}):
+                data=self.candidate()
+                data['jobs'][channel]={'timeout-minutes':5,'steps':[{'run':'true'}],**changed}
+                workflow_policy.check(data,'release-candidate.yml')
+            for changed in ({'name':'archive'},{'name':'ordinary-display'},{'name':"${{ '"+channel+"' }}"},{'strategy':{'matrix':{'os':['ubuntu-24.04']}}}):
+                data=self.candidate()
+                data['jobs'][channel]={'timeout-minutes':5,'steps':[{'run':'true'}],**changed}
+                with self.subTest(channel=channel,changed=changed), self.assertRaisesRegex(ValueError,'candidate job identity'):
+                    workflow_policy.check(data,'release-candidate.yml')
+
+    def test_channel_registry_explicitly_maps_a_channel_to_its_owning_job_id(self):
+        from unittest.mock import patch
+        data=self.candidate()
+        data['jobs'].pop('ghcr', None)
+        data['jobs']['container-acceptance']={'name':'ghcr','timeout-minutes':5,'steps':[{'run':'true'}]}
+        with patch.dict(workflow_policy.CHANNEL_JOB_IDS,{'ghcr':'container-acceptance'}):
+            workflow_policy.check(data,'release-candidate.yml')
+            data['jobs']['unrelated']=data['jobs'].pop('container-acceptance')
+            with self.assertRaisesRegex(ValueError,'candidate job identity'):
+                workflow_policy.check(data,'release-candidate.yml')
+
+    def test_candidate_yaml_decoding_cannot_hide_reserved_name_or_duplicate(self):
+        base=(ROOT/'.github/workflows/release-candidate.yml').read_text()
+        variants=[
+            '\ufeff'+base+'\n  licence-review:\n    name: "\\u0067hcr"\n    timeout-minutes: 5\n    steps: [{run: "exit 1"}]\n',
+            base+'\n  licence-review:\n    name: ghcr\n    name: ordinary\n    timeout-minutes: 5\n    steps: [{run: "exit 1"}]\n',
+        ]
+        for raw in variants:
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);shutil.copytree(ROOT/'.github',root/'.github')
+                (root/'.github/workflows/release-candidate.yml').write_text(raw)
+                with self.subTest(raw=raw[-150:]),self.assertRaises(ValueError):
+                    workflow_policy.check_repository(root)
+
     def test_ghcr_credentials_require_selected_channel_as_well_as_enablement(self):
         data = yaml.safe_load((ROOT / '.github/workflows/release-publish.yml').read_text())
         for name in ['ghcr', 'ghcr-attest']:
@@ -4686,6 +5075,83 @@ jobs:
             publish-boundary.json
             reconciliation.json
             public-path.json
+  crates:
+    needs: [github, authorize]
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_CRATES_ENABLED == 'true'
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      RELEASE_AUDIT_BUCKET: ${{ vars.RELEASE_AUDIT_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AUDIT_WRITE_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AUDIT_WRITE_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Fetch the complete exact held candidate; never rebuild during publication
+        env:
+          RELEASE_BUCKET: ${{ vars.RELEASE_CANDIDATE_BUCKET }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          RECEIPT_VERSION: ${{ inputs.retention_receipt_version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_CANDIDATE_READ_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_CANDIDATE_READ_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+        run: |
+          nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
+          nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signatures
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: crates
+          phase: preflight
+          receipt: crates-preflight.json
+      - name: Verify maintainer approval and exact tagged Sigstore provenance before credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          nix develop .#release -c python3 packaging/release/verify.py --candidate candidate --tag "$TAG" --source-sha "$SOURCE_SHA" --bundle signatures/release.sigstore.jsonl --approval-signature signatures/release-inventory.json.asc
+      - name: Revalidate signed global and channel bytes and public corresponding source before OIDC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+        run: nix develop .#release -c node packaging/publish-crates.mjs --verify candidate "$INVENTORY"
+      - name: Obtain temporary crates.io authority; revoke in the action post step
+        id: cratesio
+        uses: rust-lang/crates-io-auth-action@9c067fc5d5c254b33978fed918cb50c032549d0e # main @ 2026-10-15
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: crates
+          phase: boundary
+          receipt: crates-boundary.json
+      - name: Upload frozen crates in dependency order; renew the live gate at every boundary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.cratesio.outputs.token }}
+        run: nix develop .#release -c node packaging/publish-crates.mjs candidate "$INVENTORY"
 
   # R4: generate and verify bundles before protected registry publication.
   ghcr:
@@ -5096,6 +5562,15 @@ corresponding-source/licence/advisory review remains mandatory. Image scanner
 SBOMs additionally cover the base filesystem. Binary SPDX is embedded and signed
 separately because filesystem scanning cannot discover all static/frontend code.
 
+R3's channel registry binds the reserved display name `ghcr` to job ID `ghcr`
+in the workflow at the signed source commit. That aggregate downloads the frozen
+candidate after assembly, checks its source/tag, complete inventory, executable
+hashes and retained OCI/index bytes, then round-trips the index through loopback.
+Retention waits for its success when GHCR is selected. GitHub-only candidates
+may skip both optional channel jobs; a selected missing/skipped/failed aggregate
+is refused by the shared gate. Candidate `accept` checks data before approval;
+publication `qualify` still requires the maintainer signature and live gate.
+
 PR/main `build.yml` also qualifies real release-target OCI output using explicitly
 marked CI notices/SPDX fixtures, signing-input extraction and loopback acceptance.
 Those fixture images are never promoted to release candidates. Real Docker
@@ -5228,15 +5703,16 @@ never promoted to a release.
 [R4's collector-image guide](images.md) describes the release target, labels,
 reviewed notices and binary/image SBOMs, native OCI candidates, gated GHCR
 publication, digest deployment, volume upgrades and maintainer-only setup.
-Its R1 adapter integration remains mandatory and publication is disabled.
+R1's shared gate and R3's registered GHCR aggregate are integrated; publication
+remains disabled pending independent review and maintainer qualification.
 PR/main images are never promoted to releases.
 
 Every archive builds with the `vendored-openssl` feature
 (`dist-workspace.toml`). OpenSSL, which `webauthn-rs-core` links, is then
 compiled in from source. Without it, the macOS binary would load Homebrew's
 `libssl` and fail on a Mac without it, and a static musl build would not
-link at all (distribution §1.1). Development and `ci.yml` use the system
-OpenSSL.
+link at all (distribution §1.1). Cargo builds now enable vendored OpenSSL by default (R3); Nix opts out with
+`--no-default-features` and uses its system-library inputs.
 
 Third-party actions are pinned by commit, every image by its multi-arch
 digest, and cargo-dist by the SHA-256 in `install-dist.sh`.
@@ -5292,6 +5768,130 @@ live, with logged-in agents, and the operator's to run before it merges:
     prefixes);
   - the `codexHome` field of `initialize`'s answer, canonical;
   - `--version`'s `codex-cli X.Y.Z` line.
+
+## Crates.io and cargo-binstall (R3)
+
+The seven production crates opt into crates.io at one exact version. Publish
+in this order: hennery-proto, hennery-kernel, hennery-view, hennery-host,
+hennery-gateway, hennery-sessions, hennery. The workspace default, testkit and
+pin generator remain private. Library compatibility is pre-1.0 application
+support, not a separately stable SDK. Protocol/view generators are build tools,
+not advertised install products.
+
+The `crates` CI workflow prepares from a fresh git-archive snapshot outside the
+checkout. `packaging/prepare-crates.mjs` builds the locked web UI, copies only
+its distributable output into the kernel, gathers licence texts for production
+dependencies and configured build tools (including emitted helpers and CSS), and
+writes its source/UI inventories.
+The canonical host manifest is `crates/hennery-host/manifest.json`; pin generation,
+CI and Nix read that same file. No agent or managed Node payload is packaged.
+Each final tarball is inspected for actual AGPL text, normalized registry
+metadata and its exact production dependency versions, and the 10 MB size cap.
+The kernel also carries FRONTEND-NOTICES.txt and SOURCE.json, and its README
+links to the immutable corresponding-source archive and SHA-256. The complete
+source archive includes Rust/web sources, lockfiles, build scripts, repository
+tests and fixtures. Individual crates intentionally omit the workspace's tests.
+
+`packaging/check-crates.mjs` creates a temporary loopback sparse registry
+containing these seven exact candidates and prefetched upstream dependencies.
+The overlay only exists in a scratch CARGO_HOME; it is never a real publishing
+registry or user configuration. Cargo package verification and publish dry runs
+run on extracted tarballs, then builds/installations run with Cargo offline and
+OS network access denied to subprocesses. The OS restriction includes build
+scripts and is tested with a reachable loopback positive control. Cargo's
+publish dry run itself needs registry HTTP, so it is separate from that phase.
+Both locked and unlocked registry installs run from an empty directory. Their
+collectors run in disposable homes with Node/pnpm absent from PATH, serve all
+HTML-referenced assets and render the app in the pinned Chromium. A separate
+Rust 1.88 toolchain builds the extracted CLI's complete dependency graph.
+Source installs need Rust, a C compiler, make and Perl (macOS: Xcode Command
+Line Tools); default vendored OpenSSL removes the system OpenSSL prerequisite.
+
+Native cargo-binstall is disabled. Pinned 1.24.0 refusal tests offer real loopback
+archives, but all seven attempts must refuse without fetching or installing an
+archive. All native strategies (`crate-meta-data`, `quick-install`, `compile`)
+are disabled in the final CLI metadata. Native binstall cannot enforce the
+required OpenPGP and Sigstore policy. The `hennery-release` metadata namespace
+records the maintainer fingerprint and concrete version's exact tagged workflow
+identity for an external verifier. A native bridge needs separate review;
+archive URL mappings remain dormant data for that future integration.
+
+Before running any release-contained installer or verifier, follow the reviewed
+[verify-then-run bootstrap](../README.md#verify-a-release-installer-before-running-it).
+Use installed GnuPG and independently corroborate the full signing fingerprint;
+authenticate the exact inventory and installer digest before execution. Then
+use a clean source checkout at that authenticated inventory's full source SHA
+and the [common verifier](release/verify.py), requiring both
+`release-inventory.json.asc` and the exact tagged Sigstore identity. Bare Cargo
+installation waits for non-prerelease publication and separate public-path
+qualification. The first alpha remains GitHub-only.
+
+### R1 integration and maintainer-only setup
+
+The crate writer lives in R1's manual tagged `release-publish.yml`, in environment
+`release`, with direct `needs: [github, authorize]` and the exact authorized
+inventory/current-attempt condition. `RELEASE_PUBLICATION_ENABLED` and
+`RELEASE_CRATES_ENABLED` remain unset/disabled. The complete candidate comes
+from exact held object versions. Preparation qualifies all seven packages using
+R1's single retained UI build and exports only final crates, their channel
+inventory and immutable source into R1's flat candidate before freeze.
+Publication never rebuilds those bytes.
+
+The shared `packaging/release-gate crates` receives the complete root, approved
+global digest, explicit preflight/boundary phase and a fresh receipt outside the
+candidate. Each call verifies approval, inventory digest, maintainer signature,
+signed tag and current exact-SHA evidence, then retains its audit. The publisher
+also binds and rechecks channel inventory, source/version and all crate/source
+bytes against that global inventory before and after each call. It renews the
+boundary gate before every upload and index-readiness operation.
+
+The workflow verifies both the detached maintainer signature and exact tagged
+Sigstore provenance before the official pinned OIDC action, then repeats the
+frozen-byte/public-source preflight immediately before OIDC. Only the action's
+short-lived output reaches upload; its post step revokes it. Every publishing
+credential belongs only in protected environment `release`.
+
+R1 must retain all seven .crate files, crates-inventory.json and
+`hennery-source-<sha>.tar.gz` unchanged. Publish and verify the source archive
+at its inventory URL before enabling crates.io. Its digest must also appear in
+R1's authenticated inventory; retain it for the required AGPL availability
+period. The publisher fetches it without credentials and refuses unavailable
+or mismatched bytes. Missing candidate bytes stop recovery; never rebuild them
+under old approval. A fresh approved attempt reconciles each existing registry
+package against its digest and waits for index resolution before consumers.
+Ambiguous uploads or conflicting remote bytes stop, requiring renewed approval
+and a new candidate/version where immutable published versions prevent repair.
+The uploader uses the documented registry API to send frozen tarball bytes;
+it does not invoke Cargo publication and repackage approved inputs.
+
+Maintainer steps, never performed by a builder:
+
+1. Approve the exact source/version/channels, all platform/MSRV/licence/advisory
+   gates, protected tag/environment rules with bypass disabled, candidate
+   retention and the unauthenticated source-delivery URL. Review the full notice
+   closure and application assets/fonts; no licence permission is inferred for
+   third-party agent binaries. No real publication is authorized by CI green.
+2. For the first versions, arrange a one-off R1-gated bootstrap using a narrowly
+   scoped, short-lived crates.io token held only in environment `release`.
+   The same approval tuple and exact-byte
+   uploader apply. Do not add a standing all-crates token to this workflow.
+3. After each of the seven crates exists, configure its trusted publisher for
+   repository `marcinwadon/hennery`, exact workflow filename `release-publish.yml`
+   and environment `release` together. Check
+   current crates.io support/settings and pin the official auth action. Test
+   the OIDC identity in the gated workflow; no local registry login substitutes.
+4. Revoke the bootstrap token immediately after successful bootstrap/trusted
+   publishing configuration. Remove any temporary secret and verify it is no
+   longer usable. Future runs use the short-lived OIDC token and revoke it via
+   the auth action's post step. The builder never receives any token.
+5. Verify public installs and UI from clean scratch homes before advertising the
+   channel. Keep the early-testing data/migration guarantees unchanged.
+
+Cargo's [registry API](https://doc.rust-lang.org/cargo/reference/registry-web-api.html#publish),
+[source replacement](https://doc.rust-lang.org/cargo/reference/source-replacement.html),
+[binstall metadata](https://github.com/cargo-bins/cargo-binstall/blob/main/SUPPORT.md)
+and [trusted publishing bootstrap](https://blog.rust-lang.org/2025/07/11/crates-io-development-update-2025-07/)
+are the implementation contracts to recheck on changes.
 
 ## Publishing is the operator's
 
@@ -5433,6 +6033,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [The session list and the read-only transcript (4c-i)](plans/2026-10-18-web-sessions.md) — part 4c-i of plan 4, the frontend (5 tasks), in `web/` only: a typed view client over 4a-ii's view API; the SSE helper's deferred fixes (a throwing handler never loses its event, one abort listener, `closed` at once, bodies cancelled); an item store per session (upsert by id and version, groups by opaque `turn_id`, older pages by `before_turn`, a resync that replaces the store and reopens, backed off when it repeats) and a list store fed by `session_upsert`, `session_removed` and `waiting_changed`, refetching on no event. The session list: day buckets across DST that move on with the clock, rows by lifecycle and activity, "Waiting on a question", the server's waiting count in the badge and the tab title (kept through a refused search), search on the server, Hide closed, the hat switch. The read-only session view: the header from the list or the detail, every item kind and all 18 markers, Markdown with raw HTML as text and no remote image, an error boundary per item, a tail window of 200 items measured in Chromium; a session's link (a push notification's) opens it beside the list. A guard on the tests' text locators. Amended after the security review of 2026-10-02, its re-confirmation of 2026-10-03, the task reviews and the whole-branch review; executed 2026-10-03 (see its "Execution status").
    - [The composer, cards, New Session and the session menu (4c-ii)](plans/2026-10-18-web-sessions.md) — part 4c-ii of plan 4, the frontend (Tasks 6–10 of the same plan), in `web/` only: a composer under each transcript (Ctrl/Cmd+Enter, images by paste, drop or pick with `[Image #N]` markers, a slash menu, the config bar taken back on a refusal, Cancel with the turn's real outcome, every prompt refusal in words, drafts per session and forgotten at sign-out, "Send again" refilling the draft); question cards (permissions by option kind, digits only from a focused card on a desktop and never stealing typing, forms with pairing, every delivery state, a verdict that never goes back, "Answer as a new message" as a draft); New Session (hosts, agents behind one function, the project picker, the hat preview, the first prompt as its own request); footers by lifecycle with every resume refusal in words and the header menu (park, close, delete behind a confirmation and step-up); "delivers when the host reconnects" following the host from what the view streams. Playwright starts a session on a host paired with the page's command, answers a permission, crashes the host and resumes, at two widths; CI builds the fake agent. Amended after its security review and re-confirmation of 2026-10-03, the task reviews, the whole-branch review and the review of its fixes; executed 2026-10-03 (see its "Execution status").
    - [The PWA and device Settings (P1)](plans/2026-10-26-phone-pwa.md) — four tasks: manifest/icons, digest-verified static-only worker, natural updates, fenced push lifecycle and minimum device Settings/mobile sign-out. Five review fixes independently CONFIRMED; CI 15/15 at `88ac41e2`. Rebased onto D1 `37fc7488`: both generator checks and full web/browser gate exit 0 (1,784 web tests; PWA 5 passed; Chromium 86 passed / 11 existing skips). Fresh tree replay: 64 blocks/eight matching trees. Earlier full replay: 2,148 Rust tests and 144 BITE probes. Draft #142 remains parent-managed; new-head CI/status and deployment approval remain with the parent. P2 owns click/deep-link/mobile-answer/relay and live iOS/vendor acceptance.
+   - [Phone answers, deep links and gateway relay (P2)](plans/2026-10-29-phone-answers.md) — coherent owner-filtered question snapshots shared by HTTP/SSE, fenced notification navigation, mobile answers through the durable queue and gateway relay. Review amendments independently CONFIRMED per parent. Rebased onto R1 191aa71b with unchanged P2 implementation bytes and both README entries preserved; all six Rust gates (2,223 tests), web (1,818 tests / 101 files) and PWA (8 passed, 1280/390 px) exit 0. Six embedded patches reproduce 33 files and the rebased source tree. PR #148 was green before rebase; new-head CI/full status and installed-iOS/vendor/pinned-adapter acceptance remain parent-owned.
    - [The management screens: hosts and hats (4d-i)](plans/2026-10-18-web-manage.md) — part 4d-i of plan 4, the frontend (4 tasks), in `web/` only: every server string shown escaped and bidi-isolated (`visible()`, `<Text>`); a confirmation that runs its action and stays open under the step-up dialog; the page `inert` behind that dialog; a failed sign-out that says the browser is still signed in. Hosts: the list with each host's state, pairing with a one-time code minted on the click behind step-up and kept in the page's state only, with the exact `hennery host join` command and a countdown; rename, default hat and revoke, confirmed then stepped up. Hats: create, rename, recolour, the default for new hosts, each host's path rules saved as a set with a live tester that asks the host, and purge from the server's preview. Playwright pairs a real host with the command the page shows, at two widths, with every binary in a scratch environment. Amended after the security review of 2026-10-02 and its re-confirmation; executed 2026-10-03 (see its "Execution status").
    - [The MCP connections screen (4e-i)](plans/2026-10-22-web-mcp.md) — part 4e-i of plan 4, the frontend (3 tasks), in `web/` only, over plan 8a's routes: `/mcp` (nothing under it, which the server reserves), shown only when `features` names `mcp_connections`; each connection with `hennery-<slug>`, its URL, hat, kind, whether a token is stored and its state in words (`needs_auth` "needs sign-in again", `error` "is failing", never a reconnect), the vendor's note escaped and cut at 300 characters; add (step-up; the hat starts at the default for new hosts), edit sending only the changed fields (a label edit needs no step-up; the token's loss confirmed first), delete (confirmed, then stepped up); the static token write-only, read once from an uncontrolled field kept from password managers and emptied before the request; the hosts ticked as a full set built from the connection's own mounts; a note that changes apply to new and resumed sessions, and how Codex, Claude on the operator's own CLI and any other agent command get them (without isolation, only both in the host's default hat; may change). Playwright creates one, sets its token and mounts it on a real paired host at two widths. Stdio servers, OAuth and the delivery indicator are 4e-ii's. Amended after the security review of 2026-10-03 and its re-confirmation. Executed 2026-10-03, with the whole-branch review fixes completed and rebased onto merged 8e (`d54c704c`) on 2026-10-12 (see its "Execution status").
    - [Web MCP delivery and local servers (4e-ii-a)](plans/2026-10-23-web-mcp-delivery.md) — six web-only tasks over merged 8e: last-start/resume mode/count, bounded metadata refresh, host/agent predictions, full-set local stdio configuration with write-only env values and step-up, isolation refusals, and security-review amendments. Executed 2026-10-13 on `7a8dab28`; opus review APPROVE AFTER AMENDMENTS and scoped re-confirmation CONFIRMED WITH NOTES (maintainer's behalf, 2026-10-13), all N1–N3 taken. Fresh v2 replay: 88 blocks / 33 files, twelve matching phase trees; 1465 Vitest / 84 files, prior full Playwright 58 passed / 11 skipped and changed spec 8/8; 171 historical/new caught probe records. Final-tip gate is logged in the ledger before push (see Execution status). OAuth Connect is 4e-ii-b after 8f.
@@ -5464,7 +6065,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [`hennery doctor` (7d)](plans/2026-10-13-doctor.md) — plan 7d, distribution, in two PRs. 7d-i (3 tasks): `hennery doctor [--data-dir]` reads only, and says `ok`, `warn` or `fail` with a fix for checks 1 (the binary and the set present), 2 (glibc ≥ 2.28 by its loader's banner, kernel ≥ 4.18, NixOS without nix-ld), 5 (the service's PATH and its drift), 6 (nesting variables, root), 9 (disk, outbox, orphaned outboxes), 10 (the service, `up`'s children as `service status` judges them, restart needed by the running executable's identity), 11 (another `hennery` on PATH), 12 (the set against the pin, the hold), 14 (`host.lock`'s holder without taking it, the directory's and key's modes) and 17 (`--use-cli`); it exits 1 only on a failure. [7d-ii](plans/2026-10-14-doctor-ii.md) (3 tasks) adds checks 3 (each adapter answers `initialize` as the host would start it, its group killed after; on macOS a silence only warns), 4 (each CLI logged in, by its exit code alone), 7 (the collector step by step: URL rule, DNS, TCP, TLS, `/healthz`, then a `hello` only while no host holds `host.lock`), 8 (the clock against the collector's `Date`), 13 and 17's gap (the bundled CLIs against the terminal's and the overrides), and 16 (listeners and `public_url`); `probe_agents` and check 15 wait for their lanes. Amended after the security reviews of 2026-10-02; 7d-i and 7d-ii executed 2026-10-02 (see their "Execution status").
    - [Nix package (7e-i)](plans/2026-10-12-nix-package.md) — 2 tasks: `nix build` gives `hennery` (crane, on nixpkgs' own toolchain and OpenSSL), and `nix flake check` runs the package, clippy, rustfmt and cargo-audit against a pinned advisory database, on Linux and macOS in a new CI job on every PR. The adapter and frontend derivations and the NixOS modules are 7e-ii's. Amended after the security review of 2026-10-02; executed 2026-10-02 (see its "Execution status").
    - [Nix web UI (7e-ii-b)](plans/2026-10-20-nix-web.md) — 3 tasks: the web UI as a derivation of its own (`nix/web.nix`: `fetchPnpmDeps` with `fetcherVersion = 4` on nixpkgs-web's `pnpm_12`; one dependency hash for every system, as the fetcher's `--force` takes every platform, so no `supportedArchitectures`; pnpm 12's `v11/links` dropped before the fetcher's fixup), embedded in the package through `HENNERY_WEB_DIST` with `HENNERY_WEB_REQUIRE=1`, a `web-ui` flake check on the binary, reference guards on both, and `packaging/update-web-hash.sh` for every change to `web/pnpm-lock.yaml`. Amended after the security review of 2026-10-02 and its re-confirmation; executed 2026-10-02 (see its "Execution status").
-   - [Managed runtime and pinned adapters (7b)](plans/2026-10-08-managed-runtime.md) — plan 7b (7 tasks, two PRs): the adapter manifest (`adapters/manifest.json`, compiled in) and its generator `hennery-pins`, the pin-bump job, the installer (resumable verified downloads, safe extraction, sets with `current`/`previous`, rollback hold, collection), `hennery host adapters update|rollback`, `join` installing the runtime, `host run`'s default agents from the installed set, and `--use-cli`. Pins proposed, operator to confirm. Amended after the security review of 2026-10-01 and the plan review of 2026-10-02; executed 2026-10-02 as PR #51 and its stacked follow-up (see its "Execution status").
+   - [Managed runtime and pinned adapters (7b)](plans/2026-10-08-managed-runtime.md) — plan 7b (7 tasks, two PRs): the adapter manifest (`crates/hennery-host/manifest.json`, compiled in) and its generator `hennery-pins`, the pin-bump job, the installer (resumable verified downloads, safe extraction, sets with `current`/`previous`, rollback hold, collection), `hennery host adapters update|rollback`, `join` installing the runtime, `host run`'s default agents from the installed set, and `--use-cli`. Pins proposed, operator to confirm. Amended after the security review of 2026-10-01 and the plan review of 2026-10-02; executed 2026-10-02 as PR #51 and its stacked follow-up (see its "Execution status").
    - [Web Push: the VAPID key, subscriptions and hat policies (10a)](plans/2026-10-14-push.md) — the first part of plan 10, Web Push (2 tasks): `<data>/vapid.key` (made once, never replaced; a damaged, symlinked, FIFO or readable one stops the start), the RFC 8292 token signed by hand with `p256` (ES256 as raw `r ‖ s`, checked against RFC 6979's and RFC 8292's vectors), push subscriptions that end with the signed-in session that made them (subscribing needs step-up; a push service's rotation needs none), endpoints checked as `https` on a public domain name and stored as parsed, per-hat push policies, the push contact in `GET/PATCH /api/settings`. Nothing is sent: delivery and the triggers are 10b's. Amended after the security review of 2026-10-02 and its re-confirmation; executed 2026-10-02 (see its "Execution status").
    - [Web Push: the push triggers (10b-i)](plans/2026-10-15-push-triggers.md) — the second part of plan 10 (3 tasks): `pending_opened` carries the question's title from the host; the store reports the push edge a host fact crosses (a turn blocked on its first question, a turn ended `completed` or `failed`), read in the fact's own transaction with the session as it left it; one function decides what notifies; a per-tag coalescing queue that never blocks ingest; a resent backlog notifies only once reconciled and only what still holds; a question asked again after a withdrawal is quiet. A question outside a turn is an edge of its own; it notified nothing here, and 10b-iii makes it notify (the operator's decision). Nothing is sent: delivery is 10b-ii's. Amended after the security review of 2026-10-02 and its re-confirmation; executed 2026-10-02 (see its "Execution status").
    - [Web Push: delivery (10b-ii)](plans/2026-10-17-push-delivery.md) — the third part of plan 10 (2 tasks): the collector sends its notices. Each goes to every subscription of the owner's under the hat's policy (muted, generic title, details), encrypted to the browser (RFC 8291, `web-push-native` with default features off), signed with 10a's VAPID token (reused until an hour before it expires), padded to 512-byte buckets, `TTL` 3600 and `Urgency` high or normal, never `Topic`. It goes through the shared egress client, public addresses only; one `Egress` is built in `main.rs` and the gateway shares it. A 429, 5xx, timeout or failed connection is retried (1 s, 4 s, `Retry-After` up to 10 s; 10 s a try, 30 s a subscription); 404/410 removes the subscription and expired ones are pruned, an outcome landing only on the endpoint pushed to. Amended after the security review of 2026-10-02, its re-confirmation and the whole-branch review; executed 2026-10-02 (see its "Execution status").
@@ -5478,14 +6079,18 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [The agent's transcript on its host, Codex (9d-ii)](plans/2026-10-20-codex-transcripts.md) — the last part of plan 9 (4 tasks; operator delegated, parent decided 2026-10-02): the host runs the bundled `codex app-server` against the session's recorded `CODEX_HOME` only, checks `initialize`'s `codexHome`, calls `thread/delete` and checks afterwards; when the app-server cannot be used (or timed out three times in a row) codex-acp archives and the host removes the rollouts through the descriptor walk, reporting that copies may remain in Codex's database; the call shape is pinned per Codex version in the manifest, checked by `hennery-pins` and re-read at every pin bump. Amended after the security review of 2026-10-02 and its re-confirmation; executed 2026-10-02 (see its "Execution status").
    - [Delete and purge: the design record (plan 9)](plans/2026-10-21-delete-and-purge-design-record.md) — why plan 9 was built as it was: the decisions and the security reviews' amendments for 9a–9c and 9d, the operator's delegated decisions (the parent, 2026-10-02), and the evidence on Claude's and Codex's own session storage (claude-agent-acp 0.81.0, codex-acp 1.13.0, Codex 0.155.1) to re-read at a pin bump.
    - [Generic plug-in contract (C1)](plans/2026-10-26-plugin-contract.md) — generic owner/hat registration, completed activity with typed provenance, exposure bindings and durable deletion lifecycle; built first and replayed on merged design main (40 blocks, exact tree match). The PR #140 flake investigation fixed writer-registry identity lifetime test-first and rebased onto W1 main `26cc3cca`; current verification and historical replay are distinguished in its execution record. Parent re-review and Linux/macOS CI remain pending.
+   - [Plug-in startup context (C2)](plans/2026-10-30-plugin-startup.md) — scoped opt-in context in a new session's first operator prompt, typed provenance and separate display, bounded failures and lifecycle fences. Security re-review approved at `b1f9b402`; rebased onto D2/P2 main `a58479c7` with both command/config/close fences preserved. Final six Rust checks passed (2,374 tests), web gate passed (1,823 tests), Nix flake check passed, fresh integration replay matched 790 files, four copy probes caught and 516 loaded test executions passed. Post-rebase delta review and Linux/macOS PR CI remain parent-owned.
 
    - [WSS transport and diagnostics (W1)](plans/2026-10-26-wss-transport.md) — merged as #139; verified HTTPS/WSS transport, private-CA trust, durable enrollment recovery, migration and diagnostics. Its record preserves the build/review history; public real-adapter/MCP acceptance is carried into W2.
 
    - [Proxy attribution and public deployment (W2)](plans/2026-10-27-wss-proxy.md) — built and replayed on `256691fe`: exact trusted peers across all limiter charges/clears, executed proxy/HTTPS README recipes and W1 recovery gates. PR #147 maintainer-delegated review returned APPROVE AFTER AMENDMENTS; its one request-cap coverage Minor is implemented, removal-probed and locally checked. Scoped re-confirmation, Linux/macOS CI and live public-adapter/MCP acceptance remain pending.
    - [Session-bound MCP and family identity (D1)](plans/2026-10-27-delegation-mcp.md) — collector-local opt-in MCP delivery, generation-bound grants, shared identity and immutable scoped family storage; built first, exact fresh replay and guard/load evidence recorded. Actual pinned Claude/Codex discovery passed. Maintainer-delegated review returned APPROVE; its one cycle-fixture Minor is corrected and independently probed. Linux/macOS CI remains parent-owned; tools, durable delivery and UI follow in D2–D4.
+   - [Delegation tools, catalog and configuration (D2)](plans/2026-10-29-delegation-tools.md) — seven scoped tools, host catalogs and fenced owned-child commands; ordinary elicitation only, one generation. Amendments are CONFIRMED and the Nix SQL-source fix is approved. Rebased onto P2 at cdcd0cb8, preserving both implementations and all owner-audit cases. All six Rust checks (2,339 tests) and native Nix flake checks passed. Historical replay/load evidence remains in the plan; PR #149 and Linux CI remain parent-owned. D3–D4 follow.
 
    - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — hardware-backed inventory approval plus the executed verify-then-run README bootstrap, re-confirmed by the parent. The Linux CI tool-directory collision is repaired with duplicate-name/conflict regressions. Rebased onto W2 at `e36e66c8`; post-rebase checks, COPY probes and fresh replay evidence are recorded in the plan. PR #145 awaits review and CI; maintainer-only setup remains and publication is disabled.
-   - [GHCR collector image (R4)](plans/2026-10-28-ghcr-image.md) — rebased onto merged R1 at `191aa71b`: real shared `release-gate ghcr`, protected environment credentials and hardware-signed inventory plus exact-tag Sigstore. Native OCI/index bytes enter the complete held candidate; each writer revalidates actual image/binary digests. R1's shared OCI verifier also checks both platform subjects. Fresh 32-file replay, 168 R4 and 97 R1 contracts, scoped assertion-producing copy probes; current Rust/lint evidence is in the plan. Draft #143 Docker acceptance and scoped integration review remain parent-owned. Nothing published.
+   - [GHCR collector image (R4)](plans/2026-10-28-ghcr-image.md) — rebased onto R3 main `cbd002b0`; literal `ghcr` aggregate matches the reserved job-ID registry, qualifies frozen OCI/index bytes through loopback and gates retention. Shared channel-aware gate keeps GitHub-only skips valid while selected GHCR requires success. Both credential detectors, signed selection and pre-publication bundle verification remain. Current targeted checks, six Rust checks and native Nix evidence are recorded in the plan; no full amendment replay under the verification budget. Draft #143 CI and scoped re-review remain parent-owned. Nothing published.
+
+   - [Crates.io and cargo-binstall (R3)](plans/2026-10-28-crates-io.md) — seven package-local production crates and signed R1 gates; rebased onto C2/D2 main 7fe43fbe. Fresh tarball acceptance found and fixed Cargo basename include collisions at 1dc57fe4, with real Cargo regression, test-harness refusal and production feature auditing. All seven dry runs/offline builds, locked/unlocked registry installs, UI/browser checks and Rust 1.88 pass on the new candidate. All six Rust checks pass (2376 passed, one unchanged pinned-adapter test ignored); release129, packaging82, actionlint and native full Nix checks pass. Four RED regressions, exact-tree fresh replay and ten COPY probes are recorded. Opt-in hook source is retained, disabled in production. Native binstall and both publication switches remain off; R4 now supplies the registered GHCR aggregate; see its rebase record. Scoped parent review, current PR #144 status and maintainer-only setup remain.
 
 ## Maintainer decisions (2026-09-27)
 
@@ -5510,7 +6115,7 @@ Every open design decision is resolved; the specs carry the details.
 _Generated with Claude AI — please review before distribution._
 ~~~~
 
-## Scoped review amendments (2026-10-15)
+## Earlier scoped review amendments (2026-10-15, historical)
 
 The scoped review of `fc8aea88..6b1c9241` returned CHANGES. Five new
 regressions first failed by assertion: missing candidate verification, stale
@@ -5542,9 +6147,9 @@ race even if differing version content appears immediately after the last check.
 The digest is the deployment reference and public release identity; reviewed
 atomic version-tag creation would be separate work, not a claimed guarantee.
 
-## Verification record
+## Verification before R3 rebase (historical, `ba416796`)
 
-Final fresh snapshot: `.superpowers/sdd/r4/replay-17`, from **`191aa71b`**.
+Historical fresh snapshot: `.superpowers/sdd/r4/replay-17`, from **`191aa71b`**.
 **32 complete File blocks, 0 patches**, with identical source bytes/modes after
 each task. The plan itself is excluded from recursive embedding and is copied
 back after the execution record. Final staged and committed bytes are compared
@@ -5607,9 +6212,9 @@ full retry passed. No Rust/web source change or test/type/rule weakening occurre
 
 ## After this plan
 
-- Parent scoped review of the **`6b1c9241..R4 head` review amendments 1–3**, with full branch
-  based on **`191aa71b`**. Inspect new shared membership/classifier changes,
-  protected credential selection, pre-publication candidate/OCI Sigstore checks, exact held bytes, every boundary and retries. Finding 4 waits for the parent’s R3 merge notice; do not rebase yet.
+- Parent scoped review of the **`62ad3c00..R4 head` R3 integration / finding 4**, with full branch
+  based on **`cbd002b0`**. Inspect new shared membership/classifier changes,
+  protected credential selection, pre-publication candidate/OCI Sigstore checks, exact held bytes, every boundary and retries. Finding 4 is now integrated; review its registered aggregate, retention dependencies and shared data qualification.
 - Parent watches draft **#143** native Docker proof and reads checks,
   reviewDecision, mergeStateStatus and unresolved human/bot threads. Local Docker
   is unavailable; no real publication/login or live settings acceptance was run.
