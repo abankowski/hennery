@@ -279,7 +279,7 @@ jobs:
   ghcr:
     name: ghcr
     needs: assemble
-    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -367,7 +367,7 @@ jobs:
         run: echo 'Native local-tap acceptance passed on all three platforms'
   retain:
     needs: [assemble, installer, tag-signature, ghcr]
-    if: always() && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')))
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,'))) }}
     environment: release-staging
     runs-on: ubuntu-24.04
     timeout-minutes: 20

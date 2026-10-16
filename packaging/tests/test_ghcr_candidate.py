@@ -353,13 +353,13 @@ class Orchestrator(unittest.TestCase):
 
     def test_candidate_channels_have_registered_aggregate_jobs_and_retention_guard(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
-        self.assertEqual(set(workflow['jobs']), {'tag-signature', 'web-ui', 'archive', 'crates', 'assemble', 'ghcr', 'installer', 'retain'})
+        self.assertEqual(set(workflow['jobs']), {'tag-signature', 'web-ui', 'archive', 'crates', 'assemble', 'ghcr', 'installer', 'homebrew-native', 'homebrew', 'retain'})
         import workflow_policy
         try:
             bindings = workflow_policy.candidate_channel_jobs(workflow)
         except ValueError as error:
             self.fail('the shipped candidate graph must satisfy the reserved registry: ' + str(error))
-        self.assertEqual(bindings, {'crates': 'crates', 'ghcr': 'ghcr'})
+        self.assertEqual(bindings, {'crates': 'crates', 'ghcr': 'ghcr', 'homebrew': 'homebrew'})
         aggregate = workflow['jobs']['ghcr']
         self.assertEqual(aggregate['name'], 'ghcr')
         self.assertEqual(aggregate['needs'], 'assemble')
@@ -367,25 +367,43 @@ class Orchestrator(unittest.TestCase):
         self.assertIn(",ghcr,", aggregate['if'])
         retain = workflow['jobs']['retain']
         self.assertIn('ghcr', retain['needs'])
-        for text in ['always()', "needs.ghcr.result == 'success'", "needs.ghcr.result == 'skipped'", '!contains(']:
+        for text in ['!cancelled()', "needs.ghcr.result == 'success'", "needs.ghcr.result == 'skipped'", '!contains(']:
             self.assertIn(text, retain['if'])
         selection = "contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')"
-        def retained(selected, outcome, enabled=True, failed=None):
-            expression = retain['if'].replace(selection, str(selected)).replace('always()', 'True')
+        def retained(selected, outcome, enabled=True, failed=None, cancelled=False):
+            expression = retain['if'].removeprefix('${{').removesuffix('}}').strip()
+            expression = expression.replace(selection, str(selected)).replace('cancelled()', str(cancelled))
             expression = expression.replace('vars.RELEASE_CANDIDATE_STORAGE_ENABLED', repr('true' if enabled else 'false'))
             for name in ['assemble', 'installer', 'tag-signature', 'ghcr']:
                 status = outcome if name == 'ghcr' else ('failure' if name == failed else 'success')
                 expression = expression.replace('needs.' + name + '.result', repr(status))
-            return eval(expression.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not '), {'__builtins__': {}})
+            return eval(expression.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not ').strip(), {'__builtins__': {}})
         self.assertTrue(retained(False, 'skipped'))
         self.assertTrue(retained(True, 'success'))
         for selected in [False, True]:
             for outcome in ['failure', 'cancelled']:
                 self.assertFalse(retained(selected, outcome))
             self.assertFalse(retained(selected, 'success', enabled=False))
+            self.assertFalse(retained(selected, 'success', cancelled=True))
             for failed in ['assemble', 'installer', 'tag-signature']:
                 self.assertFalse(retained(selected, 'success', failed=failed))
         self.assertFalse(retained(True, 'skipped'))
+
+    def test_ghcr_status_guard_handles_skipped_ancestors_without_ignoring_failures(self):
+        workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
+        condition = workflow['jobs']['ghcr']['if']
+        self.assertIn('!cancelled()', condition)
+        self.assertIn("needs.assemble.result == 'success'", condition)
+        selection = "contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')"
+        for selected in [False, True]:
+            for status in ['success', 'skipped', 'failure', 'cancelled']:
+                for cancelled in [False, True]:
+                    expression = condition.removeprefix('${{').removesuffix('}}').strip()
+                    expression = expression.replace(selection, str(selected)).replace('cancelled()', str(cancelled))
+                    expression = expression.replace('needs.assemble.result', repr(status))
+                    actual = eval(expression.replace('&&', ' and ').replace('!', ' not ').strip(), {'__builtins__': {}})
+                    with self.subTest(selected=selected, status=status, cancelled=cancelled):
+                        self.assertEqual(actual, selected and status == 'success' and not cancelled)
 
     def test_aggregate_verifies_frozen_oci_before_loopback_acceptance(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
@@ -416,7 +434,7 @@ class CandidateGate(unittest.TestCase):
 
     def test_selected_ghcr_requires_successful_job_in_the_actual_candidate_workflow(self):
         fixture, workflow = self.fixture()
-        jobs = [fixture.job(name, 'skipped' if name == 'crates' else 'success') for name in workflow['jobs']]
+        jobs = [fixture.job(name, 'skipped' if name in ('crates', 'homebrew') else 'success') for name in workflow['jobs']]
         try:
             fixture.candidate_evidence(['github', 'ghcr'], jobs, workflow=workflow)
         except gate.Refused as error:
@@ -427,9 +445,9 @@ class CandidateGate(unittest.TestCase):
             with self.subTest(conclusion=conclusion), self.assertRaises(gate.Refused):
                 fixture.candidate_evidence(['github', 'ghcr'], changed, workflow=workflow)
 
-    def test_github_only_accepts_both_registered_channel_jobs_skipped(self):
+    def test_github_only_accepts_all_unselected_registered_channel_jobs_skipped(self):
         fixture, workflow = self.fixture()
-        jobs = [fixture.job(name, 'skipped' if name in ('crates', 'ghcr') else 'success') for name in workflow['jobs']]
+        jobs = [fixture.job(name, 'skipped' if name in ('crates', 'ghcr', 'homebrew') else 'success') for name in workflow['jobs']]
         try:
             fixture.candidate_evidence(['github'], jobs, workflow=workflow)
         except gate.Refused as error:

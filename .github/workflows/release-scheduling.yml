@@ -80,15 +80,29 @@ jobs:
     timeout-minutes: 2
     steps:
       - run: exit 1
+  ghcr:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: exit 1
+  ghcr-selected:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(format(',{0},', 'github,ghcr'), ',ghcr,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
   retain:
-    needs: [assemble, installer, tag-signature]
-    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && true }}
+    needs: [assemble, installer, tag-signature, ghcr]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && true && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - run: 'true'
   assert-scheduling:
-    needs: [crates, archive, tag-signature, assemble, installer, homebrew-native, homebrew, homebrew-unselected, retain]
+    needs: [crates, archive, tag-signature, assemble, installer, homebrew-native, homebrew, homebrew-unselected, ghcr, ghcr-selected, retain]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -104,9 +118,10 @@ jobs:
               'crates': 'skipped', 'archive': 'success', 'tag-signature': 'success',
               'assemble': 'success', 'installer': 'success', 'homebrew-native': 'success',
               'homebrew': 'success', 'homebrew-unselected': 'skipped', 'retain': 'success',
+              'ghcr': 'skipped', 'ghcr-selected': 'success',
           }
           actual = {key: value['result'] for key, value in json.loads(os.environ['RESULTS']).items()}
           if actual != expected:
               raise SystemExit(f'Scheduling regression: expected {expected}, got {actual}')
-          print('Skipped optional crates: github and github,homebrew descendants passed')
+          print('Skipped optional crates and GHCR: selected/unselected channel descendants passed')
           PY
