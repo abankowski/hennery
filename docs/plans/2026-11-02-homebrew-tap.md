@@ -2,17 +2,21 @@
 
 > Build first, then replay. Base `cbd002b0`; branch `plan/dist-homebrew`.
 > Built code: `71bc4a2b`; initial task 1: `31979159`; review amendment: `cabc7420`.
+> Parent rebase: main `6cb867c6`, head `d04c32fe`; native CI amendment: `12b11772`.
 > No publication is authorized.
 
 ## Execution status
 
-Implementation and the review amendment are built and locally checked. PR #155
-received CHANGES for optional-channel scheduling; task 3 addresses that finding
-and awaits parent re-review. The three native CI proofs remain pending. The
-parent explicitly moved actual Homebrew acceptance to CI after the local CLT
-refusal; this record does not
-claim a successful local install, upgrade or uninstall. Publication remains
-disabled. A merge never authorizes publication.
+Implementation and both amendments are built and locally checked. The parent
+reported scheduling re-review APPROVE, then rebased onto main `6cb867c6` with an
+identical range-diff and pushed `d04c32fe`. The branch was pulled before task 4.
+PR #155's three native jobs then installed the labelled old fixture successfully
+but all failed the whole-stdout version comparison. Task 4 corrects that check,
+binds the reported source commit, and proves a separate candidate-version
+install before seeding the lower upgrade fixture. Its native CI rerun remains
+pending. Local CLT refusal evidence remains intact; no successful complete local
+Homebrew transaction is claimed. Publication stays disabled; merge never
+authorizes publication.
 
 The original build's six Rust gates exited 0: fmt, both Clippy modes, workspace
 tests (2,376 passed, one pre-existing ignored test, 161 suite summaries), and both generator
@@ -37,6 +41,13 @@ The amendment does not change Rust; the verification budget and parent ruling
 exclude another full replay or Rust run. The original replay remains historical
 evidence for tasks 1/2. The new secret-free scheduling workflow runs on PR pushes;
 its actual Actions result remains pending parent relay.
+
+The native CI amendment passed 175 release tests, workflow policy and actionlint
+on all five workflows. Seven focused tests were seen RED first and passed after
+the fix. Thirteen new guard probes were caught in a copy with an APFS-cloned
+target; the restored suite passed and all three source files matched the tested
+and staged bytes. No Rust code changed; no full replay or Rust run was repeated.
+These are offline harness checks, not a substitute for the real native CI rerun.
 
 Local evidence, retained in the ledger:
 - Native cargo-dist build and web build succeeded. Generated notices had zero
@@ -69,12 +80,13 @@ public immutable releases and native qualification before enablement. R3's
 channel registry supplies the owning-job contract; this plan extends it without
 changing R1's runtime evidence algorithm or weakening other channels.
 
-Two initial tasks and one review amendment:
+Two initial tasks and two review amendments:
 
 1. Frozen formula checks and an isolated actual Homebrew acceptance harness.
 2. Shared release/PR native archive build, three-platform proof CI, owning job,
    signed protected publication, negative tests and operator guidance.
 3. Review amendment: explicit optional-channel scheduling and a real Actions regression.
+4. Native CI amendment: multiline version/source checks and a candidate-version install.
 
 Out: Homebrew core, new platform qualification, a second service manager,
 automatic publication, token minting, actual releases, and application N-1 data
@@ -5772,6 +5784,496 @@ if __name__ == '__main__':
     check_repository(Path(__file__).resolve().parents[2])
     print('release workflow authority graph checked')
 ```
+
+
+## Task 4: Native CI amendment — CLI identity and candidate Cellar version
+
+Source commit: `12b11772`; parent-rebased starting head `d04c32fe` on main
+`6cb867c6`. The parent reported the scheduling re-review APPROVE with identical
+range-diff after the rebase. Initial native CI logs are retained under
+`.superpowers/sdd/dist-homebrew/ci-proof-*.log`: all three platforms completed
+a real isolated Homebrew install of the labelled `0.0.0` upgrade fixture, then
+stopped at the same smoke assertion.
+
+### Step 1 — establish both causes and see tests RED
+
+The binary legitimately reports four lines: version, source commit, UI hash and
+adapter manifest hash. Comparing its entire stdout against one version line
+incorrectly refused the installed binary. `smoke()` now requires an exact first
+line and exactly one `source:` line matching the frozen inventory's source SHA.
+It still requires byte-for-byte executable equality before invoking the binary.
+Missing, mismatched and duplicate source lines refuse, as do empty, prefixed,
+whitespace-padded and incorrect version lines.
+
+The workspace version is `0.1.0-alpha.1`, and the proof script derives its tag
+from that workspace. `homebrew.check()` already requires the generated formula
+version to equal that tag before freezing; no cargo-dist version-source bug was
+found. The harness itself changed the local formula to `0.0.0` before its first
+install. That was the intentionally labelled lower fixture, but it meant the
+proof had never performed a normal candidate-version install. Changing the
+frozen formula to hide this distinction would weaken its integrity contract.
+
+Apply the test block first. The corrected RED run of seven tests exited 1
+(`native-smoke-red-2.log`); the full sequence reproduced the original multiline
+refusal. New required source and Cellar checks were absent. The first test run
+also exposed a `/tmp` versus `/private/tmp` mismatch in the offline fixture;
+the fixture now canonicalizes its scratch root, matching the real harness.
+
+### Step 2 — candidate install, separate old fixture, candidate upgrade
+
+Apply the remaining blocks. The local-tap sequence is now:
+
+1. Commit the candidate formula with only archive origins changed to file URLs.
+   Install its actual version, require the linked executable to be the regular
+   file at `Cellar/hennery/<candidate version>/bin/hennery`, and check bytes,
+   exact version line and source commit.
+2. Uninstall it and require no package files or dangling links before seeding
+   the separate, explicitly labelled `0.0.0` fixture with the same archive.
+   Require that fixture's own Cellar version and the candidate payload identity.
+3. Restore the candidate local formula, upgrade, run the existing formula tests,
+   and require the exact candidate Cellar path and payload identity again.
+4. Uninstall all package kegs and links; preserve data/service sentinels and
+   recheck every original frozen candidate byte. The result records candidate
+   install version, separate old fixture version, upgrade version and source SHA.
+
+Wrong initial or upgraded Cellar versions refuse even when the executable bytes
+and CLI identity are correct. A same-version executable outside the scratch
+Cellar also refuses. Tests use a tiny four-line executable and an offline
+orchestration fixture; they do not pretend to execute Homebrew. Actual runner
+Homebrew remains the native proof of record. The guide's three shell recipes
+are unchanged and remain the commands executed by native acceptance. Its prose
+now explains the separate candidate install and lower fixture.
+
+Commands actually run, final exits 0:
+
+- `nix develop .#release -c python3 -B -m unittest discover -s packaging/release -p test_homebrew_accept.py`: seven tests.
+- `nix develop .#release -c python3 -B -m unittest discover -s packaging/release -p 'test_*.py'`: 175 tests.
+- `nix develop .#release -c python3 -B packaging/release/workflow_policy.py`: authority graph checked.
+- `nix develop .#release -c actionlint .github/workflows/release-*.yml`: all five workflows.
+
+### Step 3 — cloned-copy guard probes and review handoff
+
+Thirteen mutations were caught in `.superpowers/probe-native-fix-1`, using a
+separate APFS clone of target: the old whole-output comparison, version-prefix
+and whitespace weakening, absent/duplicate source binding, wrong inventory
+source, absent Cellar check, wrong linked keg, outside-Cellar same-version path,
+old fixture as initial install, missing initial/upgraded keg checks and a
+fixture that lost its separate lower version. The restored seven-test suite
+passed and all three source files matched the tested worktree and index.
+The ledger retains the test output, probe output and tested source hashes.
+
+All 35 embedded block hashes are checked; the three task-4 snapshots match the
+source commit's bytes and modes. The old snapshots preserve the original build:
+`docs/README.md` already differs after the parent's rebase and is unchanged by
+this amendment. The record does not claim a fresh replay of the rebased tree.
+
+No Rust, timing-sensitive runtime logic, workflow authority, credential order,
+channel registry or frozen candidate generation changed. No new full replay,
+Rust suite or load run was performed under the amendment verification budget.
+The parent's local CLT ruling remains binding; no local Homebrew retry or
+operator package manager change was attempted. Retain the new scratch copy for
+parent cleanup along with the earlier retained copies.
+
+Request review of this amendment and the next native CI result on all three
+platforms. The prior failures demonstrate real old-fixture installs, not a
+completed install/upgrade/uninstall proof. Native acceptance is not green until
+the complete corrected sequence passes. No release or tap publication occurred.
+
+<!-- r2:file {"encoding": "utf-8", "mode": "100644", "path": "packaging/release/test_homebrew_accept.py", "phase": "tests", "sha256": "0db1f0f3d1ec6d8bf813d07b35ba4014faace77fa40024166d4cab74df14b823", "size": 9379, "task": 4} -->
+```text
+"""Smoke refusals execute tiny local fixtures under an isolated home."""
+import os
+import io
+import re
+import subprocess
+import tarfile
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import gate
+import homebrew_accept
+import homebrew
+
+SOURCE = 'a' * 40
+VERSION_OUTPUT = 'hennery 0.1.0-alpha.1\nsource: ' + SOURCE + '\nUI SHA-256: ' + 'b' * 64 + '\nadapter manifest SHA-256: ' + 'c' * 64 + '\n'
+
+
+class Smoke(unittest.TestCase):
+    def test_exact_installed_bytes_and_version_are_both_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); binary=root/'hennery'
+            raw=('#!/bin/sh\nprintf "%s" "' + VERSION_OUTPUT + '"\n').encode()
+            binary.write_bytes(raw);binary.chmod(0o755)
+            env={'HOME':str(root),'PATH':'/usr/bin:/bin'}
+            homebrew_accept.smoke(binary,raw,'v0.1.0-alpha.1',SOURCE,env,root)
+            for expected,tag in ((b'changed','v0.1.0-alpha.1'),(raw,'v9.0.0')):
+                with self.subTest(expected=expected,tag=tag),self.assertRaises(gate.Refused):
+                    homebrew_accept.smoke(binary,expected,tag,SOURCE,env,root)
+
+    def test_first_line_is_exact_and_source_is_required_unique_and_matches_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);binary=root/'hennery';env={'HOME':str(root),'PATH':'/usr/bin:/bin'}
+            for output in ('', '\n' + VERSION_OUTPUT, ' ' + VERSION_OUTPUT,
+                           VERSION_OUTPUT.replace('alpha.1', 'alpha.10', 1),
+                           VERSION_OUTPUT.replace('source: ' + SOURCE + '\n', ''),
+                           VERSION_OUTPUT.replace(SOURCE, 'd' * 40),
+                           VERSION_OUTPUT + 'source: ' + SOURCE + '\n',
+                           VERSION_OUTPUT + 'source: ' + 'd' * 40 + '\n'):
+                raw=('#!/bin/sh\nprintf "%s" "' + output + '"\n').encode()
+                binary.write_bytes(raw);binary.chmod(0o755)
+                with self.subTest(output=output),self.assertRaises(gate.Refused):
+                    homebrew_accept.smoke(binary,raw,'v0.1.0-alpha.1',SOURCE,env,root)
+
+    def test_keg_must_be_the_exact_version_inside_the_scratch_cellar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);prefix=root/'prefix';(prefix/'bin').mkdir(parents=True)
+            installed=prefix/'bin/hennery'
+            paths=[prefix/'Cellar/hennery/0.1.0-alpha.1/bin/hennery',
+                   prefix/'Cellar/hennery/0.0.0/bin/hennery',root/'outside/0.1.0-alpha.1/bin/hennery']
+            for path in paths:
+                path.parent.mkdir(parents=True);path.write_bytes(b'candidate')
+                installed.symlink_to(path)
+                if path==paths[0]: homebrew_accept.check_keg(installed,prefix,'0.1.0-alpha.1')
+                else:
+                    with self.subTest(path=path),self.assertRaises(gate.Refused):
+                        homebrew_accept.check_keg(installed,prefix,'0.1.0-alpha.1')
+                installed.unlink()
+            paths[0].unlink();paths[0].symlink_to(paths[2]);installed.symlink_to(paths[0])
+            with self.assertRaises(gate.Refused): homebrew_accept.check_keg(installed,prefix,'0.1.0-alpha.1')
+
+    def test_documented_tap_recipes_are_the_executed_three_operations(self):
+        recipes=homebrew_accept.recipes()
+        self.assertEqual(set(recipes),{'install','upgrade','uninstall'})
+        self.assertIn('brew install --formula marcinwadon/tap/hennery',recipes['install'])
+        self.assertIn('hennery --version',recipes['install'])
+        self.assertIn('brew upgrade --formula marcinwadon/tap/hennery',recipes['upgrade'])
+        self.assertIn('brew test marcinwadon/tap/hennery',recipes['upgrade'])
+        self.assertIn('brew uninstall --force marcinwadon/tap/hennery',recipes['uninstall'])
+
+
+    def test_local_tap_formula_has_a_real_commit_and_personal_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);tap=root/'tap';(tap/'Formula').mkdir(parents=True)
+            env={'HOME':str(root),'PATH':os.environ['PATH']}
+            subprocess.run(['git','-C',str(tap),'init','-q','--initial-branch=main'],env=env,check=True)
+            for text in ('old fixture\n','candidate formula\n'):
+                homebrew_accept.commit_formula(tap,text,env,root,'test(formula): local fixture')
+                raw=subprocess.check_output(['git','-C',str(tap),'show','HEAD:Formula/hennery.rb'],env=env)
+                self.assertEqual(raw,text.encode())
+                author=subprocess.check_output(['git','-C',str(tap),'show','-s','--format=%ae','HEAD'],env=env,text=True).strip()
+                self.assertEqual(author,'marcin.wadon@gmail.com')
+                self.assertEqual(subprocess.check_output(['git','-C',str(tap),'status','--porcelain'],env=env),b'')
+
+
+class ProofSequence(unittest.TestCase):
+    def execute(self, root, bad_keg_at=None):
+        # Offline orchestration fixture; the real Homebrew transaction remains CI's job.
+        root=root.resolve()
+        source=root/'source';source.mkdir();candidate=root/'candidate';work=root/'work'
+        target='x86_64-unknown-linux-musl';tag='v0.1.0-alpha.1'
+        payload=('#!/bin/sh\nprintf "%s" "' + VERSION_OUTPUT + '"\n').encode()
+        archive=source/('hennery-'+target+'.tar.xz')
+        with tarfile.open(archive,'w:xz') as output:
+            entry=tarfile.TarInfo('hennery-'+target+'/hennery');entry.size=len(payload);entry.mode=0o755
+            output.addfile(entry,io.BytesIO(payload))
+        formula=('class Hennery < Formula\n  version "0.1.0-alpha.1"\n'
+                 f'  url "https://github.com/{gate.REPOSITORY}/releases/download/{tag}/{archive.name}"\n'
+                 f'  sha256 "{gate.digest(archive.read_bytes())}"\n  def install\n    bin.install "hennery"\n  end\nend\n')
+        (source/'hennery.rb').write_text(formula)
+        homebrew.prepare(source,tag,[target]);homebrew.freeze_proof(source,candidate,tag,[target],SOURCE)
+        frozen=(candidate/'hennery.rb').read_bytes();prefix=work/'prefix';installed=prefix/'bin/hennery'
+        tap=prefix/'Library/Taps/marcinwadon/homebrew-tap/Formula/hennery.rb'
+        events=[]
+        def command(args,**kwargs):
+            args=list(args);stdout=''
+            if args[:2]==['git','clone']:
+                (prefix/'bin').mkdir(parents=True);(prefix/'bin/brew').touch()
+            elif args[-2:]==['rev-parse','HEAD']: stdout=homebrew_accept.BREW_COMMIT+'\n'
+            elif args[0]==str(prefix/'bin/brew'): stdout=str(prefix)+'\n'
+            elif args[:3]==['sh','-eu','-c']:
+                operation=args[3];version=re.search(r'version "([^"]+)"',tap.read_text())[1]
+                events.append((operation,version))
+                if operation=='uninstall':
+                    installed.unlink()
+                    for binary in (prefix/'Cellar/hennery').glob('*/bin/hennery'):
+                        binary.unlink();binary.parent.rmdir();binary.parent.parent.rmdir()
+                    (prefix/'Cellar/hennery').rmdir()
+                else:
+                    actual='0.0.0' if operation==bad_keg_at else version
+                    binary=prefix/'Cellar/hennery'/actual/'bin/hennery'
+                    binary.parent.mkdir(parents=True,exist_ok=True);binary.write_bytes(payload)
+                    if installed.is_symlink(): installed.unlink()
+                    installed.symlink_to(binary)
+            elif args==[str(installed),'--version']: stdout=VERSION_OUTPUT
+            elif args[0]!='git': raise AssertionError(args)
+            return subprocess.CompletedProcess(args,0,stdout=stdout)
+        scripts={operation:operation for operation in ('install','upgrade','uninstall')}
+        with patch.object(homebrew_accept.platform,'system',return_value='Linux'), \
+             patch.object(homebrew_accept.platform,'machine',return_value='x86_64'), \
+             patch.object(homebrew_accept,'recipes',return_value=scripts), \
+             patch.object(homebrew_accept.subprocess,'run',side_effect=command):
+            homebrew_accept.run(candidate,work)
+        self.assertEqual((candidate/'hennery.rb').read_bytes(),frozen)
+        return events,gate.strict_json((work/'result.json').read_bytes())
+
+    def test_candidate_install_then_distinct_lower_fixture_then_candidate_upgrade(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            events,report=self.execute(Path(tmp))
+            self.assertEqual(events,[('install','0.1.0-alpha.1'),('uninstall','0.1.0-alpha.1'),
+                                     ('install','0.0.0'),('upgrade','0.1.0-alpha.1'),('uninstall','0.1.0-alpha.1')])
+            self.assertEqual(report['install'],'0.1.0-alpha.1')
+            self.assertEqual(report['old_fixture'],'0.0.0')
+            self.assertEqual(report['upgrade'],'0.1.0-alpha.1')
+            self.assertEqual(report['source_sha'],SOURCE)
+            self.assertTrue(report['uninstall'])
+
+    def test_wrong_candidate_cellar_version_refuses_at_install_and_upgrade(self):
+        for operation in ('install','upgrade'):
+            with self.subTest(operation=operation),tempfile.TemporaryDirectory() as tmp, \
+                 self.assertRaisesRegex(gate.Refused,'keg'):
+                self.execute(Path(tmp),bad_keg_at=operation)
+
+
+if __name__=='__main__': unittest.main()
+```
+
+<!-- r2:file {"encoding": "utf-8", "mode": "100644", "path": "packaging/release/homebrew_accept.py", "phase": "feature", "sha256": "8e2874e1b61f1facdcebd6f6d1b962cc07aacea9be3648fcae39896501705db6", "size": 9104, "task": 4} -->
+```text
+#!/usr/bin/env python3
+"""Real local-tap install/upgrade/remove in a fresh, pinned Homebrew prefix.
+
+Only the URL origins are rewritten to local files, after original formula and
+candidate digests are checked. Install and verify the actual candidate first.
+Then seed a separate old formula using the same candidate binary with version
+0.0.0: this proves Homebrew's upgrade transaction, not N-1 data migration.
+No services, agents or registry credentials are used.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import platform
+import subprocess
+
+import gate
+import homebrew
+
+BREW_COMMIT = '00001bedf8eac442bdabd327148be0b97998b27b'  # Homebrew 4.6.18
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def recipes():
+    result = {}
+    for operation in ('install', 'upgrade', 'uninstall'):
+        result[operation] = subprocess.check_output(
+            ['sh', str(ROOT / 'packaging/readme-blocks.sh'), str(ROOT / 'docs/homebrew.md'), 'homebrew-' + operation], text=True)
+    return result
+
+
+def smoke(binary, expected, tag, source_sha, env, work):
+    gate.require(Path(binary).read_bytes() == expected, 'Homebrew changed executable bytes')
+    result = subprocess.run([str(binary), '--version'], env=env, cwd=work, check=True, capture_output=True, text=True)
+    lines = result.stdout.splitlines()
+    gate.require(lines[:1] == ['hennery ' + tag.removeprefix('v')], 'installed Homebrew executable has wrong version')
+    gate.require([line for line in lines if line.startswith('source:')] == ['source: ' + source_sha],
+                 'installed Homebrew executable has wrong or ambiguous source')
+    print(result.stdout, end='')
+
+
+def check_keg(binary, prefix, version):
+    expected = Path(prefix).resolve() / 'Cellar/hennery' / version / 'bin/hennery'
+    gate.require(expected.is_file() and not expected.is_symlink() and Path(binary).resolve() == expected,
+                 'Homebrew link does not select the expected versioned keg')
+
+
+def check_removed(prefix):
+    installed = Path(prefix) / 'bin/hennery'
+    gate.require(not installed.exists() and not installed.is_symlink() and not (Path(prefix) / 'Cellar/hennery').exists(),
+                 'uninstall left package files')
+
+
+def commit_formula(tap, formula, env, work, message):
+    path = Path(tap) / 'Formula/hennery.rb'
+    path.write_text(formula)
+    for args in (['add', 'Formula/hennery.rb'],
+                 ['-c', 'user.name=Marcin Wadoń', '-c', 'user.email=marcin.wadon@gmail.com',
+                  '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', message, '--', 'Formula/hennery.rb']):
+        subprocess.run(['git', '-C', str(tap), *args], env=env, cwd=work, check=True)
+
+
+def run(candidate, work, brew_source=None):
+    candidate, work = Path(candidate).resolve(), Path(work).resolve()
+    raw = (candidate / 'release-inventory.json').read_bytes()
+    inventory = gate.strict_json(raw)
+    gate.verify_files(inventory, candidate)
+    original = homebrew.check(candidate, inventory['tag'], inventory['targets']).decode()
+    native = {('Darwin', 'arm64'): 'aarch64-apple-darwin', ('Linux', 'x86_64'): 'x86_64-unknown-linux-musl',
+              ('Linux', 'aarch64'): 'aarch64-unknown-linux-musl'}.get((platform.system(), platform.machine()))
+    gate.require(native in inventory['targets'], 'candidate has no qualified native Homebrew archive')
+    work.mkdir(parents=True, exist_ok=False)
+    prefix = work / 'prefix'
+    env = {k: v for k, v in os.environ.items() if k in ('PATH', 'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', 'TMPDIR', 'TERM')}
+    # Exclude the operator's package manager from every subprocess search path.
+    env['PATH'] = ':'.join(p for p in env.get('PATH', '').split(':') if p.startswith('/nix/')) + ':/usr/bin:/bin:/usr/sbin:/sbin'
+    for key, directory in {'HOME': 'home', 'XDG_CONFIG_HOME': 'config', 'XDG_DATA_HOME': 'data',
+                           'XDG_CACHE_HOME': 'cache', 'HOMEBREW_CACHE': 'brew-cache', 'HOMEBREW_LOGS': 'logs',
+                           'HOMEBREW_TEMP': 'tmp'}.items():
+        env[key] = str(work / directory); Path(env[key]).mkdir()
+    env.update(HOMEBREW_NO_AUTO_UPDATE='1', HOMEBREW_NO_ANALYTICS='1', HOMEBREW_NO_INSTALL_FROM_API='1',
+               HOMEBREW_NO_INSTALL_CLEANUP='1', HOMEBREW_NO_ENV_HINTS='1', HOMEBREW_NO_GITHUB_API='1',
+               HOMEBREW_NO_BOOTSNAP='1', HOMEBREW_NO_COLOR='1', HOMEBREW_NO_EMOJI='1', CI='1')
+    def command(*args, capture=False):
+        return subprocess.run(args, env=env, cwd=work, check=True, text=True,
+                              stdout=subprocess.PIPE if capture else None).stdout
+    source = str(Path(brew_source).resolve()) if brew_source else 'https://github.com/Homebrew/brew.git'
+    args = ['git', 'clone', '--no-hardlinks']
+    if not brew_source:
+        args += ['--depth', '1', '--branch', '4.6.18']
+    command(*args, source, str(prefix))
+    gate.require(command('git', '-C', str(prefix), 'rev-parse', 'HEAD', capture=True).strip() == BREW_COMMIT,
+                 'Homebrew source revision differs from pin')
+    brew = str(prefix / 'bin/brew')
+    gate.require(Path(command(brew, '--prefix', capture=True).strip()).resolve() == prefix, 'Homebrew escaped scratch prefix')
+    gate.require(Path(command(brew, '--repository', capture=True).strip()).resolve() == prefix, 'Homebrew escaped scratch repository')
+    env['PATH'] = str(prefix / 'bin') + ':' + env['PATH']
+    tap = prefix / 'Library/Taps/marcinwadon/homebrew-tap'
+    (tap / 'Formula').mkdir(parents=True)
+    command('git', '-C', str(tap), 'init', '-q', '--initial-branch=main')
+    command('git', '-C', str(tap), 'remote', 'add', 'origin', str(tap))
+    local = original
+    for target in inventory['targets']:
+        name = 'hennery-' + target + '.tar.xz'
+        local = local.replace(f'https://github.com/{gate.REPOSITORY}/releases/download/{inventory["tag"]}/{name}', (candidate / name).as_uri())
+    old = local.replace(f'version "{inventory["tag"][1:]}"', 'version "0.0.0"')
+    commit_formula(tap, local, env, work, 'test(formula): install frozen candidate')
+    sentinels = [work / 'data/hennery/preserve', work / 'home/Library/LaunchAgents/hennery-preserve.plist']
+    for path in sentinels:
+        path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'operator-owned sentinel\n')
+    # Extract and compare without executing or unpacking arbitrary extra files.
+    import tarfile
+    with tarfile.open(candidate / ('hennery-' + native + '.tar.xz')) as archive:
+        entries = [m for m in archive.getmembers() if m.isfile() and m.name.endswith('/hennery')]
+        gate.require(len(entries) == 1, 'candidate executable ambiguous')
+        expected = archive.extractfile(entries[0]).read()
+    scripts = recipes()
+    print('Install frozen candidate with its exact candidate formula version', flush=True)
+    command('sh', '-eu', '-c', scripts['install'])
+    installed = prefix / 'bin/hennery'
+    check_keg(installed, prefix, inventory['tag'][1:])
+    smoke(installed, expected, inventory['tag'], inventory['source_sha'], env, work)
+    # Clear the candidate install before seeding the explicitly lower fixture.
+    command('sh', '-eu', '-c', scripts['uninstall'])
+    check_removed(prefix)
+    print('Seed labelled 0.0.0 upgrade fixture using the same candidate payload', flush=True)
+    commit_formula(tap, old, env, work, 'test(formula): install old-version upgrade fixture')
+    command('sh', '-eu', '-c', scripts['install'])
+    check_keg(installed, prefix, '0.0.0')
+    smoke(installed, expected, inventory['tag'], inventory['source_sha'], env, work)
+    commit_formula(tap, local, env, work, 'test(formula): upgrade to frozen candidate')
+    command('sh', '-eu', '-c', scripts['upgrade'])
+    check_keg(installed, prefix, inventory['tag'][1:])
+    smoke(installed, expected, inventory['tag'], inventory['source_sha'], env, work)
+    command('sh', '-eu', '-c', scripts['uninstall'])
+    check_removed(prefix)
+    gate.require(all(p.read_bytes() == b'operator-owned sentinel\n' for p in sentinels), 'package operation changed user data/service definitions')
+    gate.require((candidate / 'release-inventory.json').read_bytes() == raw, 'acceptance changed frozen inventory')
+    gate.verify_files(inventory, candidate)
+    homebrew.check(candidate, inventory['tag'], inventory['targets'])
+    report = {'brew_commit': BREW_COMMIT, 'native': native, 'inventory_sha256': gate.digest(raw),
+              'install': inventory['tag'][1:], 'old_fixture': '0.0.0', 'upgrade': inventory['tag'][1:],
+              'source_sha': inventory['source_sha'], 'test': 'version/source/UI/notices',
+              'uninstall': True, 'binary_unchanged': True, 'data_and_service_preserved': True}
+    (work / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps(report))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('candidate', type=Path)
+    parser.add_argument('work', type=Path)
+    parser.add_argument('--brew-source', type=Path)
+    args = parser.parse_args()
+    run(args.candidate, args.work, args.brew_source)
+```
+
+<!-- r2:file {"encoding": "utf-8", "mode": "100644", "path": "docs/homebrew.md", "phase": "feature", "sha256": "8a1c962b73095f6f577b24f0813e64c8a5d2991ffefd7bc25a37fc2c1de242e6", "size": 3592, "task": 4} -->
+````text
+# Homebrew installs and services
+
+The planned project tap is `marcinwadon/homebrew-tap`. Publication is disabled
+until the maintainer enables a qualified stable release; the first alpha is
+GitHub-only. The commands below become available after that enablement. The
+binary formula covers Apple Silicon macOS and x86_64/aarch64 Linux, subject to
+native CI acceptance. It does not qualify Intel macOS or managed Alpine hosts.
+
+Install the versioned release archive and check the executable:
+
+<!-- check: homebrew-install -->
+```sh
+brew install --formula marcinwadon/tap/hennery
+hennery --version
+brew --prefix hennery
+```
+
+The formula verifies archive SHA-256 and installs the same executable, embedded
+UI, licence and third-party notices. The normal tap path trusts Homebrew, the
+tap and GitHub release hosting; it does not independently perform the README's
+hardware-inventory and Sigstore verification. Installation starts no service,
+installs no agents and changes no login. A host may download its separately
+pinned runtime when the operator later joins or starts it.
+
+Before installing a service, put Homebrew's stable binary directory on the
+login shell's PATH and check which Hennery executable is selected. Use Hennery's
+own service installer, choosing the existing role and data directory. There is
+no separate Homebrew service definition: do not register it through Homebrew's
+service manager. Hennery records the invoked executable path and captures the
+login shell's PATH; use the stable Homebrew binary link rather than an absolute
+versioned Cellar path. A graphical macOS login is required for the user agent.
+
+Upgrade and run the formula's version, embedded-UI and notices checks:
+
+<!-- check: homebrew-upgrade -->
+```sh
+brew upgrade --formula marcinwadon/tap/hennery
+hennery --version
+brew test marcinwadon/tap/hennery
+```
+
+An already-running process continues to use its old executable after upgrade.
+Run Hennery's service installer again with the same role and data directory to
+refresh PATH and restart it. This is especially necessary for a service that
+names an old Cellar path. Check service status and doctor afterwards; upgrade
+never silently restarts a service or changes its role. Preserve the data backup
+and migration precautions in the README.
+
+Before package removal, explicitly stop and uninstall any Hennery service with
+Hennery's service uninstaller. Then remove every installed package keg:
+
+<!-- check: homebrew-uninstall -->
+```sh
+brew uninstall --force marcinwadon/tap/hennery
+```
+
+This removes package files and links, preserving user data, managed runtime,
+agent logins and operator service definitions. Removing the formula alone is
+not a service uninstall or a data purge.
+
+The native PR and candidate jobs execute these exact three command blocks in a
+fresh pinned Homebrew prefix and local file-based tap, with scratch home/cache/
+config. They first install the candidate with its actual formula/Cellar version,
+then clear that installation and seed a separate old-version fixture labelled
+0.0.0 using the same candidate payload. Upgrading it proves Homebrew's
+transaction, not an older application's migration. Every installed executable
+is compared byte-for-byte with the candidate archive, its exact first version
+line and its candidate source commit. Both candidate kegs must match the tag.
+Removal checks package leftovers and preserved data/service
+sentinels. macOS 27 with CLT 26.6 refused the local proof; that check remains
+intact. Native runner CI is the acceptance evidence.
+
+Generated with Claude AI — please review before distribution.
+````
 
 
 ## After this plan
