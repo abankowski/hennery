@@ -144,6 +144,8 @@ def homebrew_writer(job):
 
 
 def check(data, name):
+    if name == 'release.yml':
+        return check_simplified(data)
     if tap_credential(data.get('env', {})):
         raise ValueError('tap credential must not be workflow-scoped')
     if name == 'release-candidate.yml':
@@ -212,6 +214,89 @@ def check(data, name):
         for job in data['jobs'].values():
             if privileged(job) and "vars.RELEASE_PUBLICATION_ENABLED == 'true'" not in job.get('if', ''):
                 raise ValueError('publication switch missing')
+
+
+def check_simplified(data):
+    """Police the authorized workflow, not arbitrary repository writers."""
+    def require(value, message):
+        if not value:
+            raise ValueError(message)
+    trigger = data.get('on', data.get(True))
+    require(trigger == {'push': {'tags': ['v*']}}, 'release must be tag-push only')
+    require(data.get('permissions') == {'contents': 'read'}, 'release default must be read-only')
+    require('secrets.' not in str(data.get('env', {})), 'workflow secrets forbidden')
+    jobs = data.get('jobs', {})
+    required = {'tag-signature','web-ui','qualification','archive','crates','assemble','ghcr',
+                'installer','homebrew-native','homebrew','attest','publish'}
+    require(required <= set(jobs), 'single release graph incomplete')
+    candidate_channel_jobs(data)
+    # Explicit status conditions are essential after optional channel ancestors.
+    optional_job_status(data, 'release.yml')
+    visiting, visited = set(), set()
+    def walk(name):
+        require(name in jobs, 'DAG dependency missing')
+        require(name not in visiting, 'DAG cycle')
+        if name in visited:
+            return
+        visiting.add(name)
+        needs=jobs[name].get('needs',[])
+        for parent in ([needs] if isinstance(needs,str) else needs):walk(parent)
+        visiting.remove(name);visited.add(name)
+    for key in jobs:walk(key)
+    budgets={'attest':{'contents':'read','id-token':'write','attestations':'write'},
+             'publish':{'contents':'write','actions':'read','attestations':'read','id-token':'write'}}
+    for key,job in jobs.items():
+        require('uses' not in job, 'reusable jobs forbidden')
+        require(type(job.get('timeout-minutes')) is int and job['timeout-minutes']>0, 'timeout required')
+        require(job.get('continue-on-error') in (None,False), 'jobs must fail closed')
+        require(job.get('permissions',data['permissions'])==budgets.get(key,{'contents':'read'}), 'excess job permissions')
+        require(environment_name(job)==('release' if key=='publish' else None), 'only publisher enters protected release')
+        require('secrets.' not in str(job.get('env',{})), 'job secrets forbidden')
+        for step in job.get('steps',[]):
+            uses=step.get('uses','')
+            require(not uses or uses.startswith('./') or re.fullmatch(r'[^@]+@[0-9a-f]{40}',uses), 'action must be pinned')
+            require('cache' not in uses.casefold(), 'release cache restore forbidden')
+            require(step.get('continue-on-error') in (None,False), 'steps must fail closed')
+            if uses.startswith('actions/checkout@'):
+                require(step.get('with',{}).get('ref')=='${{ github.sha }}' and step['with'].get('persist-credentials') is False,
+                        'checkout must use exact source without persisted authority')
+            if 'secrets.' in str(step):require(key=='publish', 'publication secret outside release')
+    attest=jobs['attest']
+    require(set(attest.get('needs',[])) >= required-{'publish','attest','archive','web-ui'}, 'attestation must await complete acceptance')
+    selection=lambda c:"contains(fromJSON(needs.tag-signature.outputs.channels), '"+c+"')"
+    condition="!cancelled() && "+' && '.join("needs."+key+".result == 'success'" for key in ['tag-signature','qualification','assemble','installer','homebrew-native'])
+    for channel in ['homebrew','crates','ghcr']:
+        condition+=" && (needs."+channel+".result == 'success' || (needs."+channel+".result == 'skipped' && !"+selection(channel)+'))'
+    require(attest.get('if')=='${{ '+condition+' }}', 'attestation cannot bypass selected or required acceptance')
+    checks=[i for i,s in enumerate(attest['steps']) if 'release_run.py check payload' in s.get('run','')]
+    signers=[i for i,s in enumerate(attest['steps']) if s.get('uses','').startswith('actions/attest')]
+    require(len(checks)==1 and signers and checks[0]<min(signers) and attest['steps'][checks[0]].get('if') is None,
+            'original-attempt byte check must precede attestation')
+    summaries=[s for s in attest['steps'] if s.get('id')=='summary']
+    require(len(summaries)==1 and summaries[0].get('if') is None and 'release_run.py summary ' in summaries[0].get('run',''), 'asset digest summary required')
+    publisher=jobs['publish']
+    require(publisher.get('needs')==['attest'], 'publisher must depend on attestation')
+    require(publisher.get('if')=="${{ !cancelled() && needs.attest.result == 'success' && vars.RELEASE_PUBLICATION_ENABLED == 'true' && vars.RELEASE_GITHUB_ENABLED == 'true' }}",
+            'publisher switches and successful attestation required')
+    steps=publisher['steps'];positions={s.get('id'):i for i,s in enumerate(steps) if s.get('id')}
+    require('verified' in positions and 'github-publish' in positions and positions['verified']<positions['github-publish'], 'verification must precede publication')
+    for key,command in [('verified','verify original/payload original/signatures github'),('github-publish','publish original/payload original/signatures')]:
+        step=steps[positions[key]]
+        require(step.get('if') is None and 'release_run.py '+command in step.get('run','') and '||' not in step['run'], 'integrity gate must be unconditional and fatal')
+    for channel in CHANNEL_JOB_IDS:
+        condition="${{ vars.RELEASE_"+channel.upper()+"_ENABLED == 'true' && contains(fromJSON(steps.verified.outputs.channels), '"+channel+"') }}"
+        require(channel+'-verify' in positions and channel+'-publish' in positions, 'folded channel gate required')
+        before,write=positions[channel+'-verify'],positions[channel+'-publish']
+        require(positions['github-publish']<before<write, 'channel must follow immutable publication and verification')
+        for index in (before,write):require(steps[index].get('if')==condition, 'channel needs switch and selection')
+        require('release_run.py verify ' in steps[before].get('run','') and 'release_run.py channel ' in steps[write].get('run',''), 'channel verifier/writer command required')
+    for index,step in enumerate(steps):
+        if 'secrets.' in str(step):
+            require(index in {positions[c+'-publish'] for c in CHANNEL_JOB_IDS}, 'credentials must follow channel verification')
+        if step.get('uses','').startswith('rust-lang/crates-io-auth-action@'):
+            require(positions['crates-verify']<index<positions['crates-publish'], 'OIDC exchange must follow verification')
+            require(step.get('if')=="${{ vars.RELEASE_CRATES_ENABLED == 'true' && contains(fromJSON(steps.verified.outputs.channels), 'crates') && vars.RELEASE_CRATES_BOOTSTRAP_ENABLED != 'true' }}",
+                    'OIDC exchange requires selection/switch and must not bootstrap')
 
 
 def check_repository(root):

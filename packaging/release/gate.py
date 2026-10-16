@@ -178,7 +178,7 @@ class GitHub:
 
     def get(self, suffix):
         require(suffix.startswith('/') and '..' not in suffix, 'invalid API path')
-        request = urllib.request.Request('https://api.github.com/repos/' + REPOSITORY + suffix,
+        request = urllib.request.Request('https://api.github.com/repos/' + REPOSITORY + ('' if suffix == '/' else suffix),
                                          headers={'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + self.token,
                                                   'X-GitHub-Api-Version': '2022-11-28'})
         class NoRedirect(urllib.request.HTTPRedirectHandler):

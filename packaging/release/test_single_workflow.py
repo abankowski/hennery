@@ -1,0 +1,53 @@
+"""Negative authority/DAG tests for the single tagged orchestrator."""
+import copy
+from pathlib import Path
+import unittest
+
+import workflow_policy
+
+ROOT=Path(__file__).resolve().parents[2]
+
+
+class SingleWorkflow(unittest.TestCase):
+    def data(self):
+        path=ROOT/'.github/workflows/release.yml'
+        self.assertTrue(path.is_file(),'single tag workflow must exist')
+        return workflow_policy.load_workflow(path.read_bytes())
+
+    def test_real_workflow_has_only_one_protected_writer(self):
+        data=self.data()
+        try:workflow_policy.check(data,'release.yml')
+        except ValueError as error:self.fail(str(error))
+        writers=[name for name,job in data['jobs'].items() if job.get('permissions',{}).get('contents')=='write']
+        self.assertEqual(writers,['publish'])
+        self.assertEqual(data['jobs']['publish']['environment'],'release')
+
+    def test_every_authority_guard_refuses_its_removal(self):
+        original=self.data()
+        for mutation in ['branch','dispatch','outside-write','missing-env','no-attest','no-gate','no-summary','unpin',
+                         'ignored','reusable','cache','credential-first','job-secret','channel-switch','wrong-owner',
+                         'missing-status','optional-descendant','dag-cycle','missing-dependency','unqualified-attest','missing-attest-check','oidc-bypass']:
+            data=copy.deepcopy(original);jobs=data['jobs'];publisher=jobs['publish']
+            if mutation=='branch':data['on']={'push':{'branches':['main']}};data.pop(True,None)
+            if mutation=='dispatch':data['on']={'workflow_dispatch':{}};data.pop(True,None)
+            if mutation=='outside-write':jobs['archive']['permissions']={'contents':'write'}
+            if mutation=='missing-env':publisher.pop('environment')
+            if mutation=='no-attest':publisher['needs']=[]
+            if mutation=='no-gate':publisher['steps']=[s for s in publisher['steps'] if s.get('id')!='verified']
+            if mutation=='no-summary':jobs['attest']['steps']=[s for s in jobs['attest']['steps'] if s.get('id')!='summary']
+            if mutation=='unpin':jobs['archive']['steps'][0]['uses']='actions/checkout@v4'
+            if mutation=='ignored':jobs['archive']['continue-on-error']=True
+            if mutation=='reusable':jobs['archive']['uses']='./.github/workflows/other.yml'
+            if mutation=='cache':jobs['archive']['steps'].append({'uses':'actions/cache@'+'a'*40})
+            if mutation=='credential-first':publisher['steps'].insert(0,{'env':{'TOKEN':'${{ secrets.GHCR_PUBLISH_TOKEN }}'},'run':'true'})
+            if mutation=='job-secret':publisher['env']={'TOKEN':'${{ secrets.GHCR_PUBLISH_TOKEN }}'}
+            if mutation=='channel-switch':next(s for s in publisher['steps'] if s.get('id')=='homebrew-publish')['if']='true'
+            if mutation=='wrong-owner':jobs['homebrew']['name']='other'
+            if mutation=='missing-status':jobs['installer'].pop('if')
+            if mutation=='optional-descendant':jobs['later']={'needs':'installer','timeout-minutes':1,'steps':[{'run':'true'}]}
+            if mutation=='dag-cycle':jobs['assemble']['needs'].append('homebrew')
+            if mutation=='missing-dependency':jobs['attest']['needs'].remove('qualification')
+            if mutation=='unqualified-attest':jobs['attest']['if']=jobs['attest']['if'].replace("needs.qualification.result == 'success'",'true')
+            if mutation=='missing-attest-check':jobs['attest']['steps']=[s for s in jobs['attest']['steps'] if 'release_run.py check ' not in s.get('run','')]
+            if mutation=='oidc-bypass':next(s for s in publisher['steps'] if s.get('id')=='cratesio')['if']='true'
+            with self.subTest(mutation=mutation),self.assertRaises(ValueError):workflow_policy.check(data,'release.yml')

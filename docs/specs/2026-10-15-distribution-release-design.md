@@ -248,6 +248,11 @@ current publishing attempt. Once admitted, the publisher records both attempts
 and unchanged digests; it verifies the original attestation against its original
 attempt, not the new `GITHUB_RUN_ATTEMPT`. Renewal of approval is required even
 for identical bytes.
+GitHub's review-history API lacks an attempt field. For a retry, the maintainer's
+new approval comment must therefore be exactly `publish-run:<id>:attempt:<n>`
+for the current publishing attempt; the read-only gate checks the owner and
+comment against live review history. This is an attempt-renewal marker, not an
+inventory signature or digest-approval tuple. Missing/stale comments refuse.
 
 Reconcile actual remote bytes/digests, count identical content as done, upload
 only authoritatively absent content and stop on ambiguity/mismatch. A successful
