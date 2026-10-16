@@ -278,8 +278,11 @@ jobs:
       run: "sh packaging/install-dist.sh \"$RUNNER_TEMP/dist-bin\"\necho \"$RUNNER_TEMP/dist-bin\"\
         \ >> \"$GITHUB_PATH\"\npython3 packaging/release/assemble.py candidates target/distrib\n\
         if test -d crates-flat; then\n  nix develop -c node packaging/prepare-crates.mjs\
-        \ --stage crates-flat target/distrib\nfi\n\"$RUNNER_TEMP/dist-bin/dist\" build\
-        \ --artifacts=global --output-format=json > target/distrib/dist-manifest.json\n\
+        \ --stage crates-flat target/distrib\nfi\n# dist imports every *dist-manifest.json\
+        \ in distrib before building.\n# Keep stdout outside that input directory\
+        \ until the build succeeds.\n\"$RUNNER_TEMP/dist-bin/dist\" build --artifacts=global\
+        \ --output-format=json > \"$RUNNER_TEMP/global-dist-manifest.json\"\nmv \"\
+        $RUNNER_TEMP/global-dist-manifest.json\" target/distrib/dist-manifest.json\n\
         python3 packaging/harden-installer.py target/distrib/hennery-installer.sh\n\
         sh packaging/test-installer.sh target/distrib\nsh packaging/check-formula.sh\
         \ target/distrib\nnix develop .#release -c python3 packaging/release/homebrew.py\

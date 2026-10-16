@@ -259,7 +259,10 @@ jobs:
         if test -d crates-flat; then
           nix develop -c node packaging/prepare-crates.mjs --stage crates-flat target/distrib
         fi
-        "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global --output-format=json > target/distrib/dist-manifest.json
+        # dist imports every *dist-manifest.json in distrib before building.
+        # Keep stdout outside that input directory until the build succeeds.
+        "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global --output-format=json > "$RUNNER_TEMP/global-dist-manifest.json"
+        mv "$RUNNER_TEMP/global-dist-manifest.json" target/distrib/dist-manifest.json
         python3 packaging/harden-installer.py target/distrib/hennery-installer.sh
         sh packaging/test-installer.sh target/distrib
         sh packaging/check-formula.sh target/distrib

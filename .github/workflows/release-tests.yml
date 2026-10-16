@@ -33,6 +33,7 @@ jobs:
       - name: cargo-dist's actual installer with tiny shell executables
         run: |
           sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+          HENNERY_TEST_DIST="$RUNNER_TEMP/dist-bin/dist" nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_dist_assembly.py
           "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global
           python3 packaging/release/make_installer_fixture.py target/distrib/hennery-installer.sh "$RUNNER_TEMP/installer-fixture"
           python3 packaging/harden-installer.py "$RUNNER_TEMP/installer-fixture/hennery-installer.sh"
