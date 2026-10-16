@@ -1238,3 +1238,130 @@ async fn mixed_inventory_reset_is_linear_and_other_namespaces_keep_making_progre
     assert_eq!(count, 1500);
     assert!(w.s.recent(&w.c.tool, &Query::default()).unwrap().stale);
 }
+
+#[tokio::test]
+async fn managed_notes_keep_annotations_retain_typed_evidence_and_delete_suppresses_regeneration() {
+    let w = World::new(60).await;
+    w.s.bind_manager("ui-principal", "owner").unwrap();
+    let manager = w.s.manager("ui-principal").unwrap();
+    assert!(w.s.managed_list(&manager, &w.c.namespace, "note", "", 0).is_err());
+    let origin = json!({"kind":"child_report","child_id":"child","source_event_id":"event","delivery_id":"delivery"});
+    w.set(
+        vec![turn("s", "initial", "retain this observation", origin.clone())],
+        "first",
+    );
+    w.poll().await.unwrap();
+    let note =
+        w.s.managed_list(&manager, &w.c.namespace, "note", "", 0)
+            .unwrap()
+            .remove(0);
+    assert!(
+        w.s.managed_edit(
+            &manager,
+            &w.c.namespace,
+            &note.id,
+            hennery_memory::management::Edit {
+                revision: note.revision,
+                title: "forged".into(),
+                body: "operator approved".into()
+            }
+        )
+        .is_err()
+    );
+    let annotated =
+        w.s.managed_annotate(
+            &manager,
+            &w.c.namespace,
+            &note.id,
+            note.revision,
+            "owner annotation hnry_activity_DEADBEEF",
+        )
+        .unwrap();
+    assert!(!annotated.owner_annotation.contains("DEADBEEF"));
+    assert!(
+        w.s.managed_retain(
+            &manager,
+            &w.c.namespace,
+            &note.id,
+            annotated.revision,
+            "memory",
+            "invented text"
+        )
+        .is_err()
+    );
+    let retained =
+        w.s.managed_retain(
+            &manager,
+            &w.c.namespace,
+            &note.id,
+            annotated.revision,
+            "memory",
+            "retain this observation",
+        )
+        .unwrap();
+    assert_eq!(retained.provenance, annotated.provenance);
+    assert!(
+        serde_json::to_string(&retained.provenance)
+            .unwrap()
+            .contains("child_report")
+    );
+    w.set(vec![turn("s", "later", "later observation", origin)], "second");
+    w.poll().await.unwrap();
+    let refreshed = w.s.managed_entry(&manager, &w.c.namespace, &note.id).unwrap();
+    assert_eq!(refreshed.owner_annotation, annotated.owner_annotation);
+    assert!(refreshed.revision > annotated.revision);
+    w.s.managed_delete(&manager, &w.c.namespace, &refreshed.id, refreshed.revision)
+        .unwrap();
+    w.set(vec![turn("s", "after-delete", "must not return", op())], "third");
+    w.poll().await.unwrap();
+    assert!(
+        w.s.managed_list(&manager, &w.c.namespace, "note", "", 0)
+            .unwrap()
+            .is_empty()
+    );
+    let retained = w.s.managed_entry(&manager, &w.c.namespace, &retained.id).unwrap();
+    assert_eq!(retained.body, "retain this observation");
+    assert!(retained.source_refs.is_empty());
+    assert_eq!(
+        retained.provenance,
+        vec![hennery_proto::plugin::Provenance::Unverified {}]
+    );
+}
+
+#[tokio::test]
+async fn managed_note_delete_fences_an_already_fetched_page_without_advancing_its_cursor() {
+    let w = World::new(60).await;
+    w.s.bind_manager("ui-principal", "owner").unwrap();
+    let manager = w.s.manager("ui-principal").unwrap();
+    w.set(vec![turn("s", "first", "initial", op())], "first");
+    w.poll().await.unwrap();
+    let note =
+        w.s.managed_list(&manager, &w.c.namespace, "note", "", 0)
+            .unwrap()
+            .remove(0);
+    w.set(vec![turn("s", "held", "late content", op())], "held");
+    w.remote.hold.store(true, Ordering::SeqCst);
+    let s = w.s.clone();
+    let key = w.key.clone();
+    let id = w.c.namespace.clone();
+    let task = tokio::spawn(async move { Consumer::new().unwrap().poll(&s, &key, &id).await });
+    tokio::time::timeout(Duration::from_secs(5), w.remote.arrived.notified())
+        .await
+        .unwrap();
+    w.s.managed_delete(&manager, &w.c.namespace, &note.id, note.revision)
+        .unwrap();
+    w.remote.release.notify_one();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(8), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(w.cursor().as_deref(), Some("first"));
+    assert!(
+        w.s.managed_list(&manager, &w.c.namespace, "note", "", 0)
+            .unwrap()
+            .is_empty()
+    );
+}

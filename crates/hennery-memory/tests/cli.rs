@@ -86,3 +86,120 @@ fn missing_data_dir_and_unsafe_directory_are_refused() {
     );
     assert!(!target.join("memory.db").exists());
 }
+
+#[test]
+fn ui_bootstrap_uses_separate_private_auth_and_never_prints_password() {
+    use std::io::Write;
+    let d = tempfile::tempdir().unwrap();
+    let data = d.path().join("private");
+    let mut child = command(d.path())
+        .arg("--data-dir")
+        .arg(&data)
+        .args([
+            "ui-init",
+            "--owner",
+            "fixture-owner",
+            "--public-url",
+            "https://memory.example.test",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"synthetic bootstrap password\n")
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(result.status.success());
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("synthetic bootstrap password"));
+    assert_eq!(
+        data.join("memory-auth.db").metadata().unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(!data.join("hennery.db").exists());
+    let operator = hennery_kernel::operator::Operator::open(&data.join("memory-auth.db")).unwrap();
+    assert!(
+        operator
+            .verify_password("synthetic bootstrap password")
+            .unwrap()
+            .is_some()
+    );
+    let store = hennery_memory::store::Store::open(&data.join("memory.db")).unwrap();
+    assert!(store.manager(operator.owner_id()).is_ok());
+}
+
+#[test]
+fn local_snapshot_import_requires_signed_preview_and_exact_digest() {
+    let d = tempfile::tempdir().unwrap();
+    let data = d.path().join("private");
+    let created = command(d.path())
+        .arg("--data-dir")
+        .arg(&data)
+        .args(["create", "--owner", "fixture-owner", "--hat", "garden"])
+        .output()
+        .unwrap();
+    assert!(created.status.success());
+    let c: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let snapshot = d.path().join("synthetic-snapshot.tar");
+    let mapping = d.path().join("mapping.json");
+    let proposal = d.path().join("reviewed-preview.json");
+    let mut builder = tar::Builder::new(Vec::new());
+    let body =
+        b"---\nname: Imported fixture\nmetadata:\n  scope: garden\n---\nRetained synthetic text hnry_plugin_DEADBEEF";
+    let mut header = tar::Header::new_ustar();
+    header.set_path("memories/garden/fixture.md").unwrap();
+    header.set_mode(0o600);
+    header.set_size(body.len() as u64);
+    header.set_cksum();
+    builder.append(&header, &body[..]).unwrap();
+    std::fs::write(&snapshot, builder.into_inner().unwrap()).unwrap();
+    std::fs::write(&mapping,serde_json::to_vec(&serde_json::json!({"scopes":{"garden":{"action":"namespace","namespace":c["namespace"]}},"files":{},"mixed":[]})).unwrap()).unwrap();
+    let preview = command(d.path())
+        .arg("--data-dir")
+        .arg(&data)
+        .args([
+            "import-preview",
+            "--owner",
+            "fixture-owner",
+            "--vault",
+            "invented-vault",
+            "--snapshot",
+        ])
+        .arg(&snapshot)
+        .arg("--mapping")
+        .arg(&mapping)
+        .output()
+        .unwrap();
+    assert!(preview.status.success(), "{}", String::from_utf8_lossy(&preview.stderr));
+    assert!(!String::from_utf8_lossy(&preview.stdout).contains("DEADBEEF"));
+    let preview_json: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    std::fs::write(&proposal, &preview.stdout).unwrap();
+    let wrong = command(d.path())
+        .arg("--data-dir")
+        .arg(&data)
+        .args(["import-apply", "--owner", "fixture-owner", "--preview"])
+        .arg(&proposal)
+        .args(["--digest", "wrong"])
+        .output()
+        .unwrap();
+    assert!(!wrong.status.success());
+    for expected in [1, 0] {
+        let result = command(d.path())
+            .arg("--data-dir")
+            .arg(&data)
+            .args(["import-apply", "--owner", "fixture-owner", "--preview"])
+            .arg(&proposal)
+            .arg("--digest")
+            .arg(preview_json["digest"].as_str().unwrap())
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let result: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(result[0]["status"], "committed");
+        assert_eq!(result[0]["imported"], expected);
+    }
+}

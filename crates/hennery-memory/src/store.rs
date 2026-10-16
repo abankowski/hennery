@@ -104,6 +104,12 @@ pub struct Entry {
     pub turns: Vec<Observation>,
     #[serde(default)]
     pub older_turns: u64,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub owner_annotation: String,
+    #[serde(default)]
+    pub legacy: Option<crate::management::LegacyEvidence>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Page {
@@ -157,7 +163,12 @@ impl Store {
         db::migrate_component(
             &mut db,
             "memory",
-            &[include_str!("schema.sql"), include_str!("schema2.sql")],
+            &[
+                include_str!("schema.sql"),
+                include_str!("schema2.sql"),
+                include_str!("schema3.sql"),
+                include_str!("schema4.sql"),
+            ],
         )?;
         db.busy_timeout(std::time::Duration::from_millis(100))?;
         Ok(Self {
@@ -226,8 +237,19 @@ impl Store {
             .optional()?
         {
             ensure!(old == digest, "idempotency conflict");
-            return Ok(serde_json::from_str(&result)?);
+            let remembered: Remembered = serde_json::from_str(&result)?;
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM entries WHERE namespace=?1 AND id=?2)",
+                params![ns.id, remembered.id],
+                |r| r.get(0),
+            )?;
+            ensure!(exists, "memory was deleted; this retry cannot recreate it");
+            return Ok(remembered);
         }
+        let requests: i64 = tx.query_row("SELECT count(*) FROM requests WHERE namespace=?1", [&ns.id], |r| {
+            r.get(0)
+        })?;
+        ensure!(requests < 100000, "idempotency ledger full");
         let (count, bytes): (i64, i64) = tx.query_row(
             "SELECT count(*),coalesce(sum(length(CAST(data AS BLOB))),0) FROM entries WHERE namespace=?1",
             [&ns.id],
@@ -255,6 +277,9 @@ impl Store {
             stale: false,
             turns: vec![],
             older_turns: 0,
+            pinned: false,
+            owner_annotation: String::new(),
+            legacy: None,
         };
         let serialized_bytes = i64::try_from(serde_json::to_vec(&entry)?.len())?;
         ensure!(
@@ -378,6 +403,13 @@ impl Store {
             }
             // Preserve typed evidence and roles. Only display text/tags may
             // shrink, visibly, so a single escaped entry cannot stall a page.
+            if let Some(legacy) = &mut entry.legacy
+                && serde_json::to_vec(&legacy.metadata)?.len() > 4096
+            {
+                legacy.metadata.clear();
+                legacy.metadata_omitted = true;
+                entry.truncated = true;
+            }
             while serde_json::to_vec(&serde_json::to_string(&entry)?)?.len() > 12 * 1024 {
                 let before = serde_json::to_vec(&entry)?.len();
                 entry.body = bounded(&entry.body, entry.body.len() / 2);

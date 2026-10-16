@@ -86,6 +86,8 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch(include_str!("../src/schema.sql")).unwrap();
     db.execute_batch(include_str!("../src/schema2.sql")).unwrap();
+    db.execute_batch(include_str!("../src/schema3.sql")).unwrap();
+    db.execute_batch(include_str!("../src/schema4.sql")).unwrap();
     let source = include_str!("../src/store.rs");
     let fragments = string_literals(source);
     let coverage = fragments
@@ -93,8 +95,16 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
         .find(|s| s.starts_with("CASE WHEN "))
         .expect("actual coverage SQL")
         .replace("{}", "7");
-    let mut count = [0, 0];
-    for (file, source) in [source, include_str!("../src/consumer.rs")].into_iter().enumerate() {
+    let mut count = [0, 0, 0, 0];
+    for (file, source) in [
+        source,
+        include_str!("../src/consumer.rs"),
+        include_str!("../src/management.rs"),
+        include_str!("../src/import.rs"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         for sql in string_literals(source).into_iter().filter(|s| {
             ["SELECT ", "INSERT ", "DELETE ", "UPDATE "]
                 .iter()
@@ -110,6 +120,7 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
                     "seen",
                     "feeds",
                     "receipts",
+                    "imports",
                 ]
             } else {
                 vec!["entries"]
@@ -138,6 +149,18 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
                     );
                 }
                 let compact = sql.split_whitespace().collect::<String>();
+                if file >= 2 && sql.contains(" FROM namespaces ") {
+                    assert!(sql.contains("owner=?"), "management owner boundary: {sql}");
+                    continue;
+                }
+                if file == 2 && sql.contains("ui_bindings") {
+                    assert!(
+                        sql == "SELECT owner FROM ui_bindings WHERE principal=?1"
+                            || sql == "INSERT INTO ui_bindings(principal,owner) VALUES(?1,?2)",
+                        "local immutable auth binding: {sql}"
+                    );
+                    continue;
+                }
                 if sql.starts_with("INSERT INTO namespaces(") {
                     continue;
                 } // Explicit local bootstrap, never a mounted operation.
@@ -172,5 +195,5 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
             }
         }
     }
-    assert_eq!(count, [8, 51], "new statements need explicit audit coverage");
+    assert_eq!(count, [10, 51, 14, 7], "new statements need explicit audit coverage");
 }

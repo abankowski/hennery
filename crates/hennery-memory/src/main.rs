@@ -4,6 +4,7 @@ use hennery_memory::{
     consumer::{self, FeedConfig},
     http, keys,
     store::Store,
+    ui,
 };
 use std::io::Read;
 use std::{
@@ -25,6 +26,33 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Preview an uncompressed, regular-file-only vault snapshot; no entries are written.
+    ImportPreview {
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long)]
+        vault: String,
+        #[arg(long)]
+        mapping: PathBuf,
+    },
+    /// Apply exactly a previously reviewed, signed preview and content/mapping digest.
+    ImportApply {
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        preview: PathBuf,
+        #[arg(long)]
+        digest: String,
+    },
+    /// Bootstrap this plug-in's independent browser authentication. Password from stdin.
+    UiInit {
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        public_url: String,
+    },
     /// Read a C1 grant from bounded stdin, never command arguments.
     Attach {
         #[arg(long)]
@@ -86,6 +114,35 @@ async fn run() -> anyhow::Result<()> {
     );
     let store = Arc::new(Store::open(&args.data_dir.join("memory.db"))?);
     match args.command {
+        Command::ImportPreview {
+            owner,
+            snapshot,
+            vault,
+            mapping,
+        } => {
+            let manager = store.filesystem_manager(&owner)?;
+            let bundle = hennery_memory::import::Bundle::from_snapshot(&snapshot, &vault)?;
+            let mapping = hennery_memory::import::read_local_json(&mapping, 2 * 1024 * 1024)?;
+            let preview = store.preview_import(&manager, &bundle, &mapping)?;
+            println!("{}", serde_json::to_string_pretty(&preview)?);
+        }
+        Command::ImportApply { owner, preview, digest } => {
+            let manager = store.filesystem_manager(&owner)?;
+            let preview = hennery_memory::import::read_local_json(&preview, 128 * 1024 * 1024)?;
+            let results = store.apply_import(&manager, &preview, &digest)?;
+            println!("{}", serde_json::to_string_pretty(&results)?);
+            anyhow::ensure!(results.iter().all(|r| r.status == "committed"), "some hats untouched");
+        }
+        Command::UiInit { owner, public_url } => {
+            let mut bytes = zeroize::Zeroizing::new(Vec::new());
+            std::io::stdin().take(1026).read_to_end(&mut bytes)?;
+            anyhow::ensure!(bytes.len() <= 1025, "password too large");
+            let password = std::str::from_utf8(&bytes)?
+                .strip_suffix('\n')
+                .unwrap_or(std::str::from_utf8(&bytes)?);
+            ui::bootstrap(&store, &args.data_dir, &owner, &public_url, password)?;
+            println!("independent UI authentication bootstrapped");
+        }
         Command::Attach { namespace } => {
             let mut bytes = zeroize::Zeroizing::new(Vec::new());
             std::io::stdin().take(16385).read_to_end(&mut bytes)?;
@@ -94,6 +151,13 @@ async fn run() -> anyhow::Result<()> {
                 "bounded object required"
             );
             let config: FeedConfig = serde_json::from_slice(&bytes)?;
+            if args.data_dir.join("memory-auth.db").try_exists()? {
+                let operator = hennery_kernel::operator::Operator::open(&args.data_dir.join("memory-auth.db"))?;
+                let public = operator
+                    .public_url()
+                    .ok_or_else(|| anyhow::anyhow!("UI not configured"))?;
+                ui::check_collector_host(public.origin(), &config.collector_url)?;
+            }
             let key = keys::load(&args.data_dir, store.has_feed_credentials()?)?;
             store.attach(&namespace, config, &key)?;
             println!("grant attached; namespace requires a fresh lease");
@@ -110,6 +174,18 @@ async fn run() -> anyhow::Result<()> {
             );
         }
         Command::Serve { listen } => {
+            let operator = if args.data_dir.join("memory-auth.db").try_exists()? {
+                let operator = Arc::new(hennery_kernel::operator::Operator::open(
+                    &args.data_dir.join("memory-auth.db"),
+                )?);
+                let public = operator
+                    .public_url()
+                    .ok_or_else(|| anyhow::anyhow!("UI not configured"))?;
+                ui::validate_configuration(&store, &args.data_dir, public.origin())?;
+                Some(operator)
+            } else {
+                None
+            };
             let listener = tokio::net::TcpListener::bind(listen).await?;
             println!("memory listening on {}", listener.local_addr()?);
             let worker = if store.has_feed_credentials()? {
@@ -118,11 +194,18 @@ async fn run() -> anyhow::Result<()> {
             } else {
                 None
             };
-            axum::serve(listener, http::router(store))
-                .with_graceful_shutdown(async {
-                    let _ = tokio::signal::ctrl_c().await;
-                })
-                .await?;
+            let mut router = http::router(store.clone());
+            if let Some(operator) = operator {
+                router = router.merge(ui::router(store, operator)?);
+            }
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
+                let _ = tokio::signal::ctrl_c().await;
+            })
+            .await?;
             if let Some(worker) = worker {
                 worker.abort();
             }

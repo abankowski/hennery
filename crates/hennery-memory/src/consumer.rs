@@ -275,8 +275,8 @@ impl Store {
                 "cannot change collector origin"
             );
         } else {
-            let entries: i64 = tx.query_row("SELECT count(*) FROM entries WHERE namespace=?1", [id], |r| r.get(0))?;
-            ensure!(entries == 0, "attach requires empty namespace");
+            let records: i64 = tx.query_row("SELECT (SELECT count(*) FROM entries WHERE namespace=?1)+(SELECT count(*) FROM requests WHERE namespace=?1)+(SELECT count(*) FROM imports WHERE namespace=?1)", [id], |r| r.get(0))?;
+            ensure!(records == 0, "attach requires empty namespace, including retry history");
         }
         let feeds: i64 = tx.query_row("SELECT count(*) FROM feeds", [], |r| r.get(0))?;
         ensure!(registered || feeds < 128, "too many feeds");
@@ -311,6 +311,13 @@ impl Store {
         Ok(inner
             .db
             .query_row("SELECT EXISTS(SELECT 1 FROM feeds)", [], |r| r.get(0))?)
+    }
+    /// Local configuration validation only; never expose grant credentials.
+    pub(crate) fn collector_origins(&self, key: &MasterKey) -> Result<Vec<String>> {
+        self.feed_ids()?
+            .iter()
+            .map(|id| Ok(self.job(key, id)?.config.collector_url.clone()))
+            .collect()
     }
     fn job(&self, key: &MasterKey, id: &str) -> Result<Job> {
         let mut inner = self.inner.lock().expect("store");
@@ -457,6 +464,9 @@ impl Store {
                                 stale: false,
                                 turns: vec![],
                                 older_turns: 0,
+                                pinned: false,
+                                owner_annotation: String::new(),
+                                legacy: None,
                             }
                         };
                         if let ActivityBody::CompletedTurn { completed_at, .. } = &item.body {
@@ -698,7 +708,15 @@ impl Store {
                         "UPDATE namespaces SET state='purged',tool_hash=id,cursor_key='',writes=0 WHERE id=?1",
                         [&ns.id],
                     )?;
-                    for table in ["entries", "sources", "requests", "suppressed", "seen", "feeds"] {
+                    for table in [
+                        "entries",
+                        "sources",
+                        "requests",
+                        "suppressed",
+                        "seen",
+                        "feeds",
+                        "imports",
+                    ] {
                         tx.execute(&format!("DELETE FROM {table} WHERE namespace=?1"), [&ns.id])?;
                     }
                 }
@@ -921,7 +939,7 @@ fn validate(item: &PluginActivityItem, epoch: &str) -> Result<()> {
     }
     Ok(())
 }
-fn checkpoint(inner: &Inner) -> Result<()> {
+pub(crate) fn checkpoint(inner: &Inner) -> Result<()> {
     let (busy, _, _): (i64, i64, i64) = inner.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
         Ok((r.get(0)?, r.get(1)?, r.get(2)?))
     })?;
@@ -1016,7 +1034,7 @@ fn prepare_entries(
     }
     Ok(changes)
 }
-fn remove_source(tx: &rusqlite::Transaction<'_>, ns: &str, session: &str) -> Result<()> {
+pub(crate) fn remove_source(tx: &rusqlite::Transaction<'_>, ns: &str, session: &str) -> Result<()> {
     tx.execute(
         "DELETE FROM entries WHERE namespace=?1 AND id=?2 AND kind='note'",
         params![ns, sha256_hex(format!("native-note:{session}").as_bytes())],
@@ -1045,7 +1063,7 @@ fn remove_source(tx: &rusqlite::Transaction<'_>, ns: &str, session: &str) -> Res
     }
     Ok(())
 }
-fn budget(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
+pub(crate) fn budget(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
     let (count, bytes): (i64, i64) = tx.query_row(
         "SELECT count(*),coalesce(sum(length(CAST(data AS BLOB))),0) FROM entries WHERE namespace=?1",
         [id],
