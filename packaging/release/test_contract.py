@@ -42,7 +42,8 @@ class Contract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); self.fixture(root)
             uri = 'https://github.com/marcinwadon/hennery/actions/runs/42/attempts/1'
-            output = gate.canonical([{'verificationResult': {'signature': {'certificate': {'extensions': {'runInvocationURI': uri}}}}}]).decode()
+            certificate = {'runInvocationURI': uri, 'sourceRepositoryURI': 'https://github.com/'+gate.REPOSITORY, 'buildSignerURI': 'https://github.com/'+gate.REPOSITORY+'/'+contract.WORKFLOW+'@refs/tags/v0.1.0', 'sourceRepositoryRef': 'refs/tags/v0.1.0', 'sourceRepositoryDigest': 'a'*40, 'buildSignerDigest': 'a'*40, 'runnerEnvironment': 'github-hosted', 'issuer': 'https://token.actions.githubusercontent.com'}
+            output = gate.canonical([{'verificationResult': {'signature': {'certificate': certificate}}}]).decode()
             events = []
             def crypto(command, **kwargs):
                 events.append(Path(command[3]).name)
@@ -131,10 +132,10 @@ class Contract(unittest.TestCase):
 
     def test_real_certificate_path_and_exact_original_attempt(self):
         uri = 'https://github.com/marcinwadon/hennery/actions/runs/42/attempts/1'
-        result = [{'verificationResult': {'signature': {'certificate': {'extensions': {'runInvocationURI': uri}}}}}]
+        result = [{'verificationResult': {'signature': {'certificate': {'runInvocationURI': uri}}}}]
         self.assertEqual(contract.require_run(result, 42, 1), uri)
         for wrong in [[], [{}], [{'verificationResult': {'statement': {'predicate': {'runInvocationURI': uri}}}}],
-                      [{'verificationResult': {'signature': {'certificate': {'runInvocationURI': uri}}}}],
+                      [{'verificationResult': {'signature': {'certificate': {'extensions': {'runInvocationURI': uri}}}}}],
                       str(result), result + [{}]]:
             with self.subTest(result=wrong), self.assertRaises(gate.Refused):
                 contract.require_run(wrong, 42, 1)

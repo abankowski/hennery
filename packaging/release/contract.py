@@ -1,9 +1,4 @@
-"""Task 1 contract under construction; not yet wired into publication.
-
-The approved certificate JSON path below awaits the parent's ruling: real pinned
-gh emits a flattened certificate. Keep refusal strict rather than adding a
-permissive schema fallback; authentic CLI integration is not complete yet.
-"""
+"""Signed-source, checksums and exact-run provenance for final release bytes."""
 import re
 from pathlib import Path
 import subprocess
@@ -72,11 +67,28 @@ def require_run(results, run_id, attesting_attempt):
     gate.require(isinstance(results, list) and results, 'no verified attestation results')
     for result in results:
         try:
-            actual = result['verificationResult']['signature']['certificate']['extensions']['runInvocationURI']
+            actual = result['verificationResult']['signature']['certificate']['runInvocationURI']
         except (KeyError, TypeError) as error:
             raise gate.Refused('verified certificate run invocation missing') from error
         gate.require(actual == expected, 'verified certificate belongs to another run/attesting attempt')
     return expected
+
+
+def require_identity(results, tag, source_sha):
+    # These fields come from the verified certificate, never the predicate.
+    # The real pinned-CLI test must fail if upstream changes its JSON layout.
+    expected = {'sourceRepositoryURI': 'https://github.com/' + gate.REPOSITORY,
+                'buildSignerURI': f'https://github.com/{gate.REPOSITORY}/{WORKFLOW}@refs/tags/{tag}',
+                'sourceRepositoryRef': 'refs/tags/' + tag, 'sourceRepositoryDigest': source_sha,
+                'buildSignerDigest': source_sha, 'runnerEnvironment': 'github-hosted',
+                'issuer': 'https://token.actions.githubusercontent.com'}
+    gate.require(isinstance(results, list) and results, 'no verified identity results')
+    for result in results:
+        try:
+            certificate = result['verificationResult']['signature']['certificate']
+            gate.require(all(certificate.get(key) == value for key, value in expected.items()), 'verified certificate identity differs')
+        except (KeyError, TypeError, AttributeError) as error:
+            raise gate.Refused('verified certificate identity missing') from error
 
 
 def regular(path):
@@ -158,6 +170,8 @@ def verify(root, tag, source_sha, bundle, run_id=None, attesting_attempt=None, t
     for subject in subjects:
         command = attestation_command(root / subject, tag, source_sha, bundle, trusted_root)
         result = subprocess.run(command, check=True, capture_output=True, text=True)
-        require_run(gate.strict_json(result.stdout), run_id, attesting_attempt)
+        results = gate.strict_json(result.stdout)
+        require_identity(results, tag, source_sha)
+        require_run(results, run_id, attesting_attempt)
     gate.require(load(root) == value, 'release bytes changed during verification')
     return value

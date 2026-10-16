@@ -191,7 +191,7 @@ Consumers, channel publishers and the README verify-then-run bootstrap must:
    bundles permit verification without trusting an API lookup alone. These
    identity/source constraints follow the [GitHub CLI verifier interface](https://cli.github.com/manual/gh_attestation_verify).
 3. Publication additionally checks `gh attestation verify --format=json`'s
-   verified `verificationResult.signature.certificate.extensions.runInvocationURI`
+   verified `verificationResult.signature.certificate.runInvocationURI`
    against the exact string
    `https://github.com/marcinwadon/hennery/actions/runs/<id>/attempts/<attempt>`,
    with this workflow's run ID and fixed accepted attesting attempt. Do not use
@@ -217,6 +217,17 @@ the mutually exclusive flag pair. Record fixture origin/digests and the CLI pin;
 do not substitute mocked JSON for this contract. Keep transport-mocked tests for
 publication lifecycle failures. Acquiring a fixture never authorizes this child
 to mint a real tag, attestation or publication.
+
+**Superseding parent ruling, 2026-10-16:** the real output of pinned `gh 2.101.0`
+is authoritative. Its certificate fields are flattened; the reviewer's original
+`.certificate.extensions.runInvocationURI` path is superseded by
+`.certificate.runInvocationURI`. Pin both binary version and exact JSON field
+in the offline contract test; a changed schema fails loudly, with no fallback.
+The authentic upstream `sigstore/sigstore-js` bundle proves cryptographic
+success/JSON shape and must fail production Hennery repo/workflow/ref policy.
+Tests substituting Hennery-specific fields into that real shape are structural
+tests, not cryptographic proof. Creating a real attestation writes to the public
+transparency log and remains the maintainer's disclosure decision.
 
 Keep `RELEASE_PUBLICATION_ENABLED`, `RELEASE_GITHUB_ENABLED`,
 `RELEASE_HOMEBREW_ENABLED`, `RELEASE_CRATES_ENABLED` and `RELEASE_GHCR_ENABLED`
@@ -275,6 +286,14 @@ another workflow/dispatch or silently accept an incomplete immutable release.
   refusal of missing originals/window exhaustion. If GitHub reuses approval on
   retry, keep publication disabled until a reviewed enforceable renewal gate is
   in place. Live settings/approval evidence belongs to the maintainer, not mocks.
+- **First authentic Hennery positive:** with every channel switch still off,
+  the maintainer authorizes the first signed-tag build/attestation and its public
+  transparency-log disclosure. Download and independently verify its genuine
+  tagged-workflow identity, source/signer digests, original run/attempt and
+  payload/checksums with pinned `gh`; preserve bundle, payload and origin as the
+  authentic Hennery positive fixture. This must succeed before enabling any
+  channel switch, including GitHub publication. Never substitute the upstream
+  fixture or structural tests for this pre-enablement acceptance.
 - **Signing:** maintain the pinned public key and independently corroborated
   fingerprint; enable per-signature YubiKey touch (`on`), protect key/PIN and
   recovery material and ensure no accessible software copy bypasses hardware.

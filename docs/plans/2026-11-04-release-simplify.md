@@ -91,6 +91,10 @@ the parent even if other branches happen to become visible locally.
 10. Verify certificate Run Invocation URI against this run and the trusted
     producing attempt/artifact IDs in addition to exact workflow/tag/source.
     Never accept an asset's own run claim as proof of which run produced it.
+    **Parent ruling, 2026-10-16:** pinned `gh 2.101.0` emits the flattened
+    `verificationResult.signature.certificate.runInvocationURI`. This observed
+    output supersedes the reviewer's original `.certificate.extensions` path.
+    Pin both CLI version and field in the real contract test; never fall back.
 11. Accepted parent ruling, 2026-10-16: one approval in the authorized workflow
     is not a repository-wide publication guarantee. A writer/SSH push-key holder
     can run a branch workflow with `contents: write`, publish genuine previously
@@ -172,7 +176,7 @@ amendment base; re-anchor R4 after its merge before implementing.
    with isolated config and blocked network. Record fixture origin, hashes and
    CLI pin; do not mint a real tag/attestation or publish to create a fixture.
    Require real successful signature/digest verification and read the actual
-   `verificationResult.signature.certificate.extensions.runInvocationURI` path.
+   `verificationResult.signature.certificate.runInvocationURI` path.
    Compare it exactly to
    `https://github.com/marcinwadon/hennery/actions/runs/<id>/attempts/<attempt>`.
    Change expected run and expected accepted attesting attempt independently:
@@ -182,6 +186,13 @@ amendment base; re-anchor R4 after its merge before implementing.
    `--signer-workflow`. Keep lifecycle mocks, but no mock stands in for this
    contract test. Fixture unavailability is a parent-owned prerequisite, not
    permission to weaken the test or create unauthorized public artifacts.
+   **Authorized fixture scope:** authentic `sigstore/sigstore-js` proves crypto
+   success and real JSON shape; production Hennery policy must reject its
+   repo/workflow/ref. Substituted Hennery identity/run fields test structure
+   only, explicitly labelled non-cryptographic. No real Hennery attestation is
+   created by this builder. Before any channel switch is enabled, the maintainer
+   verifies the first genuine tagged Hennery attestation and preserves it with
+   its payload as the authentic Hennery positive fixture.
 4. Run the release suite below, including the actual CLI contract; probe checksum,
    signature, identity and run-parser guards in one cloned copy. Commit tested
    task bytes and embed final source during Phase B. No speculative executable
