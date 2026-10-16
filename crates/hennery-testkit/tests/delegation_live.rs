@@ -47,6 +47,95 @@ fn runtime(variable: &str) -> Result<String> {
     Ok(value)
 }
 
+fn spawn_diagnostics(conn: &rusqlite::Connection, owner: &str, parent: &str) -> Result<Vec<Value>> {
+    // The operation survives an unavailable/detached child. Never require an
+    // active family edge to find the child whose launch failed.
+    let mut stmt = conn.prepare(
+        "SELECT o.operation_id,o.child_id,o.state,o.code,c.agent,c.lifecycle,c.activity,c.failure_reason
+         FROM session_operations o LEFT JOIN sessions c ON c.owner_id=?1 AND c.id=o.child_id
+         WHERE o.owner_id=?1 AND o.caller_id=?2 AND o.tool='session_spawn' ORDER BY o.rowid LIMIT 32",
+    )?;
+    let mut rows = stmt
+        .query_map(rusqlite::params![owner, parent], |r| {
+            Ok(
+                json!({"operation_id":r.get::<_,String>(0)?,"child_id":r.get::<_,Option<String>>(1)?,
+            "operation_state":r.get::<_,String>(2)?,"operation_code":r.get::<_,Option<String>>(3)?,
+            "child_runtime":r.get::<_,Option<String>>(4)?,"child_lifecycle":r.get::<_,Option<String>>(5)?,
+            "child_activity":r.get::<_,Option<String>>(6)?,"child_failure_reason":r.get::<_,Option<String>>(7)?}),
+            )
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for row in &mut rows {
+        let mut events = vec![];
+        if let Some(child) = row["child_id"].as_str() {
+            let mut stmt = conn.prepare(
+                "SELECT event_id,kind,body FROM events WHERE owner_id=?1 AND session_id=?2
+                 AND kind IN ('start_failed','turn_ended','session_lost','session_closed') ORDER BY event_id DESC LIMIT 32",
+            )?;
+            for event in stmt.query_map(rusqlite::params![owner, child], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            })? {
+                let (id, kind, body) = event?;
+                let body: Value = serde_json::from_str(&body)?;
+                let mut safe = json!({"event_id":id,"kind":kind});
+                for field in ["error", "message", "reason", "outcome"] {
+                    if let Some(text) = body[field].as_str() {
+                        safe[field] = json!(scrub_error(text)?);
+                    }
+                }
+                events.push(safe);
+            }
+            events.reverse();
+        }
+        row["events"] = json!(events);
+    }
+    let mut safe = serde_json::from_str(&redact_credentials(&serde_json::to_string(&rows)?)?)?;
+    scrub_capture(&mut safe);
+    hennery_kernel::redact::value(&mut safe);
+    Ok(serde_json::from_value(safe)?)
+}
+
+#[test]
+fn failed_spawn_diagnostics_survive_without_an_attached_family() -> Result<()> {
+    let conn = rusqlite::Connection::open_in_memory()?;
+    conn.execute_batch(
+        "CREATE TABLE session_operations(owner_id TEXT,caller_id TEXT,tool TEXT,operation_id TEXT,child_id TEXT,state TEXT,code TEXT);
+         CREATE TABLE sessions(owner_id TEXT,id TEXT,agent TEXT,lifecycle TEXT,activity TEXT,failure_reason TEXT);
+         CREATE TABLE events(owner_id TEXT,session_id TEXT,event_id INTEGER,kind TEXT,body TEXT);
+         INSERT INTO session_operations VALUES('owner','parent','session_spawn','op','child','failed','start_failed');
+         INSERT INTO sessions VALUES('owner','child','claude','failed',NULL,'Authentication required');
+         INSERT INTO events VALUES('owner','child',1,'start_failed','{\"error\":\"Authentication required\"}');
+         INSERT INTO events VALUES('owner','child',2,'turn_ended','{\"outcome\":\"failed\",\"error\":\"Bearer diagnostic-private\"}');
+         INSERT INTO events VALUES('owner','child',3,'acp_update','{\"private_menu\":\"must not retain\"}');
+         INSERT INTO session_operations VALUES('foreign','parent','session_spawn','other','other','failed','foreign-private');
+         INSERT INTO sessions VALUES('foreign','child','claude','failed',NULL,'foreign-private');",
+    )?;
+    let rows = spawn_diagnostics(&conn, "owner", "parent")?;
+    assert_eq!(rows.len(), 1, "retain failed spawn even without a family row");
+    assert_eq!(rows[0]["operation_state"], "failed");
+    assert_eq!(rows[0]["operation_code"], "start_failed");
+    assert_eq!(rows[0]["child_lifecycle"], "failed");
+    assert_eq!(rows[0]["child_failure_reason"], "Authentication required");
+    assert_eq!(rows[0]["events"][0]["error"], "Authentication required");
+    assert_eq!(rows[0]["events"][1]["outcome"], "failed");
+    let text = serde_json::to_string(&rows)?;
+    for private in ["diagnostic-private", "must not retain", "foreign-private"] {
+        assert!(
+            !text.contains(private),
+            "diagnostics retain only scoped, scrubbed failure fields"
+        );
+    }
+    conn.execute(
+        "UPDATE session_operations SET child_id=NULL,state='failed',code='gone' WHERE owner_id='owner'",
+        [],
+    )?;
+    let rows = spawn_diagnostics(&conn, "owner", "parent")?;
+    assert_eq!(rows.len(), 1, "retain operation failure even without a surviving child");
+    assert_eq!(rows[0]["operation_code"], "gone");
+    assert!(rows[0]["child_id"].is_null());
+    Ok(())
+}
+
 fn stage_auth(source_variable: &str, destination: &Path) -> Result<()> {
     let source = PathBuf::from(std::env::var(source_variable).with_context(|| format!("supply {source_variable}"))?);
     ensure!(source.is_file(), "{source_variable} must name a credential file");
@@ -304,7 +393,30 @@ impl Harness {
             "{}",
             json!({"phase":"catalog","runtime":parent_runtime,"config_options":catalog.config_options,"defaults":catalog.defaults,"security":catalog.security})
         );
-        let response = h.client.post(format!("{}/api/sessions", h.url)).json(&json!({"host_id":HOST,"agent":parent_runtime,"cwd":root,"mode":if parent_runtime == "codex" {"read-only"} else {"default"}})).send().await?;
+        // Bound paid parent turns with the same catalog-selected model/effort
+        // as children, while keeping the parent in ordinary collaboration mode.
+        let mut parent_config = requested(&catalog);
+        if parent_runtime == "codex" {
+            parent_config.axes.insert(
+                "collaboration_mode".into(),
+                hennery_proto::frames::ConfigValue::Id("default".into()),
+            );
+        }
+        ensure!(
+            hennery_sessions::delegation_runtime::config_offered(&catalog, &parent_config),
+            "chosen parent configuration absent from actual catalog"
+        );
+        let mut request = serde_json::to_value(&parent_config)?;
+        request["host_id"] = json!(HOST);
+        request["agent"] = json!(parent_runtime);
+        request["cwd"] = json!(root);
+        println!("{}", json!({"phase":"parent_requested_config","config":parent_config}));
+        let response = h
+            .client
+            .post(format!("{}/api/sessions", h.url))
+            .json(&request)
+            .send()
+            .await?;
         ensure!(
             response.status() == reqwest::StatusCode::ACCEPTED,
             "parent start HTTP {}",
@@ -329,6 +441,40 @@ impl Harness {
     async fn wait<T>(&self, phase: &str, mut predicate: impl FnMut() -> Option<T>) -> Result<T> {
         let result = tokio::time::timeout(BOUND, async {
             loop {
+                if matches!(
+                    phase,
+                    "real parent spawn"
+                        | "child configuration readback"
+                        | "genuine child elicitation"
+                        | "real parent answer delivered"
+                        | "child provider continuation"
+                ) {
+                    let conn = hennery_kernel::db::open(&self.dir.path().join("hennery.db"))?;
+                    let failed = spawn_diagnostics(&conn, self.state.store.owner_id(), &self.parent)?
+                        .iter()
+                        .any(|row| {
+                            matches!(
+                                row["operation_state"].as_str(),
+                                Some("failed" | "cancelled" | "not_delivered")
+                            ) || row["child_lifecycle"] == "failed"
+                                || row["events"]
+                                    .as_array()
+                                    .is_some_and(|events| events.iter().any(|event| event["outcome"] == "failed"))
+                        });
+                    let parent_failed = phase == "real parent spawn"
+                        && self
+                            .state
+                            .store
+                            .events(&self.parent, 0, 1000)?
+                            .iter()
+                            .any(|event| event.kind == "turn_ended" && event.body["outcome"] == "failed");
+                    if failed || parent_failed {
+                        self.diagnostics(phase)?;
+                        bail!(
+                            "{phase}: provider or spawn failed; scrubbed durable operation/child diagnostics printed"
+                        );
+                    }
+                }
                 if let Some(value) = predicate() {
                     println!("{}", json!({"phase":phase}));
                     return Ok(value);
@@ -436,6 +582,7 @@ impl Harness {
             "rate_limit",
             "insufficient_quota",
             "token_expired",
+            "authentication required",
             "certificate",
             "connection refused",
         ];
@@ -444,6 +591,11 @@ impl Harness {
         println!(
             "{}",
             json!({"phase":phase,"error_classes":errors,"errors":messages,"event_kinds":kinds,"mcp":*self.trace.lock().unwrap()})
+        );
+        let conn = hennery_kernel::db::open(&self.dir.path().join("hennery.db"))?;
+        println!(
+            "{}",
+            json!({"phase":"spawn_diagnostics","operations":spawn_diagnostics(&conn,self.state.store.owner_id(),&self.parent)?})
         );
         if let Some(child) = self.child() {
             let events = self.state.store.events(&child, 0, 1000)?;
@@ -1098,7 +1250,15 @@ fn question_brief(runtime: &str) -> &'static str {
 }
 
 fn scrub_error(message: &str) -> Result<String> {
-    Ok(redact_credentials(message)?.chars().take(2000).collect())
+    let text = redact_credentials(message)?;
+    if text.to_ascii_lowercase().contains("bearer") {
+        return Ok("[redacted bearer-bearing error]".into());
+    }
+    Ok(hennery_kernel::redact::text(&text)
+        .unwrap_or(text)
+        .chars()
+        .take(2000)
+        .collect())
 }
 
 fn redact_credentials(message: &str) -> Result<String> {
