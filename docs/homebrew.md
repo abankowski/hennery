@@ -60,10 +60,13 @@ not a service uninstall or a data purge.
 
 The native PR and candidate jobs execute these exact three command blocks in a
 fresh pinned Homebrew prefix and local file-based tap, with scratch home/cache/
-config. The old-version fixture labels the same candidate payload as 0.0.0;
-its upgrade proves Homebrew's transaction, not an older application's migration.
-Both the initial and upgraded executable are compared byte-for-byte with the
-candidate archive. Removal checks package leftovers and preserved data/service
+config. They first install the candidate with its actual formula/Cellar version,
+then clear that installation and seed a separate old-version fixture labelled
+0.0.0 using the same candidate payload. Upgrading it proves Homebrew's
+transaction, not an older application's migration. Every installed executable
+is compared byte-for-byte with the candidate archive, its exact first version
+line and its candidate source commit. Both candidate kegs must match the tag.
+Removal checks package leftovers and preserved data/service
 sentinels. macOS 27 with CLT 26.6 refused the local proof; that check remains
 intact. Native runner CI is the acceptance evidence.
 

@@ -2,9 +2,10 @@
 """Real local-tap install/upgrade/remove in a fresh, pinned Homebrew prefix.
 
 Only the URL origins are rewritten to local files, after original formula and
-candidate digests are checked. The old formula uses the same candidate binary
-with version 0.0.0: this proves Homebrew's upgrade transaction, not N-1 data
-migration. No services, agents or registry credentials are used.
+candidate digests are checked. Install and verify the actual candidate first.
+Then seed a separate old formula using the same candidate binary with version
+0.0.0: this proves Homebrew's upgrade transaction, not N-1 data migration.
+No services, agents or registry credentials are used.
 """
 import argparse
 import json
@@ -28,11 +29,26 @@ def recipes():
     return result
 
 
-def smoke(binary, expected, tag, env, work):
+def smoke(binary, expected, tag, source_sha, env, work):
     gate.require(Path(binary).read_bytes() == expected, 'Homebrew changed executable bytes')
     result = subprocess.run([str(binary), '--version'], env=env, cwd=work, check=True, capture_output=True, text=True)
-    gate.require(result.stdout.strip() == 'hennery ' + tag.removeprefix('v'), 'installed Homebrew executable has wrong version')
+    lines = result.stdout.splitlines()
+    gate.require(lines[:1] == ['hennery ' + tag.removeprefix('v')], 'installed Homebrew executable has wrong version')
+    gate.require([line for line in lines if line.startswith('source:')] == ['source: ' + source_sha],
+                 'installed Homebrew executable has wrong or ambiguous source')
     print(result.stdout, end='')
+
+
+def check_keg(binary, prefix, version):
+    expected = Path(prefix).resolve() / 'Cellar/hennery' / version / 'bin/hennery'
+    gate.require(expected.is_file() and not expected.is_symlink() and Path(binary).resolve() == expected,
+                 'Homebrew link does not select the expected versioned keg')
+
+
+def check_removed(prefix):
+    installed = Path(prefix) / 'bin/hennery'
+    gate.require(not installed.exists() and not installed.is_symlink() and not (Path(prefix) / 'Cellar/hennery').exists(),
+                 'uninstall left package files')
 
 
 def commit_formula(tap, formula, env, work, message):
@@ -88,7 +104,7 @@ def run(candidate, work, brew_source=None):
         name = 'hennery-' + target + '.tar.xz'
         local = local.replace(f'https://github.com/{gate.REPOSITORY}/releases/download/{inventory["tag"]}/{name}', (candidate / name).as_uri())
     old = local.replace(f'version "{inventory["tag"][1:]}"', 'version "0.0.0"')
-    commit_formula(tap, old, env, work, 'test(formula): install old-version fixture')
+    commit_formula(tap, local, env, work, 'test(formula): install frozen candidate')
     sentinels = [work / 'data/hennery/preserve', work / 'home/Library/LaunchAgents/hennery-preserve.plist']
     for path in sentinels:
         path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'operator-owned sentinel\n')
@@ -99,23 +115,32 @@ def run(candidate, work, brew_source=None):
         gate.require(len(entries) == 1, 'candidate executable ambiguous')
         expected = archive.extractfile(entries[0]).read()
     scripts = recipes()
-    # First install is a real older-keg fixture using the exact candidate payload.
+    print('Install frozen candidate with its exact candidate formula version', flush=True)
     command('sh', '-eu', '-c', scripts['install'])
     installed = prefix / 'bin/hennery'
-    smoke(installed, expected, inventory['tag'], env, work)
-    gate.require((prefix / 'Cellar/hennery/0.0.0/bin/hennery').is_file(), 'old keg missing')
+    check_keg(installed, prefix, inventory['tag'][1:])
+    smoke(installed, expected, inventory['tag'], inventory['source_sha'], env, work)
+    # Clear the candidate install before seeding the explicitly lower fixture.
+    command('sh', '-eu', '-c', scripts['uninstall'])
+    check_removed(prefix)
+    print('Seed labelled 0.0.0 upgrade fixture using the same candidate payload', flush=True)
+    commit_formula(tap, old, env, work, 'test(formula): install old-version upgrade fixture')
+    command('sh', '-eu', '-c', scripts['install'])
+    check_keg(installed, prefix, '0.0.0')
+    smoke(installed, expected, inventory['tag'], inventory['source_sha'], env, work)
     commit_formula(tap, local, env, work, 'test(formula): upgrade to frozen candidate')
     command('sh', '-eu', '-c', scripts['upgrade'])
-    gate.require(installed.resolve().parent.parent.name == inventory['tag'][1:], 'upgrade did not select candidate keg')
-    smoke(installed, expected, inventory['tag'], env, work)
+    check_keg(installed, prefix, inventory['tag'][1:])
+    smoke(installed, expected, inventory['tag'], inventory['source_sha'], env, work)
     command('sh', '-eu', '-c', scripts['uninstall'])
-    gate.require(not installed.exists() and not installed.is_symlink() and not (prefix / 'Cellar/hennery').exists(), 'uninstall left package files')
+    check_removed(prefix)
     gate.require(all(p.read_bytes() == b'operator-owned sentinel\n' for p in sentinels), 'package operation changed user data/service definitions')
     gate.require((candidate / 'release-inventory.json').read_bytes() == raw, 'acceptance changed frozen inventory')
     gate.verify_files(inventory, candidate)
     homebrew.check(candidate, inventory['tag'], inventory['targets'])
     report = {'brew_commit': BREW_COMMIT, 'native': native, 'inventory_sha256': gate.digest(raw),
-              'install': '0.0.0 fixture', 'upgrade': inventory['tag'][1:], 'test': 'version/UI/notices',
+              'install': inventory['tag'][1:], 'old_fixture': '0.0.0', 'upgrade': inventory['tag'][1:],
+              'source_sha': inventory['source_sha'], 'test': 'version/source/UI/notices',
               'uninstall': True, 'binary_unchanged': True, 'data_and_service_preserved': True}
     (work / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report))
