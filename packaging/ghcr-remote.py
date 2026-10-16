@@ -52,7 +52,7 @@ def reconcile(version, expected, authfile, opener=None):
                 raise ValueError('unexpected registry status')
             actual = 'sha256:' + hashlib.sha256(response.read()).hexdigest()
         if actual != expected:
-            raise ValueError('published image digest mismatch; new candidate/approval required')
+            raise ValueError('published image digest mismatch; new signed version required')
         return 0
     except urllib.error.HTTPError as error:
         # Only an authenticated 404 with an explicit registry classification is

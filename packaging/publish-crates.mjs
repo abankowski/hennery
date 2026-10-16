@@ -4,8 +4,6 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
 import { sha256, readJSON, requireThat, verifyCandidate, validateSource, publishBody } from './crate-release.mjs';
 import { indexPath } from './crate-registry.mjs';
 export async function preflight({dir,digest,gate,fetcher=fetch}) {
@@ -43,7 +41,7 @@ export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,p
       remote=await fetcher(download,{signal:AbortSignal.timeout(120000)});
     }
     requireThat(remote.ok,`remote package unavailable/unverifiable: ${c.name}`);
-    requireThat(sha256(Buffer.from(await remote.arrayBuffer()))===c.sha256,`remote digest differs: ${c.name}; new candidate/version required`);
+    requireThat(sha256(Buffer.from(await remote.arrayBuffer()))===c.sha256,`remote digest differs: ${c.name}; new signed version required`);
     let resolvable=false;
     for(let attempt=0;attempt<48;attempt++) {
       await authorize();
@@ -59,36 +57,6 @@ export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,p
     completed.push(c.name);
   }
   return completed;
-}
-export function signedCratesDigest(dir,rootDigest) {
-  requireThat(/^[a-f0-9]{64}$/.test(rootDigest||''),'R1 global inventory digest missing');
-  const path=join(dir,'release-inventory.json');
-  requireThat(fs.lstatSync(path).isFile(),'R1 global inventory must be regular');
-  const raw=fs.readFileSync(path);requireThat(sha256(raw)===rootDigest,'R1 global inventory digest changed');
-  const root=JSON.parse(raw),inventory=readJSON(join(dir,'crates-inventory.json'));
-  requireThat(root.channels?.includes('crates') && root.source_sha===inventory.source.sha && root.tag===`v${inventory.version}`,'R1 global inventory source/version/channel differs');
-  requireThat(inventory.source.url===`https://github.com/marcinwadon/hennery/releases/download/${root.tag}/hennery-source-${root.source_sha}.tar.gz`,'R1 global inventory source URL differs');
-  const names=['crates-inventory.json',`hennery-source-${inventory.source.sha}.tar.gz`,...inventory.crates.map(c=>c.file)];
-  for(const name of names) {
-    const entries=root.artifacts?.filter(a=>a.name===name);
-    requireThat(entries?.length===1,'R1 global inventory lacks unique '+name);
-    const file=join(dir,name);requireThat(fs.lstatSync(file).isFile(),'R1 global inventory payload must be regular');
-    const bytes=fs.readFileSync(file);
-    requireThat(entries[0].size===bytes.length && entries[0].sha256===sha256(bytes),'R1 global inventory payload differs: '+name);
-  }
-  return root.artifacts.find(a=>a.name==='crates-inventory.json').sha256;
-}
-export function r1Gate(args) {
-  // Resolve only trusted checkout code; never execute anything from the candidate.
-  const executable=resolve('packaging/release-gate');
-  requireThat(fs.existsSync(executable),'R1 gate missing: packaging/release-gate (publication disabled)');
-  requireThat(args.channel==='crates' && ['preflight','boundary'].includes(args.phase),'R1 channel/phase differs');
-  const validate=()=>requireThat(signedCratesDigest(args.dir,args.rootDigest)===args.digest,'R1 global inventory channel digest differs');
-  validate();
-  // R1 audit storage keys by basename, across every invocation in this attempt.
-  const receipt=join(fs.mkdtempSync(join(tmpdir(),'hennery-r3-gate-')),`crates-${args.phase}-${randomUUID()}.json`);
-  execFileSync(executable,['crates','--candidate',resolve(args.dir),'--inventory-sha256',args.rootDigest,'--phase',args.phase,'--receipt',receipt],{encoding:'utf8'});
-  validate();
 }
 export function releaseCratesDigest(dir) {
  const raw=fs.readFileSync(join(dir,'SHA256SUMS'),'utf8'),entries=new Map(),folded=new Set();

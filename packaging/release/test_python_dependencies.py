@@ -28,21 +28,6 @@ assert importlib.util.find_spec('yaml') is None, 'fixture must have no PyYAML'
         ''')
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
-    def test_approval_summary_runs_without_pyyaml(self):
-        result=self.bare('''
-            import json,os,runpy,tempfile
-            from pathlib import Path
-            with tempfile.TemporaryDirectory() as temporary:
-                root=Path(temporary);event=root/'event.json';summary=root/'summary'
-                event.write_text(json.dumps({'inputs':{'source_sha':'a'*40,'tag':'v0.1.0','inventory_sha256':'b'*64,
-                    'settings_audit_sha256':'c'*64,'channels':'["github"]','targets':'["aarch64-apple-darwin"]',
-                    'candidate':'{"run_id":10,"run_attempt":1}'}}))
-                os.environ.update(GITHUB_EVENT_PATH=str(event),GITHUB_STEP_SUMMARY=str(summary),GITHUB_RUN_ID='20',GITHUB_RUN_ATTEMPT='1')
-                runpy.run_module('approval_summary',run_name='__main__')
-                assert 'approve-release-v1:' in summary.read_text()
-        ''')
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-
     def test_installer_fixture_builds_without_pyyaml(self):
         result=self.bare('''
             import gate,make_installer_fixture,tempfile
@@ -57,17 +42,12 @@ assert importlib.util.find_spec('yaml') is None, 'fixture must have no PyYAML'
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_missing_parser_refuses_runtime_binding_instead_of_skipping_it(self):
-        result=self.bare('''
-            import base64,gate
-            class Offline(gate.GitHub):
-                def get(self,path):
-                    assert path=='/contents/.github/workflows/release-candidate.yml?ref='+'a'*40
-                    return {'type':'file','path':'.github/workflows/release-candidate.yml','encoding':'base64',
-                            'content':base64.b64encode(b'jobs: {crates: {name: crates}}').decode()}
-            try: Offline('offline-fixture').candidate_channels('a'*40)
-            except gate.Refused as error: assert 'workflow parser unavailable' in str(error),str(error)
-            else: raise AssertionError('parser absence must never authorize a channel exemption')
-        ''')
+        result=self.bare("""
+            import workflow_policy
+            try: workflow_policy.load_workflow(b'jobs: {crates: {name: crates}}')
+            except ValueError as error: assert 'workflow parser unavailable' in str(error),str(error)
+            else: raise AssertionError('missing parser authorized workflow')
+        """)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_workflow_policy_cannot_pass_without_parser(self):

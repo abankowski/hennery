@@ -40,3 +40,31 @@ class Orchestrator(unittest.TestCase):
             root=Path(tmp);test_contract.Contract().fixture(root)
             with patch.dict(os.environ,{'GITHUB_RUN_ID':'42','GITHUB_RUN_ATTEMPT':'2'}),self.assertRaises(gate.Refused):
                 release_run.check_original(root)
+
+    def test_every_optional_channel_needs_selection_and_its_explicit_switch(self):
+        for channel in ('homebrew','crates','ghcr'):
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);test_contract.Contract().fixture(root)
+                value=contract.load(root)
+                with patch.dict(os.environ,{'GH_TOKEN':'offline'}),patch.object(release_run.run_policy,'evidence',return_value={}),patch.object(release_run.run_policy,'validate'),patch.object(release_run.contract,'load',return_value=value),self.assertRaises(gate.Refused):
+                    release_run.verify(root,root,channel)
+                value['channels']=sorted(['github',channel])
+                for flag in ('','false'):
+                    with self.subTest(channel=channel,flag=flag),patch.dict(os.environ,{'GH_TOKEN':'offline','RELEASE_'+channel.upper()+'_ENABLED':flag}),patch.object(release_run.run_policy,'evidence',return_value={}),patch.object(release_run.run_policy,'validate'),patch.object(release_run.contract,'load',return_value=value),self.assertRaises(gate.Refused):
+                        release_run.verify(root,root,channel)
+
+    def test_channels_require_all_public_immutable_bytes_including_sidecars(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'payload';root.mkdir();test_contract.Contract().fixture(root)
+            signatures=Path(tmp)/'signatures';signatures.mkdir();(signatures/contract.BUNDLE).write_bytes(b'bundle')
+            value=contract.load(root);remote={'id':42,'tag_name':value['tag'],'draft':False,'immutable':True}
+            files={p.name:p.read_bytes() for folder in (root,signatures) for p in folder.iterdir()}
+            assets=[{'name':name} for name in files]
+            with patch.object(release_run.publish,'release_assets',return_value=assets),patch.object(release_run.publish,'asset_bytes',side_effect=lambda a:files[a['name']]):
+                with patch.object(release_run.publish,'api',return_value=remote):release_run.require_public(root,signatures,value)
+                for change in ({'draft':True},{'immutable':False},{'tag_name':'v9.0.0'}):
+                    with self.subTest(change=change),patch.object(release_run.publish,'api',return_value=remote|change),self.assertRaises(gate.Refused):release_run.require_public(root,signatures,value)
+                with patch.object(release_run.publish,'api',return_value=remote):
+                    with patch.object(release_run.publish,'asset_bytes',return_value=b'wrong'),self.assertRaises(gate.Refused):release_run.require_public(root,signatures,value)
+                    with patch.object(release_run.publish,'release_assets',return_value=assets[:-1]),self.assertRaises(gate.Refused):release_run.require_public(root,signatures,value)
+                    with patch.object(release_run.publish,'release_assets',return_value=assets+assets[:1]),self.assertRaises(gate.Refused):release_run.require_public(root,signatures,value)

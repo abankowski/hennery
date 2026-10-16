@@ -115,3 +115,42 @@ class ChannelDelivery(unittest.TestCase):
                 if mode in ('present','conflict','verify-failure'):self.assertNotIn(['skopeo','copy'],events)
                 if mode=='verify-failure':self.assertNotIn(['skopeo','login'],events)
                 if mode in ('new','present'):self.assertEqual(events[-1],'remote-verify')
+
+    def test_homebrew_cas_and_all_remote_conflicts(self):
+        fixture=test_homebrew.Formula();fixture.setUp();self.addCleanup(fixture.tmp.cleanup);fixture.prepare()
+        formula=(fixture.root/'hennery.rb').read_bytes();value={'tag':fixture.tag,'targets':fixture.targets}
+        def remote(raw):return {'type':'file','path':'Formula/hennery.rb','encoding':'base64','content':base64.b64encode(raw).decode(),'sha':tap.blob_sha(raw)}
+        for previous in [remote(formula+b'changed'),remote(formula.replace(b'0.1.0',b'9.0.0')),remote(b'invalid formula'),dict(remote(formula),sha='0'*40),dict(remote(formula),encoding='raw'),dict(remote(formula),type='symlink'),dict(remote(formula),path='other.rb'),dict(remote(formula),content='invalid base64')]:
+            def read_only(method='GET',data=None):self.assertEqual(method,'GET');return previous
+            with self.subTest(previous=previous),patch.object(release_run,'verify',return_value=value),patch.object(tap,'tap_api',side_effect=read_only),self.assertRaises(gate.Refused):
+                channel_publish.publish(fixture.root,Path('signatures'),'homebrew')
+        old=remote(formula.replace(b'0.1.0',b'0.0.1'));writes=[]
+        def api(method='GET',data=None):
+            if method=='GET':return remote(formula) if writes else old
+            self.assertEqual(data['sha'],old['sha']);writes.append(data)
+            return {'content':{'sha':tap.blob_sha(formula)},'commit':{'sha':'c'*40}}
+        with patch.object(release_run,'verify',return_value=value),patch.object(tap,'tap_api',side_effect=api):
+            self.assertEqual(channel_publish.publish(fixture.root,Path('signatures'),'homebrew')['state'],'published')
+        self.assertEqual(len(writes),1)
+
+    def test_homebrew_late_failure_or_changed_formula_never_overwrites(self):
+        fixture=test_homebrew.Formula();fixture.setUp();self.addCleanup(fixture.tmp.cleanup);fixture.prepare()
+        formula=(fixture.root/'hennery.rb').read_bytes();value={'tag':fixture.tag,'targets':fixture.targets}
+        for fault in ('withdrawn','changed','ambiguous','unconfirmed','readback'):
+            (fixture.root/'hennery.rb').write_bytes(formula);events=[]
+            def verify(*args):
+                events.append('verify')
+                if events.count('verify')==2:
+                    if fault=='withdrawn':raise gate.Refused('withdrawn')
+                    if fault=='changed':(fixture.root/'hennery.rb').write_bytes(b'changed formula')
+                return value
+            def api(method='GET',data=None):
+                events.append(method)
+                if method=='GET':
+                    if 'PUT' not in events:return None
+                    return {'type':'file','path':'Formula/hennery.rb','encoding':'base64','content':base64.b64encode(formula+b'changed').decode(),'sha':tap.blob_sha(formula+b'changed')}
+                if fault=='ambiguous':raise gate.Refused('lost response')
+                return {'content':{'sha':tap.blob_sha(formula) if fault!='unconfirmed' else '0'*40},'commit':{'sha':'c'*40}}
+            with self.subTest(fault=fault),patch.object(release_run,'verify',side_effect=verify),patch.object(tap,'tap_api',side_effect=api),self.assertRaises(gate.Refused):
+                channel_publish.publish(fixture.root,Path('signatures'),'homebrew')
+            self.assertEqual(events.count('PUT'),0 if fault in ('withdrawn','changed') else 1)

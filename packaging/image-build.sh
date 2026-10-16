@@ -1,6 +1,6 @@
 #!/bin/sh
 # Native runner only. R1 stages approved bytes and includes this OCI output in
-# its candidate inventory BEFORE approval. No registry credential or push.
+# its checksum-bound metadata BEFORE approval. No registry credential or push.
 # Usage: image-build.sh amd64|arm64 output-directory version revision epoch
 set -eu
 arch=$1

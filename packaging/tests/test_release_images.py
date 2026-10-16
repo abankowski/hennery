@@ -58,3 +58,13 @@ class ReleaseImages(ReleaseFixture,unittest.TestCase):
         next(channel_publish.image_subjects(self.work,signatures))[-1].unlink()
         with patch.object(channel_publish.subprocess,'run',side_effect=crypto),self.assertRaises(gate.Refused):
             channel_publish.check_images(self.candidate,signatures,value,self.work)
+
+    def test_layer_change_between_verification_and_write_refuses(self):
+        value=contract.load(self.candidate)
+        self.helper.inspect_release(self.candidate,self.work,value)
+        signatures=self.root/'signatures';signatures.mkdir()
+        for *_,bundle in channel_publish.image_subjects(self.work,signatures):bundle.write_text('{}')
+        layer=next(p for p in (self.work/'layout/blobs/sha256').iterdir() if p.read_bytes().startswith(b'\x1f\x8b'))
+        layer.write_bytes(b'changed layer')
+        with patch.object(channel_publish.subprocess,'run',side_effect=AssertionError('crypto or registry reached')),self.assertRaises((gate.Refused,ValueError)):
+            channel_publish.check_images(self.candidate,signatures,value,self.work)

@@ -11,7 +11,7 @@ def workflow(name): return workflow_policy.load_workflow((ROOT/'.github/workflow
 
 class HomebrewWorkflows(unittest.TestCase):
     def test_channel_has_an_owning_aggregate_job_and_native_acceptance(self):
-        data=workflow('release-candidate.yml')
+        data=workflow('release.yml')
         self.assertEqual(workflow_policy.CHANNEL_JOB_IDS['homebrew'],'homebrew')
         job=data['jobs']['homebrew']
         self.assertEqual(job['name'],'homebrew')
@@ -37,53 +37,41 @@ class HomebrewWorkflows(unittest.TestCase):
         self.assertIn('homebrew-proof.sh',str(job))
         workflow_policy.check(data,'release-homebrew.yml')
 
-    def test_writer_exposes_tap_credential_only_after_signature_and_both_gates(self):
-        data=workflow('release-publish.yml'); job=data['jobs']['homebrew']
-        self.assertEqual(job['needs'],['github','authorize'])
-        self.assertEqual(job['permissions'],{'contents':'read','actions':'read'})
-        self.assertIn("vars.RELEASE_HOMEBREW_ENABLED == 'true'",job['if'])
-        steps=job['steps']
+    def test_writer_exposes_tap_credential_only_after_immutable_release_and_verifier(self):
+        data=workflow('release.yml');job=data['jobs']['publish'];steps=job['steps']
+        self.assertEqual(job['environment'],'release')
         credential=[i for i,s in enumerate(steps) if 'secrets.RELEASE_HOMEBREW_TOKEN' in str(s)]
         self.assertEqual(len(credential),1)
-        boundary=next(i for i,s in enumerate(steps) if s.get('with',{}).get('phase')=='boundary')
-        signature=next(i for i,s in enumerate(steps) if 'verify.py --candidate' in s.get('run',''))
-        self.assertLess(signature,boundary);self.assertLess(boundary,credential[0])
+        ids=[s.get('id') for s in steps]
+        self.assertLess(ids.index('github-publish'),ids.index('homebrew-verify'))
+        self.assertLess(ids.index('homebrew-verify'),credential[0])
+        self.assertIn("vars.RELEASE_HOMEBREW_ENABLED == 'true'",steps[credential[0]]['if'])
         self.assertNotIn('RELEASE_HOMEBREW_TOKEN',str(job.get('env',{})))
-        workflow_policy.check(data,'release-publish.yml')
+        workflow_policy.check(data,'release.yml')
 
-    def test_policy_refuses_early_credential_missing_integrity_or_switch(self):
-        data=workflow('release-publish.yml')
-        for kind in ('early','job-env','missing-signature','missing-byte-check','missing-switch','ignored-upload','skip-signature'):
-            changed=copy.deepcopy(data);job=changed['jobs']['homebrew'];steps=job['steps']
-            if kind=='early':
-                step=next(s for s in steps if 'secrets.RELEASE_HOMEBREW_TOKEN' in str(s));steps.remove(step);steps.insert(0,step)
-            elif kind=='job-env': job.setdefault('env',{})['HOMEBREW_TAP_TOKEN']='${{ secrets.RELEASE_HOMEBREW_TOKEN }}'
-            elif kind=='missing-signature': job['steps']=[s for s in steps if 'verify.py --candidate' not in s.get('run','')]
-            elif kind=='missing-byte-check': job['steps']=[s for s in steps if 'homebrew_publish.py --verify' not in s.get('run','')]
-            elif kind=='missing-switch': job['if']=workflow_policy.CREDENTIAL_CONDITION
-            elif kind=='ignored-upload': steps[-1]['continue-on-error']=True
-            else: next(s for s in steps if 'verify.py --candidate' in s.get('run',''))['if']='false'
-            with self.subTest(kind=kind),self.assertRaises(ValueError): workflow_policy.check(changed,'release-publish.yml')
+    def test_policy_refuses_each_missing_or_ignored_tap_boundary(self):
+        for kind in ('early','job-env','missing-verifier','missing-switch','ignored-upload','skip-verifier'):
+            data=workflow('release.yml');job=data['jobs']['publish'];steps=job['steps']
+            verify=next(s for s in steps if s.get('id')=='homebrew-verify')
+            upload=next(s for s in steps if s.get('id')=='homebrew-publish')
+            if kind=='early':steps.remove(upload);steps.insert(0,upload)
+            if kind=='job-env':job['env']={'TOKEN':'${{ secrets.RELEASE_HOMEBREW_TOKEN }}'}
+            if kind=='missing-verifier':steps.remove(verify)
+            if kind=='missing-switch':upload['if']='true'
+            if kind=='ignored-upload':upload['continue-on-error']=True
+            if kind=='skip-verifier':verify['if']='false'
+            with self.subTest(kind=kind),self.assertRaises(ValueError):workflow_policy.check(data,'release.yml')
 
-    def test_registered_homebrew_name_cannot_be_stolen_or_missing_when_selected(self):
-        data=workflow('release-candidate.yml');data['jobs'].pop('homebrew')
-        data['jobs']['ordinary']={'name':'homebrew','timeout-minutes':5,'steps':[{'run':'false'}]}
-        with self.assertRaises(ValueError): workflow_policy.check(data,'release-candidate.yml')
-
-
-    def test_workflow_level_credential_aliases_refuse_before_any_job(self):
+    def test_workflow_level_credential_aliases_refuse(self):
         for expression in ("${{ secrets.RELEASE_HOMEBREW_TOKEN }}", "${{ secrets.release_homebrew_token }}",
                            "${{ secrets['RELEASE_HOMEBREW_TOKEN'] }}", '${{ secrets["release_homebrew_token"] }}'):
-            data=workflow('release-publish.yml');data['env']={'HOMEBREW_TAP_TOKEN':expression}
-            with self.subTest(expression=expression),self.assertRaises(ValueError):workflow_policy.check(data,'release-publish.yml')
+            data=workflow('release.yml');data['env']={'TOKEN':expression}
+            with self.subTest(expression=expression),self.assertRaises(ValueError):workflow_policy.check(data,'release.yml')
 
-
-    def test_renamed_job_and_workflow_cannot_hide_an_early_tap_credential(self):
-        data=workflow('release-publish.yml')
-        job=data['jobs'].pop('homebrew');data['jobs']['tap-mirror']=job
-        steps=job['steps'];step=next(s for s in steps if 'secrets.RELEASE_HOMEBREW_TOKEN' in str(s))
-        steps.remove(step);steps.insert(0,step)
-        with self.assertRaises(ValueError): workflow_policy.check(data,'generated.yml')
-
-
-if __name__=='__main__': unittest.main()
+    def test_unrelated_read_only_job_cannot_hide_publication_secret(self):
+        import tempfile,shutil,yaml
+        for expression in ("${{ secrets.RELEASE_HOMEBREW_TOKEN }}","${{ secrets['release_homebrew_token'] }}"):
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);shutil.copytree(ROOT/'.github',root/'.github')
+                (root/'.github/workflows/other.yml').write_text(yaml.safe_dump({'on':'push','permissions':{'contents':'read'},'jobs':{'ordinary':{'runs-on':'ubuntu-24.04','steps':[{'env':{'TOKEN':expression},'run':'true'}]}}}))
+                with self.subTest(expression=expression),self.assertRaises(ValueError):workflow_policy.check_repository(root)

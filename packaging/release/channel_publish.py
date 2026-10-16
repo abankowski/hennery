@@ -74,6 +74,7 @@ def image_subjects(work,signatures):
 
 
 def check_images(root,signatures,value,work,remote=False):
+    image_helper().inspect_release(root,work,value)
     expected=gate.strict_json(contract.regular(root/'ghcr-index.json'))
     gate.require(gate.strict_json(contract.regular(work/'verified.json'))==expected,'working OCI descriptor differs')
     for _,_,digest,predicate,bundle in image_subjects(work,signatures):

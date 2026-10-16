@@ -4,10 +4,7 @@
 Only called by the protected manual workflow after live validation. This module
 has no side effects on import; offline tests replace the transport entirely.
 """
-import argparse
-import json
 import os
-from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -66,34 +63,6 @@ def plan(expected, assets):
     return {'complete': sorted(complete), 'missing': sorted(set(expected) - set(complete))}
 
 
-def validate_live(candidate, phase):
-    event = gate.strict_json(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())['inputs']
-    raw = (candidate / 'release-inventory.json').read_bytes()
-    inventory = gate.strict_json(raw)
-    gate.require(gate.digest(raw) == event['inventory_sha256'], 'candidate inventory changed at upload boundary')
-    gate.require(os.environ.get('GITHUB_REPOSITORY') == gate.REPOSITORY and os.environ.get('GITHUB_REF') == 'refs/tags/' + inventory['tag'] and os.environ.get('GITHUB_SHA') == inventory['source_sha']
-                 and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'untrusted publication context')
-    context = gate.binding(inventory, event['inventory_sha256'], int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']), event['settings_audit_sha256'])
-    for key in ('source_sha', 'tag', 'channels', 'targets', 'candidate'):
-        value = gate.strict_json(event[key]) if key in ('channels', 'targets', 'candidate') else event[key]
-        gate.require(value == inventory[key], 'dispatch approval changed')
-    gate.require('github' in inventory['channels'], 'GitHub channel not enabled')
-    import approval
-    proof = approval.verify_dispatch(candidate, event)
-    gate.require(proof['inventory_sha256'] == event['inventory_sha256'], 'maintainer signature differs at publication boundary')
-    receipt = gate.validate(inventory, event['inventory_sha256'], candidate, context, gate.GitHub(os.environ['GH_TOKEN']).evidence(inventory, context, gate.strict_json(event['settings_audit'])))
-    receipt['phase'] = phase
-    audit = Path('audit')
-    audit.mkdir(exist_ok=True)
-    path = audit / f'{phase}.json'
-    with path.open('xb') as output:
-        output.write(gate.canonical(receipt))
-    # An authenticated, append-only audit record exists before any public write.
-    import retention
-    retention.audit(path, os.environ['RELEASE_AUDIT_BUCKET'], context['publishing']['run_id'], context['publishing']['run_attempt'])
-    return inventory
-
-
 def release_assets(release):
     if release is None:
         return []
@@ -105,87 +74,3 @@ def release_assets(release):
         if len(result) < 100:
             return assets
     raise gate.Refused('incomplete release asset pagination')
-
-
-def recover_bundle(path, data):
-    if path.exists() or path.is_symlink():
-        gate.require(path.is_file() and not path.is_symlink() and path.read_bytes() == data, 'recovered bundle differs from verified remote bytes')
-    else:
-        with path.open('xb') as output:
-            output.write(data)
-    return path
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['reconcile', 'upload'])
-    parser.add_argument('--candidate', required=True, type=Path)
-    parser.add_argument('--signatures', required=True, type=Path)
-    parser.add_argument('--output', required=True, type=Path)
-    args = parser.parse_args()
-    inventory = gate.strict_json((args.candidate / 'release-inventory.json').read_bytes())
-    gate.verify_files(inventory, args.candidate)
-    # Signatures are verification sidecars, not inventory payloads (no cycles).
-    bundle = args.signatures / 'release.sigstore.jsonl'
-    gate.require(bundle.is_file() and not bundle.is_symlink(), 'downloadable attestation bundle missing')
-    import approval
-    approval_signature = args.signatures / 'release-inventory.json.asc'
-    proof = approval.verify(args.candidate / 'release-inventory.json', approval_signature)
-    gate.require(proof['inventory_sha256'] == gate.digest(gate.canonical(inventory)), 'maintainer approval differs from publication inventory')
-    tag_path = '/repos/' + gate.REPOSITORY + '/releases/tags/' + urllib.parse.quote(inventory['tag'], safe='')
-    release = api(tag_path)
-    if release is not None:
-        gate.require(release.get('tag_name') == inventory['tag'], 'remote release tag differs')
-        gate.require(release.get('draft') is True or release.get('immutable') is True, 'published release must be immutable')
-    assets = release_assets(release)
-    import verify
-    prior = [a for a in assets if a['name'] == 'release.sigstore.jsonl']
-    if prior:
-        gate.require(len(prior) == 1, 'duplicate remote attestation bundles')
-        # A retry reuses a cryptographically verified existing bundle rather
-        # than overwriting it with this attempt's different signing bytes.
-        data = asset_bytes(prior[0])
-        gate.require(data is not None, 'existing signature is unverifiable')
-        bundle = recover_bundle(args.signatures / 'recovered-release.sigstore.jsonl', data)
-        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], approval_signature=approval_signature)
-    else:
-        verify.verify(args.candidate, bundle, inventory['source_sha'], inventory['tag'], os.environ['GITHUB_SHA'], approval_signature)
-    files = {p.name: p for p in args.candidate.iterdir()}
-    files['release.sigstore.jsonl'] = bundle
-    files['release-inventory.json.asc'] = approval_signature
-    expected = {name: gate.digest(path.read_bytes()) for name, path in files.items()}
-    gate.require(expected['release-inventory.json.asc'] == proof['signature_sha256'], 'maintainer signature changed before publication')
-    reconciliation = plan(expected, release_assets(release))
-    if args.operation == 'upload':
-        require_enabled()
-        gate.require(release is None or release.get('draft') is True or not reconciliation['missing'], 'immutable published release is incomplete; use a new version')
-        if release is None:
-            validate_live(args.candidate, 'create-release')
-            release = api('/repos/' + gate.REPOSITORY + '/releases', method='POST', data=gate.canonical({
-                'tag_name': inventory['tag'], 'target_commitish': inventory['source_sha'], 'name': inventory['tag'],
-                'draft': True, 'prerelease': '-' in inventory['tag'], 'make_latest': 'false',
-                'body': (args.candidate / 'release-notes.md').read_text() + '\n\nSource: https://github.com/' + gate.REPOSITORY + '/tree/' + inventory['source_sha'] + '\nInventory SHA-256: ' + gate.digest((args.candidate / 'release-inventory.json').read_bytes()) + '\n\nGenerated with Claude AI — please review before distribution.'}))
-        for index, name in enumerate(reconciliation['missing']):
-            # Revalidate both the platform and all retained bytes for EACH write.
-            validate_live(args.candidate, f'upload-{index}')
-            data = files[name].read_bytes()
-            gate.require(gate.digest(data) == expected[name], 'upload bytes changed after approval')
-            api(f'/repos/{gate.REPOSITORY}/releases/{release["id"]}/assets?name=' + urllib.parse.quote(name, safe=''),
-                method='POST', data=data, content_type='application/octet-stream')
-            verified = plan(expected, release_assets(release))
-            gate.require(name in verified['complete'], 'upload acknowledgement did not produce matching remote bytes')
-        reconciliation = plan(expected, release_assets(release))
-        gate.require(not reconciliation['missing'], 'release incomplete; moving aliases and announcements remain held')
-        if release.get('draft') is True:
-            validate_live(args.candidate, 'publish-release')
-            release = api(f'/repos/{gate.REPOSITORY}/releases/{release["id"]}', method='PATCH', data=gate.canonical({'draft': False, 'make_latest': 'false'}))
-            gate.require(release.get('draft') is False and release.get('immutable') is True, 'release publication did not establish immutability')
-    with args.output.open('xb') as output:
-        output.write(gate.canonical(reconciliation))
-
-
-if __name__ == '__main__':
-    try:
-        main()
-    except (gate.Refused, OSError, KeyError, ValueError) as error:
-        raise SystemExit(f'release publication refused: {error}') from error

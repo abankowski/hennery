@@ -147,7 +147,7 @@ def main():
     import contract
     import tag_signature
     metadata = contract.load(args.payload)
-    signed_tag = tag_signature.verify(metadata['tag'], metadata['source_sha'], expected_object=metadata['tag_object'])
+    signed_tag = tag_signature.verify(metadata['tag'], metadata['source_sha'], object_sha=metadata['tag_object'])
     value = report(collect(gate.strict_json(args.observations.read_bytes())), metadata['channels']) | {'signed_tag': signed_tag}
     print(gate.canonical(value).decode())
     gate.require(input('Confirm the displayed API settings AND personally checked registry observations by typing ' + gate.REPOSITORY + ': ') == gate.REPOSITORY, 'maintainer settings confirmation absent')

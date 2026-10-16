@@ -184,7 +184,7 @@ class Settings(unittest.TestCase):
             observations=Path(tmp)/'observations.json';observations.write_text('{}')
             output=Path(tmp)/'acceptance.json'
             argv=['settings_audit.py','--payload',str(root),'--observations',str(observations),'--output',str(output)]
-            with patch.object(sys,'argv',argv),patch('tag_signature.verify',return_value={'verified':True}),patch.object(settings_audit,'collect',return_value=settings()),contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(sys,'argv',argv),patch('tag_signature.verify',autospec=True,return_value={'verified':True}),patch.object(settings_audit,'collect',return_value=settings()),contextlib.redirect_stdout(io.StringIO()):
                 with patch('builtins.input',return_value='no'),self.assertRaises(gate.Refused):settings_audit.main()
                 self.assertFalse(output.exists())
                 with patch('builtins.input',return_value=gate.REPOSITORY):settings_audit.main()

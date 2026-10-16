@@ -1,6 +1,6 @@
 #!/bin/sh
-# PR-only native candidate, using the same archive finalizer as release-candidate.
-# CI supplies the same pinned Rust toolchain/targets as release-candidate.
+# PR-only native candidate, using the same archive finalizer as release.yml.
+# CI supplies the same pinned Rust toolchain/targets as release.yml.
 # Local callers run inside the default Nix shell with one-off Python.
 set -eu
 TARGET=$1

@@ -18,7 +18,7 @@ brew --prefix hennery
 The formula verifies archive SHA-256 and installs the same executable, embedded
 UI, licence and third-party notices. The normal tap path trusts Homebrew, the
 tap and GitHub release hosting; it does not independently perform the README's
-hardware-inventory and Sigstore verification. Installation starts no service,
+signed-source tag, SHA256SUMS and exact tagged-workflow Sigstore verification. Installation starts no service,
 installs no agents and changes no login. A host may download its separately
 pinned runtime when the operator later joins or starts it.
 

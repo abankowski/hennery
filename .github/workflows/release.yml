@@ -701,6 +701,9 @@ jobs:
         GHCR_PUBLISH_USER: ${{ vars.GHCR_PUBLISH_USER }}
       run: nix develop .#release -c python3 packaging/release/release_run.py channel original/payload original/signatures
         ghcr
+    - name: Bootstrap token revocation obligation
+      if: ${{ always() && vars.RELEASE_CRATES_BOOTSTRAP_ENABLED == 'true' }}
+      run: echo 'Revoke and confirm revocation of the crates bootstrap token on success or abandonment; remove the secret and disable bootstrap before retries with trusted publishing.' >> "$GITHUB_STEP_SUMMARY"
     - name: Retain publication result
       if: always()
       run: echo "Publication attempt $GITHUB_RUN_ATTEMPT; original attesting attempt 1" >> "$GITHUB_STEP_SUMMARY"
