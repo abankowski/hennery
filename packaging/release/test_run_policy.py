@@ -55,6 +55,8 @@ class RunPolicy(unittest.TestCase):
             with self.subTest(mutation=mutation),self.assertRaises(gate.Refused):run_policy.validate(self.metadata,data,self.env,self.now)
 
     def test_selected_acceptance_cannot_be_missing_or_skipped(self):
+        meta=copy.deepcopy(self.metadata);meta['targets']=meta['targets'][:1]
+        with self.assertRaises(gate.Refused):run_policy.validate(meta,self.evidence,self.env,self.now)
         for channel in ['crates','ghcr','homebrew']:
             meta=copy.deepcopy(self.metadata);meta['channels']=sorted(['github',channel])
             with self.subTest(channel=channel),self.assertRaises(gate.Refused):run_policy.validate(meta,self.evidence,self.env,self.now)

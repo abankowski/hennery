@@ -15,6 +15,7 @@ import platform
 import subprocess
 
 import gate
+import contract
 import homebrew
 
 BREW_COMMIT = '00001bedf8eac442bdabd327148be0b97998b27b'  # Homebrew 4.6.18
@@ -62,9 +63,8 @@ def commit_formula(tap, formula, env, work, message):
 
 def run(candidate, work, brew_source=None):
     candidate, work = Path(candidate).resolve(), Path(work).resolve()
-    raw = (candidate / 'release-inventory.json').read_bytes()
-    inventory = gate.strict_json(raw)
-    gate.verify_files(inventory, candidate)
+    raw = (candidate / contract.CHECKSUMS).read_bytes()
+    inventory = contract.load(candidate)
     original = homebrew.check(candidate, inventory['tag'], inventory['targets']).decode()
     native = {('Darwin', 'arm64'): 'aarch64-apple-darwin', ('Linux', 'x86_64'): 'x86_64-unknown-linux-musl',
               ('Linux', 'aarch64'): 'aarch64-unknown-linux-musl'}.get((platform.system(), platform.machine()))
@@ -135,10 +135,10 @@ def run(candidate, work, brew_source=None):
     command('sh', '-eu', '-c', scripts['uninstall'])
     check_removed(prefix)
     gate.require(all(p.read_bytes() == b'operator-owned sentinel\n' for p in sentinels), 'package operation changed user data/service definitions')
-    gate.require((candidate / 'release-inventory.json').read_bytes() == raw, 'acceptance changed frozen inventory')
-    gate.verify_files(inventory, candidate)
+    gate.require((candidate / contract.CHECKSUMS).read_bytes() == raw and contract.load(candidate) == inventory,
+                 'acceptance changed frozen release')
     homebrew.check(candidate, inventory['tag'], inventory['targets'])
-    report = {'brew_commit': BREW_COMMIT, 'native': native, 'inventory_sha256': gate.digest(raw),
+    report = {'brew_commit': BREW_COMMIT, 'native': native, 'checksums_sha256': gate.digest(raw),
               'install': inventory['tag'][1:], 'old_fixture': '0.0.0', 'upgrade': inventory['tag'][1:],
               'source_sha': inventory['source_sha'], 'test': 'version/source/UI/notices',
               'uninstall': True, 'binary_unchanged': True, 'data_and_service_preserved': True}

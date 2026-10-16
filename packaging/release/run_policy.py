@@ -11,6 +11,7 @@ def integer(value):
 
 def validate(metadata, evidence, environment, now):
     contract.validate_metadata({k:v for k,v in metadata.items() if k!='artifacts'})
+    gate.require(metadata['targets']==sorted(gate.TARGETS), 'publication requires every qualified target')
     expected={'GITHUB_REPOSITORY':gate.REPOSITORY,'GITHUB_REF':'refs/tags/'+metadata['tag'],
               'GITHUB_SHA':metadata['source_sha'],'GITHUB_EVENT_NAME':'push',
               'GITHUB_WORKFLOW_REF':f'{gate.REPOSITORY}/{contract.WORKFLOW}@refs/tags/{metadata["tag"]}',

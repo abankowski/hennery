@@ -110,6 +110,31 @@ def inspect_candidate(candidate, work, raw):
     return actual
 
 
+def inspect_release(candidate, work, inventory):
+    # Data qualification is shared by the unprivileged aggregate and the
+    # publishing verifier. Only qualify() authenticates publication authority.
+    gate.require(not work.resolve().is_relative_to(candidate.resolve()), 'OCI working directory must be outside immutable candidate')
+    import contract
+    current = contract.load(candidate)
+    gate.require(current == inventory, "release OCI metadata changed")
+    gate.require('ghcr' in inventory['channels'] and set(TARGETS.values()) <= set(inventory['targets']), 'release needs GHCR and both Linux targets')
+    supply.verify_binary_inventory(inventory, candidate)
+    files = tar_files(retained_file(candidate, inventory, 'ghcr-oci-layout.tar'))
+    index = gate.strict_json(retained_file(candidate, inventory, 'ghcr-index.json'))
+    if work.exists():
+        gate.require(work.is_dir() and not work.is_symlink(), 'nonregular image working directory')
+    else:
+        work.mkdir(parents=True)
+    materialize_layout(work / 'layout', files)
+    binaries = {a: inventory['binaries'][t]['sha256'] for a, t in TARGETS.items()}
+    actual = descriptor(work / 'layout', binaries, inventory['source_sha'], inventory['tag'].removeprefix('v'))
+    gate.require(index == actual, 'release image descriptor differs from actual OCI')
+    metadata(work / 'verified.json', gate.canonical(actual))
+    metadata(work / 'binary-sha256.json', gate.canonical(binaries))
+    metadata(work / 'index-digest.txt', (actual['digest'] + '\n').encode())
+    return actual
+
+
 def accept(candidate, work, revision, version):
     candidate, work = Path(candidate), Path(work)
     raw = (candidate / 'release-inventory.json').read_bytes()

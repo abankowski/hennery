@@ -95,18 +95,19 @@ class Formula(unittest.TestCase):
         self.prepare()
         destination = self.root / 'proof'
         homebrew.freeze_proof(self.root, destination, self.tag, self.targets, 'a' * 40)
-        inventory = gate.strict_json((destination / 'release-inventory.json').read_bytes())
-        gate.verify_files(inventory, destination)
+        import contract
+        self.assertTrue((destination / 'SHA256SUMS').is_file())
+        inventory = contract.load(destination)
         self.assertEqual(inventory['channels'], ['github'])
         self.assertEqual(inventory['source_sha'], 'a' * 40)
         self.assertEqual((destination / 'hennery.rb').read_bytes(), self.path.read_bytes())
-        self.assertEqual(len(inventory['artifacts']), len(self.targets) + 1)
+        self.assertEqual(len(inventory['artifacts']), len(self.targets) + 2)
         with self.assertRaises(FileExistsError):
             homebrew.freeze_proof(self.root, destination, self.tag, self.targets, 'a' * 40)
         archive = destination / ('hennery-' + self.targets[0] + '.tar.xz')
         archive.write_bytes(b'changed')
         with self.assertRaises(gate.Refused):
-            gate.verify_files(inventory, destination)
+            contract.load(destination)
 
 
     def test_selected_channel_contract_checks_actual_formula_not_only_payload_names(self):

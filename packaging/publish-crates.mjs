@@ -90,13 +90,35 @@ export function r1Gate(args) {
   execFileSync(executable,['crates','--candidate',resolve(args.dir),'--inventory-sha256',args.rootDigest,'--phase',args.phase,'--receipt',receipt],{encoding:'utf8'});
   validate();
 }
+export function releaseCratesDigest(dir) {
+ const raw=fs.readFileSync(join(dir,'SHA256SUMS'),'utf8'),entries=new Map(),folded=new Set();
+ requireThat(raw.endsWith('\n'),'checksum newline missing');
+ for(const line of raw.slice(0,-1).split('\n')){
+  const match=/^([a-f0-9]{64})  ([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(line);
+  requireThat(match && !folded.has(match[2].toLowerCase()) && !['sha256sums','release.sigstore.jsonl'].includes(match[2].toLowerCase()),'invalid/duplicate checksum entry');
+  entries.set(match[2],match[1]);folded.add(match[2].toLowerCase());
+ }
+ requireThat([...entries.keys()].join('\n')===[...entries.keys()].sort().join('\n'),'checksum list unsorted');
+ const names=fs.readdirSync(dir).filter(n=>n!=='SHA256SUMS').sort();
+ requireThat(names.join('\n')===[...entries.keys()].join('\n'),'global checksum closure differs');
+ for(const name of names){const path=join(dir,name);requireThat(fs.lstatSync(path).isFile() && !fs.lstatSync(path).isSymbolicLink() && sha256(fs.readFileSync(path))===entries.get(name),'global payload differs: '+name);}
+ const root=readJSON(join(dir,'release-metadata.json')),inventory=readJSON(join(dir,'crates-inventory.json'));
+ requireThat(root.schema===2 && root.repository==='marcinwadon/hennery' && root.channels?.includes('crates') && root.channels.includes('github') && root.source_sha===inventory.source.sha && root.tag===`v${inventory.version}`,'release crate source/tag/channel differs');
+ requireThat(inventory.source.url===`https://github.com/marcinwadon/hennery/releases/download/${root.tag}/hennery-source-${root.source_sha}.tar.gz`,'release source URL differs');
+ verifyCandidate(dir,inventory);
+ return entries.get('crates-inventory.json');
+}
+export function releaseGate({dir,signatures}) {
+ const executable=resolve('packaging/release/release_run.py');
+ requireThat(fs.existsSync(executable),'release gate missing from trusted checkout');
+ const env={...process.env};for(const key of ['CARGO_REGISTRY_TOKEN','RELEASE_CRATES_BOOTSTRAP_TOKEN','GHCR_PUBLISH_TOKEN','HOMEBREW_TAP_TOKEN'])delete env[key];
+ execFileSync('python3',[executable,'verify',resolve(dir),resolve(signatures),'crates'],{encoding:'utf8',env});
+ return releaseCratesDigest(dir);
+}
 if(import.meta.url===pathToFileURL(process.argv[1]||'').href) {
-  requireThat(process.env.GITHUB_ACTIONS==='true','real publisher only runs through the protected R1 workflow');
-  const verify=process.argv[2]==='--verify',dir=resolve(process.argv[verify?3:2]),rootDigest=process.argv[verify?4:3];
-  const digest=signedCratesDigest(dir,rootDigest),gate=args=>r1Gate({...args,rootDigest});
-  if(verify) {
-    await preflight({dir,digest,gate});
-  } else {
-    await publishFrozen({dir,digest,gate,credentials:async()=>process.env.CARGO_REGISTRY_TOKEN});
-  }
+ requireThat(process.env.GITHUB_ACTIONS==='true','real publisher only runs in the protected tagged workflow');
+ const verifyOnly=process.argv[2]==='--verify',dir=resolve(process.argv[verifyOnly?3:2]),signatures=resolve(process.argv[verifyOnly?4:3]);
+ const digest=releaseCratesDigest(dir),gate=async()=>{requireThat(releaseGate({dir,signatures})===digest,'release crate manifest changed');};
+ if(verifyOnly)await preflight({dir,digest,gate});
+ else await publishFrozen({dir,digest,gate,credentials:async()=>process.env.CARGO_REGISTRY_TOKEN});
 }
