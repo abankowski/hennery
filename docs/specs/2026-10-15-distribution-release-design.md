@@ -23,6 +23,211 @@ without a Rust or JavaScript toolchain. Release that before taking on every
 package ecosystem. Nothing here creates an account, reserves a name, publishes
 an artifact, creates a tag, or enables an external automation.
 
+## Simplified release model (operator decision 2026-10-16)
+
+This section supersedes the candidate/qualification split, held candidate and
+audit storage, maintainer-signed inventory, approval-tuple protocol and upload
+App requirements in §§4.1, 6–8 and the R1/R3 hand-offs. Those passages describe
+the former model. The operator rejected AWS: no new storage service, account,
+App or recurring cost is authorized. Platform, licence/source, advisory,
+acceptance, channel and rollback obligations otherwise remain. Implementation
+is pending [release simplification](../plans/2026-11-04-release-simplify.md);
+this design amendment authorizes no publication.
+
+### Authorization and threat model
+
+The maintainer signs **source**, by creating an annotated `v<version>` tag with
+the YubiKey signing subkey `F26C7F594DFE84D131703AFC23E5A318AE8D2861`.
+Retain `tag_signature.py`: freshly fetch the tag object, require a direct commit
+target, exact tag/version/source binding and valid non-expired signature from
+that exact fingerprint in an isolated public-only keyring. The owner-only
+creation ruleset and no-bypass update/delete ruleset for `v*` are already live.
+An SSH push credential alone cannot produce an accepted signed release tag.
+
+GitHub/Sigstore attestations bind final **bytes** to the tagged workflow and
+source commit. They do not prove that those bytes were independently approved
+with the YubiKey, faithfully compiled, reproducible or harmless. The former
+model also trusted runners to build and check its inventory; this model
+explicitly drops the later hardware signature over the digest set. A compromised
+runner can substitute bytes and attest them, and the environment reviewer may
+not detect that. Signed source can itself contain malicious code/workflows;
+review the release commit and workflow before signing. Dependencies, compiler,
+hosted runners, GitHub/OIDC/Sigstore, verifier/tool supply chains, maintainer
+account/recovery and signing-key custody remain trust dependencies. Pinned SHAs,
+fresh cache-free builds, acceptance and narrow credentials reduce exposure;
+they do not eliminate these risks.
+
+Draft assets remain mutable until publication; verify them again at the write
+boundary. The protected `release` environment approval authorizes publication
+of that run, rather than a separately signed inventory. Immutability protects
+published assets, not availability or the integrity of other registries.
+Registry publication is not atomic across channels. There is no held backup of
+an unpublished run: missing/expired bytes cause refusal, never reconstruction
+under an old approval. No remote test can prove a physical YubiKey touch policy.
+
+### One run and its assets
+
+One `.github/workflows/release.yml`, triggered only by `push.tags: ['v*']`,
+performs the entire release. No merge, branch push, `workflow_run` or separate
+qualification/dispatch publishes. Concurrency is per tag, without cancellation.
+Every checkout uses the verified commit, disables persisted credentials and
+every action uses a pinned SHA; every job has a timeout. No restored build
+caches. Qualification runs at the tag SHA inside this run, including all
+existing Rust/web/generator, archive/installer/source/licence/advisory and
+selected-channel acceptance gates. Existing PR/main CI remains ordinary CI.
+
+Channel selection is a reviewed list in the signed source at
+`packaging/release/channels.json` (initially `["github"]`), validated through the
+existing channel registry. Preserve literal channel/job name ownership and
+collision refusal; unknown names, duplicate selection, missing owning job or
+failed/skipped selected acceptance refuse. First alpha remains GitHub-only.
+Selection and the corresponding enable switch must both permit a channel;
+other channels additionally require successful immutable GitHub publication.
+
+`SHA256SUMS` is the single global payload digest list: canonical SHA-256 entries
+with unique safe basenames for exactly all payload assets. Include platform
+archives, hardened installer, source archive(s), notices/SBOMs, formula, release
+metadata and selected-channel frozen `.crate`/OCI inputs. Retain necessary
+channel manifests, bound as payloads, without a second approval inventory.
+Release metadata records tag, tag object, commit, version, channels, targets and
+build run/attempt. Exclude `SHA256SUMS` itself and Sigstore bundles to avoid
+cycles; attest the checksum file separately and every payload. Bundle sidecars
+must verify, and any extra release asset outside these explicit classes refuses.
+Stage OCI layouts/index descriptors as digest-bound files before pushing;
+retained R4 acceptance must establish the connection to final registry digests.
+
+The intended job graph and complete permission budget are below. Unlisted token
+scopes are `none`; workflow default is `contents: read`. Build/acceptance jobs
+receive no publication secrets. `actions: read` is added only where run/job
+identity or artifact verification needs it. No publisher gets administration
+access or an AWS credential.
+
+| Job ID | Needs / role | Environment | Job token permissions beyond read-only contents | Secrets |
+|---|---|---|---|---|
+| `tag-signature` | Fresh signed tag, version/source and channel validation | none | none | none |
+| `qualification` | `tag-signature`; exact-SHA Rust/web/generator/Nix/source gates | none | none | none |
+| `web-ui` | `tag-signature`; locked UI build | none | none | none |
+| `archive` (native matrix) | `web-ui`; Linux x86_64/arm64 musl and macOS arm64 | none | none | none |
+| `crates` | `web-ui`; selected frozen seven-crate packaging/acceptance | none | none | none |
+| `ghcr` | `archive`; selected native OCI/index/SBOM acceptance | none | none | none |
+| `homebrew` | `assemble`; selected native formula acceptance | none | none | none |
+| `assemble` | `archive`, selected `crates`/`ghcr`; global assets and checksums | none | none | none |
+| `installer` (native matrix) | `assemble`; install/refusal checks on all three platforms | none | none | none |
+| `attest` | All required qualification/acceptance; attest final bytes/checksums | none | `id-token: write`, `attestations: write` | none |
+| `draft` | `attest`; upload complete verified draft and bundles | See draft authority review below | `contents: write` | built-in `GITHUB_TOKEN` only |
+| `publish` | `draft`; freshly download, verify, publish and require immutable state | `release` | `contents: write`, `attestations: read` | built-in `GITHUB_TOKEN` only |
+| `publish-homebrew` | `publish`; verify immutable assets then update tap create-only | `release` | `attestations: read` | `RELEASE_HOMEBREW_TOKEN` |
+| `publish-crates` | `publish`; verify immutable frozen tarballs then publish in dependency order | `release` | `attestations: read`, `id-token: write` for trusted publishing | temporary bootstrap secret only during first claiming; otherwise OIDC |
+| `publish-ghcr` | `publish`; verify immutable OCI inputs then push exact digests | `release` | `attestations: read` | `GHCR_PUBLISH_TOKEN` |
+
+**Draft authority review:** uploading a draft before the manual publish approval
+requires a separate job with `contents: write`; GitHub has no draft-only contents
+scope. The brief also confines that authority to the `release` environment.
+Pending the parent's ruling, do not implement an unprotected draft writer or
+assume a step can pause a job for environment approval. The two enforceable
+choices are a `draft` job also in `release` (potential extra approval), or an
+explicitly approved pre-environment writer exception. This is the sole open
+authority detail in this Phase A outline.
+
+Attestation authority intentionally precedes publication approval and is limited
+to the exact tagged workflow. Ordinary job permissions/OIDC exist at job start;
+they cannot be truthfully described as minted only after a script preflight.
+Keep attestations in a dedicated job. In the `publish` job, never pass its write
+token into build/acceptance code; verification precedes every mutating API call.
+Channel secrets are step-scoped only after verification; OIDC exchange and
+registry login also follow verification. Recheck files at each upload boundary.
+
+### Verification, publication and recovery
+
+Consumers, channel publishers and the README verify-then-run bootstrap must:
+
+1. Use independently trusted installed Git, GnuPG, `gh` and SHA-256 tools, and a
+   reviewed verifier/pinned public key. Never execute a release-supplied verifier
+   or installer to authenticate itself. Fetch/verify the annotated tag with the
+   pinned fingerprint before trusting executable code from its commit.
+2. Authenticate `SHA256SUMS` and each consumed payload with `gh attestation
+   verify`, pinned to `marcinwadon/hennery/.github/workflows/release.yml` and
+   certificate identity `https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/<exact-tag>`.
+   Also require `--source-ref refs/tags/<exact-tag>`, `--source-digest <verified-commit>`,
+   `--signer-digest <verified-commit>`, the GitHub Actions OIDC issuer, expected
+   provenance predicate and `--deny-self-hosted-runners`. `@refs/tags/v*` describes
+   the allowed identity family; instantiate the exact validated tag, never pass
+   a wildcard as an exact CLI identity or accept a branch signer. Downloadable
+   bundles permit verification without trusting an API lookup alone. These
+   identity/source constraints follow the [GitHub CLI verifier interface](https://cli.github.com/manual/gh_attestation_verify).
+3. Check the unique checksum entry for each consumed file before execution,
+   extraction or credential use. Publication verifies the entire draft asset
+   set against the attested list and expected selected-channel/target closure.
+   Re-fetch/reverify the tag, source/run binding and remote draft bytes directly
+   before publishing; require immutable state afterwards and verify public
+   assets again before permitting any channel job.
+
+Keep `RELEASE_PUBLICATION_ENABLED`, `RELEASE_GITHUB_ENABLED`,
+`RELEASE_HOMEBREW_ENABLED`, `RELEASE_CRATES_ENABLED` and `RELEASE_GHCR_ENABLED`
+as explicit string-`true` switches, default off. Selection does not enable them.
+`GHCR_PUBLISH_USER` is a non-secret environment variable. The optional temporary
+`RELEASE_CRATES_BOOTSTRAP_ENABLED` switch defaults off; it never falls back from
+a failed trusted-publisher exchange. No other storage/App/approval vars remain.
+
+Retries reverify retained exact bytes and renew any required environment
+approval; a retry may reconcile existing immutable public bytes but never
+rebuild or replace them. Match remote digests, count identical content as done,
+upload only authoritatively absent content, and stop on ambiguity or mismatch.
+If prepublication artifacts are lost, abandon that version and sign a new tag;
+after publication use the immutable release as the channel input. Never move a
+tag or repair a published release by adding assets. Keep create-only tap/version
+and GHCR digest refusal, crates download/index checksum matching and delayed
+moving aliases/announcements until the whole selected set succeeds.
+
+### Remaining maintainer setup
+
+- **Done, per operator:** `release` requires maintainer approval, permits only
+  `v*` tags and disables admin bypass; the two live tag rulesets restrict
+  creation to the owner and block update/delete; immutable releases are enabled.
+  Retain configuration checks and negative gate coverage, without claiming this
+  child inspected live settings.
+- **Signing:** maintain the pinned public key and independently corroborated
+  fingerprint; enable per-signature YubiKey touch (`on`), protect key/PIN and
+  recovery material and ensure no accessible software copy bypasses hardware.
+  The maintainer alone creates/signs/pushes release tags. No inventory signing.
+- **Homebrew:** keep the existing approved tap; put `RELEASE_HOMEBREW_TOKEN`,
+  scoped to that tap's contents only, in `release`. No upload App is needed.
+- **GHCR:** put the qualified dedicated `GHCR_PUBLISH_TOKEN` in `release` and
+  `GHCR_PUBLISH_USER` beside it as a variable. Keep package Actions access READ;
+  ordinary `GITHUB_TOKEN` must not gain registry write through inherited access.
+  Namespace/linkage/visibility and R4's live negative write acceptance remain
+  maintainer-owned. Publishers use no `packages: write` job token.
+- **crates.io bootstrap:** maintain verified account/email and recheck all seven
+  names before first claiming. On the first release selecting `crates`, the
+  maintainer creates an expiring publish-only token restricted to the seven
+  exact names (including first-create rights), stores it temporarily as
+  `RELEASE_CRATES_BOOTSTRAP_TOKEN` only in `release`, and explicitly enables
+  `RELEASE_CRATES_BOOTSTRAP_ENABLED` alongside the normal selection/switches.
+  After immutable GitHub publication the approved `publish-crates` job verifies
+  tag, checksums, attestations and public corresponding source **before** exposing
+  the token. Its existing frozen-byte API uploader sends the accepted `.crate`
+  bytes, never reruns `cargo publish` to repackage: proto, kernel, view, host,
+  gateway, sessions, then hennery, waiting for each exact index checksum before
+  dependants. Existing versions require download/hash equality; collisions,
+  ambiguity and unavailable source stop it. The upload framing is the documented
+  [Cargo registry API](https://doc.rust-lang.org/cargo/reference/registry-web-api.html#publish).
+  After all seven exist, configure **each** crate's trusted publisher with owner
+  `marcinwadon`, repository `hennery`, workflow `release.yml`, environment
+  `release`. Revoke the bootstrap token, confirm revocation, remove its secret
+  and turn the bootstrap switch off. Later jobs exchange OIDC only after the
+  same verification, use the temporary token and revoke it in cleanup. Missing
+  trust configuration fails; no bootstrap fallback. A partial bootstrap retries
+  only identical immutable inputs with renewed approval and a fresh scoped token.
+  This explicitly authorized first claiming supplies the initial token that
+  [crates.io requires before configuring trusted publishing](https://blog.rust-lang.org/2025/07/11/crates-io-development-update-2025-07/).
+
+Remove `retention.py` and its tests, S3 bucket/region/storage/audit keys,
+`release-staging`, `RELEASE_CANDIDATE_STORAGE_ENABLED`, all
+`RELEASE_PUBLISH_APP_*`, detached inventory signatures and their CLI/setup/audit
+protocol, and the separate candidate/qualification workflow. Keep no dormant
+storage fallback. All platform/settings/live publication actions above remain
+maintainer-only; negative offline tests do not establish live enforcement.
+
 ## 1. Inventory: what actually exists
 
 | Area | Evidence on the inventory base | Missing before publication |
