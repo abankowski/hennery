@@ -250,8 +250,8 @@ export interface SessionList extends Omit<SessionListSnapshot, 'store'> {
   all: ReadonlyMap<string, SessionSummary>
   /** What the list shows, in order. */
   shown: SessionSummary[]
-  /** `waiting`: the sessions of the hat waiting on a question (blocked, or
-   *  a question open): the tab title's and the header badge's number. */
+  /** `waiting`: the hat's sessions needing operator attention, including
+   *  status-only reports: the tab title's and the header badge's number. */
   counts: { waiting: number }
   /** More pages exist. */
   hasMore: boolean

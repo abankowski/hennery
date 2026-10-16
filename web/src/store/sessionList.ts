@@ -44,7 +44,7 @@ export interface ListState {
   /** The ids removed since this query's first page: a further page read
    *  before a removal never puts one back. A first page starts it over. */
   removed: ReadonlySet<string>
-  /** The server's count of the hat's sessions waiting on a question,
+  /** The server's count of the hat's sessions needing operator attention,
    *  whatever the query: the first page's, then each `waiting_changed`'s.
    *  Absent when the first page had none: the loaded rows are counted. */
   waiting?: number
@@ -134,7 +134,7 @@ export function shownOf(state: ListState, filters: ListFilters): SessionSummary[
 }
 
 /**
- * The sessions of the hat waiting on a question (`blocked || question_waits`):
+ * The sessions of the hat needing operator attention (`operator_attention > 0`):
  * the tab title's and the header badge's number, read by both through
  * `useSessionList().counts.waiting`. It is the hat's number, never a query's:
  * a search or a lifecycle filter leaves it as it was.
@@ -173,7 +173,7 @@ export function carryWaiting(held: ReadonlySet<string>, state: ListState, hat: s
   return ids
 }
 
-const isWaiting = (s: SessionSummary) => s.activity === 'blocked' || s.question_waits
+const isWaiting = (s: SessionSummary) => s.operator_attention !== undefined ? s.operator_attention > 0 : s.activity === 'blocked' || s.question_waits
 
 /** `held` with a page's rows: a row the stream sent later is kept. */
 function merge(held: Map<string, SessionSummary>, rows: readonly unknown[]): { all: Map<string, SessionSummary>; ids: string[] } {

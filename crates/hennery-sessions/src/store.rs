@@ -374,6 +374,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("delegation_schema.sql"),
     include_str!("delegation_delivery.sql"),
     include_str!("delegation_attention.sql"),
+    include_str!("family.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -1235,7 +1236,7 @@ const SESSION_ITEM_COLUMNS: &str = "id, host_id, agent, cwd, title, lifecycle, a
      presumed_parked, git_branch, git_dirty, model, mode, created_at, last_event_at, hat_id";
 
 /// A row of `SESSION_ITEM_COLUMNS` as a list item, as stored.
-fn read_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionItem> {
+pub(crate) fn read_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionItem> {
     Ok(SessionItem {
         session_id: r.get(0)?,
         host_id: r.get(1)?,
@@ -4400,7 +4401,7 @@ const GROUP_STARTS: &str = "SELECT event_id FROM events
 /// its `pending_id`.
 const PENDING_LAST_EVENT: &str = "SELECT MAX(event_id) FROM events
      WHERE session_id = ?1
-           AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'pending_resolved', 'pending_cancelled')
+           AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'answer_cancelled', 'pending_resolved', 'pending_cancelled')
            AND json_extract(body, '$.pending_id') = ?2 AND applied = 1 AND owner_id = ?3";
 
 /// A question's `pending_opened` event (`pending_opened_at`): the one its
@@ -4731,7 +4732,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT json_extract(body, '$.pending_id') AS pending_id FROM events
              WHERE session_id = ?1
-                   AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'pending_resolved',
+                   AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'answer_cancelled', 'pending_resolved',
                                 'pending_cancelled')
                    AND event_id > ?2 AND applied = 1 AND owner_id = ?3
              GROUP BY pending_id ORDER BY MIN(event_id)",

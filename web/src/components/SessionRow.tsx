@@ -65,12 +65,17 @@ export default function SessionRow({ session, selected, hostName, now }: Props) 
               <bdi>{hostName}</bdi>
             </span>
           )}
-          {(status.tone === 'attn' || status.tone === 'fail' || status.label === 'Host offline') && (
+          {(status.tone === 'attn' || status.tone === 'fail' || status.label === 'Host offline' || status.label === 'Waiting on children' || status.label === 'Parent is handling' || status.label === 'Answer pending delivery') && (
             <span className={'sess-flag sess-flag-' + status.tone}>{status.label}</span>
           )}
           {status.resume && <span className="sess-resume">Resume</span>}
         </div>
       </Link>
+      {session.family && <div className="sess-family">
+        {session.family.parent && <Link to={sessionPath(session.family.parent.session_id)}>Parent: <bdi>{session.family.parent.title || agentLabel(session.family.parent.agent)}</bdi></Link>}
+        {session.family.children.map(child => <Link key={child.session_id} to={sessionPath(child.session_id)}>Child: <bdi>{child.title || agentLabel(child.agent)}</bdi></Link>)}
+        {session.family.child_counts.total > session.family.children.length && <span>{session.family.child_counts.total} children</span>}
+      </div>}
       {reason && (
         <>
           <button type="button" className="sess-why" aria-expanded={why} onClick={() => setWhy((open) => !open)}>

@@ -223,14 +223,20 @@ describe('SessionView', () => {
     expect(s.of(STREAM)).toHaveLength(0)
   })
 
-  it('says so when the stream says the session was removed', async () => {
+  it('clears the transcript and related family links when the stream removes the session', async () => {
     const s = server({ pages: [() => json(page(rows(2, 't5')))] })
-    render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
+    const summary: SessionSummary = { ...detail('codex'), question_waits: false, operator_attention: 0, parent_handled_questions: 0,
+      family: { revision: 1, parent: { session_id: 'parent1', title: 'Related parent', agent: 'claude' }, children: [],
+        child_counts: { total: 0, active: 0, waiting: 0 }, attention: 0 } }
+    render(<SessionView id={ID} summary={summary} timing={FAST} />, { wrapper: s.wrapper })
     await screen.findByText('t5-1')
+    expect(await screen.findByRole('link', { name: 'Related parent', hidden: true })).toHaveAttribute('href', '/sessions/parent1')
     await waitFor(() => expect(s.streams).toHaveLength(1))
     act(() => s.streams[0].event('session_removed', { session_id: ID }))
     expect(await screen.findByRole('heading', { name: 'This session was deleted' })).toBeInTheDocument()
     expect(screen.queryByText('t5-1')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Session family' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Related parent', hidden: true })).toBeNull()
   })
 
   it.each([

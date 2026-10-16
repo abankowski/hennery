@@ -41,7 +41,8 @@ pub const SILENT_UPDATES: [&str; 5] = [
 
 /// Event kinds that make no item: the session's own state, shown by the
 /// session list and the header.
-pub const SILENT_EVENTS: [&str; 6] = [
+pub const SILENT_EVENTS: [&str; 7] = [
+    "family_changed",
     "session_started",
     "turn_started",
     "config_applied",
@@ -268,7 +269,7 @@ impl Fold {
         }
         match kind {
             "pending_opened" => return self.question_opened(event, answerable),
-            "answer_submitted" | "answer_result" | "pending_resolved" | "pending_cancelled" => {
+            "answer_submitted" | "answer_result" | "answer_cancelled" | "pending_resolved" | "pending_cancelled" => {
                 return self.question_changed(event, answerable);
             }
             _ => {}
@@ -359,7 +360,19 @@ impl Fold {
                         truncated |= cut_off;
                     }
                 }
-                self.create_ordinal(event, Body::UserTurn { content, truncated });
+                let origin = event
+                    .body
+                    .get("origin")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value(value).ok());
+                self.create_ordinal(
+                    event,
+                    Body::UserTurn {
+                        content,
+                        origin,
+                        truncated,
+                    },
+                );
             }
             Err(_) => self.unrecognised(event, "user_turn"),
         }
@@ -622,6 +635,17 @@ impl Fold {
         let now = answerable.answerable(pending_id);
         self.change(event, &question_id(pending_id), |body| match body {
             Body::Question(question) => {
+                if event.kind == "answer_cancelled" {
+                    // Only the collector can cancel an undispatched answer.
+                    // A handed-off/delivered or closed question never reopens.
+                    if question.state != PendingState::Open || question.delivered == Some(true) {
+                        return false;
+                    }
+                    question.answered = false;
+                    question.delivered = None;
+                    question.answerable = now;
+                    return true;
+                }
                 let mut changed = question.absorb(state, reason, answered, delivered);
                 changed |= question.answerable != now;
                 question.answerable = now;

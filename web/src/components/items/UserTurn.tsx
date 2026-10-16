@@ -1,6 +1,8 @@
 // The operator's prompt, shown exactly as sent: plain text with its line
 // breaks (no Markdown), and its images from the attachment store when they
 // are of a type the page shows.
+import { Link } from '../../router'
+import { sessionPath } from '../SessionRow'
 import { USER_LABEL } from '../../lib/agent'
 import { CutNote, Speaker } from './parts'
 import type { ItemEnv, ItemOf } from './types'
@@ -27,8 +29,12 @@ function Attachment({ mimeType, sha256 }: { mimeType: string; sha256: unknown })
 }
 
 export default function UserTurn({ item, env }: { item: ItemOf<'user_turn'>; env: ItemEnv }) {
+  const origin = item.origin
+  const source = origin?.kind === 'parent' ? origin.session_id : origin?.kind === 'child_report' ? origin.child_id : undefined
+  const label = origin?.kind === 'parent' ? 'Parent instruction' : origin?.kind === 'child_report' ? 'Child report' : origin?.kind === 'plugin_context' ? 'Plug-in context' : USER_LABEL
   return (
-    <Speaker who="user" label={USER_LABEL} ts={item.ts}>
+    <Speaker who={source ? 'agent' : 'user'} label={label} ts={item.ts}>
+      {source && <Link className="item-note" to={sessionPath(source)}>Source session</Link>}
       <div className="bubble user">
         {item.content.map((block, i) =>
           block.type === 'text' ? (
@@ -44,7 +50,7 @@ export default function UserTurn({ item, env }: { item: ItemOf<'user_turn'>; env
           ),
         )}
       </div>
-      {item.truncated && <CutNote sessionId={env.sessionId}>This prompt was cut.</CutNote>}
+      {item.truncated && <CutNote sessionId={env.sessionId}>{origin?.kind === 'child_report' ? 'This report was cut.' : origin?.kind === 'parent' ? 'This instruction was cut.' : 'This prompt was cut.'}</CutNote>}
     </Speaker>
   )
 }

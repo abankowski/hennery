@@ -55,6 +55,7 @@ fn reconcile_page(state: &AppState, cursors: &mut Reconciliation) -> anyhow::Res
         state
             .store
             .enqueue_delegation_attention(&state.push, &state.delegation_run, &cursors.notifications, now)?;
+    state.store.flush_family_changes(&state.hub)?;
     Ok(())
 }
 async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<()> {

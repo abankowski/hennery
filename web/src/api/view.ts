@@ -3,7 +3,7 @@
 // and the streams' paths. Every id in a path is encoded: ids are server
 // data, never trusted to be path-safe.
 import type { Client } from './client'
-import type { Item, ItemPage, SummaryPage, TurnContent } from '../generated/view'
+import type { FamilyPage, Item, ItemPage, SummaryPage, TurnContent } from '../generated/view'
 import type { SessionCatalog, SessionDetail } from '../generated/protocol'
 
 const enc = encodeURIComponent
@@ -101,4 +101,13 @@ export function listStreamPath(hat?: string | null): string {
 /** Where a stream resumes after a page: `<epoch>:<revision>`, opaque. */
 export function anchorOf(page: { epoch: string; revision: number }): string {
   return `${page.epoch}:${page.revision}`
+}
+
+/** Family pages are owner-authorized by the collector, like the view itself. */
+export function familyPage(client: Client, id: string, after?: string): Promise<FamilyPage> {
+  return client.request<FamilyPage>('GET', `/api/view/sessions/${enc(id)}/family${query({ after, limit: 20 })}`)
+}
+
+export function takeOver(client: Client, id: string): Promise<void> {
+  return client.request<void>('POST', `/api/view/sessions/${enc(id)}/takeover`, {})
 }

@@ -1,5 +1,30 @@
 {
   "$defs": {
+    "ChildCounts": {
+      "properties": {
+        "active": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "waiting": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total",
+        "active",
+        "waiting"
+      ],
+      "type": "object"
+    },
     "ContextEntry": {
       "additionalProperties": false,
       "properties": {
@@ -23,6 +48,214 @@
         "text",
         "source_refs",
         "provenance"
+      ],
+      "type": "object"
+    },
+    "FamilyChild": {
+      "properties": {
+        "operations": {
+          "description": "Latest 16 receipts, bounded independently of transcript size.",
+          "items": {
+            "$ref": "#/$defs/FamilyOperation"
+          },
+          "type": "array"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/FamilyQuestion"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routing": {
+          "type": "string"
+        },
+        "summary": {
+          "$ref": "#/$defs/SessionSummary"
+        }
+      },
+      "required": [
+        "summary",
+        "routing",
+        "operations",
+        "questions"
+      ],
+      "type": "object"
+    },
+    "FamilyLink": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "agent"
+      ],
+      "type": "object"
+    },
+    "FamilyOperation": {
+      "properties": {
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "pending_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "tool",
+        "state"
+      ],
+      "type": "object"
+    },
+    "FamilyPage": {
+      "properties": {
+        "children": {
+          "items": {
+            "$ref": "#/$defs/FamilyChild"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/FamilyQuestion"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routing": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/SessionSummary"
+        }
+      },
+      "required": [
+        "summary",
+        "children",
+        "questions"
+      ],
+      "type": "object"
+    },
+    "FamilyQuestion": {
+      "properties": {
+        "handling": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "pending_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "pending_id",
+        "kind",
+        "handling"
+      ],
+      "type": "object"
+    },
+    "FamilySummary": {
+      "properties": {
+        "attention": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "child_counts": {
+          "$ref": "#/$defs/ChildCounts"
+        },
+        "children": {
+          "description": "At most three children; the family route pages the rest.",
+          "items": {
+            "$ref": "#/$defs/FamilyLink"
+          },
+          "type": "array"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FamilyLink"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision",
+        "child_counts",
+        "children",
+        "attention"
       ],
       "type": "object"
     },
@@ -214,6 +447,16 @@
             "kind": {
               "const": "user_turn",
               "type": "string"
+            },
+            "origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InputOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "truncated": {
               "description": "A text block went past `TEXT_MAX_BYTES` and was cut there.",
@@ -909,6 +1152,16 @@
             "null"
           ]
         },
+        "family": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FamilySummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "git_branch": {
           "description": "The branch checked out in `cwd`, as the host last reported it.",
           "type": [
@@ -949,6 +1202,18 @@
             "string",
             "null"
           ]
+        },
+        "operator_attention": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "parent_handled_questions": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "presumed_parked": {
           "description": "Parked only because its host has been offline past the threshold\n(ACP core §5.3); the host may still be running it.",

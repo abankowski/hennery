@@ -298,6 +298,8 @@ describe('SessionView: a refused resume, in words', () => {
         created_at: '2026-10-02T09:00:00.000Z',
         last_event_at: '2026-10-02T10:00:00.000Z',
         question_waits: false,
+        operator_attention: 0,
+        parent_handled_questions: 0,
       }) as const
     const r = render(<SessionView id="s1" summary={summary('parked')} timing={FAST} />, { wrapper: s.wrapper })
     fireEvent.click(await screen.findByRole('button', { name: 'Resume' }, WAIT))

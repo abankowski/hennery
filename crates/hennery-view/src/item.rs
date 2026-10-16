@@ -39,6 +39,9 @@ pub enum Body {
     /// as attachments (`GET /api/attachments/{sha256}`).
     UserTurn {
         content: Vec<StoredBlock>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        origin: Option<hennery_proto::plugin::InputOrigin>,
         /// A text block went past `TEXT_MAX_BYTES` and was cut there.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         #[ts(optional, as = "Option<bool>")]

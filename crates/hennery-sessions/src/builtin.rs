@@ -236,6 +236,9 @@ enum IconTheme {
 struct Call {
     name: String,
     arguments: serde_json::Map<String, Value>,
+    /// MCP metadata is transport data, never caller identity or arguments.
+    #[serde(default, rename = "_meta")]
+    metadata: serde_json::Map<String, Value>,
 }
 
 async fn handle(
@@ -376,6 +379,9 @@ async fn handle(
             let Ok(call) = serde_json::from_value::<Call>(params) else {
                 return rpc_error(id, -32602, StatusCode::BAD_REQUEST);
             };
+            if serde_json::to_vec(&call.metadata).map_or(true, |bytes| bytes.len() > 16 * 1024) {
+                return rpc_error(id, -32602, StatusCode::BAD_REQUEST);
+            }
             let active = state.app.hub.is_ready(context.host_id())
                 && state
                     .app

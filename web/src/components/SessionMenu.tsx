@@ -19,6 +19,10 @@ import { ApiFailure } from '../api/errors'
 import { close, deleteSession, park } from '../api/turns'
 import { useClient } from '../app-client'
 import type { DeleteResult } from '../generated/protocol'
+import type { FamilySummary } from '../generated/view'
+import { Link } from '../router'
+import { agentLabel } from '../lib/agent'
+import { sessionPath } from './SessionRow'
 import { Icon } from '../lib/ui'
 import ConfirmDialog from './ConfirmDialog'
 import { closeRefusal, deleteRefusal, parkRefusal } from './sessionWords'
@@ -27,6 +31,8 @@ interface Props {
   id: string
   /** The session's lifecycle; undefined while unknown (Delete only). */
   lifecycle?: string
+  /** Already owner/hat-filtered family metadata from the current view. */
+  family?: FamilySummary
   /** The session's host announced the `park` capability. */
   canPark: boolean
   /** The session was deleted (`undefined`: a server that answers 204, or
@@ -37,7 +43,7 @@ interface Props {
   focusAfterDelete?: () => HTMLElement | null
 }
 
-export default function SessionMenu({ id, lifecycle, canPark, onDeleted, focusAfterDelete }: Props) {
+export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted, focusAfterDelete }: Props) {
   const client = useClient()
   const menuId = useId()
   const [open, setOpen] = useState(false)
@@ -169,6 +175,12 @@ export default function SessionMenu({ id, lifecycle, canPark, onDeleted, focusAf
             Its transcript, its questions and the images only it holds are deleted here for good. A running session is
             closed first.
           </p>
+          {family && <>
+            <p>Copies already delivered to related sessions remain in their transcripts. Those sessions are kept.</p>
+            <ul aria-label="Related sessions">
+              {[...(family.parent ? [family.parent] : []), ...family.children].map(related => <li key={related.session_id}><Link to={sessionPath(related.session_id)}><bdi>{related.title || agentLabel(related.agent)}</bdi></Link></li>)}
+            </ul>
+          </>}
           <p>The agent’s own transcript on the host is removed too, where the host can.</p>
         </ConfirmDialog>
       )}

@@ -24,6 +24,136 @@ const OTHER: &str = "owner-00000000000000b2";
 /// How long a test waits for anything the collector sends.
 const WAIT: Duration = Duration::from_secs(20);
 
+#[tokio::test]
+async fn family_pages_are_operator_only_scoped_and_paginated() {
+    let c = Collector::start().await;
+    let owner = c.owner();
+    let hennery_kernel::hats::HatChange::Done(hat) = c.state.hosts.create_hat("Family", None, 1).unwrap() else {
+        panic!()
+    };
+    c.session(&owner, "parent");
+    c.conn()
+        .execute("UPDATE sessions SET hat_id=?1 WHERE id='parent'", [&hat.id])
+        .unwrap();
+    for id in ["child-a", "child-b"] {
+        c.session(&owner, id);
+        c.conn()
+            .execute(
+                "UPDATE sessions SET lifecycle='starting',hat_id=?2 WHERE id=?1",
+                params![id, hat.id],
+            )
+            .unwrap();
+        c.conn()
+            .execute(
+                "INSERT INTO session_families(owner_id,child_id,parent_id,root_id,hat_id,created_event_id)
+            VALUES (?1,?2,'parent','parent',?3,0)",
+                params![owner, id, hat.id],
+            )
+            .unwrap();
+    }
+    c.other_owner("foreign-family");
+    let path = "/api/view/sessions/parent/family?limit=1";
+    assert_eq!(reqwest::get(c.url(path)).await.unwrap().status(), 401);
+    let page: Value = c
+        .client()
+        .get(c.url(path))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(page["children"].as_array().unwrap().len(), 1);
+    assert_eq!(page["children"][0]["summary"]["session_id"], "child-a");
+    assert_eq!(page["summary"]["family"]["child_counts"]["total"], 2);
+    let next: Value = c
+        .client()
+        .get(c.url("/api/view/sessions/parent/family?limit=1&after=child-a"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(next["children"][0]["summary"]["session_id"], "child-b");
+    assert!(next.get("next_cursor").is_none());
+    for id in ["foreign-family", "missing", "parent"] {
+        assert_eq!(
+            c.client()
+                .post(c.url(&format!("/api/view/sessions/{id}/takeover")))
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    for invalid in [json!([]), json!({"parent_id":"forged"})] {
+        assert_eq!(
+            c.client()
+                .post(c.url("/api/view/sessions/child-b/takeover"))
+                .json(&invalid)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
+    assert_eq!(
+        c.client()
+            .post(c.url("/api/view/sessions/child-b/takeover"))
+            .header("origin", "https://foreign.example")
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        c.client()
+            .post(c.url("/api/view/sessions/child-b/takeover"))
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    for id in ["foreign-family", "missing"] {
+        assert_eq!(
+            c.client()
+                .get(c.url(&format!("/api/view/sessions/{id}/family")))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    // Historical cross-hat edges never reveal the other endpoint, even to
+    // an operator's family panel for the old hat.
+    c.conn()
+        .execute("UPDATE sessions SET hat_id='moved' WHERE id='child-a'", [])
+        .unwrap();
+    let page: Value = c.client().get(c.url(path)).send().await.unwrap().json().await.unwrap();
+    assert_eq!(page["children"][0]["summary"]["session_id"], "child-b");
+    let moved: Value = c
+        .client()
+        .get(c.url("/api/view/sessions/child-a/family"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(moved["summary"]["family"].is_null());
+}
+
 struct Collector {
     addr: SocketAddr,
     state: AppState,
@@ -2315,7 +2445,7 @@ fn scripts_intact(items: &[Item], leg: &str) {
             .find(|i| i.id == id)
             .unwrap_or_else(|| panic!("{leg}: no {id} in {items:?}"))
     };
-    let Body::UserTurn { content, truncated } = &find("t2:0").body else {
+    let Body::UserTurn { content, truncated, .. } = &find("t2:0").body else {
         panic!("{leg}: a user turn");
     };
     assert!(!truncated, "{leg}");

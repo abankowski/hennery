@@ -48,6 +48,7 @@ import { ANSWER_LABEL, answerAsMessage } from '../components/composerWords'
 import SessionFooter from '../components/SessionFooter'
 import SessionHeader, { type HeaderInfo } from '../components/SessionHeader'
 import McpDelivery from '../components/McpDelivery'
+import FamilyPanel from '../components/FamilyPanel'
 import { Text } from '../lib/text'
 import { useMcpDelivery } from '../hooks/useMcpDelivery'
 import SessionMenu from '../components/SessionMenu'
@@ -55,7 +56,7 @@ import { deleteNotes } from '../components/sessionWords'
 import Transcript from '../components/Transcript'
 import type { ItemEnv } from '../components/items/types'
 import type { Capabilities, DeleteResult, SessionDetail } from '../generated/protocol'
-import type { SessionSummary } from '../generated/view'
+import type { FamilyPage, SessionSummary } from '../generated/view'
 import type { Item } from '../generated/view'
 import { useAnnouncement } from '../hooks/useAnnouncement'
 import { isAnswerable } from '../lib/delivery'
@@ -231,7 +232,10 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   const client = useClient()
   const s = useSessionItems(id, timing)
   const mcp = useMcpDelivery(id, summary?.lifecycle, Math.max(0, s.loads - 1))
-  const info = useHeaderInfo(id, summary, awaitSummary, mcp.detail)
+  const [familyRead, setFamilyRead] = useState<{ id: string; page: FamilyPage } | null>(null)
+  const onFamilyPage = useCallback((page: FamilyPage) => setFamilyRead({ id, page }), [id])
+  const family = familyRead?.id === id && (!summary || (summary.hat_id === familyRead.page.summary.hat_id && summary.family?.revision === familyRead.page.summary.family?.revision)) ? familyRead.page : null
+  const info = useHeaderInfo(id, summary ?? family?.summary, awaitSummary, mcp.detail)
   const { search } = useLocation()
   const requested = new URLSearchParams(search).get('pending')
   const legacy = mcp.detail?.pending?.find(p => p.state === 'open' && !p.answered)?.pending_id
@@ -260,7 +264,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   const hats = useMemo(() => namesOf(hatItems, 'id'), [hatItems])
   const plan = useMemo(() => latestPlan(s.items), [s.items])
   const startNotice = useStartNotice(id)
-  const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion)
+  const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion, s.pinned)
   const announcement = useAnnouncement(answers)
   const hostAway = useHostAway(answers)
 
@@ -303,11 +307,12 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
       agent: agentLabel(info?.agent),
       hatName: (hat: string) => hats.get(hat),
       answers,
+      familyQuestions: family?.questions,
       onSendAgain,
       onAnswerAsMessage,
       composerEmpty,
     }),
-    [id, info?.agent, hats, answers, onSendAgain, onAnswerAsMessage, composerEmpty],
+    [id, info?.agent, hats, answers, family?.questions, onSendAgain, onAnswerAsMessage, composerEmpty],
   )
 
   // A deleted session's draft and images can never be sent: drop them, and
@@ -363,12 +368,14 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
           <SessionMenu
             id={id}
             lifecycle={info?.lifecycle}
+            family={info?.family}
             canPark={capabilities?.includes('park') ?? false}
             onDeleted={onDeleted}
             focusAfterDelete={() => back.current}
           />
         }
       />
+      <FamilyPanel key={id} id={id} summary={summary} hosts={hosts} resync={Math.max(0, s.loads - 1)} onPage={onFamilyPage} />
       <McpDelivery agent={info?.agent ?? mcp.detail?.agent} delivery={mcp.detail?.mcp_delivery} />
       {mcp.error && <p className="form-error"><Text>{mcp.error}</Text></p>}
       <div className="stream-state" role="status">

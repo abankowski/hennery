@@ -29,6 +29,8 @@ function summary(id: string, patch: Partial<SessionSummary> = {}): SessionSummar
     created_at: '2026-10-01T00:00:00.000Z',
     last_event_at: '2026-10-02T10:00:00.000Z',
     question_waits: false,
+    operator_attention: patch.question_waits || patch.activity === 'blocked' ? 1 : 0,
+    parent_handled_questions: 0,
     ...patch,
   }
 }
@@ -326,7 +328,7 @@ describe('the waiting count', () => {
     const { container } = render(<App fetchImpl={s.fetch} />)
     await waitFor(() => expect(document.title).toBe('(1) hennery'))
     const bar = container.querySelector('.mtopbar') as HTMLElement
-    expect(within(bar).getByRole('status', { name: '1 waiting on a question' })).toHaveTextContent('1')
+    expect(within(bar).getByRole('status', { name: '1 waiting on you' })).toHaveTextContent('1')
   })
 
 
@@ -346,12 +348,12 @@ describe('the waiting count', () => {
     render(<App fetchImpl={s.fetch} />)
     await waitFor(() => expect(document.title).toBe('(2) hennery'))
     const rail = await screen.findByRole('complementary', { name: 'Views' })
-    expect(within(rail).getByRole('status', { name: '2 waiting on a question' })).toHaveTextContent('2')
+    expect(within(rail).getByRole('status', { name: '2 waiting on you' })).toHaveTextContent('2')
     await waitFor(() => expect(s.streams).toHaveLength(1))
     act(() => s.streams[0].event('session_upsert', summary('blocked', { activity: 'running' }), 'e1:2'))
     act(() => s.streams[0].event('session_upsert', summary('asks'), 'e1:3'))
     await waitFor(() => expect(document.title).toBe('hennery'))
-    expect(within(rail).queryByRole('status', { name: /waiting on a question/ })).not.toBeInTheDocument()
+    expect(within(rail).queryByRole('status', { name: /waiting on you/ })).not.toBeInTheDocument()
   })
 
   // The fallback (pages with no `waiting`): the hat's rows, a search's
@@ -371,7 +373,7 @@ describe('the waiting count', () => {
     const bar = container.querySelector('.mtopbar') as HTMLElement
     const counted = () => {
       expect(document.title).toBe('(1) hennery')
-      expect(within(bar).getByRole('status', { name: '1 waiting on a question' })).toHaveTextContent('1')
+      expect(within(bar).getByRole('status', { name: '1 waiting on you' })).toHaveTextContent('1')
     }
     await waitFor(() => expect(names(region)).toEqual(['calm', 'asks']))
     counted()
@@ -423,7 +425,7 @@ describe('the waiting count', () => {
     const bar = container.querySelector('.mtopbar') as HTMLElement
     const counted = () => {
       expect(document.title).toBe('(3) hennery')
-      expect(within(bar).getByRole('status', { name: '3 waiting on a question' })).toHaveTextContent('3')
+      expect(within(bar).getByRole('status', { name: '3 waiting on you' })).toHaveTextContent('3')
     }
     await waitFor(() => expect(names(region)).toEqual(['calm', 'asks']))
     counted()
@@ -463,7 +465,7 @@ describe('the waiting count', () => {
     )
     expect(names(region)).toEqual([])
     expect(document.title).toBe('(3) hennery')
-    expect(within(bar).getByRole('status', { name: '3 waiting on a question' })).toHaveTextContent('3')
+    expect(within(bar).getByRole('status', { name: '3 waiting on you' })).toHaveTextContent('3')
   })
 
   it('follows waiting_changed, never an upsert, while a search is set', async () => {
@@ -912,4 +914,16 @@ describe('the list stream, as the list shows it', () => {
     expect(await within(region).findByRole('status')).toHaveTextContent('Reconnecting…')
     expect(names(region)).toEqual(['a'])
   })
+})
+
+it('counts status-only operator attention while excluding parent-handled questions, with truthful badge words', async () => {
+  at('/sessions')
+  const s = server({ list: () => page([
+    summary('failed', { lifecycle: 'failed', question_waits: false, operator_attention: 1 }),
+    summary('handled', { question_waits: true, operator_attention: 0, parent_handled_questions: 1 }),
+  ]) })
+  const { container } = render(<App fetchImpl={s.fetch} />)
+  await waitFor(() => expect(document.title).toBe('(1) hennery'))
+  const bar = container.querySelector('.mtopbar') as HTMLElement
+  expect(within(bar).getByRole('status', { name: '1 waiting on you' })).toHaveTextContent('1')
 })

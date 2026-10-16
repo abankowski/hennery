@@ -90,7 +90,7 @@ describe('SessionView: the host’s reach on a question card', () => {
     expect(await screen.findByText(NOTE, { exact: true }, WAIT)).toBeInTheDocument()
   })
 
-  it('the summary’s presumed_parked, as a session_upsert changes it, turns the note on and off, refreshing metadata only on the running transition', async () => {
+  it('the summary’s presumed_parked, as a session_upsert changes it, turns the note on and off, refreshing host metadata on the running transition and family metadata on both transitions', async () => {
     const s = server(true)
     const summary = (presumed_parked: boolean): SessionSummary =>
       ({
@@ -105,6 +105,8 @@ describe('SessionView: the host’s reach on a question card', () => {
         created_at: '2026-10-02T09:00:00.000Z',
         last_event_at: TS,
         question_waits: true,
+        operator_attention: 1,
+        parent_handled_questions: 0,
       }) as SessionSummary
     const r = render(<SessionView id="s1" summary={summary(false)} timing={FAST} />, { wrapper: s.wrapper })
     await settled(s)
@@ -116,6 +118,7 @@ describe('SessionView: the host’s reach on a question card', () => {
 
     r.rerender(<SessionView id="s1" summary={summary(false)} timing={FAST} />)
     await waitFor(() => expect(screen.queryByText(NOTE, { exact: true })).toBeNull(), WAIT)
-    expect(s.calls.length).toBe(calls + 1)
+    expect(s.calls.length).toBe(calls + 3)
+    expect(s.of('/api/view/sessions/s1/family')).toHaveLength(3)
   })
 })

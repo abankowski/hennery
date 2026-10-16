@@ -153,7 +153,7 @@ for (const width of [1280, 390]) {
     test('the agent’s permission question is answered from its card', async () => {
       const card = page.getByRole('region', { name: 'Question from Claude', exact: true })
       await expect(card.getByText('Write notes.txt', { exact: true })).toBeVisible({ timeout: 15_000 })
-      await expect(page.locator('.session-head .badge')).toHaveText('Waiting on a question')
+      await expect(page.locator('.session-head .badge')).toHaveText('Waiting on you')
       await card.getByRole('button', { name: 'Allow', exact: true }).click()
       await expect(card.getByText('Answered', { exact: true })).toBeVisible()
       await expect(card.getByRole('button')).toHaveCount(0)

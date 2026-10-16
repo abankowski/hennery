@@ -16,6 +16,48 @@ use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use std::sync::Arc;
 const ORIGIN: &str = "https://hennery.example";
+
+#[tokio::test]
+async fn pinned_codex_tool_metadata_does_not_change_caller_authority() {
+    let h = Harness::new().await;
+    let call = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+        "name":"session_spawn","arguments":{},"_meta":{"progressToken":1,"callId":"call",
+            "threadId":"thread","itemId":"item","x-codex-turn-metadata":{"turn_id":"turn"}}}});
+    let actual = h.rpc(call.clone()).await;
+    assert_eq!(actual["result"]["structuredContent"]["code"], "session_starting");
+    h.state
+        .store
+        .ingest(
+            "session",
+            1,
+            &hennery_proto::frames::SessionBody::session_started("r", "agent"),
+        )
+        .unwrap();
+    let actual = h.rpc(call.clone()).await;
+    assert_eq!(actual["result"]["structuredContent"]["code"], "invalid_arguments");
+    for meta in [json!([]), json!(null), json!("x"), json!({"large":"x".repeat(16*1024)})] {
+        let mut wrong = call.clone();
+        wrong["params"]["_meta"] = meta;
+        let response = h.post(serde_json::to_vec(&wrong).unwrap()).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"], -32602);
+    }
+    // Keys decode exactly once, including escapes, and duplicate keys remain
+    // refused by the transport before metadata can reach a handler.
+    let bytes = serde_json::to_string(&call).unwrap();
+    let escaped = bytes.replace("\"_meta\"", "\"\\u005fmeta\"");
+    assert_eq!(h.post(escaped).await.status(), StatusCode::OK);
+    let duplicate = bytes.replace("\"_meta\":", "\"_meta\":{},\"\\u005fmeta\":");
+    assert_eq!(h.post(duplicate).await.status(), StatusCode::BAD_REQUEST);
+    let wrong_case = bytes.replace("\"_meta\"", "\"_META\"");
+    assert_eq!(h.post(wrong_case).await.status(), StatusCode::BAD_REQUEST);
+    let mut forged = call;
+    forged["params"]["caller"] = "other".into();
+    assert_eq!(
+        h.post(serde_json::to_vec(&forged).unwrap()).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+}
 struct Harness {
     _dir: tempfile::TempDir,
     state: AppState,

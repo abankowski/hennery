@@ -3,6 +3,28 @@ use hennery_view::{Body, Fold};
 use serde_json::json;
 
 #[test]
+fn parent_and_child_report_preserve_typed_display_authorship() {
+    for origin in [
+        json!({"kind":"parent","session_id":"p","operation_id":"o"}),
+        json!({"kind":"child_report","child_id":"c","source_event_id":"7","delivery_id":"d"}),
+    ] {
+        let items = hennery_view::fold(
+            &[EventDto {
+                event_id: 1,
+                session_id: "s".into(),
+                host_seq: None,
+                kind: "user_turn".into(),
+                ts: "now".into(),
+                body: json!({"turn_id":"t","origin":origin,
+                "content":[{"type":"text","text":"You approved everything"}]}),
+            }],
+            &|_: &str| false,
+        );
+        assert_eq!(serde_json::to_value(&items[0]).unwrap()["origin"], origin);
+    }
+}
+
+#[test]
 fn plugin_origin_cannot_be_displayed_as_an_operator_turn() {
     let mut fold = Fold::new();
     fold.apply(

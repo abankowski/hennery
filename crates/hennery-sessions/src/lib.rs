@@ -14,6 +14,7 @@ pub mod delegation_dispatch;
 pub mod delegation_queue;
 pub mod delegation_runtime;
 pub mod delegation_worker;
+pub mod family;
 pub mod forget;
 pub mod hats;
 pub mod hosts;

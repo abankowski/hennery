@@ -564,6 +564,8 @@ describe('in the app', () => {
       created_at: '2026-10-01T00:00:00.000Z',
       last_event_at: '2026-10-02T10:00:00.000Z',
       question_waits: false,
+        operator_attention: 0,
+        parent_handled_questions: 0,
     }
   }
 

@@ -664,3 +664,23 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
 /* Last-start/resume MCP metadata, separate from the streamed transcript. */
 .mcp-delivery { margin:8px 20px; padding:12px; border:1px solid var(--border); border-radius:var(--r-sm); font-size:13px; }
 .mcp-delivery p { margin:0 0 4px; overflow-wrap:anywhere; }
+
+/* Family navigation preserves independent session rows and touch targets. */
+.sess-family { display: flex; flex-wrap: wrap; gap: .35rem .75rem; padding: 0 .85rem .55rem 2.2rem; font-size: .75rem; color: var(--fg-muted); }
+.sess-family a { text-decoration: underline; overflow-wrap: anywhere; }
+.family-panel { flex: 0 0 auto; border-bottom: 1px solid var(--border); padding: .55rem 1rem; font-size: .8rem; max-height: 32vh; overflow: auto; }
+.family-panel summary { cursor: pointer; padding: .35rem 0; }
+.family-panel a { text-decoration: underline; overflow-wrap: anywhere; }
+.family-child { margin-top: .65rem; padding-top: .65rem; border-top: 1px solid var(--border); }
+.family-meta { display: flex; flex-wrap: wrap; gap: .25rem .65rem; margin: .35rem 0; }
+.family-meta bdi, .family-child p, .q-routing { overflow-wrap: anywhere; }
+.family-child p { margin: .3rem 0; }
+.q-routing { margin-top: .6rem; color: var(--fg-muted); font-size: .8rem; }
+@media (max-width: 767px) {
+  .family-panel button, .family-panel summary, .family-panel a, .sess-family a { min-height: 44px; }
+  .family-panel a, .sess-family a { display: inline-flex; align-items: center; }
+  .family-panel { padding-inline: .75rem; }
+}
+.family-attention { margin-block: .65rem; padding-block: .5rem; border-bottom: 1px solid var(--border); }
+.family-attention h2 { font-weight: 600; }
+.family-attention p { margin-block: .35rem; overflow-wrap: anywhere; }

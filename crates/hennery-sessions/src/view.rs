@@ -47,14 +47,14 @@ use axum::routing::get;
 use axum::{Json, Router};
 use futures::StreamExt;
 use hennery_kernel::operator::Authenticated;
-use hennery_proto::rest::{EventDto, SessionItem};
+use hennery_proto::rest::EventDto;
 use hennery_view::api::{
     SessionRemoved, SessionSummary, SummaryPage, TurnContent, WaitingChanged, anchor, parse_anchor,
 };
 use hennery_view::cap::{GROUP_MAX_QUESTIONS, ID_MAX_BYTES};
 use hennery_view::{Body, Fold, Item, group_key, question_id};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -109,6 +109,8 @@ pub fn router(state: AppState) -> Router {
     let routes = Router::new()
         .route("/api/view/sessions", get(summaries))
         .route("/api/view/sessions/{id}", get(page))
+        .route("/api/view/sessions/{id}/family", get(family))
+        .route("/api/view/sessions/{id}/takeover", axum::routing::post(takeover))
         .route("/api/view/sessions/{id}/questions/{pending_id}", get(question_card))
         .route("/api/view/sessions/{id}/turns/{turn_id}", get(undelivered_turn))
         .route("/api/stream/view/sessions/{id}", get(item_stream))
@@ -132,6 +134,55 @@ fn not_found() -> Response {
     error(StatusCode::NOT_FOUND, "not_found", "no such session")
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FamilyParams {
+    #[serde(default)]
+    after: String,
+    limit: Option<u32>,
+}
+async fn family(State(state): State<AppState>, Path(id): Path<String>, Query(q): Query<FamilyParams>) -> Response {
+    if id.len() > 128 || q.after.len() > 128 {
+        return error(StatusCode::BAD_REQUEST, "invalid_arguments", "invalid arguments");
+    }
+    match state
+        .store
+        .family_page(&id, &q.after, q.limit.unwrap_or(20).clamp(1, 100))
+    {
+        Ok(Some(page)) => Json(page).into_response(),
+        Ok(None) => not_found(),
+        Err(err) => internal(err),
+    }
+}
+struct Takeover {}
+impl<'de> Deserialize<'de> for Takeover {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let fields = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        if fields.is_empty() {
+            Ok(Self {})
+        } else {
+            Err(serde::de::Error::custom("expected an empty object"))
+        }
+    }
+}
+async fn takeover(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    hennery_kernel::json::ApiJson(request): hennery_kernel::json::ApiJson<serde_json::Value>,
+) -> Response {
+    if serde_json::from_value::<Takeover>(request).is_err() {
+        return error(StatusCode::BAD_REQUEST, "invalid_arguments", "expected an empty object");
+    }
+    if id.len() > 128 {
+        return not_found();
+    }
+    match state.store.take_over_child(&id, &state.hub) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(err) => internal(err),
+    }
+}
+
 async fn question_card(State(state): State<AppState>, Path((id, pending_id)): Path<(String, String)>) -> Response {
     match stored_question(&state.store, &id, &pending_id) {
         Ok(Some(item)) => Json(item).into_response(),
@@ -152,30 +203,26 @@ async fn summaries(State(state): State<AppState>, Query(params): Query<ListParam
         // meanwhile is sent again rather than missed.
         let revision = state.store.max_event_id()?;
         let page = state.store.list(&filter.query())?;
-        let waiting = state.store.sessions_waiting()?;
         Ok(SummaryPage {
-            sessions: page.sessions.into_iter().map(|s| summary(s, &waiting)).collect(),
+            sessions: page
+                .sessions
+                .into_iter()
+                .map(|s| state.store.family_summary(&s.session_id))
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect(),
             next_cursor: page.next_cursor,
             revision,
             epoch: epoch().to_string(),
             // The hat's alone of the filters: the count is the list's
             // whole, not the page's.
-            waiting: state.store.waiting_count(filter.hat())?,
+            waiting: state.store.operator_waiting_count(filter.hat())?,
         })
     };
     match page() {
         Ok(page) => Json(page).into_response(),
         Err(err) => internal(err),
-    }
-}
-
-/// A list item as a summary: `waiting` holds the sessions with an open
-/// question.
-fn summary(session: SessionItem, waiting: &HashSet<String>) -> SessionSummary {
-    let question_waits = waiting.contains(&session.session_id);
-    SessionSummary {
-        session,
-        question_waits,
     }
 }
 
@@ -195,6 +242,11 @@ async fn page(State(state): State<AppState>, Path(id): Path<String>, Query(param
     match state.store.find_session_item(&id) {
         Ok(Some(_)) => {}
         Ok(None) => return not_found(),
+        Err(err) => return internal(err),
+    }
+    match state.store.session_scope_frozen(&id) {
+        Ok(true) => return not_found(),
+        Ok(false) => {}
         Err(err) => return internal(err),
     }
     let limit = match params.limit.as_deref().map(str::parse::<u32>) {
@@ -638,6 +690,11 @@ impl ItemStream {
         mut doorbell: broadcast::Receiver<EventDto>,
         tx: &Outbox,
     ) -> Result<()> {
+        let mut scope_revision = self.store.view_scope_revision()?;
+        if self.store.session_scope_frozen(&self.id)? {
+            tx.send(removed(&self.id)?).await;
+            return Ok(());
+        }
         let Some(burst) = self.resume(anchor, RESUME_MAX_BYTES)? else {
             // Sent once, then the stream ends; a reader gone is no error.
             tx.send(resync()).await;
@@ -650,10 +707,22 @@ impl ItemStream {
             tx.send(removed(&self.id)?).await;
             return Ok(());
         }
+        let mut scope_tick = tokio::time::interval(Duration::from_secs(1));
+        scope_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             let flush_at = self.held.map(|held| held + COALESCE);
             tokio::select! {
                 () = tx.closed() => return Ok(()),
+                _ = scope_tick.tick() => {
+                    let current = self.store.view_scope_revision()?;
+                    if current != scope_revision {
+                        if self.store.session_scope_frozen(&self.id)? {
+                            tx.send(removed(&self.id)?).await;
+                            return Ok(());
+                        }
+                        scope_revision = current;
+                    }
+                },
                 rung = doorbell.recv() => match rung {
                     Ok(event) if event.session_id != self.id => continue,
                     // Lagged: whatever it skipped is in the store.
@@ -947,7 +1016,12 @@ fn is_chunk(event: &EventDto) -> bool {
 fn question_event(event: &EventDto) -> Option<&str> {
     matches!(
         event.kind.as_str(),
-        "pending_opened" | "answer_submitted" | "answer_result" | "pending_resolved" | "pending_cancelled"
+        "pending_opened"
+            | "answer_submitted"
+            | "answer_result"
+            | "answer_cancelled"
+            | "pending_resolved"
+            | "pending_cancelled"
     )
     .then(|| event.body.get("pending_id")?.as_str())
     .flatten()
@@ -1018,6 +1092,7 @@ async fn list_follow(
 ) -> Result<()> {
     // Read before the sessions that changed: an event stored between the
     // two is sent now and again later, never missed.
+    let mut scope_revision = store.view_scope_revision()?;
     let mut cursor = store.max_event_id()?;
     let Some(after) = revision_of(anchor).filter(|after| *after <= cursor) else {
         tx.send(resync()).await;
@@ -1037,23 +1112,18 @@ async fn list_follow(
     // The count this stream last sent: none yet, so the resume's burst
     // ends with it, whatever changed.
     let mut counted: Option<u32> = None;
-    let mut changed = store.sessions_changed_after(after)?;
+    let mut changed = store.family_changed_after(after)?;
     loop {
         // Every change to what it counts (an activity, a question's state,
         // a hat, a delete) is written with an event of the session's.
         let count = if counted.is_none() || !changed.is_empty() {
-            Some(store.waiting_count(hat)?)
+            Some(store.operator_waiting_count(hat)?)
         } else {
             None
         };
-        let waiting = if changed.is_empty() {
-            HashSet::new()
-        } else {
-            store.sessions_waiting()?
-        };
         let mut messages = Vec::new();
         for session_id in changed {
-            let Some(item) = store.find_session_item(&session_id)? else {
+            let Some(summary) = store.family_summary(&session_id)? else {
                 // Deleted (plan 9a; ACP core §9): its tombstone. It has
                 // no event after its `session_deleted` (triggers refuse
                 // them), so this is sent once, or twice when the delete
@@ -1066,7 +1136,6 @@ async fn list_follow(
                 }
                 continue;
             };
-            let summary = summary(item.bounded(), &waiting);
             if sent.get(&session_id) == Some(&summary) {
                 continue;
             }
@@ -1089,6 +1158,9 @@ async fn list_follow(
         // anything else after the hold.
         let held = tokio::select! {
             () = tx.closed() => return Ok(()),
+            // Routing transitions also occur on deadlines and acknowledgements,
+            // without a host fact to ring the hub. Read their durable events.
+            () = tokio::time::sleep(Duration::from_secs(1)) => false,
             rung = doorbell.recv() => match rung {
                 Err(RecvError::Closed) => return Ok(()),
                 Err(RecvError::Lagged(_)) => false,
@@ -1099,11 +1171,13 @@ async fn list_follow(
             return Ok(());
         }
         let max = store.max_event_id()?;
-        changed = if max > cursor {
-            store.sessions_changed_after(cursor)?
+        let scope = store.view_scope_revision()?;
+        changed = if max > cursor || scope != scope_revision {
+            store.family_changes_after(cursor, scope != scope_revision)?
         } else {
             Vec::new()
         };
+        scope_revision = scope;
         cursor = cursor.max(max);
     }
 }
@@ -1268,6 +1342,188 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn review_reopened_answer_streams_live_and_resumed_in_both_groups() {
+        for earlier_group in [false, true] {
+            let (_dir, store, conn) = store();
+            write(
+                &conn,
+                &store,
+                "user_turn",
+                serde_json::json!({"turn_id":"t1","content":[]}),
+            );
+            let opened = write(
+                &conn,
+                &store,
+                "pending_opened",
+                serde_json::json!({
+                    "pending_id":"q", "indexed":{"turn_id":"t1","pending":{"id":"q","kind":"elicitation"}},
+                    "payload":{"message":"Choose","requestedSchema":{"type":"object","properties":{}}}
+                }),
+            );
+            conn.execute("INSERT INTO pending(pending_id,session_id,kind,turn_id,payload,state,opened_at,opened_event_id,owner_id)
+                VALUES ('q','s','elicitation','t1','{}','open','2026-10-01T00:00:00.000Z',?1,?2)",
+                rusqlite::params![opened.event_id,store.owner_id()]).unwrap();
+            conn.execute(
+                "INSERT INTO answer_queue(pending_id,session_id,request_id,answer,submitted_at,owner_id)
+                VALUES ('q','s','r','{}','2026-10-01T00:00:00.000Z',?1)",
+                [store.owner_id()],
+            )
+            .unwrap();
+            write(&conn, &store, "answer_submitted", serde_json::json!({"pending_id":"q"}));
+            if earlier_group {
+                write(
+                    &conn,
+                    &store,
+                    "user_turn",
+                    serde_json::json!({"turn_id":"t2","content":[]}),
+                );
+            }
+            let cursor = store.max_event_id().unwrap();
+            let anchor = anchor_now(cursor);
+            let (bell, doorbell) = broadcast::channel(10);
+            let (tx, mut rx) = Outbox::new(QUEUE_BYTES);
+            let mut live = ItemStream::new(store.clone(), "s".into());
+            let live_anchor = anchor.clone();
+            let task = tokio::spawn(async move { live.run(Some(&live_anchor), doorbell, &tx).await });
+            tokio::task::yield_now().await;
+            conn.execute(
+                "DELETE FROM answer_queue WHERE owner_id=?1 AND pending_id='q'",
+                [store.owner_id()],
+            )
+            .unwrap();
+            let event = write(
+                &conn,
+                &store,
+                "answer_cancelled",
+                serde_json::json!({"pending_id":"q","reason":"operator_takeover"}),
+            );
+            bell.send(event.clone()).unwrap();
+            let message = item(&mut rx).await;
+            assert!(
+                message.contains(r#"\"answered\":false"#) && message.contains(r#"\"answerable\":true"#),
+                "{message}"
+            );
+            assert!(
+                message.contains(&format!(r#"\"version\":{}"#, event.event_id)),
+                "{message}"
+            );
+            let resumed = ItemStream::new(store.clone(), "s".into())
+                .resume(Some(&anchor), usize::MAX)
+                .unwrap()
+                .unwrap();
+            let resumed = texts(&resumed).join(" ");
+            assert!(
+                resumed.contains(r#"\"answered\":false"#) && resumed.contains(r#"\"answerable\":true"#),
+                "{resumed}"
+            );
+            assert!(
+                resumed.contains(&format!(r#"\"version\":{}"#, event.event_id)),
+                "{resumed}"
+            );
+            drop(rx);
+            task.await.unwrap().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn review_frozen_initial_page_is_not_served() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let store = Store::open(&db).unwrap();
+        store.create_session("s", "h", "a", "/p", "hat", None).unwrap();
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute(
+                "INSERT INTO purged_hats(owner_id,hat_id,purged_at) VALUES (?1,'hat',1)",
+                [store.owner_id()],
+            )
+            .unwrap();
+        let state = AppState::new(
+            store,
+            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        let response = page(
+            State(state),
+            Path("s".into()),
+            Query(PageParams {
+                before_turn: None,
+                limit: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn review_scope_freeze_removes_cached_list_and_items_live_and_resumed() {
+        let (_dir, store, conn) = store();
+        write(
+            &conn,
+            &store,
+            "user_turn",
+            serde_json::json!({"turn_id":"t1","content":[]}),
+        );
+        conn.execute(
+            "UPDATE sessions SET activity='blocked' WHERE owner_id=?1 AND id='s'",
+            [store.owner_id()],
+        )
+        .unwrap();
+        let cursor = store.max_event_id().unwrap();
+        let anchor = anchor_now(cursor);
+        let (bell, doorbell) = broadcast::channel(10);
+        let (tx, mut list_rx) = Outbox::new(QUEUE_BYTES);
+        let (follow, follow_anchor) = (store.clone(), anchor.clone());
+        let list = tokio::spawn(async move { list_follow(&follow, Some(&follow_anchor), None, doorbell, &tx).await });
+        assert!(item(&mut list_rx).await.contains(r#"\"count\":1"#));
+        let (tx, mut item_rx) = Outbox::new(QUEUE_BYTES);
+        let mut stream = ItemStream::new(store.clone(), "s".into());
+        let (item_anchor, item_bell) = (anchor.clone(), bell.subscribe());
+        let items = tokio::spawn(async move { stream.run(Some(&item_anchor), item_bell, &tx).await });
+        tokio::task::yield_now().await;
+        // Freeze only. No session event, hub ring or deletion follows.
+        conn.execute(
+            "INSERT INTO purged_hats(owner_id,hat_id,purged_at)
+            SELECT ?1,hat_id,1 FROM sessions WHERE owner_id=?1 AND id='s'",
+            [store.owner_id()],
+        )
+        .unwrap();
+        assert_eq!(store.max_event_id().unwrap(), cursor);
+        let a = item(&mut list_rx).await;
+        let b = item(&mut list_rx).await;
+        assert!(a.contains("session_removed") && b.contains(r#"\"count\":0"#), "{a} {b}");
+        assert!(item(&mut item_rx).await.contains("session_removed"));
+        items.await.unwrap().unwrap();
+        // A new connection with the SAME event cursor must replay the scope removal.
+        let (tx, mut resumed_rx) = Outbox::new(QUEUE_BYTES);
+        let (follow, follow_anchor) = (store.clone(), anchor.clone());
+        let resumed_bell = bell.subscribe();
+        let resumed =
+            tokio::spawn(async move { list_follow(&follow, Some(&follow_anchor), None, resumed_bell, &tx).await });
+        assert!(item(&mut resumed_rx).await.contains("session_removed"));
+        assert!(item(&mut resumed_rx).await.contains(r#"\"count\":0"#));
+        let (tx, mut resumed_item_rx) = Outbox::new(QUEUE_BYTES);
+        let mut stream = ItemStream::new(store.clone(), "s".into());
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            stream.run(Some(&anchor), bell.subscribe(), &tx),
+        )
+        .await
+        .expect("a frozen resumed stream ends")
+        .unwrap();
+        assert!(item(&mut resumed_item_rx).await.contains("session_removed"));
+        assert_eq!(
+            store.max_event_id().unwrap(),
+            cursor,
+            "scope changes never append frozen-session events"
+        );
+        drop(list_rx);
+        drop(resumed_rx);
+        list.await.unwrap().unwrap();
+        resumed.await.unwrap().unwrap();
     }
 
     async fn item(rx: &mut mpsc::Receiver<Queued>) -> String {
