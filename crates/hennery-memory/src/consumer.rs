@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 use url::Url;
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeedConfig {
     pub collector_url: String,
@@ -26,6 +26,7 @@ pub struct FeedConfig {
     #[serde(default)]
     pub internal_network: bool,
 }
+#[derive(Clone)]
 struct Job {
     id: String,
     epoch: String,
@@ -38,6 +39,36 @@ struct InventoryPlan {
     note_ids: Vec<String>,
     replacements: Vec<(String, String)>,
 }
+struct ResetPermit {
+    inner: Arc<std::sync::Mutex<Inner>>,
+    id: String,
+    armed: bool,
+}
+impl Drop for ResetPermit {
+    fn drop(&mut self) {
+        if self.armed {
+            self.inner.lock().expect("store").resetting.remove(&self.id);
+        }
+    }
+}
+impl ResetPermit {
+    fn publish(mut self, job: &Job, start: Instant, until: i64) -> Result<()> {
+        let mut inner = self.inner.lock().expect("store");
+        inner.live(job)?;
+        check_lease(start, until)?;
+        inner.resetting.remove(&self.id);
+        self.armed = false;
+        inner.lease(job, start, until)
+    }
+}
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResetPhase {
+    Commit,
+    Checkpoint,
+}
+#[cfg(test)]
+pub(crate) type ResetHook = Arc<dyn Fn(ResetPhase) + Send + Sync>;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Forget {
@@ -538,8 +569,24 @@ impl Store {
         start: Instant,
         until: i64,
     ) -> Result<()> {
+        let permit = self.begin_reset(job)?;
         let plan = self.prepare_inventory(job, ids, start, until).await?;
-        self.commit_inventory(job, plan, resume, start, until)
+        let store = self.clone();
+        let job = job.clone();
+        tokio::task::spawn_blocking(move || store.commit_inventory(job, plan, resume, start, until, permit)).await?
+    }
+    fn begin_reset(&self, job: &Job) -> Result<ResetPermit> {
+        let mut inner = self.inner.lock().expect("store");
+        inner.live(job)?;
+        ensure!(inner.resetting.insert(job.id.clone()), "reset in progress");
+        inner.invalidate(&job.id);
+        inner.leases.remove(&job.id);
+        inner.stale.insert(job.id.clone());
+        Ok(ResetPermit {
+            inner: self.inner.clone(),
+            id: job.id.clone(),
+            armed: true,
+        })
     }
     async fn prepare_inventory(
         &self,
@@ -610,20 +657,21 @@ impl Store {
     }
     fn commit_inventory(
         &self,
-        job: &Job,
+        mut job: Job,
         plan: InventoryPlan,
         resume: String,
         start: Instant,
         until: i64,
+        permit: ResetPermit,
     ) -> Result<()> {
         let absent = serde_json::to_string(&plan.absent)?;
         let note_ids = serde_json::to_string(&plan.note_ids)?;
-        let mut inner = self.inner.lock().expect("store");
-        inner.live(job)?;
+        let mut db = self.reset_writer.lock().expect("reset writer");
         check_lease(start, until)?;
-        // Only the atomic SQL commit holds the shared mutex. No JSON parsing,
-        // source-by-memory scans or FTS reinsertion for unchanged text occur.
-        let tx = inner.db.transaction()?;
+        // SQLite serializes writes, but other namespaces can read through
+        // Inner's WAL connection throughout this transaction and checkpoint.
+        let tx = db.transaction()?;
+        check_job(&tx, &job)?;
         tx.execute(
             "DELETE FROM entries WHERE namespace=?1 AND kind='note' AND id IN (SELECT value FROM json_each(?2))",
             params![job.id, note_ids],
@@ -645,13 +693,23 @@ impl Store {
             "UPDATE feeds SET cursor=?2,revision=revision+1 WHERE namespace=?1",
             params![job.id, resume],
         )?;
+        #[cfg(test)]
+        self.reset_phase(ResetPhase::Commit);
         check_lease(start, until)?;
         tx.commit()?;
-        inner.invalidate(&job.id);
-        inner.leases.remove(&job.id);
-        inner.stale.insert(job.id.clone());
-        checkpoint(&inner)?;
-        inner.lease(job, start, until)
+        #[cfg(test)]
+        self.reset_phase(ResetPhase::Checkpoint);
+        checkpoint_db(&db)?;
+        job.revision += 1;
+        job.cursor = Some(resume);
+        permit.publish(&job, start, until)
+    }
+    #[cfg(test)]
+    fn reset_phase(&self, phase: ResetPhase) {
+        let hook = self.reset_hook.lock().unwrap().clone();
+        if let Some(hook) = hook {
+            hook(phase);
+        }
     }
     pub fn suppress(&self, id: &str, session: &str) -> Result<()> {
         ensure!(
@@ -846,19 +904,23 @@ impl Store {
 }
 impl Inner {
     fn live(&self, job: &Job) -> Result<()> {
-        let current:Option<(String,i64,Option<String>)>=self.db.query_row("SELECT n.epoch,f.revision,f.cursor FROM feeds f JOIN namespaces n ON n.id=f.namespace WHERE f.namespace=?1 AND n.state='active'",[&job.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
-        ensure!(
-            current == Some((job.epoch.clone(), job.revision, job.cursor.clone())),
-            "stale feed result"
-        );
-        Ok(())
+        check_job(&self.db, job)
     }
     fn lease(&mut self, job: &Job, start: Instant, until: i64) -> Result<()> {
+        ensure!(!self.resetting.contains(&job.id), "reset in progress");
         let end = check_lease(start, until)?;
         self.leases.insert(job.id.clone(), (end, until));
         self.stale.remove(&job.id);
         Ok(())
     }
+}
+fn check_job(db: &rusqlite::Connection, job: &Job) -> Result<()> {
+    let current:Option<(String,i64,Option<String>)>=db.query_row("SELECT n.epoch,f.revision,f.cursor FROM feeds f JOIN namespaces n ON n.id=f.namespace WHERE f.namespace=?1 AND n.state='active'",[&job.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    ensure!(
+        current == Some((job.epoch.clone(), job.revision, job.cursor.clone())),
+        "stale feed result"
+    );
+    Ok(())
 }
 fn check_lease(start: Instant, until: i64) -> Result<Instant> {
     let remaining = until.checked_sub(unix_now()).context("invalid lease")?;
@@ -940,7 +1002,10 @@ fn validate(item: &PluginActivityItem, epoch: &str) -> Result<()> {
     Ok(())
 }
 pub(crate) fn checkpoint(inner: &Inner) -> Result<()> {
-    let (busy, _, _): (i64, i64, i64) = inner.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+    checkpoint_db(&inner.db)
+}
+fn checkpoint_db(db: &rusqlite::Connection) -> Result<()> {
+    let (busy, _, _): (i64, i64, i64) = db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
         Ok((r.get(0)?, r.get(1)?, r.get(2)?))
     })?;
     ensure!(busy == 0, "storage checkpoint unconfirmed");
@@ -1147,11 +1212,284 @@ mod reset_tests {
         (dir, store, credentials, key)
     }
     #[tokio::test]
+    async fn stalled_reset_commit_and_checkpoint_do_not_hold_up_other_namespaces() {
+        use crate::store::{Query, Remember};
+        use std::sync::{Mutex, mpsc};
+        for phase in [ResetPhase::Commit, ResetPhase::Checkpoint] {
+            let (_dir, store, c, key) = fixture();
+            let store = Arc::new(store);
+            let other = store.create("owner", "other").unwrap();
+            store
+                .remember(
+                    &other.tool,
+                    Remember {
+                        title: "foreign marker".into(),
+                        body: "foreign marker".into(),
+                        kind: None,
+                        tags: vec![],
+                        idempotency_key: "fixture".into(),
+                    },
+                )
+                .unwrap();
+            let job = store.job(&key, &c.namespace).unwrap();
+            let start = Instant::now();
+            let until = unix_now() + 60;
+            store.renew(&job, start, until).unwrap();
+            let stamp = store.delivery_stamp(&c.tool).unwrap();
+            let permit = store.begin_reset(&job).unwrap();
+            let plan = store
+                .prepare_inventory(&job, Default::default(), start, until)
+                .await
+                .unwrap();
+            let (paused_tx, paused_rx) = mpsc::sync_channel(1);
+            let (release_tx, release_rx) = mpsc::sync_channel(1);
+            let release_rx = Mutex::new(release_rx);
+            *store.reset_hook.lock().unwrap() = Some(Arc::new(move |at| {
+                if at == phase {
+                    paused_tx.send(()).unwrap();
+                    release_rx
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(20))
+                        .unwrap();
+                }
+            }));
+            let committing = store.clone();
+            let writer = std::thread::spawn(move || {
+                committing.commit_inventory(job, plan, "reset".into(), start, until, permit)
+            });
+            paused_rx.recv_timeout(Duration::from_secs(20)).unwrap();
+            let (read_tx, read_rx) = mpsc::sync_channel(1);
+            let reading = store.clone();
+            let token = c.tool.clone();
+            let namespace = c.namespace.clone();
+            let prior = stamp.clone();
+            let reader = std::thread::spawn(move || {
+                let page = reading.search(&other.tool, &Query::search("foreign")).unwrap();
+                assert_eq!(page.entries.len(), 1);
+                let denied = reading.available(&token, false).is_err();
+                let invalidated = reading.deliverable(&token, &prior).is_err();
+                let fresh = reading.job(&MasterKey::from_bytes([9; 32]), &namespace).unwrap();
+                let renewal_denied = reading.renew(&fresh, Instant::now(), unix_now() + 60).is_err();
+                let _ = read_tx.send((denied, invalidated, renewal_denied));
+            });
+            let observed = read_rx.recv_timeout(Duration::from_secs(5));
+            // Release before asserting, including on RED, so no blocked thread
+            // or database owner leaks into another case.
+            release_tx.send(()).unwrap();
+            writer.join().unwrap().unwrap();
+            reader.join().unwrap();
+            assert!(
+                observed.is_ok(),
+                "foreign reads waited for the stalled {phase:?}; shared mutex held during reset I/O"
+            );
+            assert_eq!(
+                observed.unwrap(),
+                (true, true, true),
+                "reset scope and prior deliveries stay denied"
+            );
+            assert!(store.available(&c.tool, false).is_ok());
+            assert!(
+                store.deliverable(&c.tool, &stamp).is_err(),
+                "old delivery remains invalid after renewal"
+            );
+            *store.reset_hook.lock().unwrap() = None;
+        }
+    }
+    #[tokio::test]
+    async fn abandoning_a_prepared_reset_denies_old_leases_and_allows_a_retry() {
+        let (_dir, store, c, key) = fixture();
+        let job = store.job(&key, &c.namespace).unwrap();
+        let start = Instant::now();
+        let until = unix_now() + 60;
+        store.renew(&job, start, until).unwrap();
+        let stamp = store.delivery_stamp(&c.tool).unwrap();
+        let permit = store.begin_reset(&job).unwrap();
+        assert!(store.begin_reset(&job).is_err(), "one reset per namespace");
+        assert!(
+            store.renew(&job, start, until).is_err(),
+            "renewal cannot bypass an unfinished reset"
+        );
+        drop(permit);
+        assert!(store.available(&c.tool, false).is_err());
+        let permit = store.begin_reset(&job).unwrap();
+        let plan = store
+            .prepare_inventory(&job, Default::default(), start, until)
+            .await
+            .unwrap();
+        store
+            .commit_inventory(job, plan, "retry".into(), start, until, permit)
+            .unwrap();
+        assert!(store.available(&c.tool, false).is_ok());
+        assert!(store.deliverable(&c.tool, &stamp).is_err());
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelling_the_waiter_keeps_the_running_reset_fenced() {
+        use std::sync::{Mutex, mpsc};
+        let (_dir, store, c, key) = fixture();
+        let store = Arc::new(store);
+        let job = store.job(&key, &c.namespace).unwrap();
+        let (paused_tx, paused_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let release_rx = Mutex::new(release_rx);
+        *store.reset_hook.lock().unwrap() = Some(Arc::new(move |phase| {
+            if phase == ResetPhase::Commit {
+                paused_tx.send(()).unwrap();
+                release_rx
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(20))
+                    .unwrap();
+            }
+        }));
+        let running = store.clone();
+        let waiter = tokio::spawn(async move {
+            running
+                .inventory(
+                    &job,
+                    Default::default(),
+                    "cancelled-waiter".into(),
+                    Instant::now(),
+                    unix_now() + 60,
+                )
+                .await
+        });
+        paused_rx.recv_timeout(Duration::from_secs(20)).unwrap();
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        let fresh = store.job(&key, &c.namespace).unwrap();
+        let denied = store.available(&c.tool, false).is_err()
+            && store.begin_reset(&fresh).is_err()
+            && store.renew(&fresh, Instant::now(), unix_now() + 60).is_err();
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while store.available(&c.tool, false).is_err() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        *store.reset_hook.lock().unwrap() = None;
+        assert!(denied, "cancelling an awaiter cannot release an in-flight reset fence");
+    }
+    #[tokio::test]
+    async fn a_forget_after_reset_commit_prevents_late_lease_publication() {
+        for scope in [false, true] {
+            let (_dir, store, c, key) = fixture();
+            let store = Arc::new(store);
+            let job = store.job(&key, &c.namespace).unwrap();
+            let start = Instant::now();
+            let until = unix_now() + 60;
+            let permit = store.begin_reset(&job).unwrap();
+            let plan = store
+                .prepare_inventory(&job, Default::default(), start, until)
+                .await
+                .unwrap();
+            let weak = Arc::downgrade(&store);
+            let token = c.lifecycle.clone();
+            let epoch = job.epoch.clone();
+            *store.reset_hook.lock().unwrap() = Some(Arc::new(move |phase| {
+                if phase == ResetPhase::Checkpoint {
+                    weak.upgrade()
+                        .unwrap()
+                        .forget(
+                            &token,
+                            Forget {
+                                request_id: "late-forget".into(),
+                                namespace_epoch: epoch.clone(),
+                                target: if scope {
+                                    Target::Scope
+                                } else {
+                                    Target::Session {
+                                        session_id: "late-source".into(),
+                                    }
+                                },
+                            },
+                        )
+                        .unwrap();
+                }
+            }));
+            let result = store.commit_inventory(job, plan, "reset".into(), start, until, permit);
+            *store.reset_hook.lock().unwrap() = None;
+            assert!(result.is_err(), "late lifecycle mutation must fence lease publication");
+            assert!(store.available(&c.tool, false).is_err());
+        }
+    }
+    #[tokio::test]
+    async fn expiry_during_reset_sql_rolls_back_the_cursor_and_releases_the_reservation() {
+        let (_dir, store, c, key) = fixture();
+        let job = store.job(&key, &c.namespace).unwrap();
+        let start = Instant::now() - Duration::from_secs(59);
+        let until = unix_now() + 60;
+        let permit = store.begin_reset(&job).unwrap();
+        let plan = store
+            .prepare_inventory(&job, Default::default(), start, until)
+            .await
+            .unwrap();
+        *store.reset_hook.lock().unwrap() = Some(Arc::new(|phase| {
+            if phase == ResetPhase::Commit {
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        }));
+        let result = store.commit_inventory(job, plan, "expired".into(), start, until, permit);
+        *store.reset_hook.lock().unwrap() = None;
+        assert!(result.is_err());
+        let retry = store.job(&key, &c.namespace).unwrap();
+        assert!(retry.cursor.is_none(), "expiry cannot commit partial reconciliation");
+        assert!(store.available(&c.tool, false).is_err());
+        drop(store.begin_reset(&retry).unwrap());
+    }
+    #[tokio::test]
+    async fn a_busy_reset_checkpoint_keeps_reads_denied_until_a_successful_retry() {
+        let (dir, store, c, key) = fixture();
+        let reader = Arc::new(std::sync::Mutex::new(
+            hennery_kernel::db::open(&dir.path().join("memory.db")).unwrap(),
+        ));
+        let snapshot = reader.clone();
+        let namespace = c.namespace.clone();
+        *store.reset_hook.lock().unwrap() = Some(Arc::new(move |phase| {
+            if phase == ResetPhase::Commit {
+                let db = snapshot.lock().unwrap();
+                db.execute_batch("BEGIN").unwrap();
+                let _: Option<String> = db
+                    .query_row("SELECT cursor FROM feeds WHERE namespace=?1", [&namespace], |r| {
+                        r.get(0)
+                    })
+                    .unwrap();
+            }
+        }));
+        let job = store.job(&key, &c.namespace).unwrap();
+        let start = Instant::now();
+        let until = unix_now() + 60;
+        let permit = store.begin_reset(&job).unwrap();
+        let plan = store
+            .prepare_inventory(&job, Default::default(), start, until)
+            .await
+            .unwrap();
+        let result = store.commit_inventory(job, plan, "committed".into(), start, until, permit);
+        *store.reset_hook.lock().unwrap() = None;
+        reader.lock().unwrap().execute_batch("ROLLBACK").unwrap();
+        assert!(result.unwrap_err().to_string().contains("checkpoint unconfirmed"));
+        assert!(store.available(&c.tool, false).is_err());
+        let job = store.job(&key, &c.namespace).unwrap();
+        assert_eq!(job.cursor.as_deref(), Some("committed"));
+        let permit = store.begin_reset(&job).unwrap();
+        let plan = store
+            .prepare_inventory(&job, Default::default(), start, until)
+            .await
+            .unwrap();
+        store
+            .commit_inventory(job, plan, "retried".into(), start, until, permit)
+            .unwrap();
+        assert!(store.available(&c.tool, false).is_ok());
+    }
+    #[tokio::test]
     async fn prepared_inventory_checks_revision_before_commit() {
         let (_dir, store, c, key) = fixture();
         let job = store.job(&key, &c.namespace).unwrap();
         let start = Instant::now();
         let until = unix_now() + 60;
+        let permit = store.begin_reset(&job).unwrap();
         let plan = store
             .prepare_inventory(&job, Default::default(), start, until)
             .await
@@ -1170,7 +1508,7 @@ mod reset_tests {
             .unwrap();
         assert!(
             store
-                .commit_inventory(&job, plan, "stale".into(), start, until)
+                .commit_inventory(job, plan, "stale".into(), start, until, permit)
                 .is_err()
         );
         assert!(
@@ -1191,6 +1529,7 @@ mod reset_tests {
     async fn prepared_inventory_checks_lease_before_commit() {
         let (_dir, store, c, key) = fixture();
         let job = store.job(&key, &c.namespace).unwrap();
+        let permit = store.begin_reset(&job).unwrap();
         let plan = store
             .prepare_inventory(&job, Default::default(), Instant::now(), unix_now() + 60)
             .await
@@ -1198,11 +1537,12 @@ mod reset_tests {
         assert!(
             store
                 .commit_inventory(
-                    &job,
+                    job,
                     plan,
                     "expired".into(),
                     Instant::now() - Duration::from_secs(61),
-                    unix_now() + 60
+                    unix_now() + 60,
+                    permit,
                 )
                 .is_err()
         );

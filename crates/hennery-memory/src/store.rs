@@ -10,16 +10,28 @@ use hmac::{Hmac, Mac};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::HashMap, path::Path, sync::Mutex, time::Instant};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
+#[derive(Clone)]
 pub struct Store {
-    pub(crate) inner: Mutex<Inner>,
+    pub(crate) inner: Arc<Mutex<Inner>>,
+    // A single bounded reset writer. WAL readers use Inner's connection;
+    // reset disk I/O never owns their mutex.
+    pub(crate) reset_writer: Arc<Mutex<db::OwnedConnection>>,
+    #[cfg(test)]
+    pub(crate) reset_hook: Arc<Mutex<Option<crate::consumer::ResetHook>>>,
 }
 pub(crate) struct Inner {
     pub db: db::OwnedConnection,
     pub leases: HashMap<String, (Instant, i64)>,
     pub stale: std::collections::HashSet<String>,
     pub generations: HashMap<String, u64>,
+    pub resetting: std::collections::HashSet<String>,
 }
 pub struct Credentials {
     pub namespace: String,
@@ -171,13 +183,23 @@ impl Store {
             ],
         )?;
         db.busy_timeout(std::time::Duration::from_millis(100))?;
+        ensure!(
+            !db.path().unwrap_or_default().is_empty(),
+            "persistent memory database required"
+        );
+        let reset_writer = db::open(path)?;
+        reset_writer.busy_timeout(std::time::Duration::from_millis(100))?;
         Ok(Self {
-            inner: Mutex::new(Inner {
+            reset_writer: Arc::new(Mutex::new(reset_writer)),
+            #[cfg(test)]
+            reset_hook: Arc::new(Mutex::new(None)),
+            inner: Arc::new(Mutex::new(Inner {
                 db,
                 leases: HashMap::new(),
                 stale: Default::default(),
                 generations: Default::default(),
-            }),
+                resetting: Default::default(),
+            })),
         })
     }
     pub fn create(&self, owner: &str, hat: &str) -> Result<Credentials> {
@@ -544,6 +566,7 @@ impl Inner {
             .optional()?
             .context("unavailable")?;
         if !admin {
+            ensure!(!self.resetting.contains(&row.0.id), "reset in progress");
             ensure!(row.3 == "active" && (!write || row.2), "unavailable");
             ensure!(
                 !row.1
