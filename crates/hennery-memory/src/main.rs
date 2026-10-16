@@ -1,0 +1,132 @@
+//! Explicit standalone service: no default data path and no core installer.
+use clap::{Parser, Subcommand};
+use hennery_memory::{
+    consumer::{self, FeedConfig},
+    http, keys,
+    store::Store,
+};
+use std::io::Read;
+use std::{
+    os::unix::fs::{DirBuilderExt, PermissionsExt},
+    path::PathBuf,
+    sync::Arc,
+};
+#[derive(Parser)]
+#[command(
+    name = "hennery-memory",
+    version,
+    about = "Optional memory MCP service; no model required"
+)]
+struct Args {
+    #[arg(long)]
+    data_dir: PathBuf,
+    #[command(subcommand)]
+    command: Command,
+}
+#[derive(Subcommand)]
+enum Command {
+    /// Read a C1 grant from bounded stdin, never command arguments.
+    Attach {
+        #[arg(long)]
+        namespace: String,
+    },
+    /// Explicit filesystem-owner erasure, including after an offline revoke.
+    Purge {
+        #[arg(long)]
+        namespace: String,
+    },
+    Suppress {
+        #[arg(long)]
+        namespace: String,
+        #[arg(long)]
+        session: String,
+    },
+    Writes {
+        #[arg(long)]
+        namespace: String,
+        #[arg(long)]
+        enabled: bool,
+    },
+    Status {
+        #[arg(long)]
+        namespace: String,
+    },
+    /// Mint one isolated namespace's tool and lifecycle credentials, shown once.
+    Create {
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        hat: String,
+    },
+    /// Run stateless HTTP MCP. Put TLS/authenticated routing in front for remote use.
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:7332")]
+        listen: std::net::SocketAddr,
+    },
+}
+#[tokio::main]
+async fn main() {
+    if run().await.is_err() {
+        eprintln!("memory operation failed; check private directory, configuration and namespace state");
+        std::process::exit(1);
+    }
+}
+async fn run() -> anyhow::Result<()> {
+    let args = Args::parse();
+    if !args.data_dir.exists() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&args.data_dir)?;
+    }
+    let meta = args.data_dir.symlink_metadata()?;
+    anyhow::ensure!(
+        meta.is_dir() && !meta.file_type().is_symlink() && meta.permissions().mode() & 0o077 == 0,
+        "private real directory required"
+    );
+    let store = Arc::new(Store::open(&args.data_dir.join("memory.db"))?);
+    match args.command {
+        Command::Attach { namespace } => {
+            let mut bytes = zeroize::Zeroizing::new(Vec::new());
+            std::io::stdin().take(16385).read_to_end(&mut bytes)?;
+            anyhow::ensure!(
+                bytes.len() <= 16384 && bytes.first() == Some(&b'{'),
+                "bounded object required"
+            );
+            let config: FeedConfig = serde_json::from_slice(&bytes)?;
+            let key = keys::load(&args.data_dir, store.has_feed_credentials()?)?;
+            store.attach(&namespace, config, &key)?;
+            println!("grant attached; namespace requires a fresh lease");
+        }
+        Command::Purge { namespace } => println!("{}", serde_json::to_string(&store.owner_purge(&namespace)?)?),
+        Command::Suppress { namespace, session } => store.suppress(&namespace, &session)?,
+        Command::Writes { namespace, enabled } => store.set_writes(&namespace, enabled)?,
+        Command::Status { namespace } => println!("{}", store.status(&namespace)?),
+        Command::Create { owner, hat } => {
+            let c = store.create(&owner, &hat)?;
+            println!(
+                "{}",
+                serde_json::json!({"namespace":c.namespace,"tool_credential":c.tool,"lifecycle_credential":c.lifecycle,"mode":"standalone; no collector lease or automatic deletion guarantee"})
+            );
+        }
+        Command::Serve { listen } => {
+            let listener = tokio::net::TcpListener::bind(listen).await?;
+            println!("memory listening on {}", listener.local_addr()?);
+            let worker = if store.has_feed_credentials()? {
+                let key = Arc::new(keys::load(&args.data_dir, true)?);
+                Some(tokio::spawn(consumer::worker(store.clone(), key)))
+            } else {
+                None
+            };
+            axum::serve(listener, http::router(store))
+                .with_graceful_shutdown(async {
+                    let _ = tokio::signal::ctrl_c().await;
+                })
+                .await?;
+            if let Some(worker) = worker {
+                worker.abort();
+            }
+        }
+    }
+    Ok(())
+}

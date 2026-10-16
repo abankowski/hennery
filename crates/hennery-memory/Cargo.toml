@@ -1,0 +1,36 @@
+[package]
+name = "hennery-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+hennery-kernel.workspace = true
+hennery-proto.workspace = true
+hennery-gateway.workspace = true
+hex.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+futures.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+url.workspace = true
+zeroize.workspace = true
+time = { workspace = true, features = ["parsing"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+hennery-host = { workspace = true, features = ["test-hooks"] }
+hennery-sessions.workspace = true
+hennery-testkit = { path = "../hennery-testkit" }
+tower = { version = "0.5", features = ["util"] }
+libc = "0.2"
+tokio-tungstenite.workspace = true
