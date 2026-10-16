@@ -86,9 +86,15 @@ for (const width of [1280, 390]) test.describe(`OAuth at ${width} px`, () => {
     await expect(p.getByText('The vendor said: access_denied: <script>denied</script>', { exact: true })).toBeVisible()
     expect(await p.evaluate(() => document.querySelectorAll('script').length)).toBe(1)
     await expect(card().getByRole('region', { name: 'Gateway report', exact: true }).getByText('The vendor said: access_denied: <script>denied</script>', { exact: true })).toBeVisible()
+    // The handler closes its own page before Chromium may acknowledge the click.
+    // Require that close event, and preserve failures unrelated to target closure.
+    const closed = p.waitForEvent('close')
+    await Promise.all([closed, p.getByRole('button', { name: 'Close', exact: true }).click().catch((error: unknown) => {
+      if (!(error instanceof Error) || !error.message.startsWith('locator.click: Target page, context or browser has been closed')) throw error
+    })])
     expect((await listed()).status).toBe('ok'); expect((await listed()).has_credential).toBe(true)
     expect((await listed()).mounts).toEqual([mountedHost])
-    await p.getByRole('button', { name: 'Close', exact: true }).click(); vendor.config.deny = false
+    vendor.config.deny = false
   })
   test('COOP severs the handle without ending consent', async () => {
     vendor.config.coop = true; const p = await popup()
