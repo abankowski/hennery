@@ -207,6 +207,11 @@ publication or rebuild under the old version. Missing/deleted/expired original
 inputs refuse. After the window, document the incomplete old release, withhold
 moving aliases and roll forward to a new signed version.
 
+The producer and attester are fixed to attempt 1. If that attempt never produced
+a complete accepted artifact/bundle set, there is no publish-only recovery input:
+diagnose without publishing and use a new signed version. A later publishing
+attempt never becomes a new producing or attesting attempt.
+
 - Before immutable GitHub publication, reconcile the draft's exact asset set.
   Upload only verified missing assets; extra/different bytes refuse. If the
   publish response is lost or ambiguous, first inspect/re-verify the public
