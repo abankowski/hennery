@@ -38,6 +38,10 @@ pub struct LegacyEvidence {
     pub vault: String,
     pub path: String,
     pub metadata: BTreeMap<String, String>,
+    #[serde(default)]
+    pub metadata_omitted: bool,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub imported_at: i64,
     pub content_digest: String,
 }
@@ -52,6 +56,12 @@ pub struct Snapshot {
     pub generation: u64,
 }
 impl Store {
+    /// An explicit local CLI operation proves filesystem-owner access. Never
+    /// use caller-supplied owner text in a network handler.
+    pub fn filesystem_manager(&self, owner: &str) -> Result<Manager> {
+        ensure!(!owner.is_empty() && owner.len() <= 256, "invalid owner");
+        Ok(Manager { owner: owner.into() })
+    }
     pub fn managed_writes(&self, manager: &Manager, namespace: &str, enabled: bool) -> Result<()> {
         {
             let inner = self.inner.lock().expect("store");
@@ -172,14 +182,17 @@ impl Store {
         Ok(entry)
     }
     pub fn managed_edit(&self, manager: &Manager, namespace: &str, id: &str, input: Edit) -> Result<Entry> {
-        let safe = safe_memory(NewMemory {
-            title: input.title,
-            body: input.body,
-        })?;
         let mut inner = self.inner.lock().expect("store");
         inner.managed_scope(manager, namespace, true)?;
         let tx = inner.db.transaction()?;
         let mut entry = revision(&tx, namespace, id, input.revision)?;
+        let safe = safe_content(
+            NewMemory {
+                title: input.title,
+                body: input.body,
+            },
+            if entry.legacy.is_some() { 2 * 1024 * 1024 } else { 16384 },
+        )?;
         ensure!(
             entry.kind != "note" || entry.legacy.is_some(),
             "annotate native observations instead"
@@ -397,8 +410,11 @@ fn advance(entry: &mut Entry) -> Result<()> {
     Ok(())
 }
 fn safe_memory(input: NewMemory) -> Result<NewMemory> {
+    safe_content(input, 16384)
+}
+fn safe_content(input: NewMemory, cap: usize) -> Result<NewMemory> {
     ensure!(
-        !input.title.trim().is_empty() && input.title.chars().count() <= 160 && input.body.len() <= 16384,
+        !input.title.trim().is_empty() && input.title.chars().count() <= 160 && input.body.len() <= cap,
         "invalid content"
     );
     let safe = NewMemory {
@@ -406,7 +422,7 @@ fn safe_memory(input: NewMemory) -> Result<NewMemory> {
         body: redact::text(&input.body).unwrap_or(input.body),
     };
     ensure!(
-        safe.title.chars().count() <= 160 && safe.body.len() <= 16384,
+        safe.title.chars().count() <= 160 && safe.body.len() <= cap,
         "redacted content too large"
     );
     Ok(safe)

@@ -26,6 +26,26 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Preview an uncompressed, regular-file-only vault snapshot; no entries are written.
+    ImportPreview {
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long)]
+        vault: String,
+        #[arg(long)]
+        mapping: PathBuf,
+    },
+    /// Apply exactly a previously reviewed, signed preview and content/mapping digest.
+    ImportApply {
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        preview: PathBuf,
+        #[arg(long)]
+        digest: String,
+    },
     /// Bootstrap this plug-in's independent browser authentication. Password from stdin.
     UiInit {
         #[arg(long)]
@@ -94,6 +114,25 @@ async fn run() -> anyhow::Result<()> {
     );
     let store = Arc::new(Store::open(&args.data_dir.join("memory.db"))?);
     match args.command {
+        Command::ImportPreview {
+            owner,
+            snapshot,
+            vault,
+            mapping,
+        } => {
+            let manager = store.filesystem_manager(&owner)?;
+            let bundle = hennery_memory::import::Bundle::from_snapshot(&snapshot, &vault)?;
+            let mapping = hennery_memory::import::read_local_json(&mapping, 2 * 1024 * 1024)?;
+            let preview = store.preview_import(&manager, &bundle, &mapping)?;
+            println!("{}", serde_json::to_string_pretty(&preview)?);
+        }
+        Command::ImportApply { owner, preview, digest } => {
+            let manager = store.filesystem_manager(&owner)?;
+            let preview = hennery_memory::import::read_local_json(&preview, 128 * 1024 * 1024)?;
+            let results = store.apply_import(&manager, &preview, &digest)?;
+            println!("{}", serde_json::to_string_pretty(&results)?);
+            anyhow::ensure!(results.iter().all(|r| r.status == "committed"), "some hats untouched");
+        }
         Command::UiInit { owner, public_url } => {
             let mut bytes = zeroize::Zeroizing::new(Vec::new());
             std::io::stdin().take(1026).read_to_end(&mut bytes)?;

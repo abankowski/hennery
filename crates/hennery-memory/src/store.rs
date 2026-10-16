@@ -167,6 +167,7 @@ impl Store {
                 include_str!("schema.sql"),
                 include_str!("schema2.sql"),
                 include_str!("schema3.sql"),
+                include_str!("schema4.sql"),
             ],
         )?;
         db.busy_timeout(std::time::Duration::from_millis(100))?;
@@ -391,6 +392,13 @@ impl Store {
             }
             // Preserve typed evidence and roles. Only display text/tags may
             // shrink, visibly, so a single escaped entry cannot stall a page.
+            if let Some(legacy) = &mut entry.legacy
+                && serde_json::to_vec(&legacy.metadata)?.len() > 4096
+            {
+                legacy.metadata.clear();
+                legacy.metadata_omitted = true;
+                entry.truncated = true;
+            }
             while serde_json::to_vec(&serde_json::to_string(&entry)?)?.len() > 12 * 1024 {
                 let before = serde_json::to_vec(&entry)?.len();
                 entry.body = bounded(&entry.body, entry.body.len() / 2);

@@ -350,3 +350,220 @@ async fn stale_edits_are_visible_conflicts_and_authority_fields_are_rejected() {
         );
     }
 }
+
+#[tokio::test]
+async fn import_ui_requires_preview_step_up_and_binds_the_reviewed_content() {
+    let w = World::new(0);
+    let manager = w.store.manager(w.operator.owner_id()).unwrap();
+    let input = serde_json::json!({"version":1,"vault":"synthetic","files":[{"path":"memories/garden/one.md","body":"imported fixture hnry_plugin_DEADBEEF"}]});
+    let map = serde_json::json!({"scopes":{"garden":{"action":"namespace","namespace":w.ns}},"files":{},"mixed":[]});
+    let form = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("bundle", &input.to_string())
+        .append_pair("mapping", &map.to_string())
+        .finish();
+    let response = w
+        .request("POST", "/import-preview", Some(ORIGIN), w.cookie(), &form)
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = text(response).await;
+    assert!(response.contains("ready"));
+    assert!(!response.contains("DEADBEEF"));
+    assert!(w.store.managed_snapshot(&manager, &w.ns).unwrap().entries.is_empty());
+    let bundle = serde_json::from_value(input).unwrap();
+    let mapping = serde_json::from_value(map).unwrap();
+    let preview = w.store.preview_import(&manager, &bundle, &mapping).unwrap();
+    let apply = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("preview", &serde_json::to_string(&preview).unwrap())
+        .append_pair("digest", &preview.digest)
+        .append_pair("confirm", "apply")
+        .finish();
+    assert_eq!(
+        w.request("POST", "/import-apply", None, w.cookie(), &apply)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        w.request("POST", "/import-apply", Some(ORIGIN), w.cookie(), &apply)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(w.store.managed_snapshot(&manager, &w.ns).unwrap().entries.len(), 1);
+    assert_eq!(
+        w.request(
+            "POST",
+            "/import-preview",
+            Some(ORIGIN),
+            w.cookie(),
+            "path=%2Fserver%2Fvault"
+        )
+        .await
+        .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+}
+
+#[tokio::test]
+async fn cookie_bridge_renews_the_private_cookie_when_the_api_session_slides() {
+    let w = World::new(600);
+    let response = w.request("GET", "/api/auth/sessions", None, w.cookie(), "").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .starts_with(&format!("{}=", ui::SESSION_COOKIE))
+    );
+}
+#[tokio::test]
+async fn form_login_and_step_up_keep_failure_limits_and_clear_them_on_success() {
+    let w = World::new(600);
+    for path in ["/login", "/step-up"] {
+        for _ in 0..4 {
+            assert_eq!(
+                w.request("POST", path, Some(ORIGIN), w.cookie(), "password=wrong")
+                    .await
+                    .status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        for _ in 0..2 {
+            assert_eq!(
+                w.request(
+                    "POST",
+                    path,
+                    Some(ORIGIN),
+                    w.cookie(),
+                    "password=synthetic+password+only"
+                )
+                .await
+                .status(),
+                StatusCode::SEE_OTHER
+            );
+        }
+    }
+    for _ in 0..5 {
+        assert_eq!(
+            w.request("POST", "/login", Some(ORIGIN), None, "password=wrong")
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        w.request("POST", "/login", Some(ORIGIN), None, "password=synthetic+password+only")
+            .await
+            .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[tokio::test]
+async fn sensitive_routes_require_step_up_and_policy_controls_show_saved_state() {
+    let w = World::new(600);
+    for path in [
+        format!("/n/{}/export", w.ns),
+        format!("/n/{}/writes", w.ns),
+        format!("/n/{}/purge", w.ns),
+        format!("/n/{}/e/{}/delete", w.ns, "a".repeat(64)),
+        "/import-preview".into(),
+        "/import-apply".into(),
+    ] {
+        assert_eq!(
+            w.request("POST", &path, Some(ORIGIN), w.cookie(), "malformed")
+                .await
+                .status(),
+            StatusCode::FORBIDDEN,
+            "{path}"
+        );
+    }
+    assert_eq!(
+        w.request(
+            "POST",
+            "/step-up",
+            Some(ORIGIN),
+            w.cookie(),
+            "password=synthetic+password+only"
+        )
+        .await
+        .status(),
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        w.request(
+            "POST",
+            &format!("/n/{}/writes", w.ns),
+            Some(ORIGIN),
+            w.cookie(),
+            "enabled=false"
+        )
+        .await
+        .status(),
+        StatusCode::SEE_OTHER
+    );
+    let html = text(w.request("GET", &format!("/n/{}", w.ns), None, w.cookie(), "").await).await;
+    assert!(html.contains("value=false selected"));
+}
+#[tokio::test]
+async fn shared_kernel_login_and_passkey_registration_use_only_the_plugin_origin_and_cookie() {
+    let w = World::new(0);
+    let request = |path: &str, body: &str, cookie: Option<String>| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("origin", ORIGIN)
+            .header("content-type", "application/json")
+            .extension(ConnectInfo("127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap()));
+        if let Some(cookie) = cookie {
+            req = req.header("cookie", cookie);
+        }
+        req.body(Body::from(body.to_string())).unwrap()
+    };
+    let response = w
+        .app
+        .clone()
+        .oneshot(request(
+            "/api/auth/login",
+            r#"{"password":"synthetic password only"}"#,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(
+        response.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .starts_with(&format!("{}=", ui::SESSION_COOKIE))
+    );
+    let response = w
+        .app
+        .clone()
+        .oneshot(request(
+            "/api/auth/passkeys/register/start",
+            r#"{"label":"synthetic passkey"}"#,
+            w.cookie(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let result: serde_json::Value = serde_json::from_str(&text(response).await).unwrap();
+    assert_eq!(result["options"]["publicKey"]["rp"]["id"], "memory.example.test");
+}
+
+#[tokio::test]
+async fn form_rejections_never_echo_first_party_credentials_in_field_names() {
+    let w = World::new(0);
+    let response = w
+        .request(
+            "POST",
+            &format!("/n/{}/create", w.ns),
+            Some(ORIGIN),
+            w.cookie(),
+            "title=fixture&body=reference&hnry_plugin_DEADBEEF=unknown",
+        )
+        .await;
+    assert!(response.status().is_client_error());
+    assert!(!text(response).await.contains("DEADBEEF"));
+}

@@ -6,7 +6,7 @@ import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 const require=createRequire(new URL('../../../web/package.json',import.meta.url));
-const { chromium }=require('@playwright/test');
+const { chromium, expect }=require('@playwright/test');
 const scratch=await mkdtemp(join(tmpdir(),'hennery-memory-browser-'));
 const binary=resolve('target/debug/hennery-memory');
 const data=join(scratch,'private');
@@ -36,6 +36,8 @@ try {
     await new Promise(resolve=>setTimeout(resolve,50));
   }
   browser=await chromium.launch({headless:true});
+  const toolResponse=await fetch(`${origin}/mcp`,{method:'POST',headers:{Authorization:`Bearer ${credentials.tool_credential}`,'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
+  assert.equal(toolResponse.status,200); assert.equal((await toolResponse.json()).result.tools.length,4);
   for(const width of [1280,390]) {
     const context=await browser.newContext({viewport:{width,height:900},acceptDownloads:true});
     const page=await context.newPage();
@@ -73,6 +75,36 @@ try {
     await page.getByLabel('Type delete',{exact:true}).fill('delete');
     await page.getByRole('button',{name:'Delete entry',exact:true}).click();
     assert.equal(await page.getByRole('link',{name:`Curated fixture ${width}`,exact:true}).count(),0);
+    await page.goto(`${origin}/import`);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'import form horizontal overflow');
+    const bundle={version:1,vault:'synthetic-browser-vault',files:[{path:`notes/garden/legacy-${width}.md`,body:'Legacy synthetic observation'},{path:`sources/garden/source-${width}.md`,body:'# Original source\nhnry_plugin_DEADBEEF\n<img src="https://evil.example.test/import">'}]};
+    const mapping={scopes:{garden:{action:'namespace',namespace:credentials.namespace}},files:{},mixed:[]};
+    if(width===1280) {
+      await page.getByLabel('Load bundle JSON',{exact:true}).setInputFiles({name:'synthetic-bundle.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(bundle))});
+      await expect(page.getByLabel('Bundle JSON',{exact:true})).toHaveValue(JSON.stringify(bundle));
+    } else { await page.getByLabel('Bundle JSON',{exact:true}).fill(JSON.stringify(bundle)); }
+    await page.getByLabel('Mapping JSON',{exact:true}).fill(JSON.stringify(mapping));
+    await page.getByRole('button',{name:'Preview import',exact:true}).click();
+    assert.equal(await page.getByRole('heading',{name:'Review import manifest',exact:true}).count(),1);
+    assert.ok(!(await page.content()).includes('DEADBEEF'));
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'preview horizontal overflow');
+    await page.screenshot({path:join(scratch,`import-${width}.png`),fullPage:true});
+    await page.getByLabel('Type apply',{exact:true}).fill('apply');
+    await page.getByRole('button',{name:'Apply reviewed import',exact:true}).click();
+    assert.ok((await page.locator('pre').textContent()).includes('committed'));
+    await page.getByRole('link',{name:'Namespaces',exact:true}).click();
+    await page.getByRole('link',{name:'garden (active)',exact:true}).click();
+    await page.getByRole('link',{name:'Session notes',exact:true}).click();
+    await page.getByRole('link',{name:`legacy-${width}`,exact:true}).click();
+    await page.getByText('Source provenance',{exact:true}).click();
+    assert.ok((await page.locator('pre').last().textContent()).includes('unverified'));
+    await page.getByRole('link',{name:'Back to namespace',exact:true}).click();
+    await page.getByRole('link',{name:'Imported sources',exact:true}).click();
+    await page.getByRole('link',{name:`source-${width}`,exact:true}).click();
+    assert.ok((await page.locator('pre').first().textContent()).includes('# Original source'));
+    assert.equal(await page.locator('img').count(),0);
+    assert.ok(requests.every(url=>url.startsWith(origin)), 'import render made an external request');
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'import horizontal overflow');
     await context.close();
   }
   await writeFile(join(scratch,'result.json'),JSON.stringify({passed:2,widths:[1280,390],namespace:credentials.namespace}));

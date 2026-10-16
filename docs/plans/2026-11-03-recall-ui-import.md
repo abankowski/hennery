@@ -49,6 +49,81 @@ verification, guard probes and replay. R3 models and all core changes stay out.
   changed content conflicts. Deletion retains only opaque deduplication evidence
   needed to prevent resurrection, and purge removes that evidence too.
 
+## Operating the separate screen and importer
+
+Create namespaces with R1's explicit `create` command. `ui-init --owner ID
+--public-url ORIGIN` reads the operator password from bounded stdin and makes
+`memory-auth.db`, separate from both the collector and `memory.db`. Use a
+distinct public origin. `serve` adds the screen only after that bootstrap;
+otherwise the service remains MCP-only. The browser uses
+`hennery_memory_session`, with the existing password/passkey implementation,
+independent sessions and no SSO. Sensitive forms require step-up within five
+minutes. The passkey helper has its own Node syntax/unit gate in CI and Nix;
+Rust compiles the screen/assets and CI runs its separate browser acceptance.
+
+The local importer accepts a regular, single-link, uncompressed tar snapshot,
+never a live vault directory/database or its history/hooks. Archive members have
+normalized relative UTF-8 names under `notes/`, `memories/` or `sources/`.
+Directories have no payload; links, devices, GNU/PAX extensions, traversal,
+absolute/drive paths, empty segments and depth above eight are refused. `.git`
+and `.memory` components are skipped. Pointer-only `MEMORY.md` is skipped;
+substantive source documents with that name remain eligible. Limits are 2 MiB
+per file, 10,000 files, 100 MiB expanded content, 20,000 archive members and
+110 MiB raw tar. Oversized/non-UTF-8 files appear in the preview and must be
+fixed or explicitly excluded. Nothing is extracted or changed in the snapshot.
+
+Frontmatter is deliberately constrained: `---` delimiter lines (with a newline
+after the closing delimiter), ASCII identifier keys up to 64 bytes, plain/JSON
+double-quoted/YAML single-quoted scalars up to 8 KiB, two-space `metadata` and
+`times` scalar maps, and scalar flow/block sequences of up to 64 items. Block
+sequences use two spaces at root or four in a nested map; commas inside quoted
+flow elements are unsupported. At most 128 fields/64 KiB frontmatter. Duplicate
+case-folded keys, the duplicate `source_session`/`originSessionId` alias, tabs,
+BOM, tags/anchors/aliases/merges, block scalars, inline comments and further
+nested structures are reported as unparseable. Unknown scalar keys retain
+their spelling and values inertly. Known keys are normalized; dates and legacy
+event IDs/checksums stay source evidence. A legacy session reference is qualified
+by the source-vault hash and never becomes a native `SourceRef` or feed cursor.
+Source documents retain the whole original text after redaction. Notes retain
+their summary/sections and inert metadata, are labelled import/legacy and do
+not regenerate. Large metadata is visibly omitted only from bounded tool
+results; management/export keep the canonical metadata.
+
+Mappings are JSON objects with `scopes`, `files` and `mixed`. Each scope/file
+target is `{"action":"namespace","namespace":"ID","project_key":null}`
+or `{"action":"exclude"}`. A project key is explicit or absent, never guessed
+from cwd. Scope names have no privilege or shared-read union. Unscoped/shared
+files and directory/frontmatter disagreements need a per-file decision.
+`mixed` lists documents known to contain multiple contexts; exclude them until
+the owner supplies an edited copy for one hat. Duplicate/escaped-duplicate map
+keys and unknown authority fields are refused.
+
+While stopped, `import-preview --owner ID --snapshot FILE --vault LABEL
+--mapping FILE` emits a redacted signed proposal with counts, exclusions,
+conflicts, redactions and a content/mapping digest. It writes no entries or
+staging rows. Review that proposal, then use `import-apply --owner ID --preview
+FILE --digest DIGEST`, or upload/paste it into the authenticated screen and
+confirm apply there. The screen also previews bounded JSON bundles with
+`version: 1`, `vault` and `files: [{path, body}]`; HTTP forms are capped at
+128 MiB and accept content bytes, never a server filesystem path. Preview
+signatures bind the entire proposal, owner, namespace epoch and one-hour
+expiry using private namespace keys. A changed proposal requires a new preview.
+
+Apply commits each hat atomically and reports committed versus untouched hats.
+Content changes conflict; a retry never overwrites owner edits or resurrects a
+deleted import. Only hashed vault/path/content evidence remains in that import's
+ledger until namespace purge. Signed previews carry portable content: expiry
+invalidates approval, not external copies. They have the same external-copy
+limitation as exports/backups. Arbitrary provider secrets in plaintext or
+encoded/obfuscated secrets are outside the shared shape-based redactor's claim.
+
+To combine import with C1 capture, attach the grant to the empty namespace
+first, as R1 requires. Local preview can run offline; registered apply needs the
+live service/UI and a fresh authoritative lease. Offline CLI apply is for
+standalone namespaces. Check representative recent/search results in each
+isolated hat before cutover. Existing ACP sessions, rules/hooks and new feed
+grants are separate explicit operations; no real-data cutover was performed.
+
 ## Global Constraints
 
 Opt-in only. No hennery core behavior, DB, UI, model or publishing changes.

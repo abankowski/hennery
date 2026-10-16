@@ -8,7 +8,7 @@ use anyhow::{Result, ensure};
 use axum::{
     Form, Router,
     body::{Body, to_bytes},
-    extract::{Extension, Path, Query, Request, State},
+    extract::{DefaultBodyLimit, Extension, Path, Query, Request, State},
     http::{StatusCode, header},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
@@ -68,6 +68,9 @@ pub fn router(store: Arc<Store>, operator: Arc<Operator>) -> Result<Router> {
     };
     let forms = Router::new()
         .route("/auth.js", get(client_script))
+        .route("/import", get(import_page))
+        .route("/import-preview", post(import_preview))
+        .route("/import-apply", post(import_apply))
         .route("/", get(home))
         .route("/login", get(login_page).post(login))
         .route("/step-up", post(step_up))
@@ -83,6 +86,7 @@ pub fn router(store: Arc<Store>, operator: Arc<Operator>) -> Result<Router> {
         .route("/n/{ns}/e/{id}/retain", post(retain))
         .route("/n/{ns}/e/{id}/pin", post(pin))
         .route("/n/{ns}/e/{id}/delete", post(delete))
+        .layer(DefaultBodyLimit::disable())
         .with_state(state.clone());
     // Reuse passkey registration/login/step-up/session revocation unchanged,
     // but the boundary below translates only this plug-in's private cookie.
@@ -235,7 +239,15 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
             return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Use the management form.");
         }
         let (parts, body) = request.into_parts();
-        let bytes = match tokio::time::timeout(Duration::from_secs(5), to_bytes(body, 64 * 1024)).await {
+        let cap = if path == "/import-preview" || path == "/import-apply" {
+            128 * 1024 * 1024
+        } else if path.ends_with("/edit") {
+            8 * 1024 * 1024
+        } else {
+            64 * 1024
+        };
+        let timeout = if cap > 64 * 1024 { 30 } else { 5 };
+        let bytes = match tokio::time::timeout(Duration::from_secs(timeout), to_bytes(body, cap)).await {
             Ok(Ok(bytes)) => bytes,
             _ => return error(StatusCode::PAYLOAD_TOO_LARGE, "Form too large or slow."),
         };
@@ -262,6 +274,21 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
         }
     }
     let mut response = next.run(request).await;
+    // Axum's default Form/Query rejection can quote an unknown field name.
+    // Keep token-shaped input out of errors as well as canonical content.
+    if !api
+        && response.status().is_client_error()
+        && !response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("text/html"))
+    {
+        response = error(
+            response.status(),
+            "Form fields or query parameters were refused. Use the displayed form.",
+        );
+    }
     if api {
         let values = response
             .headers()
@@ -276,7 +303,8 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
                 .headers_mut()
                 .append(header::SET_COOKIE, v.parse().expect("cookie"));
         }
-    } else if session.as_ref().is_some_and(|s| s.slid)
+    }
+    if session.as_ref().is_some_and(|s| s.slid)
         && !response.headers().contains_key(header::SET_COOKIE)
         && let Some(token) = token.as_ref()
         && ui.operator.authenticate(token, unix_now()).is_ok_and(|a| a.is_some())
@@ -302,7 +330,7 @@ pub fn escape(text: &str) -> String {
 }
 fn page(title: &str, body: &str) -> String {
     format!(
-        "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width, initial-scale=1\"><title>{}</title><style>body{{font:17px system-ui;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#17251c;background:#f6f8f4}}a{{color:#145b3e}}label{{display:block;margin:.8rem 0}}input,textarea,select,button{{font:inherit;max-width:100%;box-sizing:border-box;padding:.5rem}}textarea{{width:100%;min-height:8rem}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;unicode-bidi:plaintext;background:#fff;padding:1rem}}input{{width:min(100%,30rem)}}button{{margin:.4rem .3rem .4rem 0;cursor:pointer}}article,section{{border-top:1px solid #b9c9bb;padding:1rem 0}}.meta{{font-size:.9rem;overflow-wrap:anywhere}}nav{{display:flex;gap:1rem;flex-wrap:wrap}}details{{margin:1rem 0}}</style><h1>{}</h1>{}</html>",
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width, initial-scale=1\"><title>{}</title><style>body{{overflow-wrap:anywhere;font:17px system-ui;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#17251c;background:#f6f8f4}}a{{color:#145b3e}}label{{display:block;margin:.8rem 0}}input,textarea,select,button{{font:inherit;max-width:100%;box-sizing:border-box;padding:.5rem}}textarea{{width:100%;min-height:8rem}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;unicode-bidi:plaintext;background:#fff;padding:1rem}}input{{width:min(100%,30rem)}}button{{margin:.4rem .3rem .4rem 0;cursor:pointer}}article,section{{border-top:1px solid #b9c9bb;padding:1rem 0}}.meta{{font-size:.9rem;overflow-wrap:anywhere}}nav{{display:flex;gap:1rem;flex-wrap:wrap}}details{{margin:1rem 0}}</style><h1>{}</h1>{}</html>",
         escape(title),
         escape(title),
         body
@@ -416,6 +444,7 @@ async fn home(State(ui): State<Ui>, Extension(manager): Extension<Manager>) -> R
         ));
     }
     body.push_str("</nav><section><h2>Confirm sensitive operations</h2>");
+    body.push_str("<p><a href=\"/import\">Import a vault snapshot</a></p>");
     body.push_str(&password_form("/step-up", "Confirm password"));
     body.push_str(&passkey_controls("step-up", "Confirm with passkey"));
     body.push_str("<label>New passkey label <input id=passkey-label maxlength=64></label><button type=button data-passkey=register>Register passkey</button>");
@@ -441,6 +470,12 @@ async fn list(
     let Ok(entries) = ui.store.managed_list(&manager, &ns, kind, query, offset) else {
         return unavailable();
     };
+    let Ok(status) = ui.store.status(&ns) else {
+        return unavailable();
+    };
+    let enabled = status["writes"].as_bool().unwrap_or(false);
+    let selected_enabled = if enabled { " selected" } else { "" };
+    let selected_disabled = if enabled { "" } else { " selected" };
     let mut body = format!(
         "<p><a href=\"/\">Namespaces</a></p><nav><a href=\"/n/{ns}?kind=memory\">Memories</a><a href=\"/n/{ns}?kind=note\">Session notes</a><a href=\"/n/{ns}?kind=source\">Imported sources</a></nav><form method=get><input name=kind type=hidden value=\"{}\"><label>Search <input name=q maxlength=512 value=\"{}\"></label><button>Search</button></form>",
         escape(kind),
@@ -457,7 +492,7 @@ async fn list(
             .finish();
         body.push_str(&format!("<a href=\"/n/{ns}?{}\">Next page</a>", escape(&encoded)));
     }
-    body.push_str(&format!("<section><h2>Create a deliberate memory</h2><form method=post action=\"/n/{ns}/create\"><label>Title <input name=title required maxlength=160></label><label>Markdown <textarea aria-label=Markdown name=body maxlength=16384></textarea></label><button>Create memory</button></form><p>At most five memories can be pinned for optional future startup selection.</p></section><section><h2>Export this namespace</h2><p>Portable content and provenance; no credentials. Exports, backups and flash remanence are outside subsequent deletion claims.</p><form method=post action=\"/n/{ns}/export\"><button>Export Markdown and manifest</button></form></section><details><summary>Agent write policy</summary><form method=post action=\"/n/{ns}/writes\"><label>Agent writes <select name=enabled><option value=true>Enabled</option><option value=false>Disabled</option></select></label><button>Save policy</button></form></details><details><summary>Erase this namespace</summary><p>Removes all plug-in content and makes this namespace terminal. External exports/backups remain.</p><form method=post action=\"/n/{ns}/purge\"><label>Type erase <input name=confirm required pattern=erase></label><button>Erase namespace</button></form></details>"));
+    body.push_str(&format!("<section><h2>Create a deliberate memory</h2><form method=post action=\"/n/{ns}/create\"><label>Title <input name=title required maxlength=160></label><label>Markdown <textarea aria-label=Markdown name=body maxlength=16384></textarea></label><button>Create memory</button></form><p>At most five memories can be pinned for optional future startup selection.</p></section><section><h2>Export this namespace</h2><p>Portable content and provenance; no credentials. Exports, backups and flash remanence are outside subsequent deletion claims.</p><form method=post action=\"/n/{ns}/export\"><button>Export Markdown and manifest</button></form></section><details><summary>Agent write policy</summary><form method=post action=\"/n/{ns}/writes\"><label>Agent writes <select name=enabled><option value=true{selected_enabled}>Enabled</option><option value=false{selected_disabled}>Disabled</option></select></label><button>Save policy</button></form></details><details><summary>Erase this namespace</summary><p>Removes all plug-in content and makes this namespace terminal. External exports/backups remain.</p><form method=post action=\"/n/{ns}/purge\"><label>Type erase <input name=confirm required pattern=erase></label><button>Erase namespace</button></form></details>"));
     html("Manage memory", body)
 }
 fn revision_field(revision: u64) -> String {
@@ -492,7 +527,7 @@ async fn view(
         body.push_str(&format!("<form method=post action=\"{base}/pin\">{revision}<input type=hidden name=pinned value={}><button>{}</button></form>",!e.pinned,if e.pinned {"Unpin"}else{"Pin memory"}));
     }
     if e.kind == "note" {
-        body.push_str(&format!("<form method=post action=\"{base}/annotate\">{revision}<label>Owner annotation <textarea name=annotation maxlength=16384>{}</textarea></label><button>Save annotation</button></form><form method=post action=\"{base}/retain\">{revision}<label>Memory title <input name=title required maxlength=160></label><label>Exact text from this note to retain <textarea name=selected required maxlength=16384></textarea></label><button>Retain selected text</button></form>",escape(&e.owner_annotation)));
+        body.push_str(&format!("<form method=post action=\"{base}/annotate\">{revision}<label>Owner annotation <textarea aria-label=\"Owner annotation\" name=annotation maxlength=16384>{}</textarea></label><button>Save annotation</button></form><form method=post action=\"{base}/retain\">{revision}<label>Memory title <input name=title required maxlength=160></label><label>Exact text from this note to retain <textarea aria-label=\"Exact text from this note to retain\" name=selected required maxlength=16384></textarea></label><button>Retain selected text</button></form>",escape(&e.owner_annotation)));
     }
     body.push_str(&format!("<details><summary>Delete this entry{}</summary><form method=post action=\"{base}/delete\">{revision}<label>Type delete <input name=confirm pattern=delete required></label><button>Delete entry</button></form><p>Native note deletion also suppresses future capture for its source. Exports/backups are not erased.</p></details>",if e.kind=="note" {" / suppress its source"}else{""}));
     html(&e.title, body)
@@ -674,4 +709,114 @@ async fn export(
         Body::from_stream(stream),
     )
         .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportInput {
+    bundle: String,
+    mapping: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportApproval {
+    preview: String,
+    digest: String,
+    confirm: String,
+}
+async fn import_page(State(ui): State<Ui>, Extension(manager): Extension<Manager>) -> Response {
+    let Ok(namespaces) = ui.store.managed_namespaces(&manager) else {
+        return unavailable();
+    };
+    let mut body="<p><a href=\"/\">Namespaces</a></p><p>Nothing enters memory until a signed preview is reviewed and applied with its exact content/mapping digest. Imported statements stay unverified legacy evidence. Never submit credentials.</p><h2>Your namespace IDs</h2><ul>".to_string();
+    for n in namespaces {
+        body.push_str(&format!(
+            "<li>{}: <code>{}</code> ({})</li>",
+            escape(&hennery_kernel::redact::text(&n.hat).unwrap_or(n.hat)),
+            escape(&n.id),
+            escape(&n.state)
+        ));
+    }
+    body.push_str("</ul><section><h2>Preview a bundle</h2><p>Bundle JSON: version 1, a source-vault label, and files with normalized relative path and UTF-8 body. Only notes/, memories/ and sources/ are accepted. Map each scope or file to one namespace or exclude; shared, unscoped, mixed and disagreeing files need explicit decisions. Maximum 2 MiB per file, 10,000 files and 100 MiB expanded; the HTTP form is capped at 128 MiB.</p><p>Mapping JSON has scopes, files and mixed. A target is {&quot;action&quot;:&quot;namespace&quot;,&quot;namespace&quot;:&quot;ID&quot;} with optional project_key, or {&quot;action&quot;:&quot;exclude&quot;}. mixed is a list of documents to exclude until edited for one hat. No automatic personal/shared fallback.</p><form method=post action=/import-preview><label for=bundle>Bundle JSON</label><input type=file data-fill=bundle accept=application/json aria-label=\"Load bundle JSON\"><textarea id=bundle name=bundle required></textarea><label for=mapping>Mapping JSON</label><textarea id=mapping name=mapping required>{&quot;scopes&quot;:{},&quot;files&quot;:{},&quot;mixed&quot;:[]}</textarea><button>Preview import</button></form></section><section><h2>Apply a local CLI preview</h2><p>The local importer reads an uncompressed tar snapshot and emits a redacted signed preview. Review that manifest first; this form never reads a server filesystem path. A preview expires after one hour. Changed data/mapping needs a new preview. Registered namespaces require a live lease for apply.</p><form method=post action=/import-apply><label for=preview>Reviewed preview JSON</label><input type=file data-fill=preview accept=application/json aria-label=\"Load reviewed preview JSON\"><textarea id=preview name=preview required></textarea><label for=digest>Reviewed content/mapping digest</label><input id=digest name=digest required minlength=64 maxlength=64><label for=confirm>Type apply</label><input id=confirm name=confirm required pattern=apply><button>Apply reviewed import</button></form><p id=passkey-status role=status></p><script type=module src=/auth.js></script></section>");
+    html("Import vault snapshot", body)
+}
+async fn import_preview(
+    State(ui): State<Ui>,
+    Extension(manager): Extension<Manager>,
+    Form(input): Form<ImportInput>,
+) -> Response {
+    let Ok(bundle) = serde_json::from_str::<crate::import::Bundle>(&input.bundle) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid bounded bundle JSON. No server paths or links are accepted.",
+        );
+    };
+    let Ok(mapping) = serde_json::from_str::<crate::import::Mapping>(&input.mapping) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid mapping JSON; duplicate keys and unknown fields are refused.",
+        );
+    };
+    let Ok(preview) = ui.store.preview_import(&manager, &bundle, &mapping) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Bundle or mapping refused: check normalized paths, duplicate files, expanded size and target mapping.",
+        );
+    };
+    let mut body = format!(
+        "<p><a href=\"/import\">Back to import</a></p><p>Content/mapping digest: <code>{}</code></p><p>Blocked: {}. Preview expires {}. No entries have been written.</p><h2>Per-namespace counts</h2><ul>",
+        escape(&preview.digest),
+        preview.blocked,
+        escape(&rfc3339(preview.expires))
+    );
+    for hat in &preview.hats {
+        body.push_str(&format!(
+            "<li><code>{}</code>: {} · conflicts: {}</li>",
+            escape(&hat.namespace),
+            escape(&serde_json::to_string(&hat.counts).expect("counts")),
+            hat.conflict
+        ));
+    }
+    body.push_str("</ul><h2>Files, exclusions, conflicts and redactions</h2><ul>");
+    for file in &preview.reports {
+        body.push_str(&format!(
+            "<li><code>{}</code>: {} · changed fields: {}</li>",
+            escape(&file.path),
+            escape(&file.status),
+            escape(&file.redactions.join(", "))
+        ));
+    }
+    body.push_str("</ul>");
+    if !preview.blocked {
+        let serialized = serde_json::to_string(&preview).expect("preview");
+        body.push_str(&format!("<form method=post action=/import-apply><textarea name=preview hidden>{}</textarea><input type=hidden name=digest value=\"{}\"><label for=confirm>Type apply</label><input id=confirm name=confirm pattern=apply required><button>Apply reviewed import</button></form><p>Each hat commits atomically. A conflicting or failed hat stays untouched; other hats can commit. Retrying never overwrites edits or resurrects deleted imports.</p>",escape(&serialized),escape(&preview.digest)));
+    } else {
+        body.push_str("<p role=alert>Resolve every ambiguous, unparseable or oversized file, or explicitly exclude it, then preview again.</p>");
+    }
+    html("Review import manifest", body)
+}
+async fn import_apply(
+    State(ui): State<Ui>,
+    Extension(manager): Extension<Manager>,
+    Form(input): Form<ImportApproval>,
+) -> Response {
+    if input.confirm != "apply" {
+        return error(StatusCode::BAD_REQUEST, "Explicit apply confirmation required.");
+    }
+    let Ok(preview) = serde_json::from_str::<crate::import::Preview>(&input.preview) else {
+        return error(StatusCode::BAD_REQUEST, "Invalid preview JSON.");
+    };
+    let Ok(results) = ui.store.apply_import(&manager, &preview, &input.digest) else {
+        return error(
+            StatusCode::CONFLICT,
+            "Preview signature, digest, expiry or namespace changed; preview again before applying.",
+        );
+    };
+    html(
+        "Import result",
+        format!(
+            "<pre>{}</pre><a href=\"/\">Namespaces</a><p>Committed and untouched hats are reported separately. Inspect representative recent/search results before cutover. Existing ACP sessions and global rules were not changed.</p>",
+            escape(&serde_json::to_string_pretty(&results).expect("results"))
+        ),
+    )
 }

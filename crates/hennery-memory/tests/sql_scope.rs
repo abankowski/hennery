@@ -87,6 +87,7 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
     db.execute_batch(include_str!("../src/schema.sql")).unwrap();
     db.execute_batch(include_str!("../src/schema2.sql")).unwrap();
     db.execute_batch(include_str!("../src/schema3.sql")).unwrap();
+    db.execute_batch(include_str!("../src/schema4.sql")).unwrap();
     let source = include_str!("../src/store.rs");
     let fragments = string_literals(source);
     let coverage = fragments
@@ -94,11 +95,12 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
         .find(|s| s.starts_with("CASE WHEN "))
         .expect("actual coverage SQL")
         .replace("{}", "7");
-    let mut count = [0, 0, 0];
+    let mut count = [0, 0, 0, 0];
     for (file, source) in [
         source,
         include_str!("../src/consumer.rs"),
         include_str!("../src/management.rs"),
+        include_str!("../src/import.rs"),
     ]
     .into_iter()
     .enumerate()
@@ -118,6 +120,7 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
                     "seen",
                     "feeds",
                     "receipts",
+                    "imports",
                 ]
             } else {
                 vec!["entries"]
@@ -146,7 +149,7 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
                     );
                 }
                 let compact = sql.split_whitespace().collect::<String>();
-                if file == 2 && sql.contains(" FROM namespaces ") {
+                if file >= 2 && sql.contains(" FROM namespaces ") {
                     assert!(sql.contains("owner=?"), "management owner boundary: {sql}");
                     continue;
                 }
@@ -192,5 +195,5 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
             }
         }
     }
-    assert_eq!(count, [8, 51, 15], "new statements need explicit audit coverage");
+    assert_eq!(count, [8, 51, 15, 7], "new statements need explicit audit coverage");
 }

@@ -701,7 +701,15 @@ impl Store {
                         "UPDATE namespaces SET state='purged',tool_hash=id,cursor_key='',writes=0 WHERE id=?1",
                         [&ns.id],
                     )?;
-                    for table in ["entries", "sources", "requests", "suppressed", "seen", "feeds"] {
+                    for table in [
+                        "entries",
+                        "sources",
+                        "requests",
+                        "suppressed",
+                        "seen",
+                        "feeds",
+                        "imports",
+                    ] {
                         tx.execute(&format!("DELETE FROM {table} WHERE namespace=?1"), [&ns.id])?;
                     }
                 }

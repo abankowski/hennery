@@ -52,3 +52,14 @@ if (typeof document !== 'undefined') {
     });
   }
 }
+if (typeof document !== 'undefined') {
+  for (const input of document.querySelectorAll('input[data-fill]')) {
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const status = document.querySelector('#passkey-status');
+      if (file.size > 100 * 1024 * 1024) { status.textContent = 'Input file exceeds the 100 MiB bound.'; input.value = ''; return; }
+      document.getElementById(input.dataset.fill).value = await file.text();
+    });
+  }
+}

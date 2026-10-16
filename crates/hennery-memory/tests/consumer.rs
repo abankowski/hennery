@@ -1327,3 +1327,41 @@ async fn managed_notes_keep_annotations_retain_typed_evidence_and_delete_suppres
         vec![hennery_proto::plugin::Provenance::Unverified {}]
     );
 }
+
+#[tokio::test]
+async fn managed_note_delete_fences_an_already_fetched_page_without_advancing_its_cursor() {
+    let w = World::new(60).await;
+    w.s.bind_manager("ui-principal", "owner").unwrap();
+    let manager = w.s.manager("ui-principal").unwrap();
+    w.set(vec![turn("s", "first", "initial", op())], "first");
+    w.poll().await.unwrap();
+    let note =
+        w.s.managed_list(&manager, &w.c.namespace, "note", "", 0)
+            .unwrap()
+            .remove(0);
+    w.set(vec![turn("s", "held", "late content", op())], "held");
+    w.remote.hold.store(true, Ordering::SeqCst);
+    let s = w.s.clone();
+    let key = w.key.clone();
+    let id = w.c.namespace.clone();
+    let task = tokio::spawn(async move { Consumer::new().unwrap().poll(&s, &key, &id).await });
+    tokio::time::timeout(Duration::from_secs(5), w.remote.arrived.notified())
+        .await
+        .unwrap();
+    w.s.managed_delete(&manager, &w.c.namespace, &note.id, note.revision)
+        .unwrap();
+    w.remote.release.notify_one();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(8), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(w.cursor().as_deref(), Some("first"));
+    assert!(
+        w.s.managed_list(&manager, &w.c.namespace, "note", "", 0)
+            .unwrap()
+            .is_empty()
+    );
+}
