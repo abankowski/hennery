@@ -4,7 +4,7 @@
 
 **Architecture:** D4a adds pure generated family types, an owner/hat-authorized operator API, a canonical question-routing view, bounded durable invalidation and typed display authorship. D4b adds the family panel and row links to the current layout, explicit operator takeover, status-only attention acknowledgement and the real-provider harness. Permission questions remain operator work; one generation remains enforced.
 
-**Tech stack:** existing Rust/axum/rusqlite, hennery-view code generation, React/TypeScript/Vitest and Playwright. No new dependency or lockfile change.
+**Tech stack:** existing Rust/axum/rusqlite, hennery-view code generation, React/TypeScript/Vitest and Playwright. The original D4 adds no dependency; the live-answer correction below pins `jsonschema` with external retrieval disabled and updates Cargo.lock.
 
 **Spec and hand-offs:** [delegation](../specs/2026-10-14-delegation-design.md), [D1](2026-10-27-delegation-mcp.md), [D2](2026-10-29-delegation-tools.md), [D3a](2026-10-31-delegation-delivery.md), [D3b](2026-11-01-delegation-attention.md), and plan 4's view/shell/list/phone contracts. Plan 3c supplies this structure. The built code in the patch blocks wins over prose.
 
@@ -3678,6 +3678,8 @@ index 05b154ea..879b0346 100644
 
 Normal `cargo test -p hennery-testkit --test delegation_live --locked` performs no inference. Explicit `--ignored --exact --nocapture` provider runs require HENNERY_D4_PINNED_ADAPTER_ROOT, HENNERY_D4_PARENT, HENNERY_D4_CHILD and the necessary HENNERY_D4_CLAUDE_AUTH/HENNERY_D4_CODEX_AUTH credential-file paths. Pinned Claude ACP 0.81.0, Codex ACP 1.13.0 and native Codex 0.155.1 are verified. Run all four parent→child pairs and record configuration, elicitation, permissions, busy/park/reconnect/failure/closed-parent cases individually. No missing scenario is inferred from a passing base row.
 
+Every adapter or underlying runtime pin bump must rerun all four live matrix rows and each required lifecycle scenario. The matrix is the drift detector for model behaviour, including tool argument spelling and repair after errors. First run the pinned no-inference discovery probe, which validates every advertised `inputSchema` against the generated, snapshotted parent-facing contract. Discovery alone cannot establish model behaviour or replace a paid matrix row.
+
 ```diff
 diff --git a/crates/hennery-testkit/tests/delegation_live.rs b/crates/hennery-testkit/tests/delegation_live.rs
 new file mode 100644
@@ -6467,8 +6469,147 @@ are now retained before cleanup.
 | Child failure | Not reached | Not run: stopped | Not run: stopped |
 | Closed parent fallback | Not reached | Not run: stopped | Not run: stopped |
 
-No release gate was removed. Review the configuration/security-baseline
+No release gate was removed in that attempt. Review the configuration/security-baseline
 preservation, terminal failure cleanup and visible receipts on
 `87cc219c..6f550a97`; independent review and Linux/macOS CI remain parent-owned.
+
+### Parent-answer contract correction (2026-10-16)
+
+The actual `session_answer` discovery schema advertised `content` without a
+type because it came from `Option<Value>`. Its object-only runtime rule was
+therefore stronger than the advertised contract. The MCP endpoint did return
+`isError: true`, `structuredContent.code=invalid_arguments` and a text tool
+result to the parent; errors were visible, but the message was the generic
+“the session operation was refused”. It did not explain how to repair content.
+
+The generated input schema now declares optional `content` as `type: object`;
+accept requires an object, and decline/cancel omit it. The tool description
+contains a concrete schema/object example and points at the actual child's
+`requestedSchema`. Bounded original schemas are included in both question
+delivery and child status, preserving the untrusted-child provenance wrapper.
+Permissions remain operator-only and contain no parent-answerable schema.
+
+A compatibility bridge accepts a string only when it decodes once to an
+unambiguous JSON object. This handles the pinned Claude parent's observed
+JSON-string spelling without teaching a weaker schema. Duplicate keys,
+including escaped equivalents and nested duplicates, remain refused. Parsing
+happens before the canonical operation digest, so object and encoded-object
+retries share the same receipt. Both then undergo the same original form-schema
+validation inside the owned-child transaction. Invalid answers queue nothing
+and consume no operation key. The operator input path is unchanged.
+
+`jsonschema` is pinned with default features off and an explicit offline
+retriever: no child schema can retrieve HTTP or local files. Schema failures
+return a bounded actionable `invalid_arguments` MCP tool result containing
+the form contract when available; malformed JSON gets object-shape guidance.
+Raw submitted values and internal store errors are never echoed. A parent
+can correct an invalid answer and retry immediately; unsupported schemas can
+be declined/cancelled or escalated to the operator.
+
+All seven parent-facing tool schemas and descriptions have a checked contract
+snapshot. The pinned no-inference probe checks the actual tools/list response's
+schemas, rather than counting names. Pin bumps must rerun the matrix as stated
+in Task 4 above.
+
+#### Verification of the parent-answer correction
+
+The object-schema, encoded-object, original-form validation, question-schema,
+MCP error-message and schema-snapshot regressions were observed RED before
+their corrections. The snapshot's initial placeholder was then replaced with
+the reviewed seven-tool contract; no automatic snapshot updater remains.
+
+- `cargo test -p hennery-sessions --test tool_args --test delegation_d2 --lib`:
+  exit 0; 10 tool-argument, 147 delegation and 73 library tests pass.
+- `cargo test -p hennery-testkit --test delegation_mcp --test delegation_live`:
+  exit 0; 22 MCP tests and 5 normal live-harness tests pass; 5 paid/no-inference
+  tests remain explicitly ignored in the normal suite.
+- `cargo test -p hennery-proto --locked`: exit 0; 73 tests pass, doctests pass.
+- `cargo test -p hennery-testkit --test delegation_tools --test delegation_host
+  --locked`: exit 0; 14 tools and 17 host tests pass; 1 ignored.
+- `cargo fmt --all --check`, both required Clippy commands and both generator
+  checks: exit 0. Proto artifacts were regenerated. The final workspace Clippy
+  check includes the exact-schema status assertion and existing-file retrieval
+  refusal regression.
+- Both pinned no-inference discovery checks: exit 0, 1 test each. Actual Claude
+  and Codex `tools/list` responses have all seven generated input schemas; no
+  provider prompt or inference is performed.
+- Ten independent guard removals in an APFS-cloned-target scratch copy fail
+  assertions: object schema, string normalization, duplicate-key refusal, form
+  validation, actionable error, error visibility, status schema, delivered
+  schema, contract snapshot and pinned schema comparison. Every mutation was
+  restored. Restored copied suites pass the same 73/147/10 and 22/5 test sets;
+  876 tracked files match, excluding only this plan and the documentation index.
+  The final existing-file refusal test also passes directly (2 form tests).
+- No repeated full workspace or full fresh replay under the amendment
+  verification budget; the earlier completed workspace coverage is recorded
+  above. No timing/concurrency transition or UI gate changed, so no new 4×3
+  load or web gate was run. No additional native Nix gate was run.
+- Patch and diagnostic/no-inference logs contain zero exact credential or
+  token-like matches. Private logs, scripts and scratch copies are retained
+  under the ignored `deleg-ungate` ledger for parent inspection and cleanup.
+
+#### Paid matrix after the parent-answer correction
+
+Product commit: `134d588b`. Each of the three requested rows ran exactly once,
+without retries. Claude uses Sonnet/low; Codex uses gpt-6-sol/low. The approved
+separate Claude test login and existing Codex login were copied only by the
+harness into disposable mode-0600 homes. Credential contents are absent from
+this record and the logs.
+
+| Parent→child | Exit | Test result | Duration |
+| --- | --- | --- | --- |
+| Claude→Claude | 0 | 1 passed | 86.52 s |
+| Claude→Codex | 0 | 1 passed | 139.56 s |
+| Codex→Claude | 101 | 0 passed, 1 failed | 98.30 s |
+
+Requested and actual complete child readbacks agree on every axis:
+
+- Claude children: `model=sonnet`, `mode=default`, `axes={effort:low}`.
+- Codex child: `model=gpt-6-sol`, `mode=read-only`,
+  `axes={collaboration_mode:plan,reasoning_effort:low}`.
+
+| Scenario | Claude→Claude | Claude→Codex | Codex→Claude |
+| --- | --- | --- | --- |
+| Actual parent spawn / child family | PASS | PASS | PASS |
+| Complete matching configuration before brief | PASS | PASS | PASS |
+| Genuine child elicitation | PASS | PASS | PASS |
+| Parent answer delivery and child continuation | PASS | PASS | PASS |
+| Permission fallback / operator denial / no edit | PASS | PASS | PASS |
+| Busy-parent queue and release delivery | PASS | PASS | FAIL: no genuine parent MCP approval |
+| Genuine parked parent | PASS | PASS | Not reached |
+| Automatic parent resume / fresh configuration / token rotation | PASS | PASS | Not reached |
+| Socket reconnect and reconciliation | PASS | PASS | Not reached |
+| Actual child failure / coalesced durable notice | PASS | PASS | Not reached |
+| Closed parent / operator fallback / remains closed | PASS | PASS | Not reached |
+
+The Codex→Claude row reaches `parent busy at real MCP approval`, then fails
+promptly because that provider turn completes without the required real
+question. Redacted diagnostic excerpt (no credential-like values):
+
+```text
+{"case":"operator_permission_fallback","passed":true}
+{"phase":"parent busy at real MCP approval"}
+Error: provider turn Completed without the required genuine question
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 98.30s
+EXIT=101
+```
+
+The retained MCP trace contains no `session_list` call for that busy-boundary
+attempt. It does contain successful parent `session_capabilities`,
+`session_spawn`, `session_status` and `session_answer` calls, and exact input
+schema discovery for both participants. The child remains active/idle with
+no failure reason; its actual output includes `CHILD_ACCEPTANCE_OK blue` and
+`PERMISSION_DENIED_OK`. No provider authentication, quota or transport error
+class is recorded. The reason the parent completed without the required
+approval is unestablished; the log does not prove an infrastructure failure.
+No paid retry or further product correction was attempted under the stop rule.
+
+The parent-answer correction passes the real answer loop in all three rows.
+Live acceptance as a whole remains incomplete. The earlier Codex→Codex full
+pass is retained as historical evidence, not rerun or used to fill the missing
+Codex→Claude scenarios. **The preview/ordinary-release restriction remains.**
+There is no separate runtime/UI preview flag on this base to flip; permanent
+per-hat authorization is retained. No gate tests were weakened or changed.
+Review and Linux/macOS CI remain parent-owned.
 
 Generated with Claude AI — please review before distribution.
