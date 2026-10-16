@@ -10,7 +10,7 @@
 
 ## Execution status
 
-Parent independent re-review: APPROVE, no findings at `b2ca6147`. Rebased onto approved C1b `f4e167a6` over D3a/D3b main `6cb867c6`, retaining byte-identical memory source/tests. All six Rust gates, targeted memory tests and native Nix checks passed after the rebase; details are recorded below. Current-head PR CI and full status remain parent-owned.
+Parent independent re-review: APPROVE, no findings at `b2ca6147`. Rebased onto approved C1b `52bd9812` over D4 main `827e6489`, retaining byte-identical memory source/tests. All six Rust gates, targeted memory tests and native Nix checks passed after the rebase; details are recorded below. Current-head PR CI and full status remain parent-owned.
 
 Built on `plan/recall-r1`; original base `a58479c7`, integration base C1b `bf632e58` (C2 main `7fe43fbe`). Four exact construction patches below were generated from the built commits. Task 3 includes the preserved WIP commit and its completed consumer. Final verification and replay results are recorded below. Independent review results come from the parent; current PR status and Linux/macOS CI remain parent-owned. No publication.
 
@@ -6379,6 +6379,29 @@ The full `crates/hennery-memory` source and tests, `Cargo.toml` and final `Cargo
 | `nix flake check -L` | 0 | completed successfully |
 
 Logs and count summary: `.superpowers/sdd/recall-r1/rebase-d3-1/`. No web files changed in this lane, so the web gate was skipped. No GitHub action or publication was performed. The parent owns current-head Linux/macOS CI and full PR status (checks, reviewDecision, mergeStateStatus and unresolved review threads, bots included).
+
+## Integration rebase onto D4 (2026-10-16)
+
+After D4 merged into main `827e6489`, the parent rebased approved C1b with an identical range-diff to `52bd9812`. This lane fetched origin and ran `git -c commit.gpgsign=false rebase --onto origin/plan/plugin-c1b f4e167a6 plan/recall-r1`. The nine rewritten R1 commits end at `c835bddf` before this record. The parent-reported R1 re-review remains APPROVE, with no findings at `b2ca6147`.
+
+The sole conflict was the first store commit's Nix source list. Kept D4's `family.sql` (sessions migration 21), `undo_family.sql` and the delegation JSONL fixture, all existing delegation SQL entries, and memory's `schema.sql`/`schema2.sql`. Core migration ordering and contents come unchanged from the new base. The owner SQL audit retains D4's family module plus memory's separate scoped audit. Workspace membership remains `crates/*`. Starting from the new base lock, `cargo update --workspace --offline` regenerated the memory path-package entry without changing external dependencies.
+
+The complete memory crate, `Cargo.toml` and final `Cargo.lock` are byte-identical to both prior head `a6045239` and approved `b2ca6147`. The range-diff changes only Nix context; no plug-in behavior, namespace/auth rule, lease, purge claim or resource guard changed. Per the Verification budget, all six Rust gates ran once for this hotspot/conflict rebase, with targeted memory tests and native Nix. No new replay, timing load or mutation probes were run because this integration adds no runtime guard or timing behavior. Historical evidence above remains unchanged. The separate R2 worktree was not touched; the parent coordinates its rebase.
+
+| Command (private HOME/XDG, flake dev shell) | Exit | Output |
+|---|---:|---|
+| `cargo fmt --all --check` | 0 | completed successfully |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | 0 | completed successfully |
+| `cargo clippy -p hennery --locked -- -D warnings` | 0 | completed successfully |
+| `cargo test --workspace --locked` | 0 | 2532 passed, 5 ignored; 173 result groups |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | 0 | completed successfully |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | 0 | completed successfully |
+| `cargo test -p hennery-memory --locked` | 0 | 56 passed, 1 ignored; 11 result groups |
+| `nix flake check -L` | 0 | completed successfully |
+
+The five ignored workspace cases retain their explicit setup requirements: the mounted memory proof and four pinned-adapter acceptance checks. The targeted memory run retains its one ignored mounted proof; the earlier live-proof record remains above. No provider inference was invoked for this rebase.
+
+Logs and count summary: `.superpowers/sdd/recall-r1/rebase-d4-1/`. This lane changed no web files, so the web gate was skipped. No GitHub action or publication was performed. Current-head Linux/macOS CI and full PR status (checks, reviewDecision, mergeStateStatus and unresolved review threads, bots included) remain parent-owned.
 
 ## After this plan
 
