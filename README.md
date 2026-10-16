@@ -25,13 +25,17 @@ What works:
   for organising sessions and choosing their MCP servers.
 - **MCP servers.** Connect a server with a static token or OAuth through the
   gateway, or configure local stdio servers for a host and hat, on the **MCP** screen.
+- **Parent/child sessions.** Let a session delegate work to children, receive
+  their reports and answer their questions, with operator oversight.
+- **Phone answers.** Enable Web Push in **Settings** to open a waiting question
+  on your phone and answer it in hennery.
+- **Optional memory.** Run the separate `hennery-memory` plug-in for scoped
+  session notes, deliberate memories, search and vault import.
 
 Known limitations:
 
 - One owner per collector. Setup requires a password; it also offers a
   passkey, which you can use to sign in afterwards.
-- Web Push is built on the collector, but the web UI has no subscribe
-  button yet.
 - Codex sessions get hennery MCP servers only in the host's default hat, without per-hat isolation, and also load the user's own `~/.codex` MCP servers; other hats get none, until per-hat isolation lands.
 - Hosts support verified `wss://`; exact trusted proxy peers provide separate
   client rate-limit budgets. Public adapter/MCP acceptance is pending. Restrict ingress until
@@ -39,6 +43,75 @@ Known limitations:
 - The designs are in [`docs/specs/`](docs/specs/) and the plans in
   [`docs/plans/`](docs/plans/); [`docs/README.md`](docs/README.md) lists
   them.
+
+## Parent/child sessions
+
+Delegation is available for ordinary use, with an explicit per-hat opt-in.
+A parent session uses hennery's session tools to spawn a child, choose its
+runtime, model and configuration, send follow-ups, inspect progress and close
+finished work. Children run on the parent's host and in its hat. There is one
+generation of children: a child cannot spawn grandchildren. Git worktrees are
+still the agent's responsibility.
+
+Child reports and ordinary questions go back to the parent, which can answer
+and steer the work. **Permission requests always go to the operator.** If a
+parent cannot handle a child question, hennery brings it to the operator's
+attention rather than leaving it hidden. With notifications enabled, that
+attention can reach your phone.
+
+The session's family panel links the parent and children and shows their
+progress and questions. You can open a child and answer directly, or use
+**Take over** to detach it from parent control and handle it yourself.
+
+Live acceptance covers all four Claude Code/Codex parent–child combinations:
+Claude→Claude, Claude→Codex, Codex→Claude and Codex→Codex. For a Codex parent,
+use at least **`medium` reasoning effort** for reliable session-tool use.
+See the [delegation design](docs/specs/2026-10-14-delegation-design.md) and
+[family UI and live acceptance record](docs/plans/2026-11-02-delegation-families.md)
+for the contract and tested scenarios.
+
+## Optional memory plug-in
+
+`hennery-memory` is a separate, opt-in binary with its own storage and
+credentials. Agents use its MCP tools through a hat-scoped gateway connection
+and host mount. hennery's plug-in contract separately controls completed
+activity access and deletion lifecycle; mounting a server alone does not grant
+it transcript access. Core hennery works without the plug-in installed.
+
+The plug-in stores bounded session notes from explicitly granted completed
+activity, deliberate memories written by agents or curated by the operator,
+and imported notes with their source information. Notes and memories stay
+scoped to their owner and hat in a separate SQLite store. Recent, brief and
+search tools retrieve that material using deterministic selection and lexical
+search. **It uses no LLM**: no embeddings, automatic fact promotion or model
+subscription is required.
+
+Its optional management UI has its own authentication and **must use a
+dedicated hostname, distinct from hennery's UI and any other application**.
+Cookies are not isolated by port, so another port on the same hostname is
+not enough. For local use, reserve `localhost` for the memory UI and use
+`127.0.0.1` for hennery's UI, with each configured public URL matching the
+address you open. The memory UI refuses IP-address origins; use HTTPS for
+remote access.
+
+To import an existing vault, take a snapshot and preview it first. Review
+the proposed files and map each to exactly one hat or exclude it, then apply
+the reviewed preview. Import is explicit, not an ongoing vault sync. The
+management UI also edits and deletes memories and exports scoped Markdown
+with source metadata; exported copies and backups remain outside later
+deletion guarantees.
+
+See the [memory spec](docs/specs/2026-10-14-memory-design.md),
+[service setup and MCP integration](docs/plans/2026-11-01-recall-service.md#operating-the-opt-in-service),
+and [management, export and preview/apply instructions](docs/plans/2026-11-03-recall-ui-import.md#operating-the-separate-screen-and-importer).
+
+## Phone answers
+
+In **Settings**, prepare and enable notifications on each browser or installed
+app you want to use. On iOS, add hennery to the Home Screen and enable them
+from that app. Push notifications open the session's question card, where you
+can answer after signing in if needed. There are **no lock-screen replies**;
+permission requests still require the operator's answer in hennery.
 
 ## Verify a release installer before running it
 
@@ -60,6 +133,12 @@ Set `release_tag` to the published version you intend to install. The block
 downloads public data into a private temporary directory and verifies the annotated
 tag with an isolated keyring. The maintainer signs source; Sigstore binds the
 installer and checksum bytes to that exact tagged workflow and source commit.
+The attestation command uses `--cert-identity` for the exact
+`release.yml@refs/tags/<tag>` identity, not the mutually exclusive
+`--signer-workflow`. It also pins the source ref, source and signer digests,
+GitHub Actions issuer, SLSA provenance predicate and hosted runners. The tag
+must be annotated, point directly to that source commit and have a valid
+signature from the full pinned maintainer fingerprint above.
 The block authenticates `SHA256SUMS`, release metadata and the installer, checks
 their common attesting run, and only then runs the installer. The installer repeats
 these checks for its archive before extraction. Keep the printed directory for
@@ -180,13 +259,32 @@ sh "$release_dir/hennery-installer.sh"
 )
 ```
 
-## Homebrew
+## Installing
 
-The project tap is implemented with publication disabled until a stable release
-passes native acceptance. The first alpha stays GitHub-only. See the
-[Homebrew guide](docs/homebrew.md) for installation, upgrade, removal and the
-service PATH/restart requirements. Package operations preserve user data and
-never automatically manage services or agent logins.
+**Until the first release (0.1.0), build from source with the quickstart
+below. Nothing is published yet.** The following channels are prepared for
+that release; these are descriptions of future installation, not executable
+quickstart steps:
+
+| Channel | After publication |
+|---|---|
+| Homebrew | `brew install marcinwadon/tap/hennery` from the project's tap. |
+| crates.io | `cargo install hennery`; the `hennery` crate installs the binary with its embedded UI. |
+| GHCR | The collector-only image at `ghcr.io/marcinwadon/hennery`; agent hosts run separately on your machines. |
+| GitHub Releases | Platform archives and `hennery-installer.sh` on the [Releases page](https://github.com/marcinwadon/hennery/releases), with `SHA256SUMS`, metadata and Sigstore bundles. Use the verification procedure above before running the installer. |
+
+For a downloaded archive, apply the same signed-tag and exact-workflow
+attestation checks to `SHA256SUMS`, `release-metadata.json` and the archive,
+require their common attesting run/attempt, then compare the archive's SHA-256
+with its single entry in the authenticated checksum list before extraction.
+The [release contract](packaging/release/README.md#assets-and-verification)
+describes these checks. Package-manager installs use their own channel trust;
+they do not automatically perform the installer verification above.
+
+See the [Homebrew guide](docs/homebrew.md) for upgrade, removal and the service
+PATH/restart requirements. Package operations preserve user data and never
+automatically manage services or agent logins. The first-release channel plan
+above supersedes that guide's historical GitHub-only alpha rollout note.
 
 ## Quickstart
 
@@ -489,3 +587,5 @@ the default place, give `--data-dir <dir>` right after `admin`.
 ## Licence
 
 hennery is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+Generated with Claude AI — please review before distribution.
