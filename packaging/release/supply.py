@@ -186,7 +186,7 @@ def binary_inventory(root, targets):
         archive = Path(root) / (base + '.tar.xz')
         with tarfile.open(archive, 'r:xz') as tar:
             members = tar.getmembers()
-            expected = {base, base + '/hennery', base + '/LICENSE', base + '/README.md', base + '/THIRD-PARTY-NOTICES.txt'}
+            expected = {base, base + '/hennery', base + '/CHANGELOG.md', base + '/LICENSE', base + '/README.md', base + '/THIRD-PARTY-NOTICES.txt'}
             gate.require(len(members) == len(expected) and {m.name.rstrip('/') for m in members} == expected,
                          'release archive content inventory differs')
             gate.require(all(m.isdir() if m.name.rstrip('/') == base else m.isfile() for m in members), 'release archive contains nonregular payload')

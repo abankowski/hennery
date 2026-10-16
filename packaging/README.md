@@ -16,7 +16,7 @@ remain qualification probes and are never promoted to releases.
 
 | Artifact | Built by | Checked by |
 |---|---|---|
-| `hennery-x86_64-unknown-linux-musl.tar.xz`, `hennery-aarch64-unknown-linux-musl.tar.xz` | `dist build`, natively on each architecture, with `musl-gcc` | `check-archive.sh` (the binary, its licence and README, nothing else); `check-linkage.sh` (no shared library, no loader); runs on the runner and on Alpine |
+| `hennery-x86_64-unknown-linux-musl.tar.xz`, `hennery-aarch64-unknown-linux-musl.tar.xz` | `dist build`, natively on each architecture, with `musl-gcc` | `check-archive.sh` (the binary, CHANGELOG.md, LICENSE and README.md, nothing else); `check-linkage.sh` (no shared library, no loader); runs on the runner and on Alpine |
 | `hennery-aarch64-apple-darwin.tar.xz` | `dist build` on macOS arm64 | `check-archive.sh`; `check-linkage.sh` (system libraries only); runs |
 | `hennery-installer.sh` | `dist build --artifacts=global`, then `harden-installer.py` | `test-installer.sh`, on Linux x86_64 and on macOS |
 | `hennery.rb` (Homebrew formula) | `dist build --artifacts=global` | `check-formula.sh` |

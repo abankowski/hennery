@@ -1,6 +1,6 @@
 #!/bin/sh
-# A release archive holds the `hennery` binary, its licence and its README,
-# and nothing else (distribution spec §3.3): never an adapter, nor the Claude
+# An archive holds the `hennery` binary, CHANGELOG.md, LICENSE and README.md;
+# final releases also require dependency notices. Never an adapter, nor the Claude
 # CLI, which hennery does not redistribute.
 #
 # Usage: check-archive.sh <archive.tar.xz> <target>
@@ -15,7 +15,7 @@ case "${3:-}" in
     "") ;;
     *) echo "unknown archive policy: $3" >&2; exit 1 ;;
 esac
-expected=$(printf '%s\n' "$dir/" "$dir/LICENSE" "$dir/README.md" "$dir/hennery" ${notices:+"$notices"} | sort)
+expected=$(printf '%s\n' "$dir/" "$dir/CHANGELOG.md" "$dir/LICENSE" "$dir/README.md" "$dir/hennery" ${notices:+"$notices"} | sort)
 if [ "$listed" != "$expected" ]; then
     echo "FAIL: $archive holds:" >&2
     echo "$listed" >&2
@@ -23,4 +23,4 @@ if [ "$listed" != "$expected" ]; then
     echo "$expected" >&2
     exit 1
 fi
-echo "ok: $archive holds the binary, its licence and its README alone"
+echo "ok: $archive holds exactly the binary and required documentation"
