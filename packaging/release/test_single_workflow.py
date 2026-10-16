@@ -22,12 +22,31 @@ class SingleWorkflow(unittest.TestCase):
         self.assertEqual(writers,['publish'])
         self.assertEqual(data['jobs']['publish']['environment'],'release')
 
+    def test_environment_switches_are_checked_inside_the_protected_job(self):
+        publisher = self.data()['jobs']['publish']
+        self.assertEqual(publisher['if'], "${{ !cancelled() && needs.attest.result == 'success' }}")
+        verified = next(s for s in publisher['steps'] if s.get('id') == 'verified')
+        for switch in ('RELEASE_PUBLICATION_ENABLED', 'RELEASE_GITHUB_ENABLED'):
+            self.assertEqual(verified['env'][switch], '${{ vars.' + switch + ' }}')
+
+    def test_id_selected_original_artifact_extracts_at_verifier_paths(self):
+        downloads = [s for s in self.data()['jobs']['publish']['steps']
+                     if s.get('uses', '').startswith('actions/download-artifact@')]
+        self.assertEqual(len(downloads), 1)
+        self.assertEqual(downloads[0]['with']['artifact-ids'], '${{ needs.attest.outputs.artifact_id }}')
+        self.assertEqual(downloads[0]['with']['path'], 'original')
+        self.assertIs(downloads[0]['with'].get('merge-multiple'), True)
+
     def test_every_authority_guard_refuses_its_removal(self):
         original=self.data()
         for mutation in ['branch','dispatch','outside-write','missing-env','no-attest','no-gate','no-summary','unpin',
                          'ignored','reusable','cache','credential-first','job-secret','channel-switch','wrong-owner',
-                         'missing-status','optional-descendant','dag-cycle','missing-dependency','unqualified-attest','missing-attest-check','oidc-bypass']:
+                         'missing-flat-download','missing-switch','missing-status','optional-descendant','dag-cycle','missing-dependency','unqualified-attest','missing-attest-check','oidc-bypass']:
             data=copy.deepcopy(original);jobs=data['jobs'];publisher=jobs['publish']
+            if mutation=='missing-flat-download':
+                next(s for s in publisher['steps'] if s.get('uses','').startswith('actions/download-artifact@'))['with'].pop('merge-multiple')
+            if mutation=='missing-switch':
+                next(s for s in publisher['steps'] if s.get('id')=='verified')['env'].pop('RELEASE_PUBLICATION_ENABLED')
             if mutation=='branch':data['on']={'push':{'branches':['main']}};data.pop(True,None)
             if mutation=='dispatch':data['on']={'workflow_dispatch':{}};data.pop(True,None)
             if mutation=='outside-write':jobs['archive']['permissions']={'contents':'write'}

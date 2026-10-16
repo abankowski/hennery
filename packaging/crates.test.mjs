@@ -14,7 +14,8 @@ test('only the seven production crates opt into publication, with package metada
   for (const name of ['pins', 'testkit']) assert.match(read(`crates/hennery-${name}/Cargo.toml`), /publish = false/);
   const root = read('Cargo.toml');
   assert.match(root, /publish = false/);
-  for (const name of names.filter(Boolean)) assert.match(root, new RegExp(`hennery-${name} = \\{ path = "crates/hennery-${name}", version = "=0.1.0-alpha.1" \\}`));
+  const version = root.match(/^version = "([^"]+)"$/m)[1];
+  for (const name of names.filter(Boolean)) assert.ok(root.includes(`hennery-${name} = { path = "crates/hennery-${name}", version = "=${version}" }`));
 });
 test('host includes its canonical package-local manifest and generator writes it', () => {
   assert.match(read('crates/hennery-host/src/runtime/manifest.rs'), /include_str!\("\.\.\/\.\.\/manifest.json"\)/);

@@ -69,8 +69,13 @@ if(error)process.exitCode=1;'''
             gate.require(kind!='bad-tag','fixture signed tag refused');return {}
         def evidence(api,metadata,env):
             self.assertEqual(os.environ.get('GH_TOKEN'),'offline-parent-only')
-            jobs=[{'name':name,'status':'completed','conclusion':'success'} for name in ('tag-signature','qualification','web-ui','archive','assemble','installer','attest','homebrew-native','crates')]
-            jobs += [dict(j) for j in list(jobs) if j['name'] in ('qualification','archive','installer','homebrew-native') for _ in range(2)]
+            names=['tag-signature','web-ui','assemble','attest','crates',
+                   'archive (x86_64-unknown-linux-musl, ubuntu-24.04, amd64)',
+                   'archive (aarch64-unknown-linux-musl, ubuntu-24.04-arm, arm64)',
+                   'archive (aarch64-apple-darwin, macos-15)']
+            names += [f'{job} ({runner})' for job in ('qualification','installer','homebrew-native')
+                      for runner in ('ubuntu-24.04','ubuntu-24.04-arm','macos-15')]
+            jobs=[{'name':name,'status':'completed','conclusion':'success'} for name in names]
             jobs += [{'name':name,'status':'completed','conclusion':'skipped'} for name in ('ghcr','homebrew')]
             return {'original':{'id':42,'run_attempt':1,'head_sha':'a'*40,'head_branch':'v0.1.0','event':'push','path':contract.WORKFLOW,'repository':{'full_name':gate.REPOSITORY},'created_at':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()},
                 'jobs':jobs,'artifact':{'id':77,'name':'attested-release-42-1','expired':False,'workflow_run':{'id':42,'head_sha':'a'*40}},
@@ -96,6 +101,7 @@ if(error)process.exitCode=1;'''
         with ExitStack() as stack:
             stack.enter_context(patch.dict(os.environ,environment,clear=True))
             stack.enter_context(patch.object(release_run,'ROOT',root))
+            stack.enter_context(patch.object(run_policy,'ROOT',root))
             stack.enter_context(patch.object(tag_signature,'verify',side_effect=tag))
             stack.enter_context(patch.object(supply,'require_contract',return_value=None))
             stack.enter_context(patch.object(supply,'verify_binary_inventory',return_value=None))
