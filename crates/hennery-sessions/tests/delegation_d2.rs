@@ -597,6 +597,60 @@ fn catalog() -> HostCatalog {
         freshness: CatalogFreshness::Fresh,
     }
 }
+
+#[test]
+fn changed_model_does_not_inherit_another_models_nonsecurity_axes() {
+    use hennery_sessions::delegation_runtime::launch_configuration;
+    let mut c = catalog();
+    c.defaults = SessionConfig {
+        model: Some("opus".into()),
+        mode: Some("default".into()),
+        axes: [
+            ("fast".into(), ConfigValue::Bool(false)),
+            ("effort".into(), ConfigValue::Id("medium".into())),
+            ("sandbox".into(), ConfigValue::Id("safe".into())),
+            ("custom_security".into(), ConfigValue::Bool(false)),
+        ]
+        .into(),
+    };
+    c.security
+        .axes
+        .insert("sandbox".into(), vec![ConfigValue::Id("safe".into())]);
+    let mut policy = hennery_proto::delegation_status::ExecutionPolicy {
+        revision: 1,
+        allowed: Default::default(),
+    };
+    policy
+        .allowed
+        .entry("claude".into())
+        .or_default()
+        .insert("custom_security".into(), vec![ConfigValue::Bool(false)]);
+    let wanted = SessionConfig {
+        model: Some("sonnet".into()),
+        axes: [("effort".into(), ConfigValue::Id("low".into()))].into(),
+        ..Default::default()
+    };
+    let actual = launch_configuration(&c, &wanted, &policy);
+    assert!(
+        !actual.axes.contains_key("fast"),
+        "Opus fast-mode default must not become a Sonnet requirement"
+    );
+    assert_eq!(actual.axes["effort"], ConfigValue::Id("low".into()));
+    assert_eq!(actual.axes["sandbox"], ConfigValue::Id("safe".into()));
+    assert_eq!(actual.axes["custom_security"], ConfigValue::Bool(false));
+    let mut explicit = wanted.clone();
+    explicit.axes.insert("fast".into(), ConfigValue::Bool(false));
+    assert_eq!(
+        launch_configuration(&c, &explicit, &policy).axes["fast"],
+        ConfigValue::Bool(false),
+        "never silently discard an explicit request"
+    );
+    assert_eq!(
+        launch_configuration(&c, &SessionConfig::default(), &policy),
+        c.defaults,
+        "unchanged model retains catalog defaults"
+    );
+}
 fn config(model: &str) -> SessionConfig {
     SessionConfig {
         model: Some(model.into()),
@@ -1861,6 +1915,45 @@ fn spawn(w: &World, p: &SessionIdentity, key: &str) -> anyhow::Result<OperationR
             mcp: McpContext::NONE,
         },
     )
+}
+
+#[test]
+fn rejected_child_configuration_is_terminal_and_visible_to_parent_and_operator() {
+    let (w, p) = pair();
+    let receipt = spawn(&w, &p, "unsupported-config").unwrap();
+    let child = receipt.child_id.unwrap();
+    w.store
+        .ingest(
+            &child,
+            1,
+            &SessionBody::StartFailed {
+                request_id: "attach".into(),
+                code: "configuration_unavailable".into(),
+                message: "fast: the selected model offers no such option".into(),
+            },
+        )
+        .unwrap();
+    assert!(
+        matches!(w.store.delegation_receipt(&p,1,"unsupported-config").unwrap().unwrap().state,OperationState::Failed {code} if code=="configuration_unavailable")
+    );
+    assert_eq!(w.store.delegation_queue_depth(&child).unwrap(), (0, 0));
+    let page = w.store.family_page("parent", "", 100).unwrap().unwrap();
+    let row = page
+        .children
+        .iter()
+        .find(|row| row.summary.session.session_id == child)
+        .unwrap();
+    assert_eq!(row.summary.session.lifecycle, "failed");
+    assert_eq!(
+        row.summary.session.failure_reason.as_deref(),
+        Some("configuration_unavailable")
+    );
+    assert!(
+        row.operations
+            .iter()
+            .any(|op| op.state == "failed" && op.code.as_deref() == Some("configuration_unavailable"))
+    );
+    assert!(notices(&w).iter().any(|notice| notice.0 == "session_failed"));
 }
 fn user_turn_with_origin(w: &World, id: &str, seq: u64, turn: &str, origin: InputOrigin) {
     assert!(

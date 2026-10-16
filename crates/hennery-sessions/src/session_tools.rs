@@ -111,21 +111,11 @@ pub async fn execute(
             if fresh {
                 ensure!(config_offered(&catalog, &args.config), "configuration_unavailable");
             }
-            let mut required = if fresh {
-                catalog.defaults.clone()
-            } else {
-                Default::default()
-            };
-            if args.config.model.is_some() {
-                required.model = args.config.model;
-            }
-            if args.config.mode.is_some() {
-                required.mode = args.config.mode;
-            }
-            required.axes.extend(args.config.axes);
+            let policy = state.store.execution_policy(caller.hat_id())?;
+            let required = crate::delegation_runtime::launch_configuration(&catalog, &args.config, &policy);
             ensure!(
                 (!fresh && required.mode.is_none() && required.axes.is_empty())
-                    || security_allowed(&catalog, &state.store.execution_policy(caller.hat_id())?, &required),
+                    || security_allowed(&catalog, &policy, &required),
                 "operator_required"
             );
             let mcp = crate::api::mcp_context(state, caller.host_id(), agent)?;

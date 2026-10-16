@@ -20,6 +20,7 @@ use hennery_sessions::{AppState, store::Store};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{
@@ -254,6 +255,7 @@ struct Harness {
     url: String,
     parent: String,
     trace: Arc<Mutex<Vec<Value>>>,
+    identities: Arc<Mutex<BTreeMap<String, hennery_gateway::identity::SessionIdentity>>>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     host: tokio::task::JoinHandle<anyhow::Result<()>>,
     server: tokio::task::JoinHandle<()>,
@@ -270,6 +272,9 @@ impl Drop for Harness {
 }
 impl Harness {
     async fn new(parent_runtime: &str, child_runtime: Option<&str>) -> Result<Self> {
+        Self::new_with_worker(parent_runtime, child_runtime, true).await
+    }
+    async fn new_with_worker(parent_runtime: &str, child_runtime: Option<&str>, deliver_brief: bool) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let root = dir.path().canonicalize()?;
         let db = root.join("hennery.db");
@@ -320,13 +325,18 @@ impl Harness {
         gateway.runtime.store.set_session_tools(&hat, true)?;
         let trace: Arc<Mutex<Vec<Value>>> = Arc::default();
         let observed = trace.clone();
+        let identities: Arc<Mutex<BTreeMap<String, hennery_gateway::identity::SessionIdentity>>> = Arc::default();
+        let authenticated = identities.clone();
         let auth = gateway.runtime.store.clone();
         let builtin = hennery_sessions::builtin::router(state.clone(), gateway).layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| {
-                let observed = observed.clone(); let auth = auth.clone();
+                let observed = observed.clone(); let auth = auth.clone(); let authenticated = authenticated.clone();
                 async move {
                     let caller = request.headers().get("authorization").and_then(|h| h.to_str().ok()).and_then(|h| h.strip_prefix("Bearer ")).and_then(|t| auth.authenticate_session(t).ok().flatten()).map(|i| {
-                        let hennery_gateway::scope::PrincipalKind::Session { session_id, .. } = i.principal.kind; session_id
+                        let hennery_gateway::scope::PrincipalKind::Session { session_id, .. } = &i.principal.kind;
+                        let session_id = session_id.clone();
+                        authenticated.lock().unwrap().insert(session_id.clone(), i);
+                        session_id
                     });
                     let (parts, body) = request.into_parts();
                     let bytes = axum::body::to_bytes(body, hennery_gateway::proxy::MAX_REQUEST_BODY).await.unwrap();
@@ -380,6 +390,7 @@ impl Harness {
             url,
             parent: String::new(),
             trace,
+            identities,
             shutdown: Some(shutdown),
             host,
             server,
@@ -387,7 +398,9 @@ impl Harness {
         };
         h.wait("host ready", || h.state.hub.is_ready(HOST).then_some(()))
             .await?;
-        hennery_sessions::delegation_worker::after_startup(&h.state);
+        if deliver_brief {
+            hennery_sessions::delegation_worker::after_startup(&h.state);
+        }
         let catalog = h.catalog(parent_runtime).await?;
         println!(
             "{}",
@@ -819,8 +832,16 @@ impl Harness {
         }
         let path = self.dir.path().canonicalize()?.join("permission-denied.txt");
         let after = self.state.store.max_event_id()?;
-        let execution = json!({"cmd":format!("printf test > '{}'",path.display()),"sandbox_permissions":"require_escalated","justification":"D4 scratch operator-denial acceptance"});
-        let turn = self.prompt(child,&format!("New operator acceptance task, superseding the earlier no-shell restriction only for this scratch command: call exec_command with exactly these arguments: {execution}. You MUST request real operator approval through the tool; do not describe or simulate it. Do not change mode or policy or write by another means. The operator will deny this once. After denial do not retry and reply PERMISSION_DENIED_OK.")).await?;
+        let command = format!("printf test > '{}'", path.display());
+        let (tool, execution) = if child_runtime == "claude" {
+            ("Bash", json!({"command":command}))
+        } else {
+            (
+                "exec_command",
+                json!({"cmd":command,"sandbox_permissions":"require_escalated","justification":"D4 scratch operator-denial acceptance"}),
+            )
+        };
+        let turn = self.prompt(child,&format!("New operator acceptance task, superseding the earlier no-shell restriction only for this scratch command: call {tool} with exactly these arguments: {execution}. You MUST request real operator approval through the tool; do not describe or simulate it. Do not change mode or policy or write by another means. The operator will deny this once. After denial do not retry and reply PERMISSION_DENIED_OK.")).await?;
         let permission = self
             .question_for_turn(child, &turn, after, PendingKind::Permission, "genuine child permission")
             .await?;
@@ -1403,6 +1424,9 @@ async fn pinned_runtime_process_token_exposure_without_inference() -> Result<()>
 
 fn requested(catalog: &HostCatalog) -> SessionConfig {
     let mut config = catalog.defaults.clone();
+    // A probe's default model can advertise axes absent on the chosen model.
+    // Request only the cost controls selected below, never unrelated defaults.
+    config.axes.clear();
     if let Some(model) = catalog
         .config_options
         .iter()
@@ -1444,6 +1468,70 @@ fn requested(catalog: &HostCatalog) -> SessionConfig {
 }
 
 #[tokio::test]
+#[ignore = "requires explicit pinned Claude adapter and scratch auth; performs no inference"]
+async fn pinned_claude_child_configuration_without_inference() -> Result<()> {
+    claude_child_configuration_without_inference(false).await
+}
+
+#[tokio::test]
+#[ignore = "requires explicit pinned Claude adapter and scratch auth; performs no inference"]
+async fn pinned_claude_unsupported_fast_without_inference() -> Result<()> {
+    claude_child_configuration_without_inference(true).await
+}
+
+async fn claude_child_configuration_without_inference(explicit_fast: bool) -> Result<()> {
+    let h = Harness::new_with_worker("claude", Some("claude"), false).await?;
+    let result = async {
+        let catalog = h.catalog("claude").await?;
+        let mut config = requested(&catalog);
+        if explicit_fast { config.axes.insert("fast".into(),hennery_proto::frames::ConfigValue::Bool(false)); }
+        let identity = h.wait("parent discovery identity", || h.identities.lock().unwrap().get(&h.parent).cloned()).await?;
+        let mcp = || -> Result<hennery_sessions::store::McpContext> {
+            let (capable,isolation) = h.state.hub.mcp_isolation(HOST,"claude").context("Claude isolation")?;
+            Ok(hennery_sessions::store::McpContext { capable,isolation,rules_name_other_hats:h.state.hosts.rules_name_other_hats(HOST)? })
+        };
+        let receipt: hennery_proto::delegation::OperationReceipt = serde_json::from_value(
+            hennery_sessions::session_tools::execute(&h.state,&identity,identity.delivered_delegation_revision().context("delivered grant")?,"session_spawn",
+                json!({"operation_key":"config-only-probe","agent":"claude","cwd":h.dir.path().canonicalize()?,"brief":"Configuration probe: this brief must never be dispatched","name":"configuration probe","config":config})
+            ).await?
+        )?;
+        let child = receipt.child_id.context("allocated child")?;
+        ensure!(h.state.store.attach_delegated(&child,mcp()?,&catalog,&h.state.hub)?,"attach handed off");
+        let evidence = h.wait("configuration-only child readback", || {
+            if let Some(row) = h.state.store.find_session(&child).ok().flatten().filter(|row|row.lifecycle=="failed") {
+                return Some(Err(row.failure_reason.unwrap_or_default()));
+            }
+            let conn = hennery_kernel::db::open(&h.dir.path().join("hennery.db")).ok()?;
+            conn.query_row("SELECT evidence FROM session_attach_evidence WHERE owner_id=?1 AND session_id=?2 AND evidence IS NOT NULL",rusqlite::params![h.state.store.owner_id(),child],|r|r.get::<_,String>(0)).optional().ok().flatten().map(Ok)
+        }).await?;
+        if let Err(reason) = evidence {
+            ensure!(explicit_fast && reason=="configuration_unavailable","unexpected configuration refusal: {}",scrub_error(&reason)?);
+            let page = h.state.store.family_page(&h.parent,"",100)?.context("operator family")?;
+            let failed = page.children.iter().find(|row|row.summary.session.session_id==child).context("operator child failure")?;
+            ensure!(failed.operations.iter().any(|op|op.state=="failed" && op.code.as_deref()==Some("configuration_unavailable")),"parent/operator must see failed receipt");
+            ensure!(!h.state.store.events(&child,0,1000)?.iter().any(|e|matches!(e.kind.as_str(),"user_turn"|"turn_started")),"refused child must run no brief");
+            h.diagnostics("explicit fast refused before brief")?;
+            println!("{}",json!({"case":"unsupported_fast_refused_without_inference","requested":config,"failure_reason":reason,"parent_and_operator_receipt_failed":true,"provider_inference":false}));
+            return Ok(());
+        }
+        let evidence = evidence.map_err(|reason|anyhow::anyhow!(reason))?;
+        let evidence: hennery_proto::delegation_host::ConfigEvidence = serde_json::from_str(&evidence)?;
+        let actual_catalog = h.state.store.catalog(&child)?.context("child catalog")?;
+        let events = h.state.store.events(&child,0,1000)?;
+        println!("{}",json!({"case":"configuration_without_inference","requested":config,"actual":evidence.actual,"actual_config_options":actual_catalog.config_options,"host_notes":events.iter().filter(|e|e.kind=="host_note").map(|e|e.body.clone()).collect::<Vec<_>>(),"provider_inference":false}));
+        ensure!(!explicit_fast,"unsupported explicit fast must be refused");
+        ensure!(!events.iter().any(|e|matches!(e.kind.as_str(),"user_turn"|"turn_started")),"configuration probe must dispatch no brief");
+        ensure!(config.axes.iter().all(|(key,value)|evidence.actual.axes.get(key)==Some(value)),"requested versus actual child axes differ");
+        Ok(())
+    }.await;
+    if result.is_err() {
+        h.diagnostics("configuration-only failed")?;
+    }
+    let cleanup = h.finish().await;
+    result.and(cleanup)
+}
+
+#[tokio::test]
 #[ignore = "requires explicit pinned parent/child adapters and provider credentials; performs inference"]
 async fn pinned_parent_child_provider_matrix() -> Result<()> {
     let parent = runtime("HENNERY_D4_PARENT")?;
@@ -1464,6 +1552,7 @@ async fn pinned_parent_child_provider_matrix() -> Result<()> {
             conn.query_row("SELECT evidence FROM session_attach_evidence WHERE owner_id=?1 AND session_id=?2 AND evidence IS NOT NULL", rusqlite::params![h.state.store.owner_id(),child], |r| r.get::<_,String>(0)).optional().ok().flatten()
         }).await?;
         let evidence: hennery_proto::delegation_host::ConfigEvidence = serde_json::from_str(&evidence)?;
+        println!("{}", json!({"case":"child_configuration_comparison","requested":config,"actual":evidence.actual,"completeness":evidence.completeness}));
         ensure!(evidence.completeness == hennery_proto::delegation_host::ConfigCompleteness::Complete, "child configuration not completely read back");
         ensure!(config.model.as_ref().is_none_or(|v| evidence.actual.model.as_ref() == Some(v)), "child model readback differs");
         ensure!(config.mode.as_ref().is_none_or(|v| evidence.actual.mode.as_ref() == Some(v)), "child permission mode readback differs");

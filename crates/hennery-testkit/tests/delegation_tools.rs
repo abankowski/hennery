@@ -760,23 +760,38 @@ async fn child_completion_resumes_a_genuinely_parked_parent_and_delivers_its_rep
 }
 
 #[tokio::test]
-async fn initial_brief_waits_for_new_child_configuration_readback() {
+async fn initial_brief_is_refused_when_authoritative_model_readback_differs() {
     let mut s = script();
     s.sticky_options = vec!["model".into()];
     let h = Harness::new(s).await;
     let receipt = h.spawn("held", json!({"model":"large"})).await;
     let child = receipt["child_id"].as_str().unwrap();
-    eventually("waiting config after readback", async || {
+    eventually("terminal configuration mismatch", async || {
         let s = h.status(child).await;
-        (s["operations"][0]["state"]["state"] == "waiting_config" && s["actual"]["model"] == "small").then_some(())
+        (s["operations"][0]["state"]["state"] == "failed"
+            && s["operations"][0]["state"]["code"] == "configuration_unavailable")
+            .then_some(())
     })
     .await;
-    // Exercise the real release path after evidence exists. Sampling the
-    // initial waiting state alone would race the periodic worker's next pass.
+    // A later worker pass must not release the rejected brief.
     hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
     let state = h.status(child).await;
     assert_eq!(state["requested"]["model"], "large");
-    assert_eq!(state["actual"]["model"], "small");
+    assert_eq!(state["summary"]["lifecycle"], "failed");
+    assert_eq!(state["summary"]["queued"], 0);
+    let events = h.state.store.events(child, 0, 1000).unwrap();
+    assert!(events.iter().any(|event| {
+        event.kind == "start_failed"
+            && event.body["code"] == "configuration_unavailable"
+            && event.body["message"]
+                .as_str()
+                .is_some_and(|text| text.contains("large") && text.contains("small"))
+    }));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.kind.as_str(), "user_turn" | "turn_started"))
+    );
     assert!(state["last_outcome"].is_null());
     assert!(state["last_report"].is_null());
     assert!(
@@ -1339,9 +1354,11 @@ async fn unavailable_prestart_catalog_validates_explicit_model_against_new_child
         let receipt = h.spawn("cold-explicit", json!({"model":"large"})).await;
         let child = receipt["child_id"].as_str().unwrap();
         if clamped {
-            eventually("cold catalog mismatch held", async || {
+            eventually("cold catalog mismatch refused", async || {
                 let s = h.status(child).await;
-                (s["actual"]["model"] == "small" && s["operations"][0]["state"]["state"] == "waiting_config")
+                (s["summary"]["lifecycle"] == "failed"
+                    && s["operations"][0]["state"]["state"] == "failed"
+                    && s["operations"][0]["state"]["code"] == "configuration_unavailable")
                     .then_some(())
             })
             .await;
@@ -1356,6 +1373,15 @@ async fn unavailable_prestart_catalog_validates_explicit_model_against_new_child
                     .is_none()
             );
             assert!(h.status(child).await["last_outcome"].is_null());
+            assert_eq!(h.status(child).await["summary"]["queued"], 0);
+            assert!(
+                !h.state
+                    .store
+                    .events(child, 0, 1000)
+                    .unwrap()
+                    .iter()
+                    .any(|event| matches!(event.kind.as_str(), "user_turn" | "turn_started"))
+            );
         } else {
             h.done(child, "cold-explicit").await;
             assert_eq!(h.status(child).await["actual"]["model"], "large");
