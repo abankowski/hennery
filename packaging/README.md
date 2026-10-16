@@ -269,4 +269,13 @@ These need the operator's decision, credentials, or both. None is set up:
 
 ---
 
-_Generated with Claude AI — please review before distribution._
+## Homebrew (R2)
+
+The generated formula is hardened with version, embedded-UI and notice checks
+before R1 freezes it. The secret-free native proof and the release candidate
+exercise a scratch file-based tap; a protected manual publisher writes only the
+signed frozen formula after GitHub's immutable release bytes match. The channel
+and global publication switches remain disabled. See the [operator guide](../docs/homebrew.md)
+and [maintainer setup](../docs/release-process.md#homebrew-channel-setup-r2).
+
+Generated with Claude AI — please review before distribution.

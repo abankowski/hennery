@@ -120,6 +120,14 @@ sh ./hennery-installer.sh
 )
 ```
 
+## Homebrew
+
+The project tap is implemented with publication disabled until a stable release
+passes native acceptance. The first alpha stays GitHub-only. See the
+[Homebrew guide](docs/homebrew.md) for installation, upgrade, removal and the
+service PATH/restart requirements. Package operations preserve user data and
+never automatically manage services or agent logins.
+
 ## Quickstart
 
 Build with [Nix](https://nixos.org/download/) with flakes enabled, or use

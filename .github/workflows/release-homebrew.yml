@@ -1,0 +1,56 @@
+name: release-homebrew
+on:
+  pull_request:
+    paths:
+      - 'packaging/**'
+      - '.github/workflows/**'
+      - '.github/actions/release-gate/**'
+      - 'dist-workspace.toml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'web/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'README.md'
+      - 'docs/homebrew.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proof:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
+        with:
+          toolchain: 1.98.1
+          targets: ${{ matrix.target }}
+      - name: Native musl build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build native candidate exactly as release archive construction
+        env:
+          TARGET: ${{ matrix.target }}
+        run: sh packaging/release/homebrew-proof.sh "$TARGET" "$RUNNER_TEMP"
+      - name: Install, version, exact executable smoke, upgrade, test, uninstall and leftovers
+        run: nix develop .#release -c python3 packaging/release/homebrew_accept.py "$RUNNER_TEMP/homebrew-candidate" "$RUNNER_TEMP/homebrew-proof"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: homebrew-proof-${{ matrix.target }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/homebrew-proof/result.json

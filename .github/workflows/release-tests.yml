@@ -38,4 +38,4 @@ jobs:
           python3 packaging/harden-installer.py "$RUNNER_TEMP/installer-fixture/hennery-installer.sh"
           sh packaging/test-installer.sh "$RUNNER_TEMP/installer-fixture"
       - name: Actionlint
-        run: nix develop .#release -c actionlint .github/workflows/release-candidate.yml .github/workflows/release-publish.yml .github/workflows/release-tests.yml
+        run: nix develop .#release -c actionlint .github/workflows/release-*.yml

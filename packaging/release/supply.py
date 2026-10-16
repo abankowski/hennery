@@ -215,6 +215,9 @@ def require_contract(root, channels, targets, tag):
     gate.require(set(channels) <= gate.CHANNELS and set(targets) <= gate.TARGETS, 'unqualified release channel/target')
     gate.require('-' not in tag or channels == ['github'], 'prerelease channels are GitHub only')
     gate.require(required_payloads(channels, targets, tag) <= {p.name for p in Path(root).iterdir()}, 'required release/channel payload missing')
+    if 'homebrew' in channels:
+        import homebrew
+        homebrew.check(root, tag, targets)
     if 'crates' in channels:
         import tomllib
         import verify

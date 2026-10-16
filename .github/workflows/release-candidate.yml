@@ -124,26 +124,9 @@ jobs:
       - name: Archive and content acceptance
         env:
           HENNERY_WEB_REQUIRE: '1'
+          TARGET: ${{ matrix.target }}
         run: |
-          dist build --artifacts=local --target='${{ matrix.target }}' --print=linkage --output-format=json > target-manifest.json
-          archive='hennery-${{ matrix.target }}'
-          mkdir -p unpacked
-          tar -xJf "target/distrib/$archive.tar.xz" -C unpacked
-          cp release-materials/THIRD-PARTY-NOTICES.txt "unpacked/$archive/"
-          tar -cJf "target/distrib/$archive.tar.xz" -C unpacked "$archive"
-          (cd target/distrib && shasum -a 256 "$archive.tar.xz" > "$archive.tar.xz.sha256")
-          sh packaging/check-archive.sh "target/distrib/$archive.tar.xz" '${{ matrix.target }}' --notices
-          binary="$PWD/unpacked/$archive/hennery"
-          sh packaging/check-linkage.sh "$binary"
-          sh packaging/check-web-ui.sh "$binary"
-          "$binary" --version
-          cp target-manifest.json 'target/distrib/${{ matrix.target }}-dist-manifest.json'
-          python3 packaging/release/refresh_manifest.py 'target/distrib/${{ matrix.target }}-dist-manifest.json' "target/distrib/$archive.tar.xz"
-          cp release-materials/* target/distrib/
-          python3 - <<'PY' > target/distrib/builder.json
-          import json,os,platform,subprocess
-          print(json.dumps({'os':platform.platform(),'runner_image':os.environ.get('ImageVersion'),'rust':subprocess.check_output(['rustc','-vV'],text=True),'sdk':subprocess.getoutput('xcrun --show-sdk-version') if platform.system()=='Darwin' else subprocess.getoutput('ldd --version')}))
-          PY
+          sh packaging/release/native-archive.sh
       - name: Alpine executable and collector image smoke
         if: runner.os == 'Linux'
         env:
@@ -243,6 +226,7 @@ jobs:
           python3 packaging/harden-installer.py target/distrib/hennery-installer.sh
           sh packaging/test-installer.sh target/distrib
           sh packaging/check-formula.sh target/distrib
+          nix develop .#release -c python3 packaging/release/homebrew.py prepare target/distrib --tag "$RELEASE_TAG" --targets aarch64-apple-darwin,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
           git show HEAD:CHANGELOG.md > target/distrib/release-notes.md
           git archive --format=tar --prefix=hennery-source/ HEAD | xz > target/distrib/hennery-source.tar.xz
           python3 packaging/release/supply.py freeze --output target/distrib \
@@ -258,6 +242,7 @@ jobs:
           path: target/distrib/
   installer:
     needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -275,9 +260,54 @@ jobs:
           path: candidate
       - name: Native installer positives and refusals
         run: sh packaging/test-installer.sh candidate
+  homebrew-native:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+          - runner: ubuntu-24.04
+          - runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Preserve successful native no-ops for unselected Homebrew
+        run: echo 'Native acceptance executes only for a selected Homebrew channel'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Real isolated tap install, smoke, upgrade and uninstall of frozen bytes
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        run: nix develop .#release -c python3 packaging/release/homebrew_accept.py candidate "$RUNNER_TEMP/homebrew-proof"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        with:
+          name: homebrew-proof-${{ matrix.runner }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/homebrew-proof/result.json
+  homebrew:
+    name: homebrew
+    needs: [assemble, homebrew-native]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: All advertised native Homebrew platforms passed
+        run: echo 'Native local-tap acceptance passed on all three platforms'
   retain:
     needs: [assemble, installer, tag-signature]
-    if: vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true'
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' }}
     environment: release-staging
     runs-on: ubuntu-24.04
     timeout-minutes: 20

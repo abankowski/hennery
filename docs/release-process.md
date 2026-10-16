@@ -315,4 +315,54 @@ restore a matching backup or ship a forward fix if downgrade is unsafe. Withdraw
 bad versions with remediation and retained corresponding source; never rewrite
 assets/tags/crate/image versions. Revoke affected credentials where appropriate.
 
+## Homebrew channel setup (R2)
+
+Create the public `marcinwadon/homebrew-tap` repository with a `main` branch.
+Store `RELEASE_HOMEBREW_TOKEN` only in this repository's protected `release`
+environment. It may be a fine-grained PAT or a live GitHub App installation
+token with contents write limited to that tap. No workflows/admin permission,
+main-repository publication authority or repository-level secret is needed.
+An App token supplied this way must remain valid for the job; this workflow
+does not mint or refresh it. Maintainer rotation/revocation remains explicit.
+
+The maintainer's local settings observations include this scope confirmation;
+these are personally inspected properties, not remotely inferred token rights:
+
+```json
+{"homebrew":{"repository":"marcinwadon/homebrew-tap","branch":"main","environment":"release","credential":"RELEASE_HOMEBREW_TOKEN","kind":"fine-grained-pat","repositories":["marcinwadon/homebrew-tap"],"permissions":{"contents":"write"},"scope_confirmed":true}}
+```
+
+For an App installation token, the kind is `app-installation`. Merge these
+observations with the existing hardware-touch and other selected-channel
+observations before producing the local settings audit. Its digest is bound
+into the authenticated approval tuple, alongside the YubiKey-signed inventory,
+candidate and publishing attempts. Selecting Homebrew requires its secret and
+scope observations; a GitHub-only candidate does not.
+
+Both `RELEASE_PUBLICATION_ENABLED` and `RELEASE_HOMEBREW_ENABLED` default to off.
+Enable GitHub first, then Homebrew, crates.io and GHCR as independently qualified
+channels. Homebrew waits for the GitHub publishing job and requires a public,
+immutable stable release whose formula, referenced archives and inventory
+match the frozen candidate. Prereleases remain GitHub-only. A merge never
+publishes; dispatch, exact protected tag, current authorization and selected
+signed channel are all required.
+
+The tap job validates preflight, verifies the maintainer signature and exact-tag
+Sigstore provenance, checks public bytes, and obtains a fresh boundary receipt
+before exposing the tap credential to its final step. The writer revalidates
+the live gate and immutable bytes before its single atomic [Contents API](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents) update
+of `Formula/hennery.rb`. It never regenerates a formula. Identical remote bytes
+are an idempotent no-op; the same version with other bytes, a downgrade, an
+unparseable remote formula, conflict or ambiguous response stops. Reconcile
+manually after uncertainty; never force an update to repair it. A confirmed
+update is read back and compared with the frozen formula.
+
+The secret-free `release-homebrew` PR workflow builds the native candidate
+through the release's archive helper and tests the guide's local-tap commands
+on macOS arm64 and both Linux architectures. The release-candidate workflow
+also tests the complete frozen candidate on all three platforms, with the
+registered `homebrew` aggregate as the owning job. Unselected native jobs are
+successful no-ops and only the aggregate is skipped. All native acceptance must
+pass before enabling publication. See [service/PATH guidance](homebrew.md).
+
 Generated with Claude AI — please review before distribution.
