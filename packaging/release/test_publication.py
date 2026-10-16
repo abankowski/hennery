@@ -31,6 +31,8 @@ class Publication(unittest.TestCase):
         if method=='GET':
             if '/assets?' in path:return [{'name':name,'url':'https://api.github.com/repos/'+gate.REPOSITORY+'/releases/assets/'+name} for name in self.assets]
             if '/releases/assets/' in path:return self.assets[path.rsplit('/',1)[1]]
+            if self.fault=='late-state' and self.remote and self.remote['immutable']:
+                return dict(self.remote,draft=True,immutable=False)
             return copy.deepcopy(self.remote)
         self.events.append(method)
         self.assertEqual(self.events[-2],'verify','each write requires fresh verification')
@@ -74,7 +76,7 @@ class Publication(unittest.TestCase):
         self.assertFalse(any(e in ('POST','PATCH') for e in self.events))
 
     def test_upload_readback_or_immutability_failure_refuses(self):
-        for fault in ['readback','mutable']:
+        for fault in ['readback','mutable','late-state']:
             self.remote=None;self.assets={};self.events=[];self.fault=fault
             with self.subTest(fault=fault),self.assertRaises(gate.Refused):self.run_publish()
 

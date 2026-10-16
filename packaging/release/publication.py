@@ -63,5 +63,8 @@ def release(root, signatures, authorize):
                                data=gate.canonical({'draft': False, 'make_latest': 'false'}))
     gate.require(isinstance(remote, dict) and remote.get('draft') is False and remote.get('immutable') is True,
                  'publication did not establish immutability')
-    gate.require(not reconcile(transport.api(tag_path))['missing'], 'public immutable release is incomplete')
+    published = transport.api(tag_path)
+    gate.require(isinstance(published, dict) and published.get('draft') is False and published.get('immutable') is True,
+                 'final public read-back did not confirm immutability')
+    gate.require(not reconcile(published)['missing'], 'public immutable release is incomplete')
     return {'state': 'immutable', 'tag': metadata['tag'], 'checksums_sha256': expected[contract.CHECKSUMS]}
