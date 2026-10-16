@@ -104,6 +104,12 @@ pub struct Entry {
     pub turns: Vec<Observation>,
     #[serde(default)]
     pub older_turns: u64,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub owner_annotation: String,
+    #[serde(default)]
+    pub legacy: Option<crate::management::LegacyEvidence>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Page {
@@ -157,7 +163,11 @@ impl Store {
         db::migrate_component(
             &mut db,
             "memory",
-            &[include_str!("schema.sql"), include_str!("schema2.sql")],
+            &[
+                include_str!("schema.sql"),
+                include_str!("schema2.sql"),
+                include_str!("schema3.sql"),
+            ],
         )?;
         db.busy_timeout(std::time::Duration::from_millis(100))?;
         Ok(Self {
@@ -255,6 +265,9 @@ impl Store {
             stale: false,
             turns: vec![],
             older_turns: 0,
+            pinned: false,
+            owner_annotation: String::new(),
+            legacy: None,
         };
         let serialized_bytes = i64::try_from(serde_json::to_vec(&entry)?.len())?;
         ensure!(

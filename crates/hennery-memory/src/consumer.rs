@@ -457,6 +457,9 @@ impl Store {
                                 stale: false,
                                 turns: vec![],
                                 older_turns: 0,
+                                pinned: false,
+                                owner_annotation: String::new(),
+                                legacy: None,
                             }
                         };
                         if let ActivityBody::CompletedTurn { completed_at, .. } = &item.body {
@@ -921,7 +924,7 @@ fn validate(item: &PluginActivityItem, epoch: &str) -> Result<()> {
     }
     Ok(())
 }
-fn checkpoint(inner: &Inner) -> Result<()> {
+pub(crate) fn checkpoint(inner: &Inner) -> Result<()> {
     let (busy, _, _): (i64, i64, i64) = inner.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
         Ok((r.get(0)?, r.get(1)?, r.get(2)?))
     })?;
@@ -1016,7 +1019,7 @@ fn prepare_entries(
     }
     Ok(changes)
 }
-fn remove_source(tx: &rusqlite::Transaction<'_>, ns: &str, session: &str) -> Result<()> {
+pub(crate) fn remove_source(tx: &rusqlite::Transaction<'_>, ns: &str, session: &str) -> Result<()> {
     tx.execute(
         "DELETE FROM entries WHERE namespace=?1 AND id=?2 AND kind='note'",
         params![ns, sha256_hex(format!("native-note:{session}").as_bytes())],
@@ -1045,7 +1048,7 @@ fn remove_source(tx: &rusqlite::Transaction<'_>, ns: &str, session: &str) -> Res
     }
     Ok(())
 }
-fn budget(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
+pub(crate) fn budget(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
     let (count, bytes): (i64, i64) = tx.query_row(
         "SELECT count(*),coalesce(sum(length(CAST(data AS BLOB))),0) FROM entries WHERE namespace=?1",
         [id],

@@ -2,4 +2,5 @@
 pub mod consumer;
 pub mod http;
 pub mod keys;
+pub mod management;
 pub mod store;
