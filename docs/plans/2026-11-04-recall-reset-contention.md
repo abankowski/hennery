@@ -8,7 +8,7 @@
 
 ## Execution status
 
-Built and verified. The first review returned CHANGES; both findings are fixed test-first in the amendment below. Parent re-review and current-head Linux/macOS CI remain pending. Initial implementation diff SHA-256: `1e49bceadea891865346d5c412d0d7c56fc28aae82f68b94f8314d486e8301a3`; frozen patch and command outputs are in `.superpowers/sdd/recall-reset-contention/` in the recall-fix-17 worktree.
+Built and verified. The first review findings were fixed and the parent reports approval at `b1567acb`. The branch is now rebased onto merged R2 main `03e7be5d`, with the integration audit and additional fixes below. Parent delta review and current-head Linux/macOS CI remain pending. Initial implementation diff SHA-256: `1e49bceadea891865346d5c412d0d7c56fc28aae82f68b94f8314d486e8301a3`; frozen patch and command outputs are in `.superpowers/sdd/recall-reset-contention/` in the recall-fix-17 worktree.
 
 ## Scope
 
@@ -27,9 +27,10 @@ Owner/hat/epoch isolation, literal/scoped FTS, canonical storage bounds and opt-
 
 ## File structure
 
-- `crates/hennery-memory/src/store.rs`: shared Store state, reset connection and namespace read fence.
+- `crates/hennery-memory/src/store.rs`: shared Store state, owned projection writer, poison recovery and namespace read fence.
 - `crates/hennery-memory/src/consumer.rs`: reset reservation, blocking transaction/checkpoint, final lease fence and regression seams/tests.
-- `crates/hennery-memory/tests/sql_scope.rs`: audit now prepares 52 consumer SQL literals, including one new namespaced checkpoint-test query; all existing scope and query-plan assertions remain.
+- `crates/hennery-memory/src/management.rs` and `src/import.rs`: fenced curated/import transactions and short metadata reads.
+- `crates/hennery-memory/tests/sql_scope.rs`: explicit statement inventory and namespace/owner/query-plan assertions; current R2 counts are recorded below.
 
 ## Task 1: reproduce and fix
 
@@ -77,8 +78,30 @@ Per the parent's targeted amendment budget, no full workspace run, Nix check, we
 
 No full workspace run, fresh replay, Nix or web gate for this review amendment, per the verification budget; no hotspot, schema, dependency or web files changed. Parent re-review should focus on the transaction fence, poison/rollback/reopen ordering and fail-closed reads. CI remains the check of record.
 
+## R2 rebase and write-path integration
+
+**Base and conflicts:** fetched and rebased onto `origin/main` at `03e7be5d` (R2 #159). The reviewed commits map to `be5eb3bf` and `381f9e0e`. Kept the separate owned WAL writer, in-transaction activity/reset job checks, poison recovery and namespace fence; kept R2's four embedded schemas, management/import code, suppression and opaque deletion receipts. Checkpoint remains callable by the plug-in's internal paths; both README entries survived. The saved range-diff shows only the expected R2 context, checkpoint visibility and SQL inventory resolutions for those two commits.
+
+**Audit findings and test-first:** import apply held the shared mutex across all hats, and curated transactions held it through SQL/JSON/checkpoints. Four regressions each failed first (exit 101, 0 passed/1 failed): stalled import I/O, stalled curated I/O, live management reads with an old retained lease during reset, and curated mutations leaving a prepared reset job valid. Further regressions cover same-namespace reservation, foreign reset/read progress, late scope purge, reattachment between capture and BEGIN, and lease expiry before work or COMMIT. The prepared-job test covers create, edit, pin, delete, import, annotate and retain.
+
+The audit also found that signed import approval was checked before applying hats: a fresh lease after epoch replacement could admit an old approved proposal, or a proposal could expire before/during SQL. All **three approval regressions failed first** (one command, exit 101, 0 passed/3 failed). Apply now checks the approved epoch inside its write transaction and checks approval expiry at admission and immediately before COMMIT. An edit script's anchor assertion initially stopped before applying these guards; the failed attempts are retained, and only the subsequent successful checks count as GREEN.
+
+**Built integration:** the same bounded second connection is now `projection_writer` / `lock_projection_writer`, because it serializes reset, import and curated mutations. No connection per request. A common managed transaction captures immutable owner/active namespace state, feed epoch/revision/cursor and lease, then reserves its namespace and invalidates old deliveries in a short main-mutex section. It waits for SQLite, validates its captured fence after BEGIN IMMEDIATE, runs the mutation and quotas, advances feed revision, rechecks deadlines, commits and (for replacement/deletion) confirms the checkpoint outside that mutex. The reservation denies MCP and live management reads/export delivery until completion and drops on errors or unwind. Reset removes its old lease; management retains its existing lease and checks it twice. Same-namespace competing work returns busy; foreign namespaces can read and begin resets. SQLite still serializes writers; existing main-connection writes retain their 100-ms busy bound.
+
+Each successful curated/import transaction advances feed revision, so a reset prepared before it must restart. Signature validation still completes for all hats before any writes. Per-hat atomicity, owner/epoch mapping, authority restrictions, import conflict/idempotency evidence, suppression, delayed-agent retry protection and purge's removal of import evidence survive. Preview parsing, redaction, hashing and signature work release the main mutex; metadata/ledger reads hold it for one scoped row. Other write paths are audited in `r2-rebase/audit.md`. No core, protocol, schema, dependency, Nix or frontend changes.
+
+**SQL audit:** exact inventories are **[10, 53, 15, 7]** for store/consumer/management/import. The extra consumer statement is the scoped purge-regression count. Management's common state read and revision UPDATE replace the earlier native-delete-only revision UPDATE. The new state query has explicit owner, namespace, active-state and same-namespace feed-join assertions; existing scope, FTS correlation and indexed keyset assertions remain.
+
+**Verification:** final `cargo fmt --all --check`, `cargo test -p hennery-memory --locked` (**131 passed, 1 ignored, 15 groups**), both clippy commands, both generator checks, and explicit `cargo test -p hennery-memory --test sql_scope --locked` (**1 passed**) all exited 0. Fresh lib/consumer artifact discovery exited 0. The one required `cargo test --workspace --locked` exited 0 with **2612 passed, 5 ignored, 177 groups** on the integration before the final three signed-approval regressions/guards. Its exact source patch is retained as `frozen-before-approval.patch`; final memory tests and both clippy checks cover those private plug-in-only additions. The workspace run was not repeated, per the budget.
+
+**Concurrency load:** four processes for three rounds, **240 passing executions in 24 groups**, all exit 0. Includes reset/curated/import stalls, cancellation, purge/reattachment interleavings, both lease boundaries and signed-approval races, plus the four existing integration cases. Maximum mixed reset **2.271 seconds**, maximum foreign read **4.551 milliseconds**; original 3-second/12-second limits remain unchanged.
+
+**Copied probes:** `r2-rebase/probes-1`, with its own `/bin/cp -c -R` target clone. Baseline/restored lib suites each passed all 24 tests and SQL audit each passed 1 (exit 0). All **20 mutations failed behaviorally (101)**: activity transaction fence; poison/rollback/reopen/clear/busy recovery; managed transaction fence; feed revision; namespace reservation/read/release and delivery generation; both managed deadline boundaries; shared mutex around SQL or checkpoint; signed approval epoch/deadline/binding; and SQL namespace routing. The probe driver stopped on cargo routing for two test filters and then on an ambiguous generation anchor; the anchor was made unique, filters were forwarded after `--` and the batch resumed without repeating completed probes. That harness error is retained and is not counted as a detected mutation. No compiler failure counts as detection. Copy restored with zero diff, root bytes unchanged; final frozen patch SHA-256 `e61b5e72e9c1f6c95effa999c3b344433dd0ab17525c922cc4274b4c25930b57`.
+
+All outputs are in `.superpowers/sdd/recall-reset-contention/r2-rebase/`. Retain its copy alongside the earlier `probes-1`, `amendment-1/probes-1` and parent-owned `review-probe-1` for parent cleanup. No fresh replay, Nix or web gate: amendment budget, no filter/schema/dependency/frontend changes. Parent delta review should check common-writer lock ordering, namespace reservation/drop, transaction/approval fences, deletion honesty and bounded resources. No open product question.
+
 ## After this plan
 
-Parent: independent review of `64f46345..fix/recall-reset-contention`, current-head CI and full PR status (checks, reviewDecision, mergeStateStatus and unresolved review threads, bots included). The child makes no GitHub API/CLI action or publication. No open product decision.
+Parent: delta review of `381f9e0e..fix/recall-reset-contention` and the resolved rebase relative to `03e7be5d`, current-head CI and full PR status (checks, reviewDecision, mergeStateStatus and unresolved review threads, bots included). The child makes no GitHub API/CLI action or publication. No open product decision.
 
 Generated with Claude AI — please review before distribution.

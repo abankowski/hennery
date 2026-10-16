@@ -149,6 +149,16 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
                     );
                 }
                 let compact = sql.split_whitespace().collect::<String>();
+                if sql.starts_with("SELECT n.epoch,f.revision,f.cursor FROM namespaces n LEFT JOIN feeds") {
+                    assert!(
+                        sql.contains("ON f.namespace=n.id"),
+                        "management fence must join the same namespace: {sql}"
+                    );
+                    assert!(
+                        sql.contains("WHERE n.id=?1 AND n.owner=?2 AND n.state='active'"),
+                        "management transaction fence must recheck its owner, namespace and active epoch: {sql}"
+                    );
+                }
                 if file >= 2 && sql.contains(" FROM namespaces ") {
                     assert!(sql.contains("owner=?"), "management owner boundary: {sql}");
                     continue;
@@ -195,5 +205,5 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
             }
         }
     }
-    assert_eq!(count, [10, 52, 14, 7], "new statements need explicit audit coverage");
+    assert_eq!(count, [10, 53, 15, 7], "new statements need explicit audit coverage");
 }

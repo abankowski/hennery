@@ -56,6 +56,57 @@ pub struct Snapshot {
     pub generation: u64,
 }
 impl Store {
+    pub(crate) fn managed_transaction<T>(
+        &self,
+        manager: &Manager,
+        namespace: &str,
+        live: bool,
+        erase: bool,
+        approval: Option<(&str, i64)>,
+        apply: impl FnOnce(&Transaction<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let (state, lease, _permit) = {
+            let mut inner = self.inner.lock().expect("store");
+            inner.managed_scope(manager, namespace, live)?;
+            let state = managed_state(&inner.db, manager, namespace)?;
+            let lease = if live {
+                inner.leases.get(namespace).copied()
+            } else {
+                None
+            };
+            let permit = self.reserve_namespace(&mut inner, namespace)?;
+            (state, lease, permit)
+        };
+        #[cfg(test)]
+        self.reset_phase(crate::consumer::ResetPhase::ManagedReady);
+        let mut writer = self.lock_projection_writer()?;
+        let tx = writer.transaction()?;
+        // Owner, active epoch and feed cursor/revision are checked under the
+        // same SQLite write lock as the mutation, after any wait for the writer.
+        ensure!(
+            managed_state(&tx, manager, namespace)? == state,
+            "stale management write"
+        );
+        if let Some((epoch, _)) = approval {
+            ensure!(state.0 == epoch, "approved namespace epoch changed");
+        }
+        check_managed_deadline(lease, approval.map(|(_, until)| until))?;
+        let result = apply(&tx)?;
+        // Every curated/import change invalidates a previously prepared reset,
+        // including changes to deliberate memories' detached source metadata.
+        tx.execute("UPDATE feeds SET revision=revision+1 WHERE namespace=?1", [namespace])?;
+        #[cfg(test)]
+        self.reset_phase(crate::consumer::ResetPhase::ManagedCommit);
+        check_managed_deadline(lease, approval.map(|(_, until)| until))?;
+        tx.commit()?;
+        if erase {
+            #[cfg(test)]
+            self.reset_phase(crate::consumer::ResetPhase::ManagedCheckpoint);
+            crate::consumer::checkpoint_db(&writer)?;
+        }
+        Ok(result)
+    }
+
     /// An explicit local CLI operation proves filesystem-owner access. Never
     /// use caller-supplied owner text in a network handler.
     pub fn filesystem_manager(&self, owner: &str) -> Result<Manager> {
@@ -171,42 +222,34 @@ impl Store {
     }
     pub fn managed_create(&self, manager: &Manager, namespace: &str, input: NewMemory) -> Result<Entry> {
         let input = safe_memory(input)?;
-        let mut inner = self.inner.lock().expect("store");
-        inner.managed_scope(manager, namespace, true)?;
-        let tx = inner.db.transaction()?;
-        let entry = owner_entry(input);
-        put(&tx, namespace, &entry)?;
-        crate::consumer::budget(&tx, namespace)?;
-        tx.commit()?;
-        inner.invalidate(namespace);
-        Ok(entry)
+        self.managed_transaction(manager, namespace, true, false, None, |tx| {
+            let entry = owner_entry(input);
+            put(tx, namespace, &entry)?;
+            crate::consumer::budget(tx, namespace)?;
+            Ok(entry)
+        })
     }
     pub fn managed_edit(&self, manager: &Manager, namespace: &str, id: &str, input: Edit) -> Result<Entry> {
-        let mut inner = self.inner.lock().expect("store");
-        inner.managed_scope(manager, namespace, true)?;
-        let tx = inner.db.transaction()?;
-        let mut entry = revision(&tx, namespace, id, input.revision)?;
-        let safe = safe_content(
-            NewMemory {
-                title: input.title,
-                body: input.body,
-            },
-            if entry.legacy.is_some() { 2 * 1024 * 1024 } else { 16384 },
-        )?;
-        ensure!(
-            entry.kind != "note" || entry.legacy.is_some(),
-            "annotate native observations instead"
-        );
-        entry.title = safe.title;
-        entry.body = safe.body;
-        advance(&mut entry)?;
-        put(&tx, namespace, &entry)?;
-        crate::consumer::budget(&tx, namespace)?;
-        tx.commit()?;
-        inner.invalidate(namespace);
-        // Replaced content has the same honest erasure boundary as deletion.
-        crate::consumer::checkpoint(&inner)?;
-        Ok(entry)
+        self.managed_transaction(manager, namespace, true, true, None, |tx| {
+            let mut entry = revision(tx, namespace, id, input.revision)?;
+            let safe = safe_content(
+                NewMemory {
+                    title: input.title,
+                    body: input.body,
+                },
+                if entry.legacy.is_some() { 2 * 1024 * 1024 } else { 16384 },
+            )?;
+            ensure!(
+                entry.kind != "note" || entry.legacy.is_some(),
+                "annotate native observations instead"
+            );
+            entry.title = safe.title;
+            entry.body = safe.body;
+            advance(&mut entry)?;
+            put(tx, namespace, &entry)?;
+            crate::consumer::budget(tx, namespace)?;
+            Ok(entry)
+        })
     }
     pub fn managed_annotate(
         &self,
@@ -219,19 +262,15 @@ impl Store {
         ensure!(annotation.len() <= 16384, "annotation too large");
         let annotation = redact::text(annotation).unwrap_or_else(|| annotation.into());
         ensure!(annotation.len() <= 16384, "redacted annotation too large");
-        let mut inner = self.inner.lock().expect("store");
-        inner.managed_scope(manager, namespace, true)?;
-        let tx = inner.db.transaction()?;
-        let mut entry = revision(&tx, namespace, id, expected)?;
-        ensure!(entry.kind == "note", "only notes have annotations");
-        entry.owner_annotation = annotation;
-        advance(&mut entry)?;
-        put(&tx, namespace, &entry)?;
-        crate::consumer::budget(&tx, namespace)?;
-        tx.commit()?;
-        inner.invalidate(namespace);
-        crate::consumer::checkpoint(&inner)?;
-        Ok(entry)
+        self.managed_transaction(manager, namespace, true, true, None, |tx| {
+            let mut entry = revision(tx, namespace, id, expected)?;
+            ensure!(entry.kind == "note", "only notes have annotations");
+            entry.owner_annotation = annotation;
+            advance(&mut entry)?;
+            put(tx, namespace, &entry)?;
+            crate::consumer::budget(tx, namespace)?;
+            Ok(entry)
+        })
     }
     pub fn managed_pin(
         &self,
@@ -241,24 +280,21 @@ impl Store {
         expected: u64,
         pinned: bool,
     ) -> Result<Entry> {
-        let mut inner = self.inner.lock().expect("store");
-        inner.managed_scope(manager, namespace, true)?;
-        let tx = inner.db.transaction()?;
-        let mut entry = revision(&tx, namespace, id, expected)?;
-        ensure!(entry.kind == "memory", "only deliberate memories can be pinned");
-        let pins: i64 = tx.query_row(
-            "SELECT count(*) FROM entries WHERE namespace=?1 AND kind='memory' AND json_extract(data,'$.pinned')=1",
-            [namespace],
-            |r| r.get(0),
-        )?;
-        ensure!(!pinned || entry.pinned || pins < 5, "at most five pinned memories");
-        entry.pinned = pinned;
-        advance(&mut entry)?;
-        put(&tx, namespace, &entry)?;
-        crate::consumer::budget(&tx, namespace)?;
-        tx.commit()?;
-        inner.invalidate(namespace);
-        Ok(entry)
+        self.managed_transaction(manager, namespace, true, false, None, |tx| {
+            let mut entry = revision(tx, namespace, id, expected)?;
+            ensure!(entry.kind == "memory", "only deliberate memories can be pinned");
+            let pins: i64 = tx.query_row(
+                "SELECT count(*) FROM entries WHERE namespace=?1 AND kind='memory' AND json_extract(data,'$.pinned')=1",
+                [namespace],
+                |r| r.get(0),
+            )?;
+            ensure!(!pinned || entry.pinned || pins < 5, "at most five pinned memories");
+            entry.pinned = pinned;
+            advance(&mut entry)?;
+            put(tx, namespace, &entry)?;
+            crate::consumer::budget(tx, namespace)?;
+            Ok(entry)
+        })
     }
     pub fn managed_retain(
         &self,
@@ -274,51 +310,44 @@ impl Store {
             title: title.into(),
             body: selected.into(),
         })?;
-        let mut inner = self.inner.lock().expect("store");
-        inner.managed_scope(manager, namespace, true)?;
-        let tx = inner.db.transaction()?;
-        let source = revision(&tx, namespace, id, expected)?;
-        ensure!(
-            source.kind == "note" && source.body.contains(selected),
-            "selection must occur in this note revision"
-        );
-        let mut entry = owner_entry(safe);
-        // Retaining text does not upgrade the source's typed origin.
-        entry.provenance = source.provenance;
-        entry.source_refs = source.source_refs;
-        entry.legacy = source.legacy;
-        put(&tx, namespace, &entry)?;
-        crate::consumer::budget(&tx, namespace)?;
-        tx.commit()?;
-        inner.invalidate(namespace);
-        Ok(entry)
+        self.managed_transaction(manager, namespace, true, false, None, |tx| {
+            let source = revision(tx, namespace, id, expected)?;
+            ensure!(
+                source.kind == "note" && source.body.contains(selected),
+                "selection must occur in this note revision"
+            );
+            let mut entry = owner_entry(safe);
+            // Retaining text does not upgrade the source's typed origin.
+            entry.provenance = source.provenance;
+            entry.source_refs = source.source_refs;
+            entry.legacy = source.legacy;
+            put(tx, namespace, &entry)?;
+            crate::consumer::budget(tx, namespace)?;
+            Ok(entry)
+        })
     }
     /// A note delete also suppresses its native source. No older body/revision
     /// survives in a history table. Opaque request receipts carry no body.
     pub fn managed_delete(&self, manager: &Manager, namespace: &str, id: &str, expected: u64) -> Result<()> {
-        let mut inner = self.inner.lock().expect("store");
-        inner.managed_scope(manager, namespace, false)?;
-        let tx = inner.db.transaction()?;
-        let entry = revision(&tx, namespace, id, expected)?;
-        if entry.kind == "note" && entry.legacy.is_none() {
-            for source in &entry.source_refs {
-                tx.execute(
-                    "INSERT OR IGNORE INTO suppressed(namespace,session) VALUES(?1,?2)",
-                    params![namespace, source.session_id],
-                )?;
-                crate::consumer::remove_source(&tx, namespace, &source.session_id)?;
+        self.managed_transaction(manager, namespace, false, true, None, |tx| {
+            let entry = revision(tx, namespace, id, expected)?;
+            if entry.kind == "note" && entry.legacy.is_none() {
+                for source in &entry.source_refs {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO suppressed(namespace,session) VALUES(?1,?2)",
+                        params![namespace, source.session_id],
+                    )?;
+                    crate::consumer::remove_source(tx, namespace, &source.session_id)?;
+                }
             }
-            tx.execute("UPDATE feeds SET revision=revision+1 WHERE namespace=?1", [namespace])?;
-        }
-        tx.execute(
-            "DELETE FROM entries WHERE namespace=?1 AND id=?2",
-            params![namespace, id],
-        )?;
-        // Keep only the bounded opaque request receipt, never a body, so an
-        // already-issued agent retry cannot undo this owner deletion.
-        tx.commit()?;
-        inner.invalidate(namespace);
-        crate::consumer::checkpoint(&inner)
+            tx.execute(
+                "DELETE FROM entries WHERE namespace=?1 AND id=?2",
+                params![namespace, id],
+            )?;
+            // Keep only the bounded opaque request receipt, never a body, so an
+            // already-issued agent retry cannot undo this owner deletion.
+            Ok(())
+        })
     }
     pub fn managed_snapshot(&self, manager: &Manager, namespace: &str) -> Result<Snapshot> {
         let inner = self.inner.lock().expect("store");
@@ -374,6 +403,9 @@ impl Inner {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         ensure!(state == "active", "unavailable");
+        if live {
+            ensure!(!self.writing.contains(namespace), "namespace busy");
+        }
         if live && registered {
             ensure!(
                 self.leases
@@ -385,6 +417,24 @@ impl Inner {
         Ok(())
     }
 }
+
+type ManagedState = (String, Option<i64>, Option<String>);
+fn managed_state(db: &rusqlite::Connection, manager: &Manager, namespace: &str) -> Result<ManagedState> {
+    Ok(db.query_row("SELECT n.epoch,f.revision,f.cursor FROM namespaces n LEFT JOIN feeds f ON f.namespace=n.id WHERE n.id=?1 AND n.owner=?2 AND n.state='active'", params![namespace,manager.owner], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?)
+}
+fn check_managed_deadline(lease: Option<(std::time::Instant, i64)>, approval: Option<i64>) -> Result<()> {
+    if let Some(until) = approval {
+        ensure!(until > unix_now(), "import approval expired");
+    }
+    if let Some((end, until)) = lease {
+        ensure!(
+            end > std::time::Instant::now() && until > unix_now(),
+            "lease unavailable"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn read_entry(db: &rusqlite::Connection, namespace: &str, id: &str) -> Result<Entry> {
     ensure!(id.len() == 64, "invalid entry");
     let data: String = db

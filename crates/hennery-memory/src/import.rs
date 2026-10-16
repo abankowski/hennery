@@ -607,7 +607,6 @@ impl Store {
                 redactions: Vec::new(),
             });
         }
-        let inner = self.inner.lock().expect("store");
         let mut hats = BTreeMap::<String, HatPreview>::new();
         let mut keys = BTreeMap::new();
         for file in &bundle.files {
@@ -675,17 +674,21 @@ impl Store {
                 preview.reports.push(report);
                 continue;
             };
-            if inner.managed_scope(manager, namespace, false).is_err() {
-                report.status = "target_unavailable".into();
-                preview.blocked = true;
-                preview.reports.push(report);
-                continue;
-            }
-            let (epoch, key): (String, String) = inner.db.query_row(
-                "SELECT epoch,cursor_key FROM namespaces WHERE id=?1 AND owner=?2 AND state='active'",
-                params![namespace, manager.owner],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
+            let (epoch, key) = {
+                let inner = self.inner.lock().expect("store");
+                if inner.managed_scope(manager, namespace, false).is_err() {
+                    report.status = "target_unavailable".into();
+                    preview.blocked = true;
+                    preview.reports.push(report);
+                    continue;
+                }
+                let (epoch, key): (String, String) = inner.db.query_row(
+                    "SELECT epoch,cursor_key FROM namespaces WHERE id=?1 AND owner=?2 AND state='active'",
+                    params![namespace, manager.owner],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?;
+                (epoch, key)
+            };
             let (item, redactions) = match imported_entry(bundle, file, parsed, namespace, project_key.clone()) {
                 Ok(item) => item,
                 Err(_) => {
@@ -696,7 +699,10 @@ impl Store {
                 }
             };
             report.redactions = redactions;
-            let prior: Option<(String, String)> = inner
+            let prior: Option<(String, String)> = self
+                .inner
+                .lock()
+                .expect("store")
                 .db
                 .query_row(
                     "SELECT digest,entry_id FROM imports WHERE namespace=?1 AND vault=?2 AND path=?3",
@@ -747,85 +753,90 @@ impl Store {
             "preview approval unavailable"
         );
         let hash = preview_hash(preview)?;
-        let mut inner = self.inner.lock().expect("store");
         let mut names = BTreeSet::new();
         for hat in &preview.hats {
             ensure!(
                 names.insert(&hat.namespace) && hat.items.len() <= COUNT_CAP,
                 "duplicate/oversized hat proposal"
             );
-            let (epoch, key): (String, String) = inner.db.query_row(
-                "SELECT epoch,cursor_key FROM namespaces WHERE id=?1 AND owner=?2 AND state='active'",
-                params![hat.namespace, manager.owner],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
+            let (epoch, key): (String, String) = {
+                let inner = self.inner.lock().expect("store");
+                inner.db.query_row(
+                    "SELECT epoch,cursor_key FROM namespaces WHERE id=?1 AND owner=?2 AND state='active'",
+                    params![hat.namespace, manager.owner],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?
+            };
             ensure!(epoch == hat.epoch && key.len() == 64, "namespace epoch changed");
             mac(&key, &manager.owner, &hash)?
                 .verify_slice(&hex::decode(&hat.proof)?)
                 .map_err(|_| anyhow::anyhow!("preview signature refused"))?;
         }
+        #[cfg(test)]
+        self.reset_phase(crate::consumer::ResetPhase::ImportVerified);
         let mut results = Vec::new();
         for hat in &preview.hats {
-            let result = (|| -> Result<(usize, usize)> {
-                inner.managed_scope(manager, &hat.namespace, true)?;
-                ensure!(!hat.conflict, "changed imported content conflicts");
-                let tx = inner.db.transaction()?;
-                let mut imported = 0;
-                let mut unchanged = 0;
-                // Preflight every ledger row in this hat before the first write.
-                for item in &hat.items {
-                    let old: Option<String> = tx
-                        .query_row(
-                            "SELECT digest FROM imports WHERE namespace=?1 AND vault=?2 AND path=?3",
+            let result = self.managed_transaction(
+                manager,
+                &hat.namespace,
+                true,
+                false,
+                Some((&hat.epoch, preview.expires)),
+                |tx| {
+                    ensure!(!hat.conflict, "changed imported content conflicts");
+                    let mut imported = 0;
+                    let mut unchanged = 0;
+                    // Preflight every ledger row in this hat before the first write.
+                    for item in &hat.items {
+                        let old: Option<String> = tx
+                            .query_row(
+                                "SELECT digest FROM imports WHERE namespace=?1 AND vault=?2 AND path=?3",
+                                params![hat.namespace, item.vault, item.path],
+                                |r| r.get(0),
+                            )
+                            .optional()?;
+                        ensure!(
+                            old.as_ref().is_none_or(|old| old == &item.digest),
+                            "changed imported content conflicts"
+                        );
+                    }
+                    for item in &hat.items {
+                        let exists: bool = tx.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM imports WHERE namespace=?1 AND vault=?2 AND path=?3)",
                             params![hat.namespace, item.vault, item.path],
                             |r| r.get(0),
-                        )
-                        .optional()?;
-                    ensure!(
-                        old.as_ref().is_none_or(|old| old == &item.digest),
-                        "changed imported content conflicts"
-                    );
-                }
-                for item in &hat.items {
-                    let exists: bool = tx.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM imports WHERE namespace=?1 AND vault=?2 AND path=?3)",
-                        params![hat.namespace, item.vault, item.path],
+                        )?;
+                        if exists {
+                            unchanged += 1;
+                            continue;
+                        }
+                        ensure!(
+                            item.entry.author == "import"
+                                && item.entry.source_refs.is_empty()
+                                && item.entry.turns.is_empty()
+                                && item.entry.legacy.is_some()
+                                && item.entry.provenance == vec![hennery_proto::plugin::Provenance::Unverified {}],
+                            "invalid imported authority"
+                        );
+                        put(tx, &hat.namespace, &item.entry)?;
+                        tx.execute(
+                            "INSERT INTO imports(namespace,vault,path,digest,entry_id) VALUES(?1,?2,?3,?4,?5)",
+                            params![hat.namespace, item.vault, item.path, item.digest, item.entry.id],
+                        )?;
+                        imported += 1;
+                    }
+                    crate::consumer::budget(tx, &hat.namespace)?;
+                    let count: i64 = tx.query_row(
+                        "SELECT count(*) FROM imports WHERE namespace=?1",
+                        [&hat.namespace],
                         |r| r.get(0),
                     )?;
-                    if exists {
-                        unchanged += 1;
-                        continue;
-                    }
-                    ensure!(
-                        item.entry.author == "import"
-                            && item.entry.source_refs.is_empty()
-                            && item.entry.turns.is_empty()
-                            && item.entry.legacy.is_some()
-                            && item.entry.provenance == vec![hennery_proto::plugin::Provenance::Unverified {}],
-                        "invalid imported authority"
-                    );
-                    put(&tx, &hat.namespace, &item.entry)?;
-                    tx.execute(
-                        "INSERT INTO imports(namespace,vault,path,digest,entry_id) VALUES(?1,?2,?3,?4,?5)",
-                        params![hat.namespace, item.vault, item.path, item.digest, item.entry.id],
-                    )?;
-                    imported += 1;
-                }
-                crate::consumer::budget(&tx, &hat.namespace)?;
-                let count: i64 = tx.query_row(
-                    "SELECT count(*) FROM imports WHERE namespace=?1",
-                    [&hat.namespace],
-                    |r| r.get(0),
-                )?;
-                ensure!(count <= 100000, "import ledger limit");
-                tx.commit()?;
-                Ok((imported, unchanged))
-            })();
+                    ensure!(count <= 100000, "import ledger limit");
+                    Ok((imported, unchanged))
+                },
+            );
             match result {
                 Ok((imported, unchanged)) => {
-                    if imported > 0 {
-                        inner.invalidate(&hat.namespace);
-                    }
                     results.push(Applied {
                         namespace: hat.namespace.clone(),
                         status: "committed".into(),
@@ -870,6 +881,109 @@ pub fn read_local_json<T: serde::de::DeserializeOwned>(path: &Path, cap: usize) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verified_import_epoch_change_is_fenced() {
+        verified_import_approval("epoch");
+    }
+    #[test]
+    fn verified_import_expiry_before_sql_is_fenced() {
+        verified_import_approval("expiry_before");
+    }
+    #[test]
+    fn verified_import_expiry_during_sql_is_fenced() {
+        verified_import_approval("expiry_during");
+    }
+    fn verified_import_approval(mode: &'static str) {
+        use crate::consumer::{FeedConfig, ResetPhase};
+        use std::{
+            sync::Arc,
+            time::{Duration, Instant},
+        };
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let store = Arc::new(Store::open(&dir.path().join("memory.db")).unwrap());
+            let c = store.create("owner", "garden").unwrap();
+            let manager = store.filesystem_manager("owner").unwrap();
+            let input = Bundle {
+                version: 1,
+                vault: "synthetic".into(),
+                files: vec![VaultFile {
+                    path: "memories/garden/reference.md".into(),
+                    body: "signed approval marker".into(),
+                }],
+                rejected: vec![],
+            };
+            let mapping = Mapping {
+                scopes: BTreeMap::from([(
+                    "garden".into(),
+                    Target::Namespace {
+                        namespace: c.namespace.clone(),
+                        project_key: None,
+                    },
+                )]),
+                files: Default::default(),
+                mixed: Default::default(),
+            };
+            let mut preview = store.preview_import(&manager, &input, &mapping).unwrap();
+            if mode.starts_with("expiry") {
+                preview.expires = unix_now() + 2;
+                let key = store
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .auth(&c.lifecycle, true, false)
+                    .unwrap()
+                    .cursor_key;
+                let hash = preview_hash(&preview).unwrap();
+                for hat in &mut preview.hats {
+                    hat.proof = hex::encode(mac(&key, &manager.owner, &hash).unwrap().finalize().into_bytes());
+                }
+            }
+            let weak = Arc::downgrade(&store);
+            let namespace = c.namespace.clone();
+            *store.reset_hook.lock().unwrap() = Some(Arc::new(move |at| {
+                if mode == "epoch" && at == ResetPhase::ImportVerified {
+                    let store = weak.upgrade().unwrap();
+                    store
+                        .attach(
+                            &namespace,
+                            FeedConfig {
+                                collector_url: "http://localhost/".into(),
+                                namespace_epoch: "a".repeat(64),
+                                activity_token: format!("hnry_activity_{}", "b".repeat(64)),
+                                activity: true,
+                                internal_network: true,
+                            },
+                            &hennery_gateway::key::MasterKey::from_bytes([9; 32]),
+                        )
+                        .unwrap();
+                    // Model a successful poll in the new epoch. Approval must
+                    // remain bound to its old epoch even with a fresh lease.
+                    store.inner.lock().unwrap().leases.insert(
+                        namespace.clone(),
+                        (Instant::now() + Duration::from_secs(60), unix_now() + 60),
+                    );
+                }
+                if (mode == "expiry_before" && at == ResetPhase::ImportVerified)
+                    || (mode == "expiry_during" && at == ResetPhase::ManagedCommit)
+                {
+                    std::thread::sleep(Duration::from_secs(3));
+                }
+            }));
+            let result = store.apply_import(&manager, &preview, &preview.digest).unwrap();
+            *store.reset_hook.lock().unwrap() = None;
+            assert_eq!(result[0].status, "untouched", "{mode}: stale signed approval committed");
+            assert!(
+                store
+                    .managed_snapshot(&manager, &c.namespace)
+                    .unwrap()
+                    .entries
+                    .is_empty()
+            );
+        }
+    }
+
     #[test]
     fn correctly_signed_expired_or_overlong_previews_cannot_apply() {
         let d = tempfile::tempdir().unwrap();

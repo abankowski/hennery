@@ -20,9 +20,9 @@ use std::{
 #[derive(Clone)]
 pub struct Store {
     pub(crate) inner: Arc<Mutex<Inner>>,
-    // A single bounded reset writer. WAL readers use Inner's connection;
-    // reset disk I/O never owns their mutex.
-    pub(crate) reset_writer: Arc<Mutex<db::OwnedConnection>>,
+    // One bounded writer for reset, import and curated mutations. WAL readers
+    // use Inner's connection; projection I/O never owns their mutex.
+    pub(crate) projection_writer: Arc<Mutex<db::OwnedConnection>>,
     #[cfg(test)]
     pub(crate) reset_hook: Arc<Mutex<Option<crate::consumer::ResetHook>>>,
 }
@@ -31,7 +31,7 @@ pub(crate) struct Inner {
     pub leases: HashMap<String, (Instant, i64)>,
     pub stale: std::collections::HashSet<String>,
     pub generations: HashMap<String, u64>,
-    pub resetting: std::collections::HashSet<String>,
+    pub writing: std::collections::HashSet<String>,
 }
 pub struct Credentials {
     pub namespace: String,
@@ -187,10 +187,10 @@ impl Store {
             !db.path().unwrap_or_default().is_empty(),
             "persistent memory database required"
         );
-        let reset_writer = db::open(path)?;
-        reset_writer.busy_timeout(std::time::Duration::from_millis(100))?;
+        let projection_writer = db::open(path)?;
+        projection_writer.busy_timeout(std::time::Duration::from_millis(100))?;
         Ok(Self {
-            reset_writer: Arc::new(Mutex::new(reset_writer)),
+            projection_writer: Arc::new(Mutex::new(projection_writer)),
             #[cfg(test)]
             reset_hook: Arc::new(Mutex::new(None)),
             inner: Arc::new(Mutex::new(Inner {
@@ -198,12 +198,12 @@ impl Store {
                 leases: HashMap::new(),
                 stale: Default::default(),
                 generations: Default::default(),
-                resetting: Default::default(),
+                writing: Default::default(),
             })),
         })
     }
-    pub(crate) fn lock_reset_writer(&self) -> Result<std::sync::MutexGuard<'_, db::OwnedConnection>> {
-        match self.reset_writer.lock() {
+    pub(crate) fn lock_projection_writer(&self) -> Result<std::sync::MutexGuard<'_, db::OwnedConnection>> {
+        match self.projection_writer.lock() {
             Ok(connection) => Ok(connection),
             Err(poisoned) => {
                 let mut connection = poisoned.into_inner();
@@ -214,7 +214,7 @@ impl Store {
                 let reopened = db::open(Path::new(path))?;
                 reopened.busy_timeout(std::time::Duration::from_millis(100))?;
                 *connection = reopened;
-                self.reset_writer.clear_poison();
+                self.projection_writer.clear_poison();
                 Ok(connection)
             }
         }
@@ -583,7 +583,7 @@ impl Inner {
             .optional()?
             .context("unavailable")?;
         if !admin {
-            ensure!(!self.resetting.contains(&row.0.id), "reset in progress");
+            ensure!(!self.writing.contains(&row.0.id), "reset in progress");
             ensure!(row.3 == "active" && (!write || row.2), "unavailable");
             ensure!(
                 !row.1
