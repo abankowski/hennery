@@ -10,9 +10,9 @@
 
 ## Execution status
 
-Review amendment completed on the rebase to approved C1b `49c0f4d7`; both Medium findings are corrected. Amendment checks, load and copy probes are recorded below. Parent scoped re-confirmation and PR CI remain pending.
+Parent independent re-review: APPROVE, no findings at `b2ca6147`. Rebased onto approved C1b `f4e167a6` over D3a/D3b main `6cb867c6`, retaining byte-identical memory source/tests. All six Rust gates, targeted memory tests and native Nix checks passed after the rebase; details are recorded below. Current-head PR CI and full status remain parent-owned.
 
-Built on `plan/recall-r1`; original base `a58479c7`, integration base C1b `bf632e58` (C2 main `7fe43fbe`). Four exact construction patches below were generated from the built commits. Task 3 includes the preserved WIP commit and its completed consumer. Final verification and replay results are recorded below. Independent review, PR status and Linux/macOS CI belong to the parent; no approval or publication is claimed.
+Built on `plan/recall-r1`; original base `a58479c7`, integration base C1b `bf632e58` (C2 main `7fe43fbe`). Four exact construction patches below were generated from the built commits. Task 3 includes the preserved WIP commit and its completed consumer. Final verification and replay results are recorded below. Independent review results come from the parent; current PR status and Linux/macOS CI remain parent-owned. No publication.
 
 ## Scope
 
@@ -6359,8 +6359,29 @@ index e91464d8..5a873e1a 100644
 +    assert_eq!(count, [8, 51], "new statements need explicit audit coverage");
 ```
 
+## Integration rebase onto D3a/D3b (2026-10-16)
+
+The parent reported independent R1 re-review **APPROVE**, with no findings at `b2ca6147`. After D3a/D3b merged into main `6cb867c6`, the parent rebased approved C1b with an identical range-diff to `f4e167a6`. This lane fetched origin and ran `git -c commit.gpgsign=false rebase --onto origin/plan/plugin-c1b 49c0f4d7 plan/recall-r1`; the rewritten eight-commit R1 head before this record is `603f3a2b`.
+
+The sole conflict was the first commit's Nix source list. Both D3 schemas, `delegation_delivery.sql` and `delegation_attention.sql`, survive alongside `delegation_schema.sql`, the undo fixture and memory's `schema.sql`/`schema2.sql`. Workspace membership remains `crates/*`, including both sides' crates. Starting from the new base lock, `cargo update --workspace --offline` regenerated the memory package entry at `0.1.0-alpha.1` without changing external dependencies. The later historical version correction was already satisfied. The SQL audit inventory retains D3's three audited source modules and the separately scoped memory database audit.
+
+The full `crates/hennery-memory` source and tests, `Cargo.toml` and final `Cargo.lock` compare byte-identically with approved `b2ca6147`. The range-diff changes only lock-version placement and Nix context; no plug-in behavior or security guard changed. Earlier construction patches and replay records remain historical evidence. Per the parent's explicit instruction and Verification budget, this hotspot/conflict rebase gets the full checks once and no new replay. No new timing or concurrency behavior was introduced, so no additional load run or mutation probes were needed; the previous amendment evidence remains above.
+
+| Command (private HOME/XDG, flake dev shell) | Exit | Output |
+|---|---:|---|
+| `cargo fmt --all --check` | 0 | completed successfully |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | 0 | completed successfully |
+| `cargo clippy -p hennery --locked -- -D warnings` | 0 | completed successfully |
+| `cargo test --workspace --locked` | 0 | 2510 passed, 2 ignored; 172 result groups |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | 0 | completed successfully |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | 0 | completed successfully |
+| `cargo test -p hennery-memory --locked` | 0 | 56 passed, 1 ignored; 11 result groups |
+| `nix flake check -L` | 0 | completed successfully |
+
+Logs and count summary: `.superpowers/sdd/recall-r1/rebase-d3-1/`. No web files changed in this lane, so the web gate was skipped. No GitHub action or publication was performed. The parent owns current-head Linux/macOS CI and full PR status (checks, reviewDecision, mergeStateStatus and unresolved review threads, bots included).
+
 ## After this plan
 
-Parent: independent security review, Linux/macOS CI and full PR status (checks, reviewDecision, mergeStateStatus, unresolved threads). R2 adds management UI, import/export and deliberate edits; R3 optional models; C2 startup delivery remains independent. Signed session attestation remains a separately reviewed generic extension. External deletion acknowledgements are service claims; offline copies remain explicitly unconfirmed.
+Parent: current-head Linux/macOS CI and full PR status (checks, reviewDecision, mergeStateStatus, unresolved threads); independent security re-review is approved as recorded above. R2 adds management UI, import/export and deliberate edits; R3 optional models; C2 startup delivery remains independent. Signed session attestation remains a separately reviewed generic extension. External deletion acknowledgements are service claims; offline copies remain explicitly unconfirmed.
 
 Generated with Claude AI — please review before distribution.
