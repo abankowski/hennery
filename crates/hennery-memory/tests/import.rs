@@ -76,6 +76,16 @@ fn golden_predecessor_kinds_aliases_whole_sources_redaction_and_native_collision
     let result = s.apply_import(&m, &preview, &preview.digest).unwrap();
     assert_eq!(result[0].status, "committed");
     assert_eq!(result[0].imported, 3);
+    let raw = rusqlite::Connection::open(_d.path().join("memory.db")).unwrap();
+    let canonical: String = raw
+        .query_row("SELECT group_concat(data) FROM entries WHERE namespace=?1", [&a], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(
+        !canonical.contains("DEADBEEF"),
+        "redaction must precede canonical storage, not just delivery"
+    );
     let snapshot = s.managed_snapshot(&m, &a).unwrap();
     assert_eq!(snapshot.entries.len(), 3);
     assert!(s.managed_snapshot(&m, &b).unwrap().entries.is_empty());
@@ -134,6 +144,13 @@ fn missing_shared_disagreeing_and_mixed_scopes_require_explicit_file_decisions()
         let input = bundle(&[(path, body)]);
         let mut map = mapping("garden", &a);
         map.scopes.insert(
+            "workshop".into(),
+            Target::Namespace {
+                namespace: a.clone(),
+                project_key: None,
+            },
+        );
+        map.scopes.insert(
             "shared".into(),
             Target::Namespace {
                 namespace: a.clone(),
@@ -158,6 +175,15 @@ fn missing_shared_disagreeing_and_mixed_scopes_require_explicit_file_decisions()
     map.mixed.insert("sources/garden/mixed.md".into());
     let preview = s.preview_import(&m, &input, &map).unwrap();
     assert!(preview.blocked);
+    map.files.insert(
+        "sources/garden/mixed.md".into(),
+        Target::Namespace {
+            namespace: a.clone(),
+            project_key: None,
+        },
+    );
+    let preview = s.preview_import(&m, &input, &map).unwrap();
+    assert!(preview.blocked && preview.reports[0].status == "mixed_exclude_required");
     map.files.insert("sources/garden/mixed.md".into(), Target::Exclude {});
     let preview = s.preview_import(&m, &input, &map).unwrap();
     assert!(!preview.blocked);
@@ -174,12 +200,15 @@ fn signatures_prevent_apply_without_preview_and_namespace_or_provenance_tamperin
     let (_d, s, m, a, b) = world();
     let input = bundle(&[("memories/garden/one.md", "safe")]);
     let preview = s.preview_import(&m, &input, &mapping("garden", &a)).unwrap();
-    for field in ["body", "namespace", "provenance", "digest", "expires"] {
+    for field in ["body", "namespace", "author", "provenance", "digest", "expires"] {
         let mut changed = serde_json::to_value(&preview).unwrap();
         match field {
             "body" => changed["hats"][0]["items"][0]["entry"]["body"] = serde_json::json!("forged"),
             "namespace" => changed["hats"][0]["namespace"] = serde_json::json!(b),
-            "provenance" => changed["hats"][0]["items"][0]["entry"]["author"] = serde_json::json!("owner"),
+            "author" => changed["hats"][0]["items"][0]["entry"]["author"] = serde_json::json!("owner"),
+            "provenance" => {
+                changed["hats"][0]["items"][0]["entry"]["provenance"] = serde_json::json!([{"kind":"source","origin":{"kind":"operator"},"source":{"session_id":"native","turn_id":null,"event_id":1}}])
+            }
             "digest" => changed["digest"] = serde_json::json!("a".repeat(64)),
             _ => changed["expires"] = serde_json::json!(i64::MAX),
         }
@@ -512,5 +541,161 @@ fn structured_authority_keys_and_frontmatter_resource_limits_fail_closed() {
         let p = s.preview_import(&m, &input, &mapping("garden", &a)).unwrap();
         assert!(p.blocked);
         assert_eq!(p.reports[0].status, "unparseable");
+    }
+}
+
+#[test]
+fn competing_previews_detect_content_changes_at_apply_and_internal_files_stay_excluded() {
+    let (_d, s, m, a, _) = world();
+    let map = mapping("garden", &a);
+    let first = s
+        .preview_import(&m, &bundle(&[("memories/garden/same.md", "first")]), &map)
+        .unwrap();
+    let second = s
+        .preview_import(&m, &bundle(&[("memories/garden/same.md", "second")]), &map)
+        .unwrap();
+    s.apply_import(&m, &first, &first.digest).unwrap();
+    assert_eq!(
+        s.apply_import(&m, &second, &second.digest).unwrap()[0].status,
+        "untouched"
+    );
+    assert_eq!(s.managed_snapshot(&m, &a).unwrap().entries[0].body, "first");
+    let input = bundle(&[
+        (".git/hooks/post-commit", "internalmarker"),
+        (".memory/index.db", "internalmarker"),
+        ("sources/garden/.git/config", "internalmarker"),
+        ("sources/garden/MEMORY.md", "A substantive original document"),
+    ]);
+    let preview = s.preview_import(&m, &input, &map).unwrap();
+    assert_eq!(
+        preview
+            .reports
+            .iter()
+            .filter(|r| r.status == "excluded_internal")
+            .count(),
+        3
+    );
+    s.apply_import(&m, &preview, &preview.digest).unwrap();
+    assert!(
+        !serde_json::to_string(&s.managed_snapshot(&m, &a).unwrap())
+            .unwrap()
+            .contains("internalmarker")
+    );
+    assert!(
+        s.managed_snapshot(&m, &a)
+            .unwrap()
+            .entries
+            .iter()
+            .any(|e| e.body == "A substantive original document")
+    );
+    let internal = Bundle::from_tar(
+        &tar_file(".memory/index.db", &[0xff], tar::EntryType::Regular),
+        "synthetic",
+    )
+    .unwrap();
+    assert!(internal.files.is_empty() && internal.rejected.is_empty());
+}
+#[test]
+fn import_capacity_failure_rolls_back_entries_and_ledger_together() {
+    let (d, s, m, a, b) = world();
+    let entry = s
+        .managed_create(
+            &m,
+            &a,
+            NewMemory {
+                title: "fixture".into(),
+                body: "existing".into(),
+            },
+        )
+        .unwrap();
+    let raw = rusqlite::Connection::open(d.path().join("memory.db")).unwrap();
+    raw.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<9999) INSERT INTO entries(namespace,id,kind,title,body,data) SELECT ?1,printf('%064x',x),'memory','fixture','existing',json_set(?2,'$.id',printf('%064x',x)) FROM n",rusqlite::params![a,serde_json::to_string(&entry).unwrap()]).unwrap();
+    let p = s
+        .preview_import(
+            &m,
+            &bundle(&[("memories/garden/new.md", "over capacity")]),
+            &mapping("garden", &a),
+        )
+        .unwrap();
+    assert_eq!(s.apply_import(&m, &p, &p.digest).unwrap()[0].status, "untouched");
+    assert_eq!(
+        raw.query_row("SELECT count(*) FROM imports WHERE namespace=?1", [&a], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    raw.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000) INSERT INTO imports(namespace,vault,path,digest,entry_id) SELECT ?1,'fixture',printf('%064x',x),'digest','entry' FROM n",[&b]).unwrap();
+    let p = s
+        .preview_import(
+            &m,
+            &bundle(&[("memories/garden/new.md", "ledger capacity")]),
+            &mapping("garden", &b),
+        )
+        .unwrap();
+    assert_eq!(s.apply_import(&m, &p, &p.digest).unwrap()[0].status, "untouched");
+    assert!(s.managed_snapshot(&m, &b).unwrap().entries.is_empty());
+}
+
+#[test]
+fn authoritative_frontmatter_fields_cannot_be_sequences_or_structures() {
+    let (_d, s, m, a, _) = world();
+    for front in [
+        "scope: [garden]",
+        "name: [title]",
+        "metadata:\n  scope: [garden]",
+        "metadata:\n  source_session: [one, two]",
+        "metadata:\n  unknown: [one, two]",
+    ] {
+        let input = bundle(&[("memories/garden/structure.md", &format!("---\n{front}\n---\nreference"))]);
+        let p = s.preview_import(&m, &input, &mapping("garden", &a)).unwrap();
+        assert!(p.blocked && p.reports[0].status == "unparseable", "{front}");
+    }
+}
+
+#[test]
+fn deleted_import_or_agent_receipts_keep_a_namespace_nonempty_for_initial_attach() {
+    for imported in [true, false] {
+        let d = tempfile::tempdir().unwrap();
+        let s = Store::open(&d.path().join("memory.db")).unwrap();
+        let c = s.create("owner", "garden").unwrap();
+        let manager = s.filesystem_manager("owner").unwrap();
+        let (id, revision) = if imported {
+            let p = s
+                .preview_import(
+                    &manager,
+                    &bundle(&[("memories/garden/reference.md", "legacy")]),
+                    &mapping("garden", &c.namespace),
+                )
+                .unwrap();
+            s.apply_import(&manager, &p, &p.digest).unwrap();
+            let entry = s.managed_snapshot(&manager, &c.namespace).unwrap().entries.remove(0);
+            (entry.id, entry.revision)
+        } else {
+            let input = serde_json::from_value(
+                serde_json::json!({"title":"reference","body":"agent","idempotency_key":"request"}),
+            )
+            .unwrap();
+            let entry = s.remember(&c.tool, input).unwrap();
+            (entry.id, entry.revision)
+        };
+        s.managed_delete(&manager, &c.namespace, &id, revision).unwrap();
+        assert!(s.managed_snapshot(&manager, &c.namespace).unwrap().entries.is_empty());
+        let config = hennery_memory::consumer::FeedConfig {
+            collector_url: "http://127.0.0.1:7331/".into(),
+            namespace_epoch: "a".repeat(64),
+            activity_token: format!("hnry_activity_{}", "b".repeat(64)),
+            activity: false,
+            internal_network: true,
+        };
+        assert!(
+            s.attach(
+                &c.namespace,
+                config,
+                &hennery_gateway::key::MasterKey::from_bytes([9; 32])
+            )
+            .is_err(),
+            "initial attach cannot carry retry history into a different epoch"
+        );
+        assert_eq!(s.status(&c.namespace).unwrap()["registered"], false);
     }
 }

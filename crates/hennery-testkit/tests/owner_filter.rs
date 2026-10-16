@@ -199,6 +199,14 @@ const GATEWAY_STATEMENTS: usize = 53;
 /// `every_file_with_sql_is_audited_or_exempt`.
 const EXEMPT: &[(&str, &str)] = &[
     (
+        "hennery-memory/src/management.rs",
+        "separate optional memory database; owner binding, namespace admission and every management statement are prepared and checked by hennery-memory/tests/sql_scope.rs",
+    ),
+    (
+        "hennery-memory/src/import.rs",
+        "separate optional memory database; import ledger and owner/epoch signing lookups are prepared and namespace/owner-scoped by hennery-memory/tests/sql_scope.rs",
+    ),
+    (
         "hennery-memory/src/consumer.rs",
         "separate optional memory database; actual consumer SQL is prepared and namespace-scoped by hennery-memory/tests/sql_scope.rs, including bounded local worker inventories",
     ),

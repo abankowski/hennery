@@ -684,15 +684,10 @@ async fn export(
     };
     let generation = snapshot.generation;
     let stream = futures::stream::unfold(
-        (ui, m, ns, session, crate::export::files(snapshot).into_iter()),
+        (ui, m, ns, session, crate::export::files(snapshot)),
         move |(ui, m, ns, session, mut files)| async move {
             let next = files.next()?;
-            let valid = session.stepped_up(unix_now())
-                && ui
-                    .operator
-                    .session_expires_at(&session.session_id, unix_now())
-                    .is_ok_and(|at| at.is_some())
-                && ui.store.managed_deliverable(&m, &ns, generation).is_ok();
+            let valid = export_allowed(&ui, &m, &ns, generation, &session, unix_now());
             let chunk = if valid {
                 next.map(axum::body::Bytes::from)
             } else {
@@ -709,6 +704,59 @@ async fn export(
         Body::from_stream(stream),
     )
         .into_response()
+}
+fn export_allowed(
+    ui: &Ui,
+    manager: &Manager,
+    namespace: &str,
+    generation: u64,
+    session: &Authenticated,
+    now: i64,
+) -> bool {
+    session.stepped_up(now)
+        && ui
+            .operator
+            .session_expires_at(&session.session_id, now)
+            .is_ok_and(|at| at.is_some())
+        && ui.store.managed_deliverable(manager, namespace, generation).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn export_delivery_requires_current_step_up() {
+        let d = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&d.path().join("memory.db")).unwrap());
+        let operator = Arc::new(Operator::open_in_memory().unwrap());
+        let now = unix_now();
+        let setup = operator.issue_setup_token(now).unwrap().unwrap();
+        let SetupOutcome::Done { phc, .. } = operator
+            .set_up(&setup, "synthetic password only", "https://memory.example.test", now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        store.bind_manager(operator.owner_id(), "owner").unwrap();
+        let namespace = store.create("owner", "garden").unwrap().namespace;
+        let manager = store.manager(operator.owner_id()).unwrap();
+        let token = operator.open_session("fixture", &phc, now).unwrap().unwrap();
+        let session = operator.authenticate(&token, now).unwrap().unwrap();
+        let ui = Ui {
+            store,
+            operator,
+            permits: Arc::new(Semaphore::new(4)),
+        };
+        assert!(export_allowed(&ui, &manager, &namespace, 0, &session, now));
+        assert!(!export_allowed(
+            &ui,
+            &manager,
+            &namespace,
+            0,
+            &session,
+            now + hennery_kernel::operator::STEP_UP_SECS + 1
+        ));
+    }
 }
 
 #[derive(Deserialize)]

@@ -21,6 +21,8 @@ fn owner_scope_revision_redaction_pin_and_erasure() {
     assert!(store.manager("owner-a").is_err());
     assert!(store.bind_manager("principal", "owner-b").is_err());
     assert_eq!(store.managed_namespaces(&manager).unwrap().len(), 2);
+    assert!(store.managed_purge(&manager, &c.namespace).is_err());
+    assert!(store.managed_writes(&manager, &c.namespace, false).is_err());
     assert!(store.managed_create(&manager, &c.namespace, memory("foreign")).is_err());
     let secret = format!("hnry_plugin_{}", "a".repeat(64));
     let entry = store
@@ -165,9 +167,21 @@ fn every_curated_write_checks_namespace_capacity_and_invalidates_snapshot_delive
     raw.execute("UPDATE entries SET kind='note',data=json_set(data,'$.kind','note','$.pinned',json('false')) WHERE namespace=?1 AND id=?2",rusqlite::params![c.namespace,entry.id]).unwrap();
     let before = s.managed_snapshot(&m, &c.namespace).unwrap();
     let entry = s
-        .managed_annotate(&m, &c.namespace, &entry.id, entry.revision, "annotation")
+        .managed_annotate(&m, &c.namespace, &entry.id, entry.revision, "retiredannotationmarker")
         .unwrap();
     assert!(s.managed_deliverable(&m, &c.namespace, before.generation).is_err());
+    let entry = s
+        .managed_annotate(&m, &c.namespace, &entry.id, entry.revision, "current annotation")
+        .unwrap();
+    for name in ["memory.db", "memory.db-wal"] {
+        if let Ok(bytes) = std::fs::read(d.path().join(name)) {
+            assert!(
+                !bytes
+                    .windows(b"retiredannotationmarker".len())
+                    .any(|b| b == b"retiredannotationmarker")
+            );
+        }
+    }
     let before = s.managed_snapshot(&m, &c.namespace).unwrap();
     s.managed_retain(
         &m,
@@ -234,4 +248,93 @@ fn owner_titles_are_redacted_and_terminal_namespaces_cannot_be_resurrected() {
     s.managed_purge(&m, &c.namespace).unwrap();
     assert!(s.managed_create(&m, &c.namespace, memory("must not return")).is_err());
     assert!(s.managed_snapshot(&m, &c.namespace).is_err());
+}
+
+#[test]
+fn deliberate_owner_content_has_real_server_side_limits() {
+    let d = tempfile::tempdir().unwrap();
+    let s = Store::open(&d.path().join("memory.db")).unwrap();
+    let c = s.create("owner", "garden").unwrap();
+    s.bind_manager("auth", "owner").unwrap();
+    let m = s.manager("auth").unwrap();
+    for input in [
+        NewMemory {
+            title: String::new(),
+            body: "reference".into(),
+        },
+        NewMemory {
+            title: "x".repeat(161),
+            body: "reference".into(),
+        },
+        NewMemory {
+            title: "reference".into(),
+            body: "x".repeat(16385),
+        },
+    ] {
+        assert!(s.managed_create(&m, &c.namespace, input).is_err());
+    }
+    assert!(s.managed_snapshot(&m, &c.namespace).unwrap().entries.is_empty());
+}
+
+#[test]
+fn a_delayed_agent_remember_retry_cannot_resurrect_an_owner_deleted_memory() {
+    let d = tempfile::tempdir().unwrap();
+    let s = Store::open(&d.path().join("memory.db")).unwrap();
+    let c = s.create("owner", "garden").unwrap();
+    s.bind_manager("auth", "owner").unwrap();
+    let m = s.manager("auth").unwrap();
+    let request = || {
+        serde_json::from_value::<hennery_memory::store::Remember>(
+            serde_json::json!({"title":"agent reference","body":"deletedagentmarker","idempotency_key":"stable retry"}),
+        )
+        .unwrap()
+    };
+    let entry = s.remember(&c.tool, request()).unwrap();
+    s.managed_delete(&m, &c.namespace, &entry.id, entry.revision).unwrap();
+    assert!(s.remember(&c.tool, request()).is_err());
+    assert!(
+        s.search(&c.tool, &Query::search("deletedagentmarker"))
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    for file in ["memory.db", "memory.db-wal"] {
+        if let Ok(bytes) = std::fs::read(d.path().join(file)) {
+            assert!(
+                !bytes
+                    .windows(b"deletedagentmarker".len())
+                    .any(|b| b == b"deletedagentmarker")
+            );
+        }
+    }
+}
+
+#[test]
+fn deleted_agent_request_receipts_have_a_namespace_bound() {
+    let d = tempfile::tempdir().unwrap();
+    let s = Store::open(&d.path().join("memory.db")).unwrap();
+    let c = s.create("owner", "garden").unwrap();
+    let raw = rusqlite::Connection::open(d.path().join("memory.db")).unwrap();
+    raw.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000) INSERT INTO requests(namespace,key,digest,result) SELECT ?1,'fixture:'||x,'digest','{}' FROM n",[&c.namespace]).unwrap();
+    let input = serde_json::from_value::<hennery_memory::store::Remember>(
+        serde_json::json!({"title":"reference","body":"must not persist","idempotency_key":"new request"}),
+    )
+    .unwrap();
+    assert!(s.remember(&c.tool, input).is_err());
+    assert_eq!(
+        raw.query_row("SELECT count(*) FROM entries WHERE namespace=?1", [&c.namespace], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    s.owner_purge(&c.namespace).unwrap();
+    assert_eq!(
+        raw.query_row(
+            "SELECT count(*) FROM requests WHERE namespace=?1",
+            [&c.namespace],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
 }

@@ -75,7 +75,9 @@ fixed or explicitly excluded. Nothing is extracted or changed in the snapshot.
 Frontmatter is deliberately constrained: `---` delimiter lines (with a newline
 after the closing delimiter), ASCII identifier keys up to 64 bytes, plain/JSON
 double-quoted/YAML single-quoted scalars up to 8 KiB, two-space `metadata` and
-`times` scalar maps, and scalar flow/block sequences of up to 64 items. Block
+`times` scalar maps, and scalar flow/block sequences of up to 64 items for
+`entities`, `in_flight` and `supersedes` only. Authority fields and unknown
+metadata must be scalars. Block
 sequences use two spaces at root or four in a nested map; commas inside quoted
 flow elements are unsupported. At most 128 fields/64 KiB frontmatter. Duplicate
 case-folded keys, the duplicate `source_session`/`originSessionId` alias, tabs,
@@ -116,6 +118,12 @@ ledger until namespace purge. Signed previews carry portable content: expiry
 invalidates approval, not external copies. They have the same external-copy
 limitation as exports/backups. Arbitrary provider secrets in plaintext or
 encoded/obfuscated secrets are outside the shared shape-based redactor's claim.
+
+Owner deletion also retains an opaque agent-request receipt so delayed
+`remember` retries are refused, rather than silently recreating a deleted
+memory. These receipts contain hashes/IDs, no bodies, are capped at 100,000
+per namespace and are removed by namespace purge. A genuinely new explicit
+remember request remains subject to the namespace's agent-write policy.
 
 To combine import with C1 capture, attach the grant to the empty namespace
 first, as R1 requires. Local preview can run offline; registered apply needs the

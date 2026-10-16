@@ -237,8 +237,19 @@ impl Store {
             .optional()?
         {
             ensure!(old == digest, "idempotency conflict");
-            return Ok(serde_json::from_str(&result)?);
+            let remembered: Remembered = serde_json::from_str(&result)?;
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM entries WHERE namespace=?1 AND id=?2)",
+                params![ns.id, remembered.id],
+                |r| r.get(0),
+            )?;
+            ensure!(exists, "memory was deleted; this retry cannot recreate it");
+            return Ok(remembered);
         }
+        let requests: i64 = tx.query_row("SELECT count(*) FROM requests WHERE namespace=?1", [&ns.id], |r| {
+            r.get(0)
+        })?;
+        ensure!(requests < 100000, "idempotency ledger full");
         let (count, bytes): (i64, i64) = tx.query_row(
             "SELECT count(*),coalesce(sum(length(CAST(data AS BLOB))),0) FROM entries WHERE namespace=?1",
             [&ns.id],

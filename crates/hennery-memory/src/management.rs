@@ -294,7 +294,7 @@ impl Store {
         Ok(entry)
     }
     /// A note delete also suppresses its native source. No older body/revision
-    /// survives in a history table or the remember result cache.
+    /// survives in a history table. Opaque request receipts carry no body.
     pub fn managed_delete(&self, manager: &Manager, namespace: &str, id: &str, expected: u64) -> Result<()> {
         let mut inner = self.inner.lock().expect("store");
         inner.managed_scope(manager, namespace, false)?;
@@ -314,10 +314,8 @@ impl Store {
             "DELETE FROM entries WHERE namespace=?1 AND id=?2",
             params![namespace, id],
         )?;
-        tx.execute(
-            "DELETE FROM requests WHERE namespace=?1 AND json_extract(result,'$.id')=?2",
-            params![namespace, id],
-        )?;
+        // Keep only the bounded opaque request receipt, never a body, so an
+        // already-issued agent retry cannot undo this owner deletion.
         tx.commit()?;
         inner.invalidate(namespace);
         crate::consumer::checkpoint(&inner)

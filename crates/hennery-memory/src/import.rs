@@ -384,7 +384,7 @@ fn frontmatter(text: &str) -> Result<Parsed> {
             ensure!(indent == 2, "unsupported nesting");
             format!("{}.{}", section.as_ref().context("unexpected indent")?, key)
         };
-        let canonical = if full.to_ascii_lowercase() == "metadata.originsessionid" {
+        let canonical = if full.eq_ignore_ascii_case("metadata.originsessionid") {
             "metadata.source_session".to_string()
         } else {
             full.to_ascii_lowercase()
@@ -401,7 +401,12 @@ fn frontmatter(text: &str) -> Result<Parsed> {
             continue;
         }
         ensure!(!raw.trim().is_empty(), "unsupported empty or nested structure");
-        metadata.insert(full, scalar_or_list(raw)?);
+        let value = if ["entities", "in_flight", "supersedes"].contains(&key.as_str()) {
+            scalar_or_list(raw)?
+        } else {
+            scalar(raw)?
+        };
+        metadata.insert(full, value);
         ensure!(metadata.len() <= 128, "metadata field limit");
     }
     for (key, list) in lists {
@@ -860,4 +865,65 @@ pub fn read_local_json<T: serde::de::DeserializeOwned>(path: &Path, cap: usize) 
         "bounded JSON object required"
     );
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn correctly_signed_expired_or_overlong_previews_cannot_apply() {
+        let d = tempfile::tempdir().unwrap();
+        let store = Store::open(&d.path().join("memory.db")).unwrap();
+        let c = store.create("owner", "garden").unwrap();
+        let manager = store.filesystem_manager("owner").unwrap();
+        let input = Bundle {
+            version: 1,
+            vault: "synthetic".into(),
+            files: vec![VaultFile {
+                path: "memories/garden/reference.md".into(),
+                body: "synthetic content".into(),
+            }],
+            rejected: Vec::new(),
+        };
+        let mapping = Mapping {
+            scopes: BTreeMap::from([(
+                "garden".into(),
+                Target::Namespace {
+                    namespace: c.namespace.clone(),
+                    project_key: None,
+                },
+            )]),
+            files: BTreeMap::new(),
+            mixed: BTreeSet::new(),
+        };
+        let original = store.preview_import(&manager, &input, &mapping).unwrap();
+        let key = store
+            .inner
+            .lock()
+            .unwrap()
+            .auth(&c.lifecycle, true, false)
+            .unwrap()
+            .cursor_key;
+        for expires in [unix_now() - 1, unix_now() + 7200] {
+            let mut proposal = original.clone();
+            proposal.expires = expires;
+            let hash = preview_hash(&proposal).unwrap();
+            // Valid fixture signatures isolate expiry from tamper detection.
+            for hat in &mut proposal.hats {
+                hat.proof = hex::encode(mac(&key, &manager.owner, &hash).unwrap().finalize().into_bytes());
+            }
+            assert!(store.apply_import(&manager, &proposal, &proposal.digest).is_err());
+            assert!(
+                store
+                    .managed_snapshot(&manager, &c.namespace)
+                    .unwrap()
+                    .entries
+                    .is_empty()
+            );
+        }
+        assert_eq!(
+            store.apply_import(&manager, &original, &original.digest).unwrap()[0].status,
+            "committed"
+        );
+    }
 }

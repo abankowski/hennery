@@ -275,8 +275,8 @@ impl Store {
                 "cannot change collector origin"
             );
         } else {
-            let entries: i64 = tx.query_row("SELECT count(*) FROM entries WHERE namespace=?1", [id], |r| r.get(0))?;
-            ensure!(entries == 0, "attach requires empty namespace");
+            let records: i64 = tx.query_row("SELECT (SELECT count(*) FROM entries WHERE namespace=?1)+(SELECT count(*) FROM requests WHERE namespace=?1)+(SELECT count(*) FROM imports WHERE namespace=?1)", [id], |r| r.get(0))?;
+            ensure!(records == 0, "attach requires empty namespace, including retry history");
         }
         let feeds: i64 = tx.query_row("SELECT count(*) FROM feeds", [], |r| r.get(0))?;
         ensure!(registered || feeds < 128, "too many feeds");

@@ -203,11 +203,13 @@ async fn login_step_up_and_logout_use_private_cookie_and_gates_precede_body() {
         w.request("POST", &export, Some(ORIGIN), w.cookie(), "").await.status(),
         StatusCode::OK
     );
-    assert_eq!(
-        w.request("POST", "/logout", Some(ORIGIN), w.cookie(), "")
-            .await
-            .status(),
-        StatusCode::SEE_OTHER
+    let signed_out = w.request("POST", "/logout", Some(ORIGIN), w.cookie(), "").await;
+    assert_eq!(signed_out.status(), StatusCode::SEE_OTHER);
+    assert!(
+        signed_out.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
     );
     assert_eq!(
         w.request("GET", "/", None, w.cookie(), "").await.status(),
@@ -282,6 +284,13 @@ async fn export_is_versioned_opaque_scoped_and_delivery_is_invalidated_by_delete
         .request("POST", &format!("/n/{}/export", w.ns), Some(ORIGIN), w.cookie(), "")
         .await;
     w.store.managed_delete(&manager, &w.ns, &a.id, a.revision).unwrap();
+    assert!(to_bytes(pending.into_body(), 10 * 1024 * 1024).await.is_err());
+    let pending = w
+        .request("POST", &format!("/n/{}/export", w.ns), Some(ORIGIN), w.cookie(), "")
+        .await;
+    w.operator
+        .revoke_session(&hennery_kernel::secret::sha256_hex(w.token.as_bytes()), unix_now())
+        .unwrap();
     assert!(to_bytes(pending.into_body(), 10 * 1024 * 1024).await.is_err());
 }
 
@@ -443,20 +452,28 @@ async fn form_login_and_step_up_keep_failure_limits_and_clear_them_on_success() 
             );
         }
     }
-    for _ in 0..5 {
+    for path in ["/login", "/step-up"] {
+        for _ in 0..5 {
+            assert_eq!(
+                w.request("POST", path, Some(ORIGIN), w.cookie(), "password=wrong")
+                    .await
+                    .status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
         assert_eq!(
-            w.request("POST", "/login", Some(ORIGIN), None, "password=wrong")
-                .await
-                .status(),
-            StatusCode::UNAUTHORIZED
-        );
-    }
-    assert_eq!(
-        w.request("POST", "/login", Some(ORIGIN), None, "password=synthetic+password+only")
+            w.request(
+                "POST",
+                path,
+                Some(ORIGIN),
+                w.cookie(),
+                "password=synthetic+password+only"
+            )
             .await
             .status(),
-        StatusCode::TOO_MANY_REQUESTS
-    );
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
 }
 
 #[tokio::test]
@@ -566,4 +583,106 @@ async fn form_rejections_never_echo_first_party_credentials_in_field_names() {
         .await;
     assert!(response.status().is_client_error());
     assert!(!text(response).await.contains("DEADBEEF"));
+}
+
+#[tokio::test]
+async fn a_session_revoked_while_its_form_arrives_cannot_commit() {
+    let w = World::new(0);
+    let arrived = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let arrival = arrived.clone();
+    let resume = release.clone();
+    let stream = futures::stream::once(async move {
+        arrival.notify_one();
+        resume.notified().await;
+        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"title=fixture&body=must-not-commit"))
+    });
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/n/{}/create", w.ns))
+        .header("origin", ORIGIN)
+        .header("cookie", w.cookie().unwrap())
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let app = w.app.clone();
+    let task = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
+    tokio::time::timeout(std::time::Duration::from_secs(5), arrived.notified())
+        .await
+        .unwrap();
+    let session = w.operator.authenticate(&w.token, unix_now()).unwrap().unwrap();
+    w.operator.revoke_session(&session.session_id, unix_now()).unwrap();
+    release.notify_one();
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(8), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let manager = w.store.manager(w.operator.owner_id()).unwrap();
+    assert!(w.store.managed_snapshot(&manager, &w.ns).unwrap().entries.is_empty());
+}
+
+#[tokio::test]
+async fn step_up_that_expires_while_an_export_form_arrives_is_rechecked() {
+    let w = World::new(0);
+    let arrived = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let arrival = arrived.clone();
+    let resume = release.clone();
+    let stream = futures::stream::once(async move {
+        arrival.notify_one();
+        resume.notified().await;
+        Ok::<_, std::io::Error>(axum::body::Bytes::new())
+    });
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/n/{}/export", w.ns))
+        .header("origin", ORIGIN)
+        .header("cookie", w.cookie().unwrap())
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let app = w.app.clone();
+    let task = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
+    tokio::time::timeout(std::time::Duration::from_secs(5), arrived.notified())
+        .await
+        .unwrap();
+    let raw = rusqlite::Connection::open(w._dir.path().join("memory-auth.db")).unwrap();
+    raw.execute(
+        "UPDATE auth_sessions SET last_step_up_at=?1 WHERE id_hash=?2",
+        rusqlite::params![unix_now() - 600, hennery_kernel::secret::sha256_hex(w.token.as_bytes())],
+    )
+    .unwrap();
+    release.notify_one();
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(8), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn step_up_is_required_before_polling_a_sensitive_request_body() {
+    let w = World::new(600);
+    let body = Body::from_stream(futures::stream::once(async {
+        Err::<axum::body::Bytes, _>(std::io::Error::from(std::io::ErrorKind::ConnectionReset))
+    }));
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/n/{}/export", w.ns))
+        .header("origin", ORIGIN)
+        .header("cookie", w.cookie().unwrap())
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(body)
+        .unwrap();
+    assert_eq!(
+        w.app.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
 }
