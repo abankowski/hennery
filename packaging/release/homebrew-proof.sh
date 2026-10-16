@@ -5,7 +5,8 @@
 set -eu
 TARGET=$1
 scratch=$2
-export TARGET
+RUNNER_TEMP=$scratch
+export TARGET RUNNER_TEMP
 case "$TARGET" in
     aarch64-apple-darwin|aarch64-unknown-linux-musl|x86_64-unknown-linux-musl) ;;
     *) echo 'unqualified Homebrew proof target' >&2; exit 1 ;;
@@ -21,6 +22,7 @@ tag=$(python3 -c 'import tomllib; print("v"+tomllib.load(open("Cargo.toml","rb")
 python3 packaging/release/supply.py materials --output release-materials --source-sha "$source_sha" --target "$TARGET" \
     --cargo-metadata "$scratch/cargo-metadata.json" --frontend-licences "$scratch/frontend-licences.json"
 python3 -c 'import json,sys; sys.path.insert(0,"packaging/release"); import gate; gate.require(not json.load(open("release-materials/licence-findings.json"))["findings"], "unresolved proof licence findings")'
+sh packaging/release/advisory-materials.sh
 sh packaging/release/native-archive.sh
 dist build --artifacts=global --target="$TARGET" --output-format=json > "$scratch/proof-dist-manifest.json"
 python3 packaging/release/homebrew.py prepare target/distrib --tag "$tag" --targets "$TARGET"

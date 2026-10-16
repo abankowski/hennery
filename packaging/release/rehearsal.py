@@ -19,9 +19,49 @@ import workflow_policy
 ROOT = Path(__file__).resolve().parents[2]
 SHARED_JOBS = ('web-ui', 'archive', 'crates', 'assemble', 'ghcr', 'installer',
                'homebrew-native', 'homebrew', 'qualification')
+# Every production job needs an explicit rehearsal decision. Adding a job must
+# fail generation until its execution/authority boundary has been reviewed.
+JOB_DECISIONS = {
+    **dict.fromkeys(SHARED_JOBS, 'include: copy complete qualification job'),
+    'tag-signature': 'replace: unsigned local configuration; exclude signed-tag authentication',
+    'attest': 'replace: local byte verification; exclude OIDC/signing and attested upload',
+    'publish': 'exclude: protected publication and all credentials',
+}
+# Identity, triggers and permissions are replaced for the unsigned PR context;
+# env/defaults/concurrency are carried through and jobs use JOB_DECISIONS.
+WORKFLOW_FIELDS = {'name', 'on', True, 'permissions', 'jobs', 'env', 'defaults', 'concurrency'}
+JOB_FIELDS = {'name', 'needs', 'if', 'runs-on', 'timeout-minutes', 'permissions',
+              'strategy', 'steps', 'env', 'defaults', 'concurrency', 'continue-on-error'}
+STEP_FIELDS = {'name', 'id', 'if', 'uses', 'with', 'env', 'run', 'shell',
+               'working-directory', 'timeout-minutes', 'continue-on-error'}
 PATHS = ['.github/workflows/release*.yml', 'packaging/**', 'dist-workspace.toml', 'Cargo.*']
 CHECKOUT = 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262'
 NIX = 'cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24'
+
+
+def require_handled(real):
+    def fields(value, allowed, location):
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f'unhandled production {location} fields: {unknown}')
+    fields(real, WORKFLOW_FIELDS, 'workflow')
+    if set(real['jobs']) != set(JOB_DECISIONS):
+        raise ValueError('production jobs require explicit rehearsal include/exclude decisions')
+    if 'concurrency' in real:
+        fields(real['concurrency'], {'group', 'cancel-in-progress'}, 'concurrency')
+    for name, job in real['jobs'].items():
+        if name == 'tag-signature':
+            # The whole authentication job is replaced, including its execution
+            # settings. Reject new settings rather than silently dropping them.
+            allowed = {'name', 'runs-on', 'timeout-minutes', 'permissions', 'outputs', 'steps'}
+        elif name == 'publish':
+            allowed = {'name', 'needs', 'if', 'environment', 'runs-on',
+                       'timeout-minutes', 'permissions', 'steps'}
+        else:
+            allowed = JOB_FIELDS | ({'outputs'} if name == 'attest' else set())
+        fields(job, allowed, name)
+        for step in job['steps']:
+            fields(step, STEP_FIELDS, name + ' step')
 
 
 def context():
@@ -61,6 +101,7 @@ def workflow(real):
     conditions, build commands and upload/download steps remain identical.
     The policy compares the entire generated object, making drift a failure.
     """
+    require_handled(real)
     jobs = {'tag-signature': {
         'name': 'tag-signature', 'runs-on': 'ubuntu-24.04', 'timeout-minutes': 15,
         'permissions': {'contents': 'read'},
@@ -78,7 +119,9 @@ def workflow(real):
         for step in job['steps']:
             # Avoid passing even the read-only built-in token to Nix setup.
             if step.get('uses') == NIX:
-                step.pop('with', None)
+                step.get('with', {}).pop('github_access_token', None)
+                if step.get('with') == {}:
+                    step.pop('with')
             for key, value in step.get('env', {}).items():
                 if value == '${{ github.ref_name }}':
                     step['env'][key] = '${{ needs.tag-signature.outputs.tag }}'
@@ -92,7 +135,8 @@ def workflow(real):
     jobs['verify'] = {
         'name': 'verify', 'needs': copy.deepcopy(real['jobs']['attest']['needs']),
         'if': real['jobs']['attest']['if'],
-        'runs-on': 'ubuntu-24.04', 'timeout-minutes': 15, 'permissions': {'contents': 'read'},
+        'runs-on': copy.deepcopy(real['jobs']['attest']['runs-on']),
+        'timeout-minutes': real['jobs']['attest']['timeout-minutes'], 'permissions': {'contents': 'read'},
         'steps': [
             {'uses': CHECKOUT, 'with': {'ref': '${{ github.sha }}', 'persist-credentials': False}},
             {'uses': NIX},
@@ -103,11 +147,22 @@ def workflow(real):
              'run': 'nix develop .#release -c python3 packaging/release/rehearsal.py verify payload'},
         ],
     }
-    return {'name': 'release-rehearsal',
+    # Preserve attester execution settings around the local verification stub;
+    # its outputs/steps/permissions are authority and intentionally substituted.
+    for field in JOB_FIELDS - {'name', 'needs', 'if', 'runs-on', 'timeout-minutes', 'permissions', 'steps'}:
+        if field in real['jobs']['attest']:
+            jobs['verify'][field] = copy.deepcopy(real['jobs']['attest'][field])
+    result = {'name': 'release-rehearsal',
             'on': {'pull_request': {'paths': PATHS}, 'push': {'branches': ['main']}},
-            'permissions': {'contents': 'read'},
-            'concurrency': {'group': 'release-rehearsal-${{ github.ref }}', 'cancel-in-progress': True},
-            'jobs': jobs}
+            'permissions': {'contents': 'read'}}
+    for field in ('env', 'defaults', 'concurrency'):
+        if field in real:
+            result[field] = copy.deepcopy(real[field])
+    if 'concurrency' in result:
+        # Separate from real tag runs while preserving cancellation semantics.
+        result['concurrency']['group'] = 'rehearsal-' + result['concurrency']['group']
+    result['jobs'] = jobs
+    return result
 
 
 def main():

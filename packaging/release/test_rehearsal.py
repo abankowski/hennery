@@ -2,6 +2,8 @@
 import copy
 import os
 from pathlib import Path
+import shlex
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -44,6 +46,38 @@ class Rehearsal(unittest.TestCase):
             with patch.object(rehearsal, 'ROOT', root):
                 self.assertEqual(rehearsal.context(), {'tag': 'v0.1.0', 'tag_object': '0' * 40, 'channels': channels})
 
+    def test_production_execution_settings_are_preserved(self):
+        real = self.workflow('release.yml')
+        real['env'] = {'RUSTFLAGS': '-D warnings'}
+        real['defaults'] = {'run': {'shell': 'bash', 'working-directory': '.'}}
+        real['concurrency']['cancel-in-progress'] = True
+        probe = rehearsal.workflow(real)
+        for field in ('env', 'defaults'):
+            self.assertEqual(probe[field], real[field])
+        self.assertEqual(probe['concurrency'], real['concurrency'] | {
+            'group': 'rehearsal-' + real['concurrency']['group']})
+
+    def test_production_mutations_require_regeneration_or_explicit_decisions(self):
+        checked = self.workflow('release-rehearsal.yml')
+        for kind in ('env', 'defaults', 'concurrency', 'runner', 'step'):
+            real = self.workflow('release.yml')
+            if kind == 'env': real['env'] = {'RUSTFLAGS': '-D warnings'}
+            if kind == 'defaults': real['defaults'] = {'run': {'shell': 'bash'}}
+            if kind == 'concurrency': real['concurrency']['cancel-in-progress'] = True
+            if kind == 'runner': real['jobs']['qualification']['runs-on'] = 'ubuntu-24.04-arm'
+            if kind == 'step': real['jobs']['qualification']['steps'].append({'run': 'echo new qualification'})
+            with self.subTest(kind=kind):
+                self.assertNotEqual(checked, rehearsal.workflow(real))
+        for kind in ('job', 'workflow-field', 'job-field', 'step-field', 'stub-job-field'):
+            real = self.workflow('release.yml')
+            if kind == 'job': real['jobs']['new-qualification'] = copy.deepcopy(real['jobs']['qualification'])
+            if kind == 'workflow-field': real['unhandled'] = 'new execution behavior'
+            if kind == 'job-field': real['jobs']['qualification']['unhandled'] = True
+            if kind == 'step-field': real['jobs']['qualification']['steps'][0]['unhandled'] = True
+            if kind == 'stub-job-field': real['jobs']['tag-signature']['defaults'] = {'run': {'shell': 'bash'}}
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                rehearsal.workflow(real)
+
     def test_policy_refuses_authority_or_drift(self):
         for kind in ('write', 'oidc', 'environment', 'secret', 'token', 'reusable', 'unpin',
                      'ignore-failure', 'different-runner', 'flat-download', 'skip-freeze', 'publish', 'trigger'):
@@ -85,23 +119,46 @@ class Rehearsal(unittest.TestCase):
                 if not (payload / name).exists(): (payload / name).write_bytes(b'fixture')
             with patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40, 'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1'}):
                 rehearsal.freeze(payload)
-                # actions/upload-artifact uses LCA(payload/,signatures/).
+                # Resolve the production upload's search roots, then apply the
+                # pinned upload action's least-common-ancestor directory layout.
                 import zipfile
                 signatures = root / 'signatures'; signatures.mkdir()
                 (signatures / contract.BUNDLE).write_bytes(b'UNSIGNED STUB: no provenance')
+                real = self.workflow('release.yml')
+                frozen = next(s for s in real['jobs']['attest']['steps'] if s.get('id') == 'frozen')
+                folders = [root / p.strip() for p in frozen['with']['path'].splitlines() if p.strip()]
+                self.assertTrue(folders)
+                self.assertTrue(all(p.is_dir() for p in folders))
+                ancestor = Path(os.path.commonpath(folders))
                 transport = root / 'attested.zip'
                 with zipfile.ZipFile(transport, 'w') as archive:
-                    for folder in (payload, signatures):
-                        for path in folder.iterdir(): archive.write(path, path.relative_to(root))
-                original = root / 'original'
+                    for folder in folders:
+                        for path in folder.rglob('*'):
+                            if path.is_file(): archive.write(path, path.relative_to(ancestor))
+                publisher = real['jobs']['publish']['steps']
+                download = next(s for s in publisher if s.get('uses', '').startswith('actions/download-artifact@'))
+                self.assertIs(download['with']['merge-multiple'], True)
+                original = root / download['with']['path']
                 with zipfile.ZipFile(transport) as archive: archive.extractall(original)
-                rehearsal.verify(original / 'payload')
+                verified = shlex.split(next(s for s in publisher if s.get('id') == 'verified')['run'])
+                consumed = verified[verified.index('verify') + 1:][:2]
+                published = shlex.split(next(s for s in publisher if s.get('id') == 'github-publish')['run'])
+                self.assertEqual(published[published.index('publish') + 1:][:2], consumed)
+                downloaded_payload, downloaded_signatures = [root / p for p in consumed]
+                rehearsal.verify(downloaded_payload)
                 for field, value in (('GITHUB_SHA', 'b' * 40), ('GITHUB_RUN_ID', '43'), ('GITHUB_RUN_ATTEMPT', '2')):
                     with self.subTest(field=field), patch.dict(os.environ, {field: value}), self.assertRaises(gate.Refused):
                         rehearsal.verify(original / 'payload')
-                subjects = {p.name for p in (original / 'payload').iterdir()}
-                self.assertEqual(subjects, set(contract.verify_files(original / 'payload')) | {contract.CHECKSUMS})
-                self.assertTrue((original / 'signatures' / contract.BUNDLE).is_file())
+                provenance = next(s for s in real['jobs']['attest']['steps'] if s.get('id') == 'provenance')
+                subjects = {p.relative_to(payload) for pattern in provenance['with']['subject-path'].splitlines()
+                            for p in root.glob(pattern.strip()) if p.is_file()}
+                # Invoke the actual verifier's subject enumeration; only crypto
+                # and identity checks are stubbed, with no credentials or gh.
+                with patch('tag_signature.verify'), patch.object(contract, 'require_identity'), patch.object(contract, 'require_run'), patch.object(contract.verifier_process, 'run', return_value=subprocess.CompletedProcess([], 0, '[]', '')) as crypto:
+                    contract.verify(downloaded_payload, tag, 'a' * 40, downloaded_signatures / contract.BUNDLE, 42, 1)
+                verified_subjects = {Path(call.args[0][3]).relative_to(downloaded_payload) for call in crypto.call_args_list}
+                self.assertEqual(subjects, verified_subjects)
+                self.assertTrue((downloaded_signatures / contract.BUNDLE).is_file())
                 with patch.object(release_run, 'configuration', side_effect=gate.Refused('no signed tag')), self.assertRaises(gate.Refused):
                     release_run.freeze(root / 'cannot-publish')
                 (original / 'payload' / 'runtime-inventory.json').write_bytes(b'tampered')
