@@ -8,7 +8,7 @@
 
 ## Execution status
 
-Built and verified. Parent independent review and Linux/macOS CI remain pending. Exact implementation diff SHA-256: `1e49bceadea891865346d5c412d0d7c56fc28aae82f68b94f8314d486e8301a3`; frozen patch and command outputs are in `.superpowers/sdd/recall-reset-contention/` in the recall-fix-17 worktree.
+Built and verified. The first review returned CHANGES; both findings are fixed test-first in the amendment below. Parent re-review and current-head Linux/macOS CI remain pending. Initial implementation diff SHA-256: `1e49bceadea891865346d5c412d0d7c56fc28aae82f68b94f8314d486e8301a3`; frozen patch and command outputs are in `.superpowers/sdd/recall-reset-contention/` in the recall-fix-17 worktree.
 
 ## Scope
 
@@ -60,6 +60,22 @@ Every command below ran in the flake dev shell with private HOME/XDG/tool config
 The probe harness initially stopped at its 120-second copied-tree build cap, then at an ambiguous mutation anchor. The build cap and anchor were corrected; completed probes were retained rather than repeated. Those harness failures are logged and are not counted as detected mutations.
 
 Per the parent's targeted amendment budget, no full workspace run, Nix check, web gate or additional full replay was performed. No hotspot/filter/dependency/web file changed. The earlier R1 fresh replay remains historical evidence; CI is the check of record.
+
+## Review amendment: activity transaction fence and panic recovery
+
+**Reviewed head:** `3d6fe4b2`. The review found a stale feed write between its preliminary job check and BEGIN IMMEDIATE, plus permanent reset-writer poisoning after a panic. Both are fixed in the same scoped branch; the historical evidence above remains unchanged.
+
+**Test-first:** the reviewer's two-connection reproduction is now a permanent regression. It pauses reset before COMMIT, admits the old feed job through its preliminary check, then lets reset commit before the feed transaction starts. Before the fix, the feed returned an error after committing `old-feed-cursor` and restoring one absent-source note (exit 101, 0 passed/1 failed). The unwind/retry regression also failed first on the poisoned mutex, as did the incomplete-rollback regression (each exit 101, 0 passed/1 failed). The unwind test covers both pre-COMMIT and post-COMMIT panics, verifies the cursor rollback/commit distinction, and verifies successful retry using a reopened connection.
+
+**Built fixes:** feed application now rechecks the exact namespace epoch, feed revision and cursor inside its own IMMEDIATE transaction, before any mutation. Reset-writer recovery checks SQLite autocommit to confirm the unwound transaction has ended, opens a new kernel-owned connection, restores the 100-ms busy budget, and only then replaces the connection and clears poison. An unconfirmed rollback returns an explicit error, retains poison and leaves reads denied. No global state mutex encloses recovery I/O.
+
+**Write-path audit:** both asynchronous job writers now validate their exact job inside their own write transaction. Attach already reads namespace state/epoch/config after BEGIN. Suppress and forget reconcile current data and advance revision inside their transaction; forget also checks active state or the existing receipt. Namespace/auth/epoch selection for remember and lifecycle operations remains serialized by the main mutex: all identity/state writers hold it, reset reservation needs it, and the separate reset writer never changes namespace identity/auth/state. Existing reservations deny remember. Create is a fresh-identity INSERT; write enablement is an active-state guarded UPDATE; erasure confirmation follows terminal scope purge under the main mutex. Transaction helpers inherit their caller's fence. No other captured feed job is used for a write. Detailed audit: `.superpowers/sdd/recall-reset-contention/amendment-1/audit.md`.
+
+**Verification:** all six amendment gates exited 0: `cargo fmt --all --check`; `cargo test -p hennery-memory --locked` (**65 passed, 1 ignored, 11 result groups**); both clippy commands and both generator checks from the table above. The ignored mounted-service proof retains its existing setup requirement. Fresh lib/consumer artifact discovery also exited 0. The concurrency load ran four processes for three rounds: **132 passing executions in 24 groups**, all exit 0, including stale activity and unwind/retry alongside the existing interleaving/lease/purge cases. The slowest mixed reset was **1.991 seconds** and worst foreign read **5.502 milliseconds**; all original timing bounds remain unchanged.
+
+**Copied probes:** `amendment-1/probes-1` has its own APFS-cloned target, made with `/bin/cp -c -R`. Baseline and restored unit suites each passed all 11 tests (exit 0). All **six guard mutations failed behaviorally (101)**: activity transaction fence, poison recovery, rollback confirmation, connection replacement, reopened busy budget and poison clearing. No compiler failure counts as a detected mutation. The restored copy diff is zero; root implementation bytes match frozen SHA-256 `cd1f89e4f84628bf229cc4bd30a4c0c36dee3d17d885a5bbeb34c4c6e0121f44`. Raw RED/GREEN, gates, load and probe outputs are in `.superpowers/sdd/recall-reset-contention/amendment-1/`. The original `probes-1` and parent-owned `review-probe-1` copies remain for parent cleanup.
+
+No full workspace run, fresh replay, Nix or web gate for this review amendment, per the verification budget; no hotspot, schema, dependency or web files changed. Parent re-review should focus on the transaction fence, poison/rollback/reopen ordering and fail-closed reads. CI remains the check of record.
 
 ## After this plan
 

@@ -1,5 +1,5 @@
 //! Pull only from explicit C1 grants. Every late response is fenced against
-//! the same namespace epoch/config/cursor revision under the store mutex.
+//! the same namespace epoch/config/cursor revision inside its write transaction.
 use crate::store::{Entry, Inner, Namespace, Observation, Store, bounded, put};
 use anyhow::{Context, Result, ensure};
 use hennery_gateway::{crypto, key::MasterKey};
@@ -66,6 +66,7 @@ impl ResetPermit {
 pub(crate) enum ResetPhase {
     Commit,
     Checkpoint,
+    Apply,
 }
 #[cfg(test)]
 pub(crate) type ResetHook = Arc<dyn Fn(ResetPhase) + Send + Sync>;
@@ -411,7 +412,12 @@ impl Store {
         let mut inner = self.inner.lock().expect("store");
         inner.live(job)?;
         check_lease(start, until)?;
+        #[cfg(test)]
+        self.reset_phase(ResetPhase::Apply);
         let tx = inner.db.transaction()?;
+        // The separate reset writer can commit after the preliminary check.
+        // Fence again under SQLite's write lock before admitting any evidence.
+        check_job(&tx, job)?;
         let erased = page
             .items
             .iter()
@@ -666,7 +672,7 @@ impl Store {
     ) -> Result<()> {
         let absent = serde_json::to_string(&plan.absent)?;
         let note_ids = serde_json::to_string(&plan.note_ids)?;
-        let mut db = self.reset_writer.lock().expect("reset writer");
+        let mut db = self.lock_reset_writer()?;
         check_lease(start, until)?;
         // SQLite serializes writes, but other namespaces can read through
         // Inner's WAL connection throughout this transaction and checkpoint.
@@ -1191,6 +1197,233 @@ pub async fn worker(store: Arc<Store>, key: Arc<MasterKey>) {
 #[cfg(test)]
 mod reset_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn poisoned_reset_with_unconfirmed_rollback_stays_fenced() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let (_dir, store, c, key) = fixture();
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                let db = store.reset_writer.lock().unwrap();
+                // Model an incomplete rollback: recovery must not silently discard
+                // an unresolved transaction or clear the poisoned state.
+                db.execute_batch("BEGIN IMMEDIATE").unwrap();
+                panic!("injected incomplete unwind");
+            }))
+            .is_err()
+        );
+        let job = store.job(&key, &c.namespace).unwrap();
+        let start = Instant::now();
+        let until = unix_now() + 60;
+        let permit = store.begin_reset(&job).unwrap();
+        let plan = store
+            .prepare_inventory(&job, Default::default(), start, until)
+            .await
+            .unwrap();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            store.commit_inventory(job, plan, "unconfirmed".into(), start, until, permit)
+        }));
+        assert!(result.is_ok(), "uncertain recovery must return an error, not panic");
+        assert!(result.unwrap().is_err());
+        assert!(store.reset_writer.is_poisoned());
+        assert!(store.available(&c.tool, false).is_err());
+        assert!(store.job(&key, &c.namespace).unwrap().cursor.is_none());
+        store
+            .reset_writer
+            .lock()
+            .unwrap_err()
+            .into_inner()
+            .execute_batch("ROLLBACK")
+            .unwrap();
+        let job = store.job(&key, &c.namespace).unwrap();
+        let permit = store.begin_reset(&job).unwrap();
+        let plan = store
+            .prepare_inventory(&job, Default::default(), start, until)
+            .await
+            .unwrap();
+        store
+            .commit_inventory(job, plan, "retry".into(), start, until, permit)
+            .unwrap();
+        store.available(&c.tool, false).unwrap();
+    }
+
+    #[tokio::test]
+    async fn stale_activity_cannot_overwrite_a_committed_inventory() {
+        use serde_json::json;
+        use std::sync::{Mutex, mpsc};
+        let (_dir, store, c, key) = fixture();
+        let store = Arc::new(store);
+        let page = |event: &str, cursor: &str| -> PluginActivityPage {
+            let source = json!({"session_id":"removed", "turn_id":event, "event_id":7});
+            serde_json::from_value(json!({
+                "version":1, "next_cursor":cursor, "has_more":false,
+                "lease_until":unix_now()+60,
+                "items":[{
+                    "kind":"completed_turn", "event_key":event, "session_id":"removed",
+                    "namespace_epoch":"a".repeat(64),
+                    "provenance":[{"kind":"source", "origin":{"kind":"operator"}, "source":source}],
+                    "turn_id":event, "project_key":"host:/scratch/project",
+                    "completed_at":"2026-10-15T10:00:00Z",
+                    "excerpts":[{"role":"assistant", "text":"resurrection marker"}],
+                    "source_refs":[source], "truncated":false, "gaps":false
+                }]
+            }))
+            .unwrap()
+        };
+        let job = store.job(&key, &c.namespace).unwrap();
+        store
+            .apply(&job, page("seed", "first"), Instant::now(), unix_now() + 60)
+            .unwrap();
+        let job = store.job(&key, &c.namespace).unwrap();
+        let start = Instant::now();
+        let until = unix_now() + 60;
+        let permit = store.begin_reset(&job).unwrap();
+        let plan = store
+            .prepare_inventory(&job, Default::default(), start, until)
+            .await
+            .unwrap();
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (commit_tx, commit_rx) = mpsc::channel();
+        let (apply_tx, apply_rx) = mpsc::channel();
+        let (checkpoint_tx, checkpoint_rx) = mpsc::channel();
+        let commit_rx = Mutex::new(commit_rx);
+        let apply_rx = Mutex::new(apply_rx);
+        let checkpoint_rx = Mutex::new(checkpoint_rx);
+        *store.reset_hook.lock().unwrap() = Some(Arc::new(move |phase| {
+            arrived_tx.send(phase).unwrap();
+            let rx = match phase {
+                ResetPhase::Commit => &commit_rx,
+                ResetPhase::Apply => &apply_rx,
+                ResetPhase::Checkpoint => &checkpoint_rx,
+            };
+            rx.lock().unwrap().recv_timeout(Duration::from_secs(20)).unwrap();
+        }));
+        let writing = store.clone();
+        let reset_job = job.clone();
+        let writer = std::thread::spawn(move || {
+            writing.commit_inventory(reset_job, plan, "reset-watermark".into(), start, until, permit)
+        });
+        assert_eq!(
+            arrived_rx.recv_timeout(Duration::from_secs(20)).unwrap(),
+            ResetPhase::Commit
+        );
+        let applying = store.clone();
+        let late = page("late", "old-feed-cursor");
+        let applier = std::thread::spawn(move || applying.apply(&job, late, start, until));
+        assert_eq!(
+            arrived_rx.recv_timeout(Duration::from_secs(20)).unwrap(),
+            ResetPhase::Apply
+        );
+        commit_tx.send(()).unwrap();
+        assert_eq!(
+            arrived_rx.recv_timeout(Duration::from_secs(20)).unwrap(),
+            ResetPhase::Checkpoint
+        );
+        apply_tx.send(()).unwrap();
+        let applied = applier.join().unwrap();
+        checkpoint_tx.send(()).unwrap();
+        let committed = writer.join().unwrap();
+        *store.reset_hook.lock().unwrap() = None;
+        assert!(applied.is_err(), "stale page must be rejected before mutation");
+        committed.unwrap();
+        let fresh = store.job(&key, &c.namespace).unwrap();
+        store.renew(&fresh, Instant::now(), unix_now() + 60).unwrap();
+        let returned = store
+            .search(&c.tool, &crate::store::Query::search("resurrection"))
+            .unwrap();
+        eprintln!(
+            "apply={applied:?}; cursor={:?}; visible_notes={}",
+            fresh.cursor,
+            returned.entries.len()
+        );
+        assert_eq!(
+            fresh.cursor.as_deref(),
+            Some("reset-watermark"),
+            "stale activity overwrote the reset cursor"
+        );
+        assert!(
+            returned.entries.is_empty(),
+            "stale activity resurrected an absent source"
+        );
+    }
+
+    #[tokio::test]
+    async fn panicked_reset_rolls_back_reopens_and_allows_a_retry() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        for phase in [ResetPhase::Commit, ResetPhase::Checkpoint] {
+            let (_dir, store, c, key) = fixture();
+            let job = store.job(&key, &c.namespace).unwrap();
+            let start = Instant::now();
+            let until = unix_now() + 60;
+            let permit = store.begin_reset(&job).unwrap();
+            let plan = store
+                .prepare_inventory(&job, Default::default(), start, until)
+                .await
+                .unwrap();
+            // A connection-local setting proves retry reopens, rather than just
+            // ignoring poison and reusing the unwound connection.
+            store
+                .reset_writer
+                .lock()
+                .unwrap()
+                .pragma_update(None, "cache_size", 1234)
+                .unwrap();
+            *store.reset_hook.lock().unwrap() = Some(Arc::new(move |at| {
+                if at == phase {
+                    panic!("injected reset panic");
+                }
+            }));
+            let failed = catch_unwind(AssertUnwindSafe(|| {
+                store.commit_inventory(job, plan, "reset".into(), start, until, permit)
+            }));
+            assert!(failed.is_err());
+            *store.reset_hook.lock().unwrap() = None;
+            assert!(!store.inner.lock().unwrap().resetting.contains(&c.namespace));
+            assert!(store.available(&c.tool, false).is_err());
+            assert!(store.reset_writer.is_poisoned());
+            {
+                let connection = store.reset_writer.lock().unwrap_err().into_inner();
+                assert!(connection.is_autocommit(), "unwinding must roll back the transaction");
+            }
+            let retry = store.job(&key, &c.namespace).unwrap();
+            assert_eq!(
+                retry.cursor.as_deref(),
+                if phase == ResetPhase::Commit {
+                    None
+                } else {
+                    Some("reset")
+                }
+            );
+            let permit = store.begin_reset(&retry).unwrap();
+            let plan = store
+                .prepare_inventory(&retry, Default::default(), start, until)
+                .await
+                .unwrap();
+            let retried = catch_unwind(AssertUnwindSafe(|| {
+                store.commit_inventory(retry, plan, "retry".into(), start, until, permit)
+            }));
+            assert!(retried.is_ok(), "a poisoned reset writer must recover without restart");
+            retried.unwrap().unwrap();
+            assert!(!store.reset_writer.is_poisoned());
+            let cache_size: i64 = store
+                .reset_writer
+                .lock()
+                .unwrap()
+                .pragma_query_value(None, "cache_size", |r| r.get(0))
+                .unwrap();
+            assert_ne!(cache_size, 1234, "retry must use a reopened connection");
+            let busy_ms: i64 = store
+                .reset_writer
+                .lock()
+                .unwrap()
+                .pragma_query_value(None, "busy_timeout", |r| r.get(0))
+                .unwrap();
+            assert_eq!(busy_ms, 100, "reopened writer must retain its bounded wait");
+            assert_eq!(store.job(&key, &c.namespace).unwrap().cursor.as_deref(), Some("retry"));
+            store.available(&c.tool, false).unwrap();
+        }
+    }
+
     fn fixture() -> (tempfile::TempDir, Store, crate::store::Credentials, MasterKey) {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("memory.db")).unwrap();

@@ -202,6 +202,23 @@ impl Store {
             })),
         })
     }
+    pub(crate) fn lock_reset_writer(&self) -> Result<std::sync::MutexGuard<'_, db::OwnedConnection>> {
+        match self.reset_writer.lock() {
+            Ok(connection) => Ok(connection),
+            Err(poisoned) => {
+                let mut connection = poisoned.into_inner();
+                // Transaction's unwind drop must have rolled back. If SQLite
+                // cannot confirm this, keep the writer poisoned and reads denied.
+                ensure!(connection.is_autocommit(), "reset rollback unconfirmed");
+                let path = connection.path().context("reset database path unavailable")?;
+                let reopened = db::open(Path::new(path))?;
+                reopened.busy_timeout(std::time::Duration::from_millis(100))?;
+                *connection = reopened;
+                self.reset_writer.clear_poison();
+                Ok(connection)
+            }
+        }
+    }
     pub fn create(&self, owner: &str, hat: &str) -> Result<Credentials> {
         ensure!(
             !owner.is_empty() && owner.len() <= 256 && !hat.is_empty() && hat.len() <= 256,
