@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add acceptance tests to cargo-dist's formula before freezing; validate final bytes."""
+"""Add documentation installs and tests to cargo-dist's formula before freezing."""
 import argparse
 from pathlib import Path
 import re
@@ -7,11 +7,18 @@ import shutil
 
 import gate
 
+DOC_INSTALL_BLOCK = '''    doc.install "CHANGELOG.md"
+    doc.install "LICENSE"
+    doc.install "README.md"
+'''
+
 TEST_BLOCK = '''  test do
     assert_match version.to_s, shell_output("#{bin}/hennery --version")
     refute_match "hennery-web-ui-not-embedded", File.binread(bin/"hennery")
     assert_path_exists pkgshare/"THIRD-PARTY-NOTICES.txt"
     assert_path_exists doc/"CHANGELOG.md"
+    assert_path_exists doc/"LICENSE"
+    assert_path_exists doc/"README.md"
   end
 '''
 
@@ -29,6 +36,7 @@ def check(root, tag, targets, require_test=True):
     except UnicodeError as error:
         raise gate.Refused('formula must be UTF-8') from error
     gate.require(formula.startswith('class Hennery < Formula\n') and formula.endswith('\nend\n'), 'unexpected formula structure')
+    gate.require(formula.count('  def install\n') == 1, 'formula must have one install method')
     versions = re.findall(r'^\s*version (.+)$', formula, re.M)
     gate.require(versions == ['"' + tag[1:] + '"'], 'formula version differs from candidate')
     gate.require(not re.search(r'\b(service|post_install)\b', formula), 'formula must not manage services or run post-install hooks')
@@ -43,6 +51,8 @@ def check(root, tag, targets, require_test=True):
         expected[f'https://github.com/{gate.REPOSITORY}/releases/download/{tag}/{name}'] = gate.digest(archive.read_bytes())
     gate.require(len(dict(pairs)) == len(pairs) and dict(pairs) == expected, 'formula URL or digest differs from candidate archives')
     if require_test:
+        gate.require(formula.count('  def install\n' + DOC_INSTALL_BLOCK) == 1,
+                     'formula must explicitly install the tested documentation')
         gate.require(formula.count(TEST_BLOCK) == 1, 'formula must carry the version, UI, notices and changelog test')
     return raw
 
@@ -51,8 +61,11 @@ def prepare(root, tag, targets):
     check(root, tag, targets, require_test=False)
     path = Path(root) / 'hennery.rb'
     formula = path.read_text()
+    if '  def install\n' + DOC_INSTALL_BLOCK not in formula:
+        formula = formula.replace('  def install\n', '  def install\n' + DOC_INSTALL_BLOCK, 1)
     if TEST_BLOCK not in formula:
-        path.write_text(formula[:-4] + TEST_BLOCK + 'end\n')
+        formula = formula[:-4] + TEST_BLOCK + 'end\n'
+    path.write_text(formula)
     check(root, tag, targets)
 
 

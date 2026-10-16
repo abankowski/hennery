@@ -1,5 +1,6 @@
 """Frozen formula validation; never invokes Homebrew or a publication transport."""
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -30,9 +31,10 @@ class Formula(unittest.TestCase):
         homebrew.prepare(self.root, self.tag, self.targets)
         return self.path.read_text()
 
-    def test_prepare_preserves_dist_formula_and_adds_executed_version_ui_test(self):
+    def test_prepare_preserves_dist_formula_and_adds_docs_and_executed_tests(self):
         result = self.prepare()
-        self.assertEqual(result, self.original[:-4] + homebrew.TEST_BLOCK + 'end\n')
+        expected = self.original.replace('  def install\n', '  def install\n' + homebrew.DOC_INSTALL_BLOCK)
+        self.assertEqual(result, expected[:-4] + homebrew.TEST_BLOCK + 'end\n')
         self.assertIn('test do', result)
         self.assertIn('shell_output', result)
         self.assertIn('hennery-web-ui-not-embedded', result)
@@ -41,6 +43,29 @@ class Formula(unittest.TestCase):
 
     def test_prepare_is_idempotent(self):
         self.assertEqual(self.prepare(), self.prepare())
+
+    def test_rendered_install_and_test_agree_on_every_document(self):
+        formula = self.prepare()
+        install = re.search(r'^  def install\n(.*?)^  end$', formula, re.M | re.S)[1]
+        test = re.search(r'^  test do\n(.*?)^  end$', formula, re.M | re.S)[1]
+        installed = re.findall(r'^    doc\.install "([^"\n]+)"$', install, re.M)
+        asserted = re.findall(r'^    assert_path_exists doc/"([^"\n]+)"$', test, re.M)
+        self.assertCountEqual(installed, ['CHANGELOG.md', 'LICENSE', 'README.md'])
+        self.assertCountEqual(asserted, installed)
+
+    def test_frozen_formula_refuses_each_missing_document_install(self):
+        formula = self.prepare()
+        for name in ['CHANGELOG.md', 'LICENSE', 'README.md']:
+            with self.subTest(document=name):
+                self.path.write_text(formula.replace(f'    doc.install "{name}"\n', ''))
+                with self.assertRaises(gate.Refused):
+                    homebrew.check(self.root, self.tag, self.targets)
+
+    def test_prepare_refuses_missing_or_duplicate_install_methods(self):
+        for replacement in ['', '  def install\n  end\n  def install\n']:
+            self.path.write_text(self.original.replace('  def install\n', replacement))
+            with self.subTest(replacement=replacement), self.assertRaises(gate.Refused):
+                homebrew.prepare(self.root, self.tag, self.targets)
 
     def test_wrong_url_hash_version_or_hooks_refuse(self):
         valid = self.prepare()
