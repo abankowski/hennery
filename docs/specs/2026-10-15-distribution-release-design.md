@@ -59,7 +59,12 @@ they do not eliminate these risks.
 
 Draft assets remain mutable until publication; verify them again at the write
 boundary. The protected `release` environment approval authorizes publication
-of that run, rather than a separately signed inventory. Immutability protects
+of that run, rather than a separately signed inventory. Before approval the
+maintainer reviews the run summary listing every asset and SHA-256, checksum
+file/bundle hashes, tag, source, channels, targets and producing run/attempt.
+There is no preapproval draft to inspect: the single approved job creates it.
+This trades draft inspection for an artifact/digest summary and one approval,
+while keeping all repository mutation inside `release`. Immutability protects
 published assets, not availability or the integrity of other registries.
 Registry publication is not atomic across channels. There is no held backup of
 an unpublished run: missing/expired bytes cause refusal, never reconstruction
@@ -98,9 +103,14 @@ retained R4 acceptance must establish the connection to final registry digests.
 
 The intended job graph and complete permission budget are below. Unlisted token
 scopes are `none`; workflow default is `contents: read`. Build/acceptance jobs
-receive no publication secrets. `actions: read` is added only where run/job
-identity or artifact verification needs it. No publisher gets administration
-access or an AWS credential.
+receive no publication secrets. Only `publish` adds `actions: read` to verify
+run/job/artifact identity. No publisher gets administration access or an AWS
+credential.
+
+The pre-environment permission ceiling is `contents: read`, `id-token: write`
+and `attestations: write`; only the dedicated `attest` job needs the latter two.
+No build/test job gets `contents: write`, an environment or publication secrets.
+`attest` produces the complete run summary before `publish` awaits approval.
 
 | Job ID | Needs / role | Environment | Job token permissions beyond read-only contents | Secrets |
 |---|---|---|---|---|
@@ -113,21 +123,27 @@ access or an AWS credential.
 | `homebrew` | `assemble`; selected native formula acceptance | none | none | none |
 | `assemble` | `archive`, selected `crates`/`ghcr`; global assets and checksums | none | none | none |
 | `installer` (native matrix) | `assemble`; install/refusal checks on all three platforms | none | none | none |
-| `attest` | All required qualification/acceptance; attest final bytes/checksums | none | `id-token: write`, `attestations: write` | none |
-| `draft` | `attest`; upload complete verified draft and bundles | See draft authority review below | `contents: write` | built-in `GITHUB_TOKEN` only |
-| `publish` | `draft`; freshly download, verify, publish and require immutable state | `release` | `contents: write`, `attestations: read` | built-in `GITHUB_TOKEN` only |
-| `publish-homebrew` | `publish`; verify immutable assets then update tap create-only | `release` | `attestations: read` | `RELEASE_HOMEBREW_TOKEN` |
-| `publish-crates` | `publish`; verify immutable frozen tarballs then publish in dependency order | `release` | `attestations: read`, `id-token: write` for trusted publishing | temporary bootstrap secret only during first claiming; otherwise OIDC |
-| `publish-ghcr` | `publish`; verify immutable OCI inputs then push exact digests | `release` | `attestations: read` | `GHCR_PUBLISH_TOKEN` |
+| `attest` | All required qualification/acceptance; attest final bytes/checksums, publish run summary and artifact/bundle IDs | none | `id-token: write`, `attestations: write` | none |
+| `publish` | `attest`; download this run's artifacts, verify, create/upload/read-back draft, reverify, publish immutable, then selected channel steps | `release` | `contents: write`, `actions: read`, `attestations: read`, `id-token: write` for crates OIDC | built-in `GITHUB_TOKEN`; step-scoped channel secrets below |
 
-**Draft authority review:** uploading a draft before the manual publish approval
-requires a separate job with `contents: write`; GitHub has no draft-only contents
-scope. The brief also confines that authority to the `release` environment.
-Pending the parent's ruling, do not implement an unprotected draft writer or
-assume a step can pause a job for environment approval. The two enforceable
-choices are a `draft` job also in `release` (potential extra approval), or an
-explicitly approved pre-environment writer exception. This is the sole open
-authority detail in this Phase A outline.
+**Parent ruling on the maintainer's behalf, 2026-10-16:** no `contents: write`
+outside `release`. There is no separate draft writer. An unprotected draft
+writer could race the approved publisher for an existing `v*` tag. `publish`
+gets one environment approval and performs all mutation afterwards. Following
+immutable publication it runs switched/selected `homebrew`, `crates` and `ghcr`
+publication steps in that same job, each calling its own verifier and publisher.
+The acceptance jobs and their channel registry/name binding remain separate.
+Channel publication steps require successful immutable publication, reverify
+its bytes and attestations, then receive respectively `RELEASE_HOMEBREW_TOKEN`,
+temporary crates bootstrap secret or exchanged OIDC token, and `GHCR_PUBLISH_TOKEN`.
+Never put these secrets at workflow/job scope.
+
+[GitHub documents required reviews per environment-referencing job](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments),
+without promising inherited approval for downstream jobs. Folding channels into
+`publish` guarantees one approval per publishing attempt and avoids extra clicks;
+no live approval experiment was performed. The cost is a longer serial job with
+the union of required permissions, and channel retries re-enter that job and
+renew approval. Do not use an unprotected downstream writer as an approval proxy.
 
 Attestation authority intentionally precedes publication approval and is limited
 to the exact tagged workflow. Ordinary job permissions/OIDC exist at job start;
@@ -155,12 +171,19 @@ Consumers, channel publishers and the README verify-then-run bootstrap must:
    a wildcard as an exact CLI identity or accept a branch signer. Downloadable
    bundles permit verification without trusting an API lookup alone. These
    identity/source constraints follow the [GitHub CLI verifier interface](https://cli.github.com/manual/gh_attestation_verify).
-3. Check the unique checksum entry for each consumed file before execution,
+3. Publication additionally checks `gh attestation verify --format=json`'s
+   verified certificate Run Invocation URI against this workflow's run ID and
+   expected artifact-producing attempt, not a run ID supplied by an asset or
+   a self-asserted provenance predicate. The [Fulcio certificate extension](https://github.com/sigstore/fulcio/blob/main/docs/oid-info.md#13614157264121--run-invocation-uri)
+   binds GitHub's run ID/attempt into the certificate. Require matching exact
+   artifact IDs/producing attempt from the trusted run dependency and refuse
+   absent/mismatched certificate data; tag/workflow/source alone are insufficient.
+4. Check the unique checksum entry for each consumed file before execution,
    extraction or credential use. Publication verifies the entire draft asset
    set against the attested list and expected selected-channel/target closure.
    Re-fetch/reverify the tag, source/run binding and remote draft bytes directly
    before publishing; require immutable state afterwards and verify public
-   assets again before permitting any channel job.
+   assets again before permitting any channel publication step.
 
 Keep `RELEASE_PUBLICATION_ENABLED`, `RELEASE_GITHUB_ENABLED`,
 `RELEASE_HOMEBREW_ENABLED`, `RELEASE_CRATES_ENABLED` and `RELEASE_GHCR_ENABLED`
@@ -203,9 +226,9 @@ moving aliases/announcements until the whole selected set succeeds.
   exact names (including first-create rights), stores it temporarily as
   `RELEASE_CRATES_BOOTSTRAP_TOKEN` only in `release`, and explicitly enables
   `RELEASE_CRATES_BOOTSTRAP_ENABLED` alongside the normal selection/switches.
-  After immutable GitHub publication the approved `publish-crates` job verifies
-  tag, checksums, attestations and public corresponding source **before** exposing
-  the token. Its existing frozen-byte API uploader sends the accepted `.crate`
+  After immutable GitHub publication the approved `publish` job's crates step
+  verifies tag, checksums, attestations and public corresponding source **before**
+  exposing the token. Its existing frozen-byte API uploader sends the accepted `.crate`
   bytes, never reruns `cargo publish` to repackage: proto, kernel, view, host,
   gateway, sessions, then hennery, waiting for each exact index checksum before
   dependants. Existing versions require download/hash equality; collisions,

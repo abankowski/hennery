@@ -5,8 +5,8 @@
 - **Phase A base:** `87cc219c`; branch `plan/release-simplify`.
 - **Execution base:** not yet assigned; must include merged R4 (#143) and
   Homebrew (#155), confirmed by the parent, plus independent Phase A review.
-- **Goal:** one signed-tag run, attested/checksummed draft, protected immutable
-  publication and independently gated channel publication; no AWS or upload App.
+- **Goal:** one signed-tag build/attestation run, summary approval, then draft,
+  immutable release and selected channels in one protected job; no AWS/upload App.
 
 ## Execution status
 
@@ -18,9 +18,13 @@ build each task first, embed exact code/anchors from the post-merge base, then
 perform one fresh replay before the first implementation review. Do not treat
 the commands or anticipated results below as evidence that they have run.
 
-The draft writer's environment/permission boundary needs the parent's ruling
-recorded in the design before implementation. No new account, service,
-infrastructure or cost may be resolved as a technical review decision.
+**Parent ruling on the maintainer's behalf, 2026-10-16:** no `contents: write`
+outside `release`. One approved `publish` job verifies this run's artifacts,
+creates/uploads/read-back-verifies the draft, publishes immutable, then runs
+selected channel publication steps. The maintainer inspects the asset/digest
+run summary before approval; no draft exists then. Channel folding guarantees
+one approval without assuming downstream jobs inherit it. No new account,
+service, infrastructure or cost may be resolved as a technical review decision.
 
 ## Scope
 
@@ -62,12 +66,22 @@ the parent even if other branches happen to become visible locally.
    remain typed metadata, not independent authorization roots.
 6. Missing bytes fail closed; published immutable GitHub assets supply channel
    recovery. No old-version rebuild, overwrite or new storage fallback.
-7. Bootstrap is an explicit temporary mode of the protected crates job, using
+7. Bootstrap is an explicit temporary mode of the protected crates step, using
    R3's frozen-byte uploader; normal OIDC has no token fallback. Exact seven-crate
    order, per-crate trusted settings and revocation are in the design.
-8. Draft write authority remains open for parent ruling: preapproval upload
-   requires `contents: write`, which cannot simultaneously be restricted to a
-   later publish job. No implementation may conceal this permission conflict.
+8. Parent, on the maintainer's behalf, 2026-10-16: all `contents: write` belongs
+   to the single `release` job, including draft upload. Review an exhaustive run
+   summary instead of a draft before approving. Build/test/attestation jobs have
+   no environment or publishing credentials; permission ceiling is read-only
+   contents plus OIDC/attestation write where needed.
+9. Fold switched/selected channel publishers into `publish` after immutable
+   publication. GitHub's documented job-level approvals do not promise inherited
+   review for later jobs; this authorized option guarantees one approval per
+   attempt. Accept the serial job/union-permissions trade-off. Keep channel
+   acceptance job IDs/names in the registry and dedicated per-channel verifiers.
+10. Verify certificate Run Invocation URI against this run and the trusted
+    producing attempt/artifact IDs in addition to exact workflow/tag/source.
+    Never accept an asset's own run claim as proof of which run produced it.
 
 ## Global Constraints
 
@@ -89,8 +103,9 @@ the parent even if other branches happen to become visible locally.
 
 ## Review Focus
 
-Source authorization versus binary provenance; draft write authority and honest
-job-token timing; exact workflow/tag/source identity in files, OCI and README;
+Source authorization versus binary provenance; summary-before-approval and all
+draft mutation inside one environment job; honest job-token timing; exact
+workflow/tag/source/run identity in files, OCI and README;
 complete acyclic checksums and immutable-state confirmation; skipped/failed
 channel owner jobs and name spoofing; credential ordering at each boundary;
 bootstrap scope/removal and no OIDC downgrade; remote ambiguity/digest refusal;
@@ -109,7 +124,7 @@ inventory their actual files and re-anchor additions before implementing.
 | `packaging/release/tag_signature.py`, `maintainer.asc`, `test_tag_signature.py` | Preserve exact fingerprint/tag object/source behavior | 1 |
 | `packaging/release/{gate,verify,supply,workflow_policy}.py`, their tests, `.github/actions/release-gate/action.yml`, `packaging/release-gate` | SHA256SUMS, provenance, name ownership and verification boundaries | 1–2 |
 | `packaging/release/channels.json` (new), release metadata generation | Signed selection and frozen run/source metadata | 1 |
-| `.github/workflows/release.yml` (new), `release-tests.yml`; remove `release-candidate.yml`, `release-publish.yml` | Single-run DAG and permission/refusal policy | 2 |
+| `.github/workflows/release.yml` (new), `release-tests.yml`; remove `release-candidate.yml`, `release-publish.yml` | Single-run DAG, digest summary, one protected publisher and permission/refusal policy | 2 |
 | `packaging/release/{assemble,publish}.py`, tests | Complete draft, read-back verification, immutable publish/recovery | 2 |
 | `packaging/{publish-crates,crate-release,prepare-crates}.mjs`, associated tests; post-merge R4/Homebrew publishers | Immutable asset input and verification before credential use | 3 |
 | `packaging/release/{retention,approval,approval_summary}.py`, related obsolete tests; `settings_audit.py`, `post_setup.py`, `packaging/hennery-release` | Delete storage/signature protocol, retain applicable platform checks | 4 |
@@ -121,7 +136,8 @@ inventory their actual files and re-anchor additions before implementing.
 1. Add tests first for exact tag/key/commit and all existing signature failures;
    malformed/duplicate/unsafe checksum entries, missing/extra assets and changed
    bytes; wrong repository/workflow/branch/tag/source digest, missing or invalid
-   bundle/predicate; unknown/duplicate channel, name collision and wrong owner.
+   bundle/predicate, wrong/missing certificate run/attempt or substituted artifact
+   IDs; unknown/duplicate channel, name collision and wrong owner.
    Observe assertion failures against the old interface.
 2. Implement a common verifier requiring tag proof plus attested checksum file
    and per-payload attestations. Preserve `tag_signature.py` cryptography while
@@ -136,10 +152,14 @@ inventory their actual files and re-anchor additions before implementing.
 1. Add workflow graph/refusal tests before changing workflows: tag-only trigger,
    source/selected acceptance failure, wrong job identity, skipped required job,
    missing dependencies, switch off, branch signer, unpinned action, cache,
-   excess permissions, missing protected publisher, premature credential/use.
-2. Implement the design's exact job table after resolving draft authority. Keep
-   distinct unprivileged build, attest, draft and protected publish jobs; bind
-   all downloaded artifacts to this run and source. Job names/IDs for channel
+   excess permissions, any pre-environment `contents: write`, missing protected
+   publisher, absent/incomplete digest summary and premature credential/use.
+2. Implement the design's exact job table: unprivileged build/test jobs, `attest`
+   writing an exhaustive asset/SHA-256 summary, then ONE protected `publish`
+   job. After approval it downloads/verifies this exact run's artifacts, creates
+   and uploads the draft, reads back/verifies, publishes and requires immutability.
+   Bind artifacts/certificates to this run, producing attempt and source, and
+   pin artifact IDs from trusted dependencies. Job names/IDs for channel
    acceptance remain registry-owned, including aggregate jobs without matrices.
 3. Test draft/read-back and publish via fake API: conflicting/missing/extra asset,
    changed tag or asset at boundary, failed/ambiguous upload or publish response,
@@ -153,6 +173,9 @@ inventory their actual files and re-anchor additions before implementing.
 1. Migrate the actual merged Homebrew/R4 interfaces and R3 to download immutable
    release assets. Verify checksums, attestations, tag and channel/source closure
    before secret exposure/OIDC/login, then revalidate at each upload boundary.
+   Invoke their distinct publishers as selected/switched steps after immutable
+   publication in the SAME `publish` job, with step-scoped secrets. This retains
+   one approval and prevents any channel from bypassing failed publication.
 2. Add one negative case per channel switch/selection/dependency and credential
    boundary; retain remote digest matching, create-only and lost-response tests.
    For GHCR bind OCI files to the expected pushed manifests/index and SBOM;
