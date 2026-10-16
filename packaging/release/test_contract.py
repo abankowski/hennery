@@ -102,8 +102,10 @@ class Contract(unittest.TestCase):
         jobs = {'crates': {'name': 'crates'}, 'ghcr': {'name': 'ghcr'},
                 'homebrew': {'name': 'homebrew'}}
         self.assertEqual(contract.selected_channels(b'["github","homebrew"]\n', {'jobs': jobs}), ['github', 'homebrew'])
+        self.assertEqual(contract.selected_channels(b'["crates","ghcr","github","homebrew"]\n', {'jobs': jobs}),
+                         ['crates', 'ghcr', 'github', 'homebrew'])
         for raw in [b'[]', b'["homebrew"]', b'["github","unknown"]',
-                    b'["github","github"]', b'["Github"]']:
+                    b'["github","github"]', b'["Github"]', b'["github","homebrew","crates","ghcr"]']:
             with self.subTest(raw=raw), self.assertRaises(gate.Refused):
                 contract.selected_channels(raw, {'jobs': jobs})
         for mutation in ['owner', 'collision', 'missing', 'matrix', 'dynamic']:

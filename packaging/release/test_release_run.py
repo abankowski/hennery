@@ -3,7 +3,6 @@ import io
 import os
 from pathlib import Path
 import tempfile
-import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -15,13 +14,22 @@ import test_contract
 
 class Orchestrator(unittest.TestCase):
     def test_configuration_binds_original_signed_tag_and_checked_source(self):
-        version=tomllib.loads((release_run.ROOT/'Cargo.toml').read_text())['workspace']['package']['version']
-        env={'GITHUB_REPOSITORY':gate.REPOSITORY,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/tags/v'+version,
-             'GITHUB_REF_NAME':'v'+version,'GITHUB_SHA':'a'*40,'GITHUB_RUN_ATTEMPT':'1'}
-        with patch.dict(os.environ,env,clear=True),patch.object(release_run.tag_signature,'verify',return_value={'object_sha':'b'*40}):
-            self.assertEqual(release_run.configuration()['channels'],['github'])
-            for field,value in [('GITHUB_RUN_ATTEMPT','2'),('GITHUB_REF','refs/heads/main'),('GITHUB_REPOSITORY','other/repo'),('GITHUB_EVENT_NAME','workflow_dispatch'),('GITHUB_REF_NAME','v9.9.9')]:
-                with self.subTest(field=field),patch.dict(os.environ,{field:value}),self.assertRaises(gate.Refused):release_run.configuration()
+        workflow=(release_run.ROOT/contract.WORKFLOW).read_bytes()
+        for version,channels in [('0.1.0-alpha.1',['github']),('0.1.0',['crates','ghcr','github','homebrew'])]:
+            with self.subTest(version=version),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp)
+                (root/'Cargo.toml').write_text('[workspace.package]\nversion="'+version+'"\n')
+                (root/contract.WORKFLOW).parent.mkdir(parents=True)
+                (root/contract.WORKFLOW).write_bytes(workflow)
+                (root/'packaging/release').mkdir(parents=True)
+                (root/'packaging/release/channels.json').write_bytes(gate.canonical(channels))
+                env={'GITHUB_REPOSITORY':gate.REPOSITORY,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/tags/v'+version,
+                     'GITHUB_REF_NAME':'v'+version,'GITHUB_SHA':'a'*40,'GITHUB_RUN_ATTEMPT':'1'}
+                with patch.object(release_run,'ROOT',root),patch.dict(os.environ,env,clear=True),patch.object(release_run.tag_signature,'verify',return_value={'object_sha':'b'*40}) as signature:
+                    self.assertEqual(release_run.configuration(),{'channels':channels,'tag_object':'b'*40})
+                    signature.assert_called_once_with('v'+version,'a'*40)
+                    for field,value in [('GITHUB_RUN_ATTEMPT','2'),('GITHUB_REF','refs/heads/main'),('GITHUB_REPOSITORY','other/repo'),('GITHUB_EVENT_NAME','workflow_dispatch'),('GITHUB_REF_NAME','v9.9.9')]:
+                        with self.subTest(field=field),patch.dict(os.environ,{field:value}),self.assertRaises(gate.Refused):release_run.configuration()
 
     def test_summary_lists_every_asset_and_original_attempt_without_draft(self):
         with tempfile.TemporaryDirectory() as tmp:

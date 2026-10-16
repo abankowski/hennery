@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0
+
+First stable-version release for early testing; no 1.0 stability promise.
+
+- Includes the cockpit, hats, MCP/OAuth gateway, WSS/proxy deployment, phone
+  answers, delegation, optional memory plug-in and deletion/purge from the alpha.
+- Enables GitHub Releases, Homebrew, crates.io (with the embedded web UI) and
+  the GHCR collector image. Agent hosts run separately from the container.
+
 ## 0.1.0-alpha.3
 
 - Assemble the exact native release material while validating cargo-dist staging

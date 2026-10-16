@@ -149,7 +149,7 @@ inspection. Only the authenticated installer is executed.
 (
 set -eu
 release_fingerprint=F26C7F594DFE84D131703AFC23E5A318AE8D2861
-release_tag=v0.1.0-alpha.3
+release_tag=v0.1.0
 release_dir=$(mktemp -d "${TMPDIR:-/tmp}/hennery-release.XXXXXXXX") || exit 1
 printf 'Release verification directory: %s\n' "$release_dir"
 mkdir "$release_dir/keyring" || exit 1
@@ -261,16 +261,16 @@ sh "$release_dir/hennery-installer.sh"
 
 ## Installing
 
-**Until the first release (0.1.0), build from source with the quickstart
-below. Nothing is published yet.** The following channels are prepared for
-that release; these are descriptions of future installation, not executable
-quickstart steps:
+Version `0.1.0` is intended for early testing, with no 1.0 stability promise.
+Use a channel below once the maintainer has published that version; until then,
+build from source with the quickstart below. The preceding `0.1.0-alpha.2`
+release uses GitHub Releases only. Alpha.1 failed qualification and was never published.
 
 | Channel | After publication |
 |---|---|
 | Homebrew | `brew install marcinwadon/tap/hennery` from the project's tap. |
 | crates.io | `cargo install hennery`; the `hennery` crate installs the binary with its embedded UI. |
-| GHCR | The collector-only image at `ghcr.io/marcinwadon/hennery`; agent hosts run separately on your machines. |
+| GHCR | The collector-only image at `ghcr.io/marcinwadon/hennery:0.1.0`; agent hosts run separately on your machines. |
 | GitHub Releases | Platform archives and `hennery-installer.sh` on the [Releases page](https://github.com/marcinwadon/hennery/releases), with `SHA256SUMS`, metadata and Sigstore bundles. Use the verification procedure above before running the installer. |
 
 For a downloaded archive, apply the same signed-tag and exact-workflow

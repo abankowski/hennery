@@ -98,7 +98,8 @@ setup acceptance, using `--payload`, `--observations` and a create-only
 `--output`. Its report is not approval authority. The example observations must
 be replaced by personally verified facts.
 
-Channel selection is the reviewed `channels.json`, initially `["github"]`.
+Channel selection is the reviewed `channels.json`: `["github"]` for the alpha,
+then `["crates","ghcr","github","homebrew"]` for `0.1.0`, in canonical sorted order.
 The explicit channel-to-owning-job registry retains literal names `crates`,
 `ghcr` and `homebrew`, forbids collisions/dynamic names, and requires selected
 acceptance to succeed. Unselected owners alone may skip; native/no-op jobs still
