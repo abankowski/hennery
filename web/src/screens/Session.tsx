@@ -264,7 +264,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   const hats = useMemo(() => namesOf(hatItems, 'id'), [hatItems])
   const plan = useMemo(() => latestPlan(s.items), [s.items])
   const startNotice = useStartNotice(id)
-  const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion)
+  const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion, s.pinned)
   const announcement = useAnnouncement(answers)
   const hostAway = useHostAway(answers)
 

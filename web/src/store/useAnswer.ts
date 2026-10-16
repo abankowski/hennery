@@ -30,12 +30,14 @@ import type { Draft } from '../lib/elicitation'
 
 /** No draft: one object, so a card's snapshot stays the same. */
 const NO_DRAFT: Draft = Object.freeze({})
+const NO_ITEMS: readonly Item[] = []
 
 type Question = Extract<Item, { kind: 'question' }>
 
 export class AnswerBook {
   private readonly local = new Map<string, LocalAnswer>()
   private readonly inFlight = new Set<string>()
+  private readonly versions = new Map<string, number>()
   private readonly listeners = new Set<() => void>()
   private away = false
   private known: Set<string> | null = null
@@ -64,7 +66,11 @@ export class AnswerBook {
   }
 
   private set(id: string, answer: LocalAnswer) {
-    this.local.set(id, answer)
+    // An admitted stream/page version supersedes a settled HTTP outcome,
+    // including a late ambiguous response that would otherwise block retries.
+    // An actual POST in flight still keeps the single-answer guard.
+    if (answer.phase !== 'sending' && answer.version < (this.versions.get(id) ?? -Infinity)) this.local.delete(id)
+    else this.local.set(id, answer)
     this.emit()
   }
 
@@ -143,16 +149,26 @@ export class AnswerBook {
    *  `loads` counts the pages that replaced the items (the first, and each
    *  resync's): a new one is a new baseline, so a question that came with a
    *  resync is never fresh, wherever it sits. */
-  observe(items: readonly Item[], loads: number) {
+  observe(items: readonly Item[], loads: number, pinned: readonly Item[] = NO_ITEMS) {
     // The first page's newest time, once: host markers after it count.
     if (this.since === undefined) this.since = newestTs(items)
     const known = loads === this.loads ? this.known : null
     this.loads = loads
     for (const id of freshQuestions(items, known, this.lastId)) this.fresh.add(id)
     const held = known ?? new Set<string>()
-    for (const item of items) if (item.kind === 'question') held.add(item.id)
+    let changed = false
+    for (const item of [...items, ...pinned]) if (item.kind === 'question') {
+      held.add(item.id)
+      this.versions.set(item.id, Math.max(item.version, this.versions.get(item.id) ?? -Infinity))
+      const local = this.local.get(item.id)
+      if (local && local.phase !== 'sending' && local.version < item.version) {
+        this.local.delete(item.id)
+        changed = true
+      }
+    }
     this.known = held
     this.lastId = items.length > 0 ? items[items.length - 1].id : undefined
+    if (changed) this.emit()
   }
 
   /** Whether the card of question `id` may take the focus: once, and only
@@ -215,7 +231,8 @@ export function useFormDraft(book: AnswerBook | undefined, id: string): [Draft, 
  *  count of pages that replaced the items (a resync's included).
  *  `connected`: what the view's hosts list said of the session's host when
  *  it opened (undefined: unknown), the seed the host markers since then
- *  overrule. */
+ *  overrule. Pinned deep-link questions participate in version admission,
+ *  without counting as newly opened tail cards. */
 export function useAnswering(
   sessionId: string,
   info: Pick<SessionItem, 'presumed_parked'> | undefined,
@@ -224,14 +241,15 @@ export function useAnswering(
   loads: number,
   connected: boolean | undefined,
   onQuestion?: (item: Item) => void,
+  pinned: readonly Item[] = NO_ITEMS,
 ): AnswerBook {
   const client = useClient()
   const book = useMemo(() => new AnswerBook(client, sessionId, onQuestion), [client, sessionId, onQuestion])
   // Before the cards' effects (a layout effect runs first): a fresh card
   // finds itself fresh when it mounts.
   useLayoutEffect(() => {
-    if (!loading) book.observe(items, loads)
-  }, [book, items, loading, loads])
+    if (!loading) book.observe(items, loads, pinned)
+  }, [book, items, loading, loads, pinned])
   // After `observe`: the first page's time is known before its markers
   // are read (before it, the store holds no items).
   const presumedParked = Boolean(info?.presumed_parked)
