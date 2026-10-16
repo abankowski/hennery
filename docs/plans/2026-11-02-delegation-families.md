@@ -5045,13 +5045,13 @@ The parent owns independent review, Linux/macOS CI, a rebase after D3a/D3b merge
 ### Implemented and release state
 
 Built D4a and the D4b family/operator/phone UI on the D3b base `7a820fce`.
-The ordinary-release restriction remains. Claude→Claude and Claude→Codex pass
-all required lifecycle scenarios; Codex→Claude passes the real answer loop but
-stops at the busy-parent approval boundary. Earlier authentication and answer-
-shape failures are historical. The PR #162 resource/CI amendment is recorded
-below. Independent re-review, PR checks and merge belong to the fleet parent.
-No GitHub action was performed by this lane, and no release-gate removal is
-claimed.
+The live-acceptance preview restriction is cleared: every required pair and
+lifecycle scenario has passed, including the single Codex→Claude busy-parent
+follow-up below. Earlier authentication, answer-shape and busy-boundary failures
+are historical. The PR #162 resource/CI amendment is pushed at 7a85c43a; the
+final harness is ee8dbaae. Independent security re-review, Linux/macOS PR checks,
+merge and release approval belong to the fleet parent. Per-hat authorization
+remains part of the product contract. No GitHub action was performed by this lane.
 
 The operator APIs authorize the current owner and hat at read/mutation time.
 Takeover preserves an already handed-off answer's first-accepted slot while
@@ -5184,8 +5184,8 @@ Review `7a820fce..HEAD` with special attention to owner/current-hat family
 visibility, stale cached links, takeover versus queued and handed-off answers,
 count partitioning and status acknowledgement, durable invalidation under
 purge, bounded metadata admission, harness approval correlation and capture
-privacy. Ordinary enablement must wait for the remaining Codex→Claude lifecycle
-proof and security re-review; this branch currently retains the restriction.
+privacy. The live matrix is complete and its preview restriction is cleared;
+security re-review and current-head PR checks remain required before merge.
 
 The approved separate Claude test login is available; no new credentials are
 needed. The merged D1–D4/recall base is 87cc219c. Do not infer approval or live
@@ -6608,7 +6608,7 @@ No paid retry or further product correction was attempted under the stop rule.
 The parent-answer correction passes the real answer loop in all three rows.
 Live acceptance as a whole remains incomplete. The earlier Codex→Codex full
 pass is retained as historical evidence, not rerun or used to fill the missing
-Codex→Claude scenarios. **The preview/ordinary-release restriction remains.**
+Codex→Claude scenarios. **At the end of that attempt the preview/ordinary-release restriction remained; the final busy-parent follow-up below supersedes this status.**
 There is no separate runtime/UI preview flag on this base to flip; permanent
 per-hat authorization is retained. No gate tests were weakened or changed.
 Review and Linux/macOS CI remain parent-owned.
@@ -6643,6 +6643,40 @@ The bounded implementation adds no dependency or licence allowance. Cargo.lock i
 
 Verification completed: cargo test --workspace --locked exited 0: 2557 passed, 7 ignored, zero failed across 173 test/doc-test suites. The initial attempt exited 101 on two now-corrected form fixtures lacking requestedSchema; its partial results are not substituted for this full green command. Targeted sessions tests passed 73 library +150 delegation +104 store tests; the unchanged owner audit passed all three. Final fmt, workspace/all-target clippy, hennery clippy and both generator checks exited 0. Native nix flake check -L exited 0, including source-inputs (three regressions, 50 covered paths), package/clippy/fmt/audit and embedded UI checks. The copied final tree passed six form-schema, 150 delegation, 82 host and three owner-audit tests; 880 tracked non-document files match after restoration. Twelve original resource/concurrency/refusal guard probes and four final evaluator/audit/fileset probes failed on their assertions or explicit missing-input error. The two concurrency regressions passed at four workers × three rounds (24 passes). No fresh replay was repeated for this review amendment under the verification budget; no web source or UI gate changed. A pre-commit scan of 235 private evidence/record files found no token-like values.
 
-The busy-parent follow-up remains next; no additional paid run was used for the security/CI amendment.
+The busy-parent follow-up below ran after this amendment was pushed; no additional paid run was used for the security/CI amendment.
+
+#### Final busy-parent acceptance and preview clearance (2026-10-16)
+
+Security/CI amendment 7a85c43a was committed and pushed first. The remaining investigation then compared the failing Sol/low parent with the older Codex→Codex run. That historical parent was not assigned a model/effort explicitly: its pinned catalog defaults were gpt-6-astra/low. The historical log does not retain an explicit parent configuration readback, so this is a catalog-and-launch-code comparison, not an invented readback. Sol/low was the requested child configuration in that earlier run.
+
+The failing Sol/low parent ended without any session_list MCP call reaching the retained trace. Gateway discovery does not filter tools by activity, and approval auto-allow would have produced an actual tool call. The new pinned no-inference probe holds a real adapter-local /mcp host turn open, queries native mcpServerStatus/list with the actual threadId, and verifies all seven advertised inputSchemas exactly against the generated contract. It also verifies gateway tools/list while that parent turn is open. Provider turn/start and review/start are refused before forwarding; the final audit records zero provider starts. The pinned native schema was generated locally without inference to confirm the threadId selector.
+
+Initial free probe attempts exposed harness assumptions: the adapter-local /mcp command supplies no threadId, so its native inventory is global and lists codex_apps; a manual gateway request also needed the normal Accept header. Correcting those probe details produced a green session-scoped result (one pass, 2.58s). These development failures used no inference and did not retry a paid matrix scenario. The paid busy scenario subsequently proves the actual model turn receives a genuine MCP approval.
+
+The evidence supports model compliance as the likely cause, with the old prompt's earlier avoid-polling instruction a possible contributor. The new busy prompt explicitly supersedes earlier stop/polling instructions, names the actual hennery session_list tool, supplies {}, and requires the actual call and operator approval before completion. All lifecycle assertions and deadlines are retained. Parent effort is an explicit, catalog-checked override; it does not raise child effort.
+
+Exactly one paid Codex→Claude follow-up was run on the final harness bytes committed as ee8dbaae: exit 0, one pass, 122.52s. Requested and actual parent configuration both read back model gpt-6-sol, mode read-only, collaboration_mode default, reasoning_effort medium. Requested and actual child configuration both read back model sonnet, mode default, effort low, with complete evidence before the brief. The medium parent follows the authorized compliance fallback; the child keeps the original cost controls. The other two green Claude rows and the earlier Codex→Codex row were retained, not rerun.
+
+| Required scenario | Codex→Codex (retained historical) | Claude→Claude | Claude→Codex | Codex→Claude (final) |
+| --- | --- | --- | --- | --- |
+| Actual parent spawn / child family | PASS | PASS | PASS | PASS |
+| Complete matching child configuration before brief | PASS | PASS | PASS | PASS |
+| Genuine child elicitation | PASS | PASS | PASS | PASS |
+| Parent answer delivery / child continuation | PASS | PASS | PASS | PASS |
+| Permission fallback / operator denial / no edit | PASS | PASS | PASS | PASS |
+| Busy parent / real approval / queued report / release delivery | PASS | PASS | PASS | PASS |
+| Genuine parked parent | PASS | PASS | PASS | PASS |
+| Automatic resume / configuration / token rotation | PASS | PASS | PASS | PASS |
+| Socket reconnect / reconciliation | PASS | PASS | PASS | PASS |
+| Actual child failure / coalesced durable notice | PASS | PASS | PASS | PASS |
+| Closed parent / operator fallback / remains closed | PASS | PASS | PASS | PASS |
+
+Retained row durations are 133.62s for Codex→Codex, 86.52s for Claude→Claude and 139.56s for Claude→Codex. The last two were recorded at 134d588b; their original records above remain intact. A strict private evidence extractor checks every required scenario independently from its passed case record, and compares actual child configuration axes. No missing scenario was inferred from a passing base loop. The final parent also has a separate requested/actual readback record.
+
+The D4 live-acceptance preview restriction is now removed from this execution status and docs/README.md. This base contains no runtime or UI preview flag and no preview-gate tests to flip. The permanent per-hat opt-in and configuration-before-brief/resume safeguards remain required authorization and safety contracts. Removing those would contradict the specs. The clearance is a small, separate documentation commit; no UI gate changes or publication action were needed. Every pin bump must still rerun the complete matrix.
+
+Final harness verification: targeted delegation_live passed seven normal tests with six ignored; the no-inference busy probe passed one; the single paid final row passed one. Fmt, both clippy commands, both generators and native nix flake check -L exited 0. Nix's source-inputs now covers 51 paths and three check regressions; it first caught the new include_str! helper missing from the fileset, before that helper was explicitly added. Three APFS-cloned guard probes (prompt contract, explicit medium effort and thread-scoped native discovery) failed on assertions, then the restored copied suite passed seven tests with six ignored. All 881 tracked non-document source/config files match the restored copy and staged bytes. The product amendment's full workspace 2,557 passes / seven ignored and 4×3 concurrency evidence above remain the final product checks; no additional full replay or workspace run was repeated for this harness/documentation amendment under the verification budget. No web source changed. A scan of 254 private evidence/record files found zero token-like values before committing the harness.
+
+PR #162 requires parent security re-review on 0fd1520b..7a85c43a, then review of ee8dbaae and this separate gate-clearance record. Current-head checks, reviewDecision, mergeStateStatus and unresolved review threads (including bots) have not been queried by this child; the parent owns the full PR status. Retained scratch copies for parent cleanup include replay-1, answer-probe-1, schema-probe-1, busy-probe-1 and the no-inference native-protocol-1 schema output under the private deleg-ungate ledger.
 
 Generated with Claude AI — please review before distribution.
