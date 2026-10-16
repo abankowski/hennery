@@ -1,7 +1,6 @@
 // Exact-byte uploader inside R1's protected, manually approved tagged orchestrator.
 import fs from 'node:fs';
 import { join, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { sha256, readJSON, requireThat, verifyCandidate, validateSource, publishBody } from './crate-release.mjs';
@@ -76,13 +75,30 @@ export function releaseCratesDigest(dir) {
  verifyCandidate(dir,inventory);
  return entries.get('crates-inventory.json');
 }
-export function releaseGate({dir,signatures}) {
- const executable=resolve('packaging/release/release_run.py');
- requireThat(fs.existsSync(executable),'release gate missing from trusted checkout');
- const env={...process.env};for(const key of ['CARGO_REGISTRY_TOKEN','RELEASE_CRATES_BOOTSTRAP_TOKEN','GHCR_PUBLISH_TOKEN','HOMEBREW_TAP_TOKEN'])delete env[key];
- execFileSync('python3',[executable,'verify',resolve(dir),resolve(signatures),'crates'],{encoding:'utf8',env});
- return releaseCratesDigest(dir);
+let gateSequence=0;
+export function gateBroker() {
+ const request=process.env.CRATES_GATE_REQUEST_FD,reply=process.env.CRATES_GATE_REPLY_FD;
+ requireThat(/^[1-9][0-9]*$/.test(request||'') && /^[1-9][0-9]*$/.test(reply||'') && request!==reply,'private release gate broker missing');
+ const write=Number(request),read=Number(reply);
+ requireThat(Number.isSafeInteger(write) && Number.isSafeInteger(read) && write>=3 && read>=3
+   && fs.fstatSync(write).isFIFO() && fs.fstatSync(read).isFIFO(),'invalid private release gate pipes');
+ const sequence=++gateSequence,message=Buffer.from(`gate-v1:${sequence}\n`);
+ requireThat(fs.writeSync(write,message)===message.length,'incomplete release gate request');
+ const byte=Buffer.alloc(1);let response='';
+ while(response.length<128){
+  requireThat(fs.readSync(read,byte)===1,'release gate broker EOF/refusal');
+  response+=byte.toString('latin1');if(response.endsWith('\n'))break;
+ }
+ const match=/^ok-v1:([1-9][0-9]*):([0-9a-f]{64})\n$/.exec(response);
+ requireThat(match && match[1]===String(sequence),'release gate broker reply mismatch');
+ return match[2];
 }
+export function releaseGate({dir}) {
+ const before=releaseCratesDigest(dir),approved=gateBroker();
+ requireThat(approved===before && releaseCratesDigest(dir)===approved,'release crate manifest changed at parent gate');
+ return approved;
+}
+
 if(import.meta.url===pathToFileURL(process.argv[1]||'').href) {
  requireThat(process.env.GITHUB_ACTIONS==='true','real publisher only runs in the protected tagged workflow');
  const verifyOnly=process.argv[2]==='--verify',dir=resolve(process.argv[verifyOnly?3:2]),signatures=resolve(process.argv[verifyOnly?4:3]);

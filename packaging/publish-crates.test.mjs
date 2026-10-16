@@ -45,9 +45,9 @@ test('matching remote bytes reconcile without reupload',async()=>{const f=fixtur
 for(const [name,flags]of Object.entries({mismatch:{existing:true,mismatch:true},ambiguous:{ambiguous:true},index:{indexBad:true},remote:{unavailable:true},source:{sourceBad:true}}))test(`refuses ${name} and never uploads consumers`,async()=>{const f=fixture(),n=network(f,flags);await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>'ephemeral'}));assert.ok(n.uploads.length<=1);});
 test('approval failure refuses before obtaining credentials',async()=>{const f=fixture(),n=network(f);let acquired=false;await assert.rejects(publishFrozen({...f,...n,gate:async()=>{throw Error('refused');},credentials:async()=>{acquired=true;}}));assert.equal(acquired,false);});
 for(const changed of ['inventory','crate','missing'])test(`refuses ${changed} after approval`,async()=>{const f=fixture(),n=network(f);let count=0;await assert.rejects(publishFrozen({...f,...n,credentials:async()=>'ephemeral',gate:async()=>{if(++count===3){const p=join(f.dir,changed==='inventory'?'crates-inventory.json':f.crates[0].file);if(changed==='missing')fs.rmSync(p);else fs.appendFileSync(p,'bad');}}}));assert.equal(n.uploads.length,0);});
-test('R1 adapter missing from trusted checkout fails closed',()=>{
+test('missing release payload refuses before any broker authority',()=>{
  const cwd=process.cwd(),root=fs.mkdtempSync(join(tmpdir(),'r3-no-gate-'));
- try{process.chdir(root);assert.throws(()=>releaseGate({dir:root,signatures:root}),/gate.*missing/);}finally{process.chdir(cwd);}
+ try{process.chdir(root);assert.throws(()=>releaseGate({dir:root,signatures:root}));}finally{process.chdir(cwd);}
 });
 test('approval invalidated during source verification refuses credentials',async()=>{
  const f=fixture(),n=network(f);let invalid=false,acquired=false;
@@ -104,4 +104,20 @@ test('precredential preflight validates source and approval without any upload',
  const f=fixture(),n=network(f);let gates=0;
  const result=await preflight({...f,...n,gate:async()=>{gates++;}});
  assert.equal(result.inventory.version,'0.1.0-alpha.1');assert.equal(gates,2);assert.equal(n.uploads.length,0);
+});
+
+test('parent broker is mandatory with no subprocess or ambient-credential fallback',async()=>{
+ const {gateBroker}=await import('./publish-crates.mjs');
+ const names=['CRATES_GATE_REQUEST_FD','CRATES_GATE_REPLY_FD'];
+ const original=Object.fromEntries(names.map(name=>[name,process.env[name]]));
+ try{
+  for(const name of names)delete process.env[name];
+  assert.throws(()=>gateBroker(),/private release gate broker missing/);
+  for(const [request,reply] of [['0','1'],['3','3'],['3junk','4'],['9007199254740993','4']]){
+   process.env.CRATES_GATE_REQUEST_FD=request;process.env.CRATES_GATE_REPLY_FD=reply;
+   assert.throws(()=>gateBroker(),/private release gate/);
+  }
+ }finally{
+  for(const name of names){if(original[name]===undefined)delete process.env[name];else process.env[name]=original[name];}
+ }
 });

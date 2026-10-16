@@ -1,8 +1,10 @@
-"""Node frozen uploader -> real release gate; offline structural provenance/platform doubles.
+"""Node frozen uploader and parent-only real policy; all public transports mocked.
 
-Authentic cryptography/JSON shape is in test_verify_cli; this exercises lifecycle
-ordering through the actual Python CLI and Node subprocess adapter.
+Provenance substitutions below are structural tests. No gh executable or real
+registry is contacted; the real Node broker and Python parent process do run.
 """
+from contextlib import ExitStack
+from datetime import datetime,timezone,timedelta
 import json
 import os
 from pathlib import Path
@@ -10,9 +12,15 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import contract
+import crates_delivery
 import gate
+import release_run
+import run_policy
+import supply
+import tag_signature
 
 
 class CratesIntegration(unittest.TestCase):
@@ -38,83 +46,92 @@ class CratesIntegration(unittest.TestCase):
         shutil.copyfile(self.repo/contract.WORKFLOW,root/contract.WORKFLOW)
         (root/'packaging/release').mkdir(parents=True)
         (root/'packaging/release/channels.json').write_bytes(gate.canonical(metadata['channels']))
-        # All authorization predicates, checksum closure, exact-source/tag/run
-        # and argument parsing are real. Replace public signature/platform/CLI
-        # transports and unrelated archive validation for these tiny crate bytes.
-        shim=f'''import os,sys,subprocess
-from pathlib import Path
-from datetime import datetime,timezone,timedelta
-sys.path.insert(0,{str(self.repo/'packaging/release')!r})
-import release_run,contract,gate,run_policy,tag_signature,supply
-release_run.ROOT=Path({str(root)!r})
-for key in ('CARGO_REGISTRY_TOKEN','RELEASE_CRATES_BOOTSTRAP_TOKEN','GHCR_PUBLISH_TOKEN','HOMEBREW_TAP_TOKEN'):
- gate.require(key not in os.environ,'channel credential leaked into verifier')
-with Path({str(root/'calls.jsonl')!r}).open('a') as output: output.write(__import__('json').dumps(sys.argv[1:])+'\\n')
-def tag(*args):
- gate.require({kind!='bad-tag'!r},'fixture signed tag refused')
- return {{}}
-tag_signature.verify=tag
-supply.require_contract=lambda *a: None
-supply.verify_binary_inventory=lambda *a: None
-release_run.require_public=lambda *a: Path({str(root/'public-checked')!r}).touch()
-def evidence(api,metadata,environment):
- jobs=[{{'name':name,'status':'completed','conclusion':'success'}} for name in ('tag-signature','qualification','web-ui','archive','assemble','installer','attest','homebrew-native','crates')]
- jobs += [dict(j) for j in list(jobs) if j['name'] in ('qualification','archive','installer','homebrew-native') for _ in range(2)]
- jobs += [{{'name':name,'status':'completed','conclusion':'skipped'}} for name in ('ghcr','homebrew')]
- return {{'original':{{'id':42,'run_attempt':1,'head_sha':'a'*40,'head_branch':'v0.1.0','event':'push','path':contract.WORKFLOW,'repository':{{'full_name':gate.REPOSITORY}},'created_at':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()}},
-  'jobs':jobs,'artifact':{{'id':77,'name':'attested-release-42-1','expired':False,'workflow_run':{{'id':42,'head_sha':'a'*40}}}},
-  'owner':{{'login':'marcinwadon','id':9}},'reviews':[{{'state':{'rejected' if kind=='approval-rejected' else 'approved'!r},'comment':'publish-run:42:attempt:2','user':{{'id':9}},'environments':[{{'name':'release'}}]}}]}}
-run_policy.evidence=evidence
-def crypto(command,**kwargs):
- gate.require(command[:3]==['gh','attestation','verify'],'unexpected external transport')
- if {kind=='crypto-refused'!r}: raise subprocess.CalledProcessError(1,command)
- certificate={{'sourceRepositoryURI':'https://github.com/'+gate.REPOSITORY,'buildSignerURI':'https://github.com/'+gate.REPOSITORY+'/'+contract.WORKFLOW+'@refs/tags/v0.1.0','sourceRepositoryRef':'refs/tags/v0.1.0','sourceRepositoryDigest':'a'*40,'buildSignerDigest':'a'*40,'runnerEnvironment':'github-hosted','issuer':'https://token.actions.githubusercontent.com','runInvocationURI':'https://github.com/'+gate.REPOSITORY+'/actions/runs/42/attempts/1'}}
- if {kind=='wrong-run'!r}:certificate['runInvocationURI']=certificate['runInvocationURI'].replace('/42/','/43/')
- if {kind=='wrong-attempt'!r}:certificate['runInvocationURI']=certificate['runInvocationURI'].replace('attempts/1','attempts/2')
- if {kind=='branch'!r}:certificate['buildSignerURI']=certificate['buildSignerURI'].replace('refs/tags/v0.1.0','refs/heads/main')
- return subprocess.CompletedProcess(command,0,gate.canonical([{{'verificationResult':{{'signature':{{'certificate':certificate}}}}}}]).decode(),'')
-contract.subprocess.run=crypto
-release_run.main()
-if {kind=='changed-after-gate'!r} and len(Path({str(root/'calls.jsonl')!r}).read_text().splitlines())==2:
- with Path({str(payload/'crates-inventory.json')!r}).open('ab') as output:output.write(b' ')
-'''
-        if kind!='missing-gate':(root/'packaging/release/release_run.py').write_text(shim)
         if kind=='changed-crate':(payload/crates[0]['file']).write_bytes(b'altered')
-        env=dict(os.environ,GITHUB_ACTIONS='true',GITHUB_REPOSITORY=gate.REPOSITORY,GITHUB_REF='refs/tags/v0.1.0',GITHUB_SHA='a'*40,
+        environment=dict(os.environ,GITHUB_ACTIONS='true',GITHUB_REPOSITORY=gate.REPOSITORY,GITHUB_REF='refs/tags/v0.1.0',GITHUB_SHA='a'*40,
             GITHUB_WORKFLOW_REF=gate.REPOSITORY+'/'+contract.WORKFLOW+'@refs/tags/v0.1.0',GITHUB_EVENT_NAME='push',GITHUB_RUN_ID='42',GITHUB_RUN_ATTEMPT='2',
-            RELEASE_ARTIFACT_ID='77',RELEASE_ATTESTING_ATTEMPT='1',GH_TOKEN='offline-fixture',RELEASE_PUBLICATION_ENABLED='true',RELEASE_GITHUB_ENABLED='true',RELEASE_CRATES_ENABLED='true',
-            CARGO_REGISTRY_TOKEN='offline-child-must-not-see',RELEASE_CRATES_BOOTSTRAP_TOKEN='offline-child-must-not-see',GHCR_PUBLISH_TOKEN='offline-child-must-not-see',HOMEBREW_TAP_TOKEN='offline-child-must-not-see')
-        return root,payload,signatures,env
+            RELEASE_ARTIFACT_ID='77',RELEASE_ATTESTING_ATTEMPT='1',GH_TOKEN='offline-parent-only',RELEASE_PUBLICATION_ENABLED='true',RELEASE_GITHUB_ENABLED='true',RELEASE_CRATES_ENABLED='true',
+            ACTIONS_ID_TOKEN_REQUEST_TOKEN='offline-parent-only',ACTIONS_ID_TOKEN_REQUEST_URL='offline-parent-only')
+        return root,payload,signatures,environment
 
     def run_publish(self,kind,repetitions=1):
-        root,payload,signatures,env=self.fixture(kind)
+        root,payload,signatures,environment=self.fixture(kind)
         publisher=Path(os.environ.get('R3_FIXTURE_PUBLISHER',str(self.repo/'packaging/publish-crates.mjs')))
-        program=f'''import {{publishFrozen,releaseGate,releaseCratesDigest}} from {str(publisher)!r};
+        resultfile=root/'node-result.json'
+        program=f'''import fs from 'node:fs';
+import {{publishFrozen,releaseGate,releaseCratesDigest}} from {str(publisher)!r};
 const dir={str(payload)!r},signatures={str(signatures)!r};let credentials=0,uploads=0,error='',completed=[];
-try{{const digest=releaseCratesDigest(dir);for(let i=0;i<{repetitions};i++)completed=await publishFrozen({{dir,digest,gate:async()=>{{if(releaseGate({{dir,signatures}})!==digest)throw Error('changed channel digest');}},credentials:async()=>{{credentials++;return 'offline';}},fetcher:async(url,options={{}})=>{{if(options.method==='PUT'){{uploads++;throw Error('unexpected upload');}}if(url.endsWith('/download'))return new Response(url.split('/').at(-3));if(url.startsWith('https://index.crates.io/')){{const name=url.split('/').at(-1);return new Response(JSON.stringify({{vers:'0.1.0',cksum:(await import('node:crypto')).createHash('sha256').update(name).digest('hex')}}));}}return new Response('source');}}}});}}catch(e){{error=String(e);}}
-console.log('RESULT:'+JSON.stringify({{credentials,uploads,error,completed}}));'''
-        result=subprocess.run([os.environ.get('R3_FIXTURE_NODE','node'),'--input-type=module','-e',program],cwd=root,env=env,capture_output=True,text=True)
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-        return json.loads(next(line[7:] for line in result.stdout.splitlines() if line.startswith('RESULT:'))),root
+for(const key of ['GH_TOKEN','GITHUB_TOKEN','ACTIONS_ID_TOKEN_REQUEST_TOKEN','ACTIONS_ID_TOKEN_REQUEST_URL','GH_CONFIG_DIR','NODE_OPTIONS'])if(key in process.env)throw Error('authority leaked into Node');
+try{{const digest=releaseCratesDigest(dir);for(let i=0;i<{repetitions};i++)completed=await publishFrozen({{dir,digest,gate:async()=>{{if(releaseGate({{dir,signatures}})!==digest)throw Error('changed channel digest');}},credentials:async()=>{{credentials++;fs.writeFileSync({str(root/'credential-read')!r},String(credentials));return process.env.CARGO_REGISTRY_TOKEN;}},fetcher:async(url,options={{}})=>{{if(options.method==='PUT'){{uploads++;throw Error('unexpected upload');}}if(url.endsWith('/download'))return new Response(url.split('/').at(-3));if(url.startsWith('https://index.crates.io/')){{const name=url.split('/').at(-1);return new Response(JSON.stringify({{vers:'0.1.0',cksum:(await import('node:crypto')).createHash('sha256').update(name).digest('hex')}}));}}return new Response('source');}}}});}}catch(e){{error=String(e);}}
+fs.writeFileSync({str(resultfile)!r},JSON.stringify({{credentials,uploads,error,completed}}));
+if(error)process.exitCode=1;'''
+        calls=[]
+        def tag(*args,**kwargs):
+            gate.require(kind!='bad-tag','fixture signed tag refused');return {}
+        def evidence(api,metadata,env):
+            self.assertEqual(os.environ.get('GH_TOKEN'),'offline-parent-only')
+            jobs=[{'name':name,'status':'completed','conclusion':'success'} for name in ('tag-signature','qualification','web-ui','archive','assemble','installer','attest','homebrew-native','crates')]
+            jobs += [dict(j) for j in list(jobs) if j['name'] in ('qualification','archive','installer','homebrew-native') for _ in range(2)]
+            jobs += [{'name':name,'status':'completed','conclusion':'skipped'} for name in ('ghcr','homebrew')]
+            return {'original':{'id':42,'run_attempt':1,'head_sha':'a'*40,'head_branch':'v0.1.0','event':'push','path':contract.WORKFLOW,'repository':{'full_name':gate.REPOSITORY},'created_at':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()},
+                'jobs':jobs,'artifact':{'id':77,'name':'attested-release-42-1','expired':False,'workflow_run':{'id':42,'head_sha':'a'*40}},
+                'owner':{'login':'marcinwadon','id':9},'reviews':[{'state':'rejected' if kind=='approval-rejected' else 'approved','comment':'publish-run:42:attempt:2','user':{'id':9},'environments':[{'name':'release'}]}]}
+        def crypto(command,**kwargs):
+            self.assertEqual(command[:3],['gh','attestation','verify'])
+            if kind=='crypto-refused':raise subprocess.CalledProcessError(1,command)
+            certificate={'sourceRepositoryURI':'https://github.com/'+gate.REPOSITORY,'buildSignerURI':'https://github.com/'+gate.REPOSITORY+'/'+contract.WORKFLOW+'@refs/tags/v0.1.0','sourceRepositoryRef':'refs/tags/v0.1.0','sourceRepositoryDigest':'a'*40,'buildSignerDigest':'a'*40,'runnerEnvironment':'github-hosted','issuer':'https://token.actions.githubusercontent.com','runInvocationURI':'https://github.com/'+gate.REPOSITORY+'/actions/runs/42/attempts/1'}
+            if kind=='wrong-run':certificate['runInvocationURI']=certificate['runInvocationURI'].replace('/42/','/43/')
+            if kind=='wrong-attempt':certificate['runInvocationURI']=certificate['runInvocationURI'].replace('attempts/1','attempts/2')
+            if kind=='branch':certificate['buildSignerURI']=certificate['buildSignerURI'].replace('refs/tags/v0.1.0','refs/heads/main')
+            return subprocess.CompletedProcess(command,0,gate.canonical([{'verificationResult':{'signature':{'certificate':certificate}}}]).decode(),'')
+        def authorize():
+            calls.append('verify')
+            gate.require(kind!='missing-gate','fixture gate unavailable')
+            gate.require(not (kind=='late-denial' and len(calls)>=4),'fixture authorization changed after credentials')
+            release_run.verify(payload,signatures,'crates')
+            digest=gate.digest(contract.regular(payload/'crates-inventory.json'))
+            if kind in ('changed-after-gate','metadata-after-gate') and len(calls)==3:
+                with (payload/('crates-inventory.json' if kind=='changed-after-gate' else 'release-metadata.json')).open('ab') as output:output.write(b' ')
+            return 'f'*64 if kind=='wrong-broker-digest' and len(calls)>1 else digest
+        parenterror=''
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ,environment,clear=True))
+            stack.enter_context(patch.object(release_run,'ROOT',root))
+            stack.enter_context(patch.object(tag_signature,'verify',side_effect=tag))
+            stack.enter_context(patch.object(supply,'require_contract',return_value=None))
+            stack.enter_context(patch.object(supply,'verify_binary_inventory',return_value=None))
+            stack.enter_context(patch.object(release_run,'require_public',side_effect=lambda *a:(root/'public-checked').touch()))
+            stack.enter_context(patch.object(run_policy,'evidence',side_effect=evidence))
+            stack.enter_context(patch.object(contract.subprocess,'run',side_effect=crypto))
+            try:
+                authorize()  # root channel entry point verifies before choosing a token/spawning.
+                crates_delivery.run(payload,signatures,'offline-chosen-crates-token',authorize,environment=environment,
+                                    command=[os.environ.get('R3_FIXTURE_NODE','node'),'--input-type=module','-e',program])
+            except Exception as failure:parenterror=type(failure).__name__
+        result=json.loads(resultfile.read_text()) if resultfile.exists() else {'credentials':int((root/'credential-read').read_text()) if (root/'credential-read').exists() else 0,'uploads':0,'error':parenterror,'completed':[]}
+        if parenterror:result['error']=result['error'] or parenterror
+        return result,root,calls
 
     def test_authenticated_global_bytes_reach_credentials_through_real_adapter(self):
-        result,root=self.run_publish('valid')
+        result,root,calls=self.run_publish('valid')
         self.assertEqual((result['credentials'],result['uploads'],result['error']),(1,0,''))
         self.assertEqual(len(result['completed']),7);self.assertTrue((root/'public-checked').is_file())
-        calls=[json.loads(line) for line in (root/'calls.jsonl').read_text().splitlines()]
-        self.assertEqual(len(calls),16)
-        self.assertTrue(all(args[0]=='verify' and args[-1]=='crates' for args in calls))
+        self.assertEqual(len(calls),17)
 
     def test_repeat_recovery_reuses_bytes_and_reverifies_each_boundary(self):
-        result,root=self.run_publish('valid',2)
+        result,root,calls=self.run_publish('valid',2)
         self.assertEqual((result['credentials'],result['uploads'],result['error']),(2,0,''))
-        self.assertEqual(len((root/'calls.jsonl').read_text().splitlines()),32)
+        self.assertEqual(len(calls),33)
 
     def test_each_authority_failure_prevents_credentials_and_uploads(self):
-        for kind in ('missing-gate','bad-tag','crypto-refused','branch','wrong-run','wrong-attempt','approval-rejected','changed-crate','changed-after-gate'):
-            result,_=self.run_publish(kind)
+        for kind in ('missing-gate','bad-tag','crypto-refused','branch','wrong-run','wrong-attempt','approval-rejected','changed-crate','changed-after-gate','metadata-after-gate','wrong-broker-digest'):
+            result,_,_=self.run_publish(kind)
             with self.subTest(kind=kind):
                 self.assertEqual((result['credentials'],result['uploads']),(0,0));self.assertTrue(result['error'])
+
+    def test_parent_revocation_after_credentials_stops_the_next_boundary(self):
+        result,_,calls=self.run_publish('late-denial')
+        self.assertEqual((result['credentials'],result['uploads']),(1,0))
+        self.assertTrue(result['error']);self.assertEqual(len(calls),4)
 
 
 if __name__=='__main__':unittest.main()
