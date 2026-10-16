@@ -58,7 +58,13 @@
             pkgs.gnupg
             pkgs.jq
             web.nodejs_24
+            pkgs.oras
           ];
+        };
+        # R4's non-publishing OCI/registry contract tests. Uses the same pinned
+        # nixpkgs as the Rust checks; Docker Engine itself is provided by CI.
+        devShells.image = pkgs.mkShell {
+          packages = with pkgs; [ (python3.withPackages (p: [ p.pyyaml ])) actionlint shellcheck skopeo ];
         };
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [

@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 NATIVE = "${{ !cancelled() && needs.assemble.result == 'success' }}"
 SELECT = "contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')"
 AGGREGATE = "${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && " + SELECT + " }}"
-RETAIN = "${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' }}"
+GHCR_SELECT = SELECT.replace(',homebrew,', ',ghcr,')
+GHCR = "${{ !cancelled() && needs.assemble.result == 'success' && " + GHCR_SELECT + " }}"
+RETAIN = "${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !" + GHCR_SELECT + ")) }}"
 
 
 def workflow(name):
@@ -32,13 +34,13 @@ class OptionalScheduling(unittest.TestCase):
     def test_native_installer_aggregate_and_retention_have_explicit_safe_conditions(self):
         jobs = workflow('release-candidate.yml')['jobs']
         for name, expected in (('homebrew-native', NATIVE), ('installer', NATIVE),
-                               ('homebrew', AGGREGATE), ('retain', RETAIN)):
+                               ('homebrew', AGGREGATE), ('ghcr', GHCR), ('retain', RETAIN)):
             with self.subTest(job=name):
                 self.assertEqual(jobs[name].get('if'), expected)
 
     def test_policy_refuses_missing_or_implicit_status_on_transitive_descendants(self):
         original = workflow('release-candidate.yml')
-        for name in ('assemble', 'installer', 'homebrew-native', 'homebrew', 'retain'):
+        for name in ('assemble', 'installer', 'homebrew-native', 'homebrew', 'ghcr', 'retain'):
             for condition in (None, "needs.assemble.result == 'success'", "contains('success()', 'success')"):
                 data = copy.deepcopy(original)
                 if condition is None:
@@ -86,20 +88,24 @@ class OptionalScheduling(unittest.TestCase):
         for name, channels in (('homebrew', 'github,homebrew'), ('homebrew-unselected', 'github')):
             self.assertEqual(jobs[name]['if'], AGGREGATE.replace("github.event.inputs.channels || 'github'", repr(channels)))
         self.assertEqual(jobs['retain']['if'], RETAIN.replace("vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true'", 'true'))
+        self.assertEqual(jobs['ghcr']['if'], GHCR)
+        self.assertEqual(jobs['ghcr-selected']['if'], GHCR.replace("github.event.inputs.channels || 'github'", "'github,ghcr'"))
+        self.assertIn('ghcr', jobs['retain']['needs'])
         assertion = jobs['assert-scheduling']
         self.assertEqual(assertion['if'], 'always()')
         self.assertEqual(set(assertion['needs']), set(jobs) - {'assert-scheduling'})
         run = assertion['steps'][0]['run']
         self.assertIn("'crates': 'skipped'", run)
         self.assertIn("'homebrew-unselected': 'skipped'", run)
-        for name in ('assemble', 'homebrew-native', 'installer', 'homebrew', 'retain'):
+        self.assertIn("'ghcr': 'skipped'", run)
+        for name in ('assemble', 'homebrew-native', 'installer', 'homebrew', 'ghcr-selected', 'retain'):
             self.assertIn(repr(name) + ": 'success'", run)
         workflow_policy.check(data, 'release-scheduling.yml')
 
     def test_execute_exact_actions_assertion_accepts_only_expected_job_results(self):
         job = workflow('release-scheduling.yml')['jobs']['assert-scheduling']
         script = job['steps'][0]['run']
-        expected = {key: {'result': 'skipped' if key in ('crates', 'homebrew-unselected') else 'success'}
+        expected = {key: {'result': 'skipped' if key in ('crates', 'homebrew-unselected', 'ghcr') else 'success'}
                     for key in job['needs']}
         result = subprocess.run(['bash', '-eu', '-c', script], env=dict(os.environ, RESULTS=json.dumps(expected)),
                                 capture_output=True, text=True, check=False)

@@ -127,18 +127,39 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           sh packaging/release/native-archive.sh
-      - name: Alpine executable and collector image smoke
+      - name: Alpine executable and retained release image acceptance
         if: runner.os == 'Linux'
         env:
           IMAGE_ARCH: ${{ matrix.image }}
           TARGET: ${{ matrix.target }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           binary="$PWD/unpacked/hennery-$TARGET/hennery"
           docker run --rm -v "$binary:/hennery:ro" alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 /hennery --version
           mkdir -p "dist/linux-$IMAGE_ARCH"
           cp "$binary" "dist/linux-$IMAGE_ARCH/hennery"
-          docker build -t hennery-collector:candidate .
-          sh packaging/smoke-image.sh hennery-collector:candidate
+          cp release-materials/THIRD-PARTY-NOTICES.txt "dist/linux-$IMAGE_ARCH/THIRD-PARTY-NOTICES"
+          cp "release-materials/hennery-$TARGET.spdx.json" "dist/linux-$IMAGE_ARCH/binary.spdx.json"
+          docker buildx create --use --name r4 --driver docker-container --driver-opt image=moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          sh packaging/image-build.sh "$IMAGE_ARCH" image-output "${RELEASE_TAG#v}" "$RELEASE_SOURCE_SHA" "$(git show -s --format=%ct HEAD)"
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          arch=os.environ['IMAGE_ARCH']
+          Path('native-binaries.json').write_text(json.dumps({arch:hashlib.sha256(Path('dist/linux-'+arch+'/hennery').read_bytes()).hexdigest()}))
+          PY
+          python3 packaging/image.py verify image-output/layout native-binaries.json "$RELEASE_SOURCE_SHA" "${RELEASE_TAG#v}" > image-output/verified.json
+          python3 packaging/image-signing-inputs.py image-output/layout "$IMAGE_ARCH" native-signing-inputs
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          sh packaging/test-image-registry.sh image-output/layout "$IMAGE_ARCH"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: runner.os == 'Linux'
+        with:
+          name: release-image-${{ matrix.image }}
+          retention-days: 90
+          if-no-files-found: error
+          path: image-output/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: candidate-${{ matrix.target }}
@@ -208,6 +229,11 @@ jobs:
         with:
           name: release-crates
           path: crates-flat
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')
+        with:
+          pattern: release-image-*
+          path: images
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ github.token }}
@@ -229,6 +255,15 @@ jobs:
           nix develop .#release -c python3 packaging/release/homebrew.py prepare target/distrib --tag "$RELEASE_TAG" --targets aarch64-apple-darwin,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
           git show HEAD:CHANGELOG.md > target/distrib/release-notes.md
           git archive --format=tar --prefix=hennery-source/ HEAD | xz > target/distrib/hennery-source.tar.xz
+          case ",$RELEASE_CHANNELS," in
+            *,ghcr,*)
+              python3 packaging/ghcr-candidate.py assemble target/distrib image-assembly "$(git rev-parse HEAD)" "${RELEASE_TAG#v}" \
+                images/release-image-amd64/layout images/release-image-arm64/layout
+              sudo apt-get update
+              sudo apt-get install -y skopeo
+              sh packaging/test-image-registry.sh image-assembly/layout
+              ;;
+          esac
           python3 packaging/release/supply.py freeze --output target/distrib \
             --source-sha "$(git rev-parse HEAD)" --tag "$RELEASE_TAG" --channels "$RELEASE_CHANNELS" \
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" > inventory-sha256.txt
@@ -240,6 +275,31 @@ jobs:
           retention-days: 90
           if-no-files-found: error
           path: target/distrib/
+  # Registered by workflow_policy.CHANNEL_JOB_IDS: ghcr -> ghcr.
+  ghcr:
+    name: ghcr
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Verify the frozen GHCR payload, then accept the retained index through loopback
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          nix develop .#image -c python3 packaging/ghcr-candidate.py accept candidate image-acceptance "$GITHUB_SHA" "${RELEASE_TAG#v}"
+          nix develop .#image -c sh packaging/test-image-registry.sh image-acceptance/layout
   installer:
     needs: assemble
     if: ${{ !cancelled() && needs.assemble.result == 'success' }}
@@ -306,8 +366,8 @@ jobs:
       - name: All advertised native Homebrew platforms passed
         run: echo 'Native local-tap acceptance passed on all three platforms'
   retain:
-    needs: [assemble, installer, tag-signature]
-    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' }}
+    needs: [assemble, installer, tag-signature, ghcr]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,'))) }}
     environment: release-staging
     runs-on: ubuntu-24.04
     timeout-minutes: 20

@@ -20,7 +20,14 @@ never promoted to a release.
 | `hennery-installer.sh` | `dist build --artifacts=global`, then `harden-installer.py` | `test-installer.sh`, on Linux x86_64 and on macOS |
 | `hennery.rb` (Homebrew formula) | `dist build --artifacts=global` | `check-formula.sh` |
 | `sha256.sum` | `dist build --artifacts=global` | — |
-| the collector image, one architecture per Linux runner | `docker build` of `Dockerfile` on the staged musl binary | `smoke-image.sh` |
+| CI collector images and a two-platform OCI index | native BuildKit of `Dockerfile --target release` on staged musl binaries with marked CI fixture notices/SPDX; preserves SBOM/provenance metadata | OCI payload verification, signing-input extraction, then retained-digest loopback round-trip and `smoke-image.sh` |
+
+[R4's collector-image guide](images.md) describes the release target, labels,
+reviewed notices and binary/image SBOMs, native OCI candidates, gated GHCR
+publication, digest deployment, volume upgrades and maintainer-only setup.
+R1's shared gate and R3's registered GHCR aggregate are integrated; publication
+remains disabled pending independent review and maintainer qualification.
+PR/main images are never promoted to releases.
 
 Every archive builds with the `vendored-openssl` feature
 (`dist-workspace.toml`). OpenSSL, which `webauthn-rs-core` links, is then
@@ -246,8 +253,10 @@ These need the operator's decision, credentials, or both. None is set up:
   token allowed to push to it.
 - **The image on GHCR:** a dedicated credential held only in `release`, with
   this repository's package Actions access READ, one multi-arch manifest from
-  the per-architecture images, and its provenance attestation. Its docs
-  should say: publish the port on loopback behind a TLS proxy
+  the per-architecture images, and its provenance attestation. Complete
+  [R4's maintainer setup and R1 gate integration](images.md) before enabling
+  publication. Namespace, public visibility, retention and permissions remain
+  maintainer-only. Publish the port on loopback behind a TLS proxy
   (`-p 127.0.0.1:8080:8080`); read the setup link with
   `docker exec … hennery admin setup-url`, not from `docker logs` (with
   `docker run -t` the link itself is logged); a bind mount keeps the host's
@@ -255,13 +264,15 @@ These need the operator's decision, credentials, or both. None is set up:
   not `--listen` on the command, because the `HEALTHCHECK` reads
   `HENNERY_LISTEN`.
 - **Third-party licence notices:** the archives carry only hennery's
-  `LICENSE` in the original `build` probe, and its image none. R1's candidates
+  `LICENSE` in the original `build` probe; the CI image includes it too. R1's candidates
   generate target-specific notices, SPDX and corresponding-source bundles;
-  their immutable supplemental licence texts need maintainer review. Before
+  their immutable supplemental licence texts need maintainer review. R4's
+  release target requires reviewed notices and a binary SPDX document. Before
   the first release, review the
   notices for the Rust crates and the vendored OpenSSL (Apache-2.0), e.g.
   with `cargo-about`; ship them in each archive and in the image; and
-  update `check-archive.sh`'s exact list and the `.dockerignore`.
+  update `check-archive.sh`'s exact list. R4 permits only staged distribution
+  inputs and `LICENSE` through `.dockerignore`.
 - **Dependency updates** (Dependabot, or another bot): for `openssl-src`
   above all, the pinned actions and the image digests. It opens pull
   requests on its own schedule, so it is the operator's to switch on.

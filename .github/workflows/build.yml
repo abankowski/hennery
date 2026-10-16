@@ -4,7 +4,9 @@
 # image.
 #
 # This workflow publishes nothing. It has no tag trigger, no release, no
-# registry push, no attestation, and only `contents: read`. What it builds
+# external registry push, no signing, and only `contents: read`. OCI SBOM and
+# unsigned build metadata are tested using a temporary loopback registry.
+# What it builds
 # stays a workflow artifact, kept for a week. Publishing is the operator's
 # to switch on (packaging/README.md).
 #
@@ -14,7 +16,7 @@
 # §3.3).
 #
 # Third-party actions are pinned by commit, images by digest, cargo-dist by
-# SHA-256 (`install-dist.sh`); GitHub's own actions by major tag. Workflow
+# SHA-256 (`install-dist.sh`); GitHub's own actions by commit too. Workflow
 # artifacts are never promoted to a release (packaging/README.md).
 name: build
 
@@ -36,8 +38,23 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  image-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Image guards and workflow contracts (no credentials or external writes)
+        run: |
+          nix develop .#image -c python3 -m unittest discover -s packaging/tests -v
+          nix develop .#image -c actionlint .github/workflows/*.yml
+          nix develop .#image -c shellcheck packaging/image-build.sh packaging/image-ci.sh packaging/test-image-registry.sh packaging/ghcr-gate.sh packaging/ghcr-publish.sh packaging/smoke-image.sh packaging/release-gate
+
   # One archive per target, each on a native runner.
   archive:
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +69,7 @@ jobs:
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
@@ -104,16 +121,26 @@ jobs:
       - name: Runs on Alpine (musl)
         if: runner.os == 'Linux'
         run: docker run --rm -v "$BINARY:/hennery:ro" alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 /hennery --version
-      - name: Build the collector image
+      - name: Qualify the release OCI image with CI fixture legal inputs
         if: runner.os == 'Linux'
         run: |
           mkdir -p "dist/linux-${{ matrix.image }}"
           cp "$BINARY" "dist/linux-${{ matrix.image }}/hennery"
-          docker build -t hennery-collector:ci .
-      - name: The image starts and is healthy
+          sh packaging/image-ci.sh "${{ matrix.image }}" "$GITHUB_SHA"
+      - name: Test a push to loopback, then smoke the retained digest
         if: runner.os == 'Linux'
-        run: sh packaging/smoke-image.sh hennery-collector:ci
-      - uses: actions/upload-artifact@v4
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          sh packaging/test-image-registry.sh "dist/image-${{ matrix.image }}/layout" "${{ matrix.image }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: runner.os == 'Linux'
+        with:
+          name: ci-image-${{ matrix.image }}
+          path: dist/image-${{ matrix.image }}/
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: archive-${{ matrix.target }}
           retention-days: 7
@@ -123,20 +150,53 @@ jobs:
             target/distrib/hennery-${{ matrix.target }}.tar.xz.sha256
             target/distrib/${{ matrix.target }}-dist-manifest.json
 
+  # Exercise the exact R4 OCI merge/registry code on every PR and main run.
+  # These release-target images contain CI fixture legal inputs, never approval.
+  image-index:
+    needs: archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ci-image-*
+          path: images/
+      - name: Test both-platform index in loopback registry only
+        run: |
+          python3 packaging/image.py merge index-layout images/ci-image-amd64/layout images/ci-image-arm64/layout
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          inventory = {}
+          for path in Path('images').glob('ci-image-*/binary-sha256.json'):
+              inventory.update(json.loads(path.read_text()))
+          assert set(inventory) == {'amd64', 'arm64'}, 'both CI platforms required'
+          Path('ci-binary-sha256.json').write_text(json.dumps(inventory))
+          PY
+          python3 packaging/image.py verify index-layout ci-binary-sha256.json "$GITHUB_SHA" 0.0.0
+          python3 packaging/image-signing-inputs.py index-layout index index-signing-inputs
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          sh packaging/test-image-registry.sh index-layout
+
   # What spans the archives: the installer (their checksums embedded), the
   # Homebrew formula, and `sha256.sum`.
   installers:
     needs: archive
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
       - name: Install dist
         run: |
           sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
           echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: archive-*
           path: target/distrib/
@@ -151,7 +211,7 @@ jobs:
         run: sh packaging/test-installer.sh target/distrib
       - name: The formula names every archive's SHA-256
         run: sh packaging/check-formula.sh target/distrib
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: installers
           retention-days: 7
@@ -166,16 +226,17 @@ jobs:
   installer-macos:
     needs: installers
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: archive-*
           path: target/distrib/
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: installers
           path: target/distrib/

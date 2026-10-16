@@ -22,7 +22,7 @@ def attestation_command(subject, tag, bundle=None):
     return command
 
 
-def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/provenance/v1', candidate=None, approval_signature=None):
+def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/provenance/v1', candidate=None, approval_signature=None, manifest=None):
     gate.require(re.fullmatch(r'ghcr\.io/marcinwadon/hennery@sha256:[0-9a-f]{64}', image), 'verification requires an immutable image digest')
     gate.require(predicate_type in ('https://slsa.dev/provenance/v1', 'https://spdx.dev/Document'), 'unexpected attestation predicate')
     gate.require(candidate is not None and approval_signature is not None, 'image requires maintainer-signed inventory')
@@ -34,8 +34,24 @@ def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/prove
     gate.verify_files(inventory, candidate)
     gate.require(inventory['tag'] == tag and 'ghcr' in inventory['channels'], 'image inventory release/channel mismatch')
     index = gate.strict_json((candidate / 'ghcr-index.json').read_bytes())
-    gate.require(index.get('digest') == image.split('@', 1)[1], 'image digest is not in maintainer-signed inventory')
-    command = attestation_command('oci://' + image, tag, bundle) + ['--predicate-type', predicate_type]
+    digests = [index.get('digest')]
+    if 'platforms' in index:
+        gate.require(index.get('schema') == 1 and index.get('source_sha') == inventory['source_sha']
+                     and index.get('version') == tag.removeprefix('v')
+                     and isinstance(index['platforms'], dict)
+                     and set(index['platforms']) == {'amd64', 'arm64'}, 'invalid signed image descriptor')
+        digests.extend(index['platforms'].values())
+        gate.require(all(isinstance(d, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', d) for d in digests)
+                     and len(set(digests)) == 3, 'invalid signed image digest set')
+    gate.require(image.split('@', 1)[1] in digests, 'image digest is not in maintainer-signed inventory')
+    subject = 'oci://' + image
+    if manifest is not None:
+        manifest = Path(manifest)
+        gate.require(bundle is not None and manifest.is_file() and not manifest.is_symlink()
+                     and 'sha256:' + gate.digest(manifest.read_bytes()) == image.split('@', 1)[1],
+                     'local manifest must match the approved image digest and have a bundle')
+        subject = manifest
+    command = attestation_command(subject, tag, bundle) + ['--predicate-type', predicate_type]
     if bundle is None:
         command += ['--bundle-from-oci']
     subprocess.run(command, check=True)
@@ -85,13 +101,14 @@ if __name__ == '__main__':
     parser.add_argument('--bundle', type=Path)
     parser.add_argument('--approval-signature', required=True, type=Path)
     parser.add_argument('--inventory-directory', type=Path)
+    parser.add_argument('--manifest', type=Path, help='verify a local manifest against its exact approved digest before upload')
     parser.add_argument('--source-sha')
     parser.add_argument('--tag', required=True)
     parser.add_argument('--signer-sha')
     parser.add_argument('--predicate-type', default='https://slsa.dev/provenance/v1')
     args = parser.parse_args()
     if args.image:
-        verify_image(args.image, args.tag, args.bundle, args.predicate_type, args.inventory_directory, args.approval_signature)
+        verify_image(args.image, args.tag, args.bundle, args.predicate_type, args.inventory_directory, args.approval_signature, args.manifest)
     else:
         if args.bundle is None or args.source_sha is None:
             parser.error('file verification requires --bundle and --source-sha')

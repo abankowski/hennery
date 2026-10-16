@@ -2,7 +2,8 @@
 # The collector's image (distribution spec §4.1): the released musl binary,
 # the same bytes as the archive, on distroless static (CA roots and a
 # non-root user, no shell). No Node and no adapters: hosts run next to the
-# repositories, never in this image. The `build` workflow stages the binary
+# repositories, never in this image (managed Node/agents require glibc).
+# The `build` workflow stages the binary
 # at `dist/linux-<arch>/hennery` (plan 7a). Every image is pinned by its
 # multi-arch index digest, the tag beside it for the reader.
 # The binary embeds the web UI: the archive job builds it first, with
@@ -18,9 +19,19 @@
 FROM gcr.io/distroless/static-debian13:debug@sha256:07148a6899406df51906b183f581cf66e5b05fd51aca438bdf1d3998df566961 AS data
 RUN ["/busybox/mkdir", "-p", "-m", "0700", "/out/var/lib/hennery"]
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3 AS collector
 ARG TARGETARCH
+ARG VERSION=0.0.0
+ARG REVISION=0000000000000000000000000000000000000000
+LABEL org.opencontainers.image.title="hennery collector" \
+      org.opencontainers.image.description="Collector with embedded web UI; pair separate hosts near their repositories" \
+      org.opencontainers.image.source="https://github.com/marcinwadon/hennery" \
+      org.opencontainers.image.url="https://github.com/marcinwadon/hennery" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 COPY --chmod=0755 dist/linux-${TARGETARCH}/hennery /usr/local/bin/hennery
+COPY --chmod=0444 LICENSE /usr/share/doc/hennery/LICENSE
 COPY --from=data --chown=65532:65532 /out/var/lib/ /var/lib/
 ENV HENNERY_DATA_DIR=/var/lib/hennery HENNERY_LISTEN=0.0.0.0:8080
 # Local storage only: SQLite's locking is unreliable on network filesystems.
@@ -31,3 +42,11 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD ["/usr/local/bin/hennery", "collector", "healthcheck"]
 ENTRYPOINT ["/usr/local/bin/hennery"]
 CMD ["collector"]
+
+# R1 supplies reviewed Rust + vendored native + frontend notices and SPDX.
+# The release target fails to build if those retained inputs are absent.
+# The legacy PR/main smoke image uses --target collector; it is never promoted.
+FROM collector AS release
+ARG TARGETARCH
+COPY --chmod=0444 dist/linux-${TARGETARCH}/THIRD-PARTY-NOTICES /usr/share/doc/hennery/THIRD-PARTY-NOTICES
+COPY --chmod=0444 dist/linux-${TARGETARCH}/binary.spdx.json /usr/share/doc/hennery/binary.spdx.json
