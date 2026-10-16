@@ -18,6 +18,10 @@ server-rendered HTML compiled with the service, no core frontend dependency.
 
 ## Execution status
 
+The initial execution and its eight-patch replay below are historical, before
+the first security review. The current review amendment rebases onto R1
+`971c69ff`; see the amendment record near the end for current-head verification.
+
 Built on `a60452397d3ef3bf71484f91795efd44c6661dd8` in `plan/recall-r2`;
 implementation through `50e60a6a`. Ledger: `.superpowers/sdd/recall-r2/`.
 The exact built patches and executable replay/probe harnesses are embedded below.
@@ -55,11 +59,25 @@ verification, guard probes and replay. R3 models and all core changes stay out.
 Create namespaces with R1's explicit `create` command. `ui-init --owner ID
 --public-url ORIGIN` reads the operator password from bounded stdin and makes
 `memory-auth.db`, separate from both the collector and `memory.db`. Use a
-distinct public origin. `serve` adds the screen only after that bootstrap;
+dedicated hostname: a different port on the collector hostname does not isolate
+cookies. Do not serve the collector or another application on that hostname.
+Use TLS for remote access. UI IP-address origins are refused; loopback-only HTTP
+development can use `localhost` exclusively for memory, with the collector on
+a different host. Bootstrap, startup and grant attachment reject known
+collector/UI hostname collisions, ignoring case, ports and trailing DNS dots.
+Standalone/unattached collectors cannot be discovered; the operator must still
+provide a dedicated hostname. `serve` adds the screen only after that bootstrap;
 otherwise the service remains MCP-only. The browser uses
-`hennery_memory_session`, with the existing password/passkey implementation,
+`__Host-hennery_memory_session` under TLS (`Secure`, `Path=/`, no `Domain`),
+with the existing password/passkey implementation,
 independent sessions and no SSO. Sensitive forms require step-up within five
-minutes. The passkey helper has its own Node syntax/unit gate in CI and Nix;
+minutes. Loopback HTTP uses `hennery_memory_session` without `Secure`; it needs
+the same exclusive-host rule. When moving a preview deployment from a shared
+hostname, revoke its sessions and clear its old memory cookie there before
+using the dedicated hostname. Unauthenticated auth requests have four separate
+admission slots; auth API bodies are capped at 16 KiB and five seconds, including
+GET bodies. Cancellation drops body readers and releases their permits. The
+passkey helper has its own Node syntax/unit gate in CI and Nix;
 Rust compiles the screen/assets and CI runs its separate browser acceptance.
 
 The local importer accepts a regular, single-link, uncompressed tar snapshot,
@@ -5975,6 +5993,885 @@ const original=resolve(process.argv[2]), copy=resolve(process.argv[3]);
 const files=execFileSync('git',['ls-files','-z'],{cwd:original}).toString().split('\0').filter(Boolean);
 for(const file of files) assert.ok((await readFile(join(original,file))).equals(await readFile(join(copy,file))),file);
 console.log(files.length+' tracked files byte-identical, including final documentation');
+```
+
+## Security review amendment
+
+The first independent review returned **CHANGES** with two reproduced Medium
+findings: cookies crossed services sharing a hostname on different ports, and
+four unauthenticated stalled API login bodies retained all management permits.
+Both are fixed in **`8e52f013..eff5396f`**, pending parent scoped re-confirmation.
+
+First fetched and rebased the original five R2 commits from `a6045239` onto
+R1 `971c69ff` (C1b merged). The only conflict was the README index: preserved
+R1's current D4 record and the R2 entry. Memory source was identical across that
+rebase. `8e52f013` is the rebased pre-fix head. The initial replay/counts above
+remain historical evidence, not a claim of a fresh replay on this base.
+
+TLS memory cookies now use `__Host-hennery_memory_session` with `Secure`,
+`Path=/` and no `Domain`, across form/API login, sliding renewal and logout.
+Only that configured cookie name authenticates TLS requests. Loopback HTTP has
+its explicitly separate unprefixed cookie. A dedicated UI hostname is mandatory;
+IP UI origins are refused. Bootstrap/startup check existing encrypted collector
+grants, and attachment checks new ones before writes. Equal hosts are refused
+regardless of case, port or trailing DNS dots. Startup validates before binding
+the listener or starting the consumer. Unknown/unattached collectors cannot be
+discovered, so the hostname requirement also remains an operator obligation.
+
+Every auth API body, including GET bodies, is read within **16 KiB / five
+seconds**. Unauthenticated auth requests have a separate bounded four-slot pool;
+authenticated management retains its own four slots. Deadline/cancellation drops
+the body and permit. Existing Origin, step-up, content-type and limiter checks
+remain active. No core implementation, dependency, schema or Nix-filter change
+was needed for this amendment.
+
+Seven regression cases were observed **runtime RED** before implementation:
+`review-red-runtime.log`, 0 passed / 7 failed, exit 101. The CLI fixtures release
+the parent database writer and prove the status command works before the negative
+attach/start checks, so a writer-lock refusal cannot mask the hostname guard.
+Four additional cases cover the API read cap, GET deadline, legacy IP router
+and loopback cookie. All **11** security tests pass, including in the restored
+probe copy. The copy's only late synchronization was the unit-only Ui fixture's
+new pool field; all guard-bearing production bytes matched the probed bytes.
+
+| Current amendment gate (inside `nix develop -c`) | Result |
+|---|---|
+| `cargo test -p hennery-memory --locked` | exit 0; 111 passed, 1 unchanged mounted-proof ignored |
+| `cargo fmt --all --check` | exit 0 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | exit 0 |
+| `cargo clippy -p hennery --locked -- -D warnings` | exit 0 |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | exit 0 |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | exit 0 |
+| `cargo test --workspace --locked` | exit 0; 2587 passed, 5 ignored, 177 result groups |
+| `nix flake check -L` | exit 0; six native aarch64-darwin checks |
+| `node --check crates/hennery-memory/tests/browser.mjs` | exit 0 |
+| `node crates/hennery-memory/tests/browser.mjs` | exit 0; 2 desktop/mobile cases passed |
+| Copy guard probes below | exit 0; 21/21 caught by runtime test failures |
+| Restored-copy `cargo test -p hennery-memory --test ui_security --locked` | exit 0; 11 passed |
+| Timing/spawn load below | exit 0; 4 copies × 3 rounds, 12 processes / 60 test executions |
+
+The browser uses real local TLS reverse proxies on two synthetic hostnames and
+ports, with Chromium resolution pinned to loopback. It proves each service
+receives its own cookie and neither receives the other's, while exercising the
+existing management/import/export workflow at desktop/mobile sizes. No real
+collector, credentials or vault data is involved. The existing CI browser gate
+runs this changed script; its OpenSSL and browser tools come from the default
+dev shell. The client module/build gates remain wired into CI and Nix.
+
+Only one complete workspace run was made for this amendment, as required by
+the hotspot rebase. No new fresh replay was run under the amendment budget.
+The unchanged mounted R1 and supplied-adapter live tests remain ignored; Linux
+and current PR checks/review/merge/thread status remain parent-owned. No type,
+test, rule or lint was weakened. A useless test `format!` found by clippy and
+the unit Ui fixture's missing pool field were corrected before final gates.
+
+All logs are `review-*.log` under the lane ledger, with per-probe output in
+`review-probes/`. The additional retained scratch copy is `probe-review-1`:
+its own target was APFS-cloned while the source compiler was idle; no target
+was shared and no mutation ran in the execution tree. Final tested hashes for
+the five changed code/test files are in `review-tested.json`; staged hashes
+were checked against those bytes before committing. The final record/index
+update is documentation only. Parent: re-confirm these two fixes over the fix
+range, then obtain the full Linux/macOS PR status before merging.
+
+### Exact amendment code and test patch
+
+This is the five-file patch built and tested on rebased head `8e52f013`.
+The operating instructions above also record the dedicated-host requirement.
+This amendment block is an exact record, not a claim of another fresh replay.
+
+<!-- recall-r2-security-amendment-patch -->
+```diff
+diff --git a/crates/hennery-memory/src/consumer.rs b/crates/hennery-memory/src/consumer.rs
+index 4b6bdf557871f22c6e15893fcf7ac3b069a2ac3e..498d4f0f8298abbdf2e53a9bcc4760ddf80e79ec 100644
+--- a/crates/hennery-memory/src/consumer.rs
++++ b/crates/hennery-memory/src/consumer.rs
+@@ -314,0 +315,7 @@ impl Store {
++    /// Local configuration validation only; never expose grant credentials.
++    pub(crate) fn collector_origins(&self, key: &MasterKey) -> Result<Vec<String>> {
++        self.feed_ids()?
++            .iter()
++            .map(|id| Ok(self.job(key, id)?.config.collector_url.clone()))
++            .collect()
++    }
+diff --git a/crates/hennery-memory/src/main.rs b/crates/hennery-memory/src/main.rs
+index 857cfe3ba81cc926e99f80540dbd95d1ea4247fb..414d12e0eaea2fce095676a2dc82aa2cdfc69370 100644
+--- a/crates/hennery-memory/src/main.rs
++++ b/crates/hennery-memory/src/main.rs
+@@ -153,0 +154,7 @@ async fn run() -> anyhow::Result<()> {
++            if args.data_dir.join("memory-auth.db").try_exists()? {
++                let operator = hennery_kernel::operator::Operator::open(&args.data_dir.join("memory-auth.db"))?;
++                let public = operator
++                    .public_url()
++                    .ok_or_else(|| anyhow::anyhow!("UI not configured"))?;
++                ui::check_collector_host(public.origin(), &config.collector_url)?;
++            }
+@@ -169,0 +177,12 @@ async fn run() -> anyhow::Result<()> {
++            let operator = if args.data_dir.join("memory-auth.db").try_exists()? {
++                let operator = Arc::new(hennery_kernel::operator::Operator::open(
++                    &args.data_dir.join("memory-auth.db"),
++                )?);
++                let public = operator
++                    .public_url()
++                    .ok_or_else(|| anyhow::anyhow!("UI not configured"))?;
++                ui::validate_configuration(&store, &args.data_dir, public.origin())?;
++                Some(operator)
++            } else {
++                None
++            };
+@@ -179,4 +198 @@ async fn run() -> anyhow::Result<()> {
+-            if args.data_dir.join("memory-auth.db").try_exists()? {
+-                let operator = Arc::new(hennery_kernel::operator::Operator::open(
+-                    &args.data_dir.join("memory-auth.db"),
+-                )?);
++            if let Some(operator) = operator {
+diff --git a/crates/hennery-memory/src/ui.rs b/crates/hennery-memory/src/ui.rs
+index c6f60e63d51c8c7626794d44e111e9f700a11e08..25712f358cfaecc1a5456bbb27c3fcdb872de3e7 100644
+--- a/crates/hennery-memory/src/ui.rs
++++ b/crates/hennery-memory/src/ui.rs
+@@ -30 +30 @@ use tokio::sync::Semaphore;
+-pub const SESSION_COOKIE: &str = "hennery_memory_session";
++pub const SESSION_COOKIE: &str = "__Host-hennery_memory_session";
+@@ -35,0 +36,29 @@ struct Ui {
++    auth_permits: Arc<Semaphore>,
++}
++
++/// Cookies ignore ports. Deploy the UI on a hostname dedicated to this service.
++/// Compare all known collector grants; standalone collectors cannot be discovered.
++pub fn validate_configuration(store: &Store, directory: &FsPath, origin: &str) -> Result<()> {
++    let public = PublicUrl::parse(origin).map_err(anyhow::Error::msg)?;
++    ensure!(public.rp_id().is_some(), "memory UI requires a dedicated hostname");
++    if store.has_feed_credentials()? {
++        let key = crate::keys::load(directory, true)?;
++        for collector in store.collector_origins(&key)? {
++            check_collector_host(origin, &collector)?;
++        }
++    }
++    Ok(())
++}
++pub fn check_collector_host(origin: &str, collector: &str) -> Result<()> {
++    let public = PublicUrl::parse(origin).map_err(anyhow::Error::msg)?;
++    let host = public
++        .rp_id()
++        .ok_or_else(|| anyhow::anyhow!("memory UI requires a dedicated hostname"))?;
++    let collector = url::Url::parse(collector)?;
++    ensure!(
++        collector.host_str().is_some_and(|other| !host
++            .trim_end_matches('.')
++            .eq_ignore_ascii_case(other.trim_end_matches('.'))),
++        "memory UI and collector require different hostnames, regardless of ports"
++    );
++    Ok(())
+@@ -41 +70 @@ pub fn bootstrap(store: &Store, directory: &FsPath, owner: &str, origin: &str, p
+-    PublicUrl::parse(origin).map_err(anyhow::Error::msg)?;
++    validate_configuration(store, directory, origin)?;
+@@ -62,0 +92,4 @@ pub fn router(store: Arc<Store>, operator: Arc<Operator>) -> Result<Router> {
++    ensure!(
++        operator.public_url().is_some_and(|p| p.rp_id().is_some()),
++        "memory UI requires a dedicated hostname"
++    );
+@@ -67,0 +101 @@ pub fn router(store: Arc<Store>, operator: Arc<Operator>) -> Result<Router> {
++        auth_permits: Arc::new(Semaphore::new(4)),
+@@ -100 +134 @@ fn cookie(token: &str, operator: &Operator) -> String {
+-        &format!("{SESSION_COOKIE}="),
++        &format!("{}=", cookie_name(operator)),
+@@ -104 +138,8 @@ fn cookie(token: &str, operator: &Operator) -> String {
+-fn tokens(headers: &axum::http::HeaderMap) -> Vec<String> {
++fn cookie_name(operator: &Operator) -> &'static str {
++    if operator.public_url().is_none_or(|p| p.is_https()) {
++        SESSION_COOKIE
++    } else {
++        "hennery_memory_session"
++    }
++}
++fn tokens(headers: &axum::http::HeaderMap, operator: &Operator) -> Vec<String> {
+@@ -112 +153 @@ fn tokens(headers: &axum::http::HeaderMap) -> Vec<String> {
+-            (name == SESSION_COOKIE && value.len() <= 256).then(|| value.to_string())
++            (name == cookie_name(operator) && value.len() <= 256).then(|| value.to_string())
+@@ -201,3 +241,0 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
+-    let Ok(permit) = ui.permits.clone().try_acquire_owned() else {
+-        return error(StatusCode::SERVICE_UNAVAILABLE, "Busy; retry later.");
+-    };
+@@ -206 +244 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
+-    for value in tokens(request.headers()) {
++    for value in tokens(request.headers(), &ui.operator) {
+@@ -214,0 +253,8 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
++    let pool = if session.is_none() && public_route {
++        &ui.auth_permits
++    } else {
++        &ui.permits
++    };
++    let Ok(permit) = pool.clone().try_acquire_owned() else {
++        return error(StatusCode::SERVICE_UNAVAILABLE, "Busy; retry later.");
++    };
+@@ -228,12 +274,14 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
+-    if changing && !api {
+-        let types = request
+-            .headers()
+-            .get_all(header::CONTENT_TYPE)
+-            .iter()
+-            .collect::<Vec<_>>();
+-        if types.len() != 1
+-            || !types[0]
+-                .to_str()
+-                .is_ok_and(|v| v.split(';').next() == Some("application/x-www-form-urlencoded"))
+-        {
+-            return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Use the management form.");
++    if changing || api {
++        if !api {
++            let types = request
++                .headers()
++                .get_all(header::CONTENT_TYPE)
++                .iter()
++                .collect::<Vec<_>>();
++            if types.len() != 1
++                || !types[0]
++                    .to_str()
++                    .is_ok_and(|v| v.split(';').next() == Some("application/x-www-form-urlencoded"))
++            {
++                return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Use the management form.");
++            }
+@@ -242 +290,3 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
+-        let cap = if path == "/import-preview" || path == "/import-apply" {
++        let cap = if api {
++            hennery_kernel::auth_api::MAX_BODY_BYTES
++        } else if path == "/import-preview" || path == "/import-apply" {
+@@ -298 +348 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
+-            .map(|v| v.replacen("hennery_session=", &format!("{SESSION_COOKIE}="), 1))
++            .map(|v| v.replacen("hennery_session=", &format!("{}=", cookie_name(&ui.operator)), 1))
+@@ -427 +477 @@ async fn logout(State(ui): State<Ui>, Extension(session): Extension<Authenticate
+-        .replacen("hennery_session=", &format!("{SESSION_COOKIE}="), 1);
++        .replacen("hennery_session=", &format!("{}=", cookie_name(&ui.operator)), 1);
+@@ -748,0 +799 @@ mod tests {
++            auth_permits: Arc::new(Semaphore::new(4)),
+diff --git a/crates/hennery-memory/tests/browser.mjs b/crates/hennery-memory/tests/browser.mjs
+index e3530a3afe61d7b83aa194b1ad53757ca8d1d4bd..cb54cf9dee0e0ac3b50f09851751b10cd31f8b15 100644
+--- a/crates/hennery-memory/tests/browser.mjs
++++ b/crates/hennery-memory/tests/browser.mjs
+@@ -3 +3 @@ import { createRequire } from 'node:module';
+-import { mkdtemp, writeFile } from 'node:fs/promises';
++import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+@@ -27 +27,24 @@ await new Promise(resolve=>socket.close(resolve));
+-const origin=`http://127.0.0.1:${port}`;
++const backend=`http://127.0.0.1:${port}`;
++// Real local TLS proxies preserve form redirects and browser cookie delivery.
++// Chromium resolves these synthetic names only to loopback, without a proxy.
++const certificate=spawnSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',join(scratch,'key.pem'),'-out',join(scratch,'cert.pem'),'-subj','/CN=memory.example.test','-days','1'],{encoding:'utf8'});
++assert.equal(certificate.status,0,certificate.stderr);
++const tls={key:await readFile(join(scratch,'key.pem')),cert:await readFile(join(scratch,'cert.pem'))};
++const {createServer}=await import('node:https');
++const {request:forward}=await import('node:http');
++const deliveries=[];
++const memoryProxy=createServer(tls,(request,response)=>{
++  deliveries.push({service:'memory',cookie:request.headers.cookie??''});
++  const upstream=forward(`${backend}${request.url}`,{method:request.method,headers:request.headers},result=>{
++    response.writeHead(result.statusCode,result.headers);result.pipe(response);
++  });
++  upstream.on('error',error=>response.destroy(error));request.pipe(upstream);
++});
++const collectorProxy=createServer(tls,(request,response)=>{
++  deliveries.push({service:'collector',cookie:request.headers.cookie??''});
++  response.writeHead(200,{'content-type':'text/html','set-cookie':'hennery_session=synthetic-core-cookie; HttpOnly; SameSite=Strict; Path=/; Secure'});
++  response.end('<p>synthetic collector</p>');
++});
++for(const proxy of [memoryProxy,collectorProxy])await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
++const origin=`https://memory.example.test:${memoryProxy.address().port}`;
++const collector=`https://collector.example.test:${collectorProxy.address().port}`;
+@@ -34 +57 @@ try {
+-    try { const response=await fetch(`${origin}/login`);if(response.ok)break; } catch {}
++    try { const response=await fetch(`${backend}/login`);if(response.ok)break; } catch {}
+@@ -38,2 +61,2 @@ try {
+-  browser=await chromium.launch({headless:true});
+-  const toolResponse=await fetch(`${origin}/mcp`,{method:'POST',headers:{Authorization:`Bearer ${credentials.tool_credential}`,'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
++  browser=await chromium.launch({headless:true,args:['--no-proxy-server','--host-resolver-rules=MAP memory.example.test 127.0.0.1, MAP collector.example.test 127.0.0.1']});
++  const toolResponse=await fetch(`${backend}/mcp`,{method:'POST',headers:{Authorization:`Bearer ${credentials.tool_credential}`,'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
+@@ -42 +65,3 @@ try {
+-    const context=await browser.newContext({viewport:{width,height:900},acceptDownloads:true});
++    const context=await browser.newContext({viewport:{width,height:900},acceptDownloads:true,ignoreHTTPSErrors:true});
++    const corePage=await context.newPage();
++    await corePage.goto(collector);
+@@ -53,0 +79,11 @@ try {
++    const cookies=await context.cookies(origin);
++    assert.equal(cookies.length,1);
++    assert.equal(cookies[0].name,'__Host-hennery_memory_session');
++    assert.ok(cookies[0].secure && cookies[0].httpOnly && cookies[0].path==='/');
++    assert.equal(cookies[0].domain,'memory.example.test');
++    await corePage.reload();await page.reload();
++    assert.ok(deliveries.some(item=>item.service==='collector'&&item.cookie.includes('hennery_session=synthetic-core-cookie')));
++    assert.ok(deliveries.some(item=>item.service==='memory'&&item.cookie.includes('__Host-hennery_memory_session=')));
++    assert.ok(deliveries.filter(item=>item.service==='collector').every(item=>!item.cookie.includes('hennery_memory_session=')));
++    assert.ok(deliveries.filter(item=>item.service==='memory').every(item=>!item.cookie.includes('hennery_session=')));
++    await corePage.close();
+@@ -115,0 +152 @@ try {
++  for(const proxy of [memoryProxy,collectorProxy]){proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));}
+diff --git a/crates/hennery-memory/tests/ui_security.rs b/crates/hennery-memory/tests/ui_security.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..40caacdff96b8279408d07b493b80d41b687da73
+--- /dev/null
++++ b/crates/hennery-memory/tests/ui_security.rs
+@@ -0,0 +1,467 @@
++//! Synthetic regressions for the first R2 security review.
++use axum::{
++    Router,
++    body::{Body, Bytes, to_bytes},
++    extract::ConnectInfo,
++    http::{Request, StatusCode},
++};
++use hennery_kernel::{operator::Operator, secret::unix_now};
++use hennery_memory::{consumer::FeedConfig, store::Store, ui};
++use std::{
++    sync::{
++        Arc,
++        atomic::{AtomicUsize, Ordering},
++    },
++    time::Duration,
++};
++use tower::ServiceExt;
++const ORIGIN: &str = "https://memory.example.test";
++const PASSWORD: &str = "synthetic review password";
++struct World {
++    _dir: tempfile::TempDir,
++    app: Router,
++    token: String,
++}
++impl World {
++    fn new() -> Self {
++        let dir = tempfile::tempdir().unwrap();
++        let store = Arc::new(Store::open(&dir.path().join("memory.db")).unwrap());
++        ui::bootstrap(&store, dir.path(), "fixture-owner", ORIGIN, PASSWORD).unwrap();
++        let operator = Arc::new(Operator::open(&dir.path().join("memory-auth.db")).unwrap());
++        let phc = operator.verify_password(PASSWORD).unwrap().unwrap();
++        let token = operator.open_session("fixture", &phc, unix_now()).unwrap().unwrap();
++        Self {
++            app: ui::router(store, operator).unwrap(),
++            _dir: dir,
++            token,
++        }
++    }
++    fn request(&self, path: &str, body: Body) -> Request<Body> {
++        Request::builder()
++            .method("POST")
++            .uri(path)
++            .header("origin", ORIGIN)
++            .header("content-type", "application/json")
++            .extension(ConnectInfo("127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap()))
++            .body(body)
++            .unwrap()
++    }
++}
++#[tokio::test]
++async fn tls_login_issues_only_host_prefixed_cookie_and_rejects_old_cookie_name() {
++    let w = World::new();
++    for path in ["/login", "/api/auth/login"] {
++        let mut request = w.request(
++            path,
++            Body::from(if path == "/login" {
++                "password=synthetic+review+password".to_string()
++            } else {
++                format!(r#"{{"password":"{PASSWORD}"}}"#)
++            }),
++        );
++        if path == "/login" {
++            request
++                .headers_mut()
++                .insert("content-type", "application/x-www-form-urlencoded".parse().unwrap());
++        }
++        let response = w.app.clone().oneshot(request).await.unwrap();
++        assert!(response.status().is_success() || response.status() == StatusCode::SEE_OTHER);
++        let cookie = response.headers()["set-cookie"].to_str().unwrap();
++        assert!(cookie.starts_with("__Host-hennery_memory_session="), "{cookie}");
++        assert!(
++            cookie.contains("; Secure")
++                && cookie.contains("Path=/")
++                && !cookie.to_ascii_lowercase().contains("domain=")
++        );
++    }
++    let request = Request::builder()
++        .uri("/")
++        .header("cookie", format!("hennery_memory_session={}", w.token))
++        .body(Body::empty())
++        .unwrap();
++    assert_eq!(
++        w.app.clone().oneshot(request).await.unwrap().status(),
++        StatusCode::UNAUTHORIZED
++    );
++    let response = w
++        .app
++        .oneshot(
++            Request::builder()
++                .method("POST")
++                .uri("/logout")
++                .header("origin", ORIGIN)
++                .header("cookie", format!("{}={}", ui::SESSION_COOKIE, w.token))
++                .header("content-type", "application/x-www-form-urlencoded")
++                .body(Body::empty())
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(response.status(), StatusCode::SEE_OTHER);
++    let cleared = response.headers()["set-cookie"].to_str().unwrap();
++    assert!(
++        cleared.starts_with("__Host-hennery_memory_session=")
++            && cleared.contains("; Secure")
++            && cleared.contains("Path=/")
++            && cleared.contains("Max-Age=0")
++            && !cleared.contains("Domain=")
++    );
++}
++#[test]
++fn ui_bootstrap_requires_a_hostname() {
++    for origin in ["https://127.0.0.1:7332", "http://127.0.0.1:7332", "https://[::1]:7332"] {
++        let dir = tempfile::tempdir().unwrap();
++        let store = Store::open(&dir.path().join("memory.db")).unwrap();
++        assert!(
++            ui::bootstrap(&store, dir.path(), "fixture-owner", origin, PASSWORD).is_err(),
++            "accepted {origin}"
++        );
++        assert!(!dir.path().join("memory-auth.db").exists());
++    }
++}
++fn grant(origin: &str) -> FeedConfig {
++    FeedConfig {
++        collector_url: origin.into(),
++        namespace_epoch: "a".repeat(64),
++        activity_token: format!("hnry_activity_{}", "b".repeat(64)),
++        activity: true,
++        internal_network: false,
++    }
++}
++#[test]
++fn bootstrap_rejects_preexisting_same_hostname_grants_ignoring_ports_and_case() {
++    for collector in [
++        "https://memory.example.test:7443",
++        "https://MEMORY.EXAMPLE.TEST:7444",
++        "https://memory.example.test.:7445",
++    ] {
++        let dir = tempfile::tempdir().unwrap();
++        let store = Store::open(&dir.path().join("memory.db")).unwrap();
++        let c = store.create("fixture-owner", "garden").unwrap();
++        let key = hennery_memory::keys::load(dir.path(), false).unwrap();
++        store.attach(&c.namespace, grant(collector), &key).unwrap();
++        assert!(
++            ui::bootstrap(&store, dir.path(), "fixture-owner", ORIGIN, PASSWORD).is_err(),
++            "accepted {collector}"
++        );
++        assert!(!dir.path().join("memory-auth.db").exists());
++    }
++    // Same registrable domain is fine: host-only cookies stay on exact hosts.
++    let dir = tempfile::tempdir().unwrap();
++    let store = Store::open(&dir.path().join("memory.db")).unwrap();
++    let c = store.create("fixture-owner", "garden").unwrap();
++    let key = hennery_memory::keys::load(dir.path(), false).unwrap();
++    store
++        .attach(&c.namespace, grant("https://collector.example.test:7443"), &key)
++        .unwrap();
++    ui::bootstrap(&store, dir.path(), "fixture-owner", ORIGIN, PASSWORD).unwrap();
++}
++fn command(home: &std::path::Path) -> std::process::Command {
++    let binary = env!("CARGO_BIN_EXE_hennery-memory");
++    hennery_testkit::first_exec(binary);
++    let mut command = std::process::Command::new(binary);
++    command
++        .arg("--data-dir")
++        .arg(home)
++        .env("HOME", home)
++        .env("XDG_CONFIG_HOME", home.join("config"))
++        .env("XDG_DATA_HOME", home.join("data"))
++        .env("XDG_STATE_HOME", home.join("state"))
++        .env("XDG_CACHE_HOME", home.join("cache"));
++    for name in [
++        "HENNERY_DATA_DIR",
++        "HENNERY_HOST_DATA_DIR",
++        "HENNERY_MASTER_KEY",
++        "CREDENTIALS_DIRECTORY",
++        "CODEX_HOME",
++        "CLAUDE_CONFIG_DIR",
++    ] {
++        command.env_remove(name);
++    }
++    command
++}
++#[test]
++fn attaching_a_same_host_grant_to_an_existing_ui_is_refused_without_writes() {
++    use std::io::Write;
++    use std::os::unix::fs::PermissionsExt;
++    for collector in ["https://memory.example.test:7443", "https://MEMORY.EXAMPLE.TEST.:7444"] {
++        let dir = tempfile::tempdir().unwrap();
++        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
++        let store = Store::open(&dir.path().join("memory.db")).unwrap();
++        let c = store.create("fixture-owner", "garden").unwrap();
++        ui::bootstrap(&store, dir.path(), "fixture-owner", ORIGIN, PASSWORD).unwrap();
++        drop(store);
++        assert!(
++            command(dir.path())
++                .args(["status", "--namespace", &c.namespace])
++                .output()
++                .unwrap()
++                .status
++                .success()
++        );
++        let mut child = command(dir.path())
++            .args(["attach", "--namespace", &c.namespace])
++            .stdin(std::process::Stdio::piped())
++            .stdout(std::process::Stdio::null())
++            .stderr(std::process::Stdio::null())
++            .spawn()
++            .unwrap();
++        child
++            .stdin
++            .take()
++            .unwrap()
++            .write_all(&serde_json::to_vec(&grant(collector)).unwrap())
++            .unwrap();
++        assert!(!child.wait().unwrap().success(), "same-host attachment was accepted");
++        assert!(
++            Store::open(&dir.path().join("memory.db"))
++                .unwrap()
++                .feed_ids()
++                .unwrap()
++                .is_empty()
++        );
++    }
++}
++#[test]
++fn startup_refuses_an_existing_conflicting_ui_configuration() {
++    use std::os::unix::fs::PermissionsExt;
++    let dir = tempfile::tempdir().unwrap();
++    let store = Store::open(&dir.path().join("memory.db")).unwrap();
++    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
++    let c = store.create("fixture-owner", "garden").unwrap();
++    let key = hennery_memory::keys::load(dir.path(), false).unwrap();
++    store
++        .attach(&c.namespace, grant("https://collector.example.test:7443"), &key)
++        .unwrap();
++    ui::bootstrap(&store, dir.path(), "fixture-owner", ORIGIN, PASSWORD).unwrap();
++    Operator::open(&dir.path().join("memory-auth.db"))
++        .unwrap()
++        .reset_public_url("https://COLLECTOR.EXAMPLE.TEST:7332")
++        .unwrap();
++    drop(store);
++    assert!(
++        command(dir.path())
++            .args(["status", "--namespace", &c.namespace])
++            .output()
++            .unwrap()
++            .status
++            .success()
++    );
++    let mut child = command(dir.path())
++        .args(["serve", "--listen", "127.0.0.1:0"])
++        .stdout(std::process::Stdio::null())
++        .stderr(std::process::Stdio::null())
++        .spawn()
++        .unwrap();
++    let deadline = std::time::Instant::now() + Duration::from_secs(5);
++    loop {
++        if let Some(status) = child.try_wait().unwrap() {
++            assert!(!status.success());
++            break;
++        }
++        if std::time::Instant::now() >= deadline {
++            child.kill().unwrap();
++            child.wait().unwrap();
++            panic!("conflicting UI started a server");
++        }
++        std::thread::sleep(Duration::from_millis(20));
++    }
++}
++struct Dropped(Arc<AtomicUsize>);
++impl Drop for Dropped {
++    fn drop(&mut self) {
++        self.0.fetch_add(1, Ordering::SeqCst);
++    }
++}
++async fn stalls(w: &World) -> (Vec<tokio::task::JoinHandle<axum::response::Response>>, Arc<AtomicUsize>) {
++    let dropped = Arc::new(AtomicUsize::new(0));
++    let mut tasks = Vec::new();
++    for _ in 0..4 {
++        let polled = Arc::new(tokio::sync::Notify::new());
++        let signal = polled.clone();
++        let guard = Dropped(dropped.clone());
++        let body = Body::from_stream(futures::stream::once(async move {
++            let _guard = guard;
++            signal.notify_one();
++            std::future::pending::<Result<Bytes, std::io::Error>>().await
++        }));
++        let app = w.app.clone();
++        let request = w.request("/api/auth/login", body);
++        tasks.push(tokio::spawn(async move { app.oneshot(request).await.unwrap() }));
++        tokio::time::timeout(Duration::from_secs(10), polled.notified())
++            .await
++            .unwrap();
++    }
++    (tasks, dropped)
++}
++#[tokio::test]
++async fn stalled_auth_readers_do_not_use_management_admission_slots() {
++    let w = World::new();
++    let (tasks, dropped) = stalls(&w).await;
++    let request = Request::builder()
++        .uri("/")
++        .header("cookie", format!("{}={}", ui::SESSION_COOKIE, w.token))
++        .body(Body::empty())
++        .unwrap();
++    let response = w.app.clone().oneshot(request).await.unwrap();
++    let status = response.status();
++    to_bytes(response.into_body(), 65536).await.unwrap();
++    let overflow = w
++        .app
++        .clone()
++        .oneshot(w.request("/api/auth/login", Body::empty()))
++        .await
++        .unwrap();
++    assert_eq!(
++        overflow.status(),
++        StatusCode::SERVICE_UNAVAILABLE,
++        "auth pool must remain bounded"
++    );
++    for task in tasks {
++        task.abort();
++        let _ = task.await;
++    }
++    assert_eq!(dropped.load(Ordering::SeqCst), 4, "cancellation must drop every body");
++    assert_eq!(status, StatusCode::OK, "unauthenticated slow bodies blocked management");
++    let response = w
++        .app
++        .clone()
++        .oneshot(w.request("/api/auth/login", Body::from(r#"{"password":"wrong"}"#)))
++        .await
++        .unwrap();
++    assert_eq!(
++        response.status(),
++        StatusCode::UNAUTHORIZED,
++        "cancelled auth slots were retained"
++    );
++}
++#[tokio::test]
++async fn stalled_auth_body_deadline_drops_streams_and_releases_admission() {
++    let w = World::new();
++    let (tasks, dropped) = stalls(&w).await;
++    for task in tasks {
++        let response = tokio::time::timeout(Duration::from_secs(8), task)
++            .await
++            .expect("auth body deadline missing")
++            .unwrap();
++        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
++        to_bytes(response.into_body(), 65536).await.unwrap();
++    }
++    assert_eq!(dropped.load(Ordering::SeqCst), 4);
++    let response = w
++        .app
++        .clone()
++        .oneshot(w.request("/api/auth/login", Body::from(r#"{"password":"wrong"}"#)))
++        .await
++        .unwrap();
++    assert_eq!(
++        response.status(),
++        StatusCode::UNAUTHORIZED,
++        "expired auth slots were retained"
++    );
++}
++
++#[tokio::test]
++async fn api_size_cap_stops_consuming_before_the_rest_of_the_body() {
++    use futures::StreamExt;
++    let w = World::new();
++    let rest = Arc::new(AtomicUsize::new(0));
++    let polled = rest.clone();
++    let body = Body::from_stream(
++        futures::stream::once(async { Ok::<_, std::io::Error>(Bytes::from(vec![b'x'; 16 * 1024 + 1])) }).chain(
++            futures::stream::once(async move {
++                polled.fetch_add(1, Ordering::SeqCst);
++                std::future::pending::<Result<Bytes, std::io::Error>>().await
++            }),
++        ),
++    );
++    let response = tokio::time::timeout(
++        Duration::from_secs(8),
++        w.app.clone().oneshot(w.request("/api/auth/login", body)),
++    )
++    .await
++    .unwrap()
++    .unwrap();
++    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
++    assert_eq!(rest.load(Ordering::SeqCst), 0, "read beyond the API body cap");
++}
++#[tokio::test]
++async fn auth_api_get_bodies_have_the_same_deadline() {
++    let w = World::new();
++    let dropped = Arc::new(AtomicUsize::new(0));
++    let guard = Dropped(dropped.clone());
++    let body = Body::from_stream(futures::stream::once(async move {
++        let _guard = guard;
++        std::future::pending::<Result<Bytes, std::io::Error>>().await
++    }));
++    let mut request = w.request("/api/auth/passkeys", body);
++    *request.method_mut() = axum::http::Method::GET;
++    request
++        .headers_mut()
++        .insert("cookie", format!("{}={}", ui::SESSION_COOKIE, w.token).parse().unwrap());
++    let response = tokio::time::timeout(Duration::from_secs(8), w.app.oneshot(request))
++        .await
++        .unwrap()
++        .unwrap();
++    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
++    assert_eq!(dropped.load(Ordering::SeqCst), 1);
++}
++#[test]
++fn preexisting_ip_ui_is_refused_by_router() {
++    let dir = tempfile::tempdir().unwrap();
++    let store = Arc::new(Store::open(&dir.path().join("memory.db")).unwrap());
++    let operator = Arc::new(Operator::open(&dir.path().join("memory-auth.db")).unwrap());
++    let token = operator.issue_setup_token(unix_now()).unwrap().unwrap();
++    operator
++        .set_up(&token, PASSWORD, "https://127.0.0.1:7332", unix_now())
++        .unwrap();
++    store.bind_manager(operator.owner_id(), "fixture-owner").unwrap();
++    assert!(ui::router(store, operator).is_err());
++}
++#[tokio::test]
++async fn loopback_http_cookie_uses_the_non_secure_name_and_clears_it() {
++    let dir = tempfile::tempdir().unwrap();
++    let store = Arc::new(Store::open(&dir.path().join("memory.db")).unwrap());
++    let origin = "http://localhost:7332";
++    ui::bootstrap(&store, dir.path(), "fixture-owner", origin, PASSWORD).unwrap();
++    let operator = Arc::new(Operator::open(&dir.path().join("memory-auth.db")).unwrap());
++    let app = ui::router(store, operator).unwrap();
++    let response = app
++        .clone()
++        .oneshot(
++            Request::builder()
++                .method("POST")
++                .uri("/login")
++                .header("origin", origin)
++                .header("content-type", "application/x-www-form-urlencoded")
++                .extension(ConnectInfo("127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap()))
++                .body(Body::from("password=synthetic+review+password"))
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(response.status(), StatusCode::SEE_OTHER);
++    let cookie = response.headers()["set-cookie"].to_str().unwrap().to_string();
++    assert!(cookie.starts_with("hennery_memory_session=") && !cookie.contains("Secure") && !cookie.contains("Domain="));
++    let response = app
++        .oneshot(
++            Request::builder()
++                .method("POST")
++                .uri("/logout")
++                .header("origin", origin)
++                .header("cookie", cookie.split(';').next().unwrap())
++                .header("content-type", "application/x-www-form-urlencoded")
++                .body(Body::empty())
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(response.status(), StatusCode::SEE_OTHER);
++    assert!(
++        response.headers()["set-cookie"]
++            .to_str()
++            .unwrap()
++            .starts_with("hennery_memory_session=")
++    );
++    assert!(response.headers()["set-cookie"].to_str().unwrap().contains("Max-Age=0"));
++}
+```
+
+### Amendment copy probe harness
+
+Run only in the independent `probe-review-1` copy, inside its dev shell, with
+the execution-tree path as the module argument. Each mutation is restored in
+`finally`; compiler failures never count. Optional selection reruns only named
+guards. The original run detected all 21 guards without weakening its tests.
+
+<!-- recall-r2-security-probes -->
+```js
+import {readFile,writeFile,mkdir,copyFile} from 'node:fs/promises';
+import {join,resolve} from 'node:path';
+import {spawnSync} from 'node:child_process';
+import assert from 'node:assert/strict';
+const original=resolve(process.argv[2]),copy=process.cwd(),ledger=join(original,'.superpowers/sdd/recall-r2');
+assert.equal(copy,join(ledger,'probe-review-1'));
+const files=['src/ui.rs','src/main.rs','src/consumer.rs','tests/ui_security.rs'];
+for(const file of files)await copyFile(join(original,'crates/hennery-memory',file),join(copy,'crates/hennery-memory',file));
+const logs=join(ledger,'review-probes');await mkdir(logs,{recursive:true});
+const probes=[];
+function add(name,file,from,to,filter,section=''){probes.push({name,file,from,to,filter,section});}
+const ui='src/ui.rs',main='src/main.rs';
+add('tls-prefix',ui,'pub const SESSION_COOKIE: &str = "__Host-hennery_memory_session";','pub const SESSION_COOKIE: &str = "hennery_memory_session";','tls_login');
+add('tls-secure',ui,'operator.public_url().is_none_or(|p| p.is_https())','false','tls_login','fn cookie(');
+add('tls-token-name',ui,'name == cookie_name(operator)','(name == cookie_name(operator) || name == "hennery_memory_session")','tls_login');
+add('loopback-cookie-name',ui,'"hennery_memory_session"','SESSION_COOKIE','loopback_http','fn cookie_name(');
+add('api-cookie-bridge',ui,'.map(|v| v.replacen("hennery_session=", &format!("{}=", cookie_name(&ui.operator)), 1))','.map(|v| v.to_string())','tls_login');
+add('logout-cookie-bridge',ui,'.replacen("hennery_session=", &format!("{}=", cookie_name(&ui.operator)), 1)','.to_string()','tls_login','async fn logout(');
+add('bootstrap-host-check',ui,'validate_configuration(store, directory, origin)?;','','bootstrap_rejects');
+add('hostname-required',ui,'ensure!(public.rp_id().is_some(), "memory UI requires a dedicated hostname");','','ui_bootstrap');
+add('existing-router-hostname',ui,'operator.public_url().is_some_and(|p| p.rp_id().is_some())','true','preexisting_ip');
+add('known-feed-scan',ui,'if store.has_feed_credentials()? {','if false {','bootstrap_rejects');
+add('collector-origin-inventory','src/consumer.rs','self.feed_ids()?','Vec::<String>::new()','bootstrap_rejects','pub(crate) fn collector_origins(');
+add('host-collision-check',ui,"collector.host_str().is_some_and(|other| !host\n            .trim_end_matches('.')\n            .eq_ignore_ascii_case(other.trim_end_matches('.')))",'true','bootstrap_rejects');
+add('dns-trailing-dot',ui,".trim_end_matches('.')",'','bootstrap_rejects','pub fn check_collector_host(');
+add('new-grant-host-check',main,'ui::check_collector_host(public.origin(), &config.collector_url)?;','','attaching_a_same_host');
+add('startup-host-check',main,'ui::validate_configuration(&store, &args.data_dir, public.origin())?;','','startup_refuses');
+add('separate-auth-admission',ui,'&ui.auth_permits','&ui.permits','stalled_auth_readers');
+add('bounded-auth-admission',ui,'auth_permits: Arc::new(Semaphore::new(4))','auth_permits: Arc::new(Semaphore::new(40))','stalled_auth_readers');
+add('api-body-read',ui,'if changing || api {','if changing && !api {','stalled_auth_body_deadline');
+add('get-api-body-read',ui,'if changing || api {','if changing {','auth_api_get_bodies');
+add('api-size-before-read',ui,'hennery_kernel::auth_api::MAX_BODY_BYTES','64 * 1024','api_size_cap');
+add('api-body-deadline',ui,'Duration::from_secs(timeout), to_bytes(body, cap)','Duration::from_secs(if api { 60 } else { timeout }), to_bytes(body, cap)','stalled_auth_body_deadline');
+const selected=process.env.RECALL_REVIEW_PROBES?.split(',');const results=[];
+for(const p of probes.filter(p=>!selected||selected.includes(p.name))){
+ const path=join(copy,'crates/hennery-memory',p.file),before=await readFile(path,'utf8');
+ try{
+  const start=p.section?before.indexOf(p.section):0;assert.ok(start>=0,p.name+' section');
+  let tail=before.slice(start);assert.ok(tail.includes(p.from),p.name+' anchor');
+  if(p.name==='dns-trailing-dot'){
+   const end=tail.indexOf('/// Local,');assert.ok(end>0);tail=tail.slice(0,end).replaceAll(p.from,p.to)+tail.slice(end);
+  }else tail=tail.replace(p.from,p.to);
+  await writeFile(path,before.slice(0,start)+tail);
+  const run=spawnSync('cargo',['test','-p','hennery-memory','--test','ui_security',p.filter,'--locked'],{encoding:'utf8',maxBuffer:8*1024*1024});
+  const output=(run.stdout??'')+(run.stderr??'');
+  const caught=run.status===101&&output.includes('test result: FAILED')&&!output.includes('could not compile');
+  await writeFile(join(logs,p.name+'.log'),output+`\nEXIT=${run.status}\n`);
+  results.push({name:p.name,caught,status:run.status});console.log(`${p.name}: ${caught?'CAUGHT':'NOT CAUGHT'} (${run.status})`);
+ }finally{await writeFile(path,before);}
+ await writeFile(join(logs,process.env.RECALL_REVIEW_ROUND??'summary.json'),JSON.stringify(results,null,2));
+}
+assert.ok(results.length>0&&results.every(p=>p.caught));console.log(`${results.length}/${results.length} caught`);
+```
+
+### Amendment timing load harness
+
+Run inside the execution dev shell after the complete memory gate has produced
+its successful log. It reuses that compiled binary and selects only the five
+new timing/spawn cases; pure hostname/parser cases are skipped.
+
+<!-- recall-r2-security-load -->
+```js
+import {spawn} from 'node:child_process';
+import {readFile,writeFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const ledger='.superpowers/sdd/recall-r2';
+const log=await readFile(`${ledger}/review-memory.log`,'utf8');assert.match(log,/EXIT=0\s*$/);
+const binary=log.match(/Running tests\/ui_security\.rs \(([^)]+)\)/)?.[1];
+assert.ok(binary);
+const skip=['tls_login','ui_bootstrap','bootstrap_rejects','api_size_cap','preexisting_ip','loopback_http'];
+const args=skip.flatMap(name=>['--skip',name]);let passed=0;
+for(let round=1;round<=3;round++){
+ const results=await Promise.all(Array.from({length:4},(_,copy)=>new Promise(resolve=>{
+  const child=spawn(binary,args,{stdio:['ignore','pipe','pipe']});let output='';
+  child.stdout.on('data',bytes=>output+=bytes);child.stderr.on('data',bytes=>output+=bytes);
+  child.on('exit',code=>resolve({copy,code,output}));
+ })));
+ for(const item of results){
+  await writeFile(`${ledger}/review-load-${round}-${item.copy}.log`,item.output+`\nEXIT=${item.code}\n`);
+  assert.equal(item.code,0);const match=item.output.match(/test result: ok\. (\d+) passed/);assert.equal(Number(match?.[1]),5);passed+=Number(match[1]);
+ }
+ console.log(`round ${round}: 4/4 processes, 20 test executions passed`);
+}
+await writeFile(`${ledger}/review-load-summary.json`,JSON.stringify({processes:12,passed,exit:0},null,2));console.log(`12 processes; ${passed} timing/spawn test executions passed`);
 ```
 
 ## After this plan
