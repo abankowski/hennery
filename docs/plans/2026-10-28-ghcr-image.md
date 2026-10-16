@@ -30,10 +30,84 @@ held storage and common verifier; default for Rust. No global installs.
 §4.6 and §5, [7a](2026-10-07-release-build.md), merged
 [R1 plan](2026-10-28-release-foundation.md), [release process](../release-process.md)
 and [gate contract](../../packaging/release/README.md). Original base `14a754b6`;
-current base **`cbd002b0`**, after R3 #144 merged and the parent requested rebase. House structure follows
+current base **`10abd28f`**, after Homebrew #155 merged and the parent requested rebase. House structure follows
 plan 3c. The fleet parent assigned this future-dated plan path on 2026-10-15.
 
-## Execution status (2026-10-16)
+## Execution status (2026-10-16, Homebrew rebase)
+
+**Rebased and verified; independent re-review, native Docker and Actions
+scheduling proof remain parent-owned. Nothing published or enabled.** Parent
+head `9121ad14` (then based on `87cc219c`) was rebased onto exact main
+**`10abd28f`**, with `-c commit.gpgsign=false` at every rebase continuation.
+The rebased baseline is **`636631e7`**; the status-guard amendment review range
+starts there. Full lease/rebase audit starts at `9121ad14`.
+
+Conflicts in the candidate/publisher workflows, credential policy and docs index
+preserve both lanes. Homebrew keeps its registered `homebrew` owner, all three
+native proof platforms, unconditional successful native no-op when unselected,
+`native-archive.sh`, frozen formula preparation and protected publisher. All
+upstream publisher jobs are structurally unchanged. Crates/installer/Homebrew
+candidate jobs, generic channel registry, strict YAML loader, Homebrew credential
+detector and transitive optional-ancestor DAG policy are unchanged. R4 retains
+its `ghcr` owner, signed channel selection, bundle-publisher detector, pre-write
+hardware/Sigstore verification and exact-digest publication boundaries.
+
+GHCR's aggregate now has an explicit `!cancelled()` status guard, requires
+successful assembly, and remains conditional on GHCR selection. Retention uses
+the same explicit status pattern, requires its nonoptional prerequisites, and
+accepts a skipped GHCR only when unselected. Selected skipped/failed/cancelled
+GHCR, cancelled execution, failed assembly and disabled storage remain refused.
+Homebrew's native/aggregate and installer guards survive unchanged.
+
+The secret-free `release-scheduling.yml` now exercises selected GHCR after the
+optional crates skip, unselected GHCR skip and successful retention after both
+skipped ancestors. Its exact expected-result assertion includes the new jobs;
+tests execute that assertion and refuse every wrong job result. Existing
+Homebrew selected/unselected and native scheduling proofs remain intact.
+
+**RED first:** the targeted scheduling run reported four assertion failures,
+and GHCR candidate tests reported two, before the new guards were applied.
+The former DAG rule directly rejected GHCR's implicit status. Updated exact-job
+and registry expectations include both channels; actual shared gate evidence
+accepts GitHub-only releases with all unselected channels skipped, while selected
+GHCR without its unique successful owner is still refused.
+
+Current verification, all final exits **0**, inside plain Nix shells:
+
+| Command / evidence | Result |
+|---|---|
+| `nix develop .#image -c python3 -m unittest discover -s packaging/tests -v` | **174 passed** |
+| `nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py' -v` | **176 passed**, R1/R3/Homebrew and DAG policy |
+| `nix develop -c node --test packaging/*.test.mjs` | **82 passed**, 0 failed/skipped |
+| Targeted GHCR candidate / optional scheduling suites | **32 / 8 passed** |
+| `nix develop .#image -c actionlint .github/workflows/*.yml` | **0**, all **10** workflows |
+| Shellcheck image/release/crates/native-archive/Homebrew-proof scripts | **0**, **10** scripts |
+| `nix develop .#release -c python3 packaging/release/workflow_policy.py` | **0**, unchanged transitive DAG rule included |
+
+**13 scoped revert/mutation probes caught, 0 missed**, all in the single COPY
+`tap-dag-probe-1`, with its `target/` APFS-cloned before probes. Each mutation
+caused an actual assertion failure, never an exception-only result. Probes
+cover GHCR status/assembly/selection, retention status/selection/dependency,
+both scheduling branches and expected results, both Homebrew guards and the
+transitive DAG policy. Every mutation was restored in the COPY. Staged bytes
+are checked against restored tested source before committing; all branch
+authors must be `marcin.wadon@gmail.com` before the exact-lease push.
+
+**Skipped by this brief:** Rust checks and full runs, because no Rust changed;
+full replay and timing/load runs, per the amendment verification budget and
+deterministic graph-only scope. Earlier Rust/Nix/replay evidence below is
+historical. All **34** complete File blocks are refreshed and compared with
+tested source; this is not represented as a new replay. The current S3,
+candidate and protected-environment architecture remains; no future pipeline
+simplification is anticipated.
+
+Logs: `.superpowers/sdd/r4/tap-{dag-red,ghcr-red,dag-green,ghcr-green,r4-suite,release-suite,packaging-suite,lint,copy-probes,range-diff}.log`.
+Retained new scratch: `tap-rebase-task2`, `tap-rebase-task3`,
+`tap-rebase-task7`, `tap-rebase-task8`, `tap-dag-probe-1`. Earlier copies remain;
+the parent owns cleanup, #143's complete PR status and independent review.
+
+## Earlier R3 execution status (2026-10-16, historical)
+
 
 **Finding 4 integrated after R3 merged; scoped re-review and native Docker CI
 remain parent-owned. Nothing published or enabled.** Rebased `plan/dist-r4`
@@ -242,7 +316,7 @@ registry creation or credential-kind enablement is authorized.
 
 ## Reading the steps
 
-Each current File block replaces its entire path on `cbd002b0`; preserve base
+Each current File block replaces its entire path on `10abd28f`; preserve base
 file modes and create new source files as 0644. Existing shell script modes remain
 0755. No patch fragments or deleted orphan workflows need reconstruction: those
 workflows do not exist in this base. The current amendment compares the nonzero blocks to tested code; it does
@@ -1968,13 +2042,13 @@ class Orchestrator(unittest.TestCase):
 
     def test_candidate_channels_have_registered_aggregate_jobs_and_retention_guard(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
-        self.assertEqual(set(workflow['jobs']), {'tag-signature', 'web-ui', 'archive', 'crates', 'assemble', 'ghcr', 'installer', 'retain'})
+        self.assertEqual(set(workflow['jobs']), {'tag-signature', 'web-ui', 'archive', 'crates', 'assemble', 'ghcr', 'installer', 'homebrew-native', 'homebrew', 'retain'})
         import workflow_policy
         try:
             bindings = workflow_policy.candidate_channel_jobs(workflow)
         except ValueError as error:
             self.fail('the shipped candidate graph must satisfy the reserved registry: ' + str(error))
-        self.assertEqual(bindings, {'crates': 'crates', 'ghcr': 'ghcr'})
+        self.assertEqual(bindings, {'crates': 'crates', 'ghcr': 'ghcr', 'homebrew': 'homebrew'})
         aggregate = workflow['jobs']['ghcr']
         self.assertEqual(aggregate['name'], 'ghcr')
         self.assertEqual(aggregate['needs'], 'assemble')
@@ -1982,25 +2056,43 @@ class Orchestrator(unittest.TestCase):
         self.assertIn(",ghcr,", aggregate['if'])
         retain = workflow['jobs']['retain']
         self.assertIn('ghcr', retain['needs'])
-        for text in ['always()', "needs.ghcr.result == 'success'", "needs.ghcr.result == 'skipped'", '!contains(']:
+        for text in ['!cancelled()', "needs.ghcr.result == 'success'", "needs.ghcr.result == 'skipped'", '!contains(']:
             self.assertIn(text, retain['if'])
         selection = "contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')"
-        def retained(selected, outcome, enabled=True, failed=None):
-            expression = retain['if'].replace(selection, str(selected)).replace('always()', 'True')
+        def retained(selected, outcome, enabled=True, failed=None, cancelled=False):
+            expression = retain['if'].removeprefix('${{').removesuffix('}}').strip()
+            expression = expression.replace(selection, str(selected)).replace('cancelled()', str(cancelled))
             expression = expression.replace('vars.RELEASE_CANDIDATE_STORAGE_ENABLED', repr('true' if enabled else 'false'))
             for name in ['assemble', 'installer', 'tag-signature', 'ghcr']:
                 status = outcome if name == 'ghcr' else ('failure' if name == failed else 'success')
                 expression = expression.replace('needs.' + name + '.result', repr(status))
-            return eval(expression.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not '), {'__builtins__': {}})
+            return eval(expression.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not ').strip(), {'__builtins__': {}})
         self.assertTrue(retained(False, 'skipped'))
         self.assertTrue(retained(True, 'success'))
         for selected in [False, True]:
             for outcome in ['failure', 'cancelled']:
                 self.assertFalse(retained(selected, outcome))
             self.assertFalse(retained(selected, 'success', enabled=False))
+            self.assertFalse(retained(selected, 'success', cancelled=True))
             for failed in ['assemble', 'installer', 'tag-signature']:
                 self.assertFalse(retained(selected, 'success', failed=failed))
         self.assertFalse(retained(True, 'skipped'))
+
+    def test_ghcr_status_guard_handles_skipped_ancestors_without_ignoring_failures(self):
+        workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
+        condition = workflow['jobs']['ghcr']['if']
+        self.assertIn('!cancelled()', condition)
+        self.assertIn("needs.assemble.result == 'success'", condition)
+        selection = "contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')"
+        for selected in [False, True]:
+            for status in ['success', 'skipped', 'failure', 'cancelled']:
+                for cancelled in [False, True]:
+                    expression = condition.removeprefix('${{').removesuffix('}}').strip()
+                    expression = expression.replace(selection, str(selected)).replace('cancelled()', str(cancelled))
+                    expression = expression.replace('needs.assemble.result', repr(status))
+                    actual = eval(expression.replace('&&', ' and ').replace('!', ' not ').strip(), {'__builtins__': {}})
+                    with self.subTest(selected=selected, status=status, cancelled=cancelled):
+                        self.assertEqual(actual, selected and status == 'success' and not cancelled)
 
     def test_aggregate_verifies_frozen_oci_before_loopback_acceptance(self):
         workflow = yaml.safe_load((PACKAGING.parent / '.github/workflows/release-candidate.yml').read_text())
@@ -2031,7 +2123,7 @@ class CandidateGate(unittest.TestCase):
 
     def test_selected_ghcr_requires_successful_job_in_the_actual_candidate_workflow(self):
         fixture, workflow = self.fixture()
-        jobs = [fixture.job(name, 'skipped' if name == 'crates' else 'success') for name in workflow['jobs']]
+        jobs = [fixture.job(name, 'skipped' if name in ('crates', 'homebrew') else 'success') for name in workflow['jobs']]
         try:
             fixture.candidate_evidence(['github', 'ghcr'], jobs, workflow=workflow)
         except gate.Refused as error:
@@ -2042,9 +2134,9 @@ class CandidateGate(unittest.TestCase):
             with self.subTest(conclusion=conclusion), self.assertRaises(gate.Refused):
                 fixture.candidate_evidence(['github', 'ghcr'], changed, workflow=workflow)
 
-    def test_github_only_accepts_both_registered_channel_jobs_skipped(self):
+    def test_github_only_accepts_all_unselected_registered_channel_jobs_skipped(self):
         fixture, workflow = self.fixture()
-        jobs = [fixture.job(name, 'skipped' if name in ('crates', 'ghcr') else 'success') for name in workflow['jobs']]
+        jobs = [fixture.job(name, 'skipped' if name in ('crates', 'ghcr', 'homebrew') else 'success') for name in workflow['jobs']]
         try:
             fixture.candidate_evidence(['github'], jobs, workflow=workflow)
         except gate.Refused as error:
@@ -2768,26 +2860,9 @@ jobs:
       - name: Archive and content acceptance
         env:
           HENNERY_WEB_REQUIRE: '1'
+          TARGET: ${{ matrix.target }}
         run: |
-          dist build --artifacts=local --target='${{ matrix.target }}' --print=linkage --output-format=json > target-manifest.json
-          archive='hennery-${{ matrix.target }}'
-          mkdir -p unpacked
-          tar -xJf "target/distrib/$archive.tar.xz" -C unpacked
-          cp release-materials/THIRD-PARTY-NOTICES.txt "unpacked/$archive/"
-          tar -cJf "target/distrib/$archive.tar.xz" -C unpacked "$archive"
-          (cd target/distrib && shasum -a 256 "$archive.tar.xz" > "$archive.tar.xz.sha256")
-          sh packaging/check-archive.sh "target/distrib/$archive.tar.xz" '${{ matrix.target }}' --notices
-          binary="$PWD/unpacked/$archive/hennery"
-          sh packaging/check-linkage.sh "$binary"
-          sh packaging/check-web-ui.sh "$binary"
-          "$binary" --version
-          cp target-manifest.json 'target/distrib/${{ matrix.target }}-dist-manifest.json'
-          python3 packaging/release/refresh_manifest.py 'target/distrib/${{ matrix.target }}-dist-manifest.json' "target/distrib/$archive.tar.xz"
-          cp release-materials/* target/distrib/
-          python3 - <<'PY' > target/distrib/builder.json
-          import json,os,platform,subprocess
-          print(json.dumps({'os':platform.platform(),'runner_image':os.environ.get('ImageVersion'),'rust':subprocess.check_output(['rustc','-vV'],text=True),'sdk':subprocess.getoutput('xcrun --show-sdk-version') if platform.system()=='Darwin' else subprocess.getoutput('ldd --version')}))
-          PY
+          sh packaging/release/native-archive.sh
       - name: Alpine executable and retained release image acceptance
         if: runner.os == 'Linux'
         env:
@@ -2913,6 +2988,7 @@ jobs:
           python3 packaging/harden-installer.py target/distrib/hennery-installer.sh
           sh packaging/test-installer.sh target/distrib
           sh packaging/check-formula.sh target/distrib
+          nix develop .#release -c python3 packaging/release/homebrew.py prepare target/distrib --tag "$RELEASE_TAG" --targets aarch64-apple-darwin,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
           git show HEAD:CHANGELOG.md > target/distrib/release-notes.md
           git archive --format=tar --prefix=hennery-source/ HEAD | xz > target/distrib/hennery-source.tar.xz
           case ",$RELEASE_CHANNELS," in
@@ -2939,7 +3015,7 @@ jobs:
   ghcr:
     name: ghcr
     needs: assemble
-    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -2962,6 +3038,7 @@ jobs:
           nix develop .#image -c sh packaging/test-image-registry.sh image-acceptance/layout
   installer:
     needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -2979,9 +3056,54 @@ jobs:
           path: candidate
       - name: Native installer positives and refusals
         run: sh packaging/test-installer.sh candidate
+  homebrew-native:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+          - runner: ubuntu-24.04
+          - runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Preserve successful native no-ops for unselected Homebrew
+        run: echo 'Native acceptance executes only for a selected Homebrew channel'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        with:
+          name: frozen-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - name: Real isolated tap install, smoke, upgrade and uninstall of frozen bytes
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        run: nix develop .#release -c python3 packaging/release/homebrew_accept.py candidate "$RUNNER_TEMP/homebrew-proof"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')
+        with:
+          name: homebrew-proof-${{ matrix.runner }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/homebrew-proof/result.json
+  homebrew:
+    name: homebrew
+    needs: [assemble, homebrew-native]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: All advertised native Homebrew platforms passed
+        run: echo 'Native local-tap acceptance passed on all three platforms'
   retain:
     needs: [assemble, installer, tag-signature, ghcr]
-    if: always() && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,')))
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,'))) }}
     environment: release-staging
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -3022,7 +3144,7 @@ jobs:
 - [x] Current complete source checked against tested bytes; initial replay is historical.
 - [ ] Parent scoped review and native Docker acceptance.
 
-Run all R4 contracts, all R1 release contracts, actionlint on every workflow and shellcheck on all seven relevant scripts. The production workflow checker must pass the whole repository. Six Rust checks and fresh replay/probes are recorded below.
+Run the R4, release and packaging suites, actionlint on every workflow, shellcheck on all ten relevant scripts, and production workflow policy including its DAG rule. Current amendment verification and COPY probes are recorded above; Rust and replay evidence below is historical.
 
 ### File: `packaging/tests/test_ghcr.py`
 
@@ -4396,7 +4518,7 @@ import sys
 CREDENTIAL_CONDITION = "vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256"
 # Channel -> owning YAML job ID. The literal API display name is the channel.
 # R4's name is reserved now; selection refuses until its owning job exists.
-CHANNEL_JOB_IDS = {'crates': 'crates', 'ghcr': 'ghcr'}
+CHANNEL_JOB_IDS = {'crates': 'crates', 'ghcr': 'ghcr', 'homebrew': 'homebrew'}
 
 
 def load_workflow(raw):
@@ -4451,8 +4573,40 @@ def candidate_channel_jobs(data):
     return {channel: owner for channel, owner in CHANNEL_JOB_IDS.items() if owner in jobs}
 
 
+def tap_credential(value):
+    return bool(re.search(r"secrets\s*(?:\.\s*release_homebrew_token|\[\s*['\"]release_homebrew_token['\"]\s*\])", str(value), re.I))
+
+
+def optional_job_status(data, name):
+    """Actions propagates skips through ancestors unless an explicit status is used.
+
+    Qualification DAGs may join an optional channel, then continue through
+    several unconditional jobs. Check every descendant, not only direct needs.
+    This lint does not prove the guard's result semantics; production guards
+    are also bound to the secret-free Actions scheduling regression.
+    """
+    jobs = data.get('jobs', {})
+    optional = {key for key, job in jobs.items() if 'if' in job}
+    descendants = set()
+    frontier = set(optional)
+    while frontier:
+        following = set()
+        for key, job in jobs.items():
+            needs = job.get('needs', [])
+            needs = [needs] if isinstance(needs, str) else needs
+            if key not in descendants and frontier.intersection(needs):
+                following.add(key)
+        descendants.update(following)
+        frontier = following
+    for key in sorted(descendants):
+        # A status-looking string literal is not an Actions status function.
+        condition = re.sub(r"'(?:[^']|'')*'|\"(?:[^\"\\]|\\.)*\"", '', str(jobs[key].get('if', '')))
+        if not re.search(r'(?<![\w.])(?:always|cancelled|failure|success)\s*\(', condition):
+            raise ValueError(f'{name}/{key}: optional job ancestor requires an explicit status condition')
+
+
 def privileged(job):
-    return any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
+    return tap_credential(job) or any(job.get('permissions', {}).get(scope) == 'write' for scope in ('contents', 'packages', 'attestations', 'id-token')) or any(
         s.get('uses', '').startswith(('actions/create-github-app-token@', 'rust-lang/crates-io-auth-action@')) or
         'publish.py upload' in s.get('run', '') or
         re.search(r'(?m)(?:^|[|;&])\s*(?:nix\s+develop\s+\S+\s+-c\s+)?(?:(?:ba)?sh\s+|python3\s+)?(?:packaging/ghcr-publish\.sh|packaging/ghcr-verify\.py\s+publish|docker\s+login)(?:\s|$)', s.get('run', ''))
@@ -4470,9 +4624,41 @@ def writer(name, job):
     return privileged(job) or (environment_name(job) == 'release' and name != 'authorize')
 
 
+def homebrew_writer(job):
+    """A tap secret is exposed only to the final, gated, exact-byte writer."""
+    if job.get('if') != CREDENTIAL_CONDITION + " && vars.RELEASE_HOMEBREW_ENABLED == 'true'":
+        raise ValueError('Homebrew needs its separate publication switch')
+    if job.get('needs') != ['github', 'authorize'] or job.get('permissions') != {'contents': 'read', 'actions': 'read'}:
+        raise ValueError('Homebrew must follow GitHub with a read-only ordinary token')
+    if tap_credential(job.get('env', {})):
+        raise ValueError('tap credential must not be job-scoped')
+    steps = job.get('steps', [])
+    def one(predicate):
+        positions = [i for i, step in enumerate(steps) if predicate(step)]
+        if len(positions) != 1:
+            raise ValueError('Homebrew requires one signature, byte check, boundary and credential step')
+        step = steps[positions[0]]
+        if step.get('if') is not None or step.get('continue-on-error') not in (None, False):
+            raise ValueError('Homebrew integrity and write steps must be unconditional and fatal')
+        return positions[0]
+    preflight = one(lambda s: s.get('with', {}).get('phase') == 'preflight')
+    signature = one(lambda s: 'verify.py --candidate' in s.get('run', ''))
+    integrity = one(lambda s: 'homebrew_publish.py --verify' in s.get('run', ''))
+    boundary = one(lambda s: s.get('with', {}).get('phase') == 'boundary')
+    credential = one(tap_credential)
+    if not preflight < signature < integrity < boundary < credential or credential != len(steps) - 1:
+        raise ValueError('Homebrew signature and fresh gates must precede the tap credential')
+    if 'homebrew_publish.py candidate' not in steps[credential].get('run', ''):
+        raise ValueError('tap credential may only reach the frozen formula writer')
+
+
 def check(data, name):
+    if tap_credential(data.get('env', {})):
+        raise ValueError('tap credential must not be workflow-scoped')
     if name == 'release-candidate.yml':
         candidate_channel_jobs(data)
+    if name in ('release-candidate.yml', 'release-scheduling.yml'):
+        optional_job_status(data, name)
     jobs = data.get('jobs', {})
     writers = [j for key, j in jobs.items() if writer(key, dict(j, permissions=j.get('permissions', data.get('permissions', {}))))]
     if writers:
@@ -4484,6 +4670,8 @@ def check(data, name):
         if proof != ['preflight']:
             raise ValueError('credential authorization must run the live preflight gate')
     for key, job in jobs.items():
+        if tap_credential(job) or (name == 'release-publish.yml' and key == 'homebrew'):
+            homebrew_writer(job)
         if 'uses' in job:
             raise ValueError(f'{name}/{key}: reusable jobs need explicit authority review; put the gate inside the protected callee')
         if not job.get('timeout-minutes'):
@@ -4542,7 +4730,7 @@ def check_repository(root):
         raise ValueError('candidate, publish and negative-test workflows required')
     for path in paths:
         data = load_workflow(path.read_text())
-        authority = any(privileged(dict(job, permissions=job.get('permissions', data.get('permissions', {}))))
+        authority = tap_credential(data.get('env', {})) or any(privileged(dict(job, permissions=job.get('permissions', data.get('permissions', {}))))
                         or environment_name(job) == 'release' or 'uses' in job for job in data.get('jobs', {}).values())
         # Read-only legacy qualification jobs retain their existing style.
         # Every writer/signer or reusable indirection is checked, whatever
@@ -4579,7 +4767,7 @@ class Workflows(unittest.TestCase):
         return yaml.safe_load((ROOT / '.github/workflows/release-candidate.yml').read_text())
 
     def test_reserved_channel_names_belong_only_to_their_job_ids(self):
-        for channel in ('crates','ghcr'):
+        for channel in ('crates','ghcr','homebrew'):
             data=self.candidate()
             data['jobs'].pop(channel,None)
             data['jobs']['licence-review']={'name':channel,'timeout-minutes':5,'steps':[{'run':'exit 1'}]}
@@ -4599,7 +4787,7 @@ class Workflows(unittest.TestCase):
                 workflow_policy.check({'jobs':jobs},'release-candidate.yml')
 
     def test_channel_owner_has_literal_own_name_and_no_matrix(self):
-        for channel in ('crates','ghcr'):
+        for channel in ('crates','ghcr','homebrew'):
             for changed in ({},{'name':channel}):
                 data=self.candidate()
                 data['jobs'][channel]={'timeout-minutes':5,'steps':[{'run':'true'}],**changed}
@@ -5453,6 +5641,82 @@ jobs:
           test "$AUTH_INVENTORY" = "$INVENTORY_SHA256"
           printf '%s\n' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+  homebrew:
+    needs: [github, authorize]
+    if: vars.RELEASE_PUBLICATION_ENABLED == 'true' && github.ref == format('refs/tags/{0}', inputs.tag) && needs.authorize.outputs.run_attempt == github.run_attempt && needs.authorize.outputs.inventory_sha256 == inputs.inventory_sha256 && vars.RELEASE_HOMEBREW_ENABLED == 'true'
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    env:
+      RELEASE_AUDIT_BUCKET: ${{ vars.RELEASE_AUDIT_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_AUDIT_WRITE_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_AUDIT_WRITE_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Fetch the complete exact held candidate; never rebuild during publication
+        env:
+          RELEASE_BUCKET: ${{ vars.RELEASE_CANDIDATE_BUCKET }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          RECEIPT_VERSION: ${{ inputs.retention_receipt_version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_CANDIDATE_READ_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_CANDIDATE_READ_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_CANDIDATE_REGION }}
+        run: |
+          nix develop .#release -c aws s3api get-object --bucket "$RELEASE_BUCKET" --key "candidates/$INVENTORY/retention-receipt.json" --version-id "$RECEIPT_VERSION" retention-receipt.json
+          nix develop .#release -c python3 packaging/release/retention.py fetch --candidate candidate --inventory-sha256 "$INVENTORY" --receipt retention-receipt.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signatures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: signatures
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: homebrew
+          phase: preflight
+          receipt: homebrew-preflight.json
+      - name: Verify maintainer approval and exact tagged Sigstore provenance before credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          nix develop .#release -c python3 packaging/release/verify.py --candidate candidate --tag "$TAG" --source-sha "$SOURCE_SHA" --bundle signatures/release.sigstore.jsonl --approval-signature signatures/release-inventory.json.asc
+      - name: Verify frozen formula and public immutable release before tap credential
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+        run: nix develop .#release -c python3 packaging/release/homebrew_publish.py --verify candidate "$INVENTORY"
+      - uses: ./.github/actions/release-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          candidate: candidate
+          inventory-sha256: ${{ inputs.inventory_sha256 }}
+          channel: homebrew
+          phase: boundary
+          receipt: homebrew-boundary.json
+      - name: Publish exact formula bytes with atomic conflict detection
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INVENTORY: ${{ inputs.inventory_sha256 }}
+          RELEASE_PUBLICATION_ENABLED: ${{ vars.RELEASE_PUBLICATION_ENABLED }}
+          RELEASE_HOMEBREW_ENABLED: ${{ vars.RELEASE_HOMEBREW_ENABLED }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.RELEASE_HOMEBREW_TOKEN }}
+        run: nix develop .#release -c python3 packaging/release/homebrew_publish.py candidate "$INVENTORY"
 ~~~~
 
 ### File: `packaging/images.md`
@@ -5958,7 +6222,16 @@ These need the operator's decision, credentials, or both. None is set up:
 
 ---
 
-_Generated with Claude AI — please review before distribution._
+## Homebrew (R2)
+
+The generated formula is hardened with version, embedded-UI and notice checks
+before R1 freezes it. The secret-free native proof and the release candidate
+exercise a scratch file-based tap; a protected manual publisher writes only the
+signed frozen formula after GitHub's immutable release bytes match. The channel
+and global publication switches remain disabled. See the [operator guide](../docs/homebrew.md)
+and [maintainer setup](../docs/release-process.md#homebrew-channel-setup-r2).
+
+Generated with Claude AI — please review before distribution.
 ~~~~
 
 ### File: `docs/README.md`
@@ -5997,6 +6270,8 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [Spike: per-session MCP over ACP](spikes/2026-09-25-per-session-mcp.md)
      and its [harness](../spikes/2026-09-25-mcp-per-session/).
 4. Plans:
+   - [List-stream and MCP timing (flakes 13–14)](plans/2026-11-02-flake-list-stream.md) — paused-clock deletion checks and an awaited OAuth popup cleanup assertion, with controlled regressions, guard probes, load and replay evidence. Independent review and Linux/macOS CI remain parent-owned.
+   - [Proxy fixture port lifetimes (flake 15)](plans/2026-11-03-flake-proxy-ports.md) — leases stable proxy ports across pauses and test processes outside the kernel ephemeral ranges; deterministic contention regressions, copy probes, load and replay evidence recorded. Parent review and Linux/macOS CI remain pending.
    - [Walking skeleton](plans/2026-09-26-walking-skeleton.md) — the first
      implementation plan (9 tasks) — executed 2026-09-27; its "Execution status" section
      lists where the built code deviates from the task text.
@@ -6079,6 +6354,8 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [The agent's transcript on its host, Codex (9d-ii)](plans/2026-10-20-codex-transcripts.md) — the last part of plan 9 (4 tasks; operator delegated, parent decided 2026-10-02): the host runs the bundled `codex app-server` against the session's recorded `CODEX_HOME` only, checks `initialize`'s `codexHome`, calls `thread/delete` and checks afterwards; when the app-server cannot be used (or timed out three times in a row) codex-acp archives and the host removes the rollouts through the descriptor walk, reporting that copies may remain in Codex's database; the call shape is pinned per Codex version in the manifest, checked by `hennery-pins` and re-read at every pin bump. Amended after the security review of 2026-10-02 and its re-confirmation; executed 2026-10-02 (see its "Execution status").
    - [Delete and purge: the design record (plan 9)](plans/2026-10-21-delete-and-purge-design-record.md) — why plan 9 was built as it was: the decisions and the security reviews' amendments for 9a–9c and 9d, the operator's delegated decisions (the parent, 2026-10-02), and the evidence on Claude's and Codex's own session storage (claude-agent-acp 0.81.0, codex-acp 1.13.0, Codex 0.155.1) to re-read at a pin bump.
    - [Generic plug-in contract (C1)](plans/2026-10-26-plugin-contract.md) — generic owner/hat registration, completed activity with typed provenance, exposure bindings and durable deletion lifecycle; built first and replayed on merged design main (40 blocks, exact tree match). The PR #140 flake investigation fixed writer-registry identity lifetime test-first and rebased onto W1 main `26cc3cca`; current verification and historical replay are distinguished in its execution record. Parent re-review and Linux/macOS CI remain pending.
+   - [Plug-in inventory paging (C1b)](plans/2026-11-01-plugin-inventory-paging.md) — independent 500-id/128-KiB inventory pages, renewable 60-second idle expiry and a fixed 20-minute snapshot lifetime; completed activity remains capped at 20 items. A real HTTP 10,000-source reset takes 20 pages within the unchanged shared budgets. Built first, replayed from merged C2 with all 790 tracked files matching, and all 23 removal probes detected after strengthening cursor/envelope coverage. All six Rust checks passed (2,383 tests), and native Nix passed. Independent review and Linux/macOS PR CI remain parent-owned.
+   - [Reference memory service (memory R1)](plans/2026-11-01-recall-service.md) — opt-in `hennery-memory`, with separate storage/auth, scoped SQLite FTS and four bounded MCP tools; deterministic C1 notes without a model, renewed leases, deletion fences, suppression and honest purge receipts. Built on C1b; the execution record carries mounted live proof, copied guard probes, timing load and the single fresh replay. Independent review and Linux/macOS PR CI remain parent-owned. Review amendment: bounded cursor-committed deduplication and linear, chunked inventory reconciliation correct both Medium findings; targeted checks, Nix, timing load and copy probes passed. Parent re-review APPROVE at `b2ca6147`; memory source/tests unchanged after the D4/C1b rebase. All six Rust gates, targeted memory tests and Nix passed; current-head CI/full PR status remain parent-owned.
    - [Plug-in startup context (C2)](plans/2026-10-30-plugin-startup.md) — scoped opt-in context in a new session's first operator prompt, typed provenance and separate display, bounded failures and lifecycle fences. Security re-review approved at `b1f9b402`; rebased onto D2/P2 main `a58479c7` with both command/config/close fences preserved. Final six Rust checks passed (2,374 tests), web gate passed (1,823 tests), Nix flake check passed, fresh integration replay matched 790 files, four copy probes caught and 516 loaded test executions passed. Post-rebase delta review and Linux/macOS PR CI remain parent-owned.
 
    - [WSS transport and diagnostics (W1)](plans/2026-10-26-wss-transport.md) — merged as #139; verified HTTPS/WSS transport, private-CA trust, durable enrollment recovery, migration and diagnostics. Its record preserves the build/review history; public real-adapter/MCP acceptance is carried into W2.
@@ -6086,9 +6363,14 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [Proxy attribution and public deployment (W2)](plans/2026-10-27-wss-proxy.md) — built and replayed on `256691fe`: exact trusted peers across all limiter charges/clears, executed proxy/HTTPS README recipes and W1 recovery gates. PR #147 maintainer-delegated review returned APPROVE AFTER AMENDMENTS; its one request-cap coverage Minor is implemented, removal-probed and locally checked. Scoped re-confirmation, Linux/macOS CI and live public-adapter/MCP acceptance remain pending.
    - [Session-bound MCP and family identity (D1)](plans/2026-10-27-delegation-mcp.md) — collector-local opt-in MCP delivery, generation-bound grants, shared identity and immutable scoped family storage; built first, exact fresh replay and guard/load evidence recorded. Actual pinned Claude/Codex discovery passed. Maintainer-delegated review returned APPROVE; its one cycle-fixture Minor is corrected and independently probed. Linux/macOS CI remains parent-owned; tools, durable delivery and UI follow in D2–D4.
    - [Delegation tools, catalog and configuration (D2)](plans/2026-10-29-delegation-tools.md) — seven scoped tools, host catalogs and fenced owned-child commands; ordinary elicitation only, one generation. Amendments are CONFIRMED and the Nix SQL-source fix is approved. Rebased onto P2 at cdcd0cb8, preserving both implementations and all owner-audit cases. All six Rust checks (2,339 tests) and native Nix flake checks passed. Historical replay/load evidence remains in the plan; PR #149 and Linux CI remain parent-owned. D3–D4 follow.
+   - [Durable delegation delivery (D3a)](plans/2026-10-31-delegation-delivery.md) — transactional notices and automatic parent question/answer/report delivery. Rebased onto merged C2 7fe43fbe, retaining startup context/fences and both provenance guards; a test-first ChildReport transcript fix and four cloned-copy probes passed. Draft PR #151 review amendments coalesce the actual host crash sequence, preserve strict C1 provenance after source deletion in both directions, and protect out-of-turn question projections. All six Rust gates (2,369 tests), native Nix checks, 12 amendment copy probes, 4×3 load and exact fresh amendment replay (five files; 781 tracked files compared) passed. Re-review and CI remain parent-owned; D3b attention/push and D4 family UI/live acceptance block ordinary release.
+   - [Delegation attention and operator fallback (D3b)](plans/2026-11-01-delegation-attention.md) — durable deadlines, operator attention/rearm, reconciled push and delete/reassign fences. Four review findings fixed test-first: atomic fallback after cancelled parent answers, host-independent reconciliation, deletion-safe crash tombstones and schema-19 orphan-question backfill. Six Rust gates (2,443 tests), native Nix, eleven cloned-copy guard probes and the new timing test at 4×3 passed. No amendment replay under the verification budget. D3a/C2 implementation untouched; independent re-review/CI and D4 UI/live acceptance remain parent-owned, with preview gating enabled.
+   - [Delegation families and live acceptance (D4)](plans/2026-11-02-delegation-families.md) — scoped family API and panel, factual attention counts, status acknowledgement, explicit takeover, typed parent/report authorship, durable SSE invalidation and phone card-open integration. Includes the real pinned Codex transport-metadata regression and an opt-in provider harness. Built first; the first review’s three P2 stream/version/scope findings are fixed test-first. The amendment passed all six Rust gates (2,466 tests), native Nix, the web gate (1,862 tests), cloned-copy probes and load checks; re-review remains pending. Verification and live acceptance are recorded in the plan. Ordinary release remains gated until the full live matrix passes; independent review and CI remain parent-owned.
 
    - [Release foundation (R1)](plans/2026-10-28-release-foundation.md) — hardware-backed inventory approval plus the executed verify-then-run README bootstrap, re-confirmed by the parent. The Linux CI tool-directory collision is repaired with duplicate-name/conflict regressions. Rebased onto W2 at `e36e66c8`; post-rebase checks, COPY probes and fresh replay evidence are recorded in the plan. PR #145 awaits review and CI; maintainer-only setup remains and publication is disabled.
-   - [GHCR collector image (R4)](plans/2026-10-28-ghcr-image.md) — rebased onto R3 main `cbd002b0`; literal `ghcr` aggregate matches the reserved job-ID registry, qualifies frozen OCI/index bytes through loopback and gates retention. Shared channel-aware gate keeps GitHub-only skips valid while selected GHCR requires success. Both credential detectors, signed selection and pre-publication bundle verification remain. Current targeted checks, six Rust checks and native Nix evidence are recorded in the plan; no full amendment replay under the verification budget. Draft #143 CI and scoped re-review remain parent-owned. Nothing published.
+   - [GHCR collector image (R4)](plans/2026-10-28-ghcr-image.md) — rebased onto Homebrew main `10abd28f`, preserving both registered channels and native proofs. GHCR and retention use explicit status guards; a secret-free Actions regression covers selected GHCR and retention after skipped GHCR/crates. R4, release and packaging suites plus DAG policy/lint passed; 13 COPY probes caught. No Rust changes or full reruns. Draft #143 Docker/scheduling CI and scoped re-review remain parent-owned. Nothing published.
+
+   - [Homebrew tap (R2)](plans/2026-11-02-homebrew-tap.md) — frozen cargo-dist formula, secret-free native local-tap install/upgrade/uninstall CI on macOS arm64 and both Linux architectures, registered owning channel, protected signed-inventory publisher, and service/PATH guidance. Local macOS 27/CLT 26.6 refusal is retained without bypass; the parent owns native CI acceptance and independent review. Publication remains disabled.
 
    - [Crates.io and cargo-binstall (R3)](plans/2026-10-28-crates-io.md) — seven package-local production crates and signed R1 gates; rebased onto C2/D2 main 7fe43fbe. Fresh tarball acceptance found and fixed Cargo basename include collisions at 1dc57fe4, with real Cargo regression, test-harness refusal and production feature auditing. All seven dry runs/offline builds, locked/unlocked registry installs, UI/browser checks and Rust 1.88 pass on the new candidate. All six Rust checks pass (2376 passed, one unchanged pinned-adapter test ignored); release129, packaging82, actionlint and native full Nix checks pass. Four RED regressions, exact-tree fresh replay and ten COPY probes are recorded. Opt-in hook source is retained, disabled in production. Native binstall and both publication switches remain off; R4 now supplies the registered GHCR aggregate; see its rebase record. Scoped parent review, current PR #144 status and maintainer-only setup remain.
 
@@ -6113,6 +6395,277 @@ Every open design decision is resolved; the specs carry the details.
 ---
 
 _Generated with Claude AI — please review before distribution._
+~~~~
+
+### File: `.github/workflows/release-scheduling.yml`
+
+~~~~yaml
+name: release-scheduling
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'packaging/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'packaging/**'
+  workflow_dispatch:
+    inputs:
+      channels:
+        description: Both selections omit the optional crates channel
+        type: choice
+        options: [github, 'github,homebrew']
+        default: github
+permissions: {}
+jobs:
+  # Exercise the real Actions skipped-ancestor scheduler (actions/runner#2205).
+  # Tests bind these guards to release-candidate.yml; no release artifacts,
+  # protected environments, actions, credentials or publication are involved.
+  crates:
+    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',crates,')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: exit 1
+  archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  tag-signature:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  assemble:
+    needs: [archive, crates]
+    if: always() && needs.archive.result == 'success' && (needs.crates.result == 'success' || needs.crates.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  installer:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  homebrew-native:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        channels: [github, 'github,homebrew']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Both channel selections must reach the native job
+        run: echo 'Explicit status permits the skipped optional ancestor'
+      - name: Selected acceptance stand-in
+        if: contains(format(',{0},', matrix.channels), ',homebrew,')
+        run: echo 'Selected Homebrew acceptance reached'
+  homebrew:
+    needs: [assemble, homebrew-native]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', 'github,homebrew'), ',homebrew,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  homebrew-unselected:
+    needs: [assemble, homebrew-native]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', 'github'), ',homebrew,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: exit 1
+  ghcr:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: exit 1
+  ghcr-selected:
+    needs: assemble
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(format(',{0},', 'github,ghcr'), ',ghcr,') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  retain:
+    needs: [assemble, installer, tag-signature, ghcr]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && true && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,'))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: 'true'
+  assert-scheduling:
+    needs: [crates, archive, tag-signature, assemble, installer, homebrew-native, homebrew, homebrew-unselected, ghcr, ghcr-selected, retain]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Fail if any expected acceptance or no-op was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          expected = {
+              'crates': 'skipped', 'archive': 'success', 'tag-signature': 'success',
+              'assemble': 'success', 'installer': 'success', 'homebrew-native': 'success',
+              'homebrew': 'success', 'homebrew-unselected': 'skipped', 'retain': 'success',
+              'ghcr': 'skipped', 'ghcr-selected': 'success',
+          }
+          actual = {key: value['result'] for key, value in json.loads(os.environ['RESULTS']).items()}
+          if actual != expected:
+              raise SystemExit(f'Scheduling regression: expected {expected}, got {actual}')
+          print('Skipped optional crates and GHCR: selected/unselected channel descendants passed')
+          PY
+~~~~
+
+### File: `packaging/release/test_optional_scheduling.py`
+
+~~~~python
+"""Skipped optional ancestors must not suppress candidate acceptance descendants."""
+import copy
+import json
+import os
+from pathlib import Path
+import subprocess
+import shlex
+import unittest
+
+import workflow_policy
+
+ROOT = Path(__file__).resolve().parents[2]
+NATIVE = "${{ !cancelled() && needs.assemble.result == 'success' }}"
+SELECT = "contains(format(',{0},', github.event.inputs.channels || 'github'), ',homebrew,')"
+AGGREGATE = "${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && " + SELECT + " }}"
+GHCR_SELECT = SELECT.replace(',homebrew,', ',ghcr,')
+GHCR = "${{ !cancelled() && needs.assemble.result == 'success' && " + GHCR_SELECT + " }}"
+RETAIN = "${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true' && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !" + GHCR_SELECT + ")) }}"
+
+
+def workflow(name):
+    return workflow_policy.load_workflow((ROOT / '.github/workflows' / name).read_text())
+
+
+class OptionalScheduling(unittest.TestCase):
+    def test_ci_actionlint_covers_every_release_workflow(self):
+        steps = workflow('release-tests.yml')['jobs']['refusal-tests']['steps']
+        command = next(step['run'] for step in steps if step.get('name') == 'Actionlint')
+        words = shlex.split(command)
+        patterns = words[words.index('actionlint') + 1:]
+        checked = {path for pattern in patterns for path in ROOT.glob(pattern)}
+        self.assertLessEqual(set((ROOT / '.github/workflows').glob('release-*.yml')), checked)
+
+    def test_native_installer_aggregate_and_retention_have_explicit_safe_conditions(self):
+        jobs = workflow('release-candidate.yml')['jobs']
+        for name, expected in (('homebrew-native', NATIVE), ('installer', NATIVE),
+                               ('homebrew', AGGREGATE), ('ghcr', GHCR), ('retain', RETAIN)):
+            with self.subTest(job=name):
+                self.assertEqual(jobs[name].get('if'), expected)
+
+    def test_policy_refuses_missing_or_implicit_status_on_transitive_descendants(self):
+        original = workflow('release-candidate.yml')
+        for name in ('assemble', 'installer', 'homebrew-native', 'homebrew', 'ghcr', 'retain'):
+            for condition in (None, "needs.assemble.result == 'success'", "contains('success()', 'success')"):
+                data = copy.deepcopy(original)
+                if condition is None:
+                    data['jobs'][name].pop('if', None)
+                else:
+                    data['jobs'][name]['if'] = condition
+                with self.subTest(job=name, condition=condition), self.assertRaisesRegex(ValueError, 'optional.*status'):
+                    workflow_policy.check(data, 'release-candidate.yml')
+
+    def test_policy_walks_new_optional_jobs_and_multiple_ancestor_hops(self):
+        data = workflow('release-candidate.yml')
+        data['jobs']['future-channel'] = {'if': "inputs.channels == 'future'", 'timeout-minutes': 1,
+                                         'steps': [{'run': 'true'}]}
+        data['jobs']['join'] = {'needs': ['archive', 'future-channel'], 'if': 'always()',
+                               'timeout-minutes': 1, 'steps': [{'run': 'true'}]}
+        data['jobs']['middle'] = {'needs': 'join', 'timeout-minutes': 1, 'steps': [{'run': 'true'}]}
+        data['jobs']['later'] = {'needs': 'middle', 'timeout-minutes': 1, 'steps': [{'run': 'true'}]}
+        with self.assertRaisesRegex(ValueError, 'later.*optional.*status'):
+            workflow_policy.check(data, 'release-candidate.yml')
+        data['jobs']['middle']['if'] = "!cancelled() && needs.join.result == 'success'"
+        data['jobs']['later']['if'] = "!cancelled() && needs.middle.result == 'success'"
+        workflow_policy.check(data, 'release-candidate.yml')
+
+    def test_nonoptional_ancestors_keep_implicit_success(self):
+        data = {'jobs': {'build': {'timeout-minutes': 1, 'steps': [{'run': 'true'}]},
+                         'test': {'needs': 'build', 'timeout-minutes': 1, 'steps': [{'run': 'true'}]}}}
+        workflow_policy.check(data, 'release-candidate.yml')
+
+    def test_secret_free_actions_regression_uses_production_guards(self):
+        data = workflow('release-scheduling.yml')
+        trigger = data.get('on', data.get(True))
+        self.assertIn('pull_request', trigger)
+        self.assertEqual(trigger['workflow_dispatch']['inputs']['channels']['options'], ['github', 'github,homebrew'])
+        self.assertEqual(data['permissions'], {})
+        self.assertNotIn('secrets.', str(data))
+        jobs = data['jobs']
+        self.assertEqual(jobs['crates']['if'], workflow('release-candidate.yml')['jobs']['crates']['if'])
+        self.assertEqual(jobs['assemble']['if'], workflow('release-candidate.yml')['jobs']['assemble']['if'])
+        for name in ('homebrew-native', 'installer'):
+            self.assertEqual(jobs[name]['if'], NATIVE)
+        self.assertEqual(jobs['homebrew-native']['strategy']['matrix']['channels'], ['github', 'github,homebrew'])
+        native_steps = jobs['homebrew-native']['steps']
+        self.assertNotIn('if', native_steps[0])
+        self.assertEqual(native_steps[1]['if'], SELECT.replace("github.event.inputs.channels || 'github'", 'matrix.channels'))
+        for name, channels in (('homebrew', 'github,homebrew'), ('homebrew-unselected', 'github')):
+            self.assertEqual(jobs[name]['if'], AGGREGATE.replace("github.event.inputs.channels || 'github'", repr(channels)))
+        self.assertEqual(jobs['retain']['if'], RETAIN.replace("vars.RELEASE_CANDIDATE_STORAGE_ENABLED == 'true'", 'true'))
+        self.assertEqual(jobs['ghcr']['if'], GHCR)
+        self.assertEqual(jobs['ghcr-selected']['if'], GHCR.replace("github.event.inputs.channels || 'github'", "'github,ghcr'"))
+        self.assertIn('ghcr', jobs['retain']['needs'])
+        assertion = jobs['assert-scheduling']
+        self.assertEqual(assertion['if'], 'always()')
+        self.assertEqual(set(assertion['needs']), set(jobs) - {'assert-scheduling'})
+        run = assertion['steps'][0]['run']
+        self.assertIn("'crates': 'skipped'", run)
+        self.assertIn("'homebrew-unselected': 'skipped'", run)
+        self.assertIn("'ghcr': 'skipped'", run)
+        for name in ('assemble', 'homebrew-native', 'installer', 'homebrew', 'ghcr-selected', 'retain'):
+            self.assertIn(repr(name) + ": 'success'", run)
+        workflow_policy.check(data, 'release-scheduling.yml')
+
+    def test_execute_exact_actions_assertion_accepts_only_expected_job_results(self):
+        job = workflow('release-scheduling.yml')['jobs']['assert-scheduling']
+        script = job['steps'][0]['run']
+        expected = {key: {'result': 'skipped' if key in ('crates', 'homebrew-unselected', 'ghcr') else 'success'}
+                    for key in job['needs']}
+        result = subprocess.run(['bash', '-eu', '-c', script], env=dict(os.environ, RESULTS=json.dumps(expected)),
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in expected:
+            for status in ('skipped', 'failure', 'cancelled', 'success'):
+                if status == expected[name]['result']:
+                    continue
+                changed = copy.deepcopy(expected)
+                changed[name]['result'] = status
+                result = subprocess.run(['bash', '-eu', '-c', script],
+                                        env=dict(os.environ, RESULTS=json.dumps(changed)),
+                                        capture_output=True, text=True, check=False)
+                with self.subTest(job=name, status=status):
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('Scheduling regression:', result.stderr)
+
+    def test_regression_workflow_is_also_subject_to_optional_dag_policy(self):
+        data = workflow('release-scheduling.yml')
+        data['jobs']['installer'].pop('if')
+        with self.assertRaisesRegex(ValueError, 'installer.*optional.*status'):
+            workflow_policy.check(data, 'release-scheduling.yml')
+
+
+if __name__ == '__main__':
+    unittest.main()
 ~~~~
 
 ## Earlier scoped review amendments (2026-10-15, historical)
@@ -6212,9 +6765,10 @@ full retry passed. No Rust/web source change or test/type/rule weakening occurre
 
 ## After this plan
 
-- Parent scoped review of the **`62ad3c00..R4 head` R3 integration / finding 4**, with full branch
-  based on **`cbd002b0`**. Inspect new shared membership/classifier changes,
-  protected credential selection, pre-publication candidate/OCI Sigstore checks, exact held bytes, every boundary and retries. Finding 4 is now integrated; review its registered aggregate, retention dependencies and shared data qualification.
+- Parent scoped review of **`636631e7..R4 head` Homebrew-rebase status guards**;
+  full lease/rebase audit **`9121ad14..R4 head`**, based on **`10abd28f`**.
+  Inspect both registered lanes, native proofs, explicit descendant status
+  guards and unchanged credential/signature boundaries.
 - Parent watches draft **#143** native Docker proof and reads checks,
   reviewDecision, mergeStateStatus and unresolved human/bot threads. Local Docker
   is unavailable; no real publication/login or live settings acceptance was run.
