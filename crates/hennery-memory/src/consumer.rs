@@ -71,6 +71,8 @@ pub(crate) enum ResetPhase {
     ImportVerified,
     ManagedCommit,
     ManagedCheckpoint,
+    CleanupCheckpoint,
+    CleanupConfirmed,
 }
 #[cfg(test)]
 pub(crate) type ResetHook = Arc<dyn Fn(ResetPhase) + Send + Sync>;
@@ -895,13 +897,14 @@ impl Store {
             [id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
+        let cleanup_pending = inner.cleanup_pending(id)?;
         let lease = inner
             .leases
             .get(id)
             .filter(|(end, unix)| *end > Instant::now() && *unix > unix_now())
             .map(|(_, unix)| *unix);
         Ok(
-            serde_json::json!({"state":state,"registered":registered,"writes":writes,"lease_until":lease,"stale":inner.stale(id)||registered&&lease.is_none(),"erasure_confirmed":confirmed}),
+            serde_json::json!({"state":state,"registered":registered,"writes":writes,"lease_until":lease,"stale":cleanup_pending||inner.stale(id)||registered&&lease.is_none(),"erasure_confirmed":confirmed,"cleanup_pending":cleanup_pending}),
         )
     }
     pub fn lifecycle_active(&self, token: &str) -> Result<()> {
@@ -922,6 +925,7 @@ impl Inner {
     }
     fn lease(&mut self, job: &Job, start: Instant, until: i64) -> Result<()> {
         ensure!(!self.writing.contains(&job.id), "reset in progress");
+        ensure!(!self.cleanup_pending(&job.id)?, "storage cleanup pending");
         let end = check_lease(start, until)?;
         self.leases.insert(job.id.clone(), (end, until));
         self.stale.remove(&job.id);
@@ -1205,6 +1209,428 @@ pub async fn worker(store: Arc<Store>, key: Arc<MasterKey>) {
 #[cfg(test)]
 mod reset_tests {
     use super::*;
+
+    #[test]
+    fn cleanup_recovery_io_keeps_its_namespace_fenced_and_foreign_reads_live() {
+        use crate::management::NewMemory;
+        use std::sync::{Mutex, mpsc};
+        for phase in [ResetPhase::CleanupCheckpoint, ResetPhase::CleanupConfirmed] {
+            let (dir, store, _attached, _key) = fixture();
+            let c = store.create("owner", "standalone").unwrap();
+            let foreign = store.create("other", "hat").unwrap();
+            let manager = store.filesystem_manager("owner").unwrap();
+            let entry = store
+                .managed_create(
+                    &manager,
+                    &c.namespace,
+                    NewMemory {
+                        title: "reference".into(),
+                        body: "recovery I/O marker".into(),
+                    },
+                )
+                .unwrap();
+            let reader = hennery_kernel::db::open(&dir.path().join("memory.db")).unwrap();
+            reader.execute_batch("BEGIN").unwrap();
+            let _: i64 = reader
+                .query_row("SELECT count(*) FROM entries WHERE namespace=?1", [&c.namespace], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert!(
+                store
+                    .managed_delete(&manager, &c.namespace, &entry.id, entry.revision)
+                    .is_err()
+            );
+            reader.execute_batch("ROLLBACK").unwrap();
+            let (arrived_tx, arrived_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let release_rx = Mutex::new(release_rx);
+            *store.reset_hook.lock().unwrap() = Some(Arc::new(move |at| {
+                if at == phase {
+                    arrived_tx.send(()).unwrap();
+                    release_rx
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(20))
+                        .unwrap();
+                }
+            }));
+            let recovering = store.clone();
+            let recovery = std::thread::spawn(move || recovering.recover_cleanup());
+            arrived_rx.recv_timeout(Duration::from_secs(20)).unwrap();
+            let checking = store.clone();
+            let manager_check = manager.clone();
+            let namespace = c.namespace.clone();
+            let own = c.tool.clone();
+            let (read_tx, read_rx) = mpsc::channel();
+            let reading = std::thread::spawn(move || {
+                checking.available(&foreign.tool, false).unwrap();
+                assert!(checking.available(&own, false).is_err());
+                assert!(checking.managed_snapshot(&manager_check, &namespace).is_err());
+                read_tx.send(()).unwrap();
+            });
+            let interleaved = read_rx.recv_timeout(Duration::from_secs(5));
+            release_tx.send(()).unwrap();
+            recovery.join().unwrap().unwrap();
+            reading.join().unwrap();
+            assert!(interleaved.is_ok(), "recovery {phase:?} held the shared mutex");
+            assert_cleanup_recovered(&dir, &store, &c, &manager, "recovery I/O marker");
+        }
+    }
+
+    fn assert_cleanup_recovered(
+        dir: &tempfile::TempDir,
+        store: &Store,
+        c: &crate::store::Credentials,
+        manager: &crate::management::Manager,
+        marker: &str,
+    ) {
+        assert_eq!(store.status(&c.namespace).unwrap()["cleanup_pending"], false);
+        let snapshot = store.managed_snapshot(manager, &c.namespace).unwrap();
+        assert!(snapshot.entries.is_empty());
+        store
+            .managed_deliverable(manager, &c.namespace, snapshot.generation)
+            .unwrap();
+        store.available(&c.tool, false).unwrap();
+        for name in ["memory.db", "memory.db-wal"] {
+            if let Ok(bytes) = std::fs::read(dir.path().join(name)) {
+                assert!(
+                    !bytes.windows(marker.len()).any(|w| w == marker.as_bytes()),
+                    "erased marker remains in {name}"
+                );
+            }
+        }
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cleanup_worker_retries_panics_and_busy_checkpoints_without_a_feed() {
+        use crate::management::NewMemory;
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("memory.db")).unwrap();
+        assert!(!store.has_feed_credentials().unwrap());
+        let c = store.create("owner", "standalone").unwrap();
+        let manager = store.filesystem_manager("owner").unwrap();
+        let entry = store
+            .managed_create(
+                &manager,
+                &c.namespace,
+                NewMemory {
+                    title: "reference".into(),
+                    body: "worker cleanup marker".into(),
+                },
+            )
+            .unwrap();
+        let reader = hennery_kernel::db::open(&dir.path().join("memory.db")).unwrap();
+        reader.execute_batch("BEGIN").unwrap();
+        let _: i64 = reader
+            .query_row("SELECT count(*) FROM entries WHERE namespace=?1", [&c.namespace], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(
+            store
+                .managed_delete(&manager, &c.namespace, &entry.id, entry.revision)
+                .is_err()
+        );
+        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let attempts = AtomicUsize::new(0);
+        *store.reset_hook.lock().unwrap() = Some(Arc::new(move |at| {
+            if at == ResetPhase::CleanupCheckpoint {
+                let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                let _ = attempt_tx.send(attempt);
+                if attempt == 0 {
+                    panic!("synthetic recovery unwind");
+                }
+            }
+        }));
+        let worker = tokio::spawn(crate::management::cleanup_worker(store.clone()));
+        tokio::task::spawn_blocking(move || {
+            assert_eq!(attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap(), 0);
+            assert_eq!(attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap(), 1);
+            // A third attempt proves the second returned busy while the
+            // reader was still pinned, rather than succeeding after release.
+            assert_eq!(attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap(), 2);
+        })
+        .await
+        .unwrap();
+        assert!(store.available(&c.tool, false).is_err());
+        assert!(store.managed_snapshot(&manager, &c.namespace).is_err());
+        reader.execute_batch("ROLLBACK").unwrap();
+        *store.reset_hook.lock().unwrap() = None;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if store.status(&c.namespace).unwrap()["cleanup_pending"] == false {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        worker.abort();
+        let _ = worker.await;
+        assert!(!store.projection_writer.is_poisoned());
+        assert_cleanup_recovered(&dir, &store, &c, &manager, "worker cleanup marker");
+    }
+    #[test]
+    fn precommit_unwind_rolls_back_cleanup_fence_and_keeps_the_old_entry() {
+        use crate::management::NewMemory;
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let (_dir, store, c, key) = fixture();
+        let manager = store.filesystem_manager("owner").unwrap();
+        let job = store.job(&key, &c.namespace).unwrap();
+        store.renew(&job, Instant::now(), unix_now() + 60).unwrap();
+        let entry = store
+            .managed_create(
+                &manager,
+                &c.namespace,
+                NewMemory {
+                    title: "reference".into(),
+                    body: "still retained".into(),
+                },
+            )
+            .unwrap();
+        *store.reset_hook.lock().unwrap() = Some(Arc::new(|at| {
+            if at == ResetPhase::ManagedCommit {
+                panic!("before deletion commit");
+            }
+        }));
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| store.managed_delete(
+                &manager,
+                &c.namespace,
+                &entry.id,
+                entry.revision
+            )))
+            .is_err()
+        );
+        *store.reset_hook.lock().unwrap() = None;
+        assert_eq!(store.status(&c.namespace).unwrap()["cleanup_pending"], false);
+        assert_eq!(
+            store.managed_entry(&manager, &c.namespace, &entry.id).unwrap().body,
+            "still retained"
+        );
+        store.available(&c.tool, false).unwrap();
+        store
+            .managed_delete(&manager, &c.namespace, &entry.id, entry.revision)
+            .unwrap();
+        assert!(!store.projection_writer.is_poisoned());
+    }
+    #[test]
+    fn cleanup_confirmation_unwind_stays_fenced_until_a_retry() {
+        use crate::management::NewMemory;
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let (dir, store, _attached, _key) = fixture();
+        let c = store.create("owner", "standalone").unwrap();
+        let manager = store.filesystem_manager("owner").unwrap();
+        let entry = store
+            .managed_create(
+                &manager,
+                &c.namespace,
+                NewMemory {
+                    title: "reference".into(),
+                    body: "confirmation cleanup marker".into(),
+                },
+            )
+            .unwrap();
+        *store.reset_hook.lock().unwrap() = Some(Arc::new(|at| {
+            if at == ResetPhase::CleanupConfirmed {
+                panic!("after physical checkpoint before fence clear");
+            }
+        }));
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| store.managed_delete(
+                &manager,
+                &c.namespace,
+                &entry.id,
+                entry.revision
+            )))
+            .is_err()
+        );
+        *store.reset_hook.lock().unwrap() = None;
+        assert!(store.available(&c.tool, false).is_err());
+        assert!(store.managed_snapshot(&manager, &c.namespace).is_err());
+        store.recover_cleanup().unwrap();
+        assert_cleanup_recovered(&dir, &store, &c, &manager, "confirmation cleanup marker");
+    }
+
+    #[tokio::test]
+    async fn pending_managed_cleanup_survives_reopen_for_standalone_and_registered_namespaces() {
+        use crate::management::NewMemory;
+        for registered in [false, true] {
+            let (dir, store, attached, key) = fixture();
+            let c = if registered {
+                attached
+            } else {
+                store.create("owner", "standalone").unwrap()
+            };
+            let manager = store.filesystem_manager("owner").unwrap();
+            if registered {
+                let job = store.job(&key, &c.namespace).unwrap();
+                store.renew(&job, Instant::now(), unix_now() + 60).unwrap();
+            }
+            let entry = store
+                .managed_create(
+                    &manager,
+                    &c.namespace,
+                    NewMemory {
+                        title: "reference".into(),
+                        body: "durable cleanup marker".into(),
+                    },
+                )
+                .unwrap();
+            let stamp = store.managed_snapshot(&manager, &c.namespace).unwrap().generation;
+            let reader = hennery_kernel::db::open(&dir.path().join("memory.db")).unwrap();
+            reader.execute_batch("BEGIN").unwrap();
+            let _: i64 = reader
+                .query_row("SELECT count(*) FROM entries WHERE namespace=?1", [&c.namespace], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert!(
+                store
+                    .managed_delete(&manager, &c.namespace, &entry.id, entry.revision)
+                    .is_err()
+            );
+            drop(store);
+            let reopened = Store::open(&dir.path().join("memory.db")).unwrap();
+            if registered {
+                let job = reopened.job(&key, &c.namespace).unwrap();
+                assert!(reopened.renew(&job, Instant::now(), unix_now() + 60).is_err());
+            }
+            let denied = reopened.managed_snapshot(&manager, &c.namespace).is_err()
+                && reopened.managed_deliverable(&manager, &c.namespace, stamp).is_err()
+                && reopened.available(&c.tool, false).is_err();
+            assert!(reopened.recover_cleanup().is_err());
+            reader.execute_batch("ROLLBACK").unwrap();
+            assert!(
+                denied,
+                "restart reopened reads before cleanup confirmation: registered={registered}"
+            );
+            reopened.recover_cleanup().unwrap();
+            if registered {
+                let job = reopened.job(&key, &c.namespace).unwrap();
+                reopened.renew(&job, Instant::now(), unix_now() + 60).unwrap();
+            }
+            assert_cleanup_recovered(&dir, &reopened, &c, &manager, "durable cleanup marker");
+        }
+    }
+
+    #[test]
+    fn managed_checkpoint_error_retains_namespace_fence() {
+        use crate::management::NewMemory;
+        let (dir, store, c, key) = fixture();
+        let manager = store.filesystem_manager("owner").unwrap();
+        let job = store.job(&key, &c.namespace).unwrap();
+        store.renew(&job, Instant::now(), unix_now() + 60).unwrap();
+        let entry = store
+            .managed_create(
+                &manager,
+                &c.namespace,
+                NewMemory {
+                    title: "reference".into(),
+                    body: "pending erasure marker".into(),
+                },
+            )
+            .unwrap();
+        let reader = hennery_kernel::db::open(&dir.path().join("memory.db")).unwrap();
+        reader.execute_batch("BEGIN").unwrap();
+        let _: i64 = reader
+            .query_row("SELECT count(*) FROM entries WHERE namespace=?1", [&c.namespace], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let error = store
+            .managed_delete(&manager, &c.namespace, &entry.id, entry.revision)
+            .unwrap_err();
+        assert!(error.to_string().contains("checkpoint unconfirmed"));
+        let snapshot = store.managed_snapshot(&manager, &c.namespace);
+        let export_allowed = snapshot
+            .as_ref()
+            .is_ok_and(|s| store.managed_deliverable(&manager, &c.namespace, s.generation).is_ok());
+        let tool_allowed = store.available(&c.tool, false).is_ok();
+        let current = *store.inner.lock().unwrap().generations.get(&c.namespace).unwrap();
+        assert!(store.managed_deliverable(&manager, &c.namespace, current).is_err());
+        let marker_remains = std::fs::read(dir.path().join("memory.db-wal"))
+            .unwrap()
+            .windows(b"pending erasure marker".len())
+            .any(|v| v == b"pending erasure marker");
+        assert!(store.recover_cleanup().is_err());
+        assert_eq!(store.status(&c.namespace).unwrap()["cleanup_pending"], true);
+        reader.execute_batch("ROLLBACK").unwrap();
+        eprintln!(
+            "checkpoint error: {error}; snapshot={}, export={export_allowed}, MCP={tool_allowed}, old WAL marker={marker_remains}",
+            snapshot.is_ok()
+        );
+        assert!(
+            snapshot.is_err() && !export_allowed && !tool_allowed,
+            "unconfirmed management checkpoint reopened namespace reads"
+        );
+        assert!(marker_remains);
+        store.recover_cleanup().unwrap();
+        assert_cleanup_recovered(&dir, &store, &c, &manager, "pending erasure marker");
+    }
+
+    #[test]
+    fn managed_checkpoint_panic_retains_namespace_fence() {
+        use crate::management::NewMemory;
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let (dir, store, c, key) = fixture();
+        let manager = store.filesystem_manager("owner").unwrap();
+        let job = store.job(&key, &c.namespace).unwrap();
+        store.renew(&job, Instant::now(), unix_now() + 60).unwrap();
+        let entry = store
+            .managed_create(
+                &manager,
+                &c.namespace,
+                NewMemory {
+                    title: "reference".into(),
+                    body: "pending erasure marker".into(),
+                },
+            )
+            .unwrap();
+        *store.reset_hook.lock().unwrap() = Some(Arc::new(|at| {
+            if at == ResetPhase::ManagedCheckpoint {
+                panic!("synthetic checkpoint unwind");
+            }
+        }));
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                store
+                    .managed_delete(&manager, &c.namespace, &entry.id, entry.revision)
+                    .unwrap();
+            }))
+            .is_err()
+        );
+        *store.reset_hook.lock().unwrap() = None;
+        assert!(store.projection_writer.is_poisoned());
+        let snapshot = store.managed_snapshot(&manager, &c.namespace);
+        let export_allowed = snapshot
+            .as_ref()
+            .is_ok_and(|s| store.managed_deliverable(&manager, &c.namespace, s.generation).is_ok());
+        let tool_allowed = store.available(&c.tool, false).is_ok();
+        let current = *store.inner.lock().unwrap().generations.get(&c.namespace).unwrap();
+        assert!(store.managed_deliverable(&manager, &c.namespace, current).is_err());
+        let marker_remains = std::fs::read(dir.path().join("memory.db-wal"))
+            .unwrap()
+            .windows(b"pending erasure marker".len())
+            .any(|v| v == b"pending erasure marker");
+        eprintln!(
+            "checkpoint panic: snapshot={}, export={export_allowed}, MCP={tool_allowed}, old WAL marker={marker_remains}",
+            snapshot.is_ok()
+        );
+        assert!(
+            snapshot.is_err() && !export_allowed && !tool_allowed,
+            "unwound management checkpoint reopened namespace reads"
+        );
+        assert!(marker_remains);
+        store.recover_cleanup().unwrap();
+        assert!(!store.projection_writer.is_poisoned());
+        assert_cleanup_recovered(&dir, &store, &c, &manager, "pending erasure marker");
+    }
 
     #[tokio::test]
     async fn import_and_curated_writes_are_fenced_against_reset_and_late_purge() {

@@ -95,6 +95,12 @@ impl Store {
         // Every curated/import change invalidates a previously prepared reset,
         // including changes to deliberate memories' detached source metadata.
         tx.execute("UPDATE feeds SET revision=revision+1 WHERE namespace=?1", [namespace])?;
+        if erase {
+            tx.execute(
+                "INSERT OR IGNORE INTO pending_cleanup(namespace) VALUES(?1)",
+                [namespace],
+            )?;
+        }
         #[cfg(test)]
         self.reset_phase(crate::consumer::ResetPhase::ManagedCommit);
         check_managed_deadline(lease, approval.map(|(_, until)| until))?;
@@ -102,9 +108,37 @@ impl Store {
         if erase {
             #[cfg(test)]
             self.reset_phase(crate::consumer::ResetPhase::ManagedCheckpoint);
-            crate::consumer::checkpoint_db(&writer)?;
+            self.confirm_cleanup(&writer)?;
         }
         Ok(result)
+    }
+
+    /// Retry physical cleanup without changing leases or recreating entries.
+    /// The owned writer serializes all pending-fence producers and clearing.
+    pub fn recover_cleanup(&self) -> Result<()> {
+        let pending: bool = {
+            let inner = self.inner.lock().expect("store");
+            inner
+                .db
+                .query_row("SELECT EXISTS(SELECT 1 FROM pending_cleanup)", [], |r| r.get(0))?
+        };
+        if pending {
+            let writer = self.lock_projection_writer()?;
+            self.confirm_cleanup(&writer)?;
+        }
+        Ok(())
+    }
+    fn confirm_cleanup(&self, writer: &rusqlite::Connection) -> Result<()> {
+        #[cfg(test)]
+        self.reset_phase(crate::consumer::ResetPhase::CleanupCheckpoint);
+        crate::consumer::checkpoint_db(writer)?;
+        #[cfg(test)]
+        self.reset_phase(crate::consumer::ResetPhase::CleanupConfirmed);
+        // This checkpoint covers every pending commit: their only producers
+        // hold projection_writer, as does this caller. Only opaque fences are
+        // written after TRUNCATE; none of the erased bodies are reintroduced.
+        writer.execute("DELETE FROM pending_cleanup", [])?;
+        Ok(())
     }
 
     /// An explicit local CLI operation proves filesystem-owner access. Never
@@ -397,12 +431,13 @@ impl Store {
 impl Inner {
     pub(crate) fn managed_scope(&self, manager: &Manager, namespace: &str, live: bool) -> Result<()> {
         ensure!(namespace.len() == 64, "unavailable");
-        let (registered, state): (bool, String) = self.db.query_row(
-            "SELECT registered,state FROM namespaces WHERE id=?1 AND owner=?2",
+        let (registered, state, pending): (bool, String, bool) = self.db.query_row(
+            "SELECT registered,state,EXISTS(SELECT 1 FROM pending_cleanup WHERE namespace=namespaces.id) FROM namespaces WHERE id=?1 AND owner=?2",
             params![namespace, manager.owner],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         ensure!(state == "active", "unavailable");
+        ensure!(!pending, "storage cleanup pending");
         if live {
             ensure!(!self.writing.contains(namespace), "namespace busy");
         }
@@ -500,5 +535,14 @@ pub(crate) fn owner_entry(input: NewMemory) -> Entry {
         pinned: false,
         owner_annotation: String::new(),
         legacy: None,
+    }
+}
+
+/// Independent of activity grants: standalone namespaces need cleanup too.
+pub async fn cleanup_worker(store: Store) {
+    loop {
+        let retry = store.clone();
+        let _ = tokio::task::spawn_blocking(move || retry.recover_cleanup()).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }

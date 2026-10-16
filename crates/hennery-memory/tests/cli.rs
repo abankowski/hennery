@@ -203,3 +203,124 @@ fn local_snapshot_import_requires_signed_preview_and_exact_digest() {
         assert_eq!(result[0]["imported"], expected);
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serving_standalone_memory_recovers_pending_cleanup_without_a_restart() {
+    use hennery_memory::{management::NewMemory, store::Store};
+    use std::{
+        io::{BufRead, BufReader},
+        process::{Child, Stdio},
+        sync::mpsc,
+        time::Duration,
+    };
+    struct Running(Child);
+    impl Drop for Running {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("private");
+    std::fs::create_dir(&data).unwrap();
+    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = data.join("memory.db");
+    let store = Store::open(&path).unwrap();
+    assert!(!store.has_feed_credentials().unwrap());
+    let c = store.create("owner", "standalone").unwrap();
+    let manager = store.filesystem_manager("owner").unwrap();
+    let entry = store
+        .managed_create(
+            &manager,
+            &c.namespace,
+            NewMemory {
+                title: "reference".into(),
+                body: "standalone server cleanup marker".into(),
+            },
+        )
+        .unwrap();
+    // Raw test reader pins WAL without retaining the kernel's process-owner
+    // lock when Store is dropped before the actual service process starts.
+    let reader = rusqlite::Connection::open(&path).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    let _: i64 = reader
+        .query_row("SELECT count(*) FROM entries WHERE namespace=?1", [&c.namespace], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(
+        store
+            .managed_delete(&manager, &c.namespace, &entry.id, entry.revision)
+            .is_err()
+    );
+    drop(store);
+    let listen = std::net::SocketAddr::from(([127, 0, 0, 1], 0)).to_string();
+    let mut server = Running(
+        command(dir.path())
+            .arg("--data-dir")
+            .arg(&data)
+            .args(["serve", "--listen", &listen])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let stdout = server.0.stdout.take().unwrap();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let readiness = std::thread::spawn(move || {
+        let mut line = String::new();
+        BufReader::new(stdout).read_line(&mut line).unwrap();
+        let _ = ready_tx.send(line);
+    });
+    let line = ready_rx.recv_timeout(Duration::from_secs(20)).unwrap();
+    readiness.join().unwrap();
+    let address = line.trim().strip_prefix("memory listening on ").unwrap();
+    let url = format!("http://{address}/mcp");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .unwrap();
+    let request = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_recent","arguments":{}}});
+    assert_eq!(
+        client
+            .post(&url)
+            .bearer_auth(&c.tool)
+            .json(&request)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+    reader.execute_batch("ROLLBACK").unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let response = client
+                .post(&url)
+                .bearer_auth(&c.tool)
+                .json(&request)
+                .send()
+                .await
+                .unwrap();
+            if response.status().is_success() {
+                break response;
+            }
+            assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let rpc: serde_json::Value = response.json().await.unwrap();
+    let page: serde_json::Value = serde_json::from_str(rpc["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(page["entries"], serde_json::json!([]));
+    for name in ["memory.db", "memory.db-wal"] {
+        if let Ok(bytes) = std::fs::read(data.join(name)) {
+            assert!(
+                !bytes
+                    .windows(b"standalone server cleanup marker".len())
+                    .any(|w| w == b"standalone server cleanup marker")
+            );
+        }
+    }
+}

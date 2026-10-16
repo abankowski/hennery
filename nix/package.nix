@@ -27,6 +27,7 @@ let
       ../crates/hennery-memory/src/schema2.sql
       ../crates/hennery-memory/src/schema3.sql
       ../crates/hennery-memory/src/schema4.sql
+      ../crates/hennery-memory/src/schema5.sql
       ../crates/hennery-memory/src/ui-client.mjs
       ../crates/hennery-memory/tests/ui-client.test.mjs
       ../crates/hennery-sessions/tests/fixtures/undo_delegation.sql

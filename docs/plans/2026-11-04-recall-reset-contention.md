@@ -8,11 +8,11 @@
 
 ## Execution status
 
-Built and verified. The first review findings were fixed and the parent reports approval at `b1567acb`. The branch is now rebased onto merged R2 main `03e7be5d`, with the integration audit and additional fixes below. Parent delta review and current-head Linux/macOS CI remain pending. Initial implementation diff SHA-256: `1e49bceadea891865346d5c412d0d7c56fc28aae82f68b94f8314d486e8301a3`; frozen patch and command outputs are in `.superpowers/sdd/recall-reset-contention/` in the recall-fix-17 worktree.
+Built and verified. The first review findings were fixed and the parent reports approval at `b1567acb`. Rebased onto merged R2 main `03e7be5d`; the parent reports that the integration's locking, revision/approval fences and deletion-resurrection checks passed at `ae8d3418`. Its remaining managed-checkpoint finding is fixed below. Parent delta review and current-head Linux/macOS CI remain pending. Initial implementation diff SHA-256: `1e49bceadea891865346d5c412d0d7c56fc28aae82f68b94f8314d486e8301a3`; frozen patches and command outputs are in `.superpowers/sdd/recall-reset-contention/` in the recall-fix-17 worktree.
 
 ## Scope
 
-Store/consumer locking, regression coverage and this record. No core, protocol, schema, dependency, Nix filter, web, tool/auth surface or model changes. The original 1,500-note plus 1,500-memory (16,000-byte bodies) regression and its 3-second/12-second assertions are unchanged.
+Store/consumer/management locking, durable cleanup fencing, regression coverage and this record. The latest amendment adds plug-in migration 5 and its explicit Nix source entry. No core, protocol, dependency, web, tool/auth surface or model changes. The original 1,500-note plus 1,500-memory (16,000-byte bodies) regression and its 3-second/12-second assertions are unchanged.
 
 ## Decisions
 
@@ -100,8 +100,28 @@ Each successful curated/import transaction advances feed revision, so a reset pr
 
 All outputs are in `.superpowers/sdd/recall-reset-contention/r2-rebase/`. Retain its copy alongside the earlier `probes-1`, `amendment-1/probes-1` and parent-owned `review-probe-1` for parent cleanup. No fresh replay, Nix or web gate: amendment budget, no filter/schema/dependency/frontend changes. Parent delta review should check common-writer lock ordering, namespace reservation/drop, transaction/approval fences, deletion honesty and bounded resources. No open product question.
 
+## Review amendment: durable managed-cleanup fencing
+
+**Reviewed head:** `ae8d3418`. A managed deletion committed before its checkpoint. When the checkpoint failed or unwound, the transient namespace reservation dropped while the previous lease remained valid. Fresh snapshots, export checks and MCP admission succeeded although the deleted marker remained in WAL; unwinding also poisoned the owned writer. The earlier integration findings passed review.
+
+**Test-first:** added both reviewer reproductions from the retained checkpoint probe. Both failed on the original code (one command, exit 101, **0 passed/2 failed**), confirming successful snapshot/export/MCP admission with the erased marker still present. A restart regression also failed first (exit 101, **0 passed/1 failed**): a reopened standalone namespace admitted reads before cleanup. Raw RED outputs are retained under `cleanup-amendment/`.
+
+**Built fix:** migration 5 adds `pending_cleanup`, one opaque primary-key row per namespace. Managed replacement/deletion writes that fence inside the same IMMEDIATE transaction as erasure. The fence is independent of the transient reservation and survives errors, unwinding and restart. MCP admission, management scope checks (including standalone/nonlive reads), export delivery and feed lease renewal deny pending namespaces. Status exposes `cleanup_pending` and marks them stale. Pre-COMMIT rollback removes the fence and restores the entry together.
+
+After COMMIT, the owned projection writer confirms a whole-database TRUNCATE checkpoint before clearing cleanup fences. Every producer and the clearing operation serialize on that same writer, so a confirmed checkpoint covers all pending commits; subsequent clearing writes only opaque metadata. On failure the row remains. `recover_cleanup` retries through the existing rollback-confirming, connection-reopening poison recovery, outside the shared read mutex. It does not renew leases or recreate data. The serving binary runs one independent cleanup worker even without feed credentials; one blocking job is awaited at a time and errors or panics are retried after a one-second pause. Reopening alone leaves the durable admission fence in place until cleanup succeeds.
+
+**Regression coverage:** failure and unwind retain the fence; busy recovery retains it; registered and standalone restarts stay closed; pre-COMMIT unwind rolls back both data and fence; an unwind after physical checkpoint but before fence clearing remains closed; recovery I/O permits foreign reads while denying its own namespace. Tests verify erased bytes are absent from both database and WAL before reopening admission. The retry regression pins a WAL reader through the third recovery attempt, proving retries after both a panic and a completed busy result. A real standalone service process denies authenticated MCP while WAL is pinned, then automatically returns an empty recent page after checkpoint recovery without restart or feed access. No timing bound was raised.
+
+**SQL and packaging:** exact SQL inventories are **[11, 57, 18, 7]**. The audit adds narrowly matched routes for the one-column namespace fence INSERT and the two internal global recovery statements; existing owner/namespace/FTS/index guards remain. `schema5.sql` is explicitly included in the Nix source fileset and independently checked for membership.
+
+**Verification:** `cargo fmt --all --check`, `cargo test -p hennery-memory --locked` (**139 passed, 1 ignored, 15 groups**), both clippy commands, both generator checks, and explicit SQL audit (**1 passed**) all exited 0. Fresh lib/consumer/CLI artifact discovery and native `nix flake check -L` also exited 0; Linux remains CI's check. The final four-process, three-round load passed **324 executions in 36 groups**, including the real standalone service recovery. Maximum mixed reset **3.374 seconds**, worst foreign read **11.538 milliseconds**; original timing limits remain unchanged. Final source/test/filter patch SHA-256: `d09a3059dfbd9bedd8e74b7680d8d4504940792533a05cf103d33bf5971abbfd`.
+
+**Copied probes:** `cleanup-amendment/probes-1` has its own target APFS-cloned with `/bin/cp -c -R`. All **15 Rust mutations failed behaviorally (101)**; removing the Nix SQL fileset entry failed the explicit source-membership assertion (exit 1). Coverage includes durable fence creation/atomicity, MCP/management/renewal gates, checkpoint confirmation and clearing order, poison recovery, recovery invocation and mutex scope, retries after panic/busy, service worker wiring and migration inclusion. Baseline and restored lib suites each passed **31 tests**, CLI recovery **1**, SQL audit **1**, and Nix source membership exited 0. Compilation failures do not count as detection; the copy is restored and root bytes are unchanged.
+
+One worker mutation initially escaped because its test released the WAL reader when the second attempt began, allowing that checkpoint to succeed. The test was strengthened to keep the reader pinned until a third attempt begins. Final root gates, baseline/restored checks, affected worker probes and load were rerun; unaffected successful probes were retained. The original escape and outputs remain in the ledger. No full workspace run or fresh replay for this review amendment, per the verification budget; no web change. CI remains the check of record.
+
 ## After this plan
 
-Parent: delta review of `381f9e0e..fix/recall-reset-contention` and the resolved rebase relative to `03e7be5d`, current-head CI and full PR status (checks, reviewDecision, mergeStateStatus and unresolved review threads, bots included). The child makes no GitHub API/CLI action or publication. No open product decision.
+Parent: delta review of `ae8d3418..fix/recall-reset-contention`, current-head CI and full PR status (checks, reviewDecision, mergeStateStatus and unresolved review threads, bots included). Focus on durable fence atomicity, checkpoint/clear ordering, poison recovery, standalone admission and the independent worker's retry/startup behavior. The child makes no GitHub API/CLI action or publication. No open product decision.
 
 Generated with Claude AI — please review before distribution.

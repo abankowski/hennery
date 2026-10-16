@@ -180,6 +180,7 @@ impl Store {
                 include_str!("schema2.sql"),
                 include_str!("schema3.sql"),
                 include_str!("schema4.sql"),
+                include_str!("schema5.sql"),
             ],
         )?;
         db.busy_timeout(std::time::Duration::from_millis(100))?;
@@ -565,7 +566,9 @@ impl Inner {
     pub(crate) fn auth(&self, token: &str, admin: bool, write: bool) -> Result<Namespace> {
         ensure!(token.len() <= 256, "unavailable");
         let column = if admin { "lifecycle_hash" } else { "tool_hash" };
-        let sql = format!("SELECT id,epoch,cursor_key,registered,writes,state FROM namespaces WHERE {column}=?1");
+        let sql = format!(
+            "SELECT id,epoch,cursor_key,registered,writes,state,EXISTS(SELECT 1 FROM pending_cleanup WHERE namespace=namespaces.id) FROM namespaces WHERE {column}=?1"
+        );
         let row = self
             .db
             .query_row(&sql, [sha256_hex(token.as_bytes())], |r| {
@@ -578,11 +581,13 @@ impl Inner {
                     r.get::<_, bool>(3)?,
                     r.get::<_, bool>(4)?,
                     r.get::<_, String>(5)?,
+                    r.get::<_, bool>(6)?,
                 ))
             })
             .optional()?
             .context("unavailable")?;
         if !admin {
+            ensure!(!row.4, "storage cleanup pending");
             ensure!(!self.writing.contains(&row.0.id), "reset in progress");
             ensure!(row.3 == "active" && (!write || row.2), "unavailable");
             ensure!(
@@ -595,6 +600,13 @@ impl Inner {
             );
         }
         Ok(row.0)
+    }
+    pub(crate) fn cleanup_pending(&self, id: &str) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pending_cleanup WHERE namespace=?1)",
+            [id],
+            |r| r.get(0),
+        )?)
     }
     pub(crate) fn stale(&self, id: &str) -> bool {
         self.stale.contains(id)
