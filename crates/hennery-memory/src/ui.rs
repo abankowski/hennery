@@ -27,18 +27,47 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::Semaphore;
-pub const SESSION_COOKIE: &str = "hennery_memory_session";
+pub const SESSION_COOKIE: &str = "__Host-hennery_memory_session";
 #[derive(Clone)]
 struct Ui {
     store: Arc<Store>,
     operator: Arc<Operator>,
     permits: Arc<Semaphore>,
+    auth_permits: Arc<Semaphore>,
+}
+
+/// Cookies ignore ports. Deploy the UI on a hostname dedicated to this service.
+/// Compare all known collector grants; standalone collectors cannot be discovered.
+pub fn validate_configuration(store: &Store, directory: &FsPath, origin: &str) -> Result<()> {
+    let public = PublicUrl::parse(origin).map_err(anyhow::Error::msg)?;
+    ensure!(public.rp_id().is_some(), "memory UI requires a dedicated hostname");
+    if store.has_feed_credentials()? {
+        let key = crate::keys::load(directory, true)?;
+        for collector in store.collector_origins(&key)? {
+            check_collector_host(origin, &collector)?;
+        }
+    }
+    Ok(())
+}
+pub fn check_collector_host(origin: &str, collector: &str) -> Result<()> {
+    let public = PublicUrl::parse(origin).map_err(anyhow::Error::msg)?;
+    let host = public
+        .rp_id()
+        .ok_or_else(|| anyhow::anyhow!("memory UI requires a dedicated hostname"))?;
+    let collector = url::Url::parse(collector)?;
+    ensure!(
+        collector.host_str().is_some_and(|other| !host
+            .trim_end_matches('.')
+            .eq_ignore_ascii_case(other.trim_end_matches('.'))),
+        "memory UI and collector require different hostnames, regardless of ports"
+    );
+    Ok(())
 }
 
 /// Local, filesystem-owner bootstrap. The caller supplies the password over
 /// bounded stdin; neither mounted credentials nor a core session can do this.
 pub fn bootstrap(store: &Store, directory: &FsPath, owner: &str, origin: &str, password: &str) -> Result<()> {
-    PublicUrl::parse(origin).map_err(anyhow::Error::msg)?;
+    validate_configuration(store, directory, origin)?;
     ensure!(!owner.is_empty() && owner.len() <= 256, "invalid owner");
     let operator = Operator::open(&directory.join("memory-auth.db"))?;
     ensure!(!operator.is_set_up()?, "UI already bootstrapped");
@@ -60,11 +89,16 @@ pub fn router(store: Arc<Store>, operator: Arc<Operator>) -> Result<Router> {
         operator.is_set_up()? && operator.public_url().is_some(),
         "explicit UI bootstrap required"
     );
+    ensure!(
+        operator.public_url().is_some_and(|p| p.rp_id().is_some()),
+        "memory UI requires a dedicated hostname"
+    );
     store.manager(operator.owner_id())?;
     let state = Ui {
         store,
         operator: operator.clone(),
         permits: Arc::new(Semaphore::new(4)),
+        auth_permits: Arc::new(Semaphore::new(4)),
     };
     let forms = Router::new()
         .route("/auth.js", get(client_script))
@@ -97,11 +131,18 @@ pub fn router(store: Arc<Store>, operator: Arc<Operator>) -> Result<Router> {
 fn cookie(token: &str, operator: &Operator) -> String {
     hennery_kernel::operator::session_cookie(token, operator.public_url().is_none_or(|p| p.is_https())).replacen(
         "hennery_session=",
-        &format!("{SESSION_COOKIE}="),
+        &format!("{}=", cookie_name(operator)),
         1,
     )
 }
-fn tokens(headers: &axum::http::HeaderMap) -> Vec<String> {
+fn cookie_name(operator: &Operator) -> &'static str {
+    if operator.public_url().is_none_or(|p| p.is_https()) {
+        SESSION_COOKIE
+    } else {
+        "hennery_memory_session"
+    }
+}
+fn tokens(headers: &axum::http::HeaderMap, operator: &Operator) -> Vec<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -109,7 +150,7 @@ fn tokens(headers: &axum::http::HeaderMap) -> Vec<String> {
         .flat_map(|v| v.split(';'))
         .filter_map(|p| {
             let (name, value) = p.trim().split_once('=')?;
-            (name == SESSION_COOKIE && value.len() <= 256).then(|| value.to_string())
+            (name == cookie_name(operator) && value.len() <= 256).then(|| value.to_string())
         })
         .take(4)
         .collect()
@@ -198,12 +239,9 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
     {
         return unavailable();
     }
-    let Ok(permit) = ui.permits.clone().try_acquire_owned() else {
-        return error(StatusCode::SERVICE_UNAVAILABLE, "Busy; retry later.");
-    };
     let mut session = None;
     let mut token = None;
-    for value in tokens(request.headers()) {
+    for value in tokens(request.headers(), &ui.operator) {
         if let Ok(Some(auth)) = ui.operator.authenticate(&value, unix_now()) {
             session = Some(auth);
             token = Some(value);
@@ -212,6 +250,14 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
     }
     let api = path.starts_with("/api/auth/");
     let public_route = path == "/login" || path == "/auth.js" || api;
+    let pool = if session.is_none() && public_route {
+        &ui.auth_permits
+    } else {
+        &ui.permits
+    };
+    let Ok(permit) = pool.clone().try_acquire_owned() else {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "Busy; retry later.");
+    };
     if !public_route {
         let Some(auth) = session.as_ref() else {
             return error(StatusCode::UNAUTHORIZED, "Sign in to the memory plug-in.");
@@ -225,21 +271,25 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
         request.extensions_mut().insert(manager);
         request.extensions_mut().insert(auth.clone());
     }
-    if changing && !api {
-        let types = request
-            .headers()
-            .get_all(header::CONTENT_TYPE)
-            .iter()
-            .collect::<Vec<_>>();
-        if types.len() != 1
-            || !types[0]
-                .to_str()
-                .is_ok_and(|v| v.split(';').next() == Some("application/x-www-form-urlencoded"))
-        {
-            return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Use the management form.");
+    if changing || api {
+        if !api {
+            let types = request
+                .headers()
+                .get_all(header::CONTENT_TYPE)
+                .iter()
+                .collect::<Vec<_>>();
+            if types.len() != 1
+                || !types[0]
+                    .to_str()
+                    .is_ok_and(|v| v.split(';').next() == Some("application/x-www-form-urlencoded"))
+            {
+                return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Use the management form.");
+            }
         }
         let (parts, body) = request.into_parts();
-        let cap = if path == "/import-preview" || path == "/import-apply" {
+        let cap = if api {
+            hennery_kernel::auth_api::MAX_BODY_BYTES
+        } else if path == "/import-preview" || path == "/import-apply" {
             128 * 1024 * 1024
         } else if path.ends_with("/edit") {
             8 * 1024 * 1024
@@ -295,7 +345,7 @@ async fn boundary(State(ui): State<Ui>, mut request: Request, next: Next) -> Res
             .get_all(header::SET_COOKIE)
             .iter()
             .filter_map(|v| v.to_str().ok())
-            .map(|v| v.replacen("hennery_session=", &format!("{SESSION_COOKIE}="), 1))
+            .map(|v| v.replacen("hennery_session=", &format!("{}=", cookie_name(&ui.operator)), 1))
             .collect::<Vec<_>>();
         response.headers_mut().remove(header::SET_COOKIE);
         for v in values {
@@ -424,7 +474,7 @@ async fn logout(State(ui): State<Ui>, Extension(session): Extension<Authenticate
     }
     let mut response = Redirect::to("/login").into_response();
     let cleared = hennery_kernel::operator::cleared_cookie(ui.operator.public_url().is_none_or(|p| p.is_https()))
-        .replacen("hennery_session=", &format!("{SESSION_COOKIE}="), 1);
+        .replacen("hennery_session=", &format!("{}=", cookie_name(&ui.operator)), 1);
     response
         .headers_mut()
         .insert(header::SET_COOKIE, cleared.parse().expect("cookie"));
@@ -746,6 +796,7 @@ mod tests {
             store,
             operator,
             permits: Arc::new(Semaphore::new(4)),
+            auth_permits: Arc::new(Semaphore::new(4)),
         };
         assert!(export_allowed(&ui, &manager, &namespace, 0, &session, now));
         assert!(!export_allowed(

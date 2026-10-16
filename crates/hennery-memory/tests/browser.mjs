@@ -1,6 +1,6 @@
 // Standalone screen acceptance, using the repository's pinned Playwright.
 import { createRequire } from 'node:module';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -24,22 +24,47 @@ const socket=net.createServer();
 await new Promise(resolve=>socket.listen(0,'127.0.0.1',resolve));
 const port=socket.address().port;
 await new Promise(resolve=>socket.close(resolve));
-const origin=`http://127.0.0.1:${port}`;
+const backend=`http://127.0.0.1:${port}`;
+// Real local TLS proxies preserve form redirects and browser cookie delivery.
+// Chromium resolves these synthetic names only to loopback, without a proxy.
+const certificate=spawnSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',join(scratch,'key.pem'),'-out',join(scratch,'cert.pem'),'-subj','/CN=memory.example.test','-days','1'],{encoding:'utf8'});
+assert.equal(certificate.status,0,certificate.stderr);
+const tls={key:await readFile(join(scratch,'key.pem')),cert:await readFile(join(scratch,'cert.pem'))};
+const {createServer}=await import('node:https');
+const {request:forward}=await import('node:http');
+const deliveries=[];
+const memoryProxy=createServer(tls,(request,response)=>{
+  deliveries.push({service:'memory',cookie:request.headers.cookie??''});
+  const upstream=forward(`${backend}${request.url}`,{method:request.method,headers:request.headers},result=>{
+    response.writeHead(result.statusCode,result.headers);result.pipe(response);
+  });
+  upstream.on('error',error=>response.destroy(error));request.pipe(upstream);
+});
+const collectorProxy=createServer(tls,(request,response)=>{
+  deliveries.push({service:'collector',cookie:request.headers.cookie??''});
+  response.writeHead(200,{'content-type':'text/html','set-cookie':'hennery_session=synthetic-core-cookie; HttpOnly; SameSite=Strict; Path=/; Secure'});
+  response.end('<p>synthetic collector</p>');
+});
+for(const proxy of [memoryProxy,collectorProxy])await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
+const origin=`https://memory.example.test:${memoryProxy.address().port}`;
+const collector=`https://collector.example.test:${collectorProxy.address().port}`;
 command(['ui-init','--owner','fixture-owner','--public-url',origin],'synthetic browser password\n');
 const server=spawn(binary,['--data-dir',data,'serve','--listen',`127.0.0.1:${port}`],{env,stdio:['ignore','pipe','pipe']});
 let browser;
 try {
   const deadline=Date.now()+30000;
   while(true) {
-    try { const response=await fetch(`${origin}/login`);if(response.ok)break; } catch {}
+    try { const response=await fetch(`${backend}/login`);if(response.ok)break; } catch {}
     assert.ok(Date.now()<deadline,'memory listener unavailable');
     await new Promise(resolve=>setTimeout(resolve,50));
   }
-  browser=await chromium.launch({headless:true});
-  const toolResponse=await fetch(`${origin}/mcp`,{method:'POST',headers:{Authorization:`Bearer ${credentials.tool_credential}`,'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
+  browser=await chromium.launch({headless:true,args:['--no-proxy-server','--host-resolver-rules=MAP memory.example.test 127.0.0.1, MAP collector.example.test 127.0.0.1']});
+  const toolResponse=await fetch(`${backend}/mcp`,{method:'POST',headers:{Authorization:`Bearer ${credentials.tool_credential}`,'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
   assert.equal(toolResponse.status,200); assert.equal((await toolResponse.json()).result.tools.length,4);
   for(const width of [1280,390]) {
-    const context=await browser.newContext({viewport:{width,height:900},acceptDownloads:true});
+    const context=await browser.newContext({viewport:{width,height:900},acceptDownloads:true,ignoreHTTPSErrors:true});
+    const corePage=await context.newPage();
+    await corePage.goto(collector);
     const page=await context.newPage();
     const requests=[];
     page.on('request',request=>requests.push(request.url()));
@@ -51,6 +76,17 @@ try {
     const signedIn=await loginResponse;
     assert.equal(signedIn.status(),303,signedIn.status()===303?'':await signedIn.text());
     await page.waitForURL(`${origin}/`);
+    const cookies=await context.cookies(origin);
+    assert.equal(cookies.length,1);
+    assert.equal(cookies[0].name,'__Host-hennery_memory_session');
+    assert.ok(cookies[0].secure && cookies[0].httpOnly && cookies[0].path==='/');
+    assert.equal(cookies[0].domain,'memory.example.test');
+    await corePage.reload();await page.reload();
+    assert.ok(deliveries.some(item=>item.service==='collector'&&item.cookie.includes('hennery_session=synthetic-core-cookie')));
+    assert.ok(deliveries.some(item=>item.service==='memory'&&item.cookie.includes('__Host-hennery_memory_session=')));
+    assert.ok(deliveries.filter(item=>item.service==='collector').every(item=>!item.cookie.includes('hennery_memory_session=')));
+    assert.ok(deliveries.filter(item=>item.service==='memory').every(item=>!item.cookie.includes('hennery_session=')));
+    await corePage.close();
     await page.getByRole('link',{name:'garden (active)',exact:true}).click();
     await page.getByLabel('Title',{exact:true}).fill(`Curated fixture ${width}`);
     const hostile='<img src="https://evil.example.test/leak" onerror="alert(1)"> <script>alert(1)</script> [link](javascript:alert(1))';
@@ -113,4 +149,5 @@ try {
   if(browser)await browser.close();
   server.kill('SIGTERM');
   await new Promise(resolve=>server.once('exit',resolve));
+  for(const proxy of [memoryProxy,collectorProxy]){proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));}
 }

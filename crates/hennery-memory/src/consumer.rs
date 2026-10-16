@@ -312,6 +312,13 @@ impl Store {
             .db
             .query_row("SELECT EXISTS(SELECT 1 FROM feeds)", [], |r| r.get(0))?)
     }
+    /// Local configuration validation only; never expose grant credentials.
+    pub(crate) fn collector_origins(&self, key: &MasterKey) -> Result<Vec<String>> {
+        self.feed_ids()?
+            .iter()
+            .map(|id| Ok(self.job(key, id)?.config.collector_url.clone()))
+            .collect()
+    }
     fn job(&self, key: &MasterKey, id: &str) -> Result<Job> {
         let mut inner = self.inner.lock().expect("store");
         let (epoch,revision,cursor,blob):(String,i64,Option<String>,Vec<u8>)=inner.db.query_row("SELECT n.epoch,f.revision,f.cursor,f.config FROM feeds f JOIN namespaces n ON n.id=f.namespace WHERE f.namespace=?1 AND n.state='active'",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;

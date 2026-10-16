@@ -151,6 +151,13 @@ async fn run() -> anyhow::Result<()> {
                 "bounded object required"
             );
             let config: FeedConfig = serde_json::from_slice(&bytes)?;
+            if args.data_dir.join("memory-auth.db").try_exists()? {
+                let operator = hennery_kernel::operator::Operator::open(&args.data_dir.join("memory-auth.db"))?;
+                let public = operator
+                    .public_url()
+                    .ok_or_else(|| anyhow::anyhow!("UI not configured"))?;
+                ui::check_collector_host(public.origin(), &config.collector_url)?;
+            }
             let key = keys::load(&args.data_dir, store.has_feed_credentials()?)?;
             store.attach(&namespace, config, &key)?;
             println!("grant attached; namespace requires a fresh lease");
@@ -167,6 +174,18 @@ async fn run() -> anyhow::Result<()> {
             );
         }
         Command::Serve { listen } => {
+            let operator = if args.data_dir.join("memory-auth.db").try_exists()? {
+                let operator = Arc::new(hennery_kernel::operator::Operator::open(
+                    &args.data_dir.join("memory-auth.db"),
+                )?);
+                let public = operator
+                    .public_url()
+                    .ok_or_else(|| anyhow::anyhow!("UI not configured"))?;
+                ui::validate_configuration(&store, &args.data_dir, public.origin())?;
+                Some(operator)
+            } else {
+                None
+            };
             let listener = tokio::net::TcpListener::bind(listen).await?;
             println!("memory listening on {}", listener.local_addr()?);
             let worker = if store.has_feed_credentials()? {
@@ -176,10 +195,7 @@ async fn run() -> anyhow::Result<()> {
                 None
             };
             let mut router = http::router(store.clone());
-            if args.data_dir.join("memory-auth.db").try_exists()? {
-                let operator = Arc::new(hennery_kernel::operator::Operator::open(
-                    &args.data_dir.join("memory-auth.db"),
-                )?);
+            if let Some(operator) = operator {
                 router = router.merge(ui::router(store, operator)?);
             }
             axum::serve(
