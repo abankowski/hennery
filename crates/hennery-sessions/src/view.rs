@@ -1714,6 +1714,79 @@ mod tests {
         assert!(item(&mut rx).await.contains("t1:tool:c1"));
     }
 
+    /// A delete bypasses the list hold both as the first ring and while
+    /// an ordinary update is held. Poll the real follower with time
+    /// paused: database work and a descheduled test cannot spend its
+    /// coalescing budget, and neither path can hide an unwanted timer.
+    #[tokio::test(start_paused = true)]
+    async fn a_list_removal_bypasses_the_hold_and_leaves_no_upsert() {
+        for during_hold in [false, true] {
+            let (_dir, store, conn) = store();
+            let start = write(
+                &conn,
+                &store,
+                "user_turn",
+                serde_json::json!({"turn_id": "t1", "content": []}),
+            );
+            let anchor = anchor_now(start.event_id);
+            let (bell, doorbell) = broadcast::channel(16);
+            let (tx, mut rx) = Outbox::new(QUEUE_BYTES);
+            let follow = list_follow(&store, Some(&anchor), None, doorbell, &tx);
+            tokio::pin!(follow);
+            assert!(futures::poll!(&mut follow).is_pending());
+            assert!(format!("{:?}", rx.try_recv().unwrap().0).contains("waiting_changed"));
+
+            // Populate the follower's sent-summary cache first. Ordinary
+            // updates must actually wait for the full hold.
+            bell.send(write(&conn, &store, "acp_update", tool("c0"))).unwrap();
+            assert!(futures::poll!(&mut follow).is_pending());
+            assert!(matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+            tokio::time::advance(LIST_COALESCE).await;
+            assert!(futures::poll!(&mut follow).is_pending());
+            assert!(format!("{:?}", rx.try_recv().unwrap().0).contains("session_upsert"));
+
+            if during_hold {
+                conn.execute(
+                    "UPDATE sessions SET last_event_at = '2026-10-01T00:00:01.000Z' WHERE id = 's'",
+                    [],
+                )
+                .unwrap();
+                bell.send(write(&conn, &store, "acp_update", tool("c1"))).unwrap();
+                // Poll until the real follower is inside hold(), without
+                // advancing its clock or relying on a spawned task's order.
+                assert!(futures::poll!(&mut follow).is_pending());
+                assert!(matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+            }
+            conn.execute("UPDATE sessions SET lifecycle = 'closed' WHERE id = 's'", [])
+                .unwrap();
+            let crate::store::Deletion::Done { event: deleted, .. } = store.delete_session("s", None).unwrap() else {
+                panic!("not deleted");
+            };
+            let rung = Instant::now();
+            bell.send(deleted.clone()).unwrap();
+            assert!(futures::poll!(&mut follow).is_pending());
+            let removed = format!("{:?}", rx.try_recv().expect("delete must not wait for a timer").0);
+            assert!(
+                removed.contains("session_removed") && removed.contains(r#"\"session_id\":\"s\""#),
+                "{removed}"
+            );
+            assert_eq!(Instant::now(), rung);
+            assert!(matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+
+            // A late ordinary ring cannot resurrect the deleted session,
+            // even after the cancelled hold would have expired.
+            bell.send(EventDto {
+                kind: "acp_update".into(),
+                ..deleted
+            })
+            .unwrap();
+            assert!(futures::poll!(&mut follow).is_pending());
+            tokio::time::advance(LIST_COALESCE * 2).await;
+            assert!(futures::poll!(&mut follow).is_pending());
+            assert!(matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+        }
+    }
+
     /// The re-confirmation's ask, the review's A-2 and the plan review's
     /// 3b, for the list stream: a lagged doorbell is read now, not after
     /// the hold, whether the lag is the first ring or comes during a hold,

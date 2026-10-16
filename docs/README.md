@@ -31,6 +31,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [Spike: per-session MCP over ACP](spikes/2026-09-25-per-session-mcp.md)
      and its [harness](../spikes/2026-09-25-mcp-per-session/).
 4. Plans:
+   - [List-stream removal timing (flake 13)](plans/2026-11-02-flake-list-stream.md) — replaces the HTTP wall-clock upper bound with deterministic checks of both deletion paths in the real list follower; reproduction, guard probes, load and replay evidence recorded. Independent review and Linux/macOS CI remain parent-owned.
    - [Walking skeleton](plans/2026-09-26-walking-skeleton.md) — the first
      implementation plan (9 tasks) — executed 2026-09-27; its "Execution status" section
      lists where the built code deviates from the task text.

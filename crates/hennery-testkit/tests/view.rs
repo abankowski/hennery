@@ -1948,8 +1948,10 @@ async fn the_list_stream_holds_a_burst_into_one_upsert() {
     assert_eq!(stream.message().await.summary().session.session_id, "b");
 }
 
-/// The plan review's 3b: a delete is read at once, never behind a held
-/// upsert, and no upsert for the session follows it.
+/// The plan review's 3b over HTTP: a removal arrives and no upsert for
+/// the session follows it. The exact no-hold requirement is checked with
+/// paused time in view::tests::a_list_removal_bypasses_the_hold_and_leaves_no_upsert;
+/// wall time here also includes database work, scheduling and HTTP.
 #[tokio::test]
 async fn the_list_stream_sends_a_removal_at_once_and_nothing_after_it() {
     let collector = Collector::start().await;
@@ -1964,7 +1966,6 @@ async fn the_list_stream_sends_a_removal_at_once_and_nothing_after_it() {
     // An upsert sent, then one held, then the delete.
     collector.event("a", "acp_update", &chunk("0"));
     assert_eq!(stream.message().await.summary().session.session_id, "a");
-    let start = Instant::now();
     collector.event("a", "acp_update", &chunk("1"));
     collector
         .conn()
@@ -1975,7 +1976,6 @@ async fn the_list_stream_sends_a_removal_at_once_and_nothing_after_it() {
     };
     collector.state.hub.publish(deleted);
     let removed = stream.message().await;
-    assert!(start.elapsed() < LIST_COALESCE, "sent after {:?}", start.elapsed());
     assert_eq!(
         (removed.event.as_str(), removed.data.as_str()),
         ("session_removed", r#"{"session_id":"a"}"#)
