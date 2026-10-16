@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-alpha.2
+
+- Update rustls to fix RUSTSEC-2026-0346, RUSTSEC-2026-0347,
+  RUSTSEC-2026-0348 and RUSTSEC-2026-0349.
+- Align release qualification with CI's Linux test isolation and file descriptor
+  limits, and check fresh Rust and web advisories on pull requests and daily.
+- Alpha.1 failed pre-publication qualification and was never published.
+
 ## 0.1.0-alpha.1
 
 First alpha for early testers. Expect rough edges and back up your data.

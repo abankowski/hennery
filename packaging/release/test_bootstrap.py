@@ -1,6 +1,7 @@
 """Execute the exact README bootstrap with real disposable signed-tag fixtures."""
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unittest
@@ -19,6 +20,11 @@ def documented_script():
 
 
 class Bootstrap(ConsumerFixtures,unittest.TestCase):
+    def fixture(self, case, script, **kwargs):
+        tag=re.search(r'^release_tag=(v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$',script,re.M)
+        self.assertIsNotNone(tag,'README must select an explicit release tag')
+        return super().fixture(case,script,tag=tag[1],**kwargs)
+
     def test_signed_source_bootstrap_contract(self):
         script=documented_script()
         self.assertEqual(script.count('release_fingerprint='+FINGERPRINT),1)
@@ -28,11 +34,13 @@ class Bootstrap(ConsumerFixtures,unittest.TestCase):
             self.assertIn(required,script)
 
     def test_positive_with_each_documented_sha256_tool(self):
-        for tool in ('sha256sum','shasum'):
-            with self.subTest(tool=tool):
-                result,marker=self.fixture('valid',documented_script(),hash_tool=tool)
-                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-                self.assertEqual(marker.read_text(),'executed')
+        for tag in ('v0.1.0-alpha.1','v0.1.0-alpha.2','v0.1.0'):
+            script=re.sub(r'^release_tag=.*$', 'release_tag='+tag,documented_script(),flags=re.M)
+            for tool in ('sha256sum','shasum'):
+                with self.subTest(tag=tag,tool=tool):
+                    result,marker=self.fixture('valid',script,hash_tool=tool)
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertEqual(marker.read_text(),'executed')
 
     def test_every_refusal_never_executes_installer(self):
         for case in REFUSALS+('wrong-github-key','wrong-keyserver-key','wrong-main-pin'):

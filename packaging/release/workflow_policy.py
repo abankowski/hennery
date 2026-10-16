@@ -160,13 +160,21 @@ def check_simplified(data):
     require(len(summaries)==1 and summaries[0].get('if') is None and 'release_run.py summary ' in summaries[0].get('run',''), 'asset digest summary required')
     publisher=jobs['publish']
     require(publisher.get('needs')==['attest'], 'publisher must depend on attestation')
-    require(publisher.get('if')=="${{ !cancelled() && needs.attest.result == 'success' && vars.RELEASE_PUBLICATION_ENABLED == 'true' && vars.RELEASE_GITHUB_ENABLED == 'true' }}",
-            'publisher switches and successful attestation required')
+    require(publisher.get('if')=="${{ !cancelled() && needs.attest.result == 'success' }}",
+            'publisher requires successful attestation')
     steps=publisher['steps'];positions={s.get('id'):i for i,s in enumerate(steps) if s.get('id')}
     require('verified' in positions and 'github-publish' in positions and positions['verified']<positions['github-publish'], 'verification must precede publication')
     for key,command in [('verified','verify original/payload original/signatures github'),('github-publish','publish original/payload original/signatures')]:
         step=steps[positions[key]]
         require(step.get('if') is None and 'release_run.py '+command in step.get('run','') and '||' not in step['run'], 'integrity gate must be unconditional and fatal')
+    verified=steps[positions['verified']]
+    for switch in ('RELEASE_PUBLICATION_ENABLED', 'RELEASE_GITHUB_ENABLED'):
+        require(verified.get('env', {}).get(switch)=='${{ vars.'+switch+' }}',
+                'protected verification must receive publication switches')
+    downloads=[s for s in steps if s.get('uses','').startswith('actions/download-artifact@')]
+    require(len(downloads)==1 and downloads[0].get('with',{}).get('artifact-ids')=='${{ needs.attest.outputs.artifact_id }}'
+            and downloads[0]['with'].get('path')=='original' and downloads[0]['with'].get('merge-multiple') is True,
+            'original artifact ID and flat verifier layout required')
     for channel in CHANNEL_JOB_IDS:
         condition="${{ vars.RELEASE_"+channel.upper()+"_ENABLED == 'true' && contains(fromJSON(steps.verified.outputs.channels), '"+channel+"') }}"
         require(channel+'-verify' in positions and channel+'-publish' in positions, 'folded channel gate required')
@@ -208,7 +216,7 @@ def check_repository(root):
         data=load_workflow(path.read_bytes())
         # Lint all workflows for unexpected write/environment/reusable authority.
         # Other CI may use its explicitly reviewed secret-free OIDC cache signer.
-        if path.name.startswith('release') or has_secrets(data) or 'write' in data.get('permissions',{}).values() or any(environment_name(j)=='release' or 'write' in j.get('permissions',{}).values() or 'uses' in j for j in data.get('jobs',{}).values()):
+        if path.name.startswith('release') or path.name == 'security-audit.yml' or has_secrets(data) or 'write' in data.get('permissions',{}).values() or any(environment_name(j)=='release' or 'write' in j.get('permissions',{}).values() or 'uses' in j for j in data.get('jobs',{}).values()):
             check(data,path.name)
 
 

@@ -78,7 +78,8 @@ class Platform(unittest.TestCase):
                 with self.subTest(channel=channel,mutation=mutation),self.assertRaises(gate.Refused):self.validate(broken)
 
     def test_skipped_native_and_ordinary_jobs_cannot_hide_in_successful_run(self):
-        for name in ('archive','homebrew-native','qualification','installer','attest','licence-review'):
+        required=[job['name'] for job in self.fixture.evidence['jobs'] if job['conclusion']=='success']
+        for name in required+['licence-review']:
             jobs=copy.deepcopy(self.fixture.evidence['jobs'])
             if name=='licence-review':jobs.append({'name':name,'status':'completed','conclusion':'skipped'})
             else:next(j for j in jobs if j['name']==name)['conclusion']='skipped'

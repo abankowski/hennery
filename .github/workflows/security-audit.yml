@@ -1,0 +1,37 @@
+name: security-audit
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 5 * * *'
+permissions:
+  contents: read
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Audit the lock against a freshly fetched RustSec database
+        run: |
+          audit_db=$(mktemp -d "$RUNNER_TEMP/rustsec.XXXXXX")
+          nix develop .#release -c cargo-audit audit --file Cargo.lock --db "$audit_db"
+          git -C "$audit_db" rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Query current registry advisories for every locked web dependency
+        run: nix develop .#web -c pnpm --dir web audit

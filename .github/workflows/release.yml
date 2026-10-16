@@ -422,7 +422,9 @@ jobs:
         fetch-depth: 0
         persist-credentials: false
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
-    - name: All exact-source Rust, web, packaging and Nix gates
+      with:
+        github_access_token: ${{ github.token }}
+    - name: Exact-source web gates and Rust lint checks
       env:
         CI: '1'
         HENNERY_WEB_REQUIRE: '1'
@@ -434,7 +436,18 @@ jobs:
         nix develop -c cargo fmt --all --check
         nix develop -c cargo clippy --workspace --all-targets --locked -- -D warnings
         nix develop -c cargo clippy -p hennery --locked -- -D warnings
-        nix develop -c cargo test --workspace --locked
+    - name: Tests with the same isolation and descriptor limits as CI
+      env:
+        CI: '1'
+        HENNERY_WEB_REQUIRE: '1'
+        HENNERY_REQUIRE_SHELLS: ${{ runner.os == 'Linux' && 'bash,zsh,fish' || '' }}
+        HENNERY_REQUIRE_SYSTEMD_ANALYZE: ${{ runner.os == 'Linux' && '1' || '' }}
+      run: nix develop -c sh packaging/ci-rust-tests.sh
+    - name: Generated files, browser, packaging and Nix gates
+      env:
+        CI: '1'
+        HENNERY_WEB_REQUIRE: '1'
+      run: |
         nix develop -c cargo run -p hennery-proto --bin gen --locked -- --check
         nix develop -c cargo run -p hennery-view --bin gen-view --locked -- --check
         nix develop -c cargo build -p hennery -p hennery-testkit --bins --locked
@@ -607,8 +620,9 @@ jobs:
     name: publish
     needs:
     - attest
-    if: ${{ !cancelled() && needs.attest.result == 'success' && vars.RELEASE_PUBLICATION_ENABLED == 'true' && vars.RELEASE_GITHUB_ENABLED
-      == 'true' }}
+    # Environment-scoped switches are available only after this protected job starts.
+    # The verified step checks them before any publication operation.
+    if: ${{ !cancelled() && needs.attest.result == 'success' }}
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -627,6 +641,7 @@ jobs:
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
         artifact-ids: ${{ needs.attest.outputs.artifact_id }}
+        merge-multiple: true
         path: original
         github-token: ${{ github.token }}
     - id: verified

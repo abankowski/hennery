@@ -195,16 +195,7 @@ jobs:
           dirname "$(command -v nginx)"
           SH
       - name: Tests
-        run: |
-          if [ "$RUNNER_OS" != Linux ]; then
-            cargo test --workspace --locked
-            exit 0
-          fi
-          cargo test --workspace --locked --no-run
-          sudo --preserve-env env "PATH=$PATH" "HOME=$HOME" unshare --net -- sh -c '
-            ip link set lo up
-            exec prlimit --nofile=65536:1048576 -- setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups -- cargo test --workspace --locked --offline
-          '
+        run: sh packaging/ci-rust-tests.sh
         env:
           # On ubuntu the PATH-capture and unit-lint tests fail rather than
           # skip when a shell or `systemd-analyze` is missing.

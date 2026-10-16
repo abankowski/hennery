@@ -58,7 +58,7 @@ class ConsumerFixtures:
     def gpg(cls, *arguments):
         return checked_fixture(['gpg', '--batch', '--pinentry-mode', 'loopback', '--passphrase', '', *arguments], env=cls.environment)
 
-    def fixture(self, case, script, *, hash_tool='sha256sum', conditional=False, installer=False):
+    def fixture(self, case, script, *, hash_tool='sha256sum', conditional=False, installer=False, tag='v0.1.0-alpha.1'):
         root = Path(tempfile.mkdtemp(prefix='case-', dir=self.root))
         release = root / 'release'; release.mkdir()
         source = root / 'source'
@@ -69,7 +69,6 @@ class ConsumerFixtures:
         git('init', '--template=', str(source))
         git('-C', str(source), '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'fixture')
         sha = git('-C', str(source), 'rev-parse', 'HEAD').stdout.strip()
-        tag = 'v0.1.0-alpha.1'
         if case == 'lightweight-tag':
             git('-C', str(source), '-c', 'tag.gpgsign=false', 'tag', tag)
         elif case == 'unsigned-tag':
@@ -123,7 +122,7 @@ class ConsumerFixtures:
 args=sys.argv[1:]
 url='https://github.com/marcinwadon/hennery.git'
 if 'fetch' in args:
-    assert args[-2:]==[url,'refs/tags/v0.1.0-alpha.1']
+    assert args[-2:]==[url,'refs/tags/'+os.environ['FIXTURE_TAG']]
     args[args.index(url)]=os.environ['FIXTURE_SOURCE']
 if 'verify-tag' in args and os.environ['FIXTURE_CASE'] in ('expired-status','revoked-status','duplicate-status','empty-status','failed-valid-status'):
     result=subprocess.run([{real_git!r},*args],capture_output=True)
@@ -144,7 +143,7 @@ args=sys.argv[1:]
 assert args[args.index('--proto')+1]=='=https'
 assert args[args.index('--proto-redir')+1]=='=https'
 url=next(arg for arg in args if arg.startswith('https://'))
-base='https://github.com/marcinwadon/hennery/releases/download/v0.1.0-alpha.1/'
+base='https://github.com/marcinwadon/hennery/releases/download/'+os.environ['FIXTURE_TAG']+'/'
 names={'https://raw.githubusercontent.com/marcinwadon/hennery/refs/heads/main/README.md':'main-readme',
        'https://github.com/marcinwadon.gpg':'github.asc',
        'https://keys.openpgp.org/vks/v1/by-fingerprint/'+os.environ['FIXTURE_FINGERPRINT']:'keyserver.asc'}
@@ -158,7 +157,7 @@ Path(args[args.index('-o')+1]).write_bytes(path.read_bytes())
 from pathlib import Path
 a=sys.argv[1:]; assert a[:2]==['attestation','verify']
 assert '--signer-workflow' not in a
-for flag,expected in {'--repo':'marcinwadon/hennery','--source-ref':'refs/tags/v0.1.0-alpha.1','--source-digest':os.environ['FIXTURE_SHA'],'--signer-digest':os.environ['FIXTURE_SHA'],'--cert-identity':'https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/v0.1.0-alpha.1','--format':'json','--cert-oidc-issuer':'https://token.actions.githubusercontent.com','--predicate-type':'https://slsa.dev/provenance/v1'}.items():
+for flag,expected in {'--repo':'marcinwadon/hennery','--source-ref':'refs/tags/'+os.environ['FIXTURE_TAG'],'--source-digest':os.environ['FIXTURE_SHA'],'--signer-digest':os.environ['FIXTURE_SHA'],'--cert-identity':'https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/'+os.environ['FIXTURE_TAG'],'--format':'json','--cert-oidc-issuer':'https://token.actions.githubusercontent.com','--predicate-type':'https://slsa.dev/provenance/v1'}.items():
     assert a.count(flag)==1 and a[a.index(flag)+1]==expected
 assert '--deny-self-hosted-runners' in a
 subject=Path(a[2]); bundle=Path(a[a.index('--bundle')+1]); assert bundle.read_text()=='offline provenance fixture\\n'
@@ -204,6 +203,7 @@ if case=='failed-attestation-status': sys.exit(1)
         home=root/'home';home.mkdir()
         marker=root/'executed'
         env=dict(self.environment, PATH=str(tools),HOME=str(home),GNUPGHOME=str(home/'unused'),TMPDIR=str(self.root),INSTALL_MARKER=str(marker),FIXTURE_RELEASE=str(release),FIXTURE_FINGERPRINT=self.keys[0],FIXTURE_SOURCE=str(source),FIXTURE_SHA=sha,FIXTURE_ATTESTED=str(attested),FIXTURE_CASE=case,TEST_ROOT=str(root),HENNERY_RELEASE_CHECKSUMS=str(release/'SHA256SUMS'),HENNERY_RELEASE_METADATA=str(release/'release-metadata.json'),HENNERY_ATTESTATION_BUNDLE=str(release/'release.sigstore.jsonl'))
+        env['FIXTURE_TAG']=tag
         (root/'install-work').mkdir()
         result=subprocess.run([str(tools/'sh'),str(path)],env=env,cwd=root,capture_output=True,text=True)
         return result,marker
