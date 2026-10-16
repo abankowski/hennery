@@ -1,164 +1,110 @@
-# R1 gate contract
+# Signed-source release contract
 
-The public adapter is `packaging/release-gate <channel>`; every writer/signing job
-uses the protected environment `release`. Publication stays disabled until the
-maintainer completes the platform setup and approves each channel. The static
-workflow checker is defense in depth. A repository writer can rewrite a workflow
-and request an ordinary write `GITHUB_TOKEN` or OIDC token; lint cannot prevent
-GitHub issuing those tokens.
+The authorized publisher is `.github/workflows/release.yml`, triggered only by a
+new annotated `v*` tag signed with the pinned maintainer key. The operator's
+2026-10-16 simplification signs source; exact tagged-workflow attestations bind
+bytes. Read [the maintainer runbook](../../docs/release-process.md) and the
+[design amendment](../../docs/specs/2026-10-15-distribution-release-design.md#simplified-release-model-operator-decision-2026-10-16)
+for trust assumptions, setup and accepted early-publication/denial-of-service
+risk. No held storage, upload App, detached inventory signature or separate
+candidate/qualification workflow remains.
 
-Release authority is the hardware-backed maintainer signature over the exact
-frozen inventory, required by every consumer and publisher alongside Sigstore.
-An owner SSH key can create an unsigned tag and run altered workflow code;
-an exact-tag certificate alone cannot authorize release bytes. Platform defenses
-still require maintainer review and deployment
-restricted to protected `v*` tags; publishing credentials only in `release`;
-crates.io trusted publishing bound to `release` and `release-publish.yml`; GHCR
-Actions access READ with a separate protected credential; immutable GitHub
-releases; owner-only tag creation and no bypass for tag updates/deletion. Every
-consumer rejects signatures from branch workflows. A writer can disrupt builds
-or ordinary repository content; that must not yield an accepted release identity.
+## Assets and verification
 
-## Inputs and outputs
+The flat payload directory contains canonical `SHA256SUMS` and every listed
+regular file, including `release-metadata.json`. Metadata binds repository,
+source SHA, tag/object, selected channels/targets and original attesting
+run/attempt. Channel manifests and frozen `.crate`/OCI inputs are payloads,
+not independent authorization roots. No extra, missing, duplicate, case-ambiguous
+or linked file is accepted. Bundles live in a separate signatures directory;
+checksum/self/bundle cycles are forbidden.
 
-Run in the locked release shell:
+`contract.py` checks checksums, exact tag signature and the attestation for the
+checksum list and every payload. CLI identity is the exact
+`https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/<tag>`,
+with source ref/digest, signer digest, GitHub Actions issuer, expected predicate
+and hosted-runner constraints. Use `--cert-identity`; do not add the mutually
+exclusive `--signer-workflow`. Pinned `gh 2.101.0` emits
+`verificationResult.signature.certificate.runInvocationURI`, which publication
+compares exactly to the original producing run/attempt URI. A CLI pin/schema
+change must fail the authentic offline contract test, never silently try an
+alternate JSON path.
 
-```sh
-nix develop .#release -c packaging/release-gate github --candidate candidate \
-  --inventory-sha256 "$INVENTORY" --phase preflight --receipt preflight-1.json
-```
+The authentic upstream fixture proves crypto and JSON shape, and must fail
+production Hennery identity. Hennery-field substitutions are structural tests.
+Before enabling **any** channel switch, including GitHub, the maintainer must
+preserve and verify the first genuine Hennery tagged-workflow attestation as an
+authentic positive fixture. Creating that public-log entry is the maintainer's
+disclosure decision; tests do not mint an attestation.
 
-Channels are `github`, `crates`, `ghcr`, `homebrew`. Phase is `preflight` before
-credentials and `boundary` immediately before each signing/upload/publication
-operation. A fresh receipt basename outside the candidate is mandatory each
-time, including repeated crate/image operations. Exit 0 means live validation
-and a held audit write succeeded; stdout is the exact approval challenge. The
-local receipt includes the binding, authenticated approver, phase and channel.
-Every nonzero exit stops the job. A previous receipt is never cached authority.
+## Workflow and credentials
 
-The complete retained flat root and its global inventory digest are required;
-channel-only Actions artifacts are insufficient. Materialize once per job with
-the exact-version retention fetch in `release-publish.yml`. Extract working OCI
-layouts and create receipts outside that immutable directory.
+Build and native acceptance jobs have read-only contents and no credentials.
+Only `attest` has OIDC/attestation write; it emits every asset/digest and original
+run/artifact identity in the approval summary. The maintainer reviews the run
+summary before approval. No draft exists yet.
 
-The outer workflow is manual `release-publish.yml`, dispatched at the **same
-signed release tag**, never a branch. Platform `GITHUB_REF` must be
-`refs/tags/<tag>` and `GITHUB_SHA` the exact qualified source commit. The event's
-inputs are `inventory_sha256`, `source_sha`, `tag`, sorted JSON `channels` and
-`targets`, JSON `candidate` containing integer `run_id`/`run_attempt`, the held
-`retention_receipt_version`, canonical `settings_audit` JSON and its SHA-256
-`settings_audit_sha256`, plus the armored public detached `maintainer_signature`
-over the exact inventory bytes. Publishing IDs come from the platform. Do not fabricate
-or replace platform variables. `GH_TOKEN` needs ordinary contents/Actions read;
-publishers never inspect private ruleset bypass settings or hold administration
-credentials. `RELEASE_AUDIT_BUCKET` and a storage-only AWS principal permit
-conditional held audit writes.
+One `publish` job references `release`, with contents write, Actions/attestations
+read and OIDC write. Under one approval it verifies original run artifacts,
+creates/uploads/reads back the draft, publishes immutable and then runs folded
+Homebrew, crates and GHCR steps. Each channel independently verifies public bytes
+and provenance before receiving its step-scoped credential and at write boundaries.
+There are no downstream environment jobs requiring another approval.
 
-The approval tuple includes all these candidate bindings, the settings audit
-digest and publishing run/attempt. The maintainer's authenticated environment
-review comment must equal `approve-release-v1:<canonical-tuple-sha256>`. The audit
-must postdate candidate completion, be at most 24 hours old, identify this exact
-inventory/run/attempt/channel/target set, and match the approved digest. It is a
-maintainer-local settings inspection ratified by that review, not an artifact's
-claim to be an authorized actor. Every rejection requires a fresh dispatch.
+`release_run.py` supplies `configure`, `freeze`, `check`, `summary`, `verify`,
+`publish` and `channel` entry points. The workflow invokes them in the pinned
+release shell. `run_policy.py` fetches read-only original run/jobs/artifact and
+review evidence; publishers do not read private platform settings or receive an
+administration credential. `settings_audit.py` separately records maintainer-local
+setup acceptance, using `--payload`, `--observations` and a create-only
+`--output`. Its report is not approval authority. The example observations must
+be replaced by personally verified facts.
 
-`settings_audit.py` runs locally with the maintainer's own authenticated `gh`
-account and explicitly confirmed UI observations where no settings API exists.
-It inspects the protected environment, both tag rulesets, repository/environment
-secret names and immutable-release setting. It checks GHCR Actions READ plus the
-post-setup negative push result, and each crate's exact workflow/environment.
-It records the maintainer's explicit hardware-touch policy/fingerprint confirmation;
-remote code cannot verify physical touch configuration.
-Publishers verify the ratified report, current exact-SHA checks, current review
-history and a freshly fetched tag's actual pinned-key signature at every gate.
+Channel selection is the reviewed `channels.json`, initially `["github"]`.
+The explicit channel-to-owning-job registry retains literal names `crates`,
+`ghcr` and `homebrew`, forbids collisions/dynamic names, and requires selected
+acceptance to succeed. Unselected owners alone may skip; native/no-op jobs still
+succeed. The policy checks the complete dependency graph, including descendants
+of optional jobs, and rejects reusable jobs. Secrets never appear at job scope.
 
-## Channel integration
+All `RELEASE_*_ENABLED` switches remain off until separately qualified. Secrets
+remaining in `release` are `RELEASE_HOMEBREW_TOKEN`, `GHCR_PUBLISH_TOKEN` and,
+only during explicit crates bootstrap, `RELEASE_CRATES_BOOTSTRAP_TOKEN`.
+`GHCR_PUBLISH_USER` is a non-secret variable. GitHub uses the built-in job token,
+not a stored token. GHCR Actions access for the ordinary token is READ;
+`post_setup.py` requires an authorized negative push acceptance with a successful
+known-digest read and an authoritative 403 write denial. Unit tests mock it;
+implementation never attempts that live write.
 
-R3 and R4 integration points were read from `origin/plan/dist-r3` and
-`origin/plan/dist-r4`. Both move their final jobs into the common manual tagged
-orchestrator, use `release`, direct `needs: authorize`, the exact current
-inventory/attempt condition in `workflow_policy.CREDENTIAL_CONDITION`, and
-`RELEASE_CRATES_ENABLED`/`RELEASE_GHCR_ENABLED`. Keep in-job preflight and boundary
-calls as well as the protected read-only authorization job. These local ordering
-checks supplement the platform boundary; a branch-editable boolean is not it.
+Bootstrap uploads the seven frozen crates in dependency order with one temporary
+publish-only token in `release`. Then configure every crate's trusted publisher
+for `marcinwadon/hennery`, `release.yml`, environment `release`; revoke the token
+at crates.io, confirm revocation, remove its secret and disable bootstrap on
+success **or abandonment**. Normal OIDC has no bootstrap fallback. The runbook
+describes scope, partial-graph reconciliation and maintainer cleanup explicitly.
 
-| Consumer | Adapter and retained payload contract |
-| --- | --- |
-| R3 | Replace `materialize`/`verify --channel crates-io` with exact held fetch and `packaging/release-gate crates`. Use the global digest, complete root, explicit phase and unique receipt. Freeze all seven `<crate>-<version>.crate` files and `crates-inventory.json`; independently recheck its channel digest, version, corresponding source and dependency order. Trusted publishing must require **both** `release` and `release-publish.yml`. |
-| R4 | Replace `packaging/r1-ghcr-gate upload/sign` with `packaging/release-gate ghcr`, `preflight` before dedicated credentials and `boundary` before each upload/sign. Freeze `ghcr-oci-layout.tar`, `ghcr-index.json` and SBOM/acceptance material. Extract outside the root; recheck both platform/index digests and executable hashes from signed `inventory.binaries[target]`. Ordinary `GITHUB_TOKEN` is READ only at the package; registry authentication uses a separate `release` environment secret. |
+## Retry and refusal
 
-There is no alternate `r1-ghcr-gate`, approval-ID protocol or branch signer.
-Dispatch input `maintainer_signature` carries the detached armored OpenPGP signature over the exact frozen `release-inventory.json`. Every channel gate verifies it before credentials and at each write boundary. Publishers retain and upload `release-inventory.json.asc` as a sidecar outside the frozen candidate. The pinned hardware-backed maintainer signature is authority; tag checks and Sigstore remain additional defenses. Every file/OCI verifier requires both. `ghcr-index.json` must contain a `digest` matching the requested immutable image subject; its bytes are covered by the global signed inventory.
+Only verified missing remote bytes may upload. Existing exact bytes are
+idempotent; mismatches and ambiguous authentication/network state refuse.
+GitHub requires a complete immutable release before channel writes. Homebrew
+updates the frozen formula atomically with CAS/readback and rejects downgrade
+or same-version changes. Crates and GHCR preserve frozen digest identity and
+never replace differing registry content.
 
-All file, installer and image verification pins the certificate identity to
-`https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<exact-version-tag>`
-with the GitHub OIDC issuer and exact source ref. `verify.py` supplies the shared
-file/OCI verifier. R4 must use it for each platform/index provenance and relevant
-SPDX predicate. The hardened installer applies the same identity before archive
-extraction. Checksums alone do not authenticate an author.
+Within 30 days/50 reruns, rerun only `publish` with renewed approval; original
+artifacts, artifact IDs and attesting attempt stay fixed. The publishing attempt
+changes, and its review comment must be
+`publish-run:<run-id>:attempt:<current-publishing-attempt>`. Never “rerun all”
+to rebuild old release bytes. Maintainer platform acceptance must confirm first
+approval and retry behavior. Missing originals, expired recovery or an incomplete
+immutable old release require a new signed version, an explicit incomplete-old
+release note and withheld moving aliases. Reconcile after an ambiguous GitHub
+publish response or each partial channel outcome before proceeding.
 
-Native cargo-binstall currently supports minisign rather than this Sigstore
-identity. It must not be advertised as an authenticated path or enabled without
-a reviewed bridge. Freeze and every gate inspect the final CLI `.crate` metadata:
-R3 must disable all native binstall strategies and retain the exact identity for
-the external verified path. The required metadata for each concrete version is:
-
-```toml
-[package.metadata.binstall]
-disabled-strategies = ["crate-meta-data", "quick-install", "compile"]
-
-[package.metadata.hennery-release]
-verification = "external-openpgp-sigstore"
-maintainer-fingerprint = "F26C7F594DFE84D131703AFC23E5A318AE8D2861"
-signer-identity = "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v0.1.0"
-```
-
-Use that crate's actual version tag. The `hennery-release` namespace describes
-the common external verifier; native binstall does not consume it. The parent's
-capability ruling and R3's metadata integration remain prerequisites to a
-supported native bridge. No unsupported
-Sigstore metadata key is presented as native binstall enforcement.
-
-Only fully verified missing remote artifacts may upload. An authoritative
-absence differs from failed authentication/network or mismatched bytes; ambiguous
-results stop. GitHub uploads all assets to a draft, verifies them, then publishes
-and requires immutability. Published assets are never changed. A retry reuses a
-verified existing bundle and held bytes with a fresh approval; missing/expired
-candidates or conflicting remote bytes need a new candidate/version. Hold
-candidate and audit objects until every approved channel/public path completes.
-Actions artifacts are convenience copies, never the retention authority.
-
-Candidate acceptance uses the signed inventory's selected channels. The stable
-GitHub job names `crates` and `ghcr` are reserved in the explicit channel to
-owning YAML job ID registry `workflow_policy.CHANNEL_JOB_IDS`: each selected channel requires exactly one
-completed, successful job. Only an unselected registered job may be absent or
-completed with conclusion `skipped`; failures, pending jobs, duplicate registered
-names and skipped ordinary jobs refuse. Required CI/build/Nix/release-test
-workflows retain the strict rule that every job succeeds.
-
-CI and the runtime gate validate ownership using the same policy. The gate
-reads `.github/workflows/release-candidate.yml` at the exact signed source SHA
-through the read-only contents API, with no branch-tip fallback. Only the owning
-YAML job ID may use its reserved channel display name; that name must be literal
-and the owner cannot be a matrix job. Ordinary jobs cannot claim a reserved name.
-Dynamic/expression names, display collisions and duplicate YAML keys refuse.
-Missing or malformed workflow evidence also refuses before optional exemptions.
-
-R4 integration hook: `ghcr -> ghcr` is registered now, but the current tagged
-workflow has no owning `ghcr` job, so the gate keeps GHCR unselectable. Add the
-aggregate acceptance job with YAML ID and literal display name `ghcr`,
-run it whenever `ghcr` is selected, and make all platform acceptance work its
-dependencies. A matrix should feed that aggregate job. The gate already rejects
-selected GHCR if this job is missing, skipped or failed; an unselected GHCR job
-can be skipped without blocking a GitHub-only release. A further channel's owner
-is one explicit registry entry, `channel: owning-job-id`; its display name must
-be that channel. Any other candidate jobs, including platform matrix work, must
-succeed and receive no optional-channel exemption. Keep the full candidate
-assembly and held inventory bound to the same selected channel set.
-
-Crates gate receipts have a fresh UUID in their basename for every invocation,
-including repeated preflights and publication retries. R1 audit retention keys
-by basename within the publishing run/attempt and keeps conditional creation,
-versioning, compliance retention and legal hold intact.
+Native cargo-binstall stays disabled without an authenticated bridge. Consumers
+use independently trusted tools/public key and verified source before running
+installer/verifier code or evaluating a flake. Preserve corresponding source,
+licence notices, backups and the existing native/runtime/public-path acceptance.
 
 Generated with Claude AI — please review before distribution.

@@ -1,229 +1,144 @@
+"""Offline platform acceptance; registry and live-evidence checks use real policy."""
 import copy
-import base64
-import json
+from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import gate
-import test_gate
+import post_setup
+import run_policy
 import settings_audit
-
-
-def workflow_content(workflow):
-    return {'type':'file','path':'.github/workflows/release-candidate.yml','encoding':'base64',
-            'content':base64.b64encode(json.dumps(workflow).encode()).decode()}
+import workflow_policy
+import test_run_policy
+from test_settings import settings
 
 
 class Platform(unittest.TestCase):
-    def fixture(self):
-        fixture = test_gate.Gates()
-        fixture.setUp()
-        self.addCleanup(fixture.tmp.cleanup)
-        return fixture
+    def setUp(self):
+        self.fixture = test_run_policy.RunPolicy()
+        self.fixture.setUp()
 
-    def test_skipped_jobs_cannot_hide_in_successful_workflow(self):
-        fixture = self.fixture()
-        class Fake(gate.GitHub):
-            def verify_tag(self, inventory, object_sha):
-                return fixture.snapshot['tag_signature']
+    def validate(self, jobs):
+        evidence = copy.deepcopy(self.fixture.evidence)
+        evidence['jobs'] = jobs
+        return run_policy.validate(self.fixture.metadata, evidence, self.fixture.env, self.fixture.now)
 
+    def test_original_evidence_is_read_only_and_keeps_original_attempt(self):
+        calls=[]
+        fixture=self.fixture
+        class API:
             def get(self, path):
-                if path == '/contents/.github/workflows/release-candidate.yml?ref='+fixture.inventory['source_sha']:
-                    return workflow_content({'jobs':{'archive':{},'crates':{},'ghcr':{},'homebrew':{}}})
-                if path.startswith('/git/ref/'):
-                    return fixture.snapshot['tag']
-                if path.startswith('/git/tags/'):
-                    return fixture.snapshot['tag_object']
-                if path.startswith('/rulesets/'):
-                    raise AssertionError('publishers must not read private ruleset settings')
-                if path == '/environments/release':
-                    raise AssertionError('publishers must not read private environment settings')
-                if path == '/actions/runs/10':
-                    return fixture.snapshot['candidate_run']
-                if path == '/actions/runs/20':
-                    return fixture.snapshot['publisher_run']
-                if path == '/actions/runs/20/approvals':
-                    return fixture.snapshot['reviews']
-                raise AssertionError(path)
+                calls.append(('get',path))
+                return {'/actions/runs/42/attempts/1':fixture.evidence['original'],
+                        '/actions/artifacts/77':fixture.evidence['artifact'],
+                        '/':{'owner':fixture.evidence['owner']},
+                        '/actions/runs/42/approvals':fixture.evidence['reviews']}[path]
+            def pages(self, path, key):
+                calls.append(('pages',path,key))
+                self_path='/actions/runs/42/attempts/1/jobs'
+                if path!=self_path or key!='jobs': raise AssertionError(path)
+                return fixture.evidence['jobs']
+        evidence=run_policy.evidence(API(),fixture.metadata,fixture.env)
+        self.assertEqual(evidence,fixture.evidence)
+        self.assertEqual(len(calls),5)
+        self.assertFalse(any('/rulesets' in str(call) or '/environments/' in str(call) for call in calls))
 
-            def pages(self, path, key=None):
-                if path == '/rulesets':
-                    raise AssertionError('publishers must not inspect ruleset bypass actors')
-                if path.endswith('/deployment-branch-policies'):
-                    raise AssertionError('publishers must use the approved settings audit')
-                if path.startswith('/actions/runs?'):
-                    return [dict(r, run_attempt=1) for r in fixture.snapshot['checks']]
-                if path.endswith('/jobs'):
-                    return self.jobs
-                raise AssertionError(path)
+    def test_checked_in_platform_examples_match_policy(self):
+        root=Path(__file__).resolve().parents[2]
+        rules=gate.strict_json((root/'.github/release-tag-ruleset.json').read_bytes())
+        creation=gate.strict_json((root/'.github/release-tag-creation.json').read_bytes())
+        self.assertEqual([creation,rules],settings_audit.tag_rulesets(0))
+        settings_audit.check_tag_rules([creation,rules],0)
+        environment=gate.strict_json((root/'.github/release-environment.example.json').read_bytes())
+        self.assertIs(environment['can_admins_bypass'],False)
+        self.assertEqual(environment['reviewers'],[{'type':'User','id':0}])
+        self.assertEqual(gate.strict_json((root/'.github/release-branch-policy.json').read_bytes()),{'name':'v*','type':'tag'})
 
-        client = Fake('offline-fixture')
-        client.jobs = [{'status': 'completed', 'conclusion': 'success'}]
-        snapshot = client.evidence(fixture.inventory, fixture.context, fixture.snapshot['settings_audit'])
-        gate.validate(fixture.inventory, fixture.digest, fixture.root, fixture.context, snapshot)
-        for jobs in ([], [{'status': 'completed', 'conclusion': 'skipped'}], [{'status': 'queued', 'conclusion': None}],
-                     [{'status': 'completed', 'conclusion': 'cancelled'}]):
-            client.jobs = jobs
-            with self.subTest(jobs=jobs), self.assertRaises(gate.Refused):
-                client.evidence(fixture.inventory, fixture.context, fixture.snapshot['settings_audit'])
+    def test_only_unselected_registered_owner_may_skip(self):
+        self.validate(self.fixture.evidence['jobs'])
+        for channel in workflow_policy.CHANNEL_JOB_IDS:
+            self.fixture.metadata['channels']=sorted(['github',channel])
+            changed=copy.deepcopy(self.fixture.evidence['jobs'])
+            for job in changed:
+                if job['name']==channel: job['conclusion']='success'
+            self.validate(changed)
+            for conclusion,status in [('skipped','completed'),('failure','completed'),('cancelled','completed'),(None,'queued')]:
+                broken=copy.deepcopy(changed)
+                for job in broken:
+                    if job['name']==channel:job.update(conclusion=conclusion,status=status)
+                with self.subTest(channel=channel,conclusion=conclusion),self.assertRaises(gate.Refused):self.validate(broken)
+            self.fixture.metadata['channels']=['github']
+            for mutation in ('absent','duplicate','failure','pending'):
+                broken=copy.deepcopy(changed)
+                if mutation=='absent':broken=[j for j in broken if j['name']!=channel]
+                if mutation=='duplicate':broken += [next(j for j in broken if j['name']==channel)]
+                for job in broken:
+                    if job['name']==channel and mutation=='failure':job['conclusion']='failure'
+                    if job['name']==channel and mutation=='pending':job['status']='queued'
+                with self.subTest(channel=channel,mutation=mutation),self.assertRaises(gate.Refused):self.validate(broken)
 
-    def test_checked_in_settings_match_the_validated_policy(self):
-        from pathlib import Path
-        root = Path(__file__).resolve().parents[2]
-        rules = gate.strict_json((root / '.github/release-tag-ruleset.json').read_bytes())
-        creation = gate.strict_json((root / '.github/release-tag-creation.json').read_bytes())
-        self.assertEqual([creation, rules], settings_audit.tag_rulesets(0))
-        gate.check_tag_rules([creation, rules], 0)
-        environment = gate.strict_json((root / '.github/release-environment.example.json').read_bytes())
-        self.assertIs(environment['can_admins_bypass'], False)
-        self.assertEqual(environment['reviewers'], [{'type': 'User', 'id': 0}])
-        self.assertEqual(gate.strict_json((root / '.github/release-branch-policy.json').read_bytes()), {'name': 'v*', 'type': 'tag'})
+    def test_skipped_native_and_ordinary_jobs_cannot_hide_in_successful_run(self):
+        for name in ('archive','homebrew-native','qualification','installer','attest','licence-review'):
+            jobs=copy.deepcopy(self.fixture.evidence['jobs'])
+            if name=='licence-review':jobs.append({'name':name,'status':'completed','conclusion':'skipped'})
+            else:next(j for j in jobs if j['name']==name)['conclusion']='skipped'
+            with self.subTest(name=name),self.assertRaises(gate.Refused):self.validate(jobs)
 
-    def candidate_evidence(self, channels, jobs, required_jobs=None, workflow=None, validate=False):
-        fixture = self.fixture()
-        fixture.inventory['channels'] = channels
-        if workflow is None: workflow={'jobs':{'archive':{},'crates':{},'ghcr':{},'homebrew':{}}}
-        class Fake(gate.GitHub):
-            def verify_tag(self, inventory, object_sha):
-                return fixture.snapshot['tag_signature']
-
-            def get(self, path):
-                if path == '/contents/.github/workflows/release-candidate.yml?ref='+fixture.inventory['source_sha']:
-                    if workflow is False: raise gate.Refused('fixture workflow unavailable')
-                    return workflow_content(workflow)
-                if path.startswith('/git/ref/'): return fixture.snapshot['tag']
-                if path.startswith('/git/tags/'): return fixture.snapshot['tag_object']
-                return {
-                    '/actions/runs/10': fixture.snapshot['candidate_run'],
-                    '/actions/runs/20': fixture.snapshot['publisher_run'],
-                    '/actions/runs/20/approvals': fixture.snapshot['reviews'],
-                }[path]
-
-            def pages(self, path, key=None):
-                if path.startswith('/actions/runs?'):
-                    return [dict(r, run_attempt=1) for r in fixture.snapshot['checks']]
-                if path == '/actions/runs/10/attempts/1/jobs': return jobs
-                if path.endswith('/jobs'):
-                    return required_jobs if required_jobs is not None else [{'status':'completed','conclusion':'success'}]
-                raise AssertionError(path)
-        snapshot=Fake('offline-fixture').evidence(fixture.inventory, fixture.context, fixture.snapshot['settings_audit'])
-        if validate: gate.validate(fixture.inventory, fixture.digest, fixture.root, fixture.context, snapshot)
-        return snapshot
-
-    @staticmethod
-    def job(name, conclusion='success', status='completed'):
-        return {'name':name,'status':status,'conclusion':conclusion}
-
-    def test_github_only_accepts_unselected_crates_and_ghcr_skips(self):
-        self.candidate_evidence(['github'], [self.job('archive'), self.job('crates','skipped'), self.job('ghcr','skipped')])
-        self.candidate_evidence(['github'], [self.job('archive')])
-        self.candidate_evidence(['github'], [self.job('archive'),self.job('crates'),self.job('ghcr')])
-
-    def test_github_only_homebrew_native_noops_succeed_but_skipped_native_jobs_refuse(self):
-        native=[self.job('homebrew-native ('+runner+')') for runner in ('macos-15','ubuntu-24.04','ubuntu-24.04-arm')]
-        optional=[self.job(channel,'skipped') for channel in ('crates','ghcr','homebrew')]
-        self.candidate_evidence(['github'],[self.job('archive'),*optional,*native])
-        for skipped in native:
-            with self.subTest(skipped=skipped),self.assertRaises(gate.Refused):
-                self.candidate_evidence(['github'],[self.job('archive'),*optional,self.job(skipped['name'],'skipped')])
-
-    def test_selected_channel_acceptance_must_exist_and_succeed(self):
-        for channel in ('crates','ghcr','homebrew'):
-            self.candidate_evidence(['github',channel], [self.job('archive'),self.job(channel)])
-            for jobs in ([], [self.job(channel,'skipped')], [self.job(channel,'failure')],
-                         [self.job(channel,'cancelled')], [self.job(channel,None,'queued')],
-                         [self.job(channel),self.job(channel)]):
-                with self.subTest(channel=channel,jobs=jobs), self.assertRaises(gate.Refused):
-                    self.candidate_evidence(['github',channel], [self.job('archive'),*jobs])
-
-    def test_optional_channels_do_not_waive_failures_or_other_skipped_jobs(self):
-        for channel in ('crates','ghcr','homebrew'):
-            for job in (self.job(channel,'failure'),self.job(channel,'skipped','queued'),self.job(channel,'cancelled')):
-                with self.subTest(channel=channel,job=job), self.assertRaises(gate.Refused):
-                    self.candidate_evidence(['github'],[self.job('archive'),job])
-            with self.subTest(duplicate=channel), self.assertRaises(gate.Refused):
-                self.candidate_evidence(['github'],[self.job('archive'),self.job(channel,'skipped'),self.job(channel,'skipped')])
-        with self.assertRaises(gate.Refused):
-            self.candidate_evidence(['github'],[self.job('archive','skipped'),self.job('crates','skipped')])
-
-    def test_unselected_channel_cannot_skip_a_required_workflow_job(self):
-        with self.assertRaises(gate.Refused):
-            self.candidate_evidence(['github'],[self.job('archive')],required_jobs=[self.job('crates','skipped')])
-
-    def test_each_selected_channel_is_required_when_all_are_selected(self):
-        channels=['github','crates','ghcr','homebrew']
-        self.candidate_evidence(channels,[self.job('archive'),self.job('crates'),self.job('ghcr'),self.job('homebrew')])
-        for channel in ('crates','ghcr','homebrew'):
-            with self.subTest(channel=channel), self.assertRaises(gate.Refused):
-                self.candidate_evidence(channels,[self.job('archive'),self.job(channel)])
-
-    def test_candidate_crates_job_has_registered_platform_name(self):
-        from pathlib import Path
-        import yaml
-        workflow=yaml.safe_load((Path(__file__).resolve().parents[2]/'.github/workflows/release-candidate.yml').read_text())
-        self.assertEqual(workflow['jobs']['crates'].get('name','crates'),'crates')
-        self.assertIn("',crates,'",workflow['jobs']['crates']['if'])
-
-    def test_ordinary_job_renamed_to_reserved_channel_cannot_be_exempted(self):
-        for channel in ('crates','ghcr','homebrew'):
-            for owner_present in (False,True):
-                workflow={'jobs':{'archive':{},'licence-review':{'name':channel}}}
-                if owner_present: workflow['jobs'][channel]={'name':channel}
-                with self.subTest(channel=channel,owner_present=owner_present), self.assertRaises(gate.Refused):
-                    self.candidate_evidence(['github'],[self.job('archive'),self.job(channel,'skipped')],workflow=workflow,validate=True)
-
-    def test_dynamic_job_name_cannot_claim_reserved_channel_at_runtime(self):
-        for expression in ("${{ 'ghcr' }}",'${{ matrix.name }}'):
-            workflow={'jobs':{'archive':{},'licence-review':{'name':expression}}}
-            with self.subTest(expression=expression), self.assertRaises(gate.Refused):
-                self.candidate_evidence(['github'],[self.job('archive'),self.job('ghcr','skipped')],workflow=workflow)
-
-    def test_reserved_evidence_name_requires_owner_in_tagged_workflow(self):
-        for channel in ('crates','ghcr','homebrew'):
-            for selected in (False,True):
-                with self.subTest(channel=channel,selected=selected),self.assertRaises(gate.Refused):
-                    self.candidate_evidence(['github',channel] if selected else ['github'],
-                                            [self.job('archive'),self.job(channel,'success' if selected else 'skipped')],
-                                            workflow={'jobs':{'archive':{}}})
-
-    def test_tagged_workflow_unavailable_refuses_even_unselected_channels(self):
-        with self.assertRaises(gate.Refused):
-            self.candidate_evidence(['github'],[self.job('archive')],workflow=False)
-
-    def test_ghcr_waits_for_its_registered_owner_in_the_tagged_workflow(self):
-        from pathlib import Path
-        import yaml
-        workflow=yaml.safe_load((Path(__file__).resolve().parents[2]/'.github/workflows/release-candidate.yml').read_text())
-        # Model a signed workflow before R4 adds its aggregate owner. This
-        # negative fixture must remain valid after that integration lands.
-        workflow['jobs'].pop('ghcr',None)
-        for extra in ([],[self.job('ghcr')]):
-            with self.subTest(extra=extra),self.assertRaises(gate.Refused):
-                self.candidate_evidence(['github','ghcr'],[self.job('archive'),*extra],workflow=workflow)
-
-    def test_runtime_registry_uses_explicit_channel_to_owner_mapping(self):
-        from unittest.mock import patch
-        import workflow_policy
-        workflow={'jobs':{'archive':{},'container-acceptance':{'name':'ghcr'}}}
+    def test_reserved_names_require_literal_unique_owning_nonmatrix_job(self):
+        for channel,owner in workflow_policy.CHANNEL_JOB_IDS.items():
+            valid={'jobs':{owner:{'name':channel},'archive':{}}}
+            self.assertEqual(workflow_policy.channel_jobs(valid),{channel:owner})
+            for mutation in ('spoof','collision','dynamic','matrix','renamed'):
+                workflow=copy.deepcopy(valid)
+                if mutation=='spoof':workflow['jobs']={'ordinary':{'name':channel}}
+                if mutation=='collision':workflow['jobs']['ordinary']={'name':channel}
+                if mutation=='dynamic':workflow['jobs']['ordinary']={'name':"${{ '"+channel+"' }}"}
+                if mutation=='matrix':workflow['jobs'][owner]['strategy']={'matrix':{'os':['linux']}}
+                if mutation=='renamed':workflow['jobs'][owner]['name']='ordinary'
+                with self.subTest(channel=channel,mutation=mutation),self.assertRaises(ValueError):workflow_policy.channel_jobs(workflow)
         with patch.dict(workflow_policy.CHANNEL_JOB_IDS,{'ghcr':'container-acceptance'}):
-            self.candidate_evidence(['github','ghcr'],[self.job('archive'),self.job('ghcr')],workflow=workflow)
+            self.assertEqual(workflow_policy.channel_jobs({'jobs':{'container-acceptance':{'name':'ghcr'}}}),{'ghcr':'container-acceptance'})
 
-    def test_candidate_workflow_content_must_be_a_valid_file_at_the_pinned_path(self):
-        from unittest.mock import patch
-        valid=workflow_content({'jobs':{'archive':{}}})
-        for change in ({'type':'dir'},{'path':'another.yml'},{'encoding':'raw'},{'content':'not-base64'},
-                       {'content':None},{'content':base64.b64encode(b'[]').decode()},
-                       {'content':base64.b64encode(b'jobs: {archive: {}, archive: {}}').decode()}):
-            client=gate.GitHub('offline-fixture')
-            with self.subTest(change=change),patch.object(client,'get',return_value=valid|change),self.assertRaises(gate.Refused):
-                client.candidate_channels('a'*40)
+    def test_workflow_parser_rejects_missing_mapping_and_duplicate_keys(self):
+        for raw in ('[]','jobs: {archive: {}, archive: {}}','jobs: {archive: {}, "\\u0061rchive": {}}',
+                    '\ufeffjobs: {archive: {}, archive: {}}'):
+            with self.subTest(raw=raw),self.assertRaises(ValueError):workflow_policy.load_workflow(raw)
+        for raw in ('{}','jobs: []','jobs: {}'):
+            with self.subTest(raw=raw),self.assertRaises(ValueError):workflow_policy.channel_jobs(workflow_policy.load_workflow(raw))
 
     def test_environment_bypass_must_be_explicit_false(self):
-        fixture = self.fixture()
-        for value in (None, True, 'false'):
-            fixture.snapshot['settings_audit']['settings']['environment']['can_admins_bypass'] = value
-            with self.subTest(value=value), self.assertRaises(gate.Refused):
-                fixture.validate()
+        for value in (None,True,'false'):
+            data=settings();data['environment']['can_admins_bypass']=value
+            with self.subTest(value=value),self.assertRaises(gate.Refused):settings_audit.validate_settings(data,['github'])
 
+    def test_negative_ghcr_acceptance_never_receives_any_release_credential(self):
+        post_setup.require_no_release_credentials({'GITHUB_TOKEN':'ordinary-token'})
+        for name in ('GHCR_PUBLISH_TOKEN','RELEASE_HOMEBREW_TOKEN','RELEASE_CRATES_BOOTSTRAP_TOKEN','CARGO_REGISTRY_TOKEN'):
+            with self.subTest(name=name),self.assertRaises(gate.Refused):post_setup.require_no_release_credentials({name:'secret'})
 
-if __name__ == '__main__':
-    unittest.main()
+    def test_negative_acceptance_cli_context_and_read_authentication_refuse_before_push(self):
+        import contextlib,io,os,sys
+        known=b'known';digest=gate.digest(known)
+        environment={'GITHUB_ACTIONS':'true','GITHUB_REPOSITORY':gate.REPOSITORY,'GITHUB_REF':'refs/heads/acceptance',
+                     'GITHUB_ACTOR':'marcinwadon','GITHUB_TOKEN':'offline-placeholder','GITHUB_RUN_ID':'42','GITHUB_RUN_ATTEMPT':'1'}
+        calls=[]
+        def request(url,headers,method='GET',data=None):
+            calls.append((url,method))
+            if 'scope=repository:' in url:return 200,gate.canonical({'token':'offline-placeholder'})
+            if method=='GET':return 200,known
+            return 403,b'denied'
+        argv=['post_setup.py','--expected-digest',digest]
+        with patch.object(sys,'argv',argv),patch.dict(os.environ,environment,clear=True),patch.object(post_setup,'request',side_effect=request),contextlib.redirect_stdout(io.StringIO()):
+            post_setup.main()
+        self.assertEqual(calls[-1][1],'PUT')
+        for changes in ({'GITHUB_ACTIONS':'false'},{'GITHUB_REPOSITORY':'wrong/repo'},
+                        {'GITHUB_REF':'refs/tags/v0.1.0'},{'GHCR_PUBLISH_TOKEN':'placeholder'}):
+            with patch.object(sys,'argv',argv),patch.dict(os.environ,environment|changes,clear=True),patch.object(post_setup,'request',side_effect=request) as remote:
+                with self.subTest(changes=changes),self.assertRaises(gate.Refused):post_setup.main()
+                remote.assert_not_called()
+        with patch.object(sys,'argv',['post_setup.py','--expected-digest','bad']),patch.dict(os.environ,environment,clear=True),patch.object(post_setup,'request',side_effect=request) as remote:
+            with self.assertRaises(gate.Refused):post_setup.main()
+            remote.assert_not_called()
+        with patch.object(sys,'argv',argv),patch.dict(os.environ,environment,clear=True),patch.object(post_setup,'request',return_value=(401,gate.canonical({'token':'offline-placeholder'}))) as remote:
+            with self.assertRaises(gate.Refused):post_setup.main()
+            self.assertEqual(remote.call_count,1)
