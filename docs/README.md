@@ -31,6 +31,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [Spike: per-session MCP over ACP](spikes/2026-09-25-per-session-mcp.md)
      and its [harness](../spikes/2026-09-25-mcp-per-session/).
 4. Plans:
+   - [OAuth denial popup closure (flake 18)](plans/2026-11-04-flake-oauth-denial.md) — requires the popup's close event while accepting its self-closing click's target-closure acknowledgment; retains denial, grant and mount assertions. Controlled regression, copy probes, load and web verification are recorded; independent review and CI remain parent-owned.
    - [List-stream and MCP timing (flakes 13–14)](plans/2026-11-02-flake-list-stream.md) — paused-clock deletion checks and an awaited OAuth popup cleanup assertion, with controlled regressions, guard probes, load and replay evidence. Independent review and Linux/macOS CI remain parent-owned.
    - [Proxy fixture port lifetimes (flake 15)](plans/2026-11-03-flake-proxy-ports.md) — leases stable proxy ports across pauses and test processes outside the kernel ephemeral ranges; deterministic contention regressions, copy probes, load and replay evidence recorded. Parent review and Linux/macOS CI remain pending.
    - [Walking skeleton](plans/2026-09-26-walking-skeleton.md) — the first
