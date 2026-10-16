@@ -22,6 +22,7 @@ let
       ../crates/hennery-sessions/src/delegation_attention.sql
       ../crates/hennery-sessions/src/family.sql
       ../crates/hennery-sessions/tests/fixtures/undo_family.sql
+      ../crates/hennery-sessions/tests/fixtures/session_tool_contract.json
       ../crates/hennery-memory/src/schema.sql
       ../crates/hennery-memory/src/schema2.sql
       ../crates/hennery-memory/src/schema3.sql
@@ -30,6 +31,7 @@ let
       ../crates/hennery-memory/tests/ui-client.test.mjs
       ../crates/hennery-sessions/tests/fixtures/undo_delegation.sql
       ../crates/hennery-testkit/tests/fixtures/delegation-codex-acp-1.13.0.jsonl
+      ../crates/hennery-view/tests/fixtures
       (lib.fileset.maybeMissing ../adapters/manifest.json)
       (lib.fileset.maybeMissing ../crates/hennery-host/manifest.json)
     ];
@@ -97,6 +99,11 @@ in
       touch "$out"
     '';
     inherit package;
+    source-inputs = pkgs.runCommand "hennery-source-inputs" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      python ${../packaging}/test-nix-sources.py
+      python ${../packaging}/check-nix-sources.py --root ${../.} --filtered ${src}
+      touch "$out"
+    '';
     clippy = craneLib.cargoClippy (
       common
       // {

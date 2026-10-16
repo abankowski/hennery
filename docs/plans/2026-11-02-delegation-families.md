@@ -5045,12 +5045,13 @@ The parent owns independent review, Linux/macOS CI, a rebase after D3a/D3b merge
 ### Implemented and release state
 
 Built D4a and the D4b family/operator/phone UI on the D3b base `7a820fce`.
-The ordinary-release restriction remains. Renewed authentication now permits
-Claude provider calls, but the post-fix Claude→Claude row fails parent answer
-delivery as recorded in the follow-up below. The earlier authentication blocks
-are historical. Independent security review, PR checks and merge belong to the
-fleet parent. No GitHub action was performed by this lane, and no release-gate
-removal is claimed.
+The ordinary-release restriction remains. Claude→Claude and Claude→Codex pass
+all required lifecycle scenarios; Codex→Claude passes the real answer loop but
+stops at the busy-parent approval boundary. Earlier authentication and answer-
+shape failures are historical. The PR #162 resource/CI amendment is recorded
+below. Independent re-review, PR checks and merge belong to the fleet parent.
+No GitHub action was performed by this lane, and no release-gate removal is
+claimed.
 
 The operator APIs authorize the current owner and hat at read/mutation time.
 Takeover preserves an already handed-off answer's first-accepted slot while
@@ -5183,11 +5184,11 @@ Review `7a820fce..HEAD` with special attention to owner/current-hat family
 visibility, stale cached links, takeover versus queued and handed-off answers,
 count partitioning and status acknowledgement, durable invalidation under
 purge, bounded metadata admission, harness approval correlation and capture
-privacy. Ordinary enablement must wait for the three credential-blocked Claude
-rows; this branch intentionally contains no release-gate removal.
+privacy. Ordinary enablement must wait for the remaining Codex→Claude lifecycle
+proof and security re-review; this branch currently retains the restriction.
 
-The parent must provide working approved Claude credentials and report the
-D3a/D3b merge before any required rebase. Do not infer approval or live
+The approved separate Claude test login is available; no new credentials are
+needed. The merged D1–D4/recall base is 87cc219c. Do not infer approval or live
 acceptance from tool discovery, a fixture or a socket write. No maintainer
 product decision was reopened.
 
@@ -6611,5 +6612,37 @@ Codex→Claude scenarios. **The preview/ordinary-release restriction remains.**
 There is no separate runtime/UI preview flag on this base to flip; permanent
 per-hat authorization is retained. No gate tests were weakened or changed.
 Review and Linux/macOS CI remain parent-owned.
+
+#### Review amendment: bounded form validation and CI source contracts (2026-10-16)
+
+The PR #162 High finding reproduced: a small acyclic reference DAG could make general JSON Schema evaluation exponential while holding the collector database mutex. The new regressions first failed under subprocess deadlines: the legacy stored schema exceeded three seconds, and a callback reading the same store blocked behind validation. Host refusal was independently RED: the hostile question remained answerable.
+
+The host now checks the schema before opening a question and returns JSON-RPC invalid parameters to the child. The collector independently checks before serialization, locking or storage. Both preserve a bounded operator-visible refusal marker with the question text and reason, without retaining the hostile schema. Static limits are 16 KiB, depth 24, 512 fully expanded nodes (including local reference expansion and annotations), and eight branches per combinator. Cyclic/external references, unknown constraints, patterns, patternProperties, format assertions, multipleOf and unsupported dialects are refused explicitly. The supported form vocabulary includes object/primitive constraints, required fields, enum/const, bounded arrays, local acyclic definitions and bounded combinators; unsupported assertions are never silently ignored.
+
+A small dedicated evaluator replaces jsonschema completely. No schema compilation, external retrieval or regex execution remains. Answer limits are 256 nodes, 64 KiB and depth 24, with a conservative expanded-schema/instance bound and a separate 131,072-unit evaluation budget that charges recursive visits and potentially long comparisons. Decimal comparison preserves JSON integer precision rather than rounding through f64. Normal pinned form schemas and the prior strict answer regressions remain supported.
+
+Parent answer validation runs on spawn_blocking outside the shared mutex. Admission then opens a new transaction and rechecks current scope/grant, direct-child ownership, pending kind/state, existing answer and the SHA-256 of the requested schema before queueing. A changed schema yields a visible schema_changed tool error and retry guidance. Test hooks prove reads during evaluation succeed, authority/state/schema changes prevent admission, and a current-thread Tokio executor remains responsive while the validation worker is occupied. A timeout is only a test guard, not the resource defense.
+
+Both owner-audit modules were already registered. Its comparison tokenizer requires spaces around the equals operator. Reproducing the actual registered-source audit failed on the two new compact queries; spelling the predicates as owner_id = ?1 fixes recognition without modifying or weakening the audit. Earlier whole-workspace evidence preceded the parent-answer amendment; its later targeted command list omitted owner_filter. The new full run and dedicated RED/GREEN owner audit close that coverage gap.
+
+The Nix fileset now includes the contract JSON and all runtime golden fixtures. packaging/check-nix-sources.py resolves Rust include_str!/include_bytes! literals from source tokens, ignores comments and generated source strings, refuses unrecognized expressions, and requires every file under crate fixture directories, covering computed runtime loaders. The source-inputs derivation compares these paths with the actual materialized Crane source. It runs in nix flake check and therefore every Nix CI matrix job; standalone regressions also run explicitly in CI. A cloned-copy probe removing the contract fixture fails with the missing path before compilation.
+
+The removed dependency added these 25 packages and declared licences (Cargo metadata, before removal):
+
+| Packages removed | Declared licence |
+| --- | --- |
+| ahash 0.8.12, allocator-api2 0.2.21, fraction 0.17.0, num 0.4.3, num-complex 0.4.6, num-iter 0.1.46, num-rational 0.4.2, regex 1.13.1 | MIT OR Apache-2.0 |
+| bit-set 0.8.0, bit-vec 0.8.0 | Apache-2.0 OR MIT |
+| borrow-or-share 0.2.4 | MIT-0 |
+| bytecount 0.6.9 | Apache-2.0/MIT |
+| email_address 0.2.9, fancy-regex 0.19.2, fluent-uri 0.4.1, jsonschema 0.58.6, jsonschema-regex 0.58.6, jsonschema-value 0.58.6, micromap 0.3.0, outref 0.5.2, referencing 0.58.6, uuid-simd 0.8.0, vsimd 0.8.0 | MIT |
+| num-cmp 0.1.0 | MIT/Apache-2.0 |
+| unicode-general-category 1.1.0 | Apache-2.0 |
+
+The bounded implementation adds no dependency or licence allowance. Cargo.lock is byte-identical to the lock before the jsonschema amendment (SHA-256 75a2bfb7816a4fe564eba64fd1ed386fcc1b6f62dc012e4e19b194de15891532). The release supply checker over --all-features metadata filtered to x86_64-unknown-linux-musl and aarch64-unknown-linux-musl reports 377 and 376 Rust components respectively, with zero licence findings for both. An initial unfiltered diagnostic included unrelated target/optional packages with missing material; that is not the release proof scope. No maintainer licence decision was made by this lane.
+
+Verification completed: cargo test --workspace --locked exited 0: 2557 passed, 7 ignored, zero failed across 173 test/doc-test suites. The initial attempt exited 101 on two now-corrected form fixtures lacking requestedSchema; its partial results are not substituted for this full green command. Targeted sessions tests passed 73 library +150 delegation +104 store tests; the unchanged owner audit passed all three. Final fmt, workspace/all-target clippy, hennery clippy and both generator checks exited 0. Native nix flake check -L exited 0, including source-inputs (three regressions, 50 covered paths), package/clippy/fmt/audit and embedded UI checks. The copied final tree passed six form-schema, 150 delegation, 82 host and three owner-audit tests; 880 tracked non-document files match after restoration. Twelve original resource/concurrency/refusal guard probes and four final evaluator/audit/fileset probes failed on their assertions or explicit missing-input error. The two concurrency regressions passed at four workers × three rounds (24 passes). No fresh replay was repeated for this review amendment under the verification budget; no web source or UI gate changed. A pre-commit scan of 235 private evidence/record files found no token-like values.
+
+The busy-parent follow-up remains next; no additional paid run was used for the security/CI amendment.
 
 Generated with Claude AI — please review before distribution.

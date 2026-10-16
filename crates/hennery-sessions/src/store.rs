@@ -3642,6 +3642,23 @@ impl Store {
     /// creates nothing and stores nothing, and is not an error (plan 9a
     /// decision 4, A1): the host's frame is acked, so it prunes its outbox.
     pub fn ingest_fact(&self, session_id: &str, seq: u64, body: &SessionBody) -> Result<Ingested> {
+        // Enforce independently of the host, before serialization or the shared
+        // store lock. Never retain an executable hostile schema as evidence.
+        let refused = match body {
+            SessionBody::PendingOpened { indexed, payload, .. }
+                if indexed
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.kind == PendingKind::Elicitation) =>
+            {
+                hennery_proto::form_schema::refusal_note(payload).map(|text| SessionBody::HostNote {
+                    note: "elicitation_schema_refused".into(),
+                    text,
+                })
+            }
+            _ => None,
+        };
+        let body = refused.as_ref().unwrap_or(body);
         // Before anything reads it (plan 8e decision 11): a session token
         // the agent printed is stored, compared, extracted and published
         // only redacted.

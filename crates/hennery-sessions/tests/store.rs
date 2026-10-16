@@ -1375,7 +1375,7 @@ fn elicitation(pending_id: &str) -> SessionBody {
             })),
             ..Indexed::default()
         },
-        payload: json!({"mode": "form"}),
+        payload: json!({"mode": "form", "requestedSchema":{"type":"object"}}),
     }
 }
 

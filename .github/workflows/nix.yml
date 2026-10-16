@@ -43,7 +43,9 @@ jobs:
           github_access_token: ${{ github.token }}
       - name: Check rendered Cargo arguments on every supported system
         run: python3 packaging/check-nix-args.py
-      - name: Flake checks (package, clippy, rustfmt, cargo-audit)
+      - name: Source input audit regressions
+        run: python3 packaging/test-nix-sources.py
+      - name: Flake checks (source inputs, package, clippy, rustfmt, cargo-audit)
         run: nix flake check -L
       - name: The package runs
         run: nix run . -- --version

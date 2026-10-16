@@ -732,6 +732,7 @@ fn ask_request(
         )
         .map(Some),
         FakeAsk::Elicitation => Ok(None),
+        FakeAsk::UnsafeElicitation => UntypedMessage::new("elicitation/create",serde_json::json!({"mode":"form","sessionId":session,"message":"Unsafe form question","requestedSchema":{"type":"object","properties":{"name":{"type":"string","pattern":"^(a+)+$"}}}})).map(Some),
         FakeAsk::Unknown => UntypedMessage::new("_fake/unknown", serde_json::json!({ "sessionId": session })).map(Some),
     }
 }
@@ -784,7 +785,7 @@ async fn ask_all(
 fn echo(ask: FakeAsk, answer: agent_client_protocol::Result<serde_json::Value>) -> String {
     let name = match ask {
         FakeAsk::Permission | FakeAsk::FuturePermission => "permission",
-        FakeAsk::Elicitation => "elicitation",
+        FakeAsk::Elicitation | FakeAsk::UnsafeElicitation => "elicitation",
         FakeAsk::Unknown => "unknown",
     };
     let answer = match answer {
@@ -800,7 +801,7 @@ fn echo(ask: FakeAsk, answer: agent_client_protocol::Result<serde_json::Value>) 
             Some(other) => format!("permission:{other}"),
             None => format!("permission:unreadable:{answer}"),
         },
-        FakeAsk::Elicitation => match (answer["action"].as_str(), answer.get("content")) {
+        FakeAsk::Elicitation | FakeAsk::UnsafeElicitation => match (answer["action"].as_str(), answer.get("content")) {
             (Some(action), Some(content)) => format!("elicitation:{action}:{content}"),
             (Some(action), None) => format!("elicitation:{action}"),
             (None, _) => format!("elicitation:unreadable:{answer}"),

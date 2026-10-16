@@ -22,7 +22,90 @@ pub struct DelegatedAnswer<'a> {
     pub pending: &'a str,
     pub answer: &'a AnswerRequest,
 }
+struct FormSnapshot {
+    payload: String,
+    schema_digest: Vec<u8>,
+}
 impl Store {
+    /// The expensive bounded evaluator runs on a blocking worker, without the
+    /// shared DB mutex. Admission below rechecks all authority and form facts.
+    pub async fn queue_ordinary_answer_async(
+        self: &std::sync::Arc<Self>,
+        identity: &SessionIdentity,
+        revision: i64,
+        digest: &str,
+        input: &DelegatedAnswer<'_>,
+        hub: &std::sync::Arc<Hub>,
+    ) -> Result<OperationReceipt> {
+        self.queue_answer_async(identity, revision, digest, input, hub, || {})
+            .await
+    }
+    #[cfg(feature = "test-hooks")]
+    pub async fn queue_ordinary_answer_async_during_validation(
+        self: &std::sync::Arc<Self>,
+        identity: &SessionIdentity,
+        revision: i64,
+        digest: &str,
+        input: &DelegatedAnswer<'_>,
+        hub: &std::sync::Arc<Hub>,
+        validation_hook: impl FnOnce() + Send + 'static,
+    ) -> Result<OperationReceipt> {
+        self.queue_answer_async(identity, revision, digest, input, hub, validation_hook)
+            .await
+    }
+    async fn queue_answer_async(
+        self: &std::sync::Arc<Self>,
+        identity: &SessionIdentity,
+        revision: i64,
+        digest: &str,
+        input: &DelegatedAnswer<'_>,
+        hub: &std::sync::Arc<Hub>,
+        validation_hook: impl FnOnce() + Send + 'static,
+    ) -> Result<OperationReceipt> {
+        let store = self.clone();
+        let identity = identity.clone();
+        let hub = hub.clone();
+        let digest = digest.to_owned();
+        let key = input.key.to_owned();
+        let child = input.child.to_owned();
+        let pending = input.pending.to_owned();
+        let answer = input.answer.clone();
+        tokio::task::spawn_blocking(move || {
+            store.queue_answer_checked(
+                &identity,
+                revision,
+                &digest,
+                &DelegatedAnswer {
+                    key: &key,
+                    child: &child,
+                    pending: &pending,
+                    answer: &answer,
+                },
+                &hub,
+                validation_hook,
+            )
+        })
+        .await?
+    }
+    fn ordinary_form_in(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        caller: &crate::delegation::SessionToolContext,
+        child: &str,
+        pending: &str,
+    ) -> Result<FormSnapshot> {
+        ensure!(self.owned_child_in(tx, caller, child, false)?, "not_found");
+        let row:Option<(String,String,String,Option<String>,bool)>=tx.query_row("SELECT kind,state,payload,payload -> '$.requestedSchema',EXISTS(SELECT 1 FROM answer_queue a WHERE a.owner_id=p.owner_id AND a.pending_id=p.pending_id) FROM pending p WHERE owner_id = ?1 AND session_id = ?2 AND pending_id = ?3",params![self.owner_id(),child,pending],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+        let (kind, state, payload, schema, answered) = row.ok_or_else(|| anyhow::anyhow!("not_found"))?;
+        ensure!(kind != "permission", "operator_required");
+        ensure!(kind == "elicitation", "not_found");
+        ensure!(state == "open", "not_open");
+        ensure!(!answered, "already_answered");
+        Ok(FormSnapshot {
+            payload,
+            schema_digest: Sha256::digest(schema.unwrap_or_default().as_bytes()).to_vec(),
+        })
+    }
     pub fn queue_ordinary_answer(
         &self,
         identity: &SessionIdentity,
@@ -31,12 +114,51 @@ impl Store {
         input: &DelegatedAnswer<'_>,
         hub: &Hub,
     ) -> Result<OperationReceipt> {
+        self.queue_answer_checked(identity, revision, digest, input, hub, || {})
+    }
+    #[cfg(feature = "test-hooks")]
+    pub fn queue_ordinary_answer_during_validation(
+        &self,
+        identity: &SessionIdentity,
+        revision: i64,
+        digest: &str,
+        input: &DelegatedAnswer<'_>,
+        hub: &Hub,
+        after_validation: impl FnOnce(),
+    ) -> Result<OperationReceipt> {
+        self.queue_answer_checked(identity, revision, digest, input, hub, after_validation)
+    }
+    fn queue_answer_checked(
+        &self,
+        identity: &SessionIdentity,
+        revision: i64,
+        digest: &str,
+        input: &DelegatedAnswer<'_>,
+        hub: &Hub,
+        after_validation: impl FnOnce(),
+    ) -> Result<OperationReceipt> {
         let DelegatedAnswer {
             key,
             child,
             pending,
             answer,
         } = *input;
+        let snapshot = {
+            let mut conn = self.conn();
+            let tx = conn.transaction()?;
+            let caller = self
+                .session_tool_context_in(&tx, identity, revision, true)?
+                .ok_or_else(|| anyhow::anyhow!("not_found"))?;
+            if let Some(receipt) = self.retry_in(&tx, &caller, key, digest)? {
+                return Ok(receipt);
+            }
+            self.ordinary_form_in(&tx, &caller, child, pending)?
+        };
+        crate::delegation_form::validate_with_hook(
+            &serde_json::from_str(&snapshot.payload)?,
+            answer,
+            after_validation,
+        )?;
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let caller = self
@@ -45,22 +167,8 @@ impl Store {
         if let Some(receipt) = self.retry_in(&tx, &caller, key, digest)? {
             return Ok(receipt);
         }
-        ensure!(self.owned_child_in(&tx, &caller, child, false)?, "not_found");
-        let kind: Option<String> = tx
-            .query_row(
-                "SELECT kind FROM pending WHERE owner_id = ?1 AND session_id = ?2 AND pending_id = ?3",
-                params![self.owner_id(), child, pending],
-                |r| r.get(0),
-            )
-            .optional()?;
-        ensure!(kind.as_deref() != Some("permission"), "operator_required");
-        ensure!(kind.as_deref() == Some("elicitation"), "not_found");
-        let payload: String = tx.query_row(
-            "SELECT payload FROM pending WHERE owner_id=?1 AND session_id=?2 AND pending_id=?3",
-            params![self.owner_id(), child, pending],
-            |r| r.get(0),
-        )?;
-        crate::delegation_form::validate(&serde_json::from_str(&payload)?, answer)?;
+        let current = self.ordinary_form_in(&tx, &caller, child, pending)?;
+        ensure!(current.schema_digest == snapshot.schema_digest, "schema_changed");
         let operation = uuid::Uuid::now_v7().to_string();
         let origin = InputOrigin::Parent {
             session_id: caller.session_id().into(),

@@ -1809,6 +1809,18 @@ impl Actor {
             params,
             responder,
         } = *question;
+        if kind == PendingKind::Elicitation
+            && let Some(text) = hennery_proto::form_schema::refusal_note(&params)
+        {
+            self.emit(SessionBody::HostNote {
+                note: "elicitation_schema_refused".into(),
+                text: text.clone(),
+            });
+            if let Err(error) = responder.respond_with_error(agent_client_protocol::Error::new(-32602, text)) {
+                tracing::debug!(session_id=%self.session_id,error=%self.redacted(&error),"form refusal not delivered to adapter");
+            }
+            return;
+        }
         let pending_id = uuid::Uuid::now_v7().to_string();
         let option_ids = match kind {
             PendingKind::Permission => option_ids(&params),

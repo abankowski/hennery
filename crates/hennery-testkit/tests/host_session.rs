@@ -3061,6 +3061,36 @@ async fn an_elicitation_reaches_the_operator_and_the_form_content_reaches_the_ag
 }
 
 #[tokio::test]
+async fn hostile_form_is_refused_to_the_child_and_remains_visible_to_the_operator() {
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = starting(&uplink, &asking(vec![FakeAsk::UnsafeElicitation]));
+    wait_until(&uplink, has("session_started")).await;
+    assert!(handle.send(prompt("r1", "t1")));
+    let frames = wait_until(&uplink, |frames| {
+        frames.iter().any(|frame| {
+            matches!(
+                frame,
+                HostFrame::Session {
+                    body: SessionBody::HostNote { .. } | SessionBody::PendingOpened { .. },
+                    ..
+                }
+            )
+        })
+    })
+    .await;
+    assert!(opened(&frames).is_empty(), "unsafe form must never become answerable");
+    assert!(frames.iter().any(|frame|matches!(frame,HostFrame::Session {body:SessionBody::HostNote {note,text},..} if note=="elicitation_schema_refused" && text.contains("Unsafe form question") && text.contains("pattern"))),"operator must see the refused question and reason");
+    let frames = wait_until(&uplink, has("turn_ended")).await;
+    assert!(
+        kinds(&frames).contains(&"update:elicitation:error:-32602".into()),
+        "child needs an actionable protocol refusal"
+    );
+    assert!(handle.send(SessionCmd::Close {
+        request_id: "close".into()
+    }));
+}
+
+#[tokio::test]
 async fn several_open_questions_each_take_their_own_answer() {
     let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
     let script = FakeScript {

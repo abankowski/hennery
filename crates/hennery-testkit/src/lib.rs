@@ -273,6 +273,8 @@ pub enum FakeAsk {
     /// `elicitation:decline`, `elicitation:cancel`, or, when not asked,
     /// `elicitation:unsupported`.
     Elicitation,
+    /// An unsafe regular-expression form, which must be refused promptly.
+    UnsafeElicitation,
     /// `_fake/unknown`, a method no client serves. Echoed as
     /// `unknown:error:<JSON-RPC code>`.
     Unknown,

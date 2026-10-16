@@ -374,7 +374,7 @@ fn report_in(tx: &Transaction<'_>, owner: &str, n: &Notice) -> Result<String> {
         .filter(|q| serde_json::to_vec(q).is_ok_and(|v| v.len() <= 2048));
     let mut budget = 4096;
     let schema = if let Some(pending) = &n.pending {
-        let payload: Option<String> = tx.query_row("SELECT payload FROM pending WHERE owner_id=?1 AND session_id=?2 AND pending_id=?3 AND kind='elicitation'", params![owner,n.child,pending], |r| r.get(0)).optional()?;
+        let payload: Option<String> = tx.query_row("SELECT payload FROM pending WHERE owner_id = ?1 AND session_id = ?2 AND pending_id = ?3 AND kind='elicitation'", params![owner,n.child,pending], |r| r.get(0)).optional()?;
         payload
             .map(|raw| serde_json::from_str::<serde_json::Value>(&raw))
             .transpose()?

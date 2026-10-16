@@ -730,6 +730,274 @@ fn answer() -> AnswerRequest {
     }
 }
 
+fn resource_form(case: &str) -> serde_json::Value {
+    match case {
+        "expanded" | "legacy_expanded" => {
+            let mut defs = serde_json::Map::new();
+            defs.insert("s0".into(), json!({"type":"object"}));
+            for i in 1..=40 {
+                let previous = format!("#/$defs/s{}", i - 1);
+                defs.insert(format!("s{i}"), json!({"allOf":[{"$ref":previous},{"$ref":previous}]}));
+            }
+            json!({"$defs":defs,"$ref":"#/$defs/s40"})
+        }
+        "deep" => {
+            let mut schema = json!({});
+            for _ in 0..64 {
+                schema = json!({"properties":{"next":schema}});
+            }
+            schema
+        }
+        "regex" => json!({"type":"object","properties":{"ok":{"type":"string","pattern":"^(a+)+$"}}}),
+        _ => {
+            json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false})
+        }
+    }
+}
+
+#[test]
+fn hostile_forms_have_a_bounded_subprocess() {
+    if let Ok(case) = std::env::var("HENNERY_TEST_FORM_RESOURCE_CASE") {
+        let (w, p) = pair();
+        let schema = resource_form(&case);
+        if case == "legacy_expanded" {
+            pending(&w, "child", 2, "question", PendingKind::Elicitation);
+            raw(&w)
+                .execute(
+                    "UPDATE pending SET payload=?1 WHERE pending_id='question'",
+                    [json!({"requestedSchema":schema}).to_string()],
+                )
+                .unwrap();
+            assert!(
+                w.store
+                    .queue_ordinary_answer(
+                        &p,
+                        1,
+                        "digest",
+                        &hennery_sessions::delegation_control::DelegatedAnswer {
+                            key: "answer",
+                            child: "child",
+                            pending: "question",
+                            answer: &answer()
+                        },
+                        &Hub::new()
+                    )
+                    .is_err()
+            );
+        } else {
+            let ingested = w
+                .store
+                .ingest_fact(
+                    "child",
+                    2,
+                    &SessionBody::PendingOpened {
+                        pending_id: "question".into(),
+                        indexed: Indexed {
+                            pending: Some(Box::new(PendingExtract {
+                                id: "question".into(),
+                                kind: PendingKind::Elicitation,
+                                option_ids: None,
+                                title: Some("Resource question".into()),
+                            })),
+                            ..Default::default()
+                        },
+                        payload: json!({"mode":"form","message":"Resource question","requestedSchema":schema}),
+                    },
+                )
+                .unwrap();
+            if case == "normal" {
+                w.store
+                    .queue_ordinary_answer(
+                        &p,
+                        1,
+                        "digest",
+                        &hennery_sessions::delegation_control::DelegatedAnswer {
+                            key: "answer",
+                            child: "child",
+                            pending: "question",
+                            answer: &answer(),
+                        },
+                        &Hub::new(),
+                    )
+                    .unwrap();
+            } else {
+                assert!(
+                    w.store.open_pending("child").unwrap().is_empty(),
+                    "refused form must not remain answerable"
+                );
+                assert!(
+                    ingested.events.iter().any(|e| e.kind == "host_note"
+                        && e.body["note"] == "elicitation_schema_refused"
+                        && e.body["text"]
+                            .as_str()
+                            .is_some_and(|text| text.contains("Resource question"))),
+                    "operator must retain the refusal and question"
+                );
+                assert!(
+                    !serde_json::to_string(&ingested.events)
+                        .unwrap()
+                        .contains("requestedSchema"),
+                    "do not store the hostile schema"
+                );
+            }
+        }
+        return;
+    }
+    for case in ["legacy_expanded", "expanded", "deep", "regex", "normal"] {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "hostile_forms_have_a_bounded_subprocess", "--nocapture"])
+            .env("HENNERY_TEST_FORM_RESOURCE_CASE", case)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    status.success(),
+                    "case {case}: {} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                break;
+            }
+            if std::time::Instant::now() > until {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("case {case} exceeded the subprocess resource bound");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "test-hooks")]
+fn validation_releases_the_store_lock_and_rechecks_scope_state_and_schema() {
+    if let Ok(case) = std::env::var("HENNERY_TEST_FORM_RECHECK_CASE") {
+        let (w, p) = pair();
+        pending(&w, "child", 2, "question", PendingKind::Elicitation);
+        let result = w.store.queue_ordinary_answer_during_validation(
+            &p,
+            1,
+            "digest",
+            &hennery_sessions::delegation_control::DelegatedAnswer {
+                key: "answer",
+                child: "child",
+                pending: "question",
+                answer: &answer(),
+            },
+            &Hub::new(),
+            || match case.as_str() {
+                "lock" => {
+                    assert!(w.store.find_session("parent").unwrap().is_some());
+                }
+                "scope" => {
+                    w.store.record_close_request("parent").unwrap();
+                }
+                "state" => {
+                    w.store.submit_answer("child", "question", &answer()).unwrap();
+                }
+                "schema" => {
+                    raw(&w)
+                        .execute(
+                            "UPDATE pending SET payload=?1 WHERE pending_id='question'",
+                            [
+                                json!({"requestedSchema":{"type":"object","properties":{"ok":{"const":false}}}})
+                                    .to_string(),
+                            ],
+                        )
+                        .unwrap();
+                }
+                _ => panic!("unknown case"),
+            },
+        );
+        match case.as_str() {
+            "lock" => {
+                result.unwrap();
+            }
+            "scope" => assert_eq!(result.unwrap_err().to_string(), "not_found"),
+            "state" => assert_eq!(result.unwrap_err().to_string(), "already_answered"),
+            "schema" => assert_eq!(result.unwrap_err().to_string(), "schema_changed"),
+            _ => unreachable!(),
+        }
+        return;
+    }
+    for case in ["lock", "scope", "state", "schema"] {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "validation_releases_the_store_lock_and_rechecks_scope_state_and_schema",
+                "--nocapture",
+            ])
+            .env("HENNERY_TEST_FORM_RECHECK_CASE", case)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    status.success(),
+                    "case {case}: {} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                break;
+            }
+            if std::time::Instant::now() > until {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("case {case} exceeded subprocess bound: validation retained the shared store lock");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(feature = "test-hooks")]
+async fn validation_worker_keeps_tokio_and_other_session_reads_responsive() {
+    let (w, p) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    let store = Arc::new(Store::open(&w.db).unwrap());
+    let worker = store.clone();
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    let (release, held) = std::sync::mpsc::channel();
+    let task = tokio::spawn(async move {
+        worker
+            .queue_ordinary_answer_async_during_validation(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "question",
+                    answer: &answer(),
+                },
+                &Arc::new(Hub::new()),
+                move || {
+                    entered.send(()).unwrap();
+                    held.recv_timeout(std::time::Duration::from_secs(2))
+                        .expect("Tokio must run while validation is held");
+                },
+            )
+            .await
+    });
+    ready.await.unwrap();
+    assert!(
+        store.find_session("parent").unwrap().is_some(),
+        "another session read must not wait for evaluation"
+    );
+    release.send(()).unwrap();
+    task.await.unwrap().unwrap();
+}
+
 #[test]
 fn delegated_answers_validate_the_original_schema_without_consuming_a_failed_key() {
     for content in [json!({"ok":"yes"}), json!({}), json!({"ok":true,"extra":1})] {

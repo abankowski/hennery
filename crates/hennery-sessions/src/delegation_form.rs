@@ -21,7 +21,15 @@ pub(crate) fn advertised(payload: &Value) -> Option<Value> {
         .cloned()
 }
 
-pub(crate) fn validate(payload: &Value, answer: &AnswerRequest) -> anyhow::Result<()> {
+#[cfg(test)]
+fn validate(payload: &Value, answer: &AnswerRequest) -> anyhow::Result<()> {
+    validate_with_hook(payload, answer, || {})
+}
+pub(crate) fn validate_with_hook(
+    payload: &Value,
+    answer: &AnswerRequest,
+    validation_hook: impl FnOnce(),
+) -> anyhow::Result<()> {
     let AnswerRequest::Elicitation {
         action: ElicitationAction::Accept,
         content,
@@ -30,20 +38,29 @@ pub(crate) fn validate(payload: &Value, answer: &AnswerRequest) -> anyhow::Resul
         return Ok(());
     };
     let schema = payload.get("requestedSchema");
-    let valid = schema
-        .filter(|s| s.to_string().len() <= 64 * 1024)
-        .and_then(|schema| {
-            jsonschema::options()
-                .offline()
-                .should_validate_formats(true)
-                .build(schema)
-                .ok()
-        })
-        .is_some_and(|validator| {
-            content
-                .as_ref()
-                .is_some_and(|value| value.is_object() && validator.is_valid(value))
-        });
+    if let Some(schema) = schema {
+        let bound = hennery_proto::form_schema::check(schema).map_err(|error| {
+            InvalidContent(format!(
+                "{error}; decline/cancel or ask the operator. No answer was queued."
+            ))
+        })?;
+        if let Some(content) = content {
+            hennery_proto::form_schema::check_instance(bound, content).map_err(|error| {
+                InvalidContent(format!(
+                    "{error}; reduce answer size or ask the operator. No answer was queued."
+                ))
+            })?;
+        }
+    }
+    validation_hook();
+    let valid = match (schema, content.as_ref().filter(|value| value.is_object())) {
+        (Some(schema), Some(content)) => hennery_proto::form_schema::validate(schema, content).map_err(|error| {
+            InvalidContent(format!(
+                "{error}; reduce answer size or ask the operator. No answer was queued."
+            ))
+        })?,
+        _ => false,
+    };
     if !valid {
         let contract = advertised(payload)
             .map(|s| s.to_string())

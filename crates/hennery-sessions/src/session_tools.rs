@@ -147,18 +147,23 @@ pub async fn execute(
                 action: args.action,
                 content: args.content,
             };
-            Ok(serde_json::to_value(state.store.queue_ordinary_answer(
-                identity,
-                revision,
-                &digest,
-                &crate::delegation_control::DelegatedAnswer {
-                    key: &args.operation_key,
-                    child: &args.child_id,
-                    pending: &args.pending_id,
-                    answer: &answer,
-                },
-                &state.hub,
-            )?)?)
+            Ok(serde_json::to_value(
+                state
+                    .store
+                    .queue_ordinary_answer_async(
+                        identity,
+                        revision,
+                        &digest,
+                        &crate::delegation_control::DelegatedAnswer {
+                            key: &args.operation_key,
+                            child: &args.child_id,
+                            pending: &args.pending_id,
+                            answer: &answer,
+                        },
+                        &state.hub,
+                    )
+                    .await?,
+            )?)
         }
         ToolCall::Status(args) => Ok(serde_json::to_value(state.store.child_status(
             identity,
@@ -203,6 +208,7 @@ pub fn error_code(error: &anyhow::Error) -> &'static str {
         "not_open",
         "already_answered",
         "invalid_arguments",
+        "schema_changed",
         "invalid_cursor",
     ];
     let message = error.to_string();
@@ -216,6 +222,9 @@ pub fn error_code(error: &anyhow::Error) -> &'static str {
 /// Expose only deliberate, bounded argument guidance; never raw store errors or
 /// submitted content. These remain MCP tool results so a parent can retry.
 pub fn error_message(error: &anyhow::Error) -> String {
+    if error.to_string() == "schema_changed" {
+        return "the form changed during validation; read session_status and submit an answer matching the current requestedSchema".into();
+    }
     if let Some(error) = error.downcast_ref::<crate::delegation_form::InvalidContent>() {
         return error.to_string();
     }
