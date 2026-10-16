@@ -3,14 +3,19 @@
 - **Date:** 2026-10-16; filename assigned by the parent.
 - **Design:** [Simplified release model (operator decision 2026-10-16)](../specs/2026-10-15-distribution-release-design.md#simplified-release-model-operator-decision-2026-10-16).
 - **Phase A base:** `87cc219c`; branch `plan/release-simplify`.
-- **Execution base:** not yet assigned; must include merged R4 (#143) and
-  Homebrew (#155), confirmed by the parent, plus independent Phase A review.
+- **Review amendment base:** `10abd28f` (Homebrew #155 merged, parent confirmed).
+- **Execution base:** not yet assigned; still waits for R4 (#143), explicit
+  parent authorization and scoped re-confirmation of Phase A amendments.
 - **Goal:** one signed-tag build/attestation run, summary approval, then draft,
   immutable release and selected channels in one protected job; no AWS/upload App.
 
 ## Execution status
 
-**Phase A only: design/plan outline, not implemented or approved.** The parent
+**Phase A only: design/plan outline, not implemented.** Review verdict is
+**APPROVE AFTER AMENDMENTS**; the changes below await scoped re-confirmation.
+Exact-run binding, bootstrap, task split and absence of new service/cost were
+accepted. The parent accepted the early-publication/denial-of-service residual
+risk on the maintainer's behalf; the operator will be informed. The parent
 explicitly requested this review stop before Phase B. No implementation blocks,
 RED/GREEN evidence, replay, live settings inspection or publication are claimed.
 This is intentionally an outline in plan 3c's structure. After authorization,
@@ -65,7 +70,11 @@ the parent even if other branches happen to become visible locally.
    authenticate checksum file and each payload with provenance. Channel manifests
    remain typed metadata, not independent authorization roots.
 6. Missing bytes fail closed; published immutable GitHub assets supply channel
-   recovery. No old-version rebuild, overwrite or new storage fallback.
+   payloads with the original run binding. Within 30 days/50 reruns use only
+   publish-job retries under renewed approval: accepted attesting attempt and
+   artifact IDs stay fixed while the publishing attempt changes. No “rerun all”,
+   old-version rebuild, overwrite or new storage fallback. Beyond the window,
+   document the incomplete old release and roll forward to a new signed version.
 7. Bootstrap is an explicit temporary mode of the protected crates step, using
    R3's frozen-byte uploader; normal OIDC has no token fallback. Exact seven-crate
    order, per-crate trusted settings and revocation are in the design.
@@ -82,6 +91,18 @@ the parent even if other branches happen to become visible locally.
 10. Verify certificate Run Invocation URI against this run and the trusted
     producing attempt/artifact IDs in addition to exact workflow/tag/source.
     Never accept an asset's own run claim as proof of which run produced it.
+11. Accepted parent ruling, 2026-10-16: one approval in the authorized workflow
+    is not a repository-wide publication guarantee. A writer/SSH push-key holder
+    can run a branch workflow with `contents: write`, publish genuine previously
+    attested bytes for an existing tag early, or freeze an incomplete immutable
+    release and block that version. Consumers still reject untrusted bytes;
+    early publication/denial of service remains accepted without an App/service.
+    Withhold moving aliases, document the damage and use a new signed version.
+12. Preserve policy rejection of reusable jobs (job-level `uses:`). Use exact
+    `--cert-identity` with source/signer digest constraints, never combine it
+    with mutually exclusive `--signer-workflow`. Real pinned-CLI offline
+    integration tests must prove the parser/crypto contract; mocks remain for
+    lifecycle failures. Bootstrap revocation applies on success and abandonment.
 
 ## Global Constraints
 
@@ -109,6 +130,8 @@ workflow/tag/source/run identity in files, OCI and README;
 complete acyclic checksums and immutable-state confirmation; skipped/failed
 channel owner jobs and name spoofing; credential ordering at each boundary;
 bootstrap scope/removal and no OIDC downgrade; remote ambiguity/digest refusal;
+fixed attesting versus changing publishing attempts; real CLI JSON/flag contract;
+accepted branch-writer early-publication/denial-of-service exposure;
 removal of storage, upload App and obsolete approval requirements throughout
 scripts, tests, examples and workflow policy. Review partial failure/rerun paths
 as carefully as the happy path. Parent owns live setting verification and full
@@ -116,17 +139,18 @@ PR status (checks, reviewDecision, mergeStateStatus, unresolved bot/human thread
 
 ## File structure
 
-Paths are current anchors, not future replay blocks. After the R4/Homebrew merges,
-inventory their actual files and re-anchor additions before implementing.
+Paths are current anchors, not future replay blocks. Homebrew is merged on the
+amendment base; re-anchor R4 after its merge before implementing.
 
 | Paths | Responsibility | Task |
 |---|---|---|
 | `packaging/release/tag_signature.py`, `maintainer.asc`, `test_tag_signature.py` | Preserve exact fingerprint/tag object/source behavior | 1 |
 | `packaging/release/{gate,verify,supply,workflow_policy}.py`, their tests, `.github/actions/release-gate/action.yml`, `packaging/release-gate` | SHA256SUMS, provenance, name ownership and verification boundaries | 1–2 |
+| `packaging/release/test_verify_cli.py`, `packaging/release/fixtures/attestation/` (new), pinned `gh` from `flake.lock` | Authentic bundle/payload/trusted-root offline contract, recorded origin/digests | 1 |
 | `packaging/release/channels.json` (new), release metadata generation | Signed selection and frozen run/source metadata | 1 |
 | `.github/workflows/release.yml` (new), `release-tests.yml`; remove `release-candidate.yml`, `release-publish.yml` | Single-run DAG, digest summary, one protected publisher and permission/refusal policy | 2 |
 | `packaging/release/{assemble,publish}.py`, tests | Complete draft, read-back verification, immutable publish/recovery | 2 |
-| `packaging/{publish-crates,crate-release,prepare-crates}.mjs`, associated tests; post-merge R4/Homebrew publishers | Immutable asset input and verification before credential use | 3 |
+| `packaging/{publish-crates,crate-release,prepare-crates}.mjs`, associated tests; `packaging/release/{homebrew,homebrew_accept,homebrew_publish}.py` and tests; post-merge R4 publishers | Immutable asset input and verification before credential use | 3 |
 | `packaging/release/{retention,approval,approval_summary}.py`, related obsolete tests; `settings_audit.py`, `post_setup.py`, `packaging/hennery-release` | Delete storage/signature protocol, retain applicable platform checks | 4 |
 | `flake.nix`, `packaging/release/README.md`, `packaging/README.md`, `docs/release-process.md`, `README.md`, bootstrap/README guard tests, crate metadata | Remove AWS tools/interfaces and obsolete verifier/identity claims | 3–4 |
 | This plan and `docs/README.md` | Exact blocks and execution/verification status | 5 |
@@ -143,9 +167,25 @@ inventory their actual files and re-anchor additions before implementing.
    and per-payload attestations. Preserve `tag_signature.py` cryptography while
    removing its obsolete inventory/storage coupling. Update build/freeze metadata
    and keep channel manifests digest-bound under the global list.
-3. Run the release suite below; probe checksum, signature and identity guards in
-   one cloned copy. Commit tested task bytes. Embed final source in this plan
-   during Phase B; no speculative executable implementation blocks in Phase A.
+3. Add an offline integration test invoking the actual **pinned `gh` binary**,
+   an authentic attestation bundle/original payload and trusted-root fixture,
+   with isolated config and blocked network. Record fixture origin, hashes and
+   CLI pin; do not mint a real tag/attestation or publish to create a fixture.
+   Require real successful signature/digest verification and read the actual
+   `verificationResult.signature.certificate.extensions.runInvocationURI` path.
+   Compare it exactly to
+   `https://github.com/marcinwadon/hennery/actions/runs/<id>/attempts/<attempt>`.
+   Change expected run and expected accepted attesting attempt independently:
+   both must refuse. Alter payload bytes: real CLI verification must fail.
+   Exercise exact `--cert-identity` including workflow path, `--source-digest`,
+   `--signer-digest`, `--bundle` and `--custom-trusted-root`; prohibit simultaneous
+   `--signer-workflow`. Keep lifecycle mocks, but no mock stands in for this
+   contract test. Fixture unavailability is a parent-owned prerequisite, not
+   permission to weaken the test or create unauthorized public artifacts.
+4. Run the release suite below, including the actual CLI contract; probe checksum,
+   signature, identity and run-parser guards in one cloned copy. Commit tested
+   task bytes and embed final source during Phase B. No speculative executable
+   implementation blocks belong in Phase A.
 
 ## Task 2: one-run workflow and draft lifecycle
 
@@ -153,7 +193,9 @@ inventory their actual files and re-anchor additions before implementing.
    source/selected acceptance failure, wrong job identity, skipped required job,
    missing dependencies, switch off, branch signer, unpinned action, cache,
    excess permissions, any pre-environment `contents: write`, missing protected
-   publisher, absent/incomplete digest summary and premature credential/use.
+   publisher, reusable jobs, absent/incomplete digest summary and premature
+   credential/use. State that these police the authorized workflow, not arbitrary
+   writer-controlled branch workflows.
 2. Implement the design's exact job table: unprivileged build/test jobs, `attest`
    writing an exhaustive asset/SHA-256 summary, then ONE protected `publish`
    job. After approval it downloads/verifies this exact run's artifacts, creates
@@ -165,8 +207,20 @@ inventory their actual files and re-anchor additions before implementing.
    changed tag or asset at boundary, failed/ambiguous upload or publish response,
    already immutable matching release, existing differing release and false
    immutable state. Require assertion that no publish/channel call happens on
-   refusal. No clobber or implicit tag creation. Run actionlint and suite; probe
-   each transition guard, commit and update exact blocks.
+   refusal. No clobber or implicit tag creation.
+4. Implement publish-only retry validation: unchanged original artifact IDs,
+   checksums/bundles, fixed accepted attesting attempt and run ID; renewed
+   environment approval for the new publishing attempt. Refuse replaced/expired
+   originals, “rerun all” recovery, a changed attesting attempt, no renewed
+   approval, window expiry (30 days) and exhausted reruns (50). Do not compare
+   original attestations to the new `GITHUB_RUN_ATTEMPT`.
+5. Test ambiguous successful GitHub publication: lose the response after the
+   fake server freezes the release, then retry with original inputs and fresh
+   approval. Require full remote read-back verification before continuing;
+   incomplete/mutable/conflicting/unverifiable state refuses. Verify the retry
+   does not recreate/overwrite a matching immutable release.
+6. Run actionlint and the suite; probe each transition/retry guard, commit tested
+   bytes and update exact blocks.
 
 ## Task 3: channels and first claiming
 
@@ -180,10 +234,19 @@ inventory their actual files and re-anchor additions before implementing.
    boundary; retain remote digest matching, create-only and lost-response tests.
    For GHCR bind OCI files to the expected pushed manifests/index and SBOM;
    verify through read-only/local inputs before dedicated registry authentication.
+   Add separate failure/recovery cases after Homebrew success/ambiguous update,
+   each crate upload and crates completion, GHCR blob/manifest/index and channel
+   completion, and final selected-channel completion before announcement.
+   Each retry must reconcile remote digests, skip matching completed work,
+   upload only absent content and refuse conflicts/ambiguity. Assert no moving
+   aliases or announcements on partial completion; window exhaustion documents
+   the incomplete version and requires a new signed version.
 3. Add bootstrap-mode tests: explicit off default, missing/expired/wrong-scoped
    token failure, no fallback from OIDC, missing per-crate trust, exact topo order,
-   existing differing checksum, partial retry and revocation/cleanup. Fake tokens
-   only. Reuse frozen-byte HTTP framing; never repackage accepted tarballs.
+   existing differing checksum, partial retry and revocation/cleanup on both
+   success and abandonment (including failures without an authorized immediate
+   retry); revoke/remove old bootstrap authority before a fresh retry token.
+   Fake tokens only. Reuse frozen-byte HTTP framing; never repackage accepted tarballs.
 4. Run targeted Node/Python publisher tests and available local registry/formula
    acceptance from the merged plans; probe every new guard, commit and embed.
 
@@ -247,6 +310,13 @@ commit/push the owned branch and request independent review. No self-approval.
 - Parent independent security/whole-branch review and full Linux/macOS PR status.
 - Maintainer validates the live tag/environment/immutable controls, touch policy,
   channel credentials, per-crate trust and first-claim bootstrap/revocation.
+- Maintainer platform acceptance covers both first-run and publish-only retry
+  approval: first draft/write only after summary approval, channels in that job;
+  renewed approval on retry, unchanged producing/attesting attempt and original
+  artifact IDs, new publishing attempt and no build/attest rerun. Verify refusal
+  when renewed approval is absent and when originals/window/rerun budget are
+  unavailable. If GitHub reuses approval, publication stays disabled until a
+  reviewed renewal gate exists. Observe real platform behavior, not only mocks.
 - Every real tag, draft/public release, registry login/upload and live negative
   platform test requires maintainer authorization; no publication on merge.
 - Native logged-in acceptance, current advisory/licence/source clearance and
