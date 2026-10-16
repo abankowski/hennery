@@ -1,6 +1,7 @@
 //! Resource contract for untrusted elicitation forms, shared by host and collector.
 use serde_json::Value;
 mod evaluation;
+mod formats;
 pub use evaluation::validate;
 
 pub const MAX_DEPTH: usize = 24;
@@ -9,6 +10,7 @@ pub const MAX_FAN_OUT: usize = 8;
 pub const MAX_SCHEMA_BYTES: usize = 16 * 1024;
 pub const MAX_INSTANCE_NODES: usize = 256;
 pub const MAX_VALIDATION_WORK: usize = 131_072;
+pub const MAX_ENUM_LABEL_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Bound {
@@ -147,9 +149,9 @@ fn visit<'a>(
             "items" | "additionalProperties" | "not" => visit(root, value, depth + 1, remaining, refs)?,
             "pattern" | "patternProperties" => return Err(Refused("pattern and patternProperties are unsupported")),
             "format" => {
-                return Err(Refused(
-                    "format is unsupported; use a bounded form without format assertions",
-                ));
+                if !matches!(value.as_str(), Some("email" | "uri" | "date" | "date-time")) {
+                    return Err(Refused("unsupported format; expected email, uri, date or date-time"));
+                }
             }
             "$schema" => {
                 if !value.as_str().is_some_and(|s| {
@@ -184,6 +186,22 @@ fn visit<'a>(
                     .is_some_and(|values| !values.is_empty() && values.len() <= 64)
                 {
                     return Err(Refused("enum budget exceeded"));
+                }
+            }
+            "enumNames" => {
+                if !value.as_array().is_some_and(|labels| {
+                    labels.len() <= 64
+                        && object
+                            .get("enum")
+                            .and_then(Value::as_array)
+                            .is_some_and(|values| values.len() == labels.len())
+                        && labels
+                            .iter()
+                            .all(|label| label.as_str().is_some_and(|s| s.len() <= MAX_ENUM_LABEL_BYTES))
+                }) {
+                    return Err(Refused(
+                        "enumNames must match enum with at most 64 string labels of at most 256 bytes",
+                    ));
                 }
             }
             "required" => {
@@ -364,7 +382,7 @@ mod tests {
         ));
         for schema in [
             json!({"multipleOf":0.1}),
-            json!({"format":"email"}),
+            json!({"format":"hostname"}),
             json!({"$schema":"http://json-schema.org/draft-07/schema#"}),
         ] {
             assert!(validate(&schema, &json!({})).is_err());

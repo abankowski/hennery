@@ -79,6 +79,14 @@ impl Evaluator {
                     Some(types) => types.iter().any(|t| is_type(t.as_str().unwrap_or_default(), value)),
                     None => is_type(constraint.as_str().unwrap_or_default(), value),
                 },
+                "format" => {
+                    if let Some(text) = value.as_str() {
+                        self.spend(text.len())?;
+                        super::formats::validate(constraint.as_str().ok_or(Refused("invalid format"))?, text)
+                    } else {
+                        true
+                    }
+                }
                 "const" => self.equal(value, constraint)?,
                 "enum" => {
                     let mut found = false;
@@ -203,7 +211,7 @@ impl Evaluator {
                 }
                 // Only these annotations/dialect declarations can reach here.
                 "$defs" | "definitions" | "$schema" | "title" | "description" | "$comment" | "default" | "examples"
-                | "_meta" | "readOnly" | "writeOnly" | "deprecated" => true,
+                | "_meta" | "readOnly" | "writeOnly" | "deprecated" | "enumNames" => true,
                 _ => return Err(Refused("unsupported schema keyword")),
             };
             if !valid {

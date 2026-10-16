@@ -178,7 +178,8 @@ async fn main() -> agent_client_protocol::Result<()> {
                     }
                     if script.ask_on_load
                         && let Some(ask) = script.asks.first().copied()
-                        && let Some(request) = ask_request(ask, &req.session_id, forms)?
+                        && let Some(request) =
+                            ask_request(ask, &req.session_id, forms, script.elicitation_schema.as_ref())?
                     {
                         // On the wire before the load's answer; awaited
                         // from a task of its own.
@@ -460,7 +461,9 @@ async fn main() -> agent_client_protocol::Result<()> {
                             // Sent, never awaited: kept alive until the crash.
                             let mut sent: Vec<SentRequest<serde_json::Value>> = Vec::new();
                             for ask in &script.asks {
-                                if let Some(request) = ask_request(*ask, &req.session_id, forms)? {
+                                if let Some(request) =
+                                    ask_request(*ask, &req.session_id, forms, script.elicitation_schema.as_ref())?
+                                {
                                     sent.push(cx2.send_request(request));
                                 }
                             }
@@ -691,6 +694,7 @@ fn ask_request(
     ask: FakeAsk,
     session: &SessionId,
     forms: bool,
+    schema: Option<&serde_json::Value>,
 ) -> agent_client_protocol::Result<Option<UntypedMessage>> {
     match ask {
         FakeAsk::Permission => UntypedMessage::new(
@@ -723,11 +727,11 @@ fn ask_request(
                 "mode": "form",
                 "sessionId": session,
                 "message": "What should the file be called?",
-                "requestedSchema": {
+                "requestedSchema": schema.cloned().unwrap_or_else(|| serde_json::json!({
                     "type": "object",
                     "properties": {"name": {"type": "string"}},
                     "required": ["name"]
-                }
+                }))
             }),
         )
         .map(Some),
@@ -757,7 +761,7 @@ async fn ask_all(
         if *cancelled.borrow() {
             break;
         }
-        let Some(request) = ask_request(*ask, session, forms)? else {
+        let Some(request) = ask_request(*ask, session, forms, script.elicitation_schema.as_ref())? else {
             asked.push(Asked::Echo("elicitation:unsupported".into()));
             continue;
         };

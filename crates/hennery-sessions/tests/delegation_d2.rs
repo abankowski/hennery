@@ -1049,6 +1049,74 @@ fn delegated_answers_validate_the_original_schema_without_consuming_a_failed_key
 }
 
 #[test]
+fn delegated_mcp_formats_and_enum_labels_admit_forms_and_validate_answers() {
+    for (field, good, bad) in [
+        (json!({"type":"string","format":"email"}), "person@example.org", "bad"),
+        (json!({"type":"string","format":"uri"}), "urn:example:form", "relative"),
+        (json!({"type":"string","format":"date"}), "2024-02-29", "2025-02-29"),
+        (
+            json!({"type":"string","format":"date-time"}),
+            "2026-10-16T12:34:56Z",
+            "2026-10-16T25:00:00Z",
+        ),
+        (
+            json!({"type":"string","enum":["r","g"],"enumNames":["Red","Green"]}),
+            "r",
+            "Red",
+        ),
+    ] {
+        let (w, p) = pair();
+        let schema = json!({"type":"object","properties":{"value":field},"required":["value"]});
+        w.store
+            .ingest_fact(
+                "child",
+                2,
+                &SessionBody::PendingOpened {
+                    pending_id: "question".into(),
+                    indexed: Indexed {
+                        pending: Some(Box::new(PendingExtract {
+                            id: "question".into(),
+                            kind: PendingKind::Elicitation,
+                            option_ids: None,
+                            title: None,
+                        })),
+                        ..Default::default()
+                    },
+                    payload: json!({"mode":"form","requestedSchema":schema}),
+                },
+            )
+            .unwrap();
+        assert_eq!(w.store.open_pending("child").unwrap().len(), 1, "{field}");
+        for (value, valid) in [(bad, false), (good, true)] {
+            let answer = AnswerRequest::Elicitation {
+                action: ElicitationAction::Accept,
+                content: Some(json!({"value":value})),
+            };
+            let result = w.store.queue_ordinary_answer(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "question",
+                    answer: &answer,
+                },
+                &Hub::new(),
+            );
+            if valid {
+                result.unwrap();
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(hennery_sessions::session_tools::error_code(&error), "invalid_arguments");
+                assert!(w.store.answers_to_send("host").unwrap().is_empty());
+                assert!(w.store.delegation_retry(&p, 1, "answer", "digest").unwrap().is_none());
+            }
+        }
+    }
+}
+
+#[test]
 fn child_question_delivery_contains_the_exact_form_contract() {
     let (w, p) = pair();
     ready_parent(&w);

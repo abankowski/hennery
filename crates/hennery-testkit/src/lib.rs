@@ -176,6 +176,9 @@ pub struct FakeScript {
     /// `cancelled` once its open questions are answered.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub asks: Vec<FakeAsk>,
+    /// Original schema for ordinary form elicitation compatibility tests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elicitation_schema: Option<serde_json::Value>,
     /// Send every ask at once, then await the answers in the asks' order
     /// (several questions open together).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -321,6 +324,7 @@ impl Default for FakeScript {
             model_switch_chunks_first: None,
             model_switch_answer_on_file: None,
             asks: Vec::new(),
+            elicitation_schema: None,
             asks_at_once: false,
             crash_while_asking: false,
             ask_on_load: false,
