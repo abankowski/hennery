@@ -86,3 +86,48 @@ fn missing_data_dir_and_unsafe_directory_are_refused() {
     );
     assert!(!target.join("memory.db").exists());
 }
+
+#[test]
+fn ui_bootstrap_uses_separate_private_auth_and_never_prints_password() {
+    use std::io::Write;
+    let d = tempfile::tempdir().unwrap();
+    let data = d.path().join("private");
+    let mut child = command(d.path())
+        .arg("--data-dir")
+        .arg(&data)
+        .args([
+            "ui-init",
+            "--owner",
+            "fixture-owner",
+            "--public-url",
+            "https://memory.example.test",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"synthetic bootstrap password\n")
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(result.status.success());
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("synthetic bootstrap password"));
+    assert_eq!(
+        data.join("memory-auth.db").metadata().unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(!data.join("hennery.db").exists());
+    let operator = hennery_kernel::operator::Operator::open(&data.join("memory-auth.db")).unwrap();
+    assert!(
+        operator
+            .verify_password("synthetic bootstrap password")
+            .unwrap()
+            .is_some()
+    );
+    let store = hennery_memory::store::Store::open(&data.join("memory.db")).unwrap();
+    assert!(store.manager(operator.owner_id()).is_ok());
+}

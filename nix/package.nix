@@ -25,6 +25,8 @@ let
       ../crates/hennery-memory/src/schema.sql
       ../crates/hennery-memory/src/schema2.sql
       ../crates/hennery-memory/src/schema3.sql
+      ../crates/hennery-memory/src/ui-client.mjs
+      ../crates/hennery-memory/tests/ui-client.test.mjs
       ../crates/hennery-sessions/tests/fixtures/undo_delegation.sql
       ../crates/hennery-testkit/tests/fixtures/delegation-codex-acp-1.13.0.jsonl
       (lib.fileset.maybeMissing ../adapters/manifest.json)
@@ -88,6 +90,11 @@ in
 {
   inherit package;
   checks = {
+    memory-ui = pkgs.runCommand "hennery-memory-ui-check" { nativeBuildInputs = [ pkgs.nodejs_24 ]; } ''
+      node --check ${src}/crates/hennery-memory/src/ui-client.mjs
+      node --test ${src}/crates/hennery-memory/tests/ui-client.test.mjs
+      touch "$out"
+    '';
     inherit package;
     clippy = craneLib.cargoClippy (
       common

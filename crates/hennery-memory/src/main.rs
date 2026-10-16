@@ -4,6 +4,7 @@ use hennery_memory::{
     consumer::{self, FeedConfig},
     http, keys,
     store::Store,
+    ui,
 };
 use std::io::Read;
 use std::{
@@ -25,6 +26,13 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Bootstrap this plug-in's independent browser authentication. Password from stdin.
+    UiInit {
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        public_url: String,
+    },
     /// Read a C1 grant from bounded stdin, never command arguments.
     Attach {
         #[arg(long)]
@@ -86,6 +94,16 @@ async fn run() -> anyhow::Result<()> {
     );
     let store = Arc::new(Store::open(&args.data_dir.join("memory.db"))?);
     match args.command {
+        Command::UiInit { owner, public_url } => {
+            let mut bytes = zeroize::Zeroizing::new(Vec::new());
+            std::io::stdin().take(1026).read_to_end(&mut bytes)?;
+            anyhow::ensure!(bytes.len() <= 1025, "password too large");
+            let password = std::str::from_utf8(&bytes)?
+                .strip_suffix('\n')
+                .unwrap_or(std::str::from_utf8(&bytes)?);
+            ui::bootstrap(&store, &args.data_dir, &owner, &public_url, password)?;
+            println!("independent UI authentication bootstrapped");
+        }
         Command::Attach { namespace } => {
             let mut bytes = zeroize::Zeroizing::new(Vec::new());
             std::io::stdin().take(16385).read_to_end(&mut bytes)?;
@@ -118,11 +136,21 @@ async fn run() -> anyhow::Result<()> {
             } else {
                 None
             };
-            axum::serve(listener, http::router(store))
-                .with_graceful_shutdown(async {
-                    let _ = tokio::signal::ctrl_c().await;
-                })
-                .await?;
+            let mut router = http::router(store.clone());
+            if args.data_dir.join("memory-auth.db").try_exists()? {
+                let operator = Arc::new(hennery_kernel::operator::Operator::open(
+                    &args.data_dir.join("memory-auth.db"),
+                )?);
+                router = router.merge(ui::router(store, operator)?);
+            }
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
+                let _ = tokio::signal::ctrl_c().await;
+            })
+            .await?;
             if let Some(worker) = worker {
                 worker.abort();
             }

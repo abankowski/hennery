@@ -1,10 +1,7 @@
 //! Owner-only management capabilities, separate from mounted MCP credentials.
 use crate::store::{Entry, Inner, Store, put, random};
 use anyhow::{Context, Result, ensure};
-use hennery_kernel::{
-    redact,
-    secret::{sha256_hex, unix_now},
-};
+use hennery_kernel::{redact, secret::unix_now};
 use hennery_proto::plugin::Provenance;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -12,6 +9,7 @@ use std::collections::BTreeMap;
 
 /// Issued only after the independent operator principal has been authenticated.
 /// Never deserializable from an HTTP request or a tool call.
+#[derive(Clone)]
 pub struct Manager {
     pub(crate) owner: String,
 }
@@ -54,6 +52,24 @@ pub struct Snapshot {
     pub generation: u64,
 }
 impl Store {
+    pub fn managed_writes(&self, manager: &Manager, namespace: &str, enabled: bool) -> Result<()> {
+        {
+            let inner = self.inner.lock().expect("store");
+            inner.managed_scope(manager, namespace, false)?;
+        }
+        self.set_writes(namespace, enabled)
+    }
+    pub fn managed_purge(&self, manager: &Manager, namespace: &str) -> Result<hennery_proto::plugin::ForgetReceipt> {
+        {
+            let inner = self.inner.lock().expect("store");
+            inner.db.query_row(
+                "SELECT id FROM namespaces WHERE id=?1 AND owner=?2",
+                params![namespace, manager.owner],
+                |r| r.get::<_, String>(0),
+            )?;
+        }
+        self.owner_purge(namespace)
+    }
     /// Explicit local bootstrap, not reachable through either HTTP credential.
     pub fn bind_manager(&self, principal: &str, owner: &str) -> Result<()> {
         ensure!(

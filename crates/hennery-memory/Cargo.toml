@@ -25,6 +25,7 @@ reqwest.workspace = true
 url.workspace = true
 zeroize.workspace = true
 time = { workspace = true, features = ["parsing"] }
+tar.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

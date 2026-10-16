@@ -43,6 +43,8 @@ jobs:
         run: nix develop -c pnpm --dir web install --frozen-lockfile
       - name: Types
         run: nix develop -c pnpm --dir web typecheck
+      - name: Optional memory screen client
+        run: nix develop -c sh -c 'node --check crates/hennery-memory/src/ui-client.mjs && node --test crates/hennery-memory/tests/ui-client.test.mjs'
       - name: Unit tests
         run: nix develop -c pnpm --dir web test
       - name: Build
@@ -53,6 +55,8 @@ jobs:
         run: nix develop -c pnpm --dir web e2e
         env:
           CI: "1"
+      - name: Optional memory screen browser checks
+        run: nix develop -c sh -c 'cargo build -p hennery-memory --bin hennery-memory --locked && node crates/hennery-memory/tests/browser.mjs'
 
   # The README's quickstart (plan 4f): its clone and build blocks, run as
   # written, by name (`packaging/readme-blocks.sh`). The rest of its blocks
