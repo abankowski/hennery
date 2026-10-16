@@ -9,7 +9,7 @@ use axum::{
     routing::get,
 };
 use hennery_gateway::plugin_api::{
-    empty_machine_body, error, machine_failure, machine_query, machine_token, no_store, watched_json,
+    empty_machine_body, error, inventory_query, machine_failure, machine_query, machine_token, no_store, watched_json,
 };
 
 impl crate::store::Store {
@@ -52,7 +52,11 @@ async fn serve(state: AppState, request: Request, inventory: bool) -> Response {
     let Some(token) = machine_token(request.headers()) else {
         return error(StatusCode::NOT_FOUND, "not_found");
     };
-    let query = match machine_query(request.uri().query()) {
+    let query = match if inventory {
+        inventory_query(request.uri().query())
+    } else {
+        machine_query(request.uri().query())
+    } {
         Ok(q) => q,
         Err(e) => return e.into_response(),
     };

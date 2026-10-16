@@ -4,7 +4,16 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
-pub const INVENTORY_MIGRATIONS: &[&str] = &["
+pub const INVENTORY_MAX_IDS: usize = 500;
+pub const INVENTORY_PAGE_BYTES: usize = 128 * 1024;
+const INVENTORY_IDLE_SECS: i64 = 60;
+const INVENTORY_ABSOLUTE_SECS: i64 = 20 * 60;
+// Two cursor strings (each at most 2048 bytes), watermark/resume identity
+// and the envelope fit here. The complete typed page is checked as well.
+const INVENTORY_ENVELOPE_BYTES: usize = 8192;
+
+pub const INVENTORY_MIGRATIONS: &[&str] = &[
+    "
 CREATE TABLE plugin_inventory (
     owner_id TEXT NOT NULL, hat_id TEXT NOT NULL, connection_id TEXT NOT NULL,
     epoch TEXT NOT NULL, snapshot TEXT NOT NULL, watermark INTEGER NOT NULL,
@@ -13,7 +22,11 @@ CREATE TABLE plugin_inventory_sources (
     owner_id TEXT NOT NULL, hat_id TEXT NOT NULL, connection_id TEXT NOT NULL,
     snapshot TEXT NOT NULL, session_id TEXT NOT NULL,
     PRIMARY KEY(owner_id, connection_id, snapshot, session_id));
-"];
+",
+    "
+ALTER TABLE plugin_inventory ADD COLUMN deadline INTEGER NOT NULL DEFAULT 0;
+",
+];
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -98,8 +111,8 @@ impl Control {
                 params![self.owner, grant.connection_id],
             )?;
             tx.execute(
-                "INSERT INTO plugin_inventory(owner_id,hat_id,connection_id,epoch,snapshot,watermark,expires,resume_cursor)
-                VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                "INSERT INTO plugin_inventory(owner_id,hat_id,connection_id,epoch,snapshot,watermark,expires,resume_cursor,deadline)
+                VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                 params![
                     self.owner,
                     grant.hat_id,
@@ -107,8 +120,9 @@ impl Control {
                     grant.epoch,
                     snapshot,
                     watermark,
-                    now.saturating_add(60),
-                    resume
+                    now.saturating_add(INVENTORY_IDLE_SECS),
+                    resume,
+                    now.saturating_add(INVENTORY_ABSOLUTE_SECS)
                 ],
             )?;
             for id in ids {
@@ -139,24 +153,103 @@ impl Control {
         limit: usize,
         now: i64,
     ) -> Result<InventorySlice> {
+        ensure!(
+            (1..=INVENTORY_MAX_IDS).contains(&limit),
+            "invalid plug-in inventory limit"
+        );
         let position = self
             .inventory_position(grant, cursor)
             .map_err(|_| anyhow::anyhow!("reset_required"))?;
         self.with(false, |conn| {
             db::migrate_component(conn, "plugin_inventory", INVENTORY_MIGRATIONS)?;
-            let row: Option<(i64,i64,String)> = conn.query_row("SELECT watermark,expires,resume_cursor FROM plugin_inventory
-                WHERE owner_id = ?1 AND hat_id = ?2 AND connection_id = ?3 AND epoch = ?4 AND snapshot = ?5 AND expires > ?6",
-                params![self.owner,grant.hat_id,grant.connection_id,grant.epoch,position.snapshot,now],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
-            let (watermark,expires,resume_cursor)=row.context("reset_required")?;
-            let mut stmt=conn.prepare("SELECT session_id FROM plugin_inventory_sources
+            let tx = conn.transaction()?;
+            let row: Option<(i64, i64, String)> = tx
+                .query_row(
+                    "UPDATE plugin_inventory
+                SET expires = min(?7, deadline)
+                WHERE owner_id = ?1 AND hat_id = ?2 AND connection_id = ?3 AND epoch = ?4 AND snapshot = ?5
+                AND expires > ?6 AND deadline > ?6
+                RETURNING watermark,expires,resume_cursor",
+                    params![
+                        self.owner,
+                        grant.hat_id,
+                        grant.connection_id,
+                        grant.epoch,
+                        position.snapshot,
+                        now,
+                        now.saturating_add(INVENTORY_IDLE_SECS)
+                    ],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()?;
+            let (watermark, expires, resume_cursor) = row.context("reset_required")?;
+            let mut stmt = tx.prepare(
+                "SELECT session_id FROM plugin_inventory_sources
                 WHERE owner_id = ?1 AND hat_id = ?2 AND connection_id = ?3 AND snapshot = ?4 AND session_id > ?5
-                ORDER BY session_id LIMIT ?6")?;
-            let mut ids=stmt.query_map(params![self.owner,grant.hat_id,grant.connection_id,position.snapshot,position.after,limit as i64+1],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            let has_more=ids.len()>limit;
-            ids.truncate(limit);
-            let next_cursor=if has_more {Some(self.inventory_cursor(grant,&Position {snapshot:position.snapshot,after:ids.last().cloned().context("empty inventory page")?})?)} else {None};
-            Ok(InventorySlice {source_ids:ids,next_cursor,watermark,expires,resume_cursor})
-        })?.context("reset_required")
+                ORDER BY session_id LIMIT ?6",
+            )?;
+            let mut rows = stmt.query_map(
+                params![
+                    self.owner,
+                    grant.hat_id,
+                    grant.connection_id,
+                    position.snapshot,
+                    position.after,
+                    limit as i64 + 1
+                ],
+                |r| r.get::<_, String>(0),
+            )?;
+            let mut ids = Vec::new();
+            let mut bytes = 2usize;
+            let mut has_more = false;
+            for id in rows.by_ref() {
+                let id = id?;
+                let weight = serde_json::to_vec(&id)?.len().saturating_add(1);
+                if ids.len() == limit || bytes.saturating_add(weight) > INVENTORY_PAGE_BYTES - INVENTORY_ENVELOPE_BYTES
+                {
+                    has_more = true;
+                    break;
+                }
+                bytes += weight;
+                ids.push(id);
+            }
+            ensure!(!has_more || !ids.is_empty(), "reset_required");
+            let next_cursor = if has_more {
+                Some(self.inventory_cursor(
+                    grant,
+                    &Position {
+                        snapshot: position.snapshot,
+                        after: ids.last().cloned().context("reset_required")?,
+                    },
+                )?)
+            } else {
+                None
+            };
+            ensure!(next_cursor.as_ref().is_none_or(|c| c.len() <= 2048), "reset_required");
+            let page = hennery_proto::plugin::PluginSourceInventoryPage {
+                version: 1,
+                source_ids: ids.clone(),
+                next_cursor: next_cursor.clone(),
+                resume_cursor: resume_cursor.clone(),
+                watermark: resume_cursor.clone(),
+                lease_until: expires,
+            };
+            ensure!(
+                serde_json::to_vec(&page)?.len() <= INVENTORY_PAGE_BYTES,
+                "reset_required"
+            );
+            drop(rows);
+            drop(stmt);
+            tx.commit()?;
+            Ok(InventorySlice {
+                source_ids: ids,
+                next_cursor,
+                watermark,
+                expires,
+                resume_cursor,
+            })
+        })?
+        .context("reset_required")
     }
 
     fn inventory_cursor(&self, grant: &Grant, position: &Position) -> Result<String> {
