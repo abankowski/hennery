@@ -5043,10 +5043,12 @@ The parent owns independent review, Linux/macOS CI, a rebase after D3a/D3b merge
 ### Implemented and release state
 
 Built D4a and the D4b family/operator/phone UI on the D3b base `7a820fce`.
-The ordinary-release restriction remains: three required provider combinations
-cannot run with the supplied expired Claude credentials. Independent security
-review, PR checks and merge belong to the fleet parent. No GitHub action was
-performed by this lane, and no release-gate removal is claimed.
+The ordinary-release restriction remains. Renewed authentication now permits
+Claude provider calls, but the post-fix Claude→Claude row fails parent answer
+delivery as recorded in the follow-up below. The earlier authentication blocks
+are historical. Independent security review, PR checks and merge belong to the
+fleet parent. No GitHub action was performed by this lane, and no release-gate
+removal is claimed.
 
 The operator APIs authorize the current owner and hat at read/mutation time.
 Takeover preserves an already handed-off answer's first-accepted slot while
@@ -5123,7 +5125,7 @@ tests across 110 files, TypeScript, both generators and formatting. SHA-256
 comparison matched all 853 tracked files other than this plan and the README
 record. No implementation patch changed after this comparison.
 
-### Actual pinned provider acceptance
+### Historical pinned provider acceptance before the live follow-up
 
 Pinned adapters: Claude ACP 0.81.0, Codex ACP 1.13.0, native Codex 0.155.1.
 Provider calls used explicit scratch homes and approved source credential files,
@@ -6374,5 +6376,99 @@ index 4e29ce32..00bc8570 100644
    // are read (before it, the store holds no items).
    const presumedParked = Boolean(info?.presumed_parked)
 ```
+
+## Live follow-up: model-specific configuration (2026-10-16)
+
+Base `87cc219c`; branch `plan/deleg-ungate`. Harness diagnostics and cost controls
+were committed first at `de5a8790`; the product correction is `6f550a97`.
+Provider authentication is supplied only through explicit source paths and
+copied by the harness into disposable homes with mode-0600 files. No credential
+values are retained in this record or the logs.
+
+### Root cause and correction
+
+The pinned Claude ACP 0.81.0 cold probe describes its default Opus model, which
+advertises `fast=false`. After selecting Sonnet, actual readback is
+`model=sonnet`, `mode=default`, `axes={effort:low}`: Sonnet advertises effort,
+including low, but no fast option. A no-inference reproduction requested
+`axes={effort:low,fast:false}`, read back the missing fast axis, and observed the
+host's `config_failed` note while the spawn remained waiting. This was not an
+effort-id or low-effort compatibility failure.
+
+D2 now drops inherited nonsecurity defaults when changing the probe's model,
+while retaining every profile/operator security baseline and every explicitly
+requested axis. The host terminates a delegated attach with an authoritative
+configuration failure before `session_started` or any brief, emitting
+`configuration_unavailable` through the existing receipt, token-revocation and
+parent-notice paths. Partial/unknown readback retains its existing fence.
+Ordinary operator session semantics and permanent per-hat opt-in are unchanged.
+
+Both pinned no-inference checks pass: Sonnet/low reads back exactly; an explicit
+unsupported `fast=false` request fails visibly in the parent receipt and
+operator family view, with no child brief. The harness records requested and
+actual configuration before assertions and uses native Bash for Claude's
+permission scenario, retaining actual permission/denial/no-edit assertions.
+
+### Verification of the correction
+
+- Meaningful RED: inherited fast default, and announcing an attached child after
+  a known configuration failure. An initial import compile error is excluded.
+- Targeted D2: 145 passed. Host: 17 passed; MCP: 20 passed; harness: 4 passed,
+  5 ignored. The updated real-socket delegation suite passes 14, with 1 ignored.
+- Formatting, both Clippy commands and both generators: exit 0. Final workspace
+  Clippy includes the amended integration expectations.
+- The full workspace command ran once and exited 101 on two old expectations
+  that explicitly demanded indefinite `waiting_config` after a known mismatch.
+  Both now assert terminal refusal, an empty queue and no brief; the matching
+  cold-catalog case still succeeds. The 50-binary continuation and doctests
+  exited 0. Deduplicated completed coverage: 163 workspace binaries,
+  **2,536 passed, 7 ignored**, plus passing doctests. This is not a claim that
+  the original workspace command exited 0.
+- One fresh copied replay from the base, with a private APFS-cloned target:
+  focused suites pass and 874 tracked files match, excluding only this record
+  and the documentation index. Seven copied guard removals fail assertions,
+  including the real handler's default-merge regression against the pinned
+  adapter without inference. Restored checks pass. Host refusal passes 4×3
+  load (12 test executions, two cases each).
+- No UI or dependency change; no web gate or additional Nix gate was run.
+  Scratch replay and logs remain in the ignored `deleg-ungate` ledger for
+  parent inspection and cleanup. No source-home credentials were copied there.
+
+### Post-fix provider attempt and remaining blocker
+
+Exactly one post-fix Claude→Claude row ran on `6f550a97`, Sonnet/low:
+exit **101**, **0 passed, 1 failed**, **265.66 seconds**. Spawn, complete exact
+configuration readback and genuine ACP elicitation pass. The question is
+durably `parent_delivered` and remains open; the parent is idle and the child
+blocked. Parent `session_answer` calls are refused with `invalid_arguments`.
+Observed ACP argument updates contain string-valued `content`, including a
+string encoding `question_0=blue`; runtime validation requires an object.
+`AnswerArgs.content` is advertised from `Option<Value>` while the tool's prose
+and acceptance validator require object content. The adapter/model schema
+conversion needs investigation; this record does not claim that a valid
+object-valued parent answer was accepted or delivered.
+
+The harness ends with `real parent answer delivered exceeded 240 seconds`.
+The product-failure stop rule prevents remaining paid rows or retries. The
+earlier Codex→Claude scratch database was deleted during its cleanup, so that
+old missing-child cause remains unproven; operation/child failure diagnostics
+are now retained before cleanup.
+
+| Scenario | Claude→Claude | Claude→Codex | Codex→Claude |
+| --- | --- | --- | --- |
+| Actual spawn | PASS | Not run: stopped | Not run: stopped |
+| Complete matching child configuration | PASS | Not run: stopped | Not run: stopped |
+| Genuine elicitation | PASS | Not run: stopped | Not run: stopped |
+| Parent answer delivery and continuation | FAIL | Not run: stopped | Not run: stopped |
+| Operator permission fallback/denial | Not reached | Not run: stopped | Not run: stopped |
+| Busy parent | Not reached | Not run: stopped | Not run: stopped |
+| Parked parent and automatic resume | Not reached | Not run: stopped | Not run: stopped |
+| Reconnect | Not reached | Not run: stopped | Not run: stopped |
+| Child failure | Not reached | Not run: stopped | Not run: stopped |
+| Closed parent fallback | Not reached | Not run: stopped | Not run: stopped |
+
+No release gate was removed. Review the configuration/security-baseline
+preservation, terminal failure cleanup and visible receipts on
+`87cc219c..6f550a97`; independent review and Linux/macOS CI remain parent-owned.
 
 Generated with Claude AI — please review before distribution.
