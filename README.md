@@ -44,8 +44,7 @@ Known limitations:
 
 Releases are not published yet; this procedure is for when publication is enabled.
 Until then, use the source quickstart below. You need trusted, already installed
-`curl`, GnuPG, `jq`, and either `sha256sum` or `shasum` (plus `gh` for the
-installer's archive verification).
+`curl`, Git, GnuPG, `jq`, `gh`, and either `sha256sum` or `shasum`.
 
 The release signing subkey's **full fingerprint** is
 **`F26C7F594DFE84D131703AFC23E5A318AE8D2861`**. Confirm it through channels
@@ -58,12 +57,13 @@ supplied alongside a release as the trust anchor. Review these commands from
 main and compare the fingerprint independently before running them.
 
 Set `release_tag` to the published version you intend to install. The block
-downloads public data into a private temporary directory, verifies the inventory
-with an isolated keyring, and checks the installer's SHA-256 against that signed
-inventory. Only then does it run the installer, which authenticates the archives
-with the maintainer signature and exact-tag Sigstore provenance. Keep the printed
-directory for inspection. Verification uses installed tools; only the
-authenticated installer is executed.
+downloads public data into a private temporary directory and verifies the annotated
+tag with an isolated keyring. The maintainer signs source; Sigstore binds the
+installer and checksum bytes to that exact tagged workflow and source commit.
+The block authenticates `SHA256SUMS`, release metadata and the installer, checks
+their common attesting run, and only then runs the installer. The installer repeats
+these checks for its archive before extraction. Keep the printed directory for
+inspection. Only the authenticated installer is executed.
 
 <!-- check: release-bootstrap -->
 ```sh
@@ -75,11 +75,88 @@ release_dir=$(mktemp -d "${TMPDIR:-/tmp}/hennery-release.XXXXXXXX") || exit 1
 printf 'Release verification directory: %s\n' "$release_dir"
 mkdir "$release_dir/keyring" || exit 1
 chmod 0700 "$release_dir/keyring" || exit 1
+printf 'no-autostart\nno-auto-key-retrieve\n' > "$release_dir/keyring/gpg.conf" || exit 1
 release_fetch() {
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$1" -o "$2" || exit 1
 }
 release_gpg() {
     gpg --batch --no-options --homedir "$release_dir/keyring" --no-autostart --no-auto-key-retrieve "$@"
+}
+release_git() {
+    env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 \
+        GNUPGHOME="$release_dir/keyring" git -c credential.helper= -c core.hooksPath=/dev/null "$@"
+}
+release_verify_tag() {
+    case "$release_tag" in v*) ;; *) return 1 ;; esac
+    printf '%s\n' "$release_tag" | LC_ALL=C grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || return 1
+    release_git init --bare --template= "$release_dir/source.git" >/dev/null 2>&1 || return 1
+    release_git --git-dir="$release_dir/source.git" fetch --no-tags --depth=1 \
+        https://github.com/marcinwadon/hennery.git "refs/tags/$release_tag" >/dev/null 2>&1 || return 1
+    release_object=$(release_git --git-dir="$release_dir/source.git" rev-parse FETCH_HEAD) || return 1
+    printf '%s\n' "$release_object" | LC_ALL=C grep -Eq '^[0-9a-f]{40}$' || return 1
+    release_git --git-dir="$release_dir/source.git" cat-file tag "$release_object" > "$release_dir/tag-object" || return 1
+    release_git --git-dir="$release_dir/source.git" -c gpg.format=openpgp -c gpg.program=gpg \
+        verify-tag --raw "$release_object" > "$release_dir/tag-output" 2> "$release_dir/tag-status" || return 1
+    awk -v fp="$release_fingerprint" '
+        $1 == "[GNUPG:]" && $2 == "VALIDSIG" { count++; if ($3 != fp) bad=1 }
+        $1 == "[GNUPG:]" && $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYEXPIRED|SIGEXPIRED|KEYREVOKED|NO_PUBKEY|NODATA|FAILURE|ERROR)$/ { bad=1 }
+        END { exit !(count == 1 && !bad) }
+    ' "$release_dir/tag-status" || return 1
+    release_source=$(awk -v tag="$release_tag" '
+        /^$/ { done=1 }
+        !done && $1 == "object" { objects++; sha=$2; if (NF != 2 || length(sha) != 40 || sha ~ /[^0-9a-f]/) bad=1 }
+        !done && $1 == "type" { types++; if ($0 != "type commit") bad=1 }
+        !done && $1 == "tag" { tags++; if ($0 != "tag " tag) bad=1 }
+        END { if (objects != 1 || types != 1 || tags != 1 || bad) exit 1; print sha }
+    ' "$release_dir/tag-object") || return 1
+}
+release_attest() {
+    gh attestation verify "$1" --bundle "$release_bundle" --repo marcinwadon/hennery \
+        --cert-identity "https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/$release_tag" \
+        --source-ref "refs/tags/$release_tag" --source-digest "$release_source" --signer-digest "$release_source" \
+        --cert-oidc-issuer https://token.actions.githubusercontent.com --predicate-type https://slsa.dev/provenance/v1 \
+        --deny-self-hosted-runners --format json > "$2" || return 1
+}
+release_check_hash() {
+    release_expected=$(awk -v name="$2" '$2 == name { count++; sha=$1 } END { if (count != 1) exit 1; print sha }' "$release_checksums") || return 1
+    if command -v sha256sum >/dev/null 2>&1; then
+        release_actual=$(sha256sum -b "$1") || return 1
+    elif command -v shasum >/dev/null 2>&1; then
+        release_actual=$(shasum -a 256 -b "$1") || return 1
+    else
+        return 1
+    fi
+    release_actual=$(printf '%s\n' "$release_actual" | awk '{ print $1 }') || return 1
+    [ "$release_actual" = "$release_expected" ] || return 1
+}
+release_verify_payload() {
+    [ -s "$release_checksums" ] && [ -s "$release_metadata" ] && [ -s "$release_bundle" ] || return 1
+    release_attest "$release_checksums" "$release_dir/checksums.verified.json" || return 1
+    release_last=$(tail -c 1 "$release_checksums") || return 1
+    [ -z "$release_last" ] || return 1
+    LC_ALL=C awk '
+        { name=$2; lower=tolower(name) }
+        length($1) != 64 || $1 ~ /[^0-9a-f]/ || name !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ || $0 != $1 "  " name { bad=1 }
+        lower == "sha256sums" || lower == "release.sigstore.jsonl" || seen[lower]++ || (NR > 1 && name <= previous) { bad=1 }
+        { previous=name }
+        END { exit !(NR > 0 && !bad) }
+    ' "$release_checksums" || return 1
+    release_check_hash "$release_metadata" release-metadata.json || return 1
+    release_attest "$release_metadata" "$release_dir/metadata.verified.json" || return 1
+    release_run=$(jq -er --arg tag "$release_tag" --arg sha "$release_source" --arg object "$release_object" '
+        if .schema == 2 and .repository == "marcinwadon/hennery" and .tag == $tag and .source_sha == $sha and .tag_object == $object
+            and (.attesting.run_id | type == "number" and . > 0 and floor == .)
+            and (.attesting.run_attempt | type == "number" and . > 0 and floor == .)
+        then "https://github.com/marcinwadon/hennery/actions/runs/\(.attesting.run_id)/attempts/\(.attesting.run_attempt)"
+        else error("release metadata source/tag/run mismatch") end
+    ' "$release_metadata") || return 1
+    release_check_hash "$1" "$2" || return 1
+    release_attest "$1" "$release_dir/payload.verified.json" || return 1
+    for release_result in checksums metadata payload; do
+        jq -e --arg run "$release_run" '
+            type == "array" and length > 0 and all(.[]; .verificationResult.signature.certificate.runInvocationURI == $run)
+        ' "$release_dir/$release_result.verified.json" >/dev/null || return 1
+    done
 }
 release_fetch https://raw.githubusercontent.com/marcinwadon/hennery/refs/heads/main/README.md "$release_dir/main-readme"
 grep -F -- "$release_fingerprint" "$release_dir/main-readme" >/dev/null || exit 1
@@ -90,33 +167,16 @@ for release_source in github keyserver; do
     awk -F: -v fp="$release_fingerprint" '$1 == "fpr" && $10 == fp { found=1 } END { exit !found }' "$release_dir/$release_source.fingerprints" || exit 1
 done
 release_gpg --import "$release_dir/github.asc" "$release_dir/keyserver.asc" || exit 1
+release_verify_tag || exit 1
 release_url="https://github.com/marcinwadon/hennery/releases/download/$release_tag"
-for release_file in release-inventory.json release-inventory.json.asc hennery-installer.sh; do
+for release_file in SHA256SUMS release-metadata.json release.sigstore.jsonl hennery-installer.sh; do
     release_fetch "$release_url/$release_file" "$release_dir/$release_file"
 done
-cd "$release_dir" || exit 1
-release_gpg --status-fd 1 --verify release-inventory.json.asc release-inventory.json > inventory-status || exit 1
-awk -v fp="$release_fingerprint" '
-    $1 == "[GNUPG:]" && $2 == "VALIDSIG" { count++; if ($3 != fp) bad=1 }
-    $1 == "[GNUPG:]" && $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYEXPIRED|SIGEXPIRED|KEYREVOKED|NO_PUBKEY|NODATA|FAILURE|ERROR)$/ { bad=1 }
-    END { exit !(count == 1 && !bad) }
-' inventory-status || exit 1
-release_sha=$(jq -er --arg tag "$release_tag" '
-    if .schema != 1 or .repository != "marcinwadon/hennery" or .tag != $tag then error("wrong release inventory") else
-        [.artifacts[] | select(.name == "hennery-installer.sh")] |
-        if length != 1 then error("installer missing or duplicated") else .[0].sha256 end |
-        if type == "string" and test("^[0-9a-f]{64}$") then . else error("invalid installer digest") end
-    end' release-inventory.json) || exit 1
-printf '%s  hennery-installer.sh\n' "$release_sha" > installer.sha256 || exit 1
-if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum -c installer.sha256 || exit 1
-elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 -c installer.sha256 || exit 1
-else
-    printf 'A SHA-256 tool is required\n' >&2
-    exit 1
-fi
-sh ./hennery-installer.sh
+release_checksums="$release_dir/SHA256SUMS"
+release_metadata="$release_dir/release-metadata.json"
+release_bundle="$release_dir/release.sigstore.jsonl"
+release_verify_payload "$release_dir/hennery-installer.sh" hennery-installer.sh || exit 1
+sh "$release_dir/hennery-installer.sh"
 )
 ```
 

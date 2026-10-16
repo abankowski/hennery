@@ -18,47 +18,112 @@ import sys
 from pathlib import Path
 
 MAINTAINER_KEY = (Path(__file__).parent / 'release/maintainer.asc').read_text()
-MAINTAINER_VERIFICATION = r'''    # The maintainer's touch-approved digest set is the root of trust.
-    check_cmd gpg || err "gpg is required for maintainer release signature verification"
-    check_cmd jq || err "jq is required for maintainer release inventory verification"
-    local _inventory="${HENNERY_RELEASE_INVENTORY:-$_dir/release-inventory.json}"
-    local _signature="${HENNERY_RELEASE_SIGNATURE:-$_dir/release-inventory.json.asc}"
-    if [ -z "${HENNERY_RELEASE_INVENTORY:-}" ]; then
-        downloader "$ARTIFACT_DOWNLOAD_URL/release-inventory.json" "$_inventory" || err "cannot download maintainer release inventory"
-    fi
-    if [ -z "${HENNERY_RELEASE_SIGNATURE:-}" ]; then
-        downloader "$ARTIFACT_DOWNLOAD_URL/release-inventory.json.asc" "$_signature" || err "cannot download maintainer release signature"
-    fi
-    [ -s "$_inventory" ] && [ -s "$_signature" ] || err "missing maintainer release signature or inventory"
-    local _keyring="$_dir/maintainer-keyring"
-    mkdir -m 0700 "$_keyring" || err "cannot isolate maintainer verification keyring"
-    cat > "$_keyring/key.asc" <<'HENNERY_MAINTAINER_KEY'
-''' + MAINTAINER_KEY + r'''HENNERY_MAINTAINER_KEY
-    gpg --batch --no-options --homedir "$_keyring" --no-autostart --no-auto-key-retrieve \
-        --import "$_keyring/key.asc" >/dev/null 2>&1 || err "cannot import pinned maintainer public key"
-    local _status
-    _status=$(gpg --batch --no-options --homedir "$_keyring" --no-autostart --no-auto-key-retrieve \
-        --status-fd 1 --verify "$_signature" "$_inventory" 2>/dev/null) || err "invalid maintainer release signature"
-    printf '%s\n' "$_status" | awk '
-        $1 == "[GNUPG:]" && $2 == "VALIDSIG" { count++; if ($3 != "F26C7F594DFE84D131703AFC23E5A318AE8D2861") bad=1 }
+CONSUMER_FUNCTIONS = r'''release_git() {
+    env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 \
+        GNUPGHOME="$release_dir/keyring" git -c credential.helper= -c core.hooksPath=/dev/null "$@"
+}
+release_verify_tag() {
+    case "$release_tag" in v*) ;; *) return 1 ;; esac
+    printf '%s\n' "$release_tag" | LC_ALL=C grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || return 1
+    release_git init --bare --template= "$release_dir/source.git" >/dev/null 2>&1 || return 1
+    release_git --git-dir="$release_dir/source.git" fetch --no-tags --depth=1 \
+        https://github.com/marcinwadon/hennery.git "refs/tags/$release_tag" >/dev/null 2>&1 || return 1
+    release_object=$(release_git --git-dir="$release_dir/source.git" rev-parse FETCH_HEAD) || return 1
+    printf '%s\n' "$release_object" | LC_ALL=C grep -Eq '^[0-9a-f]{40}$' || return 1
+    release_git --git-dir="$release_dir/source.git" cat-file tag "$release_object" > "$release_dir/tag-object" || return 1
+    release_git --git-dir="$release_dir/source.git" -c gpg.format=openpgp -c gpg.program=gpg \
+        verify-tag --raw "$release_object" > "$release_dir/tag-output" 2> "$release_dir/tag-status" || return 1
+    awk -v fp="$release_fingerprint" '
+        $1 == "[GNUPG:]" && $2 == "VALIDSIG" { count++; if ($3 != fp) bad=1 }
         $1 == "[GNUPG:]" && $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYEXPIRED|SIGEXPIRED|KEYREVOKED|NO_PUBKEY|NODATA|FAILURE|ERROR)$/ { bad=1 }
         END { exit !(count == 1 && !bad) }
-    ' || err "release signature is not from the pinned maintainer signing key"
-    local _approved_sha _actual_sha
-    _approved_sha=$(jq -er --arg tag "v$APP_VERSION" --arg archive "$_artifact_name" '
-        if .schema != 1 or .repository != "marcinwadon/hennery" or .tag != $tag then error("release schema/repository/tag mismatch") else
-            [.artifacts[] | select(.name == $archive)] |
-            if length != 1 then error("archive missing or duplicated") else .[0].sha256 end |
-            if type == "string" and test("^[0-9a-f]{64}$") then . else error("invalid archive digest") end
-        end' "$_inventory") || err "maintainer inventory does not authorize this archive and tag"
-    if check_cmd sha256sum; then
-        _actual_sha=$(sha256sum -b "$_file" | awk '{ print $1 }')
-    elif check_cmd shasum; then
-        _actual_sha=$(shasum -a 256 -b "$_file" | awk '{ print $1 }')
+    ' "$release_dir/tag-status" || return 1
+    release_source=$(awk -v tag="$release_tag" '
+        /^$/ { done=1 }
+        !done && $1 == "object" { objects++; sha=$2; if (NF != 2 || length(sha) != 40 || sha ~ /[^0-9a-f]/) bad=1 }
+        !done && $1 == "type" { types++; if ($0 != "type commit") bad=1 }
+        !done && $1 == "tag" { tags++; if ($0 != "tag " tag) bad=1 }
+        END { if (objects != 1 || types != 1 || tags != 1 || bad) exit 1; print sha }
+    ' "$release_dir/tag-object") || return 1
+}
+release_attest() {
+    gh attestation verify "$1" --bundle "$release_bundle" --repo marcinwadon/hennery \
+        --cert-identity "https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/$release_tag" \
+        --source-ref "refs/tags/$release_tag" --source-digest "$release_source" --signer-digest "$release_source" \
+        --cert-oidc-issuer https://token.actions.githubusercontent.com --predicate-type https://slsa.dev/provenance/v1 \
+        --deny-self-hosted-runners --format json > "$2" || return 1
+}
+release_check_hash() {
+    release_expected=$(awk -v name="$2" '$2 == name { count++; sha=$1 } END { if (count != 1) exit 1; print sha }' "$release_checksums") || return 1
+    if command -v sha256sum >/dev/null 2>&1; then
+        release_actual=$(sha256sum -b "$1") || return 1
+    elif command -v shasum >/dev/null 2>&1; then
+        release_actual=$(shasum -a 256 -b "$1") || return 1
     else
-        err "cannot check maintainer inventory without a SHA-256 tool"
+        return 1
     fi
-    [ "$_actual_sha" = "$_approved_sha" ] || err "archive differs from maintainer-approved inventory"
+    release_actual=$(printf '%s\n' "$release_actual" | awk '{ print $1 }') || return 1
+    [ "$release_actual" = "$release_expected" ] || return 1
+}
+release_verify_payload() {
+    [ -s "$release_checksums" ] && [ -s "$release_metadata" ] && [ -s "$release_bundle" ] || return 1
+    release_attest "$release_checksums" "$release_dir/checksums.verified.json" || return 1
+    release_last=$(tail -c 1 "$release_checksums") || return 1
+    [ -z "$release_last" ] || return 1
+    LC_ALL=C awk '
+        { name=$2; lower=tolower(name) }
+        length($1) != 64 || $1 ~ /[^0-9a-f]/ || name !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ || $0 != $1 "  " name { bad=1 }
+        lower == "sha256sums" || lower == "release.sigstore.jsonl" || seen[lower]++ || (NR > 1 && name <= previous) { bad=1 }
+        { previous=name }
+        END { exit !(NR > 0 && !bad) }
+    ' "$release_checksums" || return 1
+    release_check_hash "$release_metadata" release-metadata.json || return 1
+    release_attest "$release_metadata" "$release_dir/metadata.verified.json" || return 1
+    release_run=$(jq -er --arg tag "$release_tag" --arg sha "$release_source" --arg object "$release_object" '
+        if .schema == 2 and .repository == "marcinwadon/hennery" and .tag == $tag and .source_sha == $sha and .tag_object == $object
+            and (.attesting.run_id | type == "number" and . > 0 and floor == .)
+            and (.attesting.run_attempt | type == "number" and . > 0 and floor == .)
+        then "https://github.com/marcinwadon/hennery/actions/runs/\(.attesting.run_id)/attempts/\(.attesting.run_attempt)"
+        else error("release metadata source/tag/run mismatch") end
+    ' "$release_metadata") || return 1
+    release_check_hash "$1" "$2" || return 1
+    release_attest "$1" "$release_dir/payload.verified.json" || return 1
+    for release_result in checksums metadata payload; do
+        jq -e --arg run "$release_run" '
+            type == "array" and length > 0 and all(.[]; .verificationResult.signature.certificate.runInvocationURI == $run)
+        ' "$release_dir/$release_result.verified.json" >/dev/null || return 1
+    done
+}
+'''
+
+MAINTAINER_VERIFICATION = r'''    # Verify signed source, the attested digest list and this archive before extraction.
+    check_cmd git || err "git is required for signed release tag verification"
+    check_cmd gpg || err "gpg is required for signed release tag verification"
+    check_cmd jq || err "jq is required for release provenance verification"
+    check_cmd gh || err "GitHub CLI is required for release signature verification"
+    release_dir=$(mktemp -d "${TMPDIR:-/tmp}/hennery-verify.XXXXXXXX") || err "cannot isolate release verification"
+    release_tag="v$APP_VERSION"
+    release_fingerprint=F26C7F594DFE84D131703AFC23E5A318AE8D2861
+    mkdir -m 0700 "$release_dir/keyring" || err "cannot isolate release verification"
+    printf 'no-autostart\nno-auto-key-retrieve\n' > "$release_dir/keyring/gpg.conf" || err "cannot isolate GPG options"
+    cat > "$release_dir/keyring/key.asc" <<'HENNERY_MAINTAINER_KEY'
+''' + MAINTAINER_KEY + r'''HENNERY_MAINTAINER_KEY
+    gpg --batch --no-options --homedir "$release_dir/keyring" --no-autostart --no-auto-key-retrieve \
+        --import "$release_dir/keyring/key.asc" >/dev/null 2>&1 || err "cannot import pinned maintainer public key"
+    release_checksums="${HENNERY_RELEASE_CHECKSUMS:-$release_dir/SHA256SUMS}"
+    release_metadata="${HENNERY_RELEASE_METADATA:-$release_dir/release-metadata.json}"
+    release_bundle="${HENNERY_ATTESTATION_BUNDLE:-$release_dir/release.sigstore.jsonl}"
+    if [ -z "${HENNERY_RELEASE_CHECKSUMS:-}" ]; then
+        downloader "$ARTIFACT_DOWNLOAD_URL/SHA256SUMS" "$release_checksums" || err "cannot download release checksums"
+    fi
+    if [ -z "${HENNERY_RELEASE_METADATA:-}" ]; then
+        downloader "$ARTIFACT_DOWNLOAD_URL/release-metadata.json" "$release_metadata" || err "cannot download release metadata"
+    fi
+    if [ -z "${HENNERY_ATTESTATION_BUNDLE:-}" ]; then
+        downloader "$ARTIFACT_DOWNLOAD_URL/release.sigstore.jsonl" "$release_bundle" || err "cannot download release attestation bundle"
+    fi
+    release_verify_tag || err "refusing an archive without a valid pinned signed release tag"
+    release_verify_payload "$_file" "$_artifact_name" || err "refusing an archive without valid release-tag provenance and SHA256SUMS"
 
 '''
 
@@ -70,19 +135,7 @@ REFUSE_UNCHECKED = (
 REPLACEMENTS = [
     (
         '    # ...and then the updater, if it exists',
-        MAINTAINER_VERIFICATION + '''    # Authenticate the downloaded archive before extraction or execution.
-    check_cmd gh || err "GitHub CLI is required for release signature verification"
-    local _bundle="${HENNERY_ATTESTATION_BUNDLE:-$_dir/release.sigstore.jsonl}"
-    if [ -z "${HENNERY_ATTESTATION_BUNDLE:-}" ]; then
-        downloader "$ARTIFACT_DOWNLOAD_URL/release.sigstore.jsonl" "$_bundle" || err "cannot download release attestation bundle"
-    fi
-    gh attestation verify "$_file" --bundle "$_bundle" --repo marcinwadon/hennery \\
-        --signer-workflow marcinwadon/hennery/.github/workflows/release-publish.yml \\
-        --cert-identity "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/v$APP_VERSION" \\
-        --source-ref "refs/tags/v$APP_VERSION" --cert-oidc-issuer https://token.actions.githubusercontent.com \\
-        --deny-self-hosted-runners || err "refusing an archive without valid release-tag provenance"
-
-    # ...and then the updater, if it exists''',
+        CONSUMER_FUNCTIONS + MAINTAINER_VERIFICATION + '    # ...and then the updater, if it exists',
     ),
     (
         '    case "$_checksum_style" in\n        sha256)',

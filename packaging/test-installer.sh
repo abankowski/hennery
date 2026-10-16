@@ -22,8 +22,8 @@ installer="$dist/hennery-installer.sh"
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-# The candidate has not been signed yet. This offline verifier double checks
-# every real CLI identity argument; public installation uses the real gh CLI.
+# Offline acceptance has no real release tag or attestation. These doubles
+# enforce the exact public verifier invocation; consumer tests use real GPG tags.
 fixture_version=$(sed -n 's/^APP_VERSION="\([^"]*\)"$/\1/p' "$installer")
 mkdir "$scratch/verifier-tools"
 printf 'offline verification fixture\n' > "$scratch/bundle.jsonl"
@@ -34,35 +34,57 @@ set -eu
 shift 3
 identity=0
 source=0
+source_digest=0
+signer_digest=0
 while [ "\$#" -gt 0 ]; do
     case "\$1" in
         --cert-identity)
-            [ "\$2" = "https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@\${HENNERY_TEST_SIGNER_REF:-refs/tags/v$fixture_version}" ] || exit 1
+            [ "\$2" = "https://github.com/marcinwadon/hennery/.github/workflows/release.yml@\${HENNERY_TEST_SIGNER_REF:-refs/tags/v$fixture_version}" ] || exit 1
             identity=1; shift 2 ;;
         --source-ref)
             [ "\$2" = 'refs/tags/v$fixture_version' ] || exit 1
             source=1; shift 2 ;;
+        --source-digest)
+            [ "\$2" = 1111111111111111111111111111111111111111 ] || exit 1
+            source_digest=1; shift 2 ;;
+        --signer-digest)
+            [ "\$2" = 1111111111111111111111111111111111111111 ] || exit 1
+            signer_digest=1; shift 2 ;;
+        --signer-workflow) exit 1 ;;
         *) shift ;;
     esac
 done
-[ "\$identity" = 1 ] && [ "\$source" = 1 ] || exit 1
+[ "\$identity\$source\$source_digest\$signer_digest" = 1111 ] || exit 1
 printf verified > '$scratch/signature-verified'
+printf '%s\n' '{"verificationResult":{"signature":{"certificate":{"runInvocationURI":"https://github.com/marcinwadon/hennery/actions/runs/10/attempts/'"\${HENNERY_TEST_ATTESTING_ATTEMPT:-1}"'"}}}}' | sed 's/^/[/;s/\$/]/'
 TOOL
 chmod +x "$scratch/verifier-tools/gh"
-# No real signing operation occurs in this offline acceptance test. The gpg
-# double models a detached signature over exact bytes and pinned signer status.
 cat > "$scratch/verifier-tools/gpg" <<'TOOL'
 #!/bin/sh
-set -eu
 for argument in "$@"; do [ "$argument" != --import ] || exit 0; done
-case "${HENNERY_TEST_MAINTAINER_SIGNATURE:-valid}" in
-    unsigned|malformed) exit 1 ;;
-    wrong-key) echo '[GNUPG:] VALIDSIG 0000000000000000000000000000000000000000'; exit 0 ;;
-esac
-cmp "$HENNERY_RELEASE_SIGNATURE" "$HENNERY_RELEASE_INVENTORY" || exit 1
-echo '[GNUPG:] VALIDSIG F26C7F594DFE84D131703AFC23E5A318AE8D2861'
+exit 1
 TOOL
-chmod +x "$scratch/verifier-tools/gpg"
+cat > "$scratch/verifier-tools/git" <<TOOL
+#!/bin/sh
+set -eu
+for argument in "\$@"; do
+    case "\$argument" in
+        init) exit 0 ;;
+        fetch) exit 0 ;;
+        rev-parse) echo 2222222222222222222222222222222222222222; exit 0 ;;
+        cat-file)
+            printf 'object 1111111111111111111111111111111111111111\ntype commit\ntag v$fixture_version\ntagger Disposable fixture\n\nOffline fixture\n'; exit 0 ;;
+        verify-tag)
+            case "\${HENNERY_TEST_TAG_SIGNATURE:-valid}" in
+                unsigned|malformed) exit 1 ;;
+                wrong-key) echo '[GNUPG:] VALIDSIG 0000000000000000000000000000000000000000' >&2; exit 0 ;;
+            esac
+            echo '[GNUPG:] VALIDSIG F26C7F594DFE84D131703AFC23E5A318AE8D2861' >&2; exit 0 ;;
+    esac
+done
+exit 1
+TOOL
+chmod +x "$scratch/verifier-tools/gpg" "$scratch/verifier-tools/git"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -105,28 +127,29 @@ done
 [ "$count" = "$built" ] || fail "the installer offers $count archives, this build made $built"
 echo "ok: the installer embeds each of its $count archives' SHA-256"
 
-# Model the maintainer-approved inventory independently of the installer's
-# embedded checksum, including source archives that must never be installed.
-command -v jq >/dev/null || fail 'jq is required for inventory fixtures'
+# SHA256SUMS is independent of the installer's embedded checksum.
+command -v jq >/dev/null || fail 'jq is required for provenance fixtures'
 ln -s "$(command -v jq)" "$scratch/verifier-tools/jq"
-printf '[]' > "$scratch/artifacts.json"
+jq -n --arg tag "v$fixture_version" '{schema:2,repository:"marcinwadon/hennery",tag:$tag,source_sha:"1111111111111111111111111111111111111111",tag_object:"2222222222222222222222222222222222222222",attesting:{run_id:10,run_attempt:1}}' > "$scratch/release-metadata.json"
+: > "$scratch/SHA256SUMS"
 for archive in $arms; do
     want=$(cut -d ' ' -f 1 "$dist/$archive.sha256")
-    jq --arg name "$archive" --arg sha "$want" '. + [{name: $name, sha256: $sha}]' "$scratch/artifacts.json" > "$scratch/next.json"
-    mv "$scratch/next.json" "$scratch/artifacts.json"
+    printf '%s  %s\n' "$want" "$archive" >> "$scratch/SHA256SUMS"
 done
-jq --arg tag "v$fixture_version" '{schema: 1, repository: "marcinwadon/hennery", tag: $tag, artifacts: .}' "$scratch/artifacts.json" > "$scratch/inventory.json"
-cp "$scratch/inventory.json" "$scratch/inventory.json.asc"
+metadata_sha=$(shasum -a 256 "$scratch/release-metadata.json" | awk '{print $1}')
+printf '%s  release-metadata.json\n' "$metadata_sha" >> "$scratch/SHA256SUMS"
+LC_ALL=C sort -k2 "$scratch/SHA256SUMS" > "$scratch/ordered-sums"
+mv "$scratch/ordered-sums" "$scratch/SHA256SUMS"
 
 # run_installer <download dir> <install dir> <log>: the installer's exit status.
 run_installer() {
     mkdir -p "$scratch/home"
     status=0
-    PATH="${VERIFIER_TOOLS:-$scratch/verifier-tools}:$PATH" \
+    PATH="${VERIFIER_TOOLS:-$scratch/verifier-tools}:${INSTALLER_SYSTEM_PATH:-$PATH}" \
         HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/.config" \
         HENNERY_ATTESTATION_BUNDLE="$scratch/bundle.jsonl" \
-        HENNERY_RELEASE_INVENTORY="${TEST_INVENTORY:-$scratch/inventory.json}" \
-        HENNERY_RELEASE_SIGNATURE="${TEST_SIGNATURE:-$scratch/inventory.json.asc}" \
+        HENNERY_RELEASE_CHECKSUMS="${TEST_CHECKSUMS:-$scratch/SHA256SUMS}" \
+        HENNERY_RELEASE_METADATA="${TEST_METADATA:-$scratch/release-metadata.json}" \
         HENNERY_DOWNLOAD_URL="file://$1" HENNERY_UNMANAGED_INSTALL="$2" \
         sh "$1/hennery-installer.sh" >"$3" 2>&1 || status=$?
     return "$status"
@@ -194,7 +217,7 @@ echo "ok: installs a binary that runs"
 # With `shasum` and no `sha256sum`.
 tools "$scratch/shasum-tools" sha256sum
 # In a subshell: an assignment before a function call may outlive it.
-(PATH="$scratch/shasum-tools" && run_installer "$dist" "$scratch/shasum" "$scratch/shasum.log") || {
+(INSTALLER_SYSTEM_PATH="$scratch/shasum-tools" run_installer "$dist" "$scratch/shasum" "$scratch/shasum.log") || {
     cat "$scratch/shasum.log"
     fail "the installer failed with shasum alone"
 }
@@ -211,7 +234,7 @@ echo "ok: a checksum mismatch aborts"
 
 # No SHA-256 tool at all.
 tools "$scratch/no-tools" sha256sum shasum
-(PATH="$scratch/no-tools" && refused unchecked "$dist" "$UNCHECKED")
+(INSTALLER_SYSTEM_PATH="$scratch/no-tools" refused unchecked "$dist" "$UNCHECKED")
 echo "ok: no SHA-256 tool aborts"
 
 # An empty checksum.
@@ -280,7 +303,7 @@ for command in cp chmod ln; do
 exit 1
 TOOL
     chmod +x "$tool_dir/$command"
-    (PATH="$tool_dir" && ! run_installer "$dist" "$scratch/failing-$command" "$scratch/failing-$command.log") ||
+    (! INSTALLER_SYSTEM_PATH="$tool_dir" run_installer "$dist" "$scratch/failing-$command" "$scratch/failing-$command.log") ||
         fail "$command failure installed"
     [ ! -e "$scratch/failing-$command/hennery" ] || fail "$command failure published an executable"
 done
@@ -298,7 +321,7 @@ if [ "\${1:-}" = -m ]; then echo unsupported-cpu; exit 0; fi
 exec '$real_uname' "\$@"
 TOOL
     chmod +x "$tool_dir/uname"
-    (PATH="$tool_dir" && ! run_installer "$dist" "$scratch/unsupported-$kind" "$scratch/unsupported-$kind.log") ||
+    (! INSTALLER_SYSTEM_PATH="$tool_dir" run_installer "$dist" "$scratch/unsupported-$kind" "$scratch/unsupported-$kind.log") ||
         fail "unsupported $kind installed"
     [ ! -e "$scratch/unsupported-$kind/hennery" ] || fail "unsupported $kind left a binary"
 done
@@ -316,7 +339,7 @@ printf observed > '$scratch/copy-observed'
 exec '$real_cp' "\$@"
 TOOL
 chmod +x "$scratch/observe-copy-tools/cp"
-(PATH="$scratch/observe-copy-tools" && run_installer "$dist" "$scratch/observe-copy" "$scratch/observe-copy.log") || fail 'staged copy failed'
+(INSTALLER_SYSTEM_PATH="$scratch/observe-copy-tools" run_installer "$dist" "$scratch/observe-copy" "$scratch/observe-copy.log") || fail 'staged copy failed'
 [ -f "$scratch/copy-observed" ] || fail 'the installer did not stage the copy'
 tools "$scratch/raced-tools" ln
 cat > "$scratch/raced-tools/ln" <<TOOL
@@ -325,30 +348,28 @@ printf raced > "\$HENNERY_UNMANAGED_INSTALL/hennery"
 exec '$real_ln' "\$@"
 TOOL
 chmod +x "$scratch/raced-tools/ln"
-(PATH="$scratch/raced-tools" && ! run_installer "$dist" "$scratch/raced" "$scratch/raced.log") || fail 'concurrent destination was replaced'
+(! INSTALLER_SYSTEM_PATH="$scratch/raced-tools" run_installer "$dist" "$scratch/raced" "$scratch/raced.log") || fail 'concurrent destination was replaced'
 [ "$(cat "$scratch/raced/hennery")" = raced ] || fail 'concurrent destination changed'
 echo 'ok: staging is invisible and concurrent destinations survive'
 
-# Even a successful exact-tag attestation cannot replace the touch-approved
-# inventory signature. Test-only signer doubles never touch a real GPG key.
+# Signed source, attested checksums and matching invocation are mandatory.
 for kind in unsigned malformed wrong-key; do
-    (export HENNERY_TEST_MAINTAINER_SIGNATURE="$kind"; refused "maintainer-$kind" "$dist" 'maintainer')
+    (export HENNERY_TEST_TAG_SIGNATURE="$kind"; refused "tag-$kind" "$dist" 'valid pinned signed release tag')
 done
 echo 'ok: unsigned tag, malformed signature and another signing key abort'
-(TEST_SIGNATURE="$scratch/missing.asc"; export TEST_SIGNATURE; refused maintainer-missing "$dist" 'missing maintainer')
-echo 'ok: missing maintainer signature aborts'
-printf ' ' >> "$scratch/inventory.json"
-refused maintainer-other-inventory "$dist" 'invalid maintainer release signature'
-cp "$scratch/inventory.json.asc" "$scratch/inventory.json"
-echo 'ok: signature over another inventory aborts'
-jq '.artifacts |= map(.sha256 = ("0" * 64))' "$scratch/inventory.json" > "$scratch/other-inventory.json"
-(TEST_INVENTORY="$scratch/other-inventory.json"; TEST_SIGNATURE="$scratch/other-inventory.json"; export TEST_INVENTORY TEST_SIGNATURE; refused maintainer-other-digest "$dist" 'archive differs from maintainer-approved inventory')
-echo 'ok: signed inventory must approve the exact archive bytes'
+(TEST_CHECKSUMS="$scratch/missing-sums"; export TEST_CHECKSUMS; refused missing-sums "$dist" 'release-tag provenance')
+echo 'ok: missing SHA256SUMS aborts'
+sed 's/[0-9a-f]/0/g' "$scratch/SHA256SUMS" > "$scratch/wrong-sums"
+(TEST_CHECKSUMS="$scratch/wrong-sums"; export TEST_CHECKSUMS; refused other-digest "$dist" 'release-tag provenance')
+echo 'ok: SHA256SUMS must authorize the exact archive bytes'
+(export HENNERY_TEST_ATTESTING_ATTEMPT=2; refused wrong-attempt "$dist" 'release-tag provenance')
+echo 'ok: provenance from another attempt aborts'
 
 (export HENNERY_TEST_SIGNER_REF=refs/heads/main; refused branch-signer "$dist" 'refusing an archive without valid release-tag provenance')
 echo 'ok: branch signer identity cannot authorize installation'
-tools "$scratch/no-gh-tools" gh gpg jq
+tools "$scratch/no-gh-tools" gh gpg jq git
 link_tool "$scratch/verifier-tools/gpg" "$scratch/no-gh-tools/gpg"
 link_tool "$scratch/verifier-tools/jq" "$scratch/no-gh-tools/jq"
-(PATH="$scratch/no-gh-tools" VERIFIER_TOOLS="$scratch/no-gh-tools" && refused missing-verifier "$dist" 'GitHub CLI is required')
+link_tool "$scratch/verifier-tools/git" "$scratch/no-gh-tools/git"
+(INSTALLER_SYSTEM_PATH="$scratch/no-gh-tools" VERIFIER_TOOLS="$scratch/no-gh-tools" refused missing-verifier "$dist" 'GitHub CLI is required')
 echo 'ok: missing signature verifier refuses installation'

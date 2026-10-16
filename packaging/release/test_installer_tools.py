@@ -23,11 +23,11 @@ class InstallerTools(unittest.TestCase):
             (root / directory / 'gpg').symlink_to(root / target)
             (root / directory / 'jq').symlink_to(root / 'system-jq')
             (root / directory / 'gh').symlink_to(root / 'system-gpg')
-        for name in ('gpg', 'jq'):
+        for name in ('gpg', 'jq', 'git'):
             (root / 'verifier-tools' / name).write_text('offline ' + name + '\n')
         if missing_gh:
             start = source.index('tools "$scratch/no-gh-tools"')
-            setup = source[start:source.index('(PATH="$scratch/no-gh-tools"', start)]
+            setup = source[start:source.index('(INSTALLER_SYSTEM_PATH="$scratch/no-gh-tools"', start)]
         else:
             setup = 'tools "$scratch/no-gh-tools" gh\n'
         script = 'set -eu\nfail() { printf "%s\\n" "$*" >&2; exit 1; }\n'
@@ -41,7 +41,7 @@ class InstallerTools(unittest.TestCase):
             result = self.fixture(root, missing_gh=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue((root / 'ready').exists())
-            for name in ('gpg', 'jq'):
+            for name in ('gpg', 'jq', 'git'):
                 self.assertTrue((root / 'no-gh-tools' / name).samefile(root / 'verifier-tools' / name))
             self.assertFalse((root / 'no-gh-tools' / 'gh').exists())
 
