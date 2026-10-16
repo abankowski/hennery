@@ -63,10 +63,12 @@ it('saving the same client resets waiting and folds the returned report without 
   const c = connection({ cred_kind: 'oauth_client', has_credential: true, status: 'ok', oauth: { redirect_uri: '', has_client_secret: false, client_id: 'public' } })
   const popup = { opener: null, closed: false, location: { href: '' }, close: vi.fn() }; vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
   const fresh = { ...c, label: 'Changed' }
-  let reported = c
-  const s = open({ 'GET /api/mcp/connections': () => json(200, [reported]), 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT,
+  // Keep the post-save read pending: its render must not be needed to close the popup.
+  let reread!: (response: Response) => void
+  let reads = 0
+  const s = open({ 'GET /api/mcp/connections': () => ++reads === 1 ? json(200, [c]) : new Promise<Response>(resolve => { reread = resolve }), 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT,
     ['POST ' + ITEM + '/authorize']: json(200, { consent_url: 'https://vendor.example/authorize', expires_at: '2099-01-01T00:00:00Z' }),
-    ['PUT ' + ITEM + '/oauth-client']: () => { reported = fresh; return json(200, fresh) },
+    ['PUT ' + ITEM + '/oauth-client']: json(200, fresh),
   }, OAUTH_CAPS)
   const docs = await card('Docs'); expect(sent(s, 'GET', PATH)).toHaveLength(1)
   fireEvent.click(within(docs).getByRole('button', { name: 'Reconnect' }))
@@ -74,7 +76,11 @@ it('saving the same client resets waiting and folds the returned report without 
   fireEvent.click(within(docs).getByRole('button', { name: 'Save client' }))
   expect(await card('Changed')).toBeVisible()
   expect(screen.queryByText('Waiting for sign-in. Return here after consent.', { exact: true })).toBeNull()
-  expect(popup.close).toHaveBeenCalled()
+  // The new card can commit before the old OAuth control's passive cleanup.
+  await waitFor(() => expect(popup.close).toHaveBeenCalledTimes(1))
+  expect(sent(s, 'GET', PATH)).toHaveLength(2)
+  await act(async () => { reread(json(200, [fresh])) })
+  expect(sent(s, 'GET', PATH)).toHaveLength(2)
 })
 it('only both capabilities enable the shared reader away from MCP', async () => {
   const s = open({ 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT }, OAUTH_CAPS)
