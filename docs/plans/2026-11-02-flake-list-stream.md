@@ -1,4 +1,4 @@
-# List-stream removal timing (flake 13)
+# List-stream removal and MCP cleanup timing (flakes 13–14)
 
 ## Execution status
 
@@ -8,6 +8,7 @@ parent-owned.
 
 Complete locally: test-only fix, required gates, loaded repeats, four caught
 copy probes and a fresh replay. Review range starts at `6cb867c6`.
+Flake 13 is committed as `27a3b766`; flake 14 follows in a separate commit.
 
 ## Scope and root cause
 
@@ -219,10 +220,111 @@ index 2e91d48b..b97811c5 100644
       lists where the built code deviates from the task text.
 ```
 
+## Task 2: await MCP popup cleanup (flake 14)
+
+**Root cause:** CI run 38830162524 observed the changed connection card
+and no waiting text, then synchronously asserted `popup.close`. Saving the
+same client increments `clientRevision`, remounting `OauthConnect`. Closing
+the old popup happens in `useMcpOauth`'s passive unmount cleanup. The DOM
+commit is observable before that cleanup; finding the new card does not
+establish that the popup was closed. A fast incidental follow-up GET/render
+or Testing Library's timer-drain turn commonly masks the ordering.
+
+**Decision:** await the popup-close assertion and require exactly one close.
+Hold the post-save GET response until after closure, so an extra list render
+cannot be required for cleanup. Assert exactly two list GETs in total, before
+and after resolving that follow-up read. No product changes or timeout changes.
+
+**Controlled reproduction:** the unchanged file passed 56 tests, and the
+unchanged focused test passed 40 loaded executions. Hold the follow-up GET;
+for diagnosis only, make Testing Library's `asyncWrapper` return after its
+DOM condition without the incidental timer-drain turn. The synchronous
+assertion fails with the same missing `popup.close` call (exit 1, one failed).
+Awaiting the assertion under the same seam passes (exit 0, one passed).
+Remove the diagnostic wrapper override before final verification; its exact
+RED patch is retained in the ignored ledger as `mcp-red-fixture.patch`.
+
+**Verification:** frozen install, typecheck and production build exit 0;
+related screen/hook/client/scope suites: 117 passed across five files, exit 0;
+full web suite: 1,823 passed across 102 files, exit 0. Forty complete MCP
+screen runs (4 parallel × 10 rounds, with four nice CPU competitors) passed:
+2,240 test executions. In an APFS-cloned copy, omitting the popup close,
+omitting the key remount, and restoring the synchronous assertion under the
+fast-observer seam each failed an assertion (exit 1, one failed each).
+Restored related suites: 117 passed, exit 0; copied source matches the
+worktree. No Rust bytes changed after flake 13's verification.
+Fresh flake 14 replay: one extracted block, two patched files, 117 related
+tests passed and typecheck passed (exit 0); all 837 tracked files matched
+after copying the execution record.
+
+**Review focus:** the await must observe actual cleanup, the GET remains
+pending until closure, exactly one popup close and no extra list reads are
+required. No diagnostic Testing Library configuration reaches the commit.
+Review flake 14 from `27a3b766` to its separate commit; review both flakes
+from `6cb867c6` to branch head.
+
+### Exact flake 14 replay patch
+
+Apply the following second diff block to `27a3b766` in a fresh copy with its
+own APFS-cloned `target/` and `web/node_modules`. Require two patched files,
+run the five related suites and typecheck, then compare tracked source/index
+bytes with the worktree. The combined execution record is copied separately
+as documentation.
+
+```diff
+diff --git a/docs/README.md b/docs/README.md
+index b97811c5..9aa0fa52 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -31,7 +31,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
+    - [Spike: per-session MCP over ACP](spikes/2026-09-25-per-session-mcp.md)
+      and its [harness](../spikes/2026-09-25-mcp-per-session/).
+ 4. Plans:
+-   - [List-stream removal timing (flake 13)](plans/2026-11-02-flake-list-stream.md) — replaces the HTTP wall-clock upper bound with deterministic checks of both deletion paths in the real list follower; reproduction, guard probes, load and replay evidence recorded. Independent review and Linux/macOS CI remain parent-owned.
++   - [List-stream and MCP timing (flakes 13–14)](plans/2026-11-02-flake-list-stream.md) — paused-clock deletion checks and an awaited OAuth popup cleanup assertion, with controlled regressions, guard probes, load and replay evidence. Independent review and Linux/macOS CI remain parent-owned.
+    - [Walking skeleton](plans/2026-09-26-walking-skeleton.md) — the first
+      implementation plan (9 tasks) — executed 2026-09-27; its "Execution status" section
+      lists where the built code deviates from the task text.
+diff --git a/web/src/screens/Mcp.test.tsx b/web/src/screens/Mcp.test.tsx
+index 5e6809bb..b4d0a29b 100644
+--- a/web/src/screens/Mcp.test.tsx
++++ b/web/src/screens/Mcp.test.tsx
+@@ -63,10 +63,12 @@ it('saving the same client resets waiting and folds the returned report without
+   const c = connection({ cred_kind: 'oauth_client', has_credential: true, status: 'ok', oauth: { redirect_uri: '', has_client_secret: false, client_id: 'public' } })
+   const popup = { opener: null, closed: false, location: { href: '' }, close: vi.fn() }; vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+   const fresh = { ...c, label: 'Changed' }
+-  let reported = c
+-  const s = open({ 'GET /api/mcp/connections': () => json(200, [reported]), 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT,
++  // Keep the post-save read pending: its render must not be needed to close the popup.
++  let reread!: (response: Response) => void
++  let reads = 0
++  const s = open({ 'GET /api/mcp/connections': () => ++reads === 1 ? json(200, [c]) : new Promise<Response>(resolve => { reread = resolve }), 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT,
+     ['POST ' + ITEM + '/authorize']: json(200, { consent_url: 'https://vendor.example/authorize', expires_at: '2099-01-01T00:00:00Z' }),
+-    ['PUT ' + ITEM + '/oauth-client']: () => { reported = fresh; return json(200, fresh) },
++    ['PUT ' + ITEM + '/oauth-client']: json(200, fresh),
+   }, OAUTH_CAPS)
+   const docs = await card('Docs'); expect(sent(s, 'GET', PATH)).toHaveLength(1)
+   fireEvent.click(within(docs).getByRole('button', { name: 'Reconnect' }))
+@@ -74,7 +76,11 @@ it('saving the same client resets waiting and folds the returned report without
+   fireEvent.click(within(docs).getByRole('button', { name: 'Save client' }))
+   expect(await card('Changed')).toBeVisible()
+   expect(screen.queryByText('Waiting for sign-in. Return here after consent.', { exact: true })).toBeNull()
+-  expect(popup.close).toHaveBeenCalled()
++  // The new card can commit before the old OAuth control's passive cleanup.
++  await waitFor(() => expect(popup.close).toHaveBeenCalledTimes(1))
++  expect(sent(s, 'GET', PATH)).toHaveLength(2)
++  await act(async () => { reread(json(200, [fresh])) })
++  expect(sent(s, 'GET', PATH)).toHaveLength(2)
+ })
+ it('only both capabilities enable the shared reader away from MCP', async () => {
+   const s = open({ 'GET /api/mcp/oauth/redirect-uri': OAUTH_REDIRECT }, OAUTH_CAPS)
+```
+
 ## After this plan
 
 The parent runs independent review and Ubuntu/macOS PR CI. Local macOS
-load results do not establish Linux execution; the code and supplied Linux
-panic establish that the failing assertion measured elapsed wall time.
+load results do not establish Linux execution; both supplied CI failures
+are reproduced with controlled test scheduling, with no product bug found.
+The parent owns cleanup of the retained probe/replay copies in the ledger.
 
 Generated with Claude AI — please review before distribution.
