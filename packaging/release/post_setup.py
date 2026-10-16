@@ -23,6 +23,12 @@ def assert_ghcr_denied(transport, expected_digest):
     return {'read_status': 200, 'push_status': 403, 'credential': 'GITHUB_TOKEN'}
 
 
+def require_no_release_credentials(environment):
+    gate.require(not any(environment.get(name) for name in
+                 ('GHCR_PUBLISH_TOKEN', 'RELEASE_HOMEBREW_TOKEN', 'RELEASE_CRATES_BOOTSTRAP_TOKEN', 'CARGO_REGISTRY_TOKEN')),
+                 'negative acceptance must never receive dedicated release credentials')
+
+
 def request(url, headers, method='GET', data=None):
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
@@ -40,7 +46,7 @@ def main():
     args = parser.parse_args()
     gate.require(re.fullmatch('[0-9a-f]{64}', args.expected_digest), 'invalid known image digest')
     gate.require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_REPOSITORY') == gate.REPOSITORY and os.environ.get('GITHUB_REF', '').startswith('refs/heads/'), 'acceptance must use a branch Actions job')
-    gate.require(not os.environ.get('GHCR_PUBLISH_TOKEN') and not os.environ.get('RELEASE_PUBLISH_APP_KEY'), 'negative acceptance must never receive dedicated release credentials')
+    require_no_release_credentials(os.environ)
     basic = base64.b64encode((os.environ['GITHUB_ACTOR']+':'+os.environ['GITHUB_TOKEN']).encode()).decode()
     token_url = 'https://ghcr.io/token?service=ghcr.io&scope=repository:marcinwadon/hennery:'
     status, data = request(token_url+'pull', {'Authorization':'Basic '+basic})
@@ -53,7 +59,7 @@ def main():
         if status != 200:
             return status, data
         push_token = gate.strict_json(data)['token']
-        canary = 'r1-negative-' + str(int(os.environ['GITHUB_RUN_ID'])) + '-' + str(int(os.environ['GITHUB_RUN_ATTEMPT']))
+        canary = 'release-negative-' + str(int(os.environ['GITHUB_RUN_ID'])) + '-' + str(int(os.environ['GITHUB_RUN_ATTEMPT']))
         return request('https://ghcr.io/v2/marcinwadon/hennery/manifests/'+canary, {'Authorization':'Bearer '+push_token,'Content-Type':'application/vnd.oci.image.index.v1+json'}, 'PUT', gate.canonical({'schemaVersion':2,'mediaType':'application/vnd.oci.image.index.v1+json','manifests':[]}))
     print(gate.canonical(assert_ghcr_denied(transport,args.expected_digest)).decode())
 

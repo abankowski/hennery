@@ -50,7 +50,7 @@ jobs:
         run: |
           nix develop .#image -c python3 -m unittest discover -s packaging/tests -v
           nix develop .#image -c actionlint .github/workflows/*.yml
-          nix develop .#image -c shellcheck packaging/image-build.sh packaging/image-ci.sh packaging/test-image-registry.sh packaging/ghcr-gate.sh packaging/ghcr-publish.sh packaging/smoke-image.sh packaging/release-gate
+          nix develop .#image -c shellcheck packaging/image-build.sh packaging/image-ci.sh packaging/test-image-registry.sh packaging/smoke-image.sh
 
   # One archive per target, each on a native runner.
   archive:

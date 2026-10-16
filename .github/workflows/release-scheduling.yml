@@ -1,127 +1,174 @@
+# Secret-free stand-ins; tests bind this DAG and every guard to release.yml.
 name: release-scheduling
-on:
+'on':
   pull_request:
     paths:
-      - '.github/workflows/**'
-      - 'packaging/**'
+    - .github/workflows/**
+    - packaging/**
   push:
-    branches: [main]
+    branches:
+    - main
     paths:
-      - '.github/workflows/**'
-      - 'packaging/**'
+    - .github/workflows/**
+    - packaging/**
   workflow_dispatch:
     inputs:
       channels:
-        description: Both selections omit the optional crates channel
         type: choice
-        options: [github, 'github,homebrew']
+        options:
+        - github
+        - github,homebrew
+        - github,ghcr
+        - github,crates
         default: github
 permissions: {}
 jobs:
-  # Exercise the real Actions skipped-ancestor scheduler (actions/runner#2205).
-  # Tests bind these guards to release-candidate.yml; no release artifacts,
-  # protected environments, actions, credentials or publication are involved.
-  crates:
-    if: contains(format(',{0},', github.event.inputs.channels || 'github'), ',crates,')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - run: exit 1
-  archive:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - run: 'true'
   tag-signature:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - run: 'true'
+    - id: selection
+      env:
+        CHANNELS: ${{ inputs.channels || 'github' }}
+      run: 'python3 - <<''PYCODE''
+
+        import json,os
+
+        with open(os.environ[''GITHUB_OUTPUT''],''a'') as out:out.write(''channels=''+json.dumps(sorted(os.environ[''CHANNELS''].split('','')))+''\n'')
+
+        PYCODE'
+    outputs:
+      channels: ${{ steps.selection.outputs.channels }}
+  web-ui:
+    needs: tag-signature
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+    - run: 'true'
+  archive:
+    needs:
+    - web-ui
+    - tag-signature
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+    - run: 'true'
+  crates:
+    needs:
+    - web-ui
+    - tag-signature
+    if: ${{ !cancelled() && needs.web-ui.result == 'success' && contains(fromJSON(needs.tag-signature.outputs.channels), 'crates') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+    - run: 'true'
   assemble:
-    needs: [archive, crates]
-    if: always() && needs.archive.result == 'success' && (needs.crates.result == 'success' || needs.crates.result == 'skipped')
+    needs:
+    - archive
+    - crates
+    - tag-signature
+    if: ${{ !cancelled() && needs.archive.result == 'success' && (needs.crates.result == 'success' || (needs.crates.result == 'skipped' && !contains(fromJSON(needs.tag-signature.outputs.channels),
+      'crates'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - run: 'true'
-  installer:
-    needs: assemble
-    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - run: 'true'
-  homebrew-native:
-    needs: assemble
-    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        channels: [github, 'github,homebrew']
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - name: Both channel selections must reach the native job
-        run: echo 'Explicit status permits the skipped optional ancestor'
-      - name: Selected acceptance stand-in
-        if: contains(format(',{0},', matrix.channels), ',homebrew,')
-        run: echo 'Selected Homebrew acceptance reached'
-  homebrew:
-    needs: [assemble, homebrew-native]
-    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', 'github,homebrew'), ',homebrew,') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - run: 'true'
-  homebrew-unselected:
-    needs: [assemble, homebrew-native]
-    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.homebrew-native.result == 'success' && contains(format(',{0},', 'github'), ',homebrew,') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - run: exit 1
+    - run: 'true'
   ghcr:
-    needs: assemble
-    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,') }}
+    needs:
+    - assemble
+    - tag-signature
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(fromJSON(needs.tag-signature.outputs.channels), 'ghcr') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - run: exit 1
-  ghcr-selected:
-    needs: assemble
-    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(format(',{0},', 'github,ghcr'), ',ghcr,') }}
+    - run: 'true'
+  installer:
+    needs:
+    - assemble
+    - tag-signature
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - run: 'true'
-  retain:
-    needs: [assemble, installer, tag-signature, ghcr]
-    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.installer.result == 'success' && needs.tag-signature.result == 'success' && true && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(format(',{0},', github.event.inputs.channels || 'github'), ',ghcr,'))) }}
+    - run: 'true'
+  homebrew-native:
+    needs:
+    - assemble
+    - tag-signature
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - run: 'true'
+    - run: 'true'
+  homebrew:
+    needs:
+    - assemble
+    - homebrew-native
+    - tag-signature
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(fromJSON(needs.tag-signature.outputs.channels), 'homebrew') && needs.homebrew-native.result
+      == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+    - run: 'true'
+  qualification:
+    needs:
+    - tag-signature
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+    - run: 'true'
+  attest:
+    needs:
+    - tag-signature
+    - qualification
+    - assemble
+    - installer
+    - homebrew-native
+    - homebrew
+    - crates
+    - ghcr
+    if: ${{ !cancelled() && needs.tag-signature.result == 'success' && needs.qualification.result == 'success' && needs.assemble.result == 'success' &&
+      needs.installer.result == 'success' && needs.homebrew-native.result == 'success' && (needs.homebrew.result == 'success' || (needs.homebrew.result
+      == 'skipped' && !contains(fromJSON(needs.tag-signature.outputs.channels), 'homebrew'))) && (needs.crates.result == 'success' || (needs.crates.result
+      == 'skipped' && !contains(fromJSON(needs.tag-signature.outputs.channels), 'crates'))) && (needs.ghcr.result == 'success' || (needs.ghcr.result ==
+      'skipped' && !contains(fromJSON(needs.tag-signature.outputs.channels), 'ghcr'))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+    - run: 'true'
   assert-scheduling:
-    needs: [crates, archive, tag-signature, assemble, installer, homebrew-native, homebrew, homebrew-unselected, ghcr, ghcr-selected, retain]
+    needs:
+    - tag-signature
+    - web-ui
+    - archive
+    - crates
+    - assemble
+    - ghcr
+    - installer
+    - homebrew-native
+    - homebrew
+    - qualification
+    - attest
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - name: Fail if any expected acceptance or no-op was skipped
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          expected = {
-              'crates': 'skipped', 'archive': 'success', 'tag-signature': 'success',
-              'assemble': 'success', 'installer': 'success', 'homebrew-native': 'success',
-              'homebrew': 'success', 'homebrew-unselected': 'skipped', 'retain': 'success',
-              'ghcr': 'skipped', 'ghcr-selected': 'success',
-          }
-          actual = {key: value['result'] for key, value in json.loads(os.environ['RESULTS']).items()}
-          if actual != expected:
-              raise SystemExit(f'Scheduling regression: expected {expected}, got {actual}')
-          print('Skipped optional crates and GHCR: selected/unselected channel descendants passed')
-          PY
+    - env:
+        RESULTS: ${{ toJSON(needs) }}
+        CHANNELS: ${{ inputs.channels || 'github' }}
+      run: 'python3 - <<''PYCODE''
+
+        import json,os
+
+        selected=os.environ[''CHANNELS''].split('','')
+
+        actual={k:v[''result''] for k,v in json.loads(os.environ[''RESULTS'']).items()}
+
+        expected={k:(''skipped'' if k in (''crates'',''ghcr'',''homebrew'') and k not in selected else ''success'') for k in actual}
+
+        assert actual==expected,(actual,expected)
+
+        print(''Real skipped-ancestor scheduler reached every required descendant'')
+
+        PYCODE'

@@ -1,115 +1,120 @@
 #!/usr/bin/env python3
-"""Verify downloaded final bytes before executing the cargo-dist installer."""
+"""Authenticate release bytes and OCI subjects with signed source and provenance."""
 import argparse
 from pathlib import Path
 import re
 import subprocess
 
+import contract
+import verifier_process
 import gate
 import supply
-import approval
+import tag_signature
+
+PROVENANCE = 'https://slsa.dev/provenance/v1'
+SPDX = 'https://spdx.dev/Document'
 
 
-def attestation_command(subject, tag, bundle=None):
-    gate.require(re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', tag), 'invalid signer release tag')
-    workflow = gate.REPOSITORY + '/.github/workflows/release-publish.yml'
-    command = ['gh', 'attestation', 'verify', str(subject), '--repo', gate.REPOSITORY,
-               '--signer-workflow', workflow, '--cert-identity', 'https://github.com/' + workflow + '@refs/tags/' + tag,
-               '--source-ref', 'refs/tags/' + tag, '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com',
-               '--deny-self-hosted-runners']
-    if bundle is not None:
-        command += ['--bundle', str(bundle)]
-    return command
+def attestation_command(subject, tag, source_sha, bundle=None, trusted_root=None):
+    return contract.attestation_command(subject, tag, source_sha, bundle, trusted_root)
 
 
-def verify_image(image, tag, bundle=None, predicate_type='https://slsa.dev/provenance/v1', candidate=None, approval_signature=None, manifest=None):
+def verify(root, bundle, source_sha, tag, run_id=None, attesting_attempt=None, trusted_root=None):
+    root = Path(root)
+    value = contract.verify(root, tag, source_sha, bundle, run_id, attesting_attempt, trusted_root)
+    supply.verify_binary_inventory(value, root)
+    gate.require(contract.load(root) == value, 'release bytes changed during binary verification')
+    return value
+
+
+def image_descriptor(root, value):
+    index = gate.strict_json(contract.regular(Path(root) / 'ghcr-index.json'))
+    gate.require('ghcr' in value['channels'] and index.get('schema') == 1
+                 and index.get('source_sha') == value['source_sha']
+                 and index.get('version') == value['tag'].removeprefix('v')
+                 and isinstance(index.get('platforms'), dict) and set(index['platforms']) == {'amd64','arm64'},
+                 'invalid release image descriptor')
+    digests = [index.get('digest'), *index['platforms'].values()]
+    gate.require(all(isinstance(d, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', d) for d in digests)
+                 and len(set(digests)) == 3, 'invalid release image digest set')
+    return index
+
+
+def verify_image_subject(image, value, bundle=None, predicate_type=PROVENANCE, manifest=None, trusted_root=None):
     gate.require(re.fullmatch(r'ghcr\.io/marcinwadon/hennery@sha256:[0-9a-f]{64}', image), 'verification requires an immutable image digest')
-    gate.require(predicate_type in ('https://slsa.dev/provenance/v1', 'https://spdx.dev/Document'), 'unexpected attestation predicate')
-    gate.require(candidate is not None and approval_signature is not None, 'image requires maintainer-signed inventory')
-    candidate = Path(candidate)
-    proof = approval.verify(candidate / 'release-inventory.json', approval_signature)
-    raw = (candidate / 'release-inventory.json').read_bytes()
-    gate.require(gate.digest(raw) == proof['inventory_sha256'], 'signed image inventory changed during verification')
-    inventory = gate.strict_json(raw)
-    gate.verify_files(inventory, candidate)
-    gate.require(inventory['tag'] == tag and 'ghcr' in inventory['channels'], 'image inventory release/channel mismatch')
-    index = gate.strict_json((candidate / 'ghcr-index.json').read_bytes())
-    digests = [index.get('digest')]
-    if 'platforms' in index:
-        gate.require(index.get('schema') == 1 and index.get('source_sha') == inventory['source_sha']
-                     and index.get('version') == tag.removeprefix('v')
-                     and isinstance(index['platforms'], dict)
-                     and set(index['platforms']) == {'amd64', 'arm64'}, 'invalid signed image descriptor')
-        digests.extend(index['platforms'].values())
-        gate.require(all(isinstance(d, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', d) for d in digests)
-                     and len(set(digests)) == 3, 'invalid signed image digest set')
-    gate.require(image.split('@', 1)[1] in digests, 'image digest is not in maintainer-signed inventory')
+    gate.require(predicate_type in (PROVENANCE, SPDX), 'unexpected attestation predicate')
     subject = 'oci://' + image
     if manifest is not None:
         manifest = Path(manifest)
-        gate.require(bundle is not None and manifest.is_file() and not manifest.is_symlink()
-                     and 'sha256:' + gate.digest(manifest.read_bytes()) == image.split('@', 1)[1],
-                     'local manifest must match the approved image digest and have a bundle')
+        gate.require(bundle is not None and 'sha256:' + gate.digest(contract.regular(manifest)) == image.split('@',1)[1],
+                     'local manifest must match the release image digest and have a bundle')
         subject = manifest
-    command = attestation_command(subject, tag, bundle) + ['--predicate-type', predicate_type]
-    if bundle is None:
-        command += ['--bundle-from-oci']
-    subprocess.run(command, check=True)
+    command = attestation_command(subject, value['tag'], value['source_sha'], bundle, trusted_root)
+    command[command.index('--predicate-type') + 1] = predicate_type
+    if bundle is None: command += ['--bundle-from-oci']
+    result = verifier_process.run(command, check=True, capture_output=True, text=True)
+    verified = gate.strict_json(result.stdout)
+    contract.require_identity(verified, value['tag'], value['source_sha'])
+    contract.require_run(verified, value['attesting']['run_id'], value['attesting']['run_attempt'])
+
+
+def verify_image(image, tag, bundle=None, predicate_type=PROVENANCE, release_directory=None,
+                 release_bundle=None, manifest=None, source_sha=None, run_id=None,
+                 attesting_attempt=None, trusted_root=None):
+    gate.require(re.fullmatch(r'ghcr\.io/marcinwadon/hennery@sha256:[0-9a-f]{64}', image), 'verification requires an immutable image digest')
+    gate.require(release_directory is not None and release_bundle is not None and source_sha is not None,
+                 'image requires checksum-authenticated release and source binding')
+    root = Path(release_directory)
+    value = contract.load(root)
+    index = image_descriptor(root, value)
+    gate.require(image.split('@',1)[1] in [index['digest'], *index['platforms'].values()], 'image digest is not in release descriptor')
+    verified = verify(root, release_bundle, source_sha, tag, run_id, attesting_attempt, trusted_root)
+    gate.require(verified == value, 'release changed before image verification')
+    verify_image_subject(image, value, bundle, predicate_type, manifest, trusted_root)
+    gate.require(contract.load(root) == value, 'release bytes changed during image verification')
+    return value
 
 
 def require_binstall_metadata(metadata, tag):
-    # Upstream binstall has no Sigstore identity verifier. Disable its native
-    # strategies until a reviewed bridge exists; this custom namespace describes
-    # the external verifier, never pretends to enable native Sigstore support.
+    # Native binstall has no exact workflow/source/run verifier. These mappings
+    # are dormant until a separately reviewed bridge implements this contract.
     disabled = metadata.get('binstall', {}).get('disabled-strategies')
-    gate.require(isinstance(disabled, list) and sorted(disabled) == ['compile', 'crate-meta-data', 'quick-install'], 'native binstall strategies must remain disabled without an identity-verifying bridge')
+    gate.require(isinstance(disabled, list) and sorted(disabled) == ['compile','crate-meta-data','quick-install'],
+                 'native binstall strategies must remain disabled without an identity-verifying bridge')
     policy = metadata.get('hennery-release', {})
-    command = attestation_command('unused', tag)
-    gate.require(policy.get('verification') == 'external-openpgp-sigstore' and policy.get('maintainer-fingerprint') == approval.FINGERPRINT and policy.get('signer-identity') == command[command.index('--cert-identity') + 1], 'binstall external verification metadata must pin the exact release-tag identity')
+    command = attestation_command('unused', tag, '0' * 40)
+    gate.require(policy.get('verification') == 'external-signed-tag-sigstore'
+                 and policy.get('maintainer-fingerprint') == tag_signature.FINGERPRINT
+                 and policy.get('signer-identity') == command[command.index('--cert-identity') + 1],
+                 'binstall external verification metadata must pin the exact release-tag identity')
 
 
-def verify(candidate, bundle, source_sha, tag, signer_sha=None, approval_signature=None):
-    candidate, bundle = Path(candidate), Path(bundle)
-    inventory_path = candidate / 'release-inventory.json'
-    proof = approval.verify(inventory_path, approval_signature or candidate.parent / 'release-inventory.json.asc')
-    # Verify Sigstore too: hashes beside bytes alone do not
-    # authenticate an author. Hardware approval is authority; workflow is provenance.
-    command = attestation_command(inventory_path, tag, bundle)
-    if signer_sha:
-        command += ['--signer-digest', signer_sha]
-    subprocess.run(command, check=True)
-    raw = inventory_path.read_bytes()
-    gate.require(gate.digest(raw) == proof['inventory_sha256'], 'signed inventory changed during verification')
-    inventory = gate.strict_json(raw)
-    gate.require(inventory['source_sha'] == source_sha and inventory['tag'] == tag, 'attested release source/tag mismatch')
-    gate.verify_files(inventory, candidate)
-    supply.verify_checksums(candidate)
-    supply.verify_binary_inventory(inventory, candidate)
-    # Every final payload has provenance too, including SBOMs and installer.
-    for artifact in inventory['artifacts']:
-        per_file = list(command)
-        per_file[3] = str(candidate / artifact['name'])
-        subprocess.run(per_file, check=True)
-    return inventory
+def arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument('--release-directory', type=Path, required=True)
+    parser.add_argument('--bundle', type=Path, required=True, help='release SHA256SUMS and payload provenance bundle')
+    parser.add_argument('--source-sha', required=True)
+    parser.add_argument('--tag', required=True)
+    parser.add_argument('--run-id', required=True, type=int)
+    parser.add_argument('--attesting-attempt', required=True, type=int)
+    parser.add_argument('--trusted-root', type=Path)
+    parser.add_argument('--image')
+    parser.add_argument('--image-bundle', type=Path)
+    parser.add_argument('--manifest', type=Path)
+    parser.add_argument('--predicate-type', choices=[PROVENANCE, SPDX], default=PROVENANCE)
+    return parser.parse_args(argv)
+
+
+def main():
+    args = arguments()
+    if args.image:
+        verify_image(args.image, args.tag, args.image_bundle, args.predicate_type, args.release_directory,
+                     args.bundle, args.manifest, args.source_sha, args.run_id, args.attesting_attempt, args.trusted_root)
+    else:
+        verify(args.release_directory, args.bundle, args.source_sha, args.tag, args.run_id, args.attesting_attempt, args.trusted_root)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__)
-    subject = parser.add_mutually_exclusive_group(required=True)
-    subject.add_argument('--candidate', type=Path)
-    subject.add_argument('--image')
-    parser.add_argument('--bundle', type=Path)
-    parser.add_argument('--approval-signature', required=True, type=Path)
-    parser.add_argument('--inventory-directory', type=Path)
-    parser.add_argument('--manifest', type=Path, help='verify a local manifest against its exact approved digest before upload')
-    parser.add_argument('--source-sha')
-    parser.add_argument('--tag', required=True)
-    parser.add_argument('--signer-sha')
-    parser.add_argument('--predicate-type', default='https://slsa.dev/provenance/v1')
-    args = parser.parse_args()
-    if args.image:
-        verify_image(args.image, args.tag, args.bundle, args.predicate_type, args.inventory_directory, args.approval_signature, args.manifest)
-    else:
-        if args.bundle is None or args.source_sha is None:
-            parser.error('file verification requires --bundle and --source-sha')
-        verify(args.candidate, args.bundle, args.source_sha, args.tag, args.signer_sha, args.approval_signature)
+    try: main()
+    except (gate.Refused, KeyError, OSError, ValueError, subprocess.CalledProcessError) as error:
+        raise SystemExit('release verification refused: ' + str(error)) from error

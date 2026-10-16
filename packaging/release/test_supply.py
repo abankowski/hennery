@@ -8,6 +8,7 @@ import tarfile
 
 import gate
 import supply
+import contract
 
 
 class Supply(unittest.TestCase):
@@ -113,7 +114,7 @@ class Supply(unittest.TestCase):
     def write_cli_crate(root, tag, identity_ref=None):
         base='hennery-'+tag.removeprefix('v')
         identity_ref=identity_ref or 'refs/tags/'+tag
-        text='[package]\nname="hennery"\nversion="'+tag.removeprefix('v')+'"\n[package.metadata.binstall]\ndisabled-strategies=["crate-meta-data","quick-install","compile"]\n[package.metadata.hennery-release]\nverification="external-openpgp-sigstore"\nmaintainer-fingerprint="F26C7F594DFE84D131703AFC23E5A318AE8D2861"\nsigner-identity="https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@'+identity_ref+'"\n'
+        text='[package]\nname="hennery"\nversion="'+tag.removeprefix('v')+'"\n[package.metadata.binstall]\ndisabled-strategies=["crate-meta-data","quick-install","compile"]\n[package.metadata.hennery-release]\nverification="external-signed-tag-sigstore"\nmaintainer-fingerprint="F26C7F594DFE84D131703AFC23E5A318AE8D2861"\nsigner-identity="https://github.com/marcinwadon/hennery/.github/workflows/release.yml@'+identity_ref+'"\n'
         with tarfile.open(root/(base+'.crate'),'w:gz') as archive:
             data=text.encode();entry=tarfile.TarInfo(base+'/Cargo.toml');entry.size=len(data);archive.addfile(entry,io.BytesIO(data))
 
@@ -145,23 +146,24 @@ class Supply(unittest.TestCase):
             (root / 'dist-manifest.json').write_text('{}')
             findings = root / 'licence-findings.json'
             findings.write_bytes(gate.canonical({'findings': ['unresolved']}))
-            argv = ['supply.py', 'freeze', '--output', str(root), '--source-sha', 'a' * 40,
-                    '--tag', 'v0.1.0-alpha.1', '--targets', targets[0], '--run-id', '10', '--run-attempt', '1']
-            with patch('sys.argv', argv), self.assertRaisesRegex(gate.Refused, 'unresolved licence'):
-                supply.main()
+            metadata = {'schema': 2, 'repository': gate.REPOSITORY, 'source_sha': 'a' * 40,
+                        'tag': 'v0.1.0-alpha.1', 'tag_object': 'b' * 40, 'channels': ['github'],
+                        'targets': targets, 'attesting': {'run_id': 10, 'run_attempt': 1}}
+            with self.assertRaisesRegex(gate.Refused, 'unresolved licence'):
+                supply.freeze(root, metadata)
             findings.write_bytes(gate.canonical({'findings': []}))
-            with patch('sys.argv', argv), contextlib.redirect_stdout(io.StringIO()):
-                supply.main()
-            inventory = gate.strict_json((root / 'release-inventory.json').read_bytes())
-            gate.verify_files(inventory, root)
+            supply.freeze(root, metadata)
+            inventory = contract.load(root)
             supply.verify_checksums(root)
             supply.verify_binary_inventory(inventory, root)
             wrong = dict(inventory, binaries={})
             with self.assertRaises(gate.Refused):
                 supply.verify_binary_inventory(wrong, root)
-            self.assertIn('sha256.sum', [a['name'] for a in inventory['artifacts']])
-            with patch('sys.argv', argv), self.assertRaisesRegex(gate.Refused, 'already frozen'):
-                supply.main()
+            self.assertIn('release-metadata.json', [a['name'] for a in inventory['artifacts']])
+            self.assertNotIn('artifacts', gate.strict_json((root / contract.METADATA).read_bytes()))
+            with patch.object(contract, 'freeze') as generation, self.assertRaisesRegex(gate.Refused, 'already frozen'):
+                supply.freeze(root, metadata)
+            generation.assert_not_called()
 
     def test_supplemental_licence_hash_cannot_drift(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -186,9 +188,9 @@ class Supply(unittest.TestCase):
             root = Path(tmp)
             (root / 'payload').write_bytes(b'bytes')
             supply.checksums(root)
-            self.assertEqual((root / 'sha256.sum').read_text(), gate.digest(b'bytes') + '  payload\n')
+            self.assertEqual((root / 'SHA256SUMS').read_text(), gate.digest(b'bytes') + '  payload\n')
             supply.checksums(root)  # stable, never hashes itself
-            self.assertNotIn('sha256.sum', (root / 'sha256.sum').read_text())
+            self.assertNotIn('SHA256SUMS', (root / 'SHA256SUMS').read_text())
             (root / 'payload').write_bytes(b'changed')
             with self.assertRaises(gate.Refused):
                 supply.verify_checksums(root)

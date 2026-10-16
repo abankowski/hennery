@@ -1,11 +1,8 @@
 // Exact-byte uploader inside R1's protected, manually approved tagged orchestrator.
 import fs from 'node:fs';
 import { join, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
 import { sha256, readJSON, requireThat, verifyCandidate, validateSource, publishBody } from './crate-release.mjs';
 import { indexPath } from './crate-registry.mjs';
 export async function preflight({dir,digest,gate,fetcher=fetch}) {
@@ -43,7 +40,7 @@ export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,p
       remote=await fetcher(download,{signal:AbortSignal.timeout(120000)});
     }
     requireThat(remote.ok,`remote package unavailable/unverifiable: ${c.name}`);
-    requireThat(sha256(Buffer.from(await remote.arrayBuffer()))===c.sha256,`remote digest differs: ${c.name}; new candidate/version required`);
+    requireThat(sha256(Buffer.from(await remote.arrayBuffer()))===c.sha256,`remote digest differs: ${c.name}; new signed version required`);
     let resolvable=false;
     for(let attempt=0;attempt<48;attempt++) {
       await authorize();
@@ -60,43 +57,52 @@ export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,p
   }
   return completed;
 }
-export function signedCratesDigest(dir,rootDigest) {
-  requireThat(/^[a-f0-9]{64}$/.test(rootDigest||''),'R1 global inventory digest missing');
-  const path=join(dir,'release-inventory.json');
-  requireThat(fs.lstatSync(path).isFile(),'R1 global inventory must be regular');
-  const raw=fs.readFileSync(path);requireThat(sha256(raw)===rootDigest,'R1 global inventory digest changed');
-  const root=JSON.parse(raw),inventory=readJSON(join(dir,'crates-inventory.json'));
-  requireThat(root.channels?.includes('crates') && root.source_sha===inventory.source.sha && root.tag===`v${inventory.version}`,'R1 global inventory source/version/channel differs');
-  requireThat(inventory.source.url===`https://github.com/marcinwadon/hennery/releases/download/${root.tag}/hennery-source-${root.source_sha}.tar.gz`,'R1 global inventory source URL differs');
-  const names=['crates-inventory.json',`hennery-source-${inventory.source.sha}.tar.gz`,...inventory.crates.map(c=>c.file)];
-  for(const name of names) {
-    const entries=root.artifacts?.filter(a=>a.name===name);
-    requireThat(entries?.length===1,'R1 global inventory lacks unique '+name);
-    const file=join(dir,name);requireThat(fs.lstatSync(file).isFile(),'R1 global inventory payload must be regular');
-    const bytes=fs.readFileSync(file);
-    requireThat(entries[0].size===bytes.length && entries[0].sha256===sha256(bytes),'R1 global inventory payload differs: '+name);
-  }
-  return root.artifacts.find(a=>a.name==='crates-inventory.json').sha256;
+export function releaseCratesDigest(dir) {
+ const raw=fs.readFileSync(join(dir,'SHA256SUMS'),'utf8'),entries=new Map(),folded=new Set();
+ requireThat(raw.endsWith('\n'),'checksum newline missing');
+ for(const line of raw.slice(0,-1).split('\n')){
+  const match=/^([a-f0-9]{64})  ([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(line);
+  requireThat(match && !folded.has(match[2].toLowerCase()) && !['sha256sums','release.sigstore.jsonl'].includes(match[2].toLowerCase()),'invalid/duplicate checksum entry');
+  entries.set(match[2],match[1]);folded.add(match[2].toLowerCase());
+ }
+ requireThat([...entries.keys()].join('\n')===[...entries.keys()].sort().join('\n'),'checksum list unsorted');
+ const names=fs.readdirSync(dir).filter(n=>n!=='SHA256SUMS').sort();
+ requireThat(names.join('\n')===[...entries.keys()].join('\n'),'global checksum closure differs');
+ for(const name of names){const path=join(dir,name);requireThat(fs.lstatSync(path).isFile() && !fs.lstatSync(path).isSymbolicLink() && sha256(fs.readFileSync(path))===entries.get(name),'global payload differs: '+name);}
+ const root=readJSON(join(dir,'release-metadata.json')),inventory=readJSON(join(dir,'crates-inventory.json'));
+ requireThat(root.schema===2 && root.repository==='marcinwadon/hennery' && root.channels?.includes('crates') && root.channels.includes('github') && root.source_sha===inventory.source.sha && root.tag===`v${inventory.version}`,'release crate source/tag/channel differs');
+ requireThat(inventory.source.url===`https://github.com/marcinwadon/hennery/releases/download/${root.tag}/hennery-source-${root.source_sha}.tar.gz`,'release source URL differs');
+ verifyCandidate(dir,inventory);
+ return entries.get('crates-inventory.json');
 }
-export function r1Gate(args) {
-  // Resolve only trusted checkout code; never execute anything from the candidate.
-  const executable=resolve('packaging/release-gate');
-  requireThat(fs.existsSync(executable),'R1 gate missing: packaging/release-gate (publication disabled)');
-  requireThat(args.channel==='crates' && ['preflight','boundary'].includes(args.phase),'R1 channel/phase differs');
-  const validate=()=>requireThat(signedCratesDigest(args.dir,args.rootDigest)===args.digest,'R1 global inventory channel digest differs');
-  validate();
-  // R1 audit storage keys by basename, across every invocation in this attempt.
-  const receipt=join(fs.mkdtempSync(join(tmpdir(),'hennery-r3-gate-')),`crates-${args.phase}-${randomUUID()}.json`);
-  execFileSync(executable,['crates','--candidate',resolve(args.dir),'--inventory-sha256',args.rootDigest,'--phase',args.phase,'--receipt',receipt],{encoding:'utf8'});
-  validate();
+let gateSequence=0;
+export function gateBroker() {
+ const request=process.env.CRATES_GATE_REQUEST_FD,reply=process.env.CRATES_GATE_REPLY_FD;
+ requireThat(/^[1-9][0-9]*$/.test(request||'') && /^[1-9][0-9]*$/.test(reply||'') && request!==reply,'private release gate broker missing');
+ const write=Number(request),read=Number(reply);
+ requireThat(Number.isSafeInteger(write) && Number.isSafeInteger(read) && write>=3 && read>=3
+   && fs.fstatSync(write).isFIFO() && fs.fstatSync(read).isFIFO(),'invalid private release gate pipes');
+ const sequence=++gateSequence,message=Buffer.from(`gate-v1:${sequence}\n`);
+ requireThat(fs.writeSync(write,message)===message.length,'incomplete release gate request');
+ const byte=Buffer.alloc(1);let response='';
+ while(response.length<128){
+  requireThat(fs.readSync(read,byte)===1,'release gate broker EOF/refusal');
+  response+=byte.toString('latin1');if(response.endsWith('\n'))break;
+ }
+ const match=/^ok-v1:([1-9][0-9]*):([0-9a-f]{64})\n$/.exec(response);
+ requireThat(match && match[1]===String(sequence),'release gate broker reply mismatch');
+ return match[2];
 }
+export function releaseGate({dir}) {
+ const before=releaseCratesDigest(dir),approved=gateBroker();
+ requireThat(approved===before && releaseCratesDigest(dir)===approved,'release crate manifest changed at parent gate');
+ return approved;
+}
+
 if(import.meta.url===pathToFileURL(process.argv[1]||'').href) {
-  requireThat(process.env.GITHUB_ACTIONS==='true','real publisher only runs through the protected R1 workflow');
-  const verify=process.argv[2]==='--verify',dir=resolve(process.argv[verify?3:2]),rootDigest=process.argv[verify?4:3];
-  const digest=signedCratesDigest(dir,rootDigest),gate=args=>r1Gate({...args,rootDigest});
-  if(verify) {
-    await preflight({dir,digest,gate});
-  } else {
-    await publishFrozen({dir,digest,gate,credentials:async()=>process.env.CARGO_REGISTRY_TOKEN});
-  }
+ requireThat(process.env.GITHUB_ACTIONS==='true','real publisher only runs in the protected tagged workflow');
+ const verifyOnly=process.argv[2]==='--verify',dir=resolve(process.argv[verifyOnly?3:2]),signatures=resolve(process.argv[verifyOnly?4:3]);
+ const digest=releaseCratesDigest(dir),gate=async()=>{requireThat(releaseGate({dir,signatures})===digest,'release crate manifest changed');};
+ if(verifyOnly)await preflight({dir,digest,gate});
+ else await publishFrozen({dir,digest,gate,credentials:async()=>process.env.CARGO_REGISTRY_TOKEN});
 }

@@ -2,8 +2,8 @@
 
 No GHCR image has been published by this work. The intended package is
 `ghcr.io/marcinwadon/hennery`, for `linux/amd64` and `linux/arm64`.
-R1 is merged at `191aa71b`. Publication remains disabled pending independent
-review, platform qualification and maintainer approval for this channel. A merged workflow is not approval.
+Publication remains disabled pending independent review, platform qualification
+and maintainer approval for this channel. A merged workflow is not approval.
 
 ## What runs here
 
@@ -23,33 +23,34 @@ supply-chain record.
 
 ## Deployment and storage
 
-Use an independently trusted checkout of R1's [shared verifier](release/verify.py),
-with the complete frozen candidate directory, the external
-`release-inventory.json.asc` and exact release tag. It requires the pinned
-maintainer's hardware-backed signature over the global inventory before checking
-Sigstore. The inventory hashes `ghcr-index.json`, which lists the exact index
-and both platform digests. An exact-tag Sigstore certificate alone is insufficient.
-The verifier rejects missing/wrong inventory signatures and unlisted subjects.
-Follow the [trusted bootstrap and release process](../docs/release-process.md);
-a verifier or public key downloaded from an unverified release is not a trust root.
+Use an independently trusted checkout of the [shared verifier](release/verify.py)
+and the full release payload directory plus its separate Sigstore bundles. Supply
+an independently selected exact tag, source commit, original run ID and attesting
+attempt. The verifier freshly authenticates the annotated tag with the pinned
+YubiKey fingerprint, checks `SHA256SUMS` and every payload's provenance, then
+checks the index or platform digest against authenticated `ghcr-index.json`.
+A verifier or key downloaded from an unverified release is not a trust root.
+Follow the [trusted bootstrap and release process](../docs/release-process.md).
 
-Verify the index **and** selected platform manifest and its image/base and binary
-SPDX attestations. The exact certificate identity is
-`https://github.com/marcinwadon/hennery/.github/workflows/release-publish.yml@refs/tags/<exact-release-tag>`,
-with GitHub's OIDC issuer and matching source ref. R1's verifier supports the
-SLSA provenance and SPDX predicates and requires `--inventory-directory` and
-`--approval-signature` for every OCI subject. Keep the `.asc` and Sigstore
-bundles outside the immutable candidate directory. BuildKit's embedded provenance
-is unsigned build metadata; the protected signing jobs add authenticated provenance.
-Preserve the public approval and verification bundles with the release record.
+Verify the index, selected platform manifest and both image/base and binary SPDX
+attestations. The exact certificate identity is
+`https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/<exact-release-tag>`.
+The verifier also constrains the GitHub OIDC issuer, source ref and source/signer
+commit digests, and compares the certificate's flattened `runInvocationURI`
+exactly with the original run/attesting attempt. It never combines mutually
+exclusive `--cert-identity` and `--signer-workflow`. Local manifests must hash to
+the authenticated descriptor digest; remote subjects use only immutable OCI
+references. Keep bundles outside the payload directory to avoid checksum cycles.
+BuildKit's embedded provenance is unsigned build metadata; exact tagged-workflow
+Sigstore attestations authenticate the final subjects.
 
 Set your deployment's image to `ghcr.io/marcinwadon/hennery@sha256:<verified-index>`;
 the angle-bracket value is a placeholder, not an existing release digest.
 Use a release's immutable version tag only when selecting the digest. A base
 image security rebuild gets a new immutable revision/version and provenance;
 never overwrite an existing version tag. R4 deliberately creates no `latest`
-or minor aliases. R1 may advance those only for stable releases, after all
-enabled channels and both architectures and their attestations are healthy.
+or minor aliases. Any future alias mechanism needs review and may advance only after all
+selected channels and both architectures and their attestations are healthy.
 Prereleases never advance moving aliases.
 
 Publish the collector port on loopback, for example Docker's
@@ -76,138 +77,102 @@ backward compatible: rollback means restoring that backup with its matching
 old digest, with the associated loss of writes since the backup. Do not put
 an older executable against an upgraded database without explicit support.
 
-## Candidate and approval contract
+## Signed-source release contract
 
-R1's actual `release-candidate.yml` builds each native image beside its fresh
-Linux archive. It supplies that target's musl executable, reviewed notices and
-binary SPDX from R1's release materials. The builder uses the `release` target,
+The single tag-triggered `.github/workflows/release.yml` builds each native image
+beside its fresh Linux archive, with the target's unchanged musl executable,
+reviewed notices and binary SPDX. It uses the Dockerfile's `release` target,
 pinned BuildKit/scanner/bases, native amd64/arm64 runners and no restored cache.
-It names local exports so BuildKit supplies manifest-bound attestation subjects.
-It verifies executable bytes, labels, legal files and SBOM/provenance, extracts
-signing inputs, then tests the retained digest through a loopback registry.
-Smoke covers health, private writable storage, actual process UID and embedded UI.
+It checks labels, executable bytes, legal files, SBOM/provenance and signing
+inputs, then exercises the retained digest through a loopback registry. Smoke
+checks health, private writable storage, actual UID and the embedded UI.
 
-When `ghcr` is in the candidate channel set, R1 assembles and round-trips the
-index before freezing the complete flat root. `ghcr-candidate.py` produces:
+For selected `ghcr`, `ghcr-candidate.py` assembles before the global checksum
+freeze and materializes afterward for unprivileged data acceptance. The historical
+filename conveys no separate candidate stage or publication authority. It emits:
 
-- `ghcr-oci-layout.tar`, containing the exact platform/index/BuildKit attestation
-  blobs; no reconstruction is permitted after approval;
-- `ghcr-index.json`, a schema-1 descriptor containing the index `digest`,
-  `platforms.amd64` and `platforms.arm64` manifest digests, source SHA and version.
+- `ghcr-oci-layout.tar`: the exact index/platform/BuildKit blobs;
+- `ghcr-index.json`: index digest, both `platforms.amd64`/`platforms.arm64`
+  manifest digests, source SHA and version.
 
-The global inventory hashes both files and records exact executable hashes in
-`binaries[target]`. The image payload must match those approved archive binaries.
-Notices/SPDX cover Rust, vendored OpenSSL/SQLite and embedded frontend; R1's
-corresponding-source/licence/advisory review remains mandatory. Image scanner
-SBOMs additionally cover the base filesystem. Binary SPDX is embedded and signed
-separately because filesystem scanning cannot discover all static/frontend code.
+`SHA256SUMS` binds both. Schema-2 `release-metadata.json` records the exact archive
+executable hashes in `binaries[target]`; OCI executable bytes must match them.
+Notices/SPDX cover Rust, vendored OpenSSL/SQLite and embedded frontend, with
+corresponding source and licence/advisory clearance. Image scanner SBOMs also
+cover the base filesystem; binary SPDX is attested separately because scanning
+cannot discover all static/frontend code.
 
-R3's channel registry binds the reserved display name `ghcr` to job ID `ghcr`
-in the workflow at the signed source commit. That aggregate downloads the frozen
-candidate after assembly, checks its source/tag, complete inventory, executable
-hashes and retained OCI/index bytes, then round-trips the index through loopback.
-Retention waits for its success when GHCR is selected. GitHub-only candidates
-may skip both optional channel jobs; a selected missing/skipped/failed aggregate
-is refused by the shared gate. Candidate `accept` checks data before approval;
-publication `qualify` still requires the maintainer signature and live gate.
+The channel registry reserves the literal job ID/display name `ghcr`. The job
+checks the exact frozen source/tag/layout/binaries and round-trips the assembled
+index through loopback. A selected missing/skipped/failed acceptance refuses
+attestation. PR/main `build.yml` independently tests release-target output using
+explicit CI notices/SPDX fixtures; those bytes are never promoted to a release.
+Real Docker/native acceptance is separate from offline structural transport tests.
 
-PR/main `build.yml` also qualifies real release-target OCI output using explicitly
-marked CI notices/SPDX fixtures, signing-input extraction and loopback acceptance.
-Those fixture images are never promoted to release candidates. Real Docker
-acceptance is CI proof; transport/process doubles are offline contract tests.
+The dedicated `attest` job produces seven OCI bundles without registry credentials
+or pushes: index provenance, and provenance/image SPDX/binary SPDX for each of
+amd64 and arm64. Every subject belongs to the same original tagged run/attempt.
+It also attests the global checksum file and every release payload, then writes
+the complete asset/hash run summary for maintainer approval.
 
-### Publication boundary
+### Protected publication and recovery
 
-The only orchestrator is R1's manual, exact signed-tag `release-publish.yml`.
-There is no alternate reusable R4 publisher or provisional approval-ID adapter.
-The shared interface is `packaging/release-gate ghcr`, in **`release`**, with
-the complete held candidate, approved global inventory SHA-256, explicit
-`preflight`/`boundary` phase and a new receipt outside the candidate. R1 checks
-live environment review, signed inventory/tag, settings audit, exact-SHA checks,
-retention and candidate/publishing run attempts. Its audit is maintainer-local;
-publishers receive no administration credential. See the [R1 contract](release/README.md).
+One job in environment `release` verifies the original run's artifacts, creates
+a draft, reads back and re-verifies uploaded bytes, and publishes an immutable
+GitHub release. After that, folded channel steps require `ghcr` selection plus
+`RELEASE_GHCR_ENABLED`, the global switch and GitHub switch. The common gate and
+all seven local OCI attestations verify before dedicated registry authentication.
+Only the GHCR step receives `GHCR_PUBLISH_TOKEN` and `GHCR_PUBLISH_USER`; there is
+no ordinary-job-token fallback. Credentials stay in a temporary restricted config.
 
-`ghcr` and `ghcr-attest` depend directly on protected read-only `authorize` and
-match its inventory, current attempt and selected `ghcr` channel. The gate
-checks that dispatch selection against the signed inventory. A GitHub-only
-dispatch skips both jobs even when GHCR is globally enabled. Every upload and
-provenance/SPDX signing operation gets fresh
-boundary validation. Receipt names include the matrix subject, avoiding held
-storage collisions. `ghcr-gate.sh` calls the real gate, then reuses R1's pinned-key
-inventory verifier and checks both OCI platform/index digests and executable
-identity. OCI is materialized outside the held root; changed working bytes or
-metadata refuse. The publisher accepts only that verified layout path.
+The publisher rechecks exact root/layout/bundles at each boundary, reconciles the
+remote version/digest and copies only absent content with `--preserve-digests`.
+A matching digest skips image upload. Only an authenticated structured absence
+permits a new write; differing bytes and auth/network/ambiguous responses refuse.
+Writes target immutable digests, so a version tag appearing during reconciliation
+cannot be overwritten. Pinned ORAS attaches the seven preverified bundles by
+digest, with fresh checks before each attachment, then all remote subjects verify.
+No `latest`, minor aliases or announcement is written by this implementation.
 
-The `ghcr-attest` matrix generates bundles with registry publication disabled,
-using R1's exact candidate Sigstore bundle before signing. It verifies each new
-bundle against the actual local manifest bytes and the exact maintainer-approved
-digest before retaining it. `ghcr` waits for that entire matrix, downloads R1's
-candidate signature artifact and all seven OCI bundles, and verifies every
-candidate payload and OCI subject before registry credentials. The publisher
-repeats this verification after its final live gate and before upload.
+After an ambiguous successful image write or any failed bundle attachment, keep
+aliases withheld and obtain renewed approval for a publish-only retry. Reconcile
+matching remote content and complete only missing work, reusing original artifacts
+and attestations. The publishing attempt changes; the attesting attempt does not.
+Never rerun all or rebuild old-version payloads. The recovery window is 30 days
+and at most 50 reruns. Missing originals, conflicts or window exhaustion require
+a new signed version and documentation of the incomplete old release.
 
-Only `ghcr` authenticates with **`GHCR_PUBLISH_TOKEN`**, a secret
-held only in `release`, and `GHCR_PUBLISH_USER`, its environment variable.
-The ordinary job token requests `packages: read`; the package's Actions access
-must independently be **READ**, with inherited write/admin access disabled.
-GitHub's attestation API uses the ordinary token with protected OIDC/attestation
-permissions; the generator has no registry credential. After image upload,
-the pinned ORAS tool attaches the already verified bundles as
-[Sigstore OCI referrers](https://github.com/sigstore/cosign/blob/main/specs/BUNDLE_SPEC.md),
-with fresh gate and full verification before each attachment. Credential
-kind/capability must be qualified by the maintainer; no App/fine-grained registry
-support is assumed. No fallback to `GITHUB_TOKEN` is present.
+## Maintainer-only setup
 
-After upload, each remote platform/index and all seven provenance/SPDX bundles
-are checked again with R1's shared hardware-inventory-plus-Sigstore verifier. Bundles and
-gate receipts are held under that publishing attempt. The final read-only
-completion check refuses skipped/failed jobs, stale inventory/attempts and an
-invalid digest. Rerunning failed jobs requires renewed whole-attempt approval.
-Both `RELEASE_PUBLICATION_ENABLED` and `RELEASE_GHCR_ENABLED` remain disabled
-until maintainer setup and review. First alpha releases are GitHub only; GHCR
-requires a separately approved stable channel set.
-
-Recovery reads and hashes the remote version and exact digest. Equal bytes may
-skip upload; only authenticated HTTP 404 plus structured absence permits copying
-retained bytes. Reconciliation repeats after the final gate. Auth/network/
-ambiguous errors or a differing version stop. Uploads address only the immutable
-digest: this publisher neither creates nor replaces version tags, so a version
-appearing after the final check cannot be overwritten. Use the approved digest
-from the inventory, not a version-tag assumption. Lost responses require
-reconciliation on a newly approved attempt. No mutable aliases,
-rebuild, changed approval signature or replacement release bytes are permitted.
-
-## Maintainer-only setup and release steps
-
-1. Approve the exact **namespace/package** `ghcr.io/marcinwadon/hennery` and
-   its creation under the personal account, and link it to this repository.
-   The source OCI label is present; verify the actual package linkage.
-2. Set and verify **visibility** explicitly. Confirm anonymous pull of the
-   intended public package only after the approved initial publication;
-   initial GHCR package visibility must not be assumed to be public.
-3. Choose **retention**: keep version/index/platform/attestation digests and
-   verification bundles needed for rollback, exclude them from automatic
-   deletion, and retain candidates durably until all approved channels finish.
-   Decide the base-image security rebuild/purge policy. No cleanup job is added.
-4. Set package **Manage Actions access to READ**, disabling inherited write/admin.
-   Qualify R1's explicitly authorized negative branch push and dedicated
-   credential capability before enablement; offline tests do not prove platform
-   enforcement. Store `GHCR_PUBLISH_TOKEN` only in `release` and configure
-   `GHCR_PUBLISH_USER` there. Signing needs protected `id-token: write` and
-   `attestations: write`, while the ordinary package token remains READ.
-5. Complete R1's protected **release** environment, immutable signed-tag rules,
-   hardware-touch signing setup, independently confirmed public-key bootstrap,
-   settings audit and held-storage policy. Approve the exact canonical global
-   inventory with the YubiKey and provide the public detached signature through
-   the dispatch. Exercise actual missing/rejected/stale approvals, wrong/missing
-   signatures, inventory/source/tag/target changes and package permission refusals.
-6. Independently review this integration and native Linux acceptance, then
-   explicitly qualify `RELEASE_PUBLICATION_ENABLED` and `RELEASE_GHCR_ENABLED`
-   for an approved stable channel set. Merging/enabling/tagging is not publication
-   consent. Renew audit/attempt approval for retries and never replace held bytes.
-7. After authorized upload and keyless attestations, independently pull by
-   index digest, verify each platform and SBOM/provenance identity, check the
-   non-root health/UI/volume behavior, record the index digest in release notes,
-   and only then consider stable aliases/announcements through R1.
+1. Approve `ghcr.io/marcinwadon/hennery`, link it to this repository, explicitly
+   set intended public visibility and qualify anonymous digest pulls after the
+   authorized first publication. Keep needed image/attestation digests for rollback;
+   exclude them from automatic deletion. No external storage or cleanup service.
+2. Set package Actions access to READ, with inherited write/admin disabled.
+   Qualify the dedicated credential's minimum capability and the branch-push
+   negative platform test only with explicit maintainer authorization. Store
+   `GHCR_PUBLISH_TOKEN` and `GHCR_PUBLISH_USER` only in `release`.
+3. The `release` environment, owner-only tag creation/update-delete rules and
+   immutable GitHub releases are already configured. Confirm enforcement,
+   YubiKey signing touch policy and independent fingerprint bootstrap. The owner
+   signs source, not final bytes; runners remain trusted. Repository writers can
+   publish genuine attested bytes early or freeze an incomplete immutable release.
+   This accepted early-publication/denial-of-service risk rolls forward to a new
+   signed version, as documented in the [design amendment](../docs/specs/2026-10-15-distribution-release-design.md#simplified-release-model-operator-decision-2026-10-16).
+4. Before any channel switch is enabled, obtain the first genuine Hennery tagged
+   attestation with explicit maintainer authorization, retain it as the authentic
+   positive fixture, and verify with pinned `gh 2.101.0`, the trusted root and the
+   complete Hennery identity/run policy. The bundled authentic upstream fixture
+   proves cryptography/JSON shape and Hennery-policy rejection only; substituted
+   Hennery responses are structural tests. Builders must not mint log entries.
+5. Qualify native Linux/Docker and first-run/retry approval behavior. Review the
+   run summary before the one `release` approval; no draft exists before approval.
+   Retries require renewed current-attempt approval and original artifact IDs,
+   with unchanged producing attempt. Keep every publication switch disabled until
+   independent review and this platform acceptance are complete. First alpha is
+   GitHub-only; GHCR needs a separately selected stable release.
+6. After authorized publication, independently verify index/platform/SBOM/run
+   identities, anonymous pulls and non-root health/UI/storage behavior, then record
+   the immutable deployment digest before announcing complete channel success.
 
 Generated with Claude AI — please review before distribution.

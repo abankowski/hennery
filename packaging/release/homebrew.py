@@ -63,13 +63,12 @@ def freeze_proof(source, destination, tag, targets, source_sha):
     destination.mkdir(parents=True, exist_ok=False)
     for name in ['hennery.rb', *['hennery-' + t + '.tar.xz' for t in targets]]:
         shutil.copyfile(Path(source) / name, destination / name)
-    inventory = {'schema': 1, 'repository': gate.REPOSITORY, 'source_sha': source_sha,
-                 'tag': tag, 'channels': ['github'], 'targets': sorted(targets),
-                 'candidate': {'run_id': 1, 'run_attempt': 1},
-                 'artifacts': [{'name': p.name, 'size': p.stat().st_size, 'sha256': gate.digest(p.read_bytes())}
-                               for p in sorted(destination.iterdir())]}
-    (destination / 'release-inventory.json').write_bytes(gate.canonical(inventory))
-    gate.verify_files(inventory, destination)
+    import contract
+    # This unsigned PR proof has no authority. The placeholder object and run
+    # cannot satisfy the authenticated publishing context.
+    contract.freeze(destination, {'schema': 2, 'repository': gate.REPOSITORY, 'source_sha': source_sha,
+                    'tag': tag, 'tag_object': '0' * 40, 'channels': ['github'], 'targets': sorted(targets),
+                    'attesting': {'run_id': 1, 'run_attempt': 1}})
 
 
 if __name__ == '__main__':

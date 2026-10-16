@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {publishFrozen,r1Gate} from './publish-crates.mjs';
+import {publishFrozen,releaseGate} from './publish-crates.mjs';
 import {ORDER,sha256} from './crate-release.mjs';
 function fixture(){
   const dir=fs.mkdtempSync(join(tmpdir(),'r3-publish-'));
@@ -45,20 +45,9 @@ test('matching remote bytes reconcile without reupload',async()=>{const f=fixtur
 for(const [name,flags]of Object.entries({mismatch:{existing:true,mismatch:true},ambiguous:{ambiguous:true},index:{indexBad:true},remote:{unavailable:true},source:{sourceBad:true}}))test(`refuses ${name} and never uploads consumers`,async()=>{const f=fixture(),n=network(f,flags);await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>'ephemeral'}));assert.ok(n.uploads.length<=1);});
 test('approval failure refuses before obtaining credentials',async()=>{const f=fixture(),n=network(f);let acquired=false;await assert.rejects(publishFrozen({...f,...n,gate:async()=>{throw Error('refused');},credentials:async()=>{acquired=true;}}));assert.equal(acquired,false);});
 for(const changed of ['inventory','crate','missing'])test(`refuses ${changed} after approval`,async()=>{const f=fixture(),n=network(f);let count=0;await assert.rejects(publishFrozen({...f,...n,credentials:async()=>'ephemeral',gate:async()=>{if(++count===3){const p=join(f.dir,changed==='inventory'?'crates-inventory.json':f.crates[0].file);if(changed==='missing')fs.rmSync(p);else fs.appendFileSync(p,'bad');}}}));assert.equal(n.uploads.length,0);});
-test('R1 adapter missing from trusted checkout fails closed',()=>{
+test('missing release payload refuses before any broker authority',()=>{
  const cwd=process.cwd(),root=fs.mkdtempSync(join(tmpdir(),'r3-no-gate-'));
- try{process.chdir(root);assert.throws(()=>r1Gate({channel:'crates',digest:'a'.repeat(64)}),/gate.*missing/);}finally{process.chdir(cwd);}
-});
-test('crate publication uses the real protected manual orchestrator and current authorization',()=>{
- assert.equal(fs.existsSync('.github/workflows/publish-crates.yml'),false);
- const yaml=fs.readFileSync('.github/workflows/release-publish.yml','utf8'),job=yaml.slice(yaml.indexOf('  crates:\n'));
- assert.ok(yaml.includes('  crates:\n'));assert.match(job,/environment: release/);
- assert.match(job,/needs: \[github, authorize\]/);assert.match(job,/vars\.RELEASE_CRATES_ENABLED == 'true'/);
- assert.match(job,/needs\.authorize\.outputs\.run_attempt == github\.run_attempt/);
- assert.match(job,/needs\.authorize\.outputs\.inventory_sha256 == inputs\.inventory_sha256/);
- assert.match(job,/channel: crates/);assert.match(job,/phase: preflight/);assert.match(job,/phase: boundary/);
- assert.doesNotMatch(job,/secrets\..*(?:CARGO|CRATES)|R3_PUBLISH_ENABLED/);
- for(const [,action]of job.matchAll(/uses: ([^\s]+)/g))if(!action.startsWith('./'))assert.match(action,/@[a-f0-9]{40}$/);
+ try{process.chdir(root);assert.throws(()=>releaseGate({dir:root,signatures:root}));}finally{process.chdir(cwd);}
 });
 test('approval invalidated during source verification refuses credentials',async()=>{
  const f=fixture(),n=network(f);let invalid=false,acquired=false;
@@ -97,29 +86,38 @@ test('same-size retained crate tampering stops before credentials',async()=>{
  const f=fixture(),n=network(f);fs.writeFileSync(join(f.dir,f.crates[0].file),'x'.repeat(f.crates[0].size));let acquired=false;
  await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>{acquired=true;return 'ephemeral';}}));assert.equal(acquired,false);assert.equal(n.uploads.length,0);
 });
-test('OIDC acquisition follows frozen-byte preflight and only its ephemeral output reaches upload',()=>{
- const yaml=fs.readFileSync('.github/workflows/release-publish.yml','utf8');
- const preflight=yaml.indexOf('publish-crates.mjs --verify'),auth=yaml.indexOf('uses: rust-lang/crates-io-auth-action@');
- assert.ok(preflight>=0 && auth>preflight,'credentials acquired before preflight');
+test('OIDC acquisition follows shared verifier and explicit bootstrap mode',()=>{
+ const yaml=fs.readFileSync('.github/workflows/release.yml','utf8');
+ const preflight=yaml.indexOf('id: crates-verify'),auth=yaml.indexOf('uses: rust-lang/crates-io-auth-action@');
+ assert.ok(preflight>=0 && auth>preflight);
  assert.match(yaml,/CARGO_REGISTRY_TOKEN: \$\{\{ steps\.cratesio\.outputs\.token \}\}/);
+ assert.match(yaml,/RELEASE_CRATES_BOOTSTRAP_ENABLED/);
+ assert.ok(yaml.indexOf('id: crates-publish')>auth);
 });
-test('maintainer and exact Sigstore verification precede crate OIDC in the common orchestrator',()=>{
- const yaml=fs.readFileSync('.github/workflows/release-publish.yml','utf8'),job=yaml.slice(yaml.indexOf('  crates:\n'));
- const verify=job.indexOf('packaging/release/verify.py'),preflight=job.indexOf('publish-crates.mjs --verify'),oidc=job.indexOf('uses: rust-lang/crates-io-auth-action@');
- assert.ok(verify>=0 && verify<oidc && preflight>=0 && preflight<oidc);
- assert.match(job,/--approval-signature signatures\/release-inventory\.json\.asc/);
- assert.match(job,/INVENTORY: \$\{\{ inputs\.inventory_sha256 \}\}/);
-});
-test('candidate freezes qualified crates alongside native payloads using its single UI build',()=>{
- const yaml=fs.readFileSync('.github/workflows/release-candidate.yml','utf8');
- assert.match(yaml,/  crates:\n/);assert.match(yaml,/prepare-crates\.mjs .*\$PWD\/web\/dist/);
- assert.match(yaml,/ci-crates\.sh/);assert.match(yaml,/name: release-crates/);
- const stage=yaml.indexOf('prepare-crates.mjs --stage'),freeze=yaml.indexOf('supply.py freeze');
- assert.ok(stage>=0 && freeze>stage);
+test('single workflow freezes qualified crates after the same source/UI build',()=>{
+ const yaml=fs.readFileSync('.github/workflows/release.yml','utf8');
+ assert.match(yaml,/prepare-crates\.mjs/);assert.match(yaml,/ci-crates\.sh/);
+ assert.ok(yaml.indexOf('prepare-crates.mjs --stage')<yaml.indexOf('release_run.py freeze'));
 });
 import { preflight } from './publish-crates.mjs';
 test('precredential preflight validates source and approval without any upload',async()=>{
  const f=fixture(),n=network(f);let gates=0;
  const result=await preflight({...f,...n,gate:async()=>{gates++;}});
  assert.equal(result.inventory.version,'0.1.0-alpha.1');assert.equal(gates,2);assert.equal(n.uploads.length,0);
+});
+
+test('parent broker is mandatory with no subprocess or ambient-credential fallback',async()=>{
+ const {gateBroker}=await import('./publish-crates.mjs');
+ const names=['CRATES_GATE_REQUEST_FD','CRATES_GATE_REPLY_FD'];
+ const original=Object.fromEntries(names.map(name=>[name,process.env[name]]));
+ try{
+  for(const name of names)delete process.env[name];
+  assert.throws(()=>gateBroker(),/private release gate broker missing/);
+  for(const [request,reply] of [['0','1'],['3','3'],['3junk','4'],['9007199254740993','4']]){
+   process.env.CRATES_GATE_REQUEST_FD=request;process.env.CRATES_GATE_REPLY_FD=reply;
+   assert.throws(()=>gateBroker(),/private release gate/);
+  }
+ }finally{
+  for(const name of names){if(original[name]===undefined)delete process.env[name];else process.env[name]=original[name];}
+ }
 });
