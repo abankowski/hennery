@@ -32,6 +32,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
      and its [harness](../spikes/2026-09-25-mcp-per-session/).
 4. Plans:
    - [List-stream and MCP timing (flakes 13–14)](plans/2026-11-02-flake-list-stream.md) — paused-clock deletion checks and an awaited OAuth popup cleanup assertion, with controlled regressions, guard probes, load and replay evidence. Independent review and Linux/macOS CI remain parent-owned.
+   - [Proxy fixture port lifetimes (flake 15)](plans/2026-11-03-flake-proxy-ports.md) — leases stable proxy ports across pauses and test processes outside the kernel ephemeral ranges; deterministic contention regressions, copy probes, load and replay evidence recorded. Parent review and Linux/macOS CI remain pending.
    - [Walking skeleton](plans/2026-09-26-walking-skeleton.md) — the first
      implementation plan (9 tasks) — executed 2026-09-27; its "Execution status" section
      lists where the built code deviates from the task text.
