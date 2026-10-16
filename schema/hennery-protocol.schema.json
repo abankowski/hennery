@@ -35,7 +35,10 @@
         "child_id": {
           "type": "string"
         },
-        "content": true,
+        "content": {
+          "description": "For accept, an object matching the child's requestedSchema. Omit for decline/cancel.",
+          "type": "object"
+        },
         "operation_key": {
           "type": "string"
         },

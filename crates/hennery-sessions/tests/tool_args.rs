@@ -150,6 +150,56 @@ fn answer_accepts_only_elicitation_actions_and_object_content() {
 }
 
 #[test]
+fn answer_discovery_requires_object_content_and_explains_the_child_schema() {
+    let listed = discovery();
+    let answer = listed["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "session_answer")
+        .unwrap();
+    assert_eq!(answer["inputSchema"]["properties"]["content"]["type"], "object");
+    assert!(answer["description"].as_str().unwrap().contains("requestedSchema"));
+}
+
+#[test]
+fn parent_facing_tool_contract_snapshot() {
+    let expected: Value = serde_json::from_str(include_str!("fixtures/session_tool_contract.json")).unwrap();
+    assert_eq!(
+        discovery(),
+        expected,
+        "review every parent-facing schema change and rerun pinned discovery plus the live matrix"
+    );
+}
+
+#[test]
+fn json_encoded_answer_objects_normalize_before_idempotency_but_ambiguous_json_is_refused() {
+    let args = json!({"operation_key":"a","child_id":"c","pending_id":"p","action":"accept","content":{"ok":true}});
+    let object = decode_tool("session_answer", &args).unwrap();
+    for text in [r#"{"ok":true}"#, r#" {"\u006fk":true} "#] {
+        let mut encoded = args.clone();
+        encoded["content"] = json!(text);
+        let parsed = decode_tool("session_answer", &encoded).unwrap();
+        assert_eq!(object.canonical_request(), parsed.canonical_request());
+        assert_eq!(object.request_digest(), parsed.request_digest());
+    }
+    for text in [
+        r#"{"ok":false,"ok":true}"#,
+        r#"{"ok":false,"\u006fk":true}"#,
+        "[]",
+        "null",
+        "true",
+        "broken",
+        "\u{feff}{}",
+        r#"{"nested":{"k":1,"k":2}}"#,
+    ] {
+        let mut encoded = args.clone();
+        encoded["content"] = json!(text);
+        assert!(decode_tool("session_answer", &encoded).is_err(), "{text}");
+    }
+}
+
+#[test]
 fn canonical_request_and_digest_bind_typed_defaults_tool_and_content() {
     let a = decode_tool("session_spawn", &spawn()).unwrap();
     let mut same = spawn();

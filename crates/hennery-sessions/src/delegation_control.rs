@@ -55,6 +55,12 @@ impl Store {
             .optional()?;
         ensure!(kind.as_deref() != Some("permission"), "operator_required");
         ensure!(kind.as_deref() == Some("elicitation"), "not_found");
+        let payload: String = tx.query_row(
+            "SELECT payload FROM pending WHERE owner_id=?1 AND session_id=?2 AND pending_id=?3",
+            params![self.owner_id(), child, pending],
+            |r| r.get(0),
+        )?;
+        crate::delegation_form::validate(&serde_json::from_str(&payload)?, answer)?;
         let operation = uuid::Uuid::now_v7().to_string();
         let origin = InputOrigin::Parent {
             session_id: caller.session_id().into(),
@@ -268,9 +274,10 @@ impl Store {
             let mut question = if permission {
                 None
             } else {
-                Some(serde_json::to_value(hennery_view::item::Question::from_pending(
-                    &pending,
-                ))?)
+                let mut question = serde_json::to_value(hennery_view::item::Question::from_pending(&pending))?;
+                question["requestedSchema"] =
+                    crate::delegation_form::advertised(&pending.payload).unwrap_or(serde_json::Value::Null);
+                Some(question)
             };
             if let Some(value) = &question {
                 let bytes = serde_json::to_vec(value)?.len();

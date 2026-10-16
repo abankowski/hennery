@@ -42,6 +42,35 @@ const TOOLS: &[&str] = &[
     "session_close",
 ];
 
+fn valid_tool_schemas(tools: &Value) -> bool {
+    let Some(tools) = tools.as_array().filter(|tools| tools.len() == TOOLS.len()) else {
+        return false;
+    };
+    hennery_proto::delegation::argument_schemas()
+        .iter()
+        .all(|(name, schema)| {
+            tools.iter().filter(|tool| tool["name"] == *name).count() == 1
+                && tools
+                    .iter()
+                    .any(|tool| tool["name"] == *name && tool["inputSchema"] == *schema)
+        })
+}
+
+#[test]
+fn discovery_probe_checks_input_schemas_not_only_names() {
+    let mut tools = hennery_sessions::tool_args::discovery()["tools"].clone();
+    assert!(valid_tool_schemas(&tools));
+    let answer = tools
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|t| t["name"] == "session_answer")
+        .unwrap();
+    answer["inputSchema"]["properties"]["content"] = json!({"type":"string"});
+    assert!(!valid_tool_schemas(&tools));
+    assert!(!valid_tool_schemas(&json!([])));
+}
+
 fn runtime(variable: &str) -> Result<String> {
     let value = std::env::var(variable).with_context(|| format!("supply {variable}"))?;
     ensure!(matches!(value.as_str(), "claude" | "codex"), "invalid runtime");
@@ -349,7 +378,8 @@ impl Harness {
                     let method = input["method"].as_str().filter(|s| matches!(*s, "initialize" | "tools/list" | "tools/call"));
                     let tool = input["params"]["name"].as_str().filter(|s| TOOLS.contains(s));
                     let names = output["result"]["tools"].as_array().map(|tools| tools.iter().filter_map(|t| t["name"].as_str().filter(|s| TOOLS.contains(s))).collect::<Vec<_>>());
-                    observed.lock().unwrap().push(json!({"caller":caller,"method":method,"tool":tool,"status":parts.status.as_u16(),"is_error":output["result"]["isError"].as_bool(),"rpc_error":output["error"]["code"].as_i64(),"tools":names,"fields":input.as_object().map(|object| object.keys().collect::<Vec<_>>()),"param_fields":input["params"].as_object().map(|object| object.keys().collect::<Vec<_>>()),"meta_fields":input["params"]["_meta"].as_object().map(|object| object.keys().collect::<Vec<_>>())}));
+                    let schemas_valid = (method == Some("tools/list")).then(|| valid_tool_schemas(&output["result"]["tools"]));
+                    observed.lock().unwrap().push(json!({"caller":caller,"method":method,"tool":tool,"status":parts.status.as_u16(),"is_error":output["result"]["isError"].as_bool(),"rpc_error":output["error"]["code"].as_i64(),"tools":names,"schemas_valid":schemas_valid,"fields":input.as_object().map(|object| object.keys().collect::<Vec<_>>()),"param_fields":input["params"].as_object().map(|object| object.keys().collect::<Vec<_>>()),"meta_fields":input["params"]["_meta"].as_object().map(|object| object.keys().collect::<Vec<_>>())}));
                     axum::response::Response::from_parts(parts, axum::body::Body::from(bytes))
                 }
             }
@@ -1415,7 +1445,9 @@ async fn pinned_runtime_process_token_exposure_without_inference() -> Result<()>
     let result=async {
         ensure!(h.state.store.find_session(&h.parent)?.context("attached session")?.open_turn_id.is_none(),"exposure inspection must start no turn");
         ensure!(!h.state.store.events(&h.parent,0,1000)?.iter().any(|event|event.kind=="user_turn"),"exposure inspection must submit no prompt");
-        println!("{}",json!({"case":"process_token_exposure","runtime":runtime,"provider_inference":false,"processes":process_token_exposure()?}));
+        h.wait("pinned inputSchema discovery", || h.trace.lock().unwrap().iter().any(|r|r["caller"]==h.parent && r["method"]=="tools/list").then_some(())).await?;
+        ensure!(h.trace.lock().unwrap().iter().filter(|r|r["method"]=="tools/list").all(|r|r["schemas_valid"]==true), "pinned adapter received an invalid inputSchema contract");
+        println!("{}",json!({"case":"process_token_exposure","runtime":runtime,"advertised_input_schemas_valid":true,"provider_inference":false,"processes":process_token_exposure()?}));
         Ok(())
     }.await;
     let cleanup = h.finish().await;
@@ -1572,7 +1604,7 @@ async fn pinned_parent_child_provider_matrix() -> Result<()> {
         ensure!(matches!(serde_json::from_str::<hennery_proto::plugin::InputOrigin>(&origin)?, hennery_proto::plugin::InputOrigin::Parent {session_id,..} if session_id == h.parent), "delivered schema answer did not originate from the actual parent");
         let trace = h.trace.lock().unwrap().clone();
         for id in [&h.parent, &child] {
-            ensure!(trace.iter().any(|r| r["caller"] == *id && r["method"] == "tools/list" && r["tools"].as_array().is_some_and(|t| t.len() == 7)), "actual participant did not discover all seven tools");
+            ensure!(trace.iter().any(|r| r["caller"] == *id && r["method"] == "tools/list" && r["tools"].as_array().is_some_and(|t| t.len() == 7) && r["schemas_valid"] == true), "actual participant did not discover all seven precise inputSchemas");
         }
         for tool in ["session_capabilities", "session_spawn", "session_answer"] {
             ensure!(trace.iter().any(|r| r["caller"] == h.parent && r["tool"] == tool && r["is_error"] == false), "real parent did not successfully call {tool}");

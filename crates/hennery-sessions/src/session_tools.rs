@@ -212,3 +212,18 @@ pub fn error_code(error: &anyhow::Error) -> &'static str {
         .find(|code| *code == message)
         .unwrap_or("invalid_arguments")
 }
+
+/// Expose only deliberate, bounded argument guidance; never raw store errors or
+/// submitted content. These remain MCP tool results so a parent can retry.
+pub fn error_message(error: &anyhow::Error) -> String {
+    if let Some(error) = error.downcast_ref::<crate::delegation_form::InvalidContent>() {
+        return error.to_string();
+    }
+    if matches!(
+        error.downcast_ref::<crate::tool_args::ToolArgsError>(),
+        Some(crate::tool_args::ToolArgsError::InvalidAnswerContent)
+    ) {
+        return error.to_string();
+    }
+    "the session operation was refused".into()
+}

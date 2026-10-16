@@ -730,6 +730,84 @@ fn answer() -> AnswerRequest {
     }
 }
 
+#[test]
+fn delegated_answers_validate_the_original_schema_without_consuming_a_failed_key() {
+    for content in [json!({"ok":"yes"}), json!({}), json!({"ok":true,"extra":1})] {
+        let (w, p) = pair();
+        pending(&w, "child", 2, "question", PendingKind::Elicitation);
+        raw(&w).execute("UPDATE pending SET payload=?1 WHERE pending_id='question'", [json!({"requestedSchema":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}}).to_string()]).unwrap();
+        let invalid = AnswerRequest::Elicitation {
+            action: ElicitationAction::Accept,
+            content: Some(content),
+        };
+        let error = w
+            .store
+            .queue_ordinary_answer(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "question",
+                    answer: &invalid,
+                },
+                &Hub::new(),
+            )
+            .unwrap_err();
+        assert_eq!(hennery_sessions::session_tools::error_code(&error), "invalid_arguments");
+        assert!(
+            error.to_string().contains("content must be a JSON object matching:"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("additionalProperties"));
+        assert!(w.store.answers_to_send("host").unwrap().is_empty());
+        assert!(w.store.delegation_retry(&p, 1, "answer", "digest").unwrap().is_none());
+        w.store
+            .queue_ordinary_answer(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "question",
+                    answer: &answer(),
+                },
+                &Hub::new(),
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn child_question_delivery_contains_the_exact_form_contract() {
+    let (w, p) = pair();
+    ready_parent(&w);
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    let (hub, mut rx) = connected();
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+    let CollectorFrame::DelegatedPrompt { content, .. } = rx.try_recv().unwrap() else {
+        panic!("prompt")
+    };
+    let text = serde_json::to_string(&content).unwrap();
+    assert!(text.contains("requestedSchema"), "{text}");
+    assert!(text.contains("JSON object"), "{text}");
+    assert!(text.contains("boolean"), "{text}");
+    let schema = json!({"type":"object","properties":{"ok":{"type":"boolean"}}});
+    let blocks = serde_json::to_value(content).unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_str(blocks[0]["text"].as_str().unwrap().split_once('\n').unwrap().1).unwrap();
+    assert_eq!(metadata["requestedSchema"], schema);
+    assert_eq!(
+        w.store.child_status(&p, 1, "child", None).unwrap().questions[0]
+            .question
+            .as_ref()
+            .unwrap()["requestedSchema"],
+        schema
+    );
+}
+
 fn notices(w: &World) -> Vec<(String, String, String)> {
     raw(w)
         .prepare("SELECT kind,state,source_events FROM delegation_notices WHERE owner_id = ?1 ORDER BY rowid")
