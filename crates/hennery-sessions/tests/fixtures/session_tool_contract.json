@@ -1,0 +1,260 @@
+{
+  "tools": [
+    {
+      "name": "session_capabilities",
+      "description": "Discover the caller host's runtimes and configuration catalogs for a same-hat cwd. Unknown or stale catalogs are reported honestly.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "CapabilitiesArgs",
+        "description": "Caller-host capabilities, scoped to the caller's hat and validated cwd.",
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "session_spawn",
+      "description": "Spawn one direct child using an independently selected runtime and model. No provider or model substitute is used. The brief waits for confirmed configuration. Permissions remain operator-only; children cannot spawn grandchildren. Mutations use a durable operation_key scoped to this caller session across tool names, including token rotation. Retry the same canonical typed request with the same key to retrieve its receipt; changed requests return operation_conflict. Delivery is not completion.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "SpawnArgs",
+        "description": "Start one independently configured direct child, without provider fallback.",
+        "type": "object",
+        "properties": {
+          "operation_key": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "brief": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "config": {
+            "$ref": "#/$defs/ConfigFields"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "operation_key",
+          "cwd",
+          "brief",
+          "config"
+        ],
+        "$defs": {
+          "ConfigFields": {
+            "description": "Object-only strict decoding/schema adapter for the shared session config.",
+            "type": "object",
+            "properties": {
+              "model": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "axes": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/$defs/ConfigValue"
+                },
+                "default": {}
+              }
+            },
+            "additionalProperties": false
+          },
+          "ConfigValue": {
+            "description": "The value of one config option (ACP `session/set_config_option`): a\nselect's value id, or a boolean toggle's state.",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "session_send",
+      "description": "Queue bounded follow-up text for a direct child. A genuinely parked child may resume after fresh configuration evidence; a closed child never reopens. Mutations use a durable operation_key scoped to this caller session across tool names, including token rotation. Retry the same canonical typed request with the same key to retrieve its receipt; changed requests return operation_conflict. Delivery is not completion.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "SendArgs",
+        "description": "Queue an ordinary follow-up for an owned direct child.",
+        "type": "object",
+        "properties": {
+          "operation_key": {
+            "type": "string"
+          },
+          "child_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "operation_key",
+          "child_id",
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "session_answer",
+      "description": "Answer ordinary elicitation only using its pending_id. For action accept, content must be a JSON object matching the child's requestedSchema, embedded in the question delivery and session_status. Example: requestedSchema={\"type\":\"object\",\"properties\":{\"question_0\":{\"type\":\"string\",\"enum\":[\"blue\",\"green\"]}},\"required\":[\"question_0\"]} requires content={\"question_0\":\"blue\"}. Use the actual schema's property names and values, not this example's. Omit content for decline/cancel. Invalid content returns invalid_arguments as a tool error; correct the content and retry. Permission requests are operator-only and return operator_required. Escalate missing facts and product decisions to the operator. Mutations use a durable operation_key scoped to this caller session across tool names, including token rotation. Retry the same canonical typed request with the same key to retrieve its receipt; changed requests return operation_conflict. Delivery is not completion.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "AnswerArgs",
+        "description": "Answer ordinary elicitation only. ACP permissions remain operator-only.",
+        "type": "object",
+        "properties": {
+          "operation_key": {
+            "type": "string"
+          },
+          "child_id": {
+            "type": "string"
+          },
+          "pending_id": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/$defs/ElicitationAction"
+          },
+          "content": {
+            "description": "For accept, an object matching the child's requestedSchema. Omit for decline/cancel.",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "operation_key",
+          "child_id",
+          "pending_id",
+          "action"
+        ],
+        "$defs": {
+          "ElicitationAction": {
+            "description": "The operator's answer to an elicitation (ACP `elicitation/create`).",
+            "type": "string",
+            "enum": [
+              "accept",
+              "decline",
+              "cancel"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "session_status",
+      "description": "Read one owned direct child's lifecycle, configuration, questions, reports and operation receipts. Permission questions have no parent-answerable schema.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "StatusArgs",
+        "description": "Read a direct child's state, optionally selecting one operation receipt.",
+        "type": "object",
+        "properties": {
+          "child_id": {
+            "type": "string"
+          },
+          "operation_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "child_id"
+        ]
+      }
+    },
+    {
+      "name": "session_list",
+      "description": "Page only the caller's direct children; never all owner sessions or grandchildren.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "ListArgs",
+        "description": "Page direct children only, never owner-wide sessions or grandchildren.",
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint16",
+            "minimum": 0,
+            "maximum": 65535
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "session_close",
+      "description": "Close one direct child and cancel its unstarted follow-ups. Does not delete files, cascade or delete sessions. Mutations use a durable operation_key scoped to this caller session across tool names, including token rotation. Retry the same canonical typed request with the same key to retrieve its receipt; changed requests return operation_conflict. Delivery is not completion.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "CloseArgs",
+        "description": "Close one direct child. Does not delete sessions or clean files.",
+        "type": "object",
+        "properties": {
+          "operation_key": {
+            "type": "string"
+          },
+          "child_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "operation_key",
+          "child_id"
+        ]
+      }
+    }
+  ]
+}

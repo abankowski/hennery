@@ -176,6 +176,42 @@ pub fn security_allowed(catalog: &HostCatalog, policy: &ExecutionPolicy, actual:
         actual.is_some_and(|value| permitted.contains(&value))
     })
 }
+
+pub fn launch_configuration(
+    catalog: &HostCatalog,
+    requested: &SessionConfig,
+    policy: &ExecutionPolicy,
+) -> SessionConfig {
+    let mut required = if catalog.freshness == CatalogFreshness::Fresh {
+        catalog.defaults.clone()
+    } else {
+        SessionConfig::default()
+    };
+    if requested
+        .model
+        .as_ref()
+        .is_some_and(|model| Some(model) != catalog.defaults.model.as_ref())
+    {
+        // A cold probe describes its default model. Other models may remove
+        // nonsecurity options (Claude Sonnet has effort, but no fast toggle).
+        // Keep every security baseline, and every explicit request below.
+        required.axes.retain(|id, _| {
+            catalog.security.axes.contains_key(id)
+                || policy
+                    .allowed
+                    .get(&catalog.agent)
+                    .is_some_and(|axes| axes.contains_key(id))
+        });
+    }
+    if requested.model.is_some() {
+        required.model.clone_from(&requested.model);
+    }
+    if requested.mode.is_some() {
+        required.mode.clone_from(&requested.mode);
+    }
+    required.axes.extend(requested.axes.clone());
+    required
+}
 pub fn evidence_satisfies(
     evidence: &ConfigEvidence,
     generation: u64,

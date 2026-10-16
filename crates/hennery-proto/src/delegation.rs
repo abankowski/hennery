@@ -126,6 +126,8 @@ tool_args! {
         pub child_id: String,
         pub pending_id: String,
         pub action: crate::frames::ElicitationAction,
+        /// For accept, an object matching the child's requestedSchema. Omit for decline/cancel.
+        #[schemars(extend("type" = "object"))]
         #[ts(type = "unknown | null")]
         pub content: Option<serde_json::Value>,
     }

@@ -111,21 +111,11 @@ pub async fn execute(
             if fresh {
                 ensure!(config_offered(&catalog, &args.config), "configuration_unavailable");
             }
-            let mut required = if fresh {
-                catalog.defaults.clone()
-            } else {
-                Default::default()
-            };
-            if args.config.model.is_some() {
-                required.model = args.config.model;
-            }
-            if args.config.mode.is_some() {
-                required.mode = args.config.mode;
-            }
-            required.axes.extend(args.config.axes);
+            let policy = state.store.execution_policy(caller.hat_id())?;
+            let required = crate::delegation_runtime::launch_configuration(&catalog, &args.config, &policy);
             ensure!(
                 (!fresh && required.mode.is_none() && required.axes.is_empty())
-                    || security_allowed(&catalog, &state.store.execution_policy(caller.hat_id())?, &required),
+                    || security_allowed(&catalog, &policy, &required),
                 "operator_required"
             );
             let mcp = crate::api::mcp_context(state, caller.host_id(), agent)?;
@@ -157,18 +147,23 @@ pub async fn execute(
                 action: args.action,
                 content: args.content,
             };
-            Ok(serde_json::to_value(state.store.queue_ordinary_answer(
-                identity,
-                revision,
-                &digest,
-                &crate::delegation_control::DelegatedAnswer {
-                    key: &args.operation_key,
-                    child: &args.child_id,
-                    pending: &args.pending_id,
-                    answer: &answer,
-                },
-                &state.hub,
-            )?)?)
+            Ok(serde_json::to_value(
+                state
+                    .store
+                    .queue_ordinary_answer_async(
+                        identity,
+                        revision,
+                        &digest,
+                        &crate::delegation_control::DelegatedAnswer {
+                            key: &args.operation_key,
+                            child: &args.child_id,
+                            pending: &args.pending_id,
+                            answer: &answer,
+                        },
+                        &state.hub,
+                    )
+                    .await?,
+            )?)
         }
         ToolCall::Status(args) => Ok(serde_json::to_value(state.store.child_status(
             identity,
@@ -213,6 +208,7 @@ pub fn error_code(error: &anyhow::Error) -> &'static str {
         "not_open",
         "already_answered",
         "invalid_arguments",
+        "schema_changed",
         "invalid_cursor",
     ];
     let message = error.to_string();
@@ -221,4 +217,22 @@ pub fn error_code(error: &anyhow::Error) -> &'static str {
         .copied()
         .find(|code| *code == message)
         .unwrap_or("invalid_arguments")
+}
+
+/// Expose only deliberate, bounded argument guidance; never raw store errors or
+/// submitted content. These remain MCP tool results so a parent can retry.
+pub fn error_message(error: &anyhow::Error) -> String {
+    if error.to_string() == "schema_changed" {
+        return "the form changed during validation; read session_status and submit an answer matching the current requestedSchema".into();
+    }
+    if let Some(error) = error.downcast_ref::<crate::delegation_form::InvalidContent>() {
+        return error.to_string();
+    }
+    if matches!(
+        error.downcast_ref::<crate::tool_args::ToolArgsError>(),
+        Some(crate::tool_args::ToolArgsError::InvalidAnswerContent)
+    ) {
+        return error.to_string();
+    }
+    "the session operation was refused".into()
 }

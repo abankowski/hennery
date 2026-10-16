@@ -126,7 +126,11 @@ export type SendArgs = { operation_key: string, child_id: string, text: string, 
 /**
  * Answer ordinary elicitation only. ACP permissions remain operator-only.
  */
-export type AnswerArgs = { operation_key: string, child_id: string, pending_id: string, action: ElicitationAction, content: unknown | null, };
+export type AnswerArgs = { operation_key: string, child_id: string, pending_id: string, action: ElicitationAction,
+/**
+ * For accept, an object matching the child's requestedSchema. Omit for decline/cancel.
+ */
+content: unknown | null, };
 
 /**
  * Read a direct child's state, optionally selecting one operation receipt.

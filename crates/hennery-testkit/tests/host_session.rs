@@ -3061,6 +3061,113 @@ async fn an_elicitation_reaches_the_operator_and_the_form_content_reaches_the_ag
 }
 
 #[tokio::test]
+async fn hostile_form_is_refused_to_the_child_and_remains_visible_to_the_operator() {
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = starting(&uplink, &asking(vec![FakeAsk::UnsafeElicitation]));
+    wait_until(&uplink, has("session_started")).await;
+    assert!(handle.send(prompt("r1", "t1")));
+    let frames = wait_until(&uplink, |frames| {
+        frames.iter().any(|frame| {
+            matches!(
+                frame,
+                HostFrame::Session {
+                    body: SessionBody::HostNote { .. } | SessionBody::PendingOpened { .. },
+                    ..
+                }
+            )
+        })
+    })
+    .await;
+    assert!(opened(&frames).is_empty(), "unsafe form must never become answerable");
+    assert!(frames.iter().any(|frame|matches!(frame,HostFrame::Session {body:SessionBody::HostNote {note,text},..} if note=="elicitation_schema_refused" && text.contains("Unsafe form question") && text.contains("pattern"))),"operator must see the refused question and reason");
+    let frames = wait_until(&uplink, has("turn_ended")).await;
+    assert!(
+        kinds(&frames).contains(&"update:elicitation:error:-32602".into()),
+        "child needs an actionable protocol refusal"
+    );
+    assert!(handle.send(SessionCmd::Close {
+        request_id: "close".into()
+    }));
+}
+
+async fn ordinary_mcp_form_roundtrip(field: serde_json::Value, value: &str) {
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let schema = json!({"type":"object","properties":{"name":field},"required":["name"]});
+    let script = FakeScript {
+        elicitation_schema: Some(schema.clone()),
+        ..asking(vec![FakeAsk::Elicitation])
+    };
+    // No delegation, MCP gateway or parent: the operator owns this session.
+    let handle = starting(&uplink, &script);
+    wait_until(&uplink, has("session_started")).await;
+    assert!(handle.send(prompt("r1", "t1")));
+    let frames = wait_until(&uplink, |frames| {
+        frames.iter().any(|frame| {
+            matches!(
+                frame,
+                HostFrame::Session {
+                    body: SessionBody::PendingOpened { .. } | SessionBody::HostNote { .. },
+                    ..
+                }
+            )
+        })
+    })
+    .await;
+    let questions = opened(&frames);
+    assert_eq!(questions.len(), 1, "ordinary MCP form must open, not become a refusal");
+    assert_eq!(questions[0].2["requestedSchema"], schema);
+    let pending = nth_pending(&uplink, 0).await;
+    let content = json!({"name":value});
+    assert!(handle.send(SessionCmd::Answer {
+        request_id: "operator-answer".into(),
+        pending_id: pending,
+        answer: Answer::Elicitation {
+            action: ElicitationAction::Accept,
+            content: Some(content.clone())
+        },
+    }));
+    let frames = wait_until(&uplink, has("turn_ended")).await;
+    assert!(kinds(&frames).contains(&format!("update:elicitation:accept:{content}")));
+    assert!(handle.send(SessionCmd::Close {
+        request_id: "close".into()
+    }));
+}
+
+macro_rules! ordinary_mcp_form_test {
+    ($name:ident, $field:expr, $value:expr) => {
+        #[tokio::test]
+        async fn $name() {
+            ordinary_mcp_form_roundtrip($field, $value).await;
+        }
+    };
+}
+ordinary_mcp_form_test!(
+    ordinary_mcp_email_form,
+    json!({"type":"string","format":"email"}),
+    "person@example.org"
+);
+ordinary_mcp_form_test!(
+    ordinary_mcp_uri_form,
+    json!({"type":"string","format":"uri"}),
+    "urn:example:form"
+);
+ordinary_mcp_form_test!(
+    ordinary_mcp_date_form,
+    json!({"type":"string","format":"date"}),
+    "2024-02-29"
+);
+ordinary_mcp_form_test!(
+    ordinary_mcp_date_time_form,
+    json!({"type":"string","format":"date-time"}),
+    "2026-10-16T12:34:56Z"
+);
+ordinary_mcp_form_test!(
+    ordinary_mcp_enum_names_form,
+    json!({"type":"string","enum":["r","g"],"enumNames":["Red","Green"]}),
+    "r"
+);
+
+#[tokio::test]
 async fn several_open_questions_each_take_their_own_answer() {
     let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
     let script = FakeScript {

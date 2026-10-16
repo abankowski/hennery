@@ -178,7 +178,8 @@ async fn main() -> agent_client_protocol::Result<()> {
                     }
                     if script.ask_on_load
                         && let Some(ask) = script.asks.first().copied()
-                        && let Some(request) = ask_request(ask, &req.session_id, forms)?
+                        && let Some(request) =
+                            ask_request(ask, &req.session_id, forms, script.elicitation_schema.as_ref())?
                     {
                         // On the wire before the load's answer; awaited
                         // from a task of its own.
@@ -460,7 +461,9 @@ async fn main() -> agent_client_protocol::Result<()> {
                             // Sent, never awaited: kept alive until the crash.
                             let mut sent: Vec<SentRequest<serde_json::Value>> = Vec::new();
                             for ask in &script.asks {
-                                if let Some(request) = ask_request(*ask, &req.session_id, forms)? {
+                                if let Some(request) =
+                                    ask_request(*ask, &req.session_id, forms, script.elicitation_schema.as_ref())?
+                                {
                                     sent.push(cx2.send_request(request));
                                 }
                             }
@@ -691,6 +694,7 @@ fn ask_request(
     ask: FakeAsk,
     session: &SessionId,
     forms: bool,
+    schema: Option<&serde_json::Value>,
 ) -> agent_client_protocol::Result<Option<UntypedMessage>> {
     match ask {
         FakeAsk::Permission => UntypedMessage::new(
@@ -723,15 +727,16 @@ fn ask_request(
                 "mode": "form",
                 "sessionId": session,
                 "message": "What should the file be called?",
-                "requestedSchema": {
+                "requestedSchema": schema.cloned().unwrap_or_else(|| serde_json::json!({
                     "type": "object",
                     "properties": {"name": {"type": "string"}},
                     "required": ["name"]
-                }
+                }))
             }),
         )
         .map(Some),
         FakeAsk::Elicitation => Ok(None),
+        FakeAsk::UnsafeElicitation => UntypedMessage::new("elicitation/create",serde_json::json!({"mode":"form","sessionId":session,"message":"Unsafe form question","requestedSchema":{"type":"object","properties":{"name":{"type":"string","pattern":"^(a+)+$"}}}})).map(Some),
         FakeAsk::Unknown => UntypedMessage::new("_fake/unknown", serde_json::json!({ "sessionId": session })).map(Some),
     }
 }
@@ -756,7 +761,7 @@ async fn ask_all(
         if *cancelled.borrow() {
             break;
         }
-        let Some(request) = ask_request(*ask, session, forms)? else {
+        let Some(request) = ask_request(*ask, session, forms, script.elicitation_schema.as_ref())? else {
             asked.push(Asked::Echo("elicitation:unsupported".into()));
             continue;
         };
@@ -784,7 +789,7 @@ async fn ask_all(
 fn echo(ask: FakeAsk, answer: agent_client_protocol::Result<serde_json::Value>) -> String {
     let name = match ask {
         FakeAsk::Permission | FakeAsk::FuturePermission => "permission",
-        FakeAsk::Elicitation => "elicitation",
+        FakeAsk::Elicitation | FakeAsk::UnsafeElicitation => "elicitation",
         FakeAsk::Unknown => "unknown",
     };
     let answer = match answer {
@@ -800,7 +805,7 @@ fn echo(ask: FakeAsk, answer: agent_client_protocol::Result<serde_json::Value>) 
             Some(other) => format!("permission:{other}"),
             None => format!("permission:unreadable:{answer}"),
         },
-        FakeAsk::Elicitation => match (answer["action"].as_str(), answer.get("content")) {
+        FakeAsk::Elicitation | FakeAsk::UnsafeElicitation => match (answer["action"].as_str(), answer.get("content")) {
             (Some(action), Some(content)) => format!("elicitation:{action}:{content}"),
             (Some(action), None) => format!("elicitation:{action}"),
             (None, _) => format!("elicitation:unreadable:{answer}"),

@@ -28,12 +28,14 @@ pub enum ToolCall {
 pub enum ToolArgsError {
     UnknownTool,
     InvalidArguments,
+    InvalidAnswerContent,
 }
 impl std::fmt::Display for ToolArgsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::UnknownTool => "unknown tool",
             Self::InvalidArguments => "invalid tool arguments",
+            Self::InvalidAnswerContent => "content must be a JSON object matching the child's requestedSchema in the question or session_status; use action accept with object content, or omit content for decline/cancel",
         })
     }
 }
@@ -52,7 +54,7 @@ pub fn decode_tool(name: &str, arguments: &Value) -> Result<ToolCall, ToolArgsEr
             )
         };
     }
-    let call = match name {
+    let mut call = match name {
         "session_capabilities" => decode!(CapabilitiesArgs, Capabilities),
         "session_spawn" => decode!(SpawnArgs, Spawn),
         "session_send" => decode!(SendArgs, Send),
@@ -62,6 +64,27 @@ pub fn decode_tool(name: &str, arguments: &Value) -> Result<ToolCall, ToolArgsEr
         "session_close" => decode!(CloseArgs, Close),
         _ => return Err(ToolArgsError::UnknownTool),
     };
+    if let ToolCall::Answer(args) = &mut call {
+        // Claude ACP can encode an MCP object argument as a JSON string. Accept
+        // that transport spelling only; canonicalize before digesting, retain
+        // duplicate-key refusal, and apply the same stored form validator below.
+        if let Some(Value::String(text)) = &args.content {
+            if text.len() > MAX_TEXT_BYTES || args.action != ElicitationAction::Accept {
+                return Err(ToolArgsError::InvalidAnswerContent);
+            }
+            args.content = Some(
+                hennery_gateway::decode_json_once(text.as_bytes())
+                    .filter(Value::is_object)
+                    .ok_or(ToolArgsError::InvalidAnswerContent)?,
+            );
+        }
+        if match args.action {
+            ElicitationAction::Accept => !args.content.as_ref().is_some_and(Value::is_object),
+            ElicitationAction::Decline | ElicitationAction::Cancel => args.content.is_some(),
+        } {
+            return Err(ToolArgsError::InvalidAnswerContent);
+        }
+    }
     if !call.valid() {
         return Err(ToolArgsError::InvalidArguments);
     }
@@ -175,7 +198,7 @@ pub fn discovery() -> Value {
             "session_capabilities" => "Discover the caller host's runtimes and configuration catalogs for a same-hat cwd. Unknown or stale catalogs are reported honestly.",
             "session_spawn" => "Spawn one direct child using an independently selected runtime and model. No provider or model substitute is used. The brief waits for confirmed configuration. Permissions remain operator-only; children cannot spawn grandchildren.",
             "session_send" => "Queue bounded follow-up text for a direct child. A genuinely parked child may resume after fresh configuration evidence; a closed child never reopens.",
-            "session_answer" => "Answer ordinary elicitation only using its pending_id. accept requires object content. Permission requests are operator-only and return operator_required. Escalate missing facts and product decisions to the operator.",
+            "session_answer" => "Answer ordinary elicitation only using its pending_id. For action accept, content must be a JSON object matching the child's requestedSchema, embedded in the question delivery and session_status. Example: requestedSchema={\"type\":\"object\",\"properties\":{\"question_0\":{\"type\":\"string\",\"enum\":[\"blue\",\"green\"]}},\"required\":[\"question_0\"]} requires content={\"question_0\":\"blue\"}. Use the actual schema's property names and values, not this example's. Omit content for decline/cancel. Invalid content returns invalid_arguments as a tool error; correct the content and retry. Permission requests are operator-only and return operator_required. Escalate missing facts and product decisions to the operator.",
             "session_status" => "Read one owned direct child's lifecycle, configuration, questions, reports and operation receipts. Permission questions have no parent-answerable schema.",
             "session_list" => "Page only the caller's direct children; never all owner sessions or grandchildren.",
             "session_close" => "Close one direct child and cancel its unstarted follow-ups. Does not delete files, cascade or delete sessions.",

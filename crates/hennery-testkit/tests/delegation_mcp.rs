@@ -18,6 +18,134 @@ use std::sync::Arc;
 const ORIGIN: &str = "https://hennery.example";
 
 #[tokio::test]
+async fn invalid_answer_content_is_an_actionable_tool_result_for_the_parent() {
+    let h = Harness::new().await;
+    h.state
+        .store
+        .ingest(
+            "session",
+            1,
+            &hennery_proto::frames::SessionBody::session_started("r", "agent"),
+        )
+        .unwrap();
+    let response = h.rpc(json!({"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"session_answer","arguments":{"operation_key":"retryable","child_id":"child","pending_id":"question","action":"accept","content":"not JSON"}}})).await;
+    assert!(
+        response.get("error").is_none(),
+        "tool failure must be delivered as an MCP result"
+    );
+    assert_eq!(response["id"], 21);
+    let result = &response["result"];
+    assert_eq!(result["isError"], true);
+    assert_eq!(result["structuredContent"]["code"], "invalid_arguments");
+    assert!(
+        result["structuredContent"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("content must be a JSON object")
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(result["content"][0]["text"].as_str().unwrap()).unwrap(),
+        result["structuredContent"]
+    );
+}
+
+#[tokio::test]
+async fn answer_objects_and_encoded_objects_share_strict_validation_and_retry_receipts() {
+    use hennery_proto::frames::{Indexed, PendingExtract, PendingKind, SessionBody};
+    let h = Harness::new().await;
+    h.state
+        .store
+        .ingest("session", 1, &SessionBody::session_started("r", "parent"))
+        .unwrap();
+    h.state
+        .store
+        .create_session_with_mcp(
+            "child",
+            "host",
+            "claude",
+            "/project",
+            &h.hat,
+            None,
+            McpContext {
+                capable: true,
+                isolation: McpIsolation::ClaudeStrict,
+                rules_name_other_hats: false,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let identity = h.gateway.runtime.store.authenticate_session(&h.token).unwrap().unwrap();
+    let mut conn = hennery_kernel::db::open(&h._dir.path().join("hennery.db")).unwrap();
+    let tx = conn.transaction().unwrap();
+    assert!(h.state.store.bind_family_in(&tx, &identity, 1, "child", 0).unwrap());
+    tx.commit().unwrap();
+    h.state
+        .store
+        .ingest("child", 1, &SessionBody::session_started("r", "child"))
+        .unwrap();
+    let schema = json!({"type":"object","properties":{"color":{"type":"string","enum":["blue","green"]}},"required":["color"],"additionalProperties":false});
+    h.state
+        .store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::PendingOpened {
+                pending_id: "question".into(),
+                indexed: Indexed {
+                    pending: Some(Box::new(PendingExtract {
+                        id: "question".into(),
+                        kind: PendingKind::Elicitation,
+                        option_ids: None,
+                        title: None,
+                    })),
+                    ..Default::default()
+                },
+                payload: json!({"mode":"form","message":"Choose","requestedSchema":schema}),
+            },
+        )
+        .unwrap();
+    let call = |content: Value, child: &str| json!({"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"session_answer","arguments":{"operation_key":"answer","child_id":child,"pending_id":"question","action":"accept","content":content}}});
+    for object in [
+        json!({"color":"red"}),
+        json!({"color":true}),
+        json!({}),
+        json!({"color":"blue","extra":true}),
+    ] {
+        for content in [object.clone(), json!(object.to_string())] {
+            let response = h.rpc(call(content, "child")).await;
+            let result = &response["result"];
+            assert_eq!(result["isError"], true);
+            assert_eq!(result["structuredContent"]["code"], "invalid_arguments");
+            assert!(
+                result["structuredContent"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&schema.to_string())
+            );
+            assert_eq!(
+                serde_json::from_str::<Value>(result["content"][0]["text"].as_str().unwrap()).unwrap(),
+                result["structuredContent"]
+            );
+        }
+    }
+    let foreign = h.rpc(call(json!({"color":"red"}), "foreign")).await;
+    assert_eq!(foreign["result"]["structuredContent"]["code"], "not_found");
+    assert!(
+        !foreign.to_string().contains("additionalProperties"),
+        "do not expose another child's schema"
+    );
+    let object = json!({"color":"blue"});
+    let accepted = h.rpc(call(object.clone(), "child")).await;
+    assert_eq!(accepted["result"]["isError"], false, "{accepted}");
+    let retry = h.rpc(call(json!(object.to_string()), "child")).await;
+    assert_eq!(accepted, retry, "the normalized object has the same durable receipt");
+    assert_eq!(
+        h.state.store.open_pending("child").unwrap()[0].payload["requestedSchema"],
+        schema
+    );
+}
+
+#[tokio::test]
 async fn pinned_codex_tool_metadata_does_not_change_caller_authority() {
     let h = Harness::new().await;
     let call = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{

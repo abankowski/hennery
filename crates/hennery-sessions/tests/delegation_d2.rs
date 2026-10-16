@@ -597,6 +597,60 @@ fn catalog() -> HostCatalog {
         freshness: CatalogFreshness::Fresh,
     }
 }
+
+#[test]
+fn changed_model_does_not_inherit_another_models_nonsecurity_axes() {
+    use hennery_sessions::delegation_runtime::launch_configuration;
+    let mut c = catalog();
+    c.defaults = SessionConfig {
+        model: Some("opus".into()),
+        mode: Some("default".into()),
+        axes: [
+            ("fast".into(), ConfigValue::Bool(false)),
+            ("effort".into(), ConfigValue::Id("medium".into())),
+            ("sandbox".into(), ConfigValue::Id("safe".into())),
+            ("custom_security".into(), ConfigValue::Bool(false)),
+        ]
+        .into(),
+    };
+    c.security
+        .axes
+        .insert("sandbox".into(), vec![ConfigValue::Id("safe".into())]);
+    let mut policy = hennery_proto::delegation_status::ExecutionPolicy {
+        revision: 1,
+        allowed: Default::default(),
+    };
+    policy
+        .allowed
+        .entry("claude".into())
+        .or_default()
+        .insert("custom_security".into(), vec![ConfigValue::Bool(false)]);
+    let wanted = SessionConfig {
+        model: Some("sonnet".into()),
+        axes: [("effort".into(), ConfigValue::Id("low".into()))].into(),
+        ..Default::default()
+    };
+    let actual = launch_configuration(&c, &wanted, &policy);
+    assert!(
+        !actual.axes.contains_key("fast"),
+        "Opus fast-mode default must not become a Sonnet requirement"
+    );
+    assert_eq!(actual.axes["effort"], ConfigValue::Id("low".into()));
+    assert_eq!(actual.axes["sandbox"], ConfigValue::Id("safe".into()));
+    assert_eq!(actual.axes["custom_security"], ConfigValue::Bool(false));
+    let mut explicit = wanted.clone();
+    explicit.axes.insert("fast".into(), ConfigValue::Bool(false));
+    assert_eq!(
+        launch_configuration(&c, &explicit, &policy).axes["fast"],
+        ConfigValue::Bool(false),
+        "never silently discard an explicit request"
+    );
+    assert_eq!(
+        launch_configuration(&c, &SessionConfig::default(), &policy),
+        c.defaults,
+        "unchanged model retains catalog defaults"
+    );
+}
 fn config(model: &str) -> SessionConfig {
     SessionConfig {
         model: Some(model.into()),
@@ -674,6 +728,420 @@ fn answer() -> AnswerRequest {
         action: ElicitationAction::Accept,
         content: Some(json!({"ok":true})),
     }
+}
+
+fn resource_form(case: &str) -> serde_json::Value {
+    match case {
+        "expanded" | "legacy_expanded" => {
+            let mut defs = serde_json::Map::new();
+            defs.insert("s0".into(), json!({"type":"object"}));
+            for i in 1..=40 {
+                let previous = format!("#/$defs/s{}", i - 1);
+                defs.insert(format!("s{i}"), json!({"allOf":[{"$ref":previous},{"$ref":previous}]}));
+            }
+            json!({"$defs":defs,"$ref":"#/$defs/s40"})
+        }
+        "deep" => {
+            let mut schema = json!({});
+            for _ in 0..64 {
+                schema = json!({"properties":{"next":schema}});
+            }
+            schema
+        }
+        "regex" => json!({"type":"object","properties":{"ok":{"type":"string","pattern":"^(a+)+$"}}}),
+        _ => {
+            json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false})
+        }
+    }
+}
+
+#[test]
+fn hostile_forms_have_a_bounded_subprocess() {
+    if let Ok(case) = std::env::var("HENNERY_TEST_FORM_RESOURCE_CASE") {
+        let (w, p) = pair();
+        let schema = resource_form(&case);
+        if case == "legacy_expanded" {
+            pending(&w, "child", 2, "question", PendingKind::Elicitation);
+            raw(&w)
+                .execute(
+                    "UPDATE pending SET payload=?1 WHERE pending_id='question'",
+                    [json!({"requestedSchema":schema}).to_string()],
+                )
+                .unwrap();
+            assert!(
+                w.store
+                    .queue_ordinary_answer(
+                        &p,
+                        1,
+                        "digest",
+                        &hennery_sessions::delegation_control::DelegatedAnswer {
+                            key: "answer",
+                            child: "child",
+                            pending: "question",
+                            answer: &answer()
+                        },
+                        &Hub::new()
+                    )
+                    .is_err()
+            );
+        } else {
+            let ingested = w
+                .store
+                .ingest_fact(
+                    "child",
+                    2,
+                    &SessionBody::PendingOpened {
+                        pending_id: "question".into(),
+                        indexed: Indexed {
+                            pending: Some(Box::new(PendingExtract {
+                                id: "question".into(),
+                                kind: PendingKind::Elicitation,
+                                option_ids: None,
+                                title: Some("Resource question".into()),
+                            })),
+                            ..Default::default()
+                        },
+                        payload: json!({"mode":"form","message":"Resource question","requestedSchema":schema}),
+                    },
+                )
+                .unwrap();
+            if case == "normal" {
+                w.store
+                    .queue_ordinary_answer(
+                        &p,
+                        1,
+                        "digest",
+                        &hennery_sessions::delegation_control::DelegatedAnswer {
+                            key: "answer",
+                            child: "child",
+                            pending: "question",
+                            answer: &answer(),
+                        },
+                        &Hub::new(),
+                    )
+                    .unwrap();
+            } else {
+                assert!(
+                    w.store.open_pending("child").unwrap().is_empty(),
+                    "refused form must not remain answerable"
+                );
+                assert!(
+                    ingested.events.iter().any(|e| e.kind == "host_note"
+                        && e.body["note"] == "elicitation_schema_refused"
+                        && e.body["text"]
+                            .as_str()
+                            .is_some_and(|text| text.contains("Resource question"))),
+                    "operator must retain the refusal and question"
+                );
+                assert!(
+                    !serde_json::to_string(&ingested.events)
+                        .unwrap()
+                        .contains("requestedSchema"),
+                    "do not store the hostile schema"
+                );
+            }
+        }
+        return;
+    }
+    for case in ["legacy_expanded", "expanded", "deep", "regex", "normal"] {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "hostile_forms_have_a_bounded_subprocess", "--nocapture"])
+            .env("HENNERY_TEST_FORM_RESOURCE_CASE", case)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    status.success(),
+                    "case {case}: {} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                break;
+            }
+            if std::time::Instant::now() > until {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("case {case} exceeded the subprocess resource bound");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "test-hooks")]
+fn validation_releases_the_store_lock_and_rechecks_scope_state_and_schema() {
+    if let Ok(case) = std::env::var("HENNERY_TEST_FORM_RECHECK_CASE") {
+        let (w, p) = pair();
+        pending(&w, "child", 2, "question", PendingKind::Elicitation);
+        let result = w.store.queue_ordinary_answer_during_validation(
+            &p,
+            1,
+            "digest",
+            &hennery_sessions::delegation_control::DelegatedAnswer {
+                key: "answer",
+                child: "child",
+                pending: "question",
+                answer: &answer(),
+            },
+            &Hub::new(),
+            || match case.as_str() {
+                "lock" => {
+                    assert!(w.store.find_session("parent").unwrap().is_some());
+                }
+                "scope" => {
+                    w.store.record_close_request("parent").unwrap();
+                }
+                "state" => {
+                    w.store.submit_answer("child", "question", &answer()).unwrap();
+                }
+                "schema" => {
+                    raw(&w)
+                        .execute(
+                            "UPDATE pending SET payload=?1 WHERE pending_id='question'",
+                            [
+                                json!({"requestedSchema":{"type":"object","properties":{"ok":{"const":false}}}})
+                                    .to_string(),
+                            ],
+                        )
+                        .unwrap();
+                }
+                _ => panic!("unknown case"),
+            },
+        );
+        match case.as_str() {
+            "lock" => {
+                result.unwrap();
+            }
+            "scope" => assert_eq!(result.unwrap_err().to_string(), "not_found"),
+            "state" => assert_eq!(result.unwrap_err().to_string(), "already_answered"),
+            "schema" => assert_eq!(result.unwrap_err().to_string(), "schema_changed"),
+            _ => unreachable!(),
+        }
+        return;
+    }
+    for case in ["lock", "scope", "state", "schema"] {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "validation_releases_the_store_lock_and_rechecks_scope_state_and_schema",
+                "--nocapture",
+            ])
+            .env("HENNERY_TEST_FORM_RECHECK_CASE", case)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    status.success(),
+                    "case {case}: {} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                break;
+            }
+            if std::time::Instant::now() > until {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("case {case} exceeded subprocess bound: validation retained the shared store lock");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(feature = "test-hooks")]
+async fn validation_worker_keeps_tokio_and_other_session_reads_responsive() {
+    let (w, p) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    let store = Arc::new(Store::open(&w.db).unwrap());
+    let worker = store.clone();
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    let (release, held) = std::sync::mpsc::channel();
+    let task = tokio::spawn(async move {
+        worker
+            .queue_ordinary_answer_async_during_validation(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "question",
+                    answer: &answer(),
+                },
+                &Arc::new(Hub::new()),
+                move || {
+                    entered.send(()).unwrap();
+                    held.recv_timeout(std::time::Duration::from_secs(2))
+                        .expect("Tokio must run while validation is held");
+                },
+            )
+            .await
+    });
+    ready.await.unwrap();
+    assert!(
+        store.find_session("parent").unwrap().is_some(),
+        "another session read must not wait for evaluation"
+    );
+    release.send(()).unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[test]
+fn delegated_answers_validate_the_original_schema_without_consuming_a_failed_key() {
+    for content in [json!({"ok":"yes"}), json!({}), json!({"ok":true,"extra":1})] {
+        let (w, p) = pair();
+        pending(&w, "child", 2, "question", PendingKind::Elicitation);
+        raw(&w).execute("UPDATE pending SET payload=?1 WHERE pending_id='question'", [json!({"requestedSchema":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}}).to_string()]).unwrap();
+        let invalid = AnswerRequest::Elicitation {
+            action: ElicitationAction::Accept,
+            content: Some(content),
+        };
+        let error = w
+            .store
+            .queue_ordinary_answer(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "question",
+                    answer: &invalid,
+                },
+                &Hub::new(),
+            )
+            .unwrap_err();
+        assert_eq!(hennery_sessions::session_tools::error_code(&error), "invalid_arguments");
+        assert!(
+            error.to_string().contains("content must be a JSON object matching:"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("additionalProperties"));
+        assert!(w.store.answers_to_send("host").unwrap().is_empty());
+        assert!(w.store.delegation_retry(&p, 1, "answer", "digest").unwrap().is_none());
+        w.store
+            .queue_ordinary_answer(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "question",
+                    answer: &answer(),
+                },
+                &Hub::new(),
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn delegated_mcp_formats_and_enum_labels_admit_forms_and_validate_answers() {
+    for (field, good, bad) in [
+        (json!({"type":"string","format":"email"}), "person@example.org", "bad"),
+        (json!({"type":"string","format":"uri"}), "urn:example:form", "relative"),
+        (json!({"type":"string","format":"date"}), "2024-02-29", "2025-02-29"),
+        (
+            json!({"type":"string","format":"date-time"}),
+            "2026-10-16T12:34:56Z",
+            "2026-10-16T25:00:00Z",
+        ),
+        (
+            json!({"type":"string","enum":["r","g"],"enumNames":["Red","Green"]}),
+            "r",
+            "Red",
+        ),
+    ] {
+        let (w, p) = pair();
+        let schema = json!({"type":"object","properties":{"value":field},"required":["value"]});
+        w.store
+            .ingest_fact(
+                "child",
+                2,
+                &SessionBody::PendingOpened {
+                    pending_id: "question".into(),
+                    indexed: Indexed {
+                        pending: Some(Box::new(PendingExtract {
+                            id: "question".into(),
+                            kind: PendingKind::Elicitation,
+                            option_ids: None,
+                            title: None,
+                        })),
+                        ..Default::default()
+                    },
+                    payload: json!({"mode":"form","requestedSchema":schema}),
+                },
+            )
+            .unwrap();
+        assert_eq!(w.store.open_pending("child").unwrap().len(), 1, "{field}");
+        for (value, valid) in [(bad, false), (good, true)] {
+            let answer = AnswerRequest::Elicitation {
+                action: ElicitationAction::Accept,
+                content: Some(json!({"value":value})),
+            };
+            let result = w.store.queue_ordinary_answer(
+                &p,
+                1,
+                "digest",
+                &hennery_sessions::delegation_control::DelegatedAnswer {
+                    key: "answer",
+                    child: "child",
+                    pending: "question",
+                    answer: &answer,
+                },
+                &Hub::new(),
+            );
+            if valid {
+                result.unwrap();
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(hennery_sessions::session_tools::error_code(&error), "invalid_arguments");
+                assert!(w.store.answers_to_send("host").unwrap().is_empty());
+                assert!(w.store.delegation_retry(&p, 1, "answer", "digest").unwrap().is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn child_question_delivery_contains_the_exact_form_contract() {
+    let (w, p) = pair();
+    ready_parent(&w);
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    let (hub, mut rx) = connected();
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+    let CollectorFrame::DelegatedPrompt { content, .. } = rx.try_recv().unwrap() else {
+        panic!("prompt")
+    };
+    let text = serde_json::to_string(&content).unwrap();
+    assert!(text.contains("requestedSchema"), "{text}");
+    assert!(text.contains("JSON object"), "{text}");
+    assert!(text.contains("boolean"), "{text}");
+    let schema = json!({"type":"object","properties":{"ok":{"type":"boolean"}}});
+    let blocks = serde_json::to_value(content).unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_str(blocks[0]["text"].as_str().unwrap().split_once('\n').unwrap().1).unwrap();
+    assert_eq!(metadata["requestedSchema"], schema);
+    assert_eq!(
+        w.store.child_status(&p, 1, "child", None).unwrap().questions[0]
+            .question
+            .as_ref()
+            .unwrap()["requestedSchema"],
+        schema
+    );
 }
 
 fn notices(w: &World) -> Vec<(String, String, String)> {
@@ -1861,6 +2329,45 @@ fn spawn(w: &World, p: &SessionIdentity, key: &str) -> anyhow::Result<OperationR
             mcp: McpContext::NONE,
         },
     )
+}
+
+#[test]
+fn rejected_child_configuration_is_terminal_and_visible_to_parent_and_operator() {
+    let (w, p) = pair();
+    let receipt = spawn(&w, &p, "unsupported-config").unwrap();
+    let child = receipt.child_id.unwrap();
+    w.store
+        .ingest(
+            &child,
+            1,
+            &SessionBody::StartFailed {
+                request_id: "attach".into(),
+                code: "configuration_unavailable".into(),
+                message: "fast: the selected model offers no such option".into(),
+            },
+        )
+        .unwrap();
+    assert!(
+        matches!(w.store.delegation_receipt(&p,1,"unsupported-config").unwrap().unwrap().state,OperationState::Failed {code} if code=="configuration_unavailable")
+    );
+    assert_eq!(w.store.delegation_queue_depth(&child).unwrap(), (0, 0));
+    let page = w.store.family_page("parent", "", 100).unwrap().unwrap();
+    let row = page
+        .children
+        .iter()
+        .find(|row| row.summary.session.session_id == child)
+        .unwrap();
+    assert_eq!(row.summary.session.lifecycle, "failed");
+    assert_eq!(
+        row.summary.session.failure_reason.as_deref(),
+        Some("configuration_unavailable")
+    );
+    assert!(
+        row.operations
+            .iter()
+            .any(|op| op.state == "failed" && op.code.as_deref() == Some("configuration_unavailable"))
+    );
+    assert!(notices(&w).iter().any(|notice| notice.0 == "session_failed"));
 }
 fn user_turn_with_origin(w: &World, id: &str, seq: u64, turn: &str, origin: InputOrigin) {
     assert!(

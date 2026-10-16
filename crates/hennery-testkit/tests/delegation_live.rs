@@ -20,6 +20,7 @@ use hennery_sessions::{AppState, store::Store};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{
@@ -41,10 +42,128 @@ const TOOLS: &[&str] = &[
     "session_close",
 ];
 
+fn valid_tool_schemas(tools: &Value) -> bool {
+    let Some(tools) = tools.as_array().filter(|tools| tools.len() == TOOLS.len()) else {
+        return false;
+    };
+    hennery_proto::delegation::argument_schemas()
+        .iter()
+        .all(|(name, schema)| {
+            tools.iter().filter(|tool| tool["name"] == *name).count() == 1
+                && tools
+                    .iter()
+                    .any(|tool| tool["name"] == *name && tool["inputSchema"] == *schema)
+        })
+}
+
+#[test]
+fn discovery_probe_checks_input_schemas_not_only_names() {
+    let mut tools = hennery_sessions::tool_args::discovery()["tools"].clone();
+    assert!(valid_tool_schemas(&tools));
+    let answer = tools
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|t| t["name"] == "session_answer")
+        .unwrap();
+    answer["inputSchema"]["properties"]["content"] = json!({"type":"string"});
+    assert!(!valid_tool_schemas(&tools));
+    assert!(!valid_tool_schemas(&json!([])));
+}
+
 fn runtime(variable: &str) -> Result<String> {
     let value = std::env::var(variable).with_context(|| format!("supply {variable}"))?;
     ensure!(matches!(value.as_str(), "claude" | "codex"), "invalid runtime");
     Ok(value)
+}
+
+fn spawn_diagnostics(conn: &rusqlite::Connection, owner: &str, parent: &str) -> Result<Vec<Value>> {
+    // The operation survives an unavailable/detached child. Never require an
+    // active family edge to find the child whose launch failed.
+    let mut stmt = conn.prepare(
+        "SELECT o.operation_id,o.child_id,o.state,o.code,c.agent,c.lifecycle,c.activity,c.failure_reason
+         FROM session_operations o LEFT JOIN sessions c ON c.owner_id=?1 AND c.id=o.child_id
+         WHERE o.owner_id=?1 AND o.caller_id=?2 AND o.tool='session_spawn' ORDER BY o.rowid LIMIT 32",
+    )?;
+    let mut rows = stmt
+        .query_map(rusqlite::params![owner, parent], |r| {
+            Ok(
+                json!({"operation_id":r.get::<_,String>(0)?,"child_id":r.get::<_,Option<String>>(1)?,
+            "operation_state":r.get::<_,String>(2)?,"operation_code":r.get::<_,Option<String>>(3)?,
+            "child_runtime":r.get::<_,Option<String>>(4)?,"child_lifecycle":r.get::<_,Option<String>>(5)?,
+            "child_activity":r.get::<_,Option<String>>(6)?,"child_failure_reason":r.get::<_,Option<String>>(7)?}),
+            )
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for row in &mut rows {
+        let mut events = vec![];
+        if let Some(child) = row["child_id"].as_str() {
+            let mut stmt = conn.prepare(
+                "SELECT event_id,kind,body FROM events WHERE owner_id=?1 AND session_id=?2
+                 AND kind IN ('start_failed','turn_ended','session_lost','session_closed') ORDER BY event_id DESC LIMIT 32",
+            )?;
+            for event in stmt.query_map(rusqlite::params![owner, child], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            })? {
+                let (id, kind, body) = event?;
+                let body: Value = serde_json::from_str(&body)?;
+                let mut safe = json!({"event_id":id,"kind":kind});
+                for field in ["error", "message", "reason", "outcome"] {
+                    if let Some(text) = body[field].as_str() {
+                        safe[field] = json!(scrub_error(text)?);
+                    }
+                }
+                events.push(safe);
+            }
+            events.reverse();
+        }
+        row["events"] = json!(events);
+    }
+    let mut safe = serde_json::from_str(&redact_credentials(&serde_json::to_string(&rows)?)?)?;
+    scrub_capture(&mut safe);
+    hennery_kernel::redact::value(&mut safe);
+    Ok(serde_json::from_value(safe)?)
+}
+
+#[test]
+fn failed_spawn_diagnostics_survive_without_an_attached_family() -> Result<()> {
+    let conn = rusqlite::Connection::open_in_memory()?;
+    conn.execute_batch(
+        "CREATE TABLE session_operations(owner_id TEXT,caller_id TEXT,tool TEXT,operation_id TEXT,child_id TEXT,state TEXT,code TEXT);
+         CREATE TABLE sessions(owner_id TEXT,id TEXT,agent TEXT,lifecycle TEXT,activity TEXT,failure_reason TEXT);
+         CREATE TABLE events(owner_id TEXT,session_id TEXT,event_id INTEGER,kind TEXT,body TEXT);
+         INSERT INTO session_operations VALUES('owner','parent','session_spawn','op','child','failed','start_failed');
+         INSERT INTO sessions VALUES('owner','child','claude','failed',NULL,'Authentication required');
+         INSERT INTO events VALUES('owner','child',1,'start_failed','{\"error\":\"Authentication required\"}');
+         INSERT INTO events VALUES('owner','child',2,'turn_ended','{\"outcome\":\"failed\",\"error\":\"Bearer diagnostic-private\"}');
+         INSERT INTO events VALUES('owner','child',3,'acp_update','{\"private_menu\":\"must not retain\"}');
+         INSERT INTO session_operations VALUES('foreign','parent','session_spawn','other','other','failed','foreign-private');
+         INSERT INTO sessions VALUES('foreign','child','claude','failed',NULL,'foreign-private');",
+    )?;
+    let rows = spawn_diagnostics(&conn, "owner", "parent")?;
+    assert_eq!(rows.len(), 1, "retain failed spawn even without a family row");
+    assert_eq!(rows[0]["operation_state"], "failed");
+    assert_eq!(rows[0]["operation_code"], "start_failed");
+    assert_eq!(rows[0]["child_lifecycle"], "failed");
+    assert_eq!(rows[0]["child_failure_reason"], "Authentication required");
+    assert_eq!(rows[0]["events"][0]["error"], "Authentication required");
+    assert_eq!(rows[0]["events"][1]["outcome"], "failed");
+    let text = serde_json::to_string(&rows)?;
+    for private in ["diagnostic-private", "must not retain", "foreign-private"] {
+        assert!(
+            !text.contains(private),
+            "diagnostics retain only scoped, scrubbed failure fields"
+        );
+    }
+    conn.execute(
+        "UPDATE session_operations SET child_id=NULL,state='failed',code='gone' WHERE owner_id='owner'",
+        [],
+    )?;
+    let rows = spawn_diagnostics(&conn, "owner", "parent")?;
+    assert_eq!(rows.len(), 1, "retain operation failure even without a surviving child");
+    assert_eq!(rows[0]["operation_code"], "gone");
+    assert!(rows[0]["child_id"].is_null());
+    Ok(())
 }
 
 fn stage_auth(source_variable: &str, destination: &Path) -> Result<()> {
@@ -68,7 +187,7 @@ fn stage_auth(source_variable: &str, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn command(root: &Path, runtime: &str) -> Result<(AgentCommand, Profile)> {
+fn command(root: &Path, runtime: &str, native_probe: bool) -> Result<(AgentCommand, Profile)> {
     let home = root.join(format!("{runtime}-home"));
     for leaf in [
         "",
@@ -139,7 +258,27 @@ fn command(root: &Path, runtime: &str) -> Result<(AgentCommand, Profile)> {
         let binary = adapters.join(format!(".pnpm/@openai+codex@0.155.1-{arch}/bin/codex"));
         ensure!(binary.is_file(), "pinned native Codex 0.155.1 is missing");
         hennery_testkit::first_exec(binary.to_str().context("Codex path encoding")?);
-        env.push(("CODEX_PATH".into(), binary.display().to_string()));
+        let program = if native_probe {
+            let script = root.join("native-mcp-probe.mjs");
+            std::fs::write(&script, include_str!("support/codex_mcp_probe.mjs"))?;
+            std::fs::write(
+                root.join("expected-mcp-schemas.json"),
+                serde_json::to_vec(&hennery_proto::delegation::argument_schemas())?,
+            )?;
+            let launcher = root.join("native-mcp-probe");
+            let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
+            std::fs::write(
+                &launcher,
+                format!("#!/bin/sh\nexec {} {} \"$@\"\n", quote(&node), quote(&script)),
+            )?;
+            std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700))?;
+            env.push(("HENNERY_D4_NATIVE_AUDIT_DIR".into(), root.display().to_string()));
+            env.push(("HENNERY_D4_NATIVE_AUDIT_BINARY".into(), binary.display().to_string()));
+            launcher
+        } else {
+            binary
+        };
+        env.push(("CODEX_PATH".into(), program.display().to_string()));
         ("codex-acp", "1.13.0", Profile::Codex)
     };
     let entry = adapters.join(format!("@agentclientprotocol/{package}"));
@@ -165,6 +304,8 @@ struct Harness {
     url: String,
     parent: String,
     trace: Arc<Mutex<Vec<Value>>>,
+    identities: Arc<Mutex<BTreeMap<String, hennery_gateway::identity::SessionIdentity>>>,
+    probe_tokens: Arc<Mutex<BTreeMap<String, String>>>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     host: tokio::task::JoinHandle<anyhow::Result<()>>,
     server: tokio::task::JoinHandle<()>,
@@ -181,6 +322,17 @@ impl Drop for Harness {
 }
 impl Harness {
     async fn new(parent_runtime: &str, child_runtime: Option<&str>) -> Result<Self> {
+        Self::new_with_worker(parent_runtime, child_runtime, true).await
+    }
+    async fn new_with_worker(parent_runtime: &str, child_runtime: Option<&str>, deliver_brief: bool) -> Result<Self> {
+        Self::with_probe(parent_runtime, child_runtime, deliver_brief, false).await
+    }
+    async fn with_probe(
+        parent_runtime: &str,
+        child_runtime: Option<&str>,
+        deliver_brief: bool,
+        native_probe: bool,
+    ) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let root = dir.path().canonicalize()?;
         let db = root.join("hennery.db");
@@ -231,13 +383,22 @@ impl Harness {
         gateway.runtime.store.set_session_tools(&hat, true)?;
         let trace: Arc<Mutex<Vec<Value>>> = Arc::default();
         let observed = trace.clone();
+        let identities: Arc<Mutex<BTreeMap<String, hennery_gateway::identity::SessionIdentity>>> = Arc::default();
+        let authenticated = identities.clone();
+        let probe_tokens: Arc<Mutex<BTreeMap<String, String>>> = Arc::default();
+        let tokens = probe_tokens.clone();
         let auth = gateway.runtime.store.clone();
         let builtin = hennery_sessions::builtin::router(state.clone(), gateway).layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| {
-                let observed = observed.clone(); let auth = auth.clone();
+                let observed = observed.clone(); let auth = auth.clone(); let authenticated = authenticated.clone(); let tokens=tokens.clone();
                 async move {
-                    let caller = request.headers().get("authorization").and_then(|h| h.to_str().ok()).and_then(|h| h.strip_prefix("Bearer ")).and_then(|t| auth.authenticate_session(t).ok().flatten()).map(|i| {
-                        let hennery_gateway::scope::PrincipalKind::Session { session_id, .. } = i.principal.kind; session_id
+                    let bearer=request.headers().get("authorization").and_then(|h|h.to_str().ok()).and_then(|h|h.strip_prefix("Bearer "));
+                    let caller = bearer.and_then(|t| auth.authenticate_session(t).ok().flatten()).map(|i| {
+                        let hennery_gateway::scope::PrincipalKind::Session { session_id, .. } = &i.principal.kind;
+                        let session_id = session_id.clone();
+                        authenticated.lock().unwrap().insert(session_id.clone(), i);
+                        if native_probe { tokens.lock().unwrap().insert(session_id.clone(),bearer.unwrap().to_owned()); }
+                        session_id
                     });
                     let (parts, body) = request.into_parts();
                     let bytes = axum::body::to_bytes(body, hennery_gateway::proxy::MAX_REQUEST_BODY).await.unwrap();
@@ -250,7 +411,8 @@ impl Harness {
                     let method = input["method"].as_str().filter(|s| matches!(*s, "initialize" | "tools/list" | "tools/call"));
                     let tool = input["params"]["name"].as_str().filter(|s| TOOLS.contains(s));
                     let names = output["result"]["tools"].as_array().map(|tools| tools.iter().filter_map(|t| t["name"].as_str().filter(|s| TOOLS.contains(s))).collect::<Vec<_>>());
-                    observed.lock().unwrap().push(json!({"caller":caller,"method":method,"tool":tool,"status":parts.status.as_u16(),"is_error":output["result"]["isError"].as_bool(),"rpc_error":output["error"]["code"].as_i64(),"tools":names,"fields":input.as_object().map(|object| object.keys().collect::<Vec<_>>()),"param_fields":input["params"].as_object().map(|object| object.keys().collect::<Vec<_>>()),"meta_fields":input["params"]["_meta"].as_object().map(|object| object.keys().collect::<Vec<_>>())}));
+                    let schemas_valid = (method == Some("tools/list")).then(|| valid_tool_schemas(&output["result"]["tools"]));
+                    observed.lock().unwrap().push(json!({"caller":caller,"method":method,"tool":tool,"status":parts.status.as_u16(),"is_error":output["result"]["isError"].as_bool(),"rpc_error":output["error"]["code"].as_i64(),"tools":names,"schemas_valid":schemas_valid,"fields":input.as_object().map(|object| object.keys().collect::<Vec<_>>()),"param_fields":input["params"].as_object().map(|object| object.keys().collect::<Vec<_>>()),"meta_fields":input["params"]["_meta"].as_object().map(|object| object.keys().collect::<Vec<_>>())}));
                     axum::response::Response::from_parts(parts, axum::body::Body::from(bytes))
                 }
             }
@@ -276,7 +438,7 @@ impl Harness {
             .into_iter()
             .filter(|runtime| *runtime == parent_runtime || Some(*runtime) == child_runtime)
         {
-            let (command, profile) = command(&root, runtime)?;
+            let (command, profile) = command(&root, runtime, native_probe)?;
             config.agents.insert(runtime.into(), command);
             config.profiles.insert(runtime.into(), profile);
         }
@@ -291,6 +453,8 @@ impl Harness {
             url,
             parent: String::new(),
             trace,
+            identities,
+            probe_tokens,
             shutdown: Some(shutdown),
             host,
             server,
@@ -298,13 +462,37 @@ impl Harness {
         };
         h.wait("host ready", || h.state.hub.is_ready(HOST).then_some(()))
             .await?;
-        hennery_sessions::delegation_worker::after_startup(&h.state);
+        if deliver_brief {
+            hennery_sessions::delegation_worker::after_startup(&h.state);
+        }
         let catalog = h.catalog(parent_runtime).await?;
         println!(
             "{}",
             json!({"phase":"catalog","runtime":parent_runtime,"config_options":catalog.config_options,"defaults":catalog.defaults,"security":catalog.security})
         );
-        let response = h.client.post(format!("{}/api/sessions", h.url)).json(&json!({"host_id":HOST,"agent":parent_runtime,"cwd":root,"mode":if parent_runtime == "codex" {"read-only"} else {"default"}})).send().await?;
+        // Bound paid parent turns with the same catalog-selected model/effort
+        // as children, while keeping the parent in ordinary collaboration mode.
+        let effort = match std::env::var("HENNERY_D4_CODEX_PARENT_EFFORT") {
+            Ok(value) => Some(value),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => bail!("HENNERY_D4_CODEX_PARENT_EFFORT must be low or medium"),
+        };
+        let parent_config = parent_configuration(&catalog, effort.as_deref())?;
+        ensure!(
+            hennery_sessions::delegation_runtime::config_offered(&catalog, &parent_config),
+            "chosen parent configuration absent from actual catalog"
+        );
+        let mut request = serde_json::to_value(&parent_config)?;
+        request["host_id"] = json!(HOST);
+        request["agent"] = json!(parent_runtime);
+        request["cwd"] = json!(root);
+        println!("{}", json!({"phase":"parent_requested_config","config":parent_config}));
+        let response = h
+            .client
+            .post(format!("{}/api/sessions", h.url))
+            .json(&request)
+            .send()
+            .await?;
         ensure!(
             response.status() == reqwest::StatusCode::ACCEPTED,
             "parent start HTTP {}",
@@ -324,11 +512,64 @@ impl Harness {
                 .map(|_| ())
         })
         .await?;
+        let actual = h
+            .state
+            .store
+            .catalog(&h.parent)?
+            .context("parent configuration readback")?
+            .current;
+        println!(
+            "{}",
+            json!({"case":"parent_configuration_comparison","requested":parent_config,"actual":actual})
+        );
+        ensure!(
+            parent_config.model == actual.model
+                && parent_config.mode == actual.mode
+                && parent_config
+                    .axes
+                    .iter()
+                    .all(|(id, value)| actual.axes.get(id) == Some(value)),
+            "parent requested/actual configuration differs"
+        );
         Ok(h)
     }
     async fn wait<T>(&self, phase: &str, mut predicate: impl FnMut() -> Option<T>) -> Result<T> {
         let result = tokio::time::timeout(BOUND, async {
             loop {
+                if matches!(
+                    phase,
+                    "real parent spawn"
+                        | "child configuration readback"
+                        | "genuine child elicitation"
+                        | "real parent answer delivered"
+                        | "child provider continuation"
+                ) {
+                    let conn = hennery_kernel::db::open(&self.dir.path().join("hennery.db"))?;
+                    let failed = spawn_diagnostics(&conn, self.state.store.owner_id(), &self.parent)?
+                        .iter()
+                        .any(|row| {
+                            matches!(
+                                row["operation_state"].as_str(),
+                                Some("failed" | "cancelled" | "not_delivered")
+                            ) || row["child_lifecycle"] == "failed"
+                                || row["events"]
+                                    .as_array()
+                                    .is_some_and(|events| events.iter().any(|event| event["outcome"] == "failed"))
+                        });
+                    let parent_failed = phase == "real parent spawn"
+                        && self
+                            .state
+                            .store
+                            .events(&self.parent, 0, 1000)?
+                            .iter()
+                            .any(|event| event.kind == "turn_ended" && event.body["outcome"] == "failed");
+                    if failed || parent_failed {
+                        self.diagnostics(phase)?;
+                        bail!(
+                            "{phase}: provider or spawn failed; scrubbed durable operation/child diagnostics printed"
+                        );
+                    }
+                }
                 if let Some(value) = predicate() {
                     println!("{}", json!({"phase":phase}));
                     return Ok(value);
@@ -436,6 +677,7 @@ impl Harness {
             "rate_limit",
             "insufficient_quota",
             "token_expired",
+            "authentication required",
             "certificate",
             "connection refused",
         ];
@@ -444,6 +686,15 @@ impl Harness {
         println!(
             "{}",
             json!({"phase":phase,"error_classes":errors,"errors":messages,"event_kinds":kinds,"mcp":*self.trace.lock().unwrap()})
+        );
+        println!(
+            "{}",
+            json!({"phase":"parent_diagnostics","assistant":scrub_error(&assistant_text(&events))?})
+        );
+        let conn = hennery_kernel::db::open(&self.dir.path().join("hennery.db"))?;
+        println!(
+            "{}",
+            json!({"phase":"spawn_diagnostics","operations":spawn_diagnostics(&conn,self.state.store.owner_id(),&self.parent)?})
         );
         if let Some(child) = self.child() {
             let events = self.state.store.events(&child, 0, 1000)?;
@@ -667,8 +918,16 @@ impl Harness {
         }
         let path = self.dir.path().canonicalize()?.join("permission-denied.txt");
         let after = self.state.store.max_event_id()?;
-        let execution = json!({"cmd":format!("printf test > '{}'",path.display()),"sandbox_permissions":"require_escalated","justification":"D4 scratch operator-denial acceptance"});
-        let turn = self.prompt(child,&format!("New operator acceptance task, superseding the earlier no-shell restriction only for this scratch command: call exec_command with exactly these arguments: {execution}. You MUST request real operator approval through the tool; do not describe or simulate it. Do not change mode or policy or write by another means. The operator will deny this once. After denial do not retry and reply PERMISSION_DENIED_OK.")).await?;
+        let command = format!("printf test > '{}'", path.display());
+        let (tool, execution) = if child_runtime == "claude" {
+            ("Bash", json!({"command":command}))
+        } else {
+            (
+                "exec_command",
+                json!({"cmd":command,"sandbox_permissions":"require_escalated","justification":"D4 scratch operator-denial acceptance"}),
+            )
+        };
+        let turn = self.prompt(child,&format!("New operator acceptance task, superseding the earlier no-shell restriction only for this scratch command: call {tool} with exactly these arguments: {execution}. You MUST request real operator approval through the tool; do not describe or simulate it. Do not change mode or policy or write by another means. The operator will deny this once. After denial do not retry and reply PERMISSION_DENIED_OK.")).await?;
         let permission = self
             .question_for_turn(child, &turn, after, PendingKind::Permission, "genuine child permission")
             .await?;
@@ -694,7 +953,7 @@ impl Harness {
         self.idle(&self.parent).await?;
         self.approve_builtin.store(false, Ordering::SeqCst);
         let after = self.state.store.max_event_id()?;
-        let busy = self.prompt(&self.parent,"Call session_list exactly once using the hennery MCP tool, then reply BUSY_RELEASED. Do not call any other tools.").await?;
+        let busy = self.prompt(&self.parent, busy_parent_prompt()).await?;
         let held = self
             .question_for_turn(
                 &self.parent,
@@ -1098,7 +1357,15 @@ fn question_brief(runtime: &str) -> &'static str {
 }
 
 fn scrub_error(message: &str) -> Result<String> {
-    Ok(redact_credentials(message)?.chars().take(2000).collect())
+    let text = redact_credentials(message)?;
+    if text.to_ascii_lowercase().contains("bearer") {
+        return Ok("[redacted bearer-bearing error]".into());
+    }
+    Ok(hennery_kernel::redact::text(&text)
+        .unwrap_or(text)
+        .chars()
+        .take(2000)
+        .collect())
 }
 
 fn redact_credentials(message: &str) -> Result<String> {
@@ -1234,7 +1501,9 @@ async fn pinned_runtime_process_token_exposure_without_inference() -> Result<()>
     let result=async {
         ensure!(h.state.store.find_session(&h.parent)?.context("attached session")?.open_turn_id.is_none(),"exposure inspection must start no turn");
         ensure!(!h.state.store.events(&h.parent,0,1000)?.iter().any(|event|event.kind=="user_turn"),"exposure inspection must submit no prompt");
-        println!("{}",json!({"case":"process_token_exposure","runtime":runtime,"provider_inference":false,"processes":process_token_exposure()?}));
+        h.wait("pinned inputSchema discovery", || h.trace.lock().unwrap().iter().any(|r|r["caller"]==h.parent && r["method"]=="tools/list").then_some(())).await?;
+        ensure!(h.trace.lock().unwrap().iter().filter(|r|r["method"]=="tools/list").all(|r|r["schemas_valid"]==true), "pinned adapter received an invalid inputSchema contract");
+        println!("{}",json!({"case":"process_token_exposure","runtime":runtime,"advertised_input_schemas_valid":true,"provider_inference":false,"processes":process_token_exposure()?}));
         Ok(())
     }.await;
     let cleanup = h.finish().await;
@@ -1243,6 +1512,9 @@ async fn pinned_runtime_process_token_exposure_without_inference() -> Result<()>
 
 fn requested(catalog: &HostCatalog) -> SessionConfig {
     let mut config = catalog.defaults.clone();
+    // A probe's default model can advertise axes absent on the chosen model.
+    // Request only the cost controls selected below, never unrelated defaults.
+    config.axes.clear();
     if let Some(model) = catalog
         .config_options
         .iter()
@@ -1283,6 +1555,189 @@ fn requested(catalog: &HostCatalog) -> SessionConfig {
     config
 }
 
+fn parent_configuration(catalog: &HostCatalog, effort: Option<&str>) -> Result<SessionConfig> {
+    let mut config = requested(catalog);
+    if catalog.agent == "codex" {
+        config.axes.insert(
+            "collaboration_mode".into(),
+            hennery_proto::frames::ConfigValue::Id("default".into()),
+        );
+    }
+    if let Some(effort) = effort {
+        ensure!(
+            catalog.agent == "codex" && matches!(effort, "low" | "medium"),
+            "parent effort override requires Codex and low or medium"
+        );
+        ensure!(
+            catalog
+                .config_options
+                .iter()
+                .any(|option| option["id"] == "reasoning_effort"
+                    && option["options"]
+                        .as_array()
+                        .is_some_and(|options| options.iter().any(|option| option["value"] == effort))),
+            "parent effort is absent from pinned catalog"
+        );
+        config.axes.insert(
+            "reasoning_effort".into(),
+            hennery_proto::frames::ConfigValue::Id(effort.into()),
+        );
+    }
+    Ok(config)
+}
+
+fn busy_parent_prompt() -> &'static str {
+    "New operator acceptance task. This supersedes earlier instructions to stop after spawning or avoid polling. Call the session_list tool from the hennery MCP server exactly once with arguments {}. Make an actual MCP tool call. If approval is requested, wait for the operator's response. Do not simulate tool output or finish before the actual call returns. Then reply exactly BUSY_RELEASED. Do not call any other tools."
+}
+
+#[test]
+fn busy_parent_prompt_specifies_new_task_tool_arguments_and_real_approval() {
+    let prompt = busy_parent_prompt();
+    for text in ["supersedes", "session_list", "{}", "approval", "BUSY_RELEASED"] {
+        assert!(prompt.contains(text), "missing {text}");
+    }
+}
+
+#[test]
+fn codex_parent_medium_is_explicit_catalog_checked_and_does_not_raise_child_effort() {
+    let catalog = HostCatalog {
+        agent: "codex".into(),
+        adapter_revision: String::new(),
+        config_options: vec![
+            json!({"category":"model","options":[{"value":"gpt-6-sol"}]}),
+            json!({"id":"reasoning_effort","options":[{"value":"low"},{"value":"medium"}]}),
+        ],
+        defaults: SessionConfig {
+            model: Some("gpt-6-sol".into()),
+            mode: Some("read-only".into()),
+            axes: Default::default(),
+        },
+        security: hennery_proto::delegation_host::SecurityClassification {
+            known: true,
+            axes: Default::default(),
+        },
+        freshness: hennery_proto::delegation_host::CatalogFreshness::Fresh,
+    };
+    let medium = parent_configuration(&catalog, Some("medium")).unwrap();
+    assert_eq!(
+        medium.axes["reasoning_effort"],
+        hennery_proto::frames::ConfigValue::Id("medium".into())
+    );
+    assert_eq!(medium.model.as_deref(), Some("gpt-6-sol"));
+    assert_eq!(
+        requested(&catalog).axes["reasoning_effort"],
+        hennery_proto::frames::ConfigValue::Id("low".into())
+    );
+    assert!(parent_configuration(&catalog, Some("ultra")).is_err());
+    let mut unavailable = catalog;
+    unavailable.config_options[1]["options"] = json!([{"value":"low"}]);
+    assert!(parent_configuration(&unavailable, Some("medium")).is_err());
+}
+
+#[tokio::test]
+#[ignore = "requires pinned Codex; adapter-local /mcp only, audited zero provider turns"]
+async fn pinned_codex_busy_tools_without_inference() -> Result<()> {
+    let h = Harness::with_probe("codex", None, false, true).await?;
+    let pause = h.dir.path().join("pause-mcp-status");
+    let result=async {
+        std::fs::write(&pause,[])?;
+        h.approve_builtin.store(false,Ordering::SeqCst);
+        let turn=h.prompt(&h.parent,"/mcp").await?;
+        let held=h.wait("native local MCP status held during busy turn",||{
+            if h.state.store.ended_turn_outcome(&turn).ok().flatten().is_some() {return Some(Err(anyhow::anyhow!("local /mcp ended without the audited native status request")));}
+            let row=h.state.store.find_session(&h.parent).ok().flatten()?;
+            if row.open_turn_id.as_deref()!=Some(&turn) {return None;}
+            std::fs::read(h.dir.path().join("held-mcp-status.json")).ok().and_then(|bytes|serde_json::from_slice::<Value>(&bytes).ok()).map(Ok)
+        }).await??;
+        ensure!(held["thread_scoped"]==true && held["schemas_valid"]==true,"native busy MCP status has different schemas: {held}");
+        ensure!(held["names"].as_array().is_some_and(|names|names.iter().any(|name|name=="session_list")),"session_list absent during busy native command");
+        let token=h.probe_tokens.lock().unwrap().get(&h.parent).context("probe-only in-memory bearer")?.clone();
+        let response=h.client.post(format!("{}/mcp/builtin/hennery",h.url)).bearer_auth(token)
+            .header("accept","application/json, text/event-stream")
+            .header("mcp-protocol-version","2025-11-25")
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list"})).send().await?;
+        ensure!(response.status()==reqwest::StatusCode::OK,"busy discovery refused: {}",response.status());
+        ensure!(valid_tool_schemas(&response.json::<Value>().await?["result"]["tools"]),"busy discovery schema changed");
+        ensure!(h.state.store.open_pending(&h.parent)?.is_empty(),"local status must request no provider permission");
+        std::fs::remove_file(&pause)?;
+        h.wait("local status turn completes",||h.state.store.ended_turn_outcome(&turn).ok().flatten()).await?;
+        let methods:Vec<String>=serde_json::from_slice(&std::fs::read(h.dir.path().join("native-methods.json"))?)?;
+        ensure!(methods.iter().any(|method|method=="mcpServerStatus/list"),"native status not queried");
+        ensure!(!methods.iter().any(|method|matches!(method.as_str(),"turn/start"|"review/start")),"probe invoked provider inference");
+        println!("{}",json!({"case":"native_busy_tools_without_inference","native_tools":held["names"],"advertised_input_schemas_valid":true,"provider_turn_starts":0,"busy_tools_available":true,"automatic_approval_enabled":false}));
+        Ok(())
+    }.await;
+    if pause.exists() {
+        std::fs::remove_file(pause)?;
+    }
+    let cleanup = h.finish().await;
+    result.and(cleanup)
+}
+
+#[tokio::test]
+#[ignore = "requires explicit pinned Claude adapter and scratch auth; performs no inference"]
+async fn pinned_claude_child_configuration_without_inference() -> Result<()> {
+    claude_child_configuration_without_inference(false).await
+}
+
+#[tokio::test]
+#[ignore = "requires explicit pinned Claude adapter and scratch auth; performs no inference"]
+async fn pinned_claude_unsupported_fast_without_inference() -> Result<()> {
+    claude_child_configuration_without_inference(true).await
+}
+
+async fn claude_child_configuration_without_inference(explicit_fast: bool) -> Result<()> {
+    let h = Harness::new_with_worker("claude", Some("claude"), false).await?;
+    let result = async {
+        let catalog = h.catalog("claude").await?;
+        let mut config = requested(&catalog);
+        if explicit_fast { config.axes.insert("fast".into(),hennery_proto::frames::ConfigValue::Bool(false)); }
+        let identity = h.wait("parent discovery identity", || h.identities.lock().unwrap().get(&h.parent).cloned()).await?;
+        let mcp = || -> Result<hennery_sessions::store::McpContext> {
+            let (capable,isolation) = h.state.hub.mcp_isolation(HOST,"claude").context("Claude isolation")?;
+            Ok(hennery_sessions::store::McpContext { capable,isolation,rules_name_other_hats:h.state.hosts.rules_name_other_hats(HOST)? })
+        };
+        let receipt: hennery_proto::delegation::OperationReceipt = serde_json::from_value(
+            hennery_sessions::session_tools::execute(&h.state,&identity,identity.delivered_delegation_revision().context("delivered grant")?,"session_spawn",
+                json!({"operation_key":"config-only-probe","agent":"claude","cwd":h.dir.path().canonicalize()?,"brief":"Configuration probe: this brief must never be dispatched","name":"configuration probe","config":config})
+            ).await?
+        )?;
+        let child = receipt.child_id.context("allocated child")?;
+        ensure!(h.state.store.attach_delegated(&child,mcp()?,&catalog,&h.state.hub)?,"attach handed off");
+        let evidence = h.wait("configuration-only child readback", || {
+            if let Some(row) = h.state.store.find_session(&child).ok().flatten().filter(|row|row.lifecycle=="failed") {
+                return Some(Err(row.failure_reason.unwrap_or_default()));
+            }
+            let conn = hennery_kernel::db::open(&h.dir.path().join("hennery.db")).ok()?;
+            conn.query_row("SELECT evidence FROM session_attach_evidence WHERE owner_id=?1 AND session_id=?2 AND evidence IS NOT NULL",rusqlite::params![h.state.store.owner_id(),child],|r|r.get::<_,String>(0)).optional().ok().flatten().map(Ok)
+        }).await?;
+        if let Err(reason) = evidence {
+            ensure!(explicit_fast && reason=="configuration_unavailable","unexpected configuration refusal: {}",scrub_error(&reason)?);
+            let page = h.state.store.family_page(&h.parent,"",100)?.context("operator family")?;
+            let failed = page.children.iter().find(|row|row.summary.session.session_id==child).context("operator child failure")?;
+            ensure!(failed.operations.iter().any(|op|op.state=="failed" && op.code.as_deref()==Some("configuration_unavailable")),"parent/operator must see failed receipt");
+            ensure!(!h.state.store.events(&child,0,1000)?.iter().any(|e|matches!(e.kind.as_str(),"user_turn"|"turn_started")),"refused child must run no brief");
+            h.diagnostics("explicit fast refused before brief")?;
+            println!("{}",json!({"case":"unsupported_fast_refused_without_inference","requested":config,"failure_reason":reason,"parent_and_operator_receipt_failed":true,"provider_inference":false}));
+            return Ok(());
+        }
+        let evidence = evidence.map_err(|reason|anyhow::anyhow!(reason))?;
+        let evidence: hennery_proto::delegation_host::ConfigEvidence = serde_json::from_str(&evidence)?;
+        let actual_catalog = h.state.store.catalog(&child)?.context("child catalog")?;
+        let events = h.state.store.events(&child,0,1000)?;
+        println!("{}",json!({"case":"configuration_without_inference","requested":config,"actual":evidence.actual,"actual_config_options":actual_catalog.config_options,"host_notes":events.iter().filter(|e|e.kind=="host_note").map(|e|e.body.clone()).collect::<Vec<_>>(),"provider_inference":false}));
+        ensure!(!explicit_fast,"unsupported explicit fast must be refused");
+        ensure!(!events.iter().any(|e|matches!(e.kind.as_str(),"user_turn"|"turn_started")),"configuration probe must dispatch no brief");
+        ensure!(config.axes.iter().all(|(key,value)|evidence.actual.axes.get(key)==Some(value)),"requested versus actual child axes differ");
+        Ok(())
+    }.await;
+    if result.is_err() {
+        h.diagnostics("configuration-only failed")?;
+    }
+    let cleanup = h.finish().await;
+    result.and(cleanup)
+}
+
 #[tokio::test]
 #[ignore = "requires explicit pinned parent/child adapters and provider credentials; performs inference"]
 async fn pinned_parent_child_provider_matrix() -> Result<()> {
@@ -1304,6 +1759,7 @@ async fn pinned_parent_child_provider_matrix() -> Result<()> {
             conn.query_row("SELECT evidence FROM session_attach_evidence WHERE owner_id=?1 AND session_id=?2 AND evidence IS NOT NULL", rusqlite::params![h.state.store.owner_id(),child], |r| r.get::<_,String>(0)).optional().ok().flatten()
         }).await?;
         let evidence: hennery_proto::delegation_host::ConfigEvidence = serde_json::from_str(&evidence)?;
+        println!("{}", json!({"case":"child_configuration_comparison","requested":config,"actual":evidence.actual,"completeness":evidence.completeness}));
         ensure!(evidence.completeness == hennery_proto::delegation_host::ConfigCompleteness::Complete, "child configuration not completely read back");
         ensure!(config.model.as_ref().is_none_or(|v| evidence.actual.model.as_ref() == Some(v)), "child model readback differs");
         ensure!(config.mode.as_ref().is_none_or(|v| evidence.actual.mode.as_ref() == Some(v)), "child permission mode readback differs");
@@ -1323,7 +1779,7 @@ async fn pinned_parent_child_provider_matrix() -> Result<()> {
         ensure!(matches!(serde_json::from_str::<hennery_proto::plugin::InputOrigin>(&origin)?, hennery_proto::plugin::InputOrigin::Parent {session_id,..} if session_id == h.parent), "delivered schema answer did not originate from the actual parent");
         let trace = h.trace.lock().unwrap().clone();
         for id in [&h.parent, &child] {
-            ensure!(trace.iter().any(|r| r["caller"] == *id && r["method"] == "tools/list" && r["tools"].as_array().is_some_and(|t| t.len() == 7)), "actual participant did not discover all seven tools");
+            ensure!(trace.iter().any(|r| r["caller"] == *id && r["method"] == "tools/list" && r["tools"].as_array().is_some_and(|t| t.len() == 7) && r["schemas_valid"] == true), "actual participant did not discover all seven precise inputSchemas");
         }
         for tool in ["session_capabilities", "session_spawn", "session_answer"] {
             ensure!(trace.iter().any(|r| r["caller"] == h.parent && r["tool"] == tool && r["is_error"] == false), "real parent did not successfully call {tool}");

@@ -1375,7 +1375,46 @@ fn elicitation(pending_id: &str) -> SessionBody {
             })),
             ..Indexed::default()
         },
-        payload: json!({"mode": "form"}),
+        payload: json!({"mode": "form", "requestedSchema":{"type":"object"}}),
+    }
+}
+
+#[test]
+fn ordinary_mcp_formats_and_enum_labels_reach_the_operator_answer_queue() {
+    for (field, value) in [
+        (json!({"type":"string","format":"email"}), "person@example.org"),
+        (json!({"type":"string","format":"uri"}), "urn:example:form"),
+        (json!({"type":"string","format":"date"}), "2024-02-29"),
+        (json!({"type":"string","format":"date-time"}), "2026-10-16T12:34:56Z"),
+        (
+            json!({"type":"string","enum":["r","g"],"enumNames":["Red","Green"]}),
+            "r",
+        ),
+    ] {
+        let store = Store::open_in_memory().unwrap();
+        running(&store);
+        let mut question = elicitation("form");
+        let schema = json!({"type":"object","properties":{"value":field},"required":["value"]});
+        let SessionBody::PendingOpened { payload, .. } = &mut question else {
+            unreachable!()
+        };
+        *payload = json!({"mode":"form","requestedSchema":schema});
+        store.ingest("s1", 3, &question).unwrap();
+        let opened = store.open_pending("s1").unwrap();
+        assert_eq!(opened.len(), 1, "{field}");
+        assert_eq!(opened[0].payload["requestedSchema"], schema);
+        let content = json!({"value":value});
+        let answer = AnswerRequest::Elicitation {
+            action: ElicitationAction::Accept,
+            content: Some(content.clone()),
+        };
+        let AnswerSubmission::Queued(queued) = store.submit_answer("s1", "form", &answer).unwrap() else {
+            panic!("operator answer not queued")
+        };
+        assert_eq!(queued.event.body["origin"]["kind"], "operator");
+        assert!(
+            matches!(queued.frame,CollectorFrame::AnswerElicitation {content:Some(ref actual),..} if actual==&content)
+        );
     }
 }
 

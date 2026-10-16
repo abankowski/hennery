@@ -410,7 +410,7 @@ async fn handle(
                 {
                     Ok(Ok(value)) => (value, false),
                     Ok(Err(error)) => (
-                        json!({"code":crate::session_tools::error_code(&error),"message":"the session operation was refused"}),
+                        json!({"code":crate::session_tools::error_code(&error),"message":crate::session_tools::error_message(&error)}),
                         true,
                     ),
 

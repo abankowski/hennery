@@ -120,6 +120,39 @@ async fn ordinary_parent_attach_produces_evidence_and_accepts_a_fenced_report() 
     stop(h).await;
 }
 
+#[tokio::test]
+async fn authoritative_delegated_configuration_failure_ends_before_attach_or_brief() {
+    for refused_switch in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let (up, _) = Uplink::new(Outbox::open_in_memory().unwrap());
+        let mut s = script();
+        let mut wanted = SessionConfig::default();
+        if refused_switch {
+            s.config_error = Some("requested model unavailable".into());
+            wanted.model = Some("large".into());
+        } else {
+            s.config_options.retain(|option| option["id"] != "fast");
+            wanted.axes.insert("fast".into(), ConfigValue::Bool(false));
+        }
+        let mut start = launch(root.path(), s, Attach::New);
+        start.config = wanted;
+        let h = session::launch_delegated(up.clone(), start, SessionOptions::default(), 1);
+        let facts = until(&up, |facts| !facts.is_empty()).await;
+        stop(h).await;
+        assert!(facts.iter().any(|fact|matches!(fact,HostFrame::Session { body:SessionBody::StartFailed {code,message,..},.. } if code=="configuration_unavailable" && message.contains(if refused_switch {"requested model unavailable"} else {"fast"}))),"unachievable delegated configuration must fail promptly: {facts:?}");
+        assert!(
+            !facts.iter().any(|fact| matches!(
+                fact,
+                HostFrame::Session {
+                    body: SessionBody::SessionStarted { .. } | SessionBody::TurnStarted { .. },
+                    ..
+                }
+            )),
+            "never announce an attached child or dispatch its brief after configuration refusal"
+        );
+    }
+}
+
 #[test]
 fn workspace_fence_rejects_outside_and_symlink_swap() {
     let root = tempfile::tempdir().unwrap();
