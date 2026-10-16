@@ -88,6 +88,7 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
     db.execute_batch(include_str!("../src/schema2.sql")).unwrap();
     db.execute_batch(include_str!("../src/schema3.sql")).unwrap();
     db.execute_batch(include_str!("../src/schema4.sql")).unwrap();
+    db.execute_batch(include_str!("../src/schema5.sql")).unwrap();
     let source = include_str!("../src/store.rs");
     let fragments = string_literals(source);
     let coverage = fragments
@@ -149,6 +150,31 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
                     );
                 }
                 let compact = sql.split_whitespace().collect::<String>();
+                if sql.starts_with("SELECT n.epoch,f.revision,f.cursor FROM namespaces n LEFT JOIN feeds") {
+                    assert!(
+                        sql.contains("ON f.namespace=n.id"),
+                        "management fence must join the same namespace: {sql}"
+                    );
+                    assert!(
+                        sql.contains("WHERE n.id=?1 AND n.owner=?2 AND n.state='active'"),
+                        "management transaction fence must recheck its owner, namespace and active epoch: {sql}"
+                    );
+                }
+                if sql == "INSERT OR IGNORE INTO pending_cleanup(namespace) VALUES(?1)" {
+                    assert_eq!(file, 2, "cleanup fence belongs to the managed write transaction");
+                    continue;
+                }
+                if file == 2
+                    && [
+                        "SELECT EXISTS(SELECT 1 FROM pending_cleanup)",
+                        "DELETE FROM pending_cleanup",
+                    ]
+                    .contains(&sql.as_str())
+                {
+                    // Internal recovery only: a confirmed whole-database
+                    // checkpoint under the projection writer covers all fences.
+                    continue;
+                }
                 if file >= 2 && sql.contains(" FROM namespaces ") {
                     assert!(sql.contains("owner=?"), "management owner boundary: {sql}");
                     continue;
@@ -195,5 +221,5 @@ fn every_memory_statement_prepares_and_scopes_before_data_access() {
             }
         }
     }
-    assert_eq!(count, [10, 51, 14, 7], "new statements need explicit audit coverage");
+    assert_eq!(count, [11, 57, 18, 7], "new statements need explicit audit coverage");
 }

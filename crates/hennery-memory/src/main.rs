@@ -188,6 +188,7 @@ async fn run() -> anyhow::Result<()> {
             };
             let listener = tokio::net::TcpListener::bind(listen).await?;
             println!("memory listening on {}", listener.local_addr()?);
+            let cleanup = tokio::spawn(hennery_memory::management::cleanup_worker(store.as_ref().clone()));
             let worker = if store.has_feed_credentials()? {
                 let key = Arc::new(keys::load(&args.data_dir, true)?);
                 Some(tokio::spawn(consumer::worker(store.clone(), key)))
@@ -209,6 +210,7 @@ async fn run() -> anyhow::Result<()> {
             if let Some(worker) = worker {
                 worker.abort();
             }
+            cleanup.abort();
         }
     }
     Ok(())

@@ -10,16 +10,28 @@ use hmac::{Hmac, Mac};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::HashMap, path::Path, sync::Mutex, time::Instant};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
+#[derive(Clone)]
 pub struct Store {
-    pub(crate) inner: Mutex<Inner>,
+    pub(crate) inner: Arc<Mutex<Inner>>,
+    // One bounded writer for reset, import and curated mutations. WAL readers
+    // use Inner's connection; projection I/O never owns their mutex.
+    pub(crate) projection_writer: Arc<Mutex<db::OwnedConnection>>,
+    #[cfg(test)]
+    pub(crate) reset_hook: Arc<Mutex<Option<crate::consumer::ResetHook>>>,
 }
 pub(crate) struct Inner {
     pub db: db::OwnedConnection,
     pub leases: HashMap<String, (Instant, i64)>,
     pub stale: std::collections::HashSet<String>,
     pub generations: HashMap<String, u64>,
+    pub writing: std::collections::HashSet<String>,
 }
 pub struct Credentials {
     pub namespace: String,
@@ -168,17 +180,45 @@ impl Store {
                 include_str!("schema2.sql"),
                 include_str!("schema3.sql"),
                 include_str!("schema4.sql"),
+                include_str!("schema5.sql"),
             ],
         )?;
         db.busy_timeout(std::time::Duration::from_millis(100))?;
+        ensure!(
+            !db.path().unwrap_or_default().is_empty(),
+            "persistent memory database required"
+        );
+        let projection_writer = db::open(path)?;
+        projection_writer.busy_timeout(std::time::Duration::from_millis(100))?;
         Ok(Self {
-            inner: Mutex::new(Inner {
+            projection_writer: Arc::new(Mutex::new(projection_writer)),
+            #[cfg(test)]
+            reset_hook: Arc::new(Mutex::new(None)),
+            inner: Arc::new(Mutex::new(Inner {
                 db,
                 leases: HashMap::new(),
                 stale: Default::default(),
                 generations: Default::default(),
-            }),
+                writing: Default::default(),
+            })),
         })
+    }
+    pub(crate) fn lock_projection_writer(&self) -> Result<std::sync::MutexGuard<'_, db::OwnedConnection>> {
+        match self.projection_writer.lock() {
+            Ok(connection) => Ok(connection),
+            Err(poisoned) => {
+                let mut connection = poisoned.into_inner();
+                // Transaction's unwind drop must have rolled back. If SQLite
+                // cannot confirm this, keep the writer poisoned and reads denied.
+                ensure!(connection.is_autocommit(), "reset rollback unconfirmed");
+                let path = connection.path().context("reset database path unavailable")?;
+                let reopened = db::open(Path::new(path))?;
+                reopened.busy_timeout(std::time::Duration::from_millis(100))?;
+                *connection = reopened;
+                self.projection_writer.clear_poison();
+                Ok(connection)
+            }
+        }
     }
     pub fn create(&self, owner: &str, hat: &str) -> Result<Credentials> {
         ensure!(
@@ -526,7 +566,9 @@ impl Inner {
     pub(crate) fn auth(&self, token: &str, admin: bool, write: bool) -> Result<Namespace> {
         ensure!(token.len() <= 256, "unavailable");
         let column = if admin { "lifecycle_hash" } else { "tool_hash" };
-        let sql = format!("SELECT id,epoch,cursor_key,registered,writes,state FROM namespaces WHERE {column}=?1");
+        let sql = format!(
+            "SELECT id,epoch,cursor_key,registered,writes,state,EXISTS(SELECT 1 FROM pending_cleanup WHERE namespace=namespaces.id) FROM namespaces WHERE {column}=?1"
+        );
         let row = self
             .db
             .query_row(&sql, [sha256_hex(token.as_bytes())], |r| {
@@ -539,11 +581,14 @@ impl Inner {
                     r.get::<_, bool>(3)?,
                     r.get::<_, bool>(4)?,
                     r.get::<_, String>(5)?,
+                    r.get::<_, bool>(6)?,
                 ))
             })
             .optional()?
             .context("unavailable")?;
         if !admin {
+            ensure!(!row.4, "storage cleanup pending");
+            ensure!(!self.writing.contains(&row.0.id), "reset in progress");
             ensure!(row.3 == "active" && (!write || row.2), "unavailable");
             ensure!(
                 !row.1
@@ -555,6 +600,13 @@ impl Inner {
             );
         }
         Ok(row.0)
+    }
+    pub(crate) fn cleanup_pending(&self, id: &str) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pending_cleanup WHERE namespace=?1)",
+            [id],
+            |r| r.get(0),
+        )?)
     }
     pub(crate) fn stale(&self, id: &str) -> bool {
         self.stale.contains(id)
