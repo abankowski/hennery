@@ -58,7 +58,7 @@ pub fn notice_for(edge: &PushEdge, session: &EdgeSession) -> Option<Notice> {
     })
 }
 
-fn encoded_id(id: &str) -> String {
+pub(crate) fn encoded_id(id: &str) -> String {
     id.bytes()
         .map(|byte| match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (byte as char).to_string(),

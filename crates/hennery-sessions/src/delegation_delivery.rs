@@ -57,9 +57,9 @@ pub(crate) fn record_in(tx: &Transaction<'_>, owner: &str, event: &EventDto) -> 
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
         )
         .optional()?;
-    let Some((parent, root, hat, revision, eligible, required)) = family else {
+    if family.is_none() && !delegated_in(tx, owner, &event.session_id)? {
         return Ok(());
-    };
+    }
     let attach:i64 = tx.query_row("SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1 AND session_id = ?2 AND kind = 'session_started' AND applied = 1", params![owner,event.session_id],|r|r.get(0))?;
     let incident = if loss {
         format!("loss:{attach}")
@@ -68,6 +68,10 @@ pub(crate) fn record_in(tx: &Transaction<'_>, owner: &str, event: &EventDto) -> 
         format!("failure:{attach}:{generation}")
     } else {
         format!("{}:{}", event.event_id, kind)
+    };
+    let Some((parent, root, hat, revision, eligible, required)) = family else {
+        crate::delegation_attention::record_orphan_in(tx, owner, event, kind, &incident, pending)?;
+        return Ok(());
     };
     let permission = kind == "question" && tx.query_row("SELECT EXISTS(SELECT 1 FROM pending WHERE owner_id = ?1 AND session_id = ?2 AND pending_id = ?3 AND kind = 'permission')",params![owner,event.session_id,pending],|r|r.get::<_,bool>(0))?;
     let queued:i64 = tx.query_row("SELECT COUNT(*) FROM delegation_notices WHERE owner_id = ?1 AND parent_id = ?2 AND state IN ('parent_queued','waiting_config')",params![owner,parent],|r|r.get(0))?;
@@ -91,6 +95,17 @@ pub(crate) fn record_in(tx: &Transaction<'_>, owner: &str, event: &EventDto) -> 
         WHERE delegation_notices.owner_id = ?1 AND json_array_length(delegation_notices.source_events) < 128",
         params![owner,uuid::Uuid::now_v7().to_string(),event.session_id,parent,root,hat,event.event_id,kind,turn,pending,incident,revision,now,
         if disposition.is_some(){"operator_required"}else{"parent_queued"},disposition,required])?;
+    // Reserve attention in the source transaction. Lifecycle/grant triggers
+    // activate this row using UPDATE, preserving the existing SQL owner audit.
+    tx.execute("INSERT INTO delegation_attention(owner_id,attention_id,delivery_id,child_id,hat_id,reason,pending_id,state,operator_epoch,incident)
+        SELECT ?1,n.delivery_id,n.delivery_id,n.child_id,c.hat_id,COALESCE(n.reason,'operator_required'),
+        CASE WHEN n.kind = 'question' THEN n.pending_id END,
+        CASE WHEN n.state = 'operator_required' THEN 'open' ELSE 'standby' END,
+        COALESCE((SELECT MAX(event_id) FROM events WHERE owner_id = ?1 AND session_id = n.root_id
+            AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'),0),n.incident
+        FROM delegation_notices n JOIN sessions c ON c.owner_id = ?1 AND c.id = n.child_id
+        WHERE n.owner_id = ?1 AND n.child_id = ?2 AND n.incident = ?3
+        ON CONFLICT DO NOTHING",params![owner,event.session_id,incident])?;
     Ok(())
 }
 
@@ -101,16 +116,17 @@ fn obsolete_in(tx: &Transaction<'_>, owner: &str, child: &str, pending: Option<&
         AND state IN ('parent_queued','waiting_config','operator_required','parent_delivered')",
         params![owner, child, pending],
     )?;
+    tx.execute(
+        "UPDATE delegation_attention SET state = 'resolved' WHERE owner_id = ?1 AND child_id = ?2
+        AND pending_id IS NOT NULL AND (?3 IS NULL OR pending_id = ?3)",
+        params![owner, child, pending],
+    )?;
     Ok(())
 }
 
 impl crate::store::Store {
     pub(crate) fn record_delegation_failure_in(&self, tx: &Transaction<'_>, session: &str, code: &str) -> Result<()> {
-        let child: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM session_families WHERE owner_id = ?1 AND child_id = ?2)",
-            params![self.owner_id(), session],
-            |r| r.get(0),
-        )?;
+        let child = delegated_in(tx, self.owner_id(), session)?;
         if child {
             crate::store::collector_event(
                 tx,
@@ -151,6 +167,14 @@ impl crate::store::Store {
             .as_ref()
             == Some(origin))
     }
+}
+
+fn delegated_in(tx: &Transaction<'_>, owner: &str, session: &str) -> Result<bool> {
+    Ok(tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = ?2 AND delegated_child = 1)",
+        params![owner, session],
+        |r| r.get(0),
+    )?)
 }
 
 #[cfg(test)]

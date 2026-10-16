@@ -7,7 +7,29 @@ struct Cursors {
     answers: String,
     notices: String,
 }
+#[derive(Default)]
+struct Reconciliation {
+    attention: String,
+    notifications: String,
+}
 pub fn after_startup(state: &AppState) {
+    let store = state.store.clone();
+    state.push.set_guard(std::sync::Arc::new(move |notice| {
+        store.delegation_push_current(notice).unwrap_or(false)
+    }));
+    // Host probes can take seconds each. Deadlines and push reconciliation
+    // must keep their own bounded cadence while a dispatch page waits on I/O.
+    let reconciliation_state = state.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        let mut cursors = Reconciliation::default();
+        loop {
+            tokio::select! {biased; ()=reconciliation_state.shutdown.cancelled()=>break,_=tick.tick()=>{}}
+            if let Err(error) = reconcile_page(&reconciliation_state, &mut cursors) {
+                tracing::warn!(code=%crate::session_tools::error_code(&error),"delegation reconciliation deferred");
+            }
+        }
+    });
     let state = state.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_millis(250));
@@ -21,7 +43,19 @@ pub fn after_startup(state: &AppState) {
     });
 }
 pub async fn drain(state: &AppState) -> anyhow::Result<()> {
+    reconcile_page(state, &mut Reconciliation::default())?;
     drain_page(state, &mut Cursors::default()).await
+}
+fn reconcile_page(state: &AppState, cursors: &mut Reconciliation) -> anyhow::Result<()> {
+    let now = hennery_kernel::secret::unix_now();
+    cursors.attention = state
+        .store
+        .refresh_attention_after(&state.hub, now, &cursors.attention)?;
+    cursors.notifications =
+        state
+            .store
+            .enqueue_delegation_attention(&state.push, &state.delegation_run, &cursors.notifications, now)?;
+    Ok(())
 }
 async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<()> {
     cursors.answers = state

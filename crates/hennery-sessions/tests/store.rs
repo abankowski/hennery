@@ -2752,6 +2752,7 @@ fn rows_of(conn: &Connection, id: &str, events: &[i64], turns: &[String], hashes
             "session_operations" => format!("caller_id = '{id}' OR child_id = '{id}'"),
             "delegation_start_budgets" => format!("caller_id = '{id}'"),
             "delegation_budgets" => format!("root_id = '{id}'"),
+            "delegation_attention" => format!("child_id = '{id}'"),
             "delegation_notices" => format!("child_id = '{id}' OR parent_id = '{id}' OR root_id = '{id}'"),
             "event_attachments" => format!("event_id IN ({})", list(events.iter().map(i64::to_string).collect())),
             "turn_attachments" => format!("turn_id IN ({})", quoted(turns)),
@@ -2843,6 +2844,8 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
              SELECT owner_id, 's1', 1, '{}' FROM sessions WHERE id = 's1';
          INSERT INTO delegation_start_budgets(owner_id,caller_id,epoch,starts)
              SELECT owner_id, 's1', 0, 1 FROM sessions WHERE id = 's1';
+         INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,incident)
+             SELECT owner_id, 'delete-attention', 's1', hat_id, 'test','delete-attention' FROM sessions WHERE id = 's1';
          INSERT INTO delegation_budgets(owner_id,root_id,epoch,wakes)
              SELECT owner_id, 's1', 0, 1 FROM sessions WHERE id = 's1';
          INSERT INTO delegation_notices(owner_id,delivery_id,child_id,parent_id,root_id,hat_id,source_event_id,
@@ -2867,6 +2870,7 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
         "session_attach_evidence",
         "delegation_start_budgets",
         "delegation_budgets",
+        "delegation_attention",
         "delegation_notices",
         "sessions",
         "turn_attachments",

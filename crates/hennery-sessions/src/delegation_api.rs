@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     middleware,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use hennery_kernel::json::ApiJson;
 use hennery_proto::delegation_status::SetExecutionPolicy;
@@ -23,8 +23,64 @@ pub fn router(state: AppState) -> Router {
             get(policy).patch(set_policy.layer(middleware::from_fn(hennery_kernel::auth::require_step_up))),
         )
         .route("/api/hosts/{id}/runtime-catalog", get(catalog))
+        .route("/api/delegation/attention", get(attention))
+        .route("/api/delegation/attention/{id}/rearm", post(rearm))
+        .route("/api/delegation/attention/{id}/acknowledge", post(acknowledge))
         .layer(DefaultBodyLimit::max(32 * 1024));
     hennery_kernel::auth::operator_only(routes, state.operator.clone()).with_state(state)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttentionQuery {
+    hat_id: Option<String>,
+    #[serde(default)]
+    after: String,
+}
+async fn attention(State(state): State<AppState>, Query(query): Query<AttentionQuery>) -> Response {
+    if query.after.len() > 128 || query.hat_id.as_ref().is_some_and(|hat| hat.len() > 128) {
+        return error(StatusCode::BAD_REQUEST, "invalid_arguments", "invalid arguments");
+    }
+    match state.store.operator_attention(query.hat_id.as_deref(), &query.after) {
+        Ok(rows) => Json(rows).into_response(),
+        Err(err) => internal(err),
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rearm {
+    operator_turn_id: String,
+}
+async fn rearm(State(state): State<AppState>, Path(id): Path<String>, ApiJson(request): ApiJson<Rearm>) -> Response {
+    if id.len() > 128 || request.operator_turn_id.len() > 128 {
+        return error(StatusCode::BAD_REQUEST, "invalid_arguments", "invalid arguments");
+    }
+    match state
+        .store
+        .rearm_delegation_attention(&id, &request.operator_turn_id, hennery_kernel::secret::unix_now())
+    {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => error(
+            StatusCode::CONFLICT,
+            "rearm_unavailable",
+            "a new operator prompt and eligible routing are required",
+        ),
+        Err(err) => internal(err),
+    }
+}
+async fn acknowledge(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if id.len() > 128 {
+        return error(StatusCode::BAD_REQUEST, "invalid_arguments", "invalid arguments");
+    }
+    match state.store.acknowledge_delegation_attention(&id) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => error(
+            StatusCode::CONFLICT,
+            "acknowledgement_unavailable",
+            "only an outstanding status report can be acknowledged",
+        ),
+        Err(err) => internal(err),
+    }
 }
 async fn policy(State(state): State<AppState>, Path(hat): Path<String>) -> Response {
     if !matches!(state.hosts.hat(&hat), Ok(Some(_))) {

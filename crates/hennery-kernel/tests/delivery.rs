@@ -650,3 +650,69 @@ async fn an_answer_for_a_rotated_endpoint_leaves_the_new_one_alone() {
         assert_eq!(subs[0].last_success_at, None, "{code}");
     }
 }
+
+#[tokio::test]
+async fn d3b_guard_rejects_a_stale_queued_notice_before_encryption_or_send() {
+    let setup = Setup::new("https://hennery.example");
+    setup.subscribe("https://push.example.net/device", &Browser::new(21), None);
+    let delivery = setup.delivery(at_once());
+    let (push, notices) = Push::new();
+    let current_guard = notices.guard();
+    push.set_guard(Arc::new(|_| false));
+    let done = delivery
+        .deliver_guarded(&notice(&setup.hat()), current_guard)
+        .await
+        .unwrap();
+    assert!(done.is_empty());
+    assert!(setup.fake.sent().is_empty());
+}
+#[tokio::test(start_paused = true)]
+async fn d3b_guard_is_rechecked_after_retry_delay() {
+    let setup = Setup::new("https://hennery.example");
+    setup.subscribe("https://push.example.net/device", &Browser::new(22), None);
+    setup.fake.answer(
+        "https://push.example.net/device",
+        &[Sent::Status {
+            code: 503,
+            retry_after: None,
+        }],
+    );
+    let current = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let change = current.clone();
+    setup.fake.on_send(move || {
+        change.store(false, std::sync::atomic::Ordering::SeqCst);
+    });
+    let (push, notices) = Push::new();
+    push.set_guard(Arc::new(move |_| current.load(std::sync::atomic::Ordering::SeqCst)));
+    let result = setup
+        .delivery(at_once())
+        .deliver_guarded(&notice(&setup.hat()), notices.guard())
+        .await
+        .unwrap();
+    assert_eq!(setup.fake.sent().len(), 1, "revoked work must not retry");
+    assert_eq!(result[0].1, Outcome::Suppressed);
+    assert_eq!(
+        setup.hosts.subscriptions().unwrap()[0].last_error,
+        None,
+        "revoked work is not a device failure"
+    );
+}
+#[tokio::test]
+async fn d3b_production_queue_uses_the_installed_guard() {
+    let setup = Setup::new("https://hennery.example");
+    setup.subscribe("https://push.example.net/device", &Browser::new(23), None);
+    let (push, notices) = Push::new();
+    let (seen, mut seen_rx) = tokio::sync::mpsc::unbounded_channel();
+    push.set_guard(Arc::new(move |_| {
+        seen.send(()).unwrap();
+        false
+    }));
+    let task = tokio::spawn(setup.delivery(at_once()).run(notices));
+    push.notify(notice(&setup.hat()));
+    tokio::time::timeout(Duration::from_secs(5), seen_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(setup.fake.sent().is_empty());
+    task.abort();
+}
