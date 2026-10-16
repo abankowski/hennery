@@ -1,3 +1,6 @@
+DROP TRIGGER family_view_hat_frozen;
+DROP TRIGGER family_view_notice_update;
+DROP TABLE view_scope_invalidations;
 -- Test-only rollback of sessions migration 21 for historical schema fixtures.
 DROP TRIGGER family_view_attention_insert;
 DROP TRIGGER family_view_attention_update;

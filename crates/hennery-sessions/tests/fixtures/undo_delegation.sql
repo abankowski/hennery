@@ -1,3 +1,6 @@
+DROP TRIGGER family_view_hat_frozen;
+DROP TRIGGER family_view_notice_update;
+DROP TABLE view_scope_invalidations;
 -- Test-only rollback of migration 18 before reconstructing a historical schema.
 -- Production migrations remain append-only.
 DROP TRIGGER family_view_attention_insert;

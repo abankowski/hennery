@@ -283,14 +283,48 @@ impl Store {
                 OR (kind='question' AND state='parent_delivered'))",
             params![self.owner_id(), id],
         )?;
-        tx.execute("DELETE FROM answer_queue WHERE owner_id = ?1 AND session_id = ?2 AND delegation_handoff=0 AND delivered IS NULL
-            AND json_extract(input_origin,'$.kind')='parent'",params![self.owner_id(),id])?;
-        // Ring after commit; the durable events created by triggers are the
-        // cursor source, so the ring itself carries no authority or payload.
+        let cancelled = {
+            let mut stmt = tx.prepare("DELETE FROM answer_queue WHERE owner_id = ?1 AND session_id = ?2 AND delegation_handoff=0 AND delivered IS NULL
+                AND json_extract(input_origin,'$.kind')='parent' RETURNING pending_id")?;
+            stmt.query_map(params![self.owner_id(), id], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut reopened = Vec::new();
+        for pending_id in cancelled {
+            reopened.push(crate::store::collector_event(
+                &tx,
+                self.owner_id(),
+                id,
+                "answer_cancelled",
+                serde_json::json!({"pending_id":pending_id,"reason":"operator_takeover"}),
+                &crate::store::stamp_ago(std::time::Duration::ZERO),
+            )?);
+        }
+        // The question event and cancellation commit together. Publish only
+        // afterward; dirty family projections drain separately.
         tx.commit()?;
         drop(conn);
+        for event in reopened {
+            hub.publish(event);
+        }
         self.flush_family_changes(hub)?;
         Ok(true)
+    }
+    /// Durable owner-scope sequence, independent of frozen transcript cursors.
+    pub fn view_scope_revision(&self) -> Result<i64> {
+        Ok(self.conn().query_row(
+            "SELECT COALESCE(MAX(revision),0) FROM view_scope_invalidations WHERE owner_id = ?1",
+            [self.owner_id()],
+            |row| row.get(0),
+        )?)
+    }
+    pub fn session_scope_frozen(&self, id: &str) -> Result<bool> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions s JOIN purged_hats p
+            ON p.owner_id = ?1 AND p.hat_id=s.hat_id WHERE s.owner_id = ?1 AND s.id = ?2)",
+            params![self.owner_id(), id],
+            |row| row.get(0),
+        )?)
     }
     pub fn operator_waiting_count(&self, hat: Option<&str>) -> Result<u32> {
         Ok(self.conn().query_row("SELECT count(*) FROM sessions s WHERE s.owner_id = ?1 AND s.lifecycle<>'deleted'
@@ -301,8 +335,12 @@ impl Store {
               OR (s.activity='blocked' AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=s.id AND p.state='open')))",params![self.owner_id(),hat],|r|r.get(0))?)
     }
     /// Both source and parent invalidations are derived from owner-authorized
-    /// current edges. A deleted edge emits its own parent event in migration 21.
+    /// current edges. On resume, durable owner-scope removals replay even
+    /// when no transcript cursor advanced; ordinary event polls omit them.
     pub fn family_changed_after(&self, after: i64) -> Result<Vec<String>> {
+        self.family_changes_after(after, true)
+    }
+    pub(crate) fn family_changes_after(&self, after: i64, include_scope: bool) -> Result<Vec<String>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT session_id FROM (
@@ -310,11 +348,13 @@ impl Store {
             UNION ALL SELECT f.parent_id,e.event_id FROM events e JOIN session_families f ON f.owner_id = ?1 AND f.child_id=e.session_id
             JOIN sessions p ON p.owner_id = ?1 AND p.id=f.parent_id AND p.hat_id=f.hat_id AND p.lifecycle<>'deleted'
             JOIN sessions c ON c.owner_id = ?1 AND c.id=f.child_id AND c.hat_id=f.hat_id AND c.lifecycle<>'deleted'
-            WHERE e.owner_id = ?1 AND e.event_id>?2 AND e.applied=1)
+            WHERE e.owner_id = ?1 AND e.event_id>?2 AND e.applied=1
+            UNION ALL SELECT s.id,?2 FROM sessions s JOIN purged_hats v
+                ON v.owner_id = ?1 AND v.hat_id=s.hat_id WHERE s.owner_id = ?1 AND s.lifecycle<>'deleted' AND ?3)
             GROUP BY +session_id ORDER BY MAX(event_id)",
         )?;
         Ok(stmt
-            .query_map(params![self.owner_id(), after], |r| r.get(0))?
+            .query_map(params![self.owner_id(), after, include_scope], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?)
     }
 }

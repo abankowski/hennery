@@ -1395,7 +1395,12 @@ fn sse_messages(store: &Store, e: &EventDto, catalog: bool) -> Vec<Result<Event,
 fn pending_in(store: &Store, e: &EventDto) -> Option<PendingItem> {
     if !matches!(
         e.kind.as_str(),
-        "pending_opened" | "pending_resolved" | "pending_cancelled" | "answer_submitted" | "answer_result"
+        "pending_opened"
+            | "pending_resolved"
+            | "pending_cancelled"
+            | "answer_submitted"
+            | "answer_result"
+            | "answer_cancelled"
     ) {
         return None;
     }
@@ -1592,6 +1597,54 @@ fn with_end_mark(messages: Vec<Result<Event, Infallible>>, ends: bool) -> Vec<Op
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn review_reopening_event_updates_the_legacy_pending_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = AppState::new(
+            crate::store::Store::open(&db).unwrap(),
+            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        state.store.create_session("s1", "h", "a", "/p", "hat", None).unwrap();
+        state
+            .store
+            .ingest("s1", 1, &SessionBody::session_started("r", "agent"))
+            .unwrap();
+        state
+            .store
+            .ingest(
+                "s1",
+                2,
+                &SessionBody::PendingOpened {
+                    pending_id: "q".into(),
+                    indexed: Indexed {
+                        pending: Some(Box::new(hennery_proto::frames::PendingExtract {
+                            id: "q".into(),
+                            kind: hennery_proto::frames::PendingKind::Elicitation,
+                            option_ids: None,
+                            title: None,
+                        })),
+                        ..Default::default()
+                    },
+                    payload: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        let event = EventDto {
+            kind: "answer_cancelled".into(),
+            body: serde_json::json!({"pending_id":"q"}),
+            ..event(3)
+        };
+        let messages = sse_messages(&state.store, &event, false);
+        assert_eq!(messages.len(), 2);
+        let text = format!("{:?}", messages[1]);
+        assert!(
+            text.contains("pending_changed") && text.contains(r#"\"answered\":false"#),
+            "{text}"
+        );
+    }
 
     fn event(event_id: i64) -> EventDto {
         EventDto {

@@ -82,3 +82,22 @@ CREATE TRIGGER family_view_operation_insert AFTER INSERT ON session_operations
 BEGIN
  UPDATE sessions SET family_dirty=1 WHERE owner_id=NEW.owner_id AND id=NEW.child_id AND lifecycle<>'deleted';
 END;
+
+-- A scope removal belongs to the owner, never to a now-frozen session.
+-- Its sequence is separate from transcript events. Resumed list streams
+-- replay frozen rows independently of their transcript-event cursor.
+CREATE TABLE view_scope_invalidations (
+ owner_id TEXT PRIMARY KEY,
+ revision INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO view_scope_invalidations(owner_id,revision)
+ SELECT id,(SELECT count(*) FROM purged_hats p WHERE p.owner_id=owners.id) FROM owners;
+CREATE TRIGGER family_view_hat_frozen AFTER INSERT ON purged_hats
+BEGIN
+ UPDATE view_scope_invalidations SET revision=revision+1 WHERE owner_id=NEW.owner_id;
+END;
+CREATE TRIGGER family_view_notice_update AFTER UPDATE OF state,reason,accepted_revision ON delegation_notices
+WHEN NEW.state IS NOT OLD.state OR NEW.reason IS NOT OLD.reason OR NEW.accepted_revision IS NOT OLD.accepted_revision
+BEGIN
+ UPDATE sessions SET family_dirty=1 WHERE owner_id=NEW.owner_id AND id=NEW.child_id AND lifecycle<>'deleted';
+END;

@@ -4401,7 +4401,7 @@ const GROUP_STARTS: &str = "SELECT event_id FROM events
 /// its `pending_id`.
 const PENDING_LAST_EVENT: &str = "SELECT MAX(event_id) FROM events
      WHERE session_id = ?1
-           AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'pending_resolved', 'pending_cancelled')
+           AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'answer_cancelled', 'pending_resolved', 'pending_cancelled')
            AND json_extract(body, '$.pending_id') = ?2 AND applied = 1 AND owner_id = ?3";
 
 /// A question's `pending_opened` event (`pending_opened_at`): the one its
@@ -4732,7 +4732,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT json_extract(body, '$.pending_id') AS pending_id FROM events
              WHERE session_id = ?1
-                   AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'pending_resolved',
+                   AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'answer_cancelled', 'pending_resolved',
                                 'pending_cancelled')
                    AND event_id > ?2 AND applied = 1 AND owner_id = ?3
              GROUP BY pending_id ORDER BY MIN(event_id)",

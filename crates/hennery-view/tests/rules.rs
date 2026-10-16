@@ -1018,3 +1018,57 @@ fn a_free_text_pairing_past_its_cap_pairs_with_nothing() {
         })
     );
 }
+
+#[test]
+fn review_answer_cancellation_reopens_only_undelivered_open_questions() {
+    let opened = ev(
+        2,
+        "pending_opened",
+        json!({"pending_id":"q","indexed":{"pending":{"id":"q","kind":"elicitation"}},"payload":{}}),
+    );
+    let mut f = Fold::new();
+    f.apply(&opened, &none);
+    f.apply(&ev(3, "answer_submitted", json!({"pending_id":"q"})), &none);
+    f.take();
+    assert!(f.apply(&ev(4, "answer_cancelled", json!({"pending_id":"q"})), &none));
+    let changed = f.take();
+    assert_eq!(changed.len(), 1);
+    let Body::Question(q) = &changed[0].body else { panic!() };
+    assert!(!q.answered && q.delivered.is_none());
+    assert_eq!(changed[0].version, 4);
+    f.apply(&ev(5, "answer_submitted", json!({"pending_id":"q"})), &none);
+    f.apply(
+        &ev(6, "answer_result", json!({"pending_id":"q","delivered":true})),
+        &none,
+    );
+    f.take();
+    f.apply(&ev(7, "answer_cancelled", json!({"pending_id":"q"})), &none);
+    let Body::Question(q) = &f.current().get("question:q").unwrap().body else {
+        panic!()
+    };
+    assert!(
+        q.answered && q.delivered == Some(true),
+        "delivered answers never reopen"
+    );
+    let mut f = Fold::new();
+    f.apply(&opened, &none);
+    f.apply(&ev(3, "answer_submitted", json!({"pending_id":"q"})), &none);
+    f.apply(
+        &ev(
+            4,
+            "pending_cancelled",
+            json!({"pending_id":"q","reason":"host_restarted"}),
+        ),
+        &none,
+    );
+    f.take();
+    assert!(!f.apply(&ev(5, "answer_cancelled", json!({"pending_id":"q"})), &none));
+    let Body::Question(q) = &f.current().get("question:q").unwrap().body else {
+        panic!()
+    };
+    assert_eq!(q.state, PendingState::Cancelled);
+    assert!(
+        q.answered && q.delivered == Some(false),
+        "terminal questions never reopen"
+    );
+}

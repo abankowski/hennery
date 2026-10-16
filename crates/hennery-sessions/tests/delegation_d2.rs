@@ -185,6 +185,201 @@ fn d4_counts_parent_handled_questions_and_takeover_are_factual_and_atomic() {
 }
 
 #[test]
+fn review_takeover_reopening_question_advances_its_stream_version() {
+    let (w, p) = pair();
+    let hub = Hub::new();
+    let mut heard = hub.subscribe();
+    pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
+    w.store
+        .queue_ordinary_answer(
+            &p,
+            1,
+            "digest",
+            &hennery_sessions::delegation_control::DelegatedAnswer {
+                key: "review",
+                child: "child",
+                pending: "ordinary",
+                answer: &answer(),
+            },
+            &hub,
+        )
+        .unwrap();
+    let before = w.store.question_snapshot("child", "ordinary").unwrap().unwrap();
+    let hennery_view::Body::Question(q) = &before.body else {
+        panic!()
+    };
+    assert!(q.answered && !q.answerable);
+    let cursor = w.store.max_event_id().unwrap();
+    assert!(w.store.take_over_child("child", &hub).unwrap());
+    let after = w.store.question_snapshot("child", "ordinary").unwrap().unwrap();
+    let hennery_view::Body::Question(q) = &after.body else {
+        panic!()
+    };
+    assert!(!q.answered && q.answerable, "takeover reopens canonical answerability");
+    assert!(
+        after.version > before.version,
+        "a reopened question must have a newer stream version: before={}, after={}",
+        before.version,
+        after.version
+    );
+    assert_eq!(
+        w.store.pending_touched_after("child", cursor).unwrap(),
+        vec!["ordinary".to_string()]
+    );
+    let mut published = Vec::new();
+    while let Ok(event) = heard.try_recv() {
+        published.push(event);
+    }
+    assert!(
+        published
+            .iter()
+            .any(|event| event.kind == "answer_cancelled" && event.body["pending_id"] == "ordinary")
+    );
+    let cursor = w.store.max_event_id().unwrap();
+    assert!(w.store.take_over_child("child", &hub).unwrap());
+    assert_eq!(
+        w.store.max_event_id().unwrap(),
+        cursor,
+        "repeated takeover creates no second reopening"
+    );
+}
+
+#[test]
+fn review_notice_routing_state_reason_and_grant_changes_invalidate_both_endpoints() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
+    let hub = Hub::new();
+    w.store.flush_family_changes(&hub).unwrap();
+    for (state, reason) in [
+        ("waiting_config", Some("config_wait")),
+        ("awaiting_reconciliation", None),
+        ("parent_delivered", None),
+        ("parent_delivered", Some("readback_changed")),
+        ("parent_delivered", None),
+    ] {
+        let cursor = w.store.max_event_id().unwrap();
+        raw(&w).execute("UPDATE delegation_notices SET state=?2,reason=?3 WHERE owner_id=?1 AND child_id='child' AND pending_id='ordinary'",params![w.store.owner_id(),state,reason]).unwrap();
+        w.store.flush_family_changes(&hub).unwrap();
+        let page = w.store.family_page("child", "", 20).unwrap().unwrap();
+        assert_eq!(page.questions[0].handling, state);
+        assert!(
+            page.summary.family.unwrap().revision > cursor,
+            "state={state} reason={reason:?}"
+        );
+        let changed = w.store.family_changed_after(cursor).unwrap();
+        assert!(changed.iter().any(|id| id == "parent") && changed.iter().any(|id| id == "child"));
+    }
+    let cursor = w.store.max_event_id().unwrap();
+    raw(&w).execute("UPDATE delegation_notices SET accepted_revision=accepted_revision+1 WHERE owner_id=?1 AND child_id='child' AND pending_id='ordinary'",[w.store.owner_id()]).unwrap();
+    w.store.flush_family_changes(&hub).unwrap();
+    let page = w.store.family_page("child", "", 20).unwrap().unwrap();
+    assert_eq!(page.questions[0].handling, "operator_required");
+    assert!(page.summary.family.unwrap().revision > cursor);
+}
+
+#[test]
+fn review_scope_invalidations_are_owner_bound_and_survive_reopen() {
+    let (w, _) = pair();
+    let before = w.store.view_scope_revision().unwrap();
+    raw(&w)
+        .execute(
+            "INSERT INTO view_scope_invalidations(owner_id,revision) VALUES ('other-owner',99)",
+            [],
+        )
+        .unwrap();
+    assert_eq!(w.store.view_scope_revision().unwrap(), before);
+    raw(&w)
+        .execute(
+            "INSERT INTO purged_hats(owner_id,hat_id,purged_at) VALUES (?1,?2,1)",
+            params![w.store.owner_id(), w.hat],
+        )
+        .unwrap();
+    assert!(w.store.view_scope_revision().unwrap() > before);
+    assert!(w.store.session_scope_frozen("child").unwrap());
+    assert!(!w.store.session_scope_frozen("foreign").unwrap());
+    let reopened = Store::open(&w.db).unwrap();
+    assert_eq!(
+        reopened.view_scope_revision().unwrap(),
+        w.store.view_scope_revision().unwrap()
+    );
+    let changed = reopened.family_changed_after(i64::MAX).unwrap();
+    assert!(
+        changed.iter().any(|id| id == "child"),
+        "a resumed event cursor cannot skip durable scope removal"
+    );
+}
+
+#[test]
+fn review_notice_dispatch_invalidates_family_routing() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
+    let (hub, _rx) = connected();
+    w.store.flush_family_changes(&hub).unwrap();
+    let before = w.store.family_page("child", "", 20).unwrap().unwrap();
+    assert_eq!(before.questions[0].handling, "parent_queued");
+    let cursor = w.store.max_event_id().unwrap();
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+    w.store.flush_family_changes(&hub).unwrap();
+    let after = w.store.family_page("child", "", 20).unwrap().unwrap();
+    assert_eq!(after.questions[0].handling, "awaiting_reconciliation");
+    assert!(
+        after.summary.family.unwrap().revision > before.summary.family.unwrap().revision,
+        "routing changed without a family revision"
+    );
+    assert!(
+        w.store
+            .family_changed_after(cursor)
+            .unwrap()
+            .contains(&"child".to_string())
+    );
+}
+
+#[test]
+fn review_freeze_invalidates_existing_family_and_attention_subscribers() {
+    let w = World::new();
+    let p = w.start("parent", &w.other, McpIsolation::ClaudeStrict).unwrap();
+    w.active("parent");
+    child(&w, &p, "child", &w.other);
+    for id in ["parent", "child"] {
+        w.store
+            .ingest(
+                id,
+                2,
+                &SessionBody::SessionParked {
+                    reason: ParkReason::Idle,
+                },
+            )
+            .unwrap();
+    }
+    raw(&w)
+        .execute(
+            "INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,state,incident)
+        VALUES (?1,'review-status','child',?2,'child_failed','open','review-status')",
+            params![w.store.owner_id(), w.other],
+        )
+        .unwrap();
+    let hub = Hub::new();
+    w.store.flush_family_changes(&hub).unwrap();
+    assert_eq!(w.store.operator_waiting_count(Some(&w.other)).unwrap(), 1);
+    let cursor = w.store.max_event_id().unwrap();
+    assert!(matches!(
+        Hosts::open(&w.db).unwrap().begin_purge(&w.other, 1).unwrap(),
+        hennery_kernel::hats::PurgeStart::Frozen { .. }
+    ));
+    w.store.refresh_delegation_attention(&hub, i64::MAX / 2).unwrap();
+    assert!(w.store.family_page("parent", "", 20).unwrap().is_none());
+    assert_eq!(w.store.operator_waiting_count(Some(&w.other)).unwrap(), 0);
+    assert!(
+        w.store
+            .family_changed_after(cursor)
+            .unwrap()
+            .contains(&"child".to_string()),
+        "family disappeared and badge changed, but subscribed clients have no invalidation"
+    );
+}
+
+#[test]
 fn d4_parent_child_counts_include_parent_handled_waiting_and_status_attention() {
     let (w, _) = pair();
     pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
