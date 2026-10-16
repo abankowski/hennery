@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Freeze and materialize OCI bytes through R1's signed global inventory."""
+"""Assemble and materialize exact OCI bytes bound by release SHA256SUMS."""
 import argparse
 import io
 import json
-import os
 from pathlib import Path
 import re
 import sys
@@ -11,7 +10,7 @@ import tarfile
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / 'release'))
-import approval
+import contract
 import gate
 import supply
 import image
@@ -61,7 +60,7 @@ def tar_files(raw):
 def retained_file(candidate, inventory, name):
     entry = next(a for a in inventory['artifacts'] if a['name'] == name)
     raw = (candidate / name).read_bytes()
-    gate.require(len(raw) == entry['size'] and gate.digest(raw) == entry['sha256'], 'retained OCI payload changed during verification')
+    gate.require(len(raw) == entry['size'] and gate.digest(raw) == entry['sha256'], 'release OCI payload changed during verification')
     return raw
 
 
@@ -75,7 +74,7 @@ def materialize_layout(layout, files):
     paths = list(layout.rglob('*'))
     gate.require(not layout.is_symlink() and all(not p.is_symlink() and (p.is_file() or p.is_dir()) for p in paths), 'nonregular working OCI')
     actual = {p.relative_to(layout).as_posix(): p.read_bytes() for p in paths if p.is_file()}
-    gate.require(actual == files, 'working OCI differs from signed layout')
+    gate.require(actual == files, 'working OCI differs from release layout')
 
 
 def metadata(path, raw):
@@ -86,13 +85,13 @@ def metadata(path, raw):
             output.write(raw)
 
 
-def inspect_candidate(candidate, work, raw):
-    # Data qualification is shared by the unprivileged aggregate and the
-    # publishing verifier. Only qualify() authenticates publication authority.
-    gate.require(not work.resolve().is_relative_to(candidate.resolve()), 'OCI working directory must be outside immutable candidate')
-    inventory = gate.strict_json(raw)
-    gate.verify_files(inventory, candidate)
-    gate.require('ghcr' in inventory['channels'] and set(TARGETS.values()) <= set(inventory['targets']), 'signed inventory needs GHCR and both Linux targets')
+def inspect_release(candidate, work, inventory):
+    # Unprivileged data acceptance confers no publishing authority. Credentialed
+    # callers authenticate the signed tag and exact-run attestations separately.
+    gate.require(not work.resolve().is_relative_to(candidate.resolve()), 'OCI working directory must be outside immutable release')
+    current = contract.load(candidate)
+    gate.require(current == inventory, "release OCI metadata changed")
+    gate.require('ghcr' in inventory['channels'] and set(TARGETS.values()) <= set(inventory['targets']), 'release needs GHCR and both Linux targets')
     supply.verify_binary_inventory(inventory, candidate)
     files = tar_files(retained_file(candidate, inventory, 'ghcr-oci-layout.tar'))
     index = gate.strict_json(retained_file(candidate, inventory, 'ghcr-index.json'))
@@ -103,7 +102,7 @@ def inspect_candidate(candidate, work, raw):
     materialize_layout(work / 'layout', files)
     binaries = {a: inventory['binaries'][t]['sha256'] for a, t in TARGETS.items()}
     actual = descriptor(work / 'layout', binaries, inventory['source_sha'], inventory['tag'].removeprefix('v'))
-    gate.require(index == actual, 'signed image descriptor differs from actual OCI')
+    gate.require(index == actual, 'release image descriptor differs from actual OCI')
     metadata(work / 'verified.json', gate.canonical(actual))
     metadata(work / 'binary-sha256.json', gate.canonical(binaries))
     metadata(work / 'index-digest.txt', (actual['digest'] + '\n').encode())
@@ -137,21 +136,10 @@ def inspect_release(candidate, work, inventory):
 
 def accept(candidate, work, revision, version):
     candidate, work = Path(candidate), Path(work)
-    raw = (candidate / 'release-inventory.json').read_bytes()
-    inventory = gate.strict_json(raw)
+    inventory = contract.load(candidate)
     gate.require(inventory['source_sha'] == revision and inventory['tag'] == 'v' + version,
-                 'candidate source/tag mismatch')
-    return inspect_candidate(candidate, work, raw)
-
-
-def qualify(candidate, expected, work, inputs):
-    candidate, work = Path(candidate), Path(work)
-    raw = (candidate / 'release-inventory.json').read_bytes()
-    proof = approval.verify_dispatch(candidate, inputs)
-    gate.require(proof['inventory_sha256'] == gate.digest(raw) == expected, 'signed inventory digest mismatch')
-    actual = inspect_candidate(candidate, work, raw)
-    metadata(work / 'release-inventory.json.asc', inputs['maintainer_signature'].encode())
-    return actual
+                 'release source/tag mismatch')
+    return inspect_release(candidate, work, inventory)
 
 
 def main():
@@ -161,20 +149,14 @@ def main():
     build.add_argument('candidate', type=Path); build.add_argument('work', type=Path)
     build.add_argument('revision'); build.add_argument('version')
     build.add_argument('natives', type=Path, nargs=2)
-    check = sub.add_parser('qualify')
-    check.add_argument('candidate', type=Path); check.add_argument('inventory_sha256')
-    check.add_argument('work', type=Path)
     acceptance = sub.add_parser('accept')
     acceptance.add_argument('candidate', type=Path); acceptance.add_argument('work', type=Path)
     acceptance.add_argument('revision'); acceptance.add_argument('version')
     args = parser.parse_args()
     if args.command == 'assemble':
         result = assemble(args.candidate, args.work, args.natives, args.revision, args.version)
-    elif args.command == 'accept':
-        result = accept(args.candidate, args.work, args.revision, args.version)
     else:
-        inputs = gate.strict_json(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())['inputs']
-        result = qualify(args.candidate, args.inventory_sha256, args.work, inputs)
+        result = accept(args.candidate, args.work, args.revision, args.version)
     print(gate.canonical(result).decode(), end='')
 
 

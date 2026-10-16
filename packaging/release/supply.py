@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate notices, source material, SPDX and final inventories before signing.
+"""Generate notices, source material, SPDX and final release materials before attestation.
 
 Includes build/dev dependencies conservatively. Missing licence material is a
 finding, never automatically treated as permission to redistribute. Downloaded
@@ -16,6 +16,7 @@ import uuid
 import urllib.parse
 
 import gate
+import contract
 from adapter_manifest import read_manifest
 
 
@@ -131,23 +132,28 @@ def spdx(packages, source_sha, target):
 
 
 def checksums(root):
-    files = sorted(p for p in Path(root).iterdir() if p.name not in ('sha256.sum', 'release-inventory.json'))
-    gate.require(all(p.is_file() and not p.is_symlink() for p in files), 'checksum inventory contains nonregular file')
-    (Path(root) / 'sha256.sum').write_text(''.join(f'{gate.digest(p.read_bytes())}  {p.name}\n' for p in files))
+    root = Path(root)
+    entries = [(p.name, gate.digest(contract.regular(p))) for p in sorted(root.iterdir()) if p.name != contract.CHECKSUMS]
+    raw = ''.join(f'{sha}  {name}\n' for name, sha in entries).encode('ascii')
+    contract.parse_checksums(raw)
+    (root / contract.CHECKSUMS).write_bytes(raw)
     verify_checksums(root)
 
 
 def verify_checksums(root):
+    return contract.verify_files(root)
+
+
+def freeze(root, metadata):
+    # Data generation only; the tag workflow supplies signature-verified source
+    # metadata. Public consumers must still verify tag and every attestation.
     root = Path(root)
-    listed = {}
-    for line in (root / 'sha256.sum').read_text().splitlines():
-        match = re.fullmatch(r'([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._-]*)', line)
-        gate.require(match is not None, 'malformed combined checksum list')
-        sha, name = match.groups()
-        gate.require(name not in listed and name not in ('sha256.sum', 'release-inventory.json'), 'duplicate/cyclic checksum entry')
-        listed[name] = sha
-    actual = {p.name: gate.digest(p.read_bytes()) for p in root.iterdir() if p.name not in ('sha256.sum', 'release-inventory.json') and p.is_file() and not p.is_symlink()}
-    gate.require(listed and listed == actual, 'combined checksum inventory incomplete or digest mismatch')
+    gate.require(not any((root / name).exists() or (root / name).is_symlink() for name in (contract.METADATA, contract.CHECKSUMS)), 'release already frozen')
+    gate.require(not gate.strict_json(contract.regular(root / 'licence-findings.json'))['findings'], 'unresolved licence findings: maintainer review/materials required')
+    contract.validate_metadata(metadata)
+    require_contract(root, metadata['channels'], metadata['targets'], metadata['tag'])
+    metadata = metadata | {'binaries': binary_inventory(root, metadata['targets'])}
+    return contract.freeze(root, metadata)
 
 
 def dependency_sources(cargo, frontend, destination):
@@ -192,7 +198,7 @@ def binary_inventory(root, targets):
 
 
 def verify_binary_inventory(inventory, root):
-    gate.require(inventory.get('binaries') == binary_inventory(root, inventory['targets']), 'approved binary inventory differs from archive bytes')
+    gate.require(inventory.get('binaries') == binary_inventory(root, inventory['targets']), 'release binary metadata differs from archive bytes')
 
 
 def required_payloads(channels, targets, tag):
@@ -232,17 +238,12 @@ def require_contract(root, channels, targets, tag):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['materials', 'freeze'])
+    parser.add_argument('operation', choices=['materials'])
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--source-sha', required=True)
     parser.add_argument('--target')
     parser.add_argument('--cargo-metadata', type=Path)
     parser.add_argument('--frontend-licences', type=Path)
-    parser.add_argument('--channels', default='github')
-    parser.add_argument('--targets', default=','.join(sorted(gate.TARGETS)))
-    parser.add_argument('--tag')
-    parser.add_argument('--run-id', type=int)
-    parser.add_argument('--run-attempt', type=int)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     if args.operation == 'materials':
@@ -261,28 +262,6 @@ def main():
         identity = {'source_sha': args.source_sha, 'ui_sha256': tree_digest(ui), 'adapter_manifest_sha256': gate.digest(manifest),
                     'cargo_lock_sha256': gate.digest(Path('Cargo.lock').read_bytes()), 'web_lock_sha256': gate.digest(Path('web/pnpm-lock.yaml').read_bytes())}
         (args.output / 'build-identity.json').write_bytes(gate.canonical(identity))
-    else:
-        gate.require(not (args.output / 'release-inventory.json').exists(), 'candidate already frozen')
-        findings = gate.strict_json((args.output / 'licence-findings.json').read_bytes())
-        gate.require(not findings['findings'], 'unresolved licence findings: maintainer review/materials required')
-        require_contract(args.output, sorted(args.channels.split(',')), sorted(args.targets.split(',')), args.tag)
-        manifest_path = args.output / 'dist-manifest.json'
-        manifest = gate.strict_json(manifest_path.read_bytes())
-        # Acyclic extension: native dist entries remain available to binstall;
-        # the extension covers added material without hashing itself/checksums.
-        manifest['hennery_release_materials'] = [{'name': p.name, 'sha256': gate.digest(p.read_bytes()), 'size': p.stat().st_size}
-            for p in sorted(args.output.iterdir()) if p.name not in ('dist-manifest.json', 'sha256.sum', 'release-inventory.json')]
-        manifest_path.write_bytes(gate.canonical(manifest))
-        checksums(args.output)
-        inventory = {'schema': 1, 'repository': gate.REPOSITORY, 'source_sha': args.source_sha, 'tag': args.tag,
-                     'channels': sorted(args.channels.split(',')), 'targets': sorted(args.targets.split(',')),
-                     'candidate': {'run_id': args.run_id, 'run_attempt': args.run_attempt},
-                     'artifacts': [{'name': p.name, 'sha256': gate.digest(p.read_bytes()), 'size': p.stat().st_size} for p in sorted(args.output.iterdir())]}
-        gate.verify_files(inventory, args.output)
-        inventory['binaries'] = binary_inventory(args.output, inventory['targets'])
-        raw = gate.canonical(inventory)
-        (args.output / 'release-inventory.json').write_bytes(raw)
-        print(gate.digest(raw))
 
 
 if __name__ == '__main__':
