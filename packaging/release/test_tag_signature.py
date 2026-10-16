@@ -16,7 +16,12 @@ class TagSignature(unittest.TestCase):
 
     def test_live_fetched_tag_object_signature_and_exact_commit_are_bound(self):
         def backend(args, **kwargs):
-            if 'fetch' in args:
+            if 'init' in args:
+                self.assertIn('--bare', args)
+                self.assertIn('--template=', args)
+                out = ''
+            elif 'fetch' in args:
+                self.assertIn('https://github.com/' + gate.REPOSITORY + '.git', args)
                 out = ''
             elif 'rev-parse' in args:
                 out = 'b' * 40 + '\n'

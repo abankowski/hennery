@@ -65,15 +65,17 @@ class ChannelDelivery(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp);messages=[]
                 env={'RELEASE_CRATES_BOOTSTRAP_ENABLED':'true','RELEASE_CRATES_BOOTSTRAP_TOKEN':'offline-bootstrap'}
-                with patch.dict(os.environ,env),patch.object(release_run,'verify',return_value={'tag':'v0.1.0'}),patch('builtins.print',side_effect=lambda text:messages.append(text)),patch('subprocess.run',side_effect=RuntimeError('upload failed') if failure else None):
+                with patch.dict(os.environ,env),patch.object(release_run,'verify',return_value={'tag':'v0.1.0'}),patch('builtins.print',side_effect=lambda text:messages.append(text)),patch.object(channel_publish.crates_delivery,'run',side_effect=RuntimeError('upload failed') if failure else None):
                     if failure:
                         with self.assertRaises(RuntimeError):channel_publish.publish(root,root,'crates')
                     else:channel_publish.publish(root,root,'crates')
                 self.assertTrue(any('revoke' in str(message).lower() and 'bootstrap' in str(message).lower() for message in messages))
 
-    def test_verifier_children_do_not_receive_channel_secrets(self):
+    def test_parent_verifier_retains_transport_authority_without_global_mutation(self):
+        # Actual child exclusion is exercised by test_verifier_process's
+        # executable stand-ins. This callback is the authenticated API parent.
         def verify(*args):
-            self.assertTrue(all(name not in os.environ for name in channel_publish.SECRETS))
+            self.assertTrue(all(os.environ.get(name)=='offline-secret' for name in channel_publish.SECRETS))
             raise gate.Refused('fixture denial before any token use')
         with patch.dict(os.environ,{key:'offline-secret' for key in channel_publish.SECRETS}),patch.object(release_run,'verify',side_effect=verify):
             with self.assertRaises(gate.Refused):channel_publish.publish(Path('unused'),Path('unused'),'ghcr')
@@ -92,7 +94,7 @@ class ChannelDelivery(unittest.TestCase):
                 root=Path(tmp);events=[];uploaded=mode=='present';digest='sha256:'+'a'*64
                 def inspect(*args):events.append('inspect');return {'digest':digest}
                 def checks(*args,**kwargs):
-                    events.append('remote-verify' if kwargs.get('remote') else 'verify')
+                    events.append('fetched-verify' if kwargs.get('subjects') else 'verify')
                     if mode=='verify-failure':raise gate.Refused('wrong signature')
                 def reconcile(*args):
                     events.append('reconcile')
@@ -106,15 +108,21 @@ class ChannelDelivery(unittest.TestCase):
                         Path(command[command.index('--authfile')+1]).write_text('{}')
                     if command[:2]==['skopeo','copy']:
                         self.assertIn('--preserve-digests',command);self.assertTrue(command[-1].endswith('@'+digest));uploaded=True
-                    if command[:2]==['oras','attach'] and mode=='attach-failure':raise RuntimeError('ambiguous attach')
+                def bundles(subjects,output,before_write,**kwargs):
+                    if mode!='present':
+                        for _ in subjects:
+                            before_write();events.append('referrer-write')
+                            if mode=='attach-failure':raise RuntimeError('ambiguous referrer copy')
+                    return [(*item[:4],output/item[4].name) for item in subjects]
                 fixture=SimpleNamespace(inspect_release=inspect)
-                with patch.dict(os.environ,{'GHCR_PUBLISH_TOKEN':'offline-secret','GHCR_PUBLISH_USER':'fixture'}),patch.object(channel_publish,'shared_verify',return_value={'tag':'v0.1.0'}),patch.object(channel_publish,'image_helper',return_value=fixture),patch.object(channel_publish,'registry_helper',return_value=SimpleNamespace(reconcile=reconcile)),patch.object(channel_publish,'check_images',side_effect=checks),patch.object(channel_publish,'image_subjects',return_value=[('index','provenance',digest,'slsa',root/'bundle')]),patch('subprocess.run',side_effect=run):
+                with patch.dict(os.environ,{'GHCR_PUBLISH_TOKEN':'offline-secret','GHCR_PUBLISH_USER':'fixture'}),patch.object(channel_publish,'shared_verify',return_value={'tag':'v0.1.0'}),patch.object(channel_publish,'image_helper',return_value=fixture),patch.object(channel_publish,'registry_helper',return_value=SimpleNamespace(reconcile=reconcile)),patch.object(channel_publish,'check_images',side_effect=checks),patch.object(channel_publish,'image_subjects',return_value=[('index','provenance',digest,'slsa',root/'bundle')]),patch.object(channel_publish.registry_bundles,'reconcile',side_effect=bundles),patch('subprocess.run',side_effect=run):
                     if mode in ('conflict','attach-failure','verify-failure'):
                         with self.assertRaises((gate.Refused,RuntimeError)):channel_publish.ghcr_upload(root,root,{'tag':'v0.1.0'})
                     else:self.assertEqual(channel_publish.ghcr_upload(root,root,{'tag':'v0.1.0'})['digest'],digest)
                 if mode in ('present','conflict','verify-failure'):self.assertNotIn(['skopeo','copy'],events)
                 if mode=='verify-failure':self.assertNotIn(['skopeo','login'],events)
-                if mode in ('new','present'):self.assertEqual(events[-1],'remote-verify')
+                if mode in ('new','present'):self.assertEqual(events[-1],'fetched-verify')
+                if mode=='present':self.assertNotIn('referrer-write',events)
 
     def test_homebrew_cas_and_all_remote_conflicts(self):
         fixture=test_homebrew.Formula();fixture.setUp();self.addCleanup(fixture.tmp.cleanup);fixture.prepare()

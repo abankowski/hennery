@@ -31,7 +31,7 @@ App requirements in §§4.1, 6–8 and the R1/R3 hand-offs. Those passages descr
 the former model. The operator rejected AWS: no new storage service, account,
 App or recurring cost is authorized. Platform, licence/source, advisory,
 acceptance, channel and rollback obligations otherwise remain. Implementation
-is pending [release simplification](../plans/2026-11-04-release-simplify.md);
+is recorded in [release simplification](../plans/2026-11-04-release-simplify.md);
 this design amendment authorizes no publication.
 
 ### Authorization and threat model
@@ -169,6 +169,26 @@ Keep attestations in a dedicated job. In the `publish` job, never pass its write
 token into build/acceptance code; verification precedes every mutating API call.
 Channel secrets are step-scoped only after verification; OIDC exchange and
 registry login also follow verification. Recheck files at each upload boundary.
+
+Verifier subprocesses receive an explicit credential-free environment allow-list,
+not the publisher's environment with known secrets removed. Exclude GitHub write
+tokens, every Actions/OIDC token and ambient credential-helper/config paths;
+use fresh private Git, GPG, GitHub CLI and Docker/ORAS configuration. Fetch the
+tag from the fixed public repository into a fresh bare repository. Authenticated
+GitHub API transport remains in the Python parent. The crates writer requests
+revalidation through private pipes to that parent; its verification gate never
+spawns a child carrying the writer's registry token.
+
+GHCR Sigstore referrers use canonical OCI manifests with a fixed creation-time
+annotation and content-addressed names. Discover and fetch existing referrers,
+refuse conflicting bytes, and upload only missing deterministic manifests after
+renewed verification. Complete retries perform no image/referrer writes; partial
+retries fill only the missing set. Before channel success, fetch every expected
+bundle from the registry, check its manifest/blob digests and frozen bytes, then
+cryptographically verify those fetched bundles against the checksum-bound local
+OCI subject manifests and exact original run. Local sidecars alone cannot prove
+registry referrer availability. Registry auth belongs only to transport, never
+to the cryptographic verifier subprocess.
 
 ### Verification, publication and recovery
 

@@ -10,6 +10,7 @@ import unittest
 
 import contract
 import gate
+import verifier_process
 
 FIXTURES = Path(__file__).with_name('fixtures') / 'attestation'
 SOURCE = '26d16513386ffaa790b1c32f927544f1322e4194'
@@ -25,10 +26,9 @@ class PinnedCLI(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix='release-cli-')
         cls.addClassCleanup(cls.tmp.cleanup)
-        cls.env = {k: v for k, v in os.environ.items() if k not in
-                   ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')}
-        for key in ('GH_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'):
-            cls.env[key] = str(Path(cls.tmp.name) / key)
+        isolated = verifier_process.environment()
+        cls.env = isolated.__enter__()
+        cls.addClassCleanup(isolated.__exit__, None, None, None)
         cls.env.update(HTTPS_PROXY='http://127.0.0.1:9', HTTP_PROXY='http://127.0.0.1:9',
                        ALL_PROXY='http://127.0.0.1:9', NO_PROXY='')
         for name, digest in HASHES.items():

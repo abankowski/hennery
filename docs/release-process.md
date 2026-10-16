@@ -179,6 +179,12 @@ The job has contents write, Actions/attestations read and OIDC write; other
 permissions are absent. Job permissions exist at job start; scripts do not mint
 the built-in token only after verification.
 
+Authenticated GitHub transport stays in the publisher parent. Verifier children
+receive only an explicit credential-free allow-list and fresh private Git/GPG,
+GitHub CLI and Docker/ORAS configuration, including no GitHub or Actions/OIDC
+tokens. The crates writer asks the parent to revalidate over private pipes; it
+does not spawn a verifier with its upload token.
+
 Consumers independently verify the signed tag, the attested canonical
 `SHA256SUMS` and each consumed payload. The exact certificate identity is
 `https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/<exact-tag>`.
@@ -227,7 +233,12 @@ attempt never becomes a new producing or attesting attempt.
 - After GHCR, verify the index/platform digests and required provenance/SBOM
   referrers. Login follows local verification. Push content by digest with
   preserved digests, refuse conflicts and reconcile after ambiguous upload or
-  referrer responses. Reuse verified existing content on retry. Do not move aliases
+  referrer responses. Referrer manifests are canonical and use a fixed creation
+  timestamp: discover and fetch existing manifests/blobs, refuse differing bytes
+  and upload only missing ones. Complete retries write nothing; partial retries
+  fill the missing set. Before success, cryptographically verify every bundle
+  fetched back from the registry against the frozen OCI subject and original
+  run. Checking the original local sidecars is insufficient. Do not move aliases
   until all selected channels/public paths pass.
 
 Public install, Homebrew service/PATH, crate UI/source and image runtime

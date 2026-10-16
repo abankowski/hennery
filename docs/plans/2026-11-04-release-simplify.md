@@ -11,11 +11,19 @@
 
 ## Execution status
 
-**Phase B is implemented and replayed; independent review is pending.** Phase A's
+**Phase B is implemented and replayed; PR #163 amendments await scoped re-review.** Phase A's
 first review verdict was **CHANGES**; **scoped re-review APPROVE at 0fddcc02 (2026-10-16)**. The parent then confirmed R4/Homebrew merged and authorized build.
 The implementation keeps the accepted early-publication/denial-of-service risk;
 it introduces no service, App, account, token or paid storage. No switch was
 enabled, no release/tag was created or published, and no registry login occurred.
+
+PR #163 review returned **CHANGES** at `1307f4e3`. Both findings are amended:
+verifier children use credential-free allow-lists and isolated configuration,
+with authenticated transport/revalidation retained in the parent; GHCR uses
+deterministic missing-only referrer recovery and verifies fetched registry bundles.
+The amendment evidence below records 169 release plus 22 pinned-ORAS tests,
+125 image and 89 Node tests, 70 copy probes and the broker's 4×3 load runs.
+All publication/channel switches remain disabled. No new service or cost.
 
 Tasks 1–5 are complete. Release 147, image 122 and packaging Node 88 tests
 passed; the genuine pinned-gh contract has four passing tests. Actual
@@ -473,6 +481,70 @@ for path in sorted(expected):
  assert bool(a.stat().st_mode&0o111)==bool(b.stat().st_mode&0o111),path
 print('Extracted',count,'files;',len(deleted),'deletions;',len(expected),'tracked files/modes match',flush=True)
 ```
+
+### PR #163 review amendments (2026-10-16)
+
+- Review base `1307f4e3`, verdict **CHANGES**. High: verifier subprocess authority.
+  Medium: non-deterministic, unconditional referrer attachment and local-only
+  final verification. Both are fixed test-first; scoped re-review is requested.
+- Four real stand-in child-process tests first failed on inherited authority.
+  Six now cover release, standalone/folded image, Git/GPG, denied verification
+  and parent-transport boundaries. Children get only PATH/public TLS inputs plus
+  generated private configuration; GitHub, Actions/OIDC, unknown future secrets,
+  agent sockets and ambient helper/config paths are absent. The parent keeps
+  authenticated GitHub API access. Signed-tag logic retains its exact object,
+  source and fingerprint checks in a fresh bare repository with a fixed public URL.
+  The initial RED assertion printed inherited environment values; that local
+  diagnostic log was redacted and restricted to mode 0600. Assertions now report
+  key names rather than ambient values.
+- Crates revalidation now uses bounded sequenced private pipes to the Python
+  parent. Node has only its selected registry token and private configuration,
+  never GitHub/OIDC tokens or verifier subprocesses. Initial broker regressions,
+  strict reply bytes, sanitized failures and post-callback deadline checks were
+  observed RED before their fixes. Fifteen broker and four real-Node integration
+  tests pass. The final 4×3 runs passed all 19 methods each time; cleanup kills
+  and reaps the child before removing its private configuration.
+- Referrers use pinned canonical OCI manifests and creation annotation
+  `1970-01-01T00:00:00Z`. Real ORAS 1.3.4 tests prove complete retries write
+  nothing, partial retries fill only missing referrers, and ambiguous responses
+  reconcile under renewed approval. Advertised but unfetchable or differing
+  manifest/blob bytes refuse. A genuinely undiscoverable missing deterministic
+  manifest is repaired once and read back. Existing/read-back bundles must match
+  frozen bytes and all expected digests; final cryptography uses fetched paths
+  and local checksum-bound OCI subjects, with no registry auth in `gh` children.
+  Two fetched-subject integration regressions were RED before wiring this path.
+- `/tmp/release-simple-pr163-release-final.log`: full release suite then present,
+  **169 passed**, exit 0, including the four authentic pinned-gh offline tests.
+  `/tmp/release-simple-pr163-referrers-final.log`: **22 passed**, exit 0, at their
+  final release-suite location. All **191** methods remain discoverable by CI.
+  The first image run had 22 missing-ORAS tool errors: these publisher tests now
+  belong to the release suite, whose existing shell pins ORAS. No test skipped
+  and no tool pin, test expectation, permission or workflow gate weakened.
+- `/tmp/release-simple-pr163-image-corrected.log`: **125 passed**, exit 0.
+  `/tmp/release-simple-pr163-node-final.log`: **89 passed**, exit 0.
+  `/tmp/release-simple-pr163-policy-lint.log`: workflow authority/DAG policy and
+  `actionlint .github/workflows/*.yml`, exit 0. New source imports remain stdlib.
+- `/tmp/release-simple-pr163-rust.log`: fmt, workspace/all-target clippy,
+  hennery clippy and both generator checks all exit 0. No Rust or Nix source
+  changed. Full workspace tests, Nix and the fresh replay were not repeated for
+  this amendment, under the verification budget; their prior results stand.
+- **70 assertion-killed copy probes**: 23 credential/config/read-back integration,
+  23 referrer guards/side effects and 24 broker guards/cleanup. Every copy has
+  its own host `/bin/cp -c -R` APFS clone of `target`. Root evidence:
+  `/tmp/release-simple-pr163-probes.log`, retained root copy
+  `.superpowers/sdd/release-simplify/probes-pr163-1`. Additional retained copies:
+  sibling `release-simple-referrers/.superpowers/sdd/release-referrers/probes-1`
+  and `release-simple-crates-isolation/.superpowers/sdd/release-simplify/crates-probes-1`.
+  The parent owns cleanup; prior retained copies remain untouched.
+- Only offline local fixtures, disposable OCI layouts and stand-in executables
+  were used. Every real `gh` invocation had private configuration and dead
+  proxies; no network `gh`, registry login or publication occurred. The local
+  OCI transport tests never execute `gh`. The original first authentic Hennery
+  fixture and maintainer platform/approval/registry acceptance remain required.
+- Final **84** embedded blocks were refreshed and hash/mode checked against staged
+  tested source; no second full replay. Personal author and rule review precede
+  the exact leased SSH push. Review focus: child authority, pipe lifecycle,
+  deterministic reconciliation, fetched-bundle verification and write boundaries.
 
 ## Exact replay files
 
@@ -2258,7 +2330,7 @@ pkg-url = "{ repo }/releases/download/v{ version }/hennery-aarch64-unknown-linux
 bin-dir = "hennery-aarch64-unknown-linux-musl/{ bin }"
 ``````
 
-<!-- replay-file: {"path":"docs/README.md","mode":"100644","sha256":"329e6672e6c752b39cb609cc1d3ebca05d927378d73886a1f3edfd91a489591a","encoding":"utf8"} -->
+<!-- replay-file: {"path":"docs/README.md","mode":"100644","sha256":"acee6dd26ac740273818b2e2d7e6da03a462ae7b128c3bb1366f752810772618","encoding":"utf8"} -->
 ``````markdown
 # hennery design documents
 
@@ -2294,7 +2366,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
      and its [harness](../spikes/2026-09-25-mcp-per-session/).
 4. Plans:
    - [OAuth denial popup closure (flake 18)](plans/2026-11-04-flake-oauth-denial.md) — requires the popup's close event while accepting its self-closing click's target-closure acknowledgment; retains denial, grant and mount assertions. Controlled regression, copy probes, load and web verification are recorded; independent review and CI remain parent-owned.
-   - [Release simplification](plans/2026-11-04-release-simplify.md) — Phase B implements the operator’s source-signed single tag workflow, exact-run provenance, one protected folded publisher and consumer bootstrap; candidate storage, upload App and inventory signing removed. First review: CHANGES; scoped re-review APPROVE at 0fddcc02 (2026-10-16). Rebased onto merged R4/Homebrew at `98861052`. Release 147/image 122/Node 88 and policy/lint gates passed. See the plan for the six Rust/Nix outcomes, the recovered capacity failures, final replay evidence, retained copies and remaining maintainer gates. Publication remains disabled; independent review and full PR status are parent-owned.
+   - [Release simplification](plans/2026-11-04-release-simplify.md) — Phase B implements the operator’s source-signed single tag workflow, exact-run provenance, one protected folded publisher and consumer bootstrap; candidate storage, upload App and inventory signing removed. Design first review: CHANGES; scoped re-review APPROVE at 0fddcc02 (2026-10-16). Rebased onto merged R4/Homebrew at `98861052`. PR #163 review CHANGES at `1307f4e3` amended with credential-free verifier children, parent-only crates revalidation and deterministic GHCR referrer recovery with fetched-bundle verification. Release 169 plus 22 ORAS/image 125/Node 89, policy/actionlint, 70 copy probes and broker 4×3 passed. See the plan for Rust/Nix, prior fresh replay, retained copies and maintainer gates. Publication remains disabled; scoped re-review and full PR status are parent-owned.
    - [List-stream and MCP timing (flakes 13–14)](plans/2026-11-02-flake-list-stream.md) — paused-clock deletion checks and an awaited OAuth popup cleanup assertion, with controlled regressions, guard probes, load and replay evidence. Independent review and Linux/macOS CI remain parent-owned.
    - [Proxy fixture port lifetimes (flake 15)](plans/2026-11-03-flake-proxy-ports.md) — leases stable proxy ports across pauses and test processes outside the kernel ephemeral ranges; deterministic contention regressions, copy probes, load and replay evidence recorded. Parent review and Linux/macOS CI remain pending.
    - [Walking skeleton](plans/2026-09-26-walking-skeleton.md) — the first
@@ -2499,7 +2571,7 @@ intact. Native runner CI is the acceptance evidence.
 Generated with Claude AI — please review before distribution.
 ``````
 
-<!-- replay-file: {"path":"docs/release-process.md","mode":"100644","sha256":"7e0eb0ac379ff9089e481f58d40ffc1bf5ca093626c5ecaa115689ac5e50632e","encoding":"utf8"} -->
+<!-- replay-file: {"path":"docs/release-process.md","mode":"100644","sha256":"50e8bfffb036764e4ed5009e736666b03cb7e81177218657561a5e53d4a75c41","encoding":"utf8"} -->
 ``````markdown
 # Release process
 
@@ -2682,6 +2754,12 @@ The job has contents write, Actions/attestations read and OIDC write; other
 permissions are absent. Job permissions exist at job start; scripts do not mint
 the built-in token only after verification.
 
+Authenticated GitHub transport stays in the publisher parent. Verifier children
+receive only an explicit credential-free allow-list and fresh private Git/GPG,
+GitHub CLI and Docker/ORAS configuration, including no GitHub or Actions/OIDC
+tokens. The crates writer asks the parent to revalidate over private pipes; it
+does not spawn a verifier with its upload token.
+
 Consumers independently verify the signed tag, the attested canonical
 `SHA256SUMS` and each consumed payload. The exact certificate identity is
 `https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/<exact-tag>`.
@@ -2730,7 +2808,12 @@ attempt never becomes a new producing or attesting attempt.
 - After GHCR, verify the index/platform digests and required provenance/SBOM
   referrers. Login follows local verification. Push content by digest with
   preserved digests, refuse conflicts and reconcile after ambiguous upload or
-  referrer responses. Reuse verified existing content on retry. Do not move aliases
+  referrer responses. Referrer manifests are canonical and use a fixed creation
+  timestamp: discover and fetch existing manifests/blobs, refuse differing bytes
+  and upload only missing ones. Complete retries write nothing; partial retries
+  fill the missing set. Before success, cryptographically verify every bundle
+  fetched back from the registry against the frozen OCI subject and original
+  run. Checking the original local sidecars is insufficient. Do not move aliases
   until all selected channels/public paths pass.
 
 Public install, Homebrew service/PATH, crate UI/source and image runtime
@@ -2742,7 +2825,7 @@ immutable versions. Retain corresponding source and document remediation.
 Generated with Claude AI — please review before distribution.
 ``````
 
-<!-- replay-file: {"path":"docs/specs/2026-10-15-distribution-release-design.md","mode":"100644","sha256":"f80c013314459a306c82f6c81d9af5e2741be69c81c00901ad207fb4229acb47","encoding":"utf8"} -->
+<!-- replay-file: {"path":"docs/specs/2026-10-15-distribution-release-design.md","mode":"100644","sha256":"d7c6b44290697d8f37537c28d5218e37604739174ddf9994a5e1dc2abceb855b","encoding":"utf8"} -->
 ``````markdown
 # hennery — distribution and release design
 
@@ -2777,7 +2860,7 @@ App requirements in §§4.1, 6–8 and the R1/R3 hand-offs. Those passages descr
 the former model. The operator rejected AWS: no new storage service, account,
 App or recurring cost is authorized. Platform, licence/source, advisory,
 acceptance, channel and rollback obligations otherwise remain. Implementation
-is pending [release simplification](../plans/2026-11-04-release-simplify.md);
+is recorded in [release simplification](../plans/2026-11-04-release-simplify.md);
 this design amendment authorizes no publication.
 
 ### Authorization and threat model
@@ -2915,6 +2998,26 @@ Keep attestations in a dedicated job. In the `publish` job, never pass its write
 token into build/acceptance code; verification precedes every mutating API call.
 Channel secrets are step-scoped only after verification; OIDC exchange and
 registry login also follow verification. Recheck files at each upload boundary.
+
+Verifier subprocesses receive an explicit credential-free environment allow-list,
+not the publisher's environment with known secrets removed. Exclude GitHub write
+tokens, every Actions/OIDC token and ambient credential-helper/config paths;
+use fresh private Git, GPG, GitHub CLI and Docker/ORAS configuration. Fetch the
+tag from the fixed public repository into a fresh bare repository. Authenticated
+GitHub API transport remains in the Python parent. The crates writer requests
+revalidation through private pipes to that parent; its verification gate never
+spawns a child carrying the writer's registry token.
+
+GHCR Sigstore referrers use canonical OCI manifests with a fixed creation-time
+annotation and content-addressed names. Discover and fetch existing referrers,
+refuse conflicting bytes, and upload only missing deterministic manifests after
+renewed verification. Complete retries perform no image/referrer writes; partial
+retries fill only the missing set. Before channel success, fetch every expected
+bundle from the registry, check its manifest/blob digests and frozen bytes, then
+cryptographically verify those fetched bundles against the checksum-bound local
+OCI subject manifests and exact original run. Local sidecars alone cannot prove
+registry referrer availability. Registry auth belongs only to transport, never
+to the cryptographic verifier subprocess.
 
 ### Verification, publication and recovery
 
@@ -4873,12 +4976,11 @@ a new signed version and documentation of the incomplete old release.
 Generated with Claude AI — please review before distribution.
 ``````
 
-<!-- replay-file: {"path":"packaging/publish-crates.mjs","mode":"100644","sha256":"a3d66f864e45b254fd1696465f21a5607d0c999dfa493e48e46a689c5990c9e7","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/publish-crates.mjs","mode":"100644","sha256":"08d65a34615e7bb3a7ec64fbc9927e1c938f9d80fac6255e3a708555650a598f","encoding":"utf8"} -->
 ``````js
 // Exact-byte uploader inside R1's protected, manually approved tagged orchestrator.
 import fs from 'node:fs';
 import { join, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { sha256, readJSON, requireThat, verifyCandidate, validateSource, publishBody } from './crate-release.mjs';
@@ -4953,13 +5055,30 @@ export function releaseCratesDigest(dir) {
  verifyCandidate(dir,inventory);
  return entries.get('crates-inventory.json');
 }
-export function releaseGate({dir,signatures}) {
- const executable=resolve('packaging/release/release_run.py');
- requireThat(fs.existsSync(executable),'release gate missing from trusted checkout');
- const env={...process.env};for(const key of ['CARGO_REGISTRY_TOKEN','RELEASE_CRATES_BOOTSTRAP_TOKEN','GHCR_PUBLISH_TOKEN','HOMEBREW_TAP_TOKEN'])delete env[key];
- execFileSync('python3',[executable,'verify',resolve(dir),resolve(signatures),'crates'],{encoding:'utf8',env});
- return releaseCratesDigest(dir);
+let gateSequence=0;
+export function gateBroker() {
+ const request=process.env.CRATES_GATE_REQUEST_FD,reply=process.env.CRATES_GATE_REPLY_FD;
+ requireThat(/^[1-9][0-9]*$/.test(request||'') && /^[1-9][0-9]*$/.test(reply||'') && request!==reply,'private release gate broker missing');
+ const write=Number(request),read=Number(reply);
+ requireThat(Number.isSafeInteger(write) && Number.isSafeInteger(read) && write>=3 && read>=3
+   && fs.fstatSync(write).isFIFO() && fs.fstatSync(read).isFIFO(),'invalid private release gate pipes');
+ const sequence=++gateSequence,message=Buffer.from(`gate-v1:${sequence}\n`);
+ requireThat(fs.writeSync(write,message)===message.length,'incomplete release gate request');
+ const byte=Buffer.alloc(1);let response='';
+ while(response.length<128){
+  requireThat(fs.readSync(read,byte)===1,'release gate broker EOF/refusal');
+  response+=byte.toString('latin1');if(response.endsWith('\n'))break;
+ }
+ const match=/^ok-v1:([1-9][0-9]*):([0-9a-f]{64})\n$/.exec(response);
+ requireThat(match && match[1]===String(sequence),'release gate broker reply mismatch');
+ return match[2];
 }
+export function releaseGate({dir}) {
+ const before=releaseCratesDigest(dir),approved=gateBroker();
+ requireThat(approved===before && releaseCratesDigest(dir)===approved,'release crate manifest changed at parent gate');
+ return approved;
+}
+
 if(import.meta.url===pathToFileURL(process.argv[1]||'').href) {
  requireThat(process.env.GITHUB_ACTIONS==='true','real publisher only runs in the protected tagged workflow');
  const verifyOnly=process.argv[2]==='--verify',dir=resolve(process.argv[verifyOnly?3:2]),signatures=resolve(process.argv[verifyOnly?4:3]);
@@ -4969,7 +5088,7 @@ if(import.meta.url===pathToFileURL(process.argv[1]||'').href) {
 }
 ``````
 
-<!-- replay-file: {"path":"packaging/publish-crates.test.mjs","mode":"100644","sha256":"f3199677b23894a1360f0542f09dda6ca83a8ea0344b10c8d3662dc8028cdc8c","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/publish-crates.test.mjs","mode":"100644","sha256":"885ea337c8bd254c39e62a9d3220f1a92a3584b5cc1c218d15eb40f223d9dafe","encoding":"utf8"} -->
 ``````js
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -5018,9 +5137,9 @@ test('matching remote bytes reconcile without reupload',async()=>{const f=fixtur
 for(const [name,flags]of Object.entries({mismatch:{existing:true,mismatch:true},ambiguous:{ambiguous:true},index:{indexBad:true},remote:{unavailable:true},source:{sourceBad:true}}))test(`refuses ${name} and never uploads consumers`,async()=>{const f=fixture(),n=network(f,flags);await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>'ephemeral'}));assert.ok(n.uploads.length<=1);});
 test('approval failure refuses before obtaining credentials',async()=>{const f=fixture(),n=network(f);let acquired=false;await assert.rejects(publishFrozen({...f,...n,gate:async()=>{throw Error('refused');},credentials:async()=>{acquired=true;}}));assert.equal(acquired,false);});
 for(const changed of ['inventory','crate','missing'])test(`refuses ${changed} after approval`,async()=>{const f=fixture(),n=network(f);let count=0;await assert.rejects(publishFrozen({...f,...n,credentials:async()=>'ephemeral',gate:async()=>{if(++count===3){const p=join(f.dir,changed==='inventory'?'crates-inventory.json':f.crates[0].file);if(changed==='missing')fs.rmSync(p);else fs.appendFileSync(p,'bad');}}}));assert.equal(n.uploads.length,0);});
-test('R1 adapter missing from trusted checkout fails closed',()=>{
+test('missing release payload refuses before any broker authority',()=>{
  const cwd=process.cwd(),root=fs.mkdtempSync(join(tmpdir(),'r3-no-gate-'));
- try{process.chdir(root);assert.throws(()=>releaseGate({dir:root,signatures:root}),/gate.*missing/);}finally{process.chdir(cwd);}
+ try{process.chdir(root);assert.throws(()=>releaseGate({dir:root,signatures:root}));}finally{process.chdir(cwd);}
 });
 test('approval invalidated during source verification refuses credentials',async()=>{
  const f=fixture(),n=network(f);let invalid=false,acquired=false;
@@ -5077,6 +5196,22 @@ test('precredential preflight validates source and approval without any upload',
  const f=fixture(),n=network(f);let gates=0;
  const result=await preflight({...f,...n,gate:async()=>{gates++;}});
  assert.equal(result.inventory.version,'0.1.0-alpha.1');assert.equal(gates,2);assert.equal(n.uploads.length,0);
+});
+
+test('parent broker is mandatory with no subprocess or ambient-credential fallback',async()=>{
+ const {gateBroker}=await import('./publish-crates.mjs');
+ const names=['CRATES_GATE_REQUEST_FD','CRATES_GATE_REPLY_FD'];
+ const original=Object.fromEntries(names.map(name=>[name,process.env[name]]));
+ try{
+  for(const name of names)delete process.env[name];
+  assert.throws(()=>gateBroker(),/private release gate broker missing/);
+  for(const [request,reply] of [['0','1'],['3','3'],['3junk','4'],['9007199254740993','4']]){
+   process.env.CRATES_GATE_REQUEST_FD=request;process.env.CRATES_GATE_REPLY_FD=reply;
+   assert.throws(()=>gateBroker(),/private release gate/);
+  }
+ }finally{
+  for(const name of names){if(original[name]===undefined)delete process.env[name];else process.env[name]=original[name];}
+ }
 });
 ``````
 
@@ -5229,11 +5364,10 @@ licence notices, backups and the existing native/runtime/public-path acceptance.
 Generated with Claude AI — please review before distribution.
 ``````
 
-<!-- replay-file: {"path":"packaging/release/channel_publish.py","mode":"100644","sha256":"172725975c03947ae6bdcdb6de3d93bf7e1a57a3b454c0e135c40ef0d039115c","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/release/channel_publish.py","mode":"100644","sha256":"df4a80c0f171836b45bad79151c50c523169a2ca1142df816d143fa832a0d162","encoding":"utf8"} -->
 ``````python
 """Folded channel delivery; credentials are read only after the shared verifier."""
 import base64
-from contextlib import contextmanager
 import importlib.util
 import os
 from pathlib import Path
@@ -5243,24 +5377,22 @@ import sys
 import tempfile
 
 import contract
+import crates_delivery
 import gate
 import homebrew
 import homebrew_publish as tap
+import registry_bundles
+import verifier_process
 
 ROOT=Path(__file__).resolve().parents[2]
 SECRETS=('HOMEBREW_TAP_TOKEN','GHCR_PUBLISH_TOKEN','CARGO_REGISTRY_TOKEN','RELEASE_CRATES_BOOTSTRAP_TOKEN')
 
 
-@contextmanager
-def verification_environment():
-    removed={key:os.environ.pop(key) for key in SECRETS if key in os.environ}
-    try:yield
-    finally:os.environ.update(removed)
-
-
 def shared_verify(root,signatures,channel):
     import release_run
-    with verification_environment():return release_run.verify(root,signatures,channel)
+    # Authenticated API transport stays in this parent; verifier children use
+    # verifier_process's credential-free allow-list without mutating os.environ.
+    return release_run.verify(root,signatures,channel)
 
 def crates_token(environment):
     bootstrap=environment.get('RELEASE_CRATES_BOOTSTRAP_TOKEN')
@@ -5306,19 +5438,21 @@ def image_subjects(work,signatures):
             yield subject,kind,digest,('https://slsa.dev/provenance/v1' if kind=='provenance' else 'https://spdx.dev/Document'),signatures/f'ghcr-{subject}-{kind}.json'
 
 
-def check_images(root,signatures,value,work,remote=False):
+def check_images(root,signatures,value,work,subjects=None):
     image_helper().inspect_release(root,work,value)
     expected=gate.strict_json(contract.regular(root/'ghcr-index.json'))
     gate.require(gate.strict_json(contract.regular(work/'verified.json'))==expected,'working OCI descriptor differs')
-    for _,_,digest,predicate,bundle in image_subjects(work,signatures):
+    frozen=list(image_subjects(work,signatures))
+    subjects=frozen if subjects is None else list(subjects)
+    gate.require([item[:4] for item in subjects]==[item[:4] for item in frozen],
+                 'registry read-back subjects differ from frozen set')
+    for _,_,digest,predicate,bundle in subjects:
         contract.regular(bundle)
         manifest=work/'layout/blobs/sha256'/digest.removeprefix('sha256:')
         gate.require('sha256:'+gate.digest(contract.regular(manifest))==digest,'local OCI manifest differs')
-        subject='oci://ghcr.io/marcinwadon/hennery@'+digest if remote else manifest
-        command=contract.attestation_command(subject,value['tag'],value['source_sha'],bundle)
+        command=contract.attestation_command(manifest,value['tag'],value['source_sha'],bundle)
         command[command.index('--predicate-type')+1]=predicate
-        with verification_environment():
-            result=subprocess.run(command,check=True,capture_output=True,text=True)
+        result=verifier_process.run(command,check=True,capture_output=True,text=True)
         rows=gate.strict_json(result.stdout);contract.require_identity(rows,value['tag'],value['source_sha'])
         contract.require_run(rows,value['attesting']['run_id'],value['attesting']['run_attempt'])
     return expected
@@ -5331,7 +5465,7 @@ def verify_images(root,signatures,value):
 
 
 def ghcr_upload(root,signatures,value):
-    with tempfile.TemporaryDirectory(prefix='release-ghcr-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='release-ghcr-') as tmp,verifier_process.environment() as transport:
         work=Path(tmp)/'image';index=image_helper().inspect_release(root,work,value)
         check_images(root,signatures,value,work)
         # No credential is read or registry contacted before all local subjects
@@ -5340,9 +5474,11 @@ def ghcr_upload(root,signatures,value):
         gate.require(token and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]*',user),'dedicated GHCR credential/user missing')
         auth=Path(tmp)/'config.json'
         subprocess.run(['skopeo','login','--authfile',str(auth),'--username',user,'--password-stdin','ghcr.io'],
-                       input=token,text=True,check=True,capture_output=True)
+                       input=token,text=True,check=True,capture_output=True,env=transport)
         auth.chmod(0o600)
-        registry_env=dict(os.environ,REGISTRY_AUTH_FILE=str(auth),DOCKER_CONFIG=tmp)
+        # Registry transport gets only its dedicated auth, never GitHub/OIDC
+        # authority or operator configuration. Crypto uses a separate fresh env.
+        registry_env=dict(transport,REGISTRY_AUTH_FILE=str(auth),DOCKER_CONFIG=tmp)
         remote=registry_helper()
         version=value['tag'].removeprefix('v');digest=index['digest']
         exists=remote.reconcile(version,digest,auth)==0
@@ -5354,20 +5490,11 @@ def ghcr_upload(root,signatures,value):
                 subprocess.run(['skopeo','copy','--all','--preserve-digests','--authfile',str(auth),
                                 'oci:'+str(work/'layout'),'docker://ghcr.io/marcinwadon/hennery@'+digest],check=True,env=registry_env)
             gate.require(remote.reconcile(digest,digest,auth)==0,'GHCR upload ambiguous; stop and reconcile')
-        kind='application/vnd.dev.sigstore.bundle.v0.3+json'
-        for _,_,subject,predicate,bundle in image_subjects(work,signatures):
+        def before_referrer_write():
             shared_verify(root,signatures,'ghcr');check_images(root,signatures,value,work)
-            subprocess.run(['oras','attach','--registry-config',str(auth),'--artifact-type',kind,
-                            '--annotation','dev.sigstore.bundle.predicateType='+predicate,
-                            '--annotation','dev.sigstore.bundle.content=dsse-envelope',
-                            'ghcr.io/marcinwadon/hennery@'+subject,str(bundle)+':'+kind],check=True,env=registry_env)
-        # gh reads the isolated Docker credential file only for this final remote
-        # read. No credentials escape the private temporary directory.
-        old=os.environ.get('DOCKER_CONFIG');os.environ['DOCKER_CONFIG']=tmp
-        try:check_images(root,signatures,value,work,remote=True)
-        finally:
-            if old is None:os.environ.pop('DOCKER_CONFIG',None)
-            else:os.environ['DOCKER_CONFIG']=old
+        fetched=registry_bundles.reconcile(list(image_subjects(work,signatures)),Path(tmp)/'fetched',
+                                          before_referrer_write,environment=registry_env,auth=auth)
+        check_images(root,signatures,value,work,subjects=fetched)
         return {'state':'published','digest':digest}
 
 
@@ -5385,10 +5512,11 @@ def publish(root, signatures, channel):
         if channel=='ghcr':return ghcr_upload(root,signatures,value)
         gate.require(channel=='crates','unknown folded publisher')
         token=crates_token(os.environ)
-        env={k:v for k,v in os.environ.items() if k not in SECRETS}
-        env['CARGO_REGISTRY_TOKEN']=token
-        subprocess.run(['node',str(ROOT/'packaging/publish-crates.mjs'),str(root),str(signatures)],env=env,check=True)
-        return {'state':'published'}
+        def authorize_crates():
+            shared_verify(root,signatures,'crates')
+            return gate.digest(contract.regular(Path(root)/'crates-inventory.json'))
+        with verifier_process.environment() as env:
+            return crates_delivery.run(root,signatures,token,authorize_crates,environment=env)
     finally:
         if bootstrap:
             print('BOOTSTRAP: revoke the bootstrap token and confirm revocation on success or abandonment; remove its release secret and disable bootstrap before any later run.')
@@ -5399,7 +5527,7 @@ def publish(root, signatures, channel):
 ["github"]
 ``````
 
-<!-- replay-file: {"path":"packaging/release/contract.py","mode":"100644","sha256":"7e3e0c0223a0c5e14704a3cbb268a27b5acdd40aedfda8d5e2185d893a93f7b0","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/release/contract.py","mode":"100644","sha256":"a815dbd77b7f8c92b651344e65199ed02699086f5bdba2a2776a9330aa0bd1c3","encoding":"utf8"} -->
 ``````python
 """Signed-source, checksums and exact-run provenance for final release bytes."""
 import re
@@ -5408,6 +5536,7 @@ import subprocess
 
 import gate
 import workflow_policy
+import verifier_process
 
 CHECKSUMS = 'SHA256SUMS'
 METADATA = 'release-metadata.json'
@@ -5572,12 +5701,102 @@ def verify(root, tag, source_sha, bundle, run_id=None, attesting_attempt=None, t
     subjects = [CHECKSUMS] + [item['name'] for item in value['artifacts']]
     for subject in subjects:
         command = attestation_command(root / subject, tag, source_sha, bundle, trusted_root)
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = verifier_process.run(command, check=True, capture_output=True, text=True)
         results = gate.strict_json(result.stdout)
         require_identity(results, tag, source_sha)
         require_run(results, run_id, attesting_attempt)
     gate.require(load(root) == value, 'release bytes changed during verification')
     return value
+``````
+
+<!-- replay-file: {"path":"packaging/release/crates_delivery.py","mode":"100644","sha256":"5aa4e9b2ab5437367c9d0b1b44b684f41760d10b0396f442c390116e08385452","encoding":"utf8"} -->
+``````python
+"""Private gate broker: GitHub authorization stays in the credentialed parent."""
+import os
+from pathlib import Path
+import re
+import select
+import subprocess
+import tempfile
+import time
+
+import gate
+
+ROOT=Path(__file__).resolve().parents[2]
+MAX_LINE=128
+MAX_REQUESTS=10000
+
+
+def run(root, signatures, token, gatecallback, *, environment, command=None, timeout=1800):
+    """Run the frozen uploader with only its chosen registry credential.
+
+    The callback executes in this process and returns the freshly verified
+    crates-inventory digest. Neither GitHub credentials nor verifier subprocesses
+    cross the private request/reply pipes. No child-selected path is trusted.
+    """
+    gate.require(isinstance(token,str) and bool(token),'crates publishing credential absent')
+    gate.require(timeout>0,'invalid crates delivery deadline')
+    process=None;descriptors=[];temporary=None
+    try:
+        temporary=tempfile.TemporaryDirectory(prefix='release-crates-writer-')
+        home=Path(temporary.name)
+        # Even a caller-supplied map is filtered. Ambient process state,
+        # shell hooks, proxy credentials and installed configuration are out.
+        allowed=('PATH','SSL_CERT_FILE','SSL_CERT_DIR','NIX_SSL_CERT_FILE')
+        child={key:environment[key] for key in allowed if key in environment}
+        child['PATH']=child.get('PATH',os.defpath)
+        child.update(HOME=str(home),CARGO_HOME=str(home/'cargo'),XDG_CONFIG_HOME=str(home/'config'),
+                     XDG_CACHE_HOME=str(home/'cache'),XDG_DATA_HOME=str(home/'data'),
+                     GITHUB_ACTIONS='true',CARGO_REGISTRY_TOKEN=token)
+        request_read,request_write=os.pipe();descriptors.extend((request_read,request_write))
+        reply_read,reply_write=os.pipe();descriptors.extend((reply_read,reply_write))
+        child.update(CRATES_GATE_REQUEST_FD=str(request_write),CRATES_GATE_REPLY_FD=str(reply_read))
+        args=command if command is not None else ['node',str(ROOT/'packaging/publish-crates.mjs'),str(root),str(signatures)]
+        process=subprocess.Popen(args,env=child,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL,pass_fds=(request_write,reply_read))
+        for descriptor in (request_write,reply_read):os.close(descriptor);descriptors.remove(descriptor)
+        deadline=time.monotonic()+timeout;pending=b'';sequence=0;eof=False
+        while not eof:
+            remaining=deadline-time.monotonic()
+            gate.require(remaining>0,'crates writer deadline exceeded')
+            ready,_,_=select.select([request_read],[],[],min(remaining,1))
+            if not ready:continue
+            chunk=os.read(request_read,MAX_LINE+1)
+            if not chunk:
+                eof=True;break
+            pending+=chunk
+            gate.require(len(pending)<=MAX_LINE,'oversized crates gate request')
+            while b'\n' in pending:
+                line,pending=pending.split(b'\n',1)
+                sequence+=1
+                gate.require(sequence<=MAX_REQUESTS and line==f'gate-v1:{sequence}'.encode(),
+                             'invalid crates gate protocol or sequence')
+                try:current=gatecallback()
+                except Exception:raise gate.Refused('parent crates authorization refused') from None
+                gate.require(isinstance(current,str) and re.fullmatch('[0-9a-f]{64}',current),
+                             'parent crates gate returned invalid digest')
+                gate.require(deadline-time.monotonic()>0,'parent crates authorization exceeded writer deadline')
+                response=f'ok-v1:{sequence}:{current}\n'.encode()
+                gate.require(os.write(reply_write,response)==len(response),'incomplete crates gate response')
+        gate.require(not pending and sequence>0,'crates writer ended without a complete gate request')
+        try:result=process.wait(timeout=max(0.001,deadline-time.monotonic()))
+        except subprocess.TimeoutExpired:raise gate.Refused('crates writer deadline exceeded') from None
+        gate.require(result==0,'crates writer failed; reconcile frozen bytes before retry')
+        return {'state':'published'}
+    except gate.Refused:
+        raise
+    except Exception:
+        # Callback and child exceptions may include credentials. The parent
+        # records only this fixed refusal; no child stderr or exception text.
+        raise gate.Refused('crates gate broker refused; reconcile before retry') from None
+    finally:
+        for descriptor in descriptors:
+            try:os.close(descriptor)
+            except OSError:pass
+        if process is not None:
+            if process.poll() is None:process.kill()
+            process.wait()
+        if temporary is not None:temporary.cleanup()
 ``````
 
 <!-- replay-file: {"path":"packaging/release/example-observations.json","mode":"100644","sha256":"d3bd6bef186e1945523ad7e05c4bcc03adcc1a4fdcfb10f8ca7f3c40b2af4a00","encoding":"utf8"} -->
@@ -6653,6 +6872,223 @@ def release_assets(release):
     raise gate.Refused('incomplete release asset pagination')
 ``````
 
+<!-- replay-file: {"path":"packaging/release/registry_bundles.py","mode":"100644","sha256":"6d40fcb91d8add5161552e39042e8e3bebd78d22b784b8faa4116afe362ab787","encoding":"utf8"} -->
+``````python
+"""Reconcile deterministic Sigstore OCI referrers, then return fetched bundle bytes.
+
+No keyless verification occurs here. The caller verifies returned bundle paths
+against its local frozen OCI manifests before considering publication complete.
+"""
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+import contract
+import gate
+
+BUNDLE = 'application/vnd.dev.sigstore.bundle.v0.3+json'
+MANIFEST = 'application/vnd.oci.image.manifest.v1+json'
+INDEX = 'application/vnd.oci.image.index.v1+json'
+EMPTY = 'application/vnd.oci.empty.v1+json'
+CREATED = '1970-01-01T00:00:00Z'
+PROVENANCE = 'https://slsa.dev/provenance/v1'
+SPDX = 'https://spdx.dev/Document'
+REPOSITORY = 'ghcr.io/marcinwadon/hennery'
+DIGEST = r'sha256:[0-9a-f]{64}'
+MAX_BYTES = 16*1024*1024
+# Use only the caller's private tool configuration and explicitly provided
+# transport settings. Never inherit job tokens or OIDC authority into ORAS.
+ENVIRONMENT = {'PATH','HOME','TMPDIR','TMP','TEMP','SYSTEMROOT','LANG','LC_ALL',
+               'SSL_CERT_FILE','SSL_CERT_DIR','NIX_SSL_CERT_FILE','XDG_CONFIG_HOME',
+               'DOCKER_CONFIG','GH_CONFIG_DIR','GNUPGHOME','GIT_CONFIG_GLOBAL',
+               'GIT_CONFIG_SYSTEM','GIT_TERMINAL_PROMPT','HTTP_PROXY','HTTPS_PROXY',
+               'ALL_PROXY','NO_PROXY','http_proxy','https_proxy','all_proxy','no_proxy'}
+
+
+def descriptor(raw, media):
+    return {'mediaType':media,'digest':'sha256:'+gate.digest(raw),'size':len(raw)}
+
+
+def json_bytes(raw):
+    try:
+        # Decode explicitly: json.loads(bytes) accepts a BOM whereas the string
+        # decoder rejects it. No encoding-dependent verdict is permitted.
+        return gate.strict_json(raw.decode('utf-8'))
+    except UnicodeError as error:
+        raise gate.Refused('invalid OCI JSON encoding') from error
+
+
+def valid_descriptor(expected):
+    gate.require(isinstance(expected,dict) and isinstance(expected.get('digest'),str)
+                 and re.fullmatch(DIGEST,expected['digest']) and type(expected.get('size')) is int
+                 and 0 < expected['size'] <= MAX_BYTES,'invalid OCI referrer descriptor')
+
+
+def checked(raw, expected):
+    valid_descriptor(expected)
+    gate.require(len(raw)==expected['size'] and 'sha256:'+gate.digest(raw)==expected['digest'],
+                 'fetched OCI manifest/blob digest or size differs')
+    return raw
+
+
+def inputs(subjects):
+    subjects=list(subjects)
+    expected={('index','provenance')} | {(arch,kind) for arch in ('amd64','arm64')
+               for kind in ('provenance','image-sbom','binary-sbom')}
+    gate.require(len(subjects)==7 and all(isinstance(item,(list,tuple)) and len(item)==5
+                 and all(isinstance(part,str) for part in item[:4]) for item in subjects),
+                 'exactly seven frozen OCI bundle subjects required')
+    gate.require({(item[0],item[1]) for item in subjects}==expected,'duplicate or unknown OCI bundle selection')
+    digests={}
+    rows=[]
+    for subject,kind,digest,predicate,path in subjects:
+        gate.require(isinstance(digest,str) and re.fullmatch(DIGEST,digest)
+                     and predicate==(PROVENANCE if kind=='provenance' else SPDX),'invalid OCI bundle digest/predicate')
+        gate.require(subject not in digests or digests[subject]==digest,'platform bundle subjects disagree')
+        digests[subject]=digest
+        path=Path(path)
+        gate.require(path.name==f'ghcr-{subject}-{kind}.json','unexpected frozen OCI bundle filename')
+        raw=contract.regular(path)
+        gate.require(0 < len(raw) <= MAX_BYTES,'frozen OCI bundle size outside permitted limit')
+        rows.append((subject,kind,digest,predicate,path,raw))
+    gate.require(len(set(digests.values()))==3,'index/platform digests must be distinct')
+    return rows
+
+
+def frozen(rows):
+    gate.require(all(contract.regular(row[4])==row[5] for row in rows),'frozen OCI bundle changed during reconciliation')
+
+
+def pinned_manifest(subject, predicate, path, raw):
+    config=descriptor(b'{}',EMPTY) | {'data':'e30='}
+    layer=descriptor(raw,BUNDLE) | {'annotations':{'org.opencontainers.image.title':path.name}}
+    return gate.canonical({'schemaVersion':2,'mediaType':MANIFEST,'artifactType':BUNDLE,
+                           'config':config,'layers':[layer],'subject':subject,
+                           'annotations':{'org.opencontainers.image.created':CREATED,
+                                          'dev.sigstore.bundle.predicateType':predicate,
+                                          'dev.sigstore.bundle.content':'dsse-envelope'}})
+
+
+def reconcile(subjects, output_directory, before_write, *, environment, auth=None, layout=None):
+    """Verify existing seven referrers, copy only missing, return fetched tuples.
+
+    before_write is required and authorizes each content-addressed ORAS copy.
+    ORAS transfers only absent graph objects. An ambiguous copy never implies
+    success; a renewed invocation must rediscover and verify the stored bytes.
+    layout selects disposable offline transport; production origin is fixed.
+    """
+    rows=inputs(subjects)
+    gate.require(callable(before_write),'OCI bundle writer requires a live verification callback')
+    env={key:value for key,value in environment.items() if key in ENVIRONMENT}
+    gate.require(env.get('HOME') and env.get('DOCKER_CONFIG'),'private OCI tool environment required')
+    if layout is None:
+        gate.require(auth is not None,'dedicated registry auth file required')
+        auth=Path(auth);contract.regular(auth);auth=auth.resolve()
+        target=REPOSITORY;options=['--registry-config',str(auth)]
+        copy_options=['--to-registry-config',str(auth)]
+    else:
+        gate.require(auth is None,'offline OCI layout must not receive registry credentials')
+        layout=Path(layout)
+        gate.require(layout.is_dir() and not layout.is_symlink(),'nonregular OCI layout')
+        target=str(layout.resolve());options=['--oci-layout'];copy_options=['--to-oci-layout']
+
+    def run(arguments):
+        try:
+            return subprocess.run(['oras',*arguments],check=True,capture_output=True,env=env).stdout
+        except subprocess.CalledProcessError as error:
+            # Never log credentials/config contents or attempt alternate auth.
+            raise gate.Refused('OCI referrer transport failed; reconcile under renewed approval') from error
+
+    def fetch(kind,digest):
+        return run([kind,'fetch',*options,*(['--output','-'] if kind=='blob' else []),target+'@'+digest])
+
+    # Pin subject descriptors to actual bytes at each independently expected
+    # digest, not untrusted discover annotations or mutable version tags.
+    subject_bytes={};subject_descriptors={}
+    for row in rows:
+        digest=row[2]
+        if digest in subject_bytes:continue
+        raw=fetch('manifest',digest)
+        value=json_bytes(raw)
+        gate.require(isinstance(value,dict) and value.get('schemaVersion')==2 and value.get('mediaType') in (MANIFEST,INDEX),
+                     'unexpected OCI subject manifest type')
+        actual=descriptor(raw,value['mediaType'])
+        gate.require(actual['digest']==digest,'fetched OCI subject digest differs')
+        subject_bytes[digest]=raw;subject_descriptors[digest]=actual
+
+    records={}
+    for row in rows:
+        manifest=pinned_manifest(subject_descriptors[row[2]],row[3],row[4],row[5])
+        ref=descriptor(manifest,MANIFEST)
+        records[ref['digest']]={'row':row,'manifest':manifest,'descriptor':ref}
+
+    def scan(digest):
+        result=json_bytes(run(['discover',*options,'--artifact-type',BUNDLE,'--depth','1','--format','json',target+'@'+digest]))
+        gate.require(isinstance(result,dict) and isinstance(result.get('referrers'),list),'invalid OCI referrer discovery')
+        present={}
+        for desc in result['referrers']:
+            gate.require(isinstance(desc,dict) and desc.get('artifactType')==BUNDLE
+                         and desc.get('mediaType')==MANIFEST,'unexpected OCI referrer type')
+            valid_descriptor(desc)
+            raw=checked(fetch('manifest',desc['digest']),desc)
+            # Strict decoding rejects duplicate/escaped/case-ambiguous keys even
+            # when a downstream JSON parser might interpret them differently.
+            value=json_bytes(raw)
+            record=records.get(desc['digest'])
+            gate.require(record is not None and raw==record['manifest']
+                         and value.get('subject')==subject_descriptors[digest],
+                         'existing OCI referrer differs from its frozen manifest')
+            gate.require(desc['digest'] not in present,'duplicate OCI referrer digest')
+            config=value['config'];checked(fetch('blob',config['digest']),config)
+            layer=value['layers'][0];bundle=checked(fetch('blob',layer['digest']),layer)
+            gate.require(bundle==record['row'][5],'fetched OCI bundle differs from frozen bytes')
+            present[desc['digest']]=bundle
+        return present
+
+    present={}
+    for digest in subject_bytes:present.update(scan(digest))
+    with tempfile.TemporaryDirectory(prefix='release-referrer-layout-') as temporary:
+        stage=Path(temporary);blobs=stage/'blobs/sha256';blobs.mkdir(parents=True)
+        (stage/'oci-layout').write_bytes(gate.canonical({'imageLayoutVersion':'1.0.0'}))
+        (stage/'index.json').write_bytes(gate.canonical({'schemaVersion':2,'manifests':[
+            record['descriptor'] | {'artifactType':BUNDLE} for record in records.values()]}))
+        def store(raw):
+            (blobs/gate.digest(raw)).write_bytes(raw)
+        store(b'{}')
+        for raw in subject_bytes.values():store(raw)
+        for record in records.values():store(record['manifest']);store(record['row'][5])
+        for digest,record in records.items():
+            if digest in present:continue
+            before_write()
+            frozen(rows)
+            # A gate may outlast another successful attachment. Reconcile again
+            # after approval to avoid duplicating matching completed work.
+            present.update(scan(record['row'][2]))
+            if digest in present:continue
+            run(['copy','--from-oci-layout',*copy_options,'--concurrency','1',
+                 str(stage)+'@'+digest,target+'@'+digest])
+            present.update(scan(record['row'][2]))
+            gate.require(digest in present,'new OCI referrer missing from read-back discovery')
+
+    fetched={}
+    for digest in subject_bytes:fetched.update(scan(digest))
+    gate.require(set(fetched)==set(records),'OCI referrer set incomplete after reconciliation')
+    frozen(rows)
+    output=Path(output_directory)
+    gate.require(not output.is_symlink() and (not output.exists() or output.is_dir()),'nonregular fetched bundle output')
+    output.mkdir(parents=True,exist_ok=True)
+    paths={}
+    for digest,record in records.items():
+        path=output/record['row'][4].name
+        if path.exists() or path.is_symlink():
+            gate.require(contract.regular(path)==fetched[digest],'fetched bundle output changed')
+        else:
+            with path.open('xb') as destination:destination.write(fetched[digest])
+        paths[record['row'][4].name]=path
+    return [tuple(row[:4])+(paths[row[4].name],) for row in rows]
+``````
+
 <!-- replay-file: {"path":"packaging/release/release_run.py","mode":"100644","sha256":"43c63033b595374932b27d00ff28a08ef05ac311960d63382bf832d00c8d1bf0","encoding":"utf8"} -->
 ``````python
 #!/usr/bin/env python3
@@ -7316,6 +7752,58 @@ if __name__ == '__main__':
         raise SystemExit(f'release materials refused: {error}') from error
 ``````
 
+<!-- replay-file: {"path":"packaging/release/tag_signature.py","mode":"100644","sha256":"dab795b10fa0f092d7779d3fe2b6d7e3294316c74b3649b4d54cb710b8332f44","encoding":"utf8"} -->
+``````python
+#!/usr/bin/env python3
+"""Verify the fetched annotated tag with the history-pinned maintainer key."""
+import argparse
+from pathlib import Path
+import re
+import subprocess
+
+import gate
+import verifier_process
+
+# Issuer fingerprint in signed commit 3b7b5f2d2af8821f4617afb08ba1dc766c5b9f14.
+# The committed public key also verifies that historical commit. This is not
+# GitHub's shared web-flow signing key B5690EEEBB952194.
+FINGERPRINT = 'F26C7F594DFE84D131703AFC23E5A318AE8D2861'
+
+
+def check_status(returncode, status):
+    records = [line.split()[1:] for line in status.splitlines() if line.startswith('[GNUPG:] ')]
+    valid = [r for r in records if r[0] == 'VALIDSIG']
+    gate.require(returncode == 0 and len(valid) == 1 and valid[0][1] == FINGERPRINT and not any(r[0] in {'BADSIG', 'ERRSIG', 'REVKEYSIG', 'EXPKEYSIG', 'EXPSIG', 'KEYEXPIRED', 'SIGEXPIRED'} for r in records), 'release tag signature is missing, invalid, expired or not from the pinned maintainer key')
+
+
+def verify(tag, source_sha, object_sha=None):
+    gate.require(re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', tag) and re.fullmatch('[0-9a-f]{40}', source_sha), 'invalid signed-tag binding')
+    with verifier_process.environment() as environment:
+        # Exclude checkout-local credential helpers, includes and remotes too.
+        repository = Path(environment['HOME']) / 'source.git'
+        options = dict(env=environment, capture_output=True, text=True)
+        subprocess.run(['git', 'init', '--bare', '--template=', str(repository)], check=True, **options)
+        git = ['git', '--git-dir=' + str(repository)]
+        subprocess.run(git + ['fetch', '--no-tags', 'https://github.com/' + gate.REPOSITORY + '.git', 'refs/tags/' + tag], check=True, **options)
+        fetched = subprocess.run(git + ['rev-parse', 'FETCH_HEAD'], check=True, **options).stdout.strip()
+        gate.require(re.fullmatch('[0-9a-f]{40}', fetched) and (object_sha is None or fetched == object_sha), 'fetched release tag object changed')
+        raw = subprocess.run(git + ['cat-file', 'tag', fetched], check=True, **options).stdout
+        header = dict(line.split(' ', 1) for line in raw.split('\n\n', 1)[0].splitlines())
+        gate.require(header.get('object') == source_sha and header.get('type') == 'commit' and header.get('tag') == tag, 'signed tag must directly identify the exact candidate commit')
+        subprocess.run(['gpg', '--batch', '--no-autostart', '--import', str(Path(__file__).with_name('maintainer.asc'))], check=True, **options)
+        result = subprocess.run(git + ['-c', 'gpg.format=openpgp', '-c', 'gpg.program=gpg', 'verify-tag', '--raw', fetched], **options)
+        check_status(result.returncode, result.stderr)
+    return {'object_sha': fetched, 'commit_sha': source_sha, 'tag': tag, 'fingerprint': FINGERPRINT}
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--tag', required=True)
+    parser.add_argument('--source-sha', required=True)
+    args = parser.parse_args()
+    print(gate.canonical(verify(args.tag, args.source_sha)).decode())
+``````
+
 <!-- replay-file: {"path":"packaging/release/test_bootstrap.py","mode":"100644","sha256":"097033a9afaf5e6a5f036fba0eb5db00b2a03268a77b0c20b93cf1ff10895362","encoding":"utf8"} -->
 ``````python
 """Execute the exact README bootstrap with real disposable signed-tag fixtures."""
@@ -7377,7 +7865,7 @@ if __name__=='__main__':
     unittest.main(argv=[sys.argv[0]])
 ``````
 
-<!-- replay-file: {"path":"packaging/release/test_channel_publish.py","mode":"100644","sha256":"1202bc57d8ecb6f0a7384a4f84c12561458d071d586b130933254ce5f8c165ad","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/release/test_channel_publish.py","mode":"100644","sha256":"a8fcf47a11cc8edb747775c0946f15daa827a7608497b6e01a2ff8a20f9b200c","encoding":"utf8"} -->
 ``````python
 import base64
 import os
@@ -7446,15 +7934,17 @@ class ChannelDelivery(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp);messages=[]
                 env={'RELEASE_CRATES_BOOTSTRAP_ENABLED':'true','RELEASE_CRATES_BOOTSTRAP_TOKEN':'offline-bootstrap'}
-                with patch.dict(os.environ,env),patch.object(release_run,'verify',return_value={'tag':'v0.1.0'}),patch('builtins.print',side_effect=lambda text:messages.append(text)),patch('subprocess.run',side_effect=RuntimeError('upload failed') if failure else None):
+                with patch.dict(os.environ,env),patch.object(release_run,'verify',return_value={'tag':'v0.1.0'}),patch('builtins.print',side_effect=lambda text:messages.append(text)),patch.object(channel_publish.crates_delivery,'run',side_effect=RuntimeError('upload failed') if failure else None):
                     if failure:
                         with self.assertRaises(RuntimeError):channel_publish.publish(root,root,'crates')
                     else:channel_publish.publish(root,root,'crates')
                 self.assertTrue(any('revoke' in str(message).lower() and 'bootstrap' in str(message).lower() for message in messages))
 
-    def test_verifier_children_do_not_receive_channel_secrets(self):
+    def test_parent_verifier_retains_transport_authority_without_global_mutation(self):
+        # Actual child exclusion is exercised by test_verifier_process's
+        # executable stand-ins. This callback is the authenticated API parent.
         def verify(*args):
-            self.assertTrue(all(name not in os.environ for name in channel_publish.SECRETS))
+            self.assertTrue(all(os.environ.get(name)=='offline-secret' for name in channel_publish.SECRETS))
             raise gate.Refused('fixture denial before any token use')
         with patch.dict(os.environ,{key:'offline-secret' for key in channel_publish.SECRETS}),patch.object(release_run,'verify',side_effect=verify):
             with self.assertRaises(gate.Refused):channel_publish.publish(Path('unused'),Path('unused'),'ghcr')
@@ -7473,7 +7963,7 @@ class ChannelDelivery(unittest.TestCase):
                 root=Path(tmp);events=[];uploaded=mode=='present';digest='sha256:'+'a'*64
                 def inspect(*args):events.append('inspect');return {'digest':digest}
                 def checks(*args,**kwargs):
-                    events.append('remote-verify' if kwargs.get('remote') else 'verify')
+                    events.append('fetched-verify' if kwargs.get('subjects') else 'verify')
                     if mode=='verify-failure':raise gate.Refused('wrong signature')
                 def reconcile(*args):
                     events.append('reconcile')
@@ -7487,15 +7977,21 @@ class ChannelDelivery(unittest.TestCase):
                         Path(command[command.index('--authfile')+1]).write_text('{}')
                     if command[:2]==['skopeo','copy']:
                         self.assertIn('--preserve-digests',command);self.assertTrue(command[-1].endswith('@'+digest));uploaded=True
-                    if command[:2]==['oras','attach'] and mode=='attach-failure':raise RuntimeError('ambiguous attach')
+                def bundles(subjects,output,before_write,**kwargs):
+                    if mode!='present':
+                        for _ in subjects:
+                            before_write();events.append('referrer-write')
+                            if mode=='attach-failure':raise RuntimeError('ambiguous referrer copy')
+                    return [(*item[:4],output/item[4].name) for item in subjects]
                 fixture=SimpleNamespace(inspect_release=inspect)
-                with patch.dict(os.environ,{'GHCR_PUBLISH_TOKEN':'offline-secret','GHCR_PUBLISH_USER':'fixture'}),patch.object(channel_publish,'shared_verify',return_value={'tag':'v0.1.0'}),patch.object(channel_publish,'image_helper',return_value=fixture),patch.object(channel_publish,'registry_helper',return_value=SimpleNamespace(reconcile=reconcile)),patch.object(channel_publish,'check_images',side_effect=checks),patch.object(channel_publish,'image_subjects',return_value=[('index','provenance',digest,'slsa',root/'bundle')]),patch('subprocess.run',side_effect=run):
+                with patch.dict(os.environ,{'GHCR_PUBLISH_TOKEN':'offline-secret','GHCR_PUBLISH_USER':'fixture'}),patch.object(channel_publish,'shared_verify',return_value={'tag':'v0.1.0'}),patch.object(channel_publish,'image_helper',return_value=fixture),patch.object(channel_publish,'registry_helper',return_value=SimpleNamespace(reconcile=reconcile)),patch.object(channel_publish,'check_images',side_effect=checks),patch.object(channel_publish,'image_subjects',return_value=[('index','provenance',digest,'slsa',root/'bundle')]),patch.object(channel_publish.registry_bundles,'reconcile',side_effect=bundles),patch('subprocess.run',side_effect=run):
                     if mode in ('conflict','attach-failure','verify-failure'):
                         with self.assertRaises((gate.Refused,RuntimeError)):channel_publish.ghcr_upload(root,root,{'tag':'v0.1.0'})
                     else:self.assertEqual(channel_publish.ghcr_upload(root,root,{'tag':'v0.1.0'})['digest'],digest)
                 if mode in ('present','conflict','verify-failure'):self.assertNotIn(['skopeo','copy'],events)
                 if mode=='verify-failure':self.assertNotIn(['skopeo','login'],events)
-                if mode in ('new','present'):self.assertEqual(events[-1],'remote-verify')
+                if mode in ('new','present'):self.assertEqual(events[-1],'fetched-verify')
+                if mode=='present':self.assertNotIn('referrer-write',events)
 
     def test_homebrew_cas_and_all_remote_conflicts(self):
         fixture=test_homebrew.Formula();fixture.setUp();self.addCleanup(fixture.tmp.cleanup);fixture.prepare()
@@ -7689,13 +8185,232 @@ if __name__ == '__main__':
     unittest.main()
 ``````
 
-<!-- replay-file: {"path":"packaging/release/test_crates_integration.py","mode":"100644","sha256":"46424d0724aa690b9eb8e6cdda028817e4d335ac9fbdadbbda71bd78f5c989fa","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/release/test_crates_delivery.py","mode":"100644","sha256":"37080a267dedf839e124f2d522305026cb28a5ade6b7d4f43bf5393455fd7021","encoding":"utf8"} -->
 ``````python
-"""Node frozen uploader -> real release gate; offline structural provenance/platform doubles.
+"""Real spawned writer/broker isolation, with no registry or GitHub transport."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import time
+import unittest
+from unittest import mock
 
-Authentic cryptography/JSON shape is in test_verify_cli; this exercises lifecycle
-ordering through the actual Python CLI and Node subprocess adapter.
+import gate
+
+FILE=Path(__file__).with_name('crates_delivery.py')
+if FILE.is_file():
+    import crates_delivery
+else:
+    crates_delivery=None
+
+
+class CratesDelivery(unittest.TestCase):
+    def setUp(self):
+        self.assertIsNotNone(crates_delivery,'private parent-owned crates gate broker missing')
+        temporary=tempfile.TemporaryDirectory(prefix='crates-delivery-test-');self.addCleanup(temporary.cleanup)
+        self.root=Path(temporary.name);self.signature=self.root/'signatures';self.signature.mkdir()
+        self.env={'PATH':os.environ['PATH'],'GH_TOKEN':'must-not-leak','GITHUB_TOKEN':'must-not-leak',
+                  'ACTIONS_ID_TOKEN_REQUEST_URL':'must-not-leak','ACTIONS_ID_TOKEN_REQUEST_TOKEN':'must-not-leak',
+                  'GH_CONFIG_DIR':'/operator/config','HOME':'/operator/home','CARGO_HOME':'/operator/cargo',
+                  'NODE_OPTIONS':'--require=/operator/code','SSL_CERT_FILE':'/allowed/cert'}
+
+    def command(self,code):
+        return [sys.executable,'-c',code]
+
+    def execute(self,code,callback=lambda:'a'*64,**kwargs):
+        return crates_delivery.run(self.root,self.signature,'chosen-crates-token',callback,
+                                   environment=self.env,command=self.command(code),**kwargs)
+
+    def test_real_child_receives_only_registry_token_private_paths_and_broker_fds(self):
+        observed=self.root/'observed.json';seen=[]
+        code=f'''import json,os
+from pathlib import Path
+request=int(os.environ['CRATES_GATE_REQUEST_FD']);reply=int(os.environ['CRATES_GATE_REPLY_FD'])
+os.write(request,b'gate-v1:1\\n')
+response=os.fdopen(reply,'rb').readline()
+assert response==b'ok-v1:1:'+b'a'*64+b'\\n',response
+Path({str(observed)!r}).write_text(json.dumps(dict(os.environ)))
+'''
+        def callback():seen.append(os.environ.get('GH_TOKEN'));return 'a'*64
+        with mock.patch.dict(os.environ,{'GH_TOKEN':'parent-only'},clear=False):self.execute(code,callback)
+        self.assertEqual(seen,['parent-only'])
+        env=json.loads(observed.read_text());self.assertEqual(env['CARGO_REGISTRY_TOKEN'],'chosen-crates-token')
+        self.assertEqual(env['SSL_CERT_FILE'],'/allowed/cert')
+        self.assertFalse(set(env)&{'GH_TOKEN','GITHUB_TOKEN','ACTIONS_ID_TOKEN_REQUEST_URL','ACTIONS_ID_TOKEN_REQUEST_TOKEN','GH_CONFIG_DIR','NODE_OPTIONS'})
+        self.assertNotEqual(env['HOME'],self.env['HOME']);self.assertNotEqual(env['CARGO_HOME'],self.env['CARGO_HOME'])
+        self.assertFalse(Path(env['HOME']).exists(),'private child state must be removed after reap')
+
+    def test_parent_denial_stops_child_and_returns_no_token_or_exception_detail(self):
+        marker=self.root/'continued'
+        code=f'''import os
+from pathlib import Path
+os.write(int(os.environ['CRATES_GATE_REQUEST_FD']),b'gate-v1:1\\n')
+data=os.read(int(os.environ['CRATES_GATE_REPLY_FD']),128)
+if data.startswith(b'ok-'):Path({str(marker)!r}).touch()
+'''
+        def denied():raise RuntimeError('parent-only-GitHub-token')
+        with self.assertRaises(gate.Refused) as failure:self.execute(code,denied)
+        self.assertNotIn('parent-only-GitHub-token',str(failure.exception));self.assertFalse(marker.exists())
+
+    def test_bad_sequence_duplicate_extra_and_oversized_requests_refuse(self):
+        for request in (b'gate-v1:2\n',b'gate-v1:1 extra\n',b'GATE-v1:1\n',b'gate-v1:1\nextra\n',b'x'*129+b'\n',b'gate-v1:1\n'+b'x'*129+b'\n'):
+            calls=[]
+            code=f"import os;os.write(int(os.environ['CRATES_GATE_REQUEST_FD']),{request!r});os.read(int(os.environ['CRATES_GATE_REPLY_FD']),256)"
+            with self.subTest(request=request[:25]),self.assertRaises(gate.Refused):self.execute(code,lambda:calls.append(1) or 'a'*64)
+            if request!=b'gate-v1:1\nextra\n':self.assertEqual(calls,[])
+
+    def test_missing_gate_requests_partial_eof_child_failure_and_bad_digest_refuse(self):
+        for code in ('pass',"import os;os.write(int(os.environ['CRATES_GATE_REQUEST_FD']),b'gate-v1:')",'raise SystemExit(3)'):
+            with self.subTest(code=code),self.assertRaises(gate.Refused):self.execute(code)
+        for digest in ('short','A'*64,None):
+            code="import os;os.write(int(os.environ['CRATES_GATE_REQUEST_FD']),b'gate-v1:1\\n');os.read(int(os.environ['CRATES_GATE_REPLY_FD']),256)"
+            with self.subTest(digest=digest),self.assertRaises(gate.Refused):self.execute(code,lambda:digest)
+
+    def test_timeout_kills_and_reaps_writer(self):
+        pid=self.root/'pid'
+        code=f"import os,time;from pathlib import Path;Path({str(pid)!r}).write_text(str(os.getpid()));time.sleep(60)"
+        with self.assertRaises(gate.Refused):self.execute(code,timeout=0.5)
+        if pid.exists():
+            with self.assertRaises(ProcessLookupError):os.kill(int(pid.read_text()),0)
+
+    def test_multiple_requests_require_fresh_parent_checks(self):
+        calls=[]
+        code='''import os
+request=int(os.environ['CRATES_GATE_REQUEST_FD']);reply=os.fdopen(int(os.environ['CRATES_GATE_REPLY_FD']),'rb')
+for i in range(1,4):
+ os.write(request,f'gate-v1:{i}\\n'.encode())
+ assert reply.readline()==f'ok-v1:{i}:'.encode()+b'a'*64+b'\\n'
+'''
+        self.execute(code,lambda:calls.append(1) or 'a'*64)
+        self.assertEqual(calls,[1,1,1])
+
+    def test_refusal_details_from_parent_are_not_exposed(self):
+        code="import os;os.write(int(os.environ['CRATES_GATE_REQUEST_FD']),b'gate-v1:1\\n');os.read(int(os.environ['CRATES_GATE_REPLY_FD']),128)"
+        def denied():raise gate.Refused('sensitive-parent-context')
+        with self.assertRaises(gate.Refused) as failure:self.execute(code,denied)
+        self.assertNotIn('sensitive-parent-context',str(failure.exception))
+
+    def test_actual_node_broker_strict_reply_shape_sequence_and_eof(self):
+        import subprocess
+        publisher=Path(__file__).resolve().parents[2]/'packaging/publish-crates.mjs'
+        program=f"import {{gateBroker}} from {str(publisher)!r};if(gateBroker()!=='{'a'*64}')process.exitCode=3;"
+        responses=[b'ok-v1:1:'+b'a'*64+b'\n',b'ok-v1:2:'+b'a'*64+b'\n',b'ok-v1:1:'+b'A'*64+b'\n',
+                   b'ok-v1:1:'+b'a'*64,b'wrong\n',b'x'*129+b'\n',b'',
+                   b'\xefk-v1:1:'+b'a'*64+b'\n']
+        for index,response in enumerate(responses):
+            request_read,request_write=os.pipe();reply_read,reply_write=os.pipe()
+            try:
+                environment={'PATH':os.environ['PATH'],'HOME':str(self.root),'CRATES_GATE_REQUEST_FD':str(request_write),'CRATES_GATE_REPLY_FD':str(reply_read)}
+                process=subprocess.Popen(['node','--input-type=module','-e',program],env=environment,stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,pass_fds=(request_write,reply_read))
+                os.close(request_write);request_write=None;os.close(reply_read);reply_read=None
+                os.write(reply_write,response);os.close(reply_write);reply_write=None
+                self.assertEqual(os.read(request_read,128),b'gate-v1:1\n')
+                result=process.wait(timeout=10)
+                with self.subTest(response=response[:25]):
+                    if index==0:self.assertEqual(result,0)
+                    else:self.assertNotEqual(result,0)
+            finally:
+                for descriptor in (request_read,request_write,reply_read,reply_write):
+                    if descriptor is not None:os.close(descriptor)
+                if process.poll() is None:process.kill()
+                process.wait()
+
+    def test_delivery_parameters_refuse_before_spawn(self):
+        for token,timeout in (('',1),(None,1),('token',0),('token',-1)):
+            with self.subTest(token=token,timeout=timeout),mock.patch.object(crates_delivery.subprocess,'Popen') as spawn:
+                with self.assertRaises(gate.Refused):crates_delivery.run(self.root,self.signature,token,lambda:'a'*64,environment=self.env,timeout=timeout)
+                spawn.assert_not_called()
+
+    def test_fd_cleanup_on_success_denial_and_child_error(self):
+        original=os.pipe
+        for mode in ('success','denial','child-error','closed-reply'):
+            descriptors=[]
+            def pipes():
+                result=original();descriptors.extend(result);return result
+            code="import os;os.write(int(os.environ['CRATES_GATE_REQUEST_FD']),b'gate-v1:1\\n');os.read(int(os.environ['CRATES_GATE_REPLY_FD']),128)"
+            if mode=='child-error':code+=';raise SystemExit(7)'
+            if mode=='closed-reply':code="import os;os.close(int(os.environ['CRATES_GATE_REPLY_FD']));os.write(int(os.environ['CRATES_GATE_REQUEST_FD']),b'gate-v1:1\\n')"
+            def callback():
+                if mode=='denial':raise gate.Refused('denied')
+                return 'a'*64
+            with mock.patch.object(crates_delivery.os,'pipe',side_effect=pipes):
+                if mode=='success':self.execute(code,callback)
+                else:
+                    with self.assertRaises(gate.Refused):self.execute(code,callback)
+            for descriptor in descriptors:
+                with self.subTest(mode=mode,descriptor=descriptor),self.assertRaises(OSError):os.fstat(descriptor)
+
+    def test_request_budget_refuses_before_another_parent_authorization(self):
+        calls=[]
+        code='''import os
+request=int(os.environ['CRATES_GATE_REQUEST_FD']);reply=os.fdopen(int(os.environ['CRATES_GATE_REPLY_FD']),'rb')
+for i in range(1,3):
+ os.write(request,f'gate-v1:{i}\\n'.encode())
+ reply.readline()
+'''
+        with mock.patch.object(crates_delivery,'MAX_REQUESTS',1),self.assertRaises(gate.Refused):
+            self.execute(code,lambda:calls.append(1) or 'a'*64)
+        self.assertEqual(calls,[1])
+
+    def test_cleanup_kills_and_reaps_before_removing_private_configuration(self):
+        events=[];temporary=None
+        realtemporary=tempfile.TemporaryDirectory
+        class Child:
+            def poll(self):return None
+            def kill(self):events.append('kill')
+            def wait(self,*args,**kwargs):events.append('wait');return 1
+        def directory(*args,**kwargs):
+            nonlocal temporary
+            temporary=realtemporary(*args,**kwargs)
+            original=temporary.cleanup
+            def cleanup():events.append('cleanup');original()
+            temporary.cleanup=cleanup
+            return temporary
+        with mock.patch.object(crates_delivery.tempfile,'TemporaryDirectory',side_effect=directory),mock.patch.object(crates_delivery.subprocess,'Popen',return_value=Child()),mock.patch.object(crates_delivery.os,'read',return_value=b''):
+            with self.assertRaises(gate.Refused):self.execute('pass')
+        self.assertEqual(events,['kill','wait','cleanup'])
+        self.assertFalse(Path(temporary.name).exists())
+
+    def test_partial_reply_write_is_a_refusal(self):
+        class Child:
+            def poll(self):return 0
+            def wait(self,*args,**kwargs):return 0
+        with mock.patch.object(crates_delivery.subprocess,'Popen',return_value=Child()),mock.patch.object(crates_delivery.select,'select',return_value=([1],[],[])),mock.patch.object(crates_delivery.os,'read',side_effect=[b'gate-v1:1\n',b'']),mock.patch.object(crates_delivery.os,'write',return_value=0):
+            with self.assertRaises(gate.Refused):self.execute('pass')
+
+    def test_expired_deadline_does_not_invoke_parent_authorization(self):
+        class Child:
+            def poll(self):return 0
+            def wait(self,*args,**kwargs):return 0
+        callback=mock.Mock(return_value='a'*64)
+        with mock.patch.object(crates_delivery.subprocess,'Popen',return_value=Child()),mock.patch.object(crates_delivery.time,'monotonic',side_effect=[0,2,2,2]),mock.patch.object(crates_delivery.select,'select',return_value=([1],[],[])),mock.patch.object(crates_delivery.os,'read',side_effect=[b'gate-v1:1\n',b'']),mock.patch.object(crates_delivery.os,'write',return_value=80):
+            with self.assertRaises(gate.Refused):self.execute('pass',callback,timeout=1)
+            callback.assert_not_called()
+
+    def test_expired_parent_check_never_sends_an_authorization_reply(self):
+        class Child:
+            def poll(self):return 0
+            def wait(self,*args,**kwargs):return 0
+        clock=[0]
+        def callback():clock[0]=2;return 'a'*64
+        with mock.patch.object(crates_delivery.subprocess,'Popen',return_value=Child()),mock.patch.object(crates_delivery.time,'monotonic',side_effect=lambda:clock[0]),mock.patch.object(crates_delivery.select,'select',return_value=([1],[],[])),mock.patch.object(crates_delivery.os,'read',side_effect=[b'gate-v1:1\n',b'']),mock.patch.object(crates_delivery.os,'write',return_value=80) as write:
+            with self.assertRaises(gate.Refused):self.execute('pass',callback,timeout=1)
+            write.assert_not_called()
+``````
+
+<!-- replay-file: {"path":"packaging/release/test_crates_integration.py","mode":"100644","sha256":"1ee07f2c3d9556f70d0be9edd9ad8cb944c6060e45ab683dde2bd46a8ac2a477","encoding":"utf8"} -->
+``````python
+"""Node frozen uploader and parent-only real policy; all public transports mocked.
+
+Provenance substitutions below are structural tests. No gh executable or real
+registry is contacted; the real Node broker and Python parent process do run.
 """
+from contextlib import ExitStack
+from datetime import datetime,timezone,timedelta
 import json
 import os
 from pathlib import Path
@@ -7703,9 +8418,15 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import contract
+import crates_delivery
 import gate
+import release_run
+import run_policy
+import supply
+import tag_signature
 
 
 class CratesIntegration(unittest.TestCase):
@@ -7731,83 +8452,92 @@ class CratesIntegration(unittest.TestCase):
         shutil.copyfile(self.repo/contract.WORKFLOW,root/contract.WORKFLOW)
         (root/'packaging/release').mkdir(parents=True)
         (root/'packaging/release/channels.json').write_bytes(gate.canonical(metadata['channels']))
-        # All authorization predicates, checksum closure, exact-source/tag/run
-        # and argument parsing are real. Replace public signature/platform/CLI
-        # transports and unrelated archive validation for these tiny crate bytes.
-        shim=f'''import os,sys,subprocess
-from pathlib import Path
-from datetime import datetime,timezone,timedelta
-sys.path.insert(0,{str(self.repo/'packaging/release')!r})
-import release_run,contract,gate,run_policy,tag_signature,supply
-release_run.ROOT=Path({str(root)!r})
-for key in ('CARGO_REGISTRY_TOKEN','RELEASE_CRATES_BOOTSTRAP_TOKEN','GHCR_PUBLISH_TOKEN','HOMEBREW_TAP_TOKEN'):
- gate.require(key not in os.environ,'channel credential leaked into verifier')
-with Path({str(root/'calls.jsonl')!r}).open('a') as output: output.write(__import__('json').dumps(sys.argv[1:])+'\\n')
-def tag(*args):
- gate.require({kind!='bad-tag'!r},'fixture signed tag refused')
- return {{}}
-tag_signature.verify=tag
-supply.require_contract=lambda *a: None
-supply.verify_binary_inventory=lambda *a: None
-release_run.require_public=lambda *a: Path({str(root/'public-checked')!r}).touch()
-def evidence(api,metadata,environment):
- jobs=[{{'name':name,'status':'completed','conclusion':'success'}} for name in ('tag-signature','qualification','web-ui','archive','assemble','installer','attest','homebrew-native','crates')]
- jobs += [dict(j) for j in list(jobs) if j['name'] in ('qualification','archive','installer','homebrew-native') for _ in range(2)]
- jobs += [{{'name':name,'status':'completed','conclusion':'skipped'}} for name in ('ghcr','homebrew')]
- return {{'original':{{'id':42,'run_attempt':1,'head_sha':'a'*40,'head_branch':'v0.1.0','event':'push','path':contract.WORKFLOW,'repository':{{'full_name':gate.REPOSITORY}},'created_at':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()}},
-  'jobs':jobs,'artifact':{{'id':77,'name':'attested-release-42-1','expired':False,'workflow_run':{{'id':42,'head_sha':'a'*40}}}},
-  'owner':{{'login':'marcinwadon','id':9}},'reviews':[{{'state':{'rejected' if kind=='approval-rejected' else 'approved'!r},'comment':'publish-run:42:attempt:2','user':{{'id':9}},'environments':[{{'name':'release'}}]}}]}}
-run_policy.evidence=evidence
-def crypto(command,**kwargs):
- gate.require(command[:3]==['gh','attestation','verify'],'unexpected external transport')
- if {kind=='crypto-refused'!r}: raise subprocess.CalledProcessError(1,command)
- certificate={{'sourceRepositoryURI':'https://github.com/'+gate.REPOSITORY,'buildSignerURI':'https://github.com/'+gate.REPOSITORY+'/'+contract.WORKFLOW+'@refs/tags/v0.1.0','sourceRepositoryRef':'refs/tags/v0.1.0','sourceRepositoryDigest':'a'*40,'buildSignerDigest':'a'*40,'runnerEnvironment':'github-hosted','issuer':'https://token.actions.githubusercontent.com','runInvocationURI':'https://github.com/'+gate.REPOSITORY+'/actions/runs/42/attempts/1'}}
- if {kind=='wrong-run'!r}:certificate['runInvocationURI']=certificate['runInvocationURI'].replace('/42/','/43/')
- if {kind=='wrong-attempt'!r}:certificate['runInvocationURI']=certificate['runInvocationURI'].replace('attempts/1','attempts/2')
- if {kind=='branch'!r}:certificate['buildSignerURI']=certificate['buildSignerURI'].replace('refs/tags/v0.1.0','refs/heads/main')
- return subprocess.CompletedProcess(command,0,gate.canonical([{{'verificationResult':{{'signature':{{'certificate':certificate}}}}}}]).decode(),'')
-contract.subprocess.run=crypto
-release_run.main()
-if {kind=='changed-after-gate'!r} and len(Path({str(root/'calls.jsonl')!r}).read_text().splitlines())==2:
- with Path({str(payload/'crates-inventory.json')!r}).open('ab') as output:output.write(b' ')
-'''
-        if kind!='missing-gate':(root/'packaging/release/release_run.py').write_text(shim)
         if kind=='changed-crate':(payload/crates[0]['file']).write_bytes(b'altered')
-        env=dict(os.environ,GITHUB_ACTIONS='true',GITHUB_REPOSITORY=gate.REPOSITORY,GITHUB_REF='refs/tags/v0.1.0',GITHUB_SHA='a'*40,
+        environment=dict(os.environ,GITHUB_ACTIONS='true',GITHUB_REPOSITORY=gate.REPOSITORY,GITHUB_REF='refs/tags/v0.1.0',GITHUB_SHA='a'*40,
             GITHUB_WORKFLOW_REF=gate.REPOSITORY+'/'+contract.WORKFLOW+'@refs/tags/v0.1.0',GITHUB_EVENT_NAME='push',GITHUB_RUN_ID='42',GITHUB_RUN_ATTEMPT='2',
-            RELEASE_ARTIFACT_ID='77',RELEASE_ATTESTING_ATTEMPT='1',GH_TOKEN='offline-fixture',RELEASE_PUBLICATION_ENABLED='true',RELEASE_GITHUB_ENABLED='true',RELEASE_CRATES_ENABLED='true',
-            CARGO_REGISTRY_TOKEN='offline-child-must-not-see',RELEASE_CRATES_BOOTSTRAP_TOKEN='offline-child-must-not-see',GHCR_PUBLISH_TOKEN='offline-child-must-not-see',HOMEBREW_TAP_TOKEN='offline-child-must-not-see')
-        return root,payload,signatures,env
+            RELEASE_ARTIFACT_ID='77',RELEASE_ATTESTING_ATTEMPT='1',GH_TOKEN='offline-parent-only',RELEASE_PUBLICATION_ENABLED='true',RELEASE_GITHUB_ENABLED='true',RELEASE_CRATES_ENABLED='true',
+            ACTIONS_ID_TOKEN_REQUEST_TOKEN='offline-parent-only',ACTIONS_ID_TOKEN_REQUEST_URL='offline-parent-only')
+        return root,payload,signatures,environment
 
     def run_publish(self,kind,repetitions=1):
-        root,payload,signatures,env=self.fixture(kind)
+        root,payload,signatures,environment=self.fixture(kind)
         publisher=Path(os.environ.get('R3_FIXTURE_PUBLISHER',str(self.repo/'packaging/publish-crates.mjs')))
-        program=f'''import {{publishFrozen,releaseGate,releaseCratesDigest}} from {str(publisher)!r};
+        resultfile=root/'node-result.json'
+        program=f'''import fs from 'node:fs';
+import {{publishFrozen,releaseGate,releaseCratesDigest}} from {str(publisher)!r};
 const dir={str(payload)!r},signatures={str(signatures)!r};let credentials=0,uploads=0,error='',completed=[];
-try{{const digest=releaseCratesDigest(dir);for(let i=0;i<{repetitions};i++)completed=await publishFrozen({{dir,digest,gate:async()=>{{if(releaseGate({{dir,signatures}})!==digest)throw Error('changed channel digest');}},credentials:async()=>{{credentials++;return 'offline';}},fetcher:async(url,options={{}})=>{{if(options.method==='PUT'){{uploads++;throw Error('unexpected upload');}}if(url.endsWith('/download'))return new Response(url.split('/').at(-3));if(url.startsWith('https://index.crates.io/')){{const name=url.split('/').at(-1);return new Response(JSON.stringify({{vers:'0.1.0',cksum:(await import('node:crypto')).createHash('sha256').update(name).digest('hex')}}));}}return new Response('source');}}}});}}catch(e){{error=String(e);}}
-console.log('RESULT:'+JSON.stringify({{credentials,uploads,error,completed}}));'''
-        result=subprocess.run([os.environ.get('R3_FIXTURE_NODE','node'),'--input-type=module','-e',program],cwd=root,env=env,capture_output=True,text=True)
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-        return json.loads(next(line[7:] for line in result.stdout.splitlines() if line.startswith('RESULT:'))),root
+for(const key of ['GH_TOKEN','GITHUB_TOKEN','ACTIONS_ID_TOKEN_REQUEST_TOKEN','ACTIONS_ID_TOKEN_REQUEST_URL','GH_CONFIG_DIR','NODE_OPTIONS'])if(key in process.env)throw Error('authority leaked into Node');
+try{{const digest=releaseCratesDigest(dir);for(let i=0;i<{repetitions};i++)completed=await publishFrozen({{dir,digest,gate:async()=>{{if(releaseGate({{dir,signatures}})!==digest)throw Error('changed channel digest');}},credentials:async()=>{{credentials++;fs.writeFileSync({str(root/'credential-read')!r},String(credentials));return process.env.CARGO_REGISTRY_TOKEN;}},fetcher:async(url,options={{}})=>{{if(options.method==='PUT'){{uploads++;throw Error('unexpected upload');}}if(url.endsWith('/download'))return new Response(url.split('/').at(-3));if(url.startsWith('https://index.crates.io/')){{const name=url.split('/').at(-1);return new Response(JSON.stringify({{vers:'0.1.0',cksum:(await import('node:crypto')).createHash('sha256').update(name).digest('hex')}}));}}return new Response('source');}}}});}}catch(e){{error=String(e);}}
+fs.writeFileSync({str(resultfile)!r},JSON.stringify({{credentials,uploads,error,completed}}));
+if(error)process.exitCode=1;'''
+        calls=[]
+        def tag(*args,**kwargs):
+            gate.require(kind!='bad-tag','fixture signed tag refused');return {}
+        def evidence(api,metadata,env):
+            self.assertEqual(os.environ.get('GH_TOKEN'),'offline-parent-only')
+            jobs=[{'name':name,'status':'completed','conclusion':'success'} for name in ('tag-signature','qualification','web-ui','archive','assemble','installer','attest','homebrew-native','crates')]
+            jobs += [dict(j) for j in list(jobs) if j['name'] in ('qualification','archive','installer','homebrew-native') for _ in range(2)]
+            jobs += [{'name':name,'status':'completed','conclusion':'skipped'} for name in ('ghcr','homebrew')]
+            return {'original':{'id':42,'run_attempt':1,'head_sha':'a'*40,'head_branch':'v0.1.0','event':'push','path':contract.WORKFLOW,'repository':{'full_name':gate.REPOSITORY},'created_at':(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()},
+                'jobs':jobs,'artifact':{'id':77,'name':'attested-release-42-1','expired':False,'workflow_run':{'id':42,'head_sha':'a'*40}},
+                'owner':{'login':'marcinwadon','id':9},'reviews':[{'state':'rejected' if kind=='approval-rejected' else 'approved','comment':'publish-run:42:attempt:2','user':{'id':9},'environments':[{'name':'release'}]}]}
+        def crypto(command,**kwargs):
+            self.assertEqual(command[:3],['gh','attestation','verify'])
+            if kind=='crypto-refused':raise subprocess.CalledProcessError(1,command)
+            certificate={'sourceRepositoryURI':'https://github.com/'+gate.REPOSITORY,'buildSignerURI':'https://github.com/'+gate.REPOSITORY+'/'+contract.WORKFLOW+'@refs/tags/v0.1.0','sourceRepositoryRef':'refs/tags/v0.1.0','sourceRepositoryDigest':'a'*40,'buildSignerDigest':'a'*40,'runnerEnvironment':'github-hosted','issuer':'https://token.actions.githubusercontent.com','runInvocationURI':'https://github.com/'+gate.REPOSITORY+'/actions/runs/42/attempts/1'}
+            if kind=='wrong-run':certificate['runInvocationURI']=certificate['runInvocationURI'].replace('/42/','/43/')
+            if kind=='wrong-attempt':certificate['runInvocationURI']=certificate['runInvocationURI'].replace('attempts/1','attempts/2')
+            if kind=='branch':certificate['buildSignerURI']=certificate['buildSignerURI'].replace('refs/tags/v0.1.0','refs/heads/main')
+            return subprocess.CompletedProcess(command,0,gate.canonical([{'verificationResult':{'signature':{'certificate':certificate}}}]).decode(),'')
+        def authorize():
+            calls.append('verify')
+            gate.require(kind!='missing-gate','fixture gate unavailable')
+            gate.require(not (kind=='late-denial' and len(calls)>=4),'fixture authorization changed after credentials')
+            release_run.verify(payload,signatures,'crates')
+            digest=gate.digest(contract.regular(payload/'crates-inventory.json'))
+            if kind in ('changed-after-gate','metadata-after-gate') and len(calls)==3:
+                with (payload/('crates-inventory.json' if kind=='changed-after-gate' else 'release-metadata.json')).open('ab') as output:output.write(b' ')
+            return 'f'*64 if kind=='wrong-broker-digest' and len(calls)>1 else digest
+        parenterror=''
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ,environment,clear=True))
+            stack.enter_context(patch.object(release_run,'ROOT',root))
+            stack.enter_context(patch.object(tag_signature,'verify',side_effect=tag))
+            stack.enter_context(patch.object(supply,'require_contract',return_value=None))
+            stack.enter_context(patch.object(supply,'verify_binary_inventory',return_value=None))
+            stack.enter_context(patch.object(release_run,'require_public',side_effect=lambda *a:(root/'public-checked').touch()))
+            stack.enter_context(patch.object(run_policy,'evidence',side_effect=evidence))
+            stack.enter_context(patch.object(contract.subprocess,'run',side_effect=crypto))
+            try:
+                authorize()  # root channel entry point verifies before choosing a token/spawning.
+                crates_delivery.run(payload,signatures,'offline-chosen-crates-token',authorize,environment=environment,
+                                    command=[os.environ.get('R3_FIXTURE_NODE','node'),'--input-type=module','-e',program])
+            except Exception as failure:parenterror=type(failure).__name__
+        result=json.loads(resultfile.read_text()) if resultfile.exists() else {'credentials':int((root/'credential-read').read_text()) if (root/'credential-read').exists() else 0,'uploads':0,'error':parenterror,'completed':[]}
+        if parenterror:result['error']=result['error'] or parenterror
+        return result,root,calls
 
     def test_authenticated_global_bytes_reach_credentials_through_real_adapter(self):
-        result,root=self.run_publish('valid')
+        result,root,calls=self.run_publish('valid')
         self.assertEqual((result['credentials'],result['uploads'],result['error']),(1,0,''))
         self.assertEqual(len(result['completed']),7);self.assertTrue((root/'public-checked').is_file())
-        calls=[json.loads(line) for line in (root/'calls.jsonl').read_text().splitlines()]
-        self.assertEqual(len(calls),16)
-        self.assertTrue(all(args[0]=='verify' and args[-1]=='crates' for args in calls))
+        self.assertEqual(len(calls),17)
 
     def test_repeat_recovery_reuses_bytes_and_reverifies_each_boundary(self):
-        result,root=self.run_publish('valid',2)
+        result,root,calls=self.run_publish('valid',2)
         self.assertEqual((result['credentials'],result['uploads'],result['error']),(2,0,''))
-        self.assertEqual(len((root/'calls.jsonl').read_text().splitlines()),32)
+        self.assertEqual(len(calls),33)
 
     def test_each_authority_failure_prevents_credentials_and_uploads(self):
-        for kind in ('missing-gate','bad-tag','crypto-refused','branch','wrong-run','wrong-attempt','approval-rejected','changed-crate','changed-after-gate'):
-            result,_=self.run_publish(kind)
+        for kind in ('missing-gate','bad-tag','crypto-refused','branch','wrong-run','wrong-attempt','approval-rejected','changed-crate','changed-after-gate','metadata-after-gate','wrong-broker-digest'):
+            result,_,_=self.run_publish(kind)
             with self.subTest(kind=kind):
                 self.assertEqual((result['credentials'],result['uploads']),(0,0));self.assertTrue(result['error'])
+
+    def test_parent_revocation_after_credentials_stops_the_next_boundary(self):
+        result,_,calls=self.run_publish('late-denial')
+        self.assertEqual((result['credentials'],result['uploads']),(1,0))
+        self.assertTrue(result['error']);self.assertEqual(len(calls),4)
 
 
 if __name__=='__main__':unittest.main()
@@ -8603,6 +9333,411 @@ assert importlib.util.find_spec('yaml') is None, 'fixture must have no PyYAML'
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 ``````
 
+<!-- replay-file: {"path":"packaging/release/test_registry_bundles.py","mode":"100644","sha256":"c3f261c52d322a7c9602d2291e745d171d564c74180ec33f45dc31ee99bec3f6","encoding":"utf8"} -->
+``````python
+"""Real pinned ORAS and disposable OCI layouts; no registry, gh or credentials."""
+import copy
+from contextlib import contextmanager
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).parents[1] / 'release'))
+import gate
+import registry_bundles as bundles
+
+MEDIA = 'application/vnd.oci.image.manifest.v1+json'
+INDEX = 'application/vnd.oci.image.index.v1+json'
+KIND = 'application/vnd.dev.sigstore.bundle.v0.3+json'
+PROVENANCE = 'https://slsa.dev/provenance/v1'
+SPDX = 'https://spdx.dev/Document'
+
+
+def descriptor(raw, media=MEDIA):
+    return {'mediaType': media, 'digest': 'sha256:' + gate.digest(raw), 'size': len(raw)}
+
+
+class RegistryBundles(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='release-referrers-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.layout = self.root / 'registry'; (self.layout / 'blobs/sha256').mkdir(parents=True)
+        self.environment = {key: value for key, value in os.environ.items() if key in
+                            ('PATH', 'NIX_SSL_CERT_FILE', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'SYSTEMROOT')}
+        for key in ('HOME','XDG_CONFIG_HOME','DOCKER_CONFIG','GH_CONFIG_DIR','GNUPGHOME'):
+            path = self.root / key.lower(); path.mkdir(); self.environment[key] = str(path)
+        for key in ('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','http_proxy','https_proxy','all_proxy'):
+            self.environment[key] = 'http://127.0.0.1:9'
+        self.environment.update(NO_PROXY='', no_proxy='')
+        self.real_run = subprocess.run
+        version = self.real_run(['oras','version'], env=self.environment, check=True, capture_output=True, text=True).stdout
+        self.assertIn('Version:        1.3.4\n', version, 'ORAS pin changed; requalify the deterministic manifest contract')
+        config = self.blob(b'{}', 'application/vnd.oci.empty.v1+json')
+        platforms = [self.blob(gate.canonical({'schemaVersion':2,'mediaType':MEDIA,'config':config,'layers':[],
+                                            'annotations':{'test.arch':arch}})) for arch in ('amd64','arm64')]
+        index = self.blob(gate.canonical({'schemaVersion':2,'mediaType':INDEX,'manifests':platforms}), INDEX)
+        (self.layout / 'oci-layout').write_text('{"imageLayoutVersion":"1.0.0"}')
+        (self.layout / 'index.json').write_bytes(gate.canonical({'schemaVersion':2,'manifests':[index,*platforms]}))
+        self.subjects = []
+        for name, subject in [('index',index),('amd64',platforms[0]),('arm64',platforms[1])]:
+            for kind in (['provenance'] if name == 'index' else ['provenance','image-sbom','binary-sbom']):
+                path = self.root / f'ghcr-{name}-{kind}.json'
+                path.write_bytes(gate.canonical({'offlineBundle':name + '-' + kind}))
+                self.subjects.append((name,kind,subject['digest'],PROVENANCE if kind == 'provenance' else SPDX,path))
+        self.calls = []; self.gates = 0
+        # A removed --oci-layout guard must never escape to a network operation.
+        # All actual subprocesses are ORAS with fully isolated environment.
+        def local_only(command, **kwargs):
+            self.assertEqual(command[0], 'oras', 'no other subprocess is authorized')
+            if command[1] in ('copy','cp'):
+                self.assertIn('--from-oci-layout', command); self.assertIn('--to-oci-layout', command)
+            elif command[1] != 'version':
+                self.assertIn('--oci-layout', command)
+            actual = kwargs['env']
+            self.assertEqual(actual['HOME'], self.environment['HOME'])
+            self.assertFalse(any('TOKEN' in key or key.startswith(('ACTIONS_','RUNNER_')) for key in actual))
+            self.calls.append(list(command))
+            return self.real_run(command, **kwargs)
+        transport = patch.object(bundles.subprocess, 'run', side_effect=local_only)
+        transport.start(); self.addCleanup(transport.stop)
+
+    @contextmanager
+    def refusal(self, pattern=None):
+        try:
+            yield
+        except Exception as error:
+            self.assertIsInstance(error,gate.Refused,'refusal must retain its fail-closed classification')
+            if pattern:self.assertRegex(str(error),pattern)
+        else:
+            self.fail('expected OCI refusal')
+
+    def blob(self, raw, media=MEDIA):
+        desc = descriptor(raw, media)
+        path=self.layout / 'blobs/sha256' / desc['digest'][7:]
+        if path.exists(): self.assertEqual(path.read_bytes(),raw)
+        else: path.write_bytes(raw)
+        return desc
+
+    def gate(self):
+        self.gates += 1
+
+    def reconcile(self, **kwargs):
+        return bundles.reconcile(self.subjects,self.root/'fetched',self.gate,
+                                 environment=self.environment,layout=self.layout,**kwargs)
+
+    def copies(self):
+        return [c for c in self.calls if c[1] in ('copy','cp')]
+
+    def referrers(self):
+        index = gate.strict_json((self.layout/'index.json').read_bytes())
+        return [d for d in index['manifests'] if gate.strict_json(
+            (self.layout/'blobs/sha256'/d['digest'][7:]).read_bytes()).get('artifactType') == KIND]
+
+    def test_success_fetches_every_frozen_bundle_and_pins_the_manifest_bytes(self):
+        fetched = self.reconcile()
+        self.assertEqual(len(fetched),7)
+        self.assertEqual(len(self.copies()),7);self.assertEqual(self.gates,7)
+        self.assertEqual(len(self.referrers()),7)
+        for expected,actual in zip(self.subjects,fetched):
+            self.assertEqual(actual[:4],expected[:4]);self.assertNotEqual(actual[4],expected[4])
+            self.assertTrue(actual[4].is_file())
+            self.assertEqual(actual[4].read_bytes(),expected[4].read_bytes())
+        for ref in self.referrers():
+            raw=(self.layout/'blobs/sha256'/ref['digest'][7:]).read_bytes();value=gate.strict_json(raw)
+            self.assertEqual(descriptor(raw),{k:ref[k] for k in ('mediaType','digest','size')})
+            self.assertEqual(value['annotations']['org.opencontainers.image.created'],'1970-01-01T00:00:00Z')
+            self.assertEqual(value['artifactType'],KIND)
+            self.assertEqual(len(value['layers']),1)
+
+    def test_complete_retry_has_no_write_command_or_write_approval(self):
+        self.assertEqual(len(self.reconcile()),7)
+        before=(self.layout/'index.json').read_bytes();self.calls=[];self.gates=0
+        fetched=self.reconcile()
+        self.assertEqual(len(fetched),7);self.assertEqual(self.copies(),[]);self.assertEqual(self.gates,0)
+        self.assertEqual((self.layout/'index.json').read_bytes(),before)
+        self.assertTrue(all(item[4].read_bytes()==original[4].read_bytes() for item,original in zip(fetched,self.subjects)))
+
+    def test_partial_recovery_writes_only_the_four_missing_referrers(self):
+        def stop():
+            self.gates+=1
+            if self.gates==4:raise gate.Refused('test stopped before fourth write')
+        with self.refusal('fourth'):
+            bundles.reconcile(self.subjects,self.root/'partial',stop,environment=self.environment,layout=self.layout)
+        self.assertEqual(len(self.copies()),3)
+        existing={p.name:(p.read_bytes(),p.stat().st_mtime_ns) for p in (self.layout/'blobs/sha256').iterdir()}
+        self.calls=[];self.gates=0
+        self.assertEqual(len(self.reconcile()),7);self.assertEqual(len(self.copies()),4);self.assertEqual(self.gates,4)
+        self.assertEqual(len(self.referrers()),7)
+        for name,state in existing.items():
+            path=self.layout/'blobs/sha256'/name
+            self.assertEqual((path.read_bytes(),path.stat().st_mtime_ns),state,'existing blob was rewritten')
+
+    def test_lost_success_response_is_reconciled_without_reupload(self):
+        original=bundles.subprocess.run;completed=0
+        def ambiguous(command,**kwargs):
+            nonlocal completed
+            result=original(command,**kwargs)
+            if command[1] in ('copy','cp'):
+                completed+=1
+                if completed==3:raise subprocess.CalledProcessError(97,command,stderr=b'offline lost response')
+            return result
+        with patch.object(bundles.subprocess,'run',side_effect=ambiguous),self.refusal():self.reconcile()
+        self.assertEqual(len(self.referrers()),3)
+        self.calls=[];self.gates=0
+        self.assertEqual(len(self.reconcile()),7);self.assertEqual(len(self.copies()),4)
+
+    def test_every_frozen_input_is_regular_and_present_before_any_write(self):
+        path=self.subjects[-1][4];raw=path.read_bytes();outside=self.root/'outside';outside.write_bytes(raw)
+        for kind in ('missing','symlink','directory'):
+            path.unlink(missing_ok=True)
+            if kind=='symlink':path.symlink_to(outside)
+            if kind=='directory':path.mkdir()
+            with self.subTest(kind=kind),self.refusal():self.reconcile()
+            self.assertEqual(self.copies(),[])
+            if path.is_dir():path.rmdir()
+        path.write_bytes(raw)
+
+    def test_empty_bundle_is_refused_before_any_write(self):
+        self.subjects[-1][4].write_bytes(b'')
+        with self.refusal():self.reconcile()
+        self.assertEqual(self.copies(),[])
+
+    def test_changed_frozen_bundle_at_write_boundary_refuses(self):
+        path=self.subjects[0][4]
+        def changed():
+            self.gates+=1;path.write_bytes(path.read_bytes()+b' ')
+        with self.refusal():
+            bundles.reconcile(self.subjects,self.root/'fetched',changed,environment=self.environment,layout=self.layout)
+        self.assertEqual(self.copies(),[])
+
+    def test_existing_manifest_and_bundle_are_fetched_by_digest_and_checked(self):
+        self.assertEqual(len(self.reconcile()),7)
+        ref=self.referrers()[0];manifest=self.layout/'blobs/sha256'/ref['digest'][7:]
+        raw=manifest.read_bytes();value=gate.strict_json(raw)
+        layer=self.layout/'blobs/sha256'/value['layers'][0]['digest'][7:];bundle=layer.read_bytes()
+        for kind in ('changed-blob','missing-blob','changed-manifest'):
+            self.calls=[]
+            # ORAS intentionally marks content-addressed blobs read-only. The
+            # adversarial fixture owns these files and explicitly corrupts them.
+            layer.chmod(0o600);manifest.chmod(0o600)
+            if kind=='changed-blob':layer.write_bytes(bundle+b' ')
+            if kind=='missing-blob':layer.unlink()
+            if kind=='changed-manifest':manifest.write_bytes(raw+b' ')
+            if kind=='missing-manifest':manifest.unlink()
+            with self.subTest(kind=kind),self.refusal():self.reconcile()
+            self.assertEqual(self.copies(),[])
+            layer.write_bytes(bundle);manifest.write_bytes(raw)
+
+    def test_undiscoverable_missing_manifest_is_repaired_once_then_retry_is_read_only(self):
+        self.assertEqual(len(self.reconcile()),7)
+        ref=self.referrers()[0];path=self.layout/'blobs/sha256'/ref['digest'][7:]
+        path.unlink();self.calls=[];self.gates=0
+        self.assertEqual(len(self.reconcile()),7)
+        self.assertEqual((len(self.copies()),self.gates),(1,1))
+        self.calls=[];self.gates=0
+        self.assertEqual(len(self.reconcile()),7)
+        self.assertEqual((len(self.copies()),self.gates),(0,0))
+
+    def test_advertised_but_unfetchable_manifest_refuses_without_writes(self):
+        self.assertEqual(len(self.reconcile()),7)
+        missing=self.referrers()[0]['digest'];transport=bundles.subprocess.run
+        def absent(command,**kwargs):
+            if command[1:3]==['manifest','fetch'] and command[-1].endswith('@'+missing):
+                raise subprocess.CalledProcessError(1,command,stderr=b'offline advertised manifest missing')
+            return transport(command,**kwargs)
+        self.calls=[]
+        with patch.object(bundles.subprocess,'run',side_effect=absent),self.refusal('transport failed'):self.reconcile()
+        self.assertEqual(self.copies(),[])
+
+    def test_gate_refusal_and_changed_fetched_output_never_become_success(self):
+        def refuse():raise gate.Refused('approval withdrawn')
+        with self.refusal('approval withdrawn'):
+            bundles.reconcile(self.subjects,self.root/'fetched',refuse,environment=self.environment,layout=self.layout)
+        self.assertEqual(self.copies(),[])
+        fetched=self.reconcile();fetched[0][4].write_bytes(b'changed output');self.calls=[]
+        with self.refusal('output changed'):self.reconcile()
+        self.assertEqual(self.copies(),[])
+
+    def test_caller_tokens_never_reach_the_actual_oras_subprocess(self):
+        self.environment.update(GH_TOKEN='must-not-reach-oras',GITHUB_TOKEN='must-not-reach-oras',
+            GHCR_PUBLISH_TOKEN='must-not-reach-oras',ACTIONS_ID_TOKEN_REQUEST_TOKEN='must-not-reach-oras')
+        self.assertEqual(len(self.reconcile()),7)
+
+    def test_production_transport_pins_origin_and_auth_while_test_routes_only_to_layout(self):
+        auth=self.root/'registry-auth.json';auth.write_text('{}')
+        local_transport=bundles.subprocess.run;commands=[]
+        def offline_remote(command,**kwargs):
+            commands.append(list(command));actual=list(command)
+            option='--to-registry-config' if command[1] in ('copy','cp') else '--registry-config'
+            position=actual.index(option)
+            self.assertEqual(actual[position+1],str(auth.resolve()))
+            actual[position:position+2]=['--to-oci-layout' if option.startswith('--to-') else '--oci-layout']
+            for index,argument in enumerate(actual):
+                if argument.startswith('ghcr.io/'):
+                    self.assertTrue(argument.startswith('ghcr.io/marcinwadon/hennery@sha256:'))
+                    actual[index]=str(self.layout.resolve())+'@'+argument.split('@',1)[1]
+            # This is the only actual subprocess path: the existing local-only
+            # transport refuses any remaining remote command before execution.
+            return local_transport(actual,**kwargs)
+        with patch.object(bundles.subprocess,'run',side_effect=offline_remote):
+            fetched=bundles.reconcile(self.subjects,self.root/'fetched',self.gate,
+                                      environment=self.environment,auth=auth)
+        self.assertEqual(len(fetched),7)
+        self.assertTrue(all(any(a.startswith('ghcr.io/marcinwadon/hennery@sha256:') for a in c) for c in commands))
+
+    def test_malformed_discovery_and_untrusted_descriptors_refuse_before_writes(self):
+        self.assertEqual(len(self.reconcile()),7)
+        transport=bundles.subprocess.run
+        for kind in ('missing-list','duplicate-key','escaped-key','bom','bad-digest','bad-size','wrong-type','duplicate-referrer'):
+            def altered(command,**kwargs):
+                result=transport(command,**kwargs)
+                if command[1]=='discover':
+                    value=gate.strict_json(result.stdout)
+                    if kind=='missing-list':raw=b'{}'
+                    elif kind=='duplicate-key':raw=b'{"referrers":[],"REFERRERS":[]}'
+                    elif kind=='escaped-key':raw=b'{"referrers":[],"refe\\u0072rers":[]}'
+                    elif kind=='bom':raw=b'\xef\xbb\xbf'+result.stdout
+                    else:
+                        desc=value['referrers'][0]
+                        if kind=='bad-digest':desc['digest']='sha512:'+'a'*64
+                        if kind=='bad-size':desc['size']=-1
+                        if kind=='wrong-type':desc['mediaType']=INDEX
+                        if kind=='duplicate-referrer':value['referrers'].append(dict(desc))
+                        raw=gate.canonical(value)
+                    return subprocess.CompletedProcess(command,0,raw,b'')
+                return result
+            self.calls=[]
+            with self.subTest(kind=kind),patch.object(bundles.subprocess,'run',side_effect=altered),self.refusal():self.reconcile()
+            self.assertEqual(self.copies(),[])
+
+    def test_fetched_subject_manifest_and_blob_bytes_are_checked_independently_of_oras(self):
+        self.assertEqual(len(self.reconcile()),7);transport=bundles.subprocess.run
+        for kind in ('subject','referrer','bundle','config'):
+            ref=self.referrers()[0];manifest=gate.strict_json((self.layout/'blobs/sha256'/ref['digest'][7:]).read_bytes())
+            digest={'subject':self.subjects[0][2],'referrer':ref['digest'],
+                    'bundle':manifest['layers'][0]['digest'],'config':manifest['config']['digest']}[kind]
+            def altered(command,**kwargs):
+                result=transport(command,**kwargs)
+                if command[1] in ('manifest','blob') and command[-1].endswith('@'+digest):
+                    return subprocess.CompletedProcess(command,0,result.stdout+b' ',b'')
+                return result
+            self.calls=[]
+            with self.subTest(kind=kind),patch.object(bundles.subprocess,'run',side_effect=altered),self.refusal('digest or size differs|subject digest differs'):self.reconcile()
+            self.assertEqual(self.copies(),[])
+
+    def test_new_write_requires_visible_referrer_readback(self):
+        transport=bundles.subprocess.run;discoveries=0
+        def invisible(command,**kwargs):
+            nonlocal discoveries
+            result=transport(command,**kwargs)
+            if command[1]=='discover':
+                discoveries+=1
+                if discoveries==5:return subprocess.CompletedProcess(command,0,b'{"referrers":[]}',b'')
+            return result
+        with patch.object(bundles.subprocess,'run',side_effect=invisible),self.refusal('missing from read-back'):
+            self.reconcile()
+        self.assertEqual(len(self.copies()),1)
+
+    def test_final_discovery_must_still_cover_the_complete_bundle_set(self):
+        transport=bundles.subprocess.run;discoveries=0
+        def incomplete(command,**kwargs):
+            nonlocal discoveries
+            result=transport(command,**kwargs)
+            if command[1]=='discover':
+                discoveries+=1
+                if discoveries>=18:return subprocess.CompletedProcess(command,0,b'{"referrers":[]}',b'')
+            return result
+        with patch.object(bundles.subprocess,'run',side_effect=incomplete),self.refusal('set incomplete'):
+            self.reconcile()
+        self.assertEqual(len(self.copies()),7)
+
+    def test_frozen_inputs_cannot_change_during_final_readback(self):
+        transport=bundles.subprocess.run;discoveries=0
+        def changed(command,**kwargs):
+            nonlocal discoveries
+            result=transport(command,**kwargs)
+            if command[1]=='discover':
+                discoveries+=1
+                if discoveries==18:
+                    path=self.subjects[0][4];path.write_bytes(path.read_bytes()+b' ')
+            return result
+        with patch.object(bundles.subprocess,'run',side_effect=changed),self.refusal('changed during reconciliation'):
+            self.reconcile()
+        self.assertEqual(len(self.copies()),7)
+
+    def test_wrong_or_duplicate_subject_selection_refuses_before_transport(self):
+        for mutation in ('missing','duplicate','extra-duplicate','predicate','digest','name','kind','filename','different-platform','same-digests'):
+            subjects=list(self.subjects)
+            if mutation=='missing':subjects.pop()
+            if mutation=='duplicate':subjects[-1]=subjects[0]
+            if mutation=='extra-duplicate':subjects.append(subjects[0])
+            if mutation=='filename':
+                path=self.root/'unbound.json';path.write_bytes(subjects[1][4].read_bytes())
+                subjects[1]=(*subjects[1][:4],path)
+            if mutation=='different-platform':subjects[2]=(*subjects[2][:2],subjects[4][2],*subjects[2][3:])
+            if mutation=='same-digests':subjects=[(*row[:2],subjects[0][2],*row[3:]) for row in subjects]
+            if mutation=='predicate':subjects[1]=(*subjects[1][:3],SPDX,subjects[1][4])
+            if mutation=='digest':subjects[1]=(*subjects[1][:2],'sha512:'+'a'*64,*subjects[1][3:])
+            if mutation=='name':subjects[0]=('other',*subjects[0][1:])
+            if mutation=='kind':subjects[0]=(subjects[0][0],'other',*subjects[0][2:])
+            self.calls=[]
+            with self.subTest(mutation=mutation),self.refusal():
+                bundles.reconcile(subjects,self.root/'fetched',self.gate,environment=self.environment,layout=self.layout)
+            self.assertEqual(self.calls,[])
+
+    def test_descriptor_validator_refuses_malformed_or_unbounded_inputs(self):
+        good={'mediaType':MEDIA,'digest':'sha256:'+'a'*64,'size':1}
+        bundles.valid_descriptor(good)
+        for value in (None,{},good|{'digest':None},good|{'digest':'sha512:'+'a'*64},
+                      good|{'size':True},good|{'size':0},good|{'size':16*1024*1024+1}):
+            with self.subTest(value=value),self.refusal():bundles.valid_descriptor(value)
+
+    def test_referrers_completed_during_approval_are_not_copied_again(self):
+        transport=bundles.subprocess.run;other=False;completed=False;our_writes=[]
+        def record(command,**kwargs):
+            if command[1] in ('copy','cp') and not other:our_writes.append(command)
+            return transport(command,**kwargs)
+        def another_writer():
+            nonlocal other,completed
+            if not completed:
+                completed=True;other=True
+                try:bundles.reconcile(self.subjects,self.root/'other-fetched',lambda:None,environment=self.environment,layout=self.layout)
+                finally:other=False
+        with patch.object(bundles.subprocess,'run',side_effect=record):
+            fetched=bundles.reconcile(self.subjects,self.root/'fetched',another_writer,environment=self.environment,layout=self.layout)
+        self.assertEqual(len(fetched),7);self.assertEqual(our_writes,[])
+        self.assertEqual(len(self.copies()),7)
+
+    def test_referrer_metadata_cannot_silently_select_different_bundle_bytes(self):
+        self.assertEqual(len(self.reconcile()),7)
+        # An extra Sigstore referrer with a valid content-addressed blob is still
+        # a conflict if its frozen manifest/predicate/subject differs.
+        ref=self.referrers()[0];raw=(self.layout/'blobs/sha256'/ref['digest'][7:]).read_bytes()
+        original=gate.strict_json((self.layout/'index.json').read_bytes())
+        for field in ('created','predicate','subject','layer'):
+            changed=gate.strict_json(raw)
+            if field=='created':changed['annotations']['org.opencontainers.image.created']='2026-10-16T00:00:00Z'
+            if field=='predicate':changed['annotations']['dev.sigstore.bundle.predicateType']=PROVENANCE if changed['annotations']['dev.sigstore.bundle.predicateType']==SPDX else SPDX
+            if field=='subject':changed['subject']['size']+=1
+            if field=='layer':changed['layers'][0]=self.blob(b'other',KIND)
+            self.assertNotEqual(gate.canonical(changed),raw)
+            extra=self.blob(gate.canonical(changed));extra['artifactType']=KIND
+            index=copy.deepcopy(original);index['manifests'].append(extra)
+            (self.layout/'index.json').write_bytes(gate.canonical(index));self.calls=[]
+            with self.subTest(field=field),self.refusal():self.reconcile()
+            self.assertEqual(self.copies(),[])
+            (self.layout/'index.json').write_bytes(gate.canonical(original))
+
+
+if __name__=='__main__':unittest.main()
+``````
+
 <!-- replay-file: {"path":"packaging/release/test_release_run.py","mode":"100644","sha256":"f3ecde5a36cb36c6d70619b15f9bca5e5c4f32972974843d1402569007b547cb","encoding":"utf8"} -->
 ``````python
 import contextlib
@@ -9238,6 +10373,187 @@ if __name__ == '__main__':
     unittest.main()
 ``````
 
+<!-- replay-file: {"path":"packaging/release/test_tag_signature.py","mode":"100644","sha256":"82082416b1125de58d5126cb43828488c1fe3f247ce10393c48761e4f4690bd0","encoding":"utf8"} -->
+``````python
+import subprocess
+import unittest
+from unittest.mock import patch
+
+import gate
+import tag_signature
+
+
+class TagSignature(unittest.TestCase):
+    def test_only_pinned_nonexpired_valid_signature_is_accepted(self):
+        good = '[GNUPG:] VALIDSIG ' + tag_signature.FINGERPRINT + ' 2026-10-15 123 0 4 0 1 10 00\n'
+        tag_signature.check_status(0, good)
+        for code, status in [(1, good), (0, good.replace(tag_signature.FINGERPRINT, 'a' * 40)), (0, ''), (0, good + '[GNUPG:] EXPKEYSIG old\n'), (0, good + '[GNUPG:] REVKEYSIG old\n')]:
+            with self.subTest(code=code, status=status), self.assertRaises(gate.Refused):
+                tag_signature.check_status(code, status)
+
+    def test_live_fetched_tag_object_signature_and_exact_commit_are_bound(self):
+        def backend(args, **kwargs):
+            if 'init' in args:
+                self.assertIn('--bare', args)
+                self.assertIn('--template=', args)
+                out = ''
+            elif 'fetch' in args:
+                self.assertIn('https://github.com/' + gate.REPOSITORY + '.git', args)
+                out = ''
+            elif 'rev-parse' in args:
+                out = 'b' * 40 + '\n'
+            elif 'cat-file' in args:
+                out = 'object ' + 'a' * 40 + '\ntype commit\ntag v0.1.0\ntagger Maintainer\n\nmessage\n'
+            elif 'verify-tag' in args:
+                return subprocess.CompletedProcess(args, 0, '', '[GNUPG:] VALIDSIG ' + tag_signature.FINGERPRINT + ' 2026 1 0\n')
+            else:
+                self.assertIn('--no-autostart', args)
+                out = ''
+            return subprocess.CompletedProcess(args, 0, out, '')
+        with patch.object(tag_signature.subprocess, 'run', side_effect=backend):
+            proof = tag_signature.verify('v0.1.0', 'a' * 40, 'b' * 40)
+            self.assertEqual(proof['fingerprint'], tag_signature.FINGERPRINT)
+            for tag, commit, obj in [('v0.1.0', 'c' * 40, 'b' * 40), ('v9.0.0', 'a' * 40, 'b' * 40), ('v0.1.0', 'a' * 40, 'c' * 40)]:
+                with self.subTest(tag=tag, commit=commit, obj=obj), self.assertRaises(gate.Refused):
+                    tag_signature.verify(tag, commit, obj)
+``````
+
+<!-- replay-file: {"path":"packaging/release/test_verifier_process.py","mode":"100644","sha256":"354b32fa2696daecc1eac32739e9d2b1e560079365cdc5941db85b6a9fde2ffe","encoding":"utf8"} -->
+``````python
+"""Real stand-in executables prove the verifier process authority boundary."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
+
+import channel_publish
+import contract
+import gate
+import tag_signature
+import test_contract
+import verify
+
+
+class VerifierChildren(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory(prefix='verifier-child-test-');self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name);self.tools=self.root/'tools';self.tools.mkdir();self.log=self.root/'children.jsonl'
+        self.certificate={'runInvocationURI':'https://github.com/'+gate.REPOSITORY+'/actions/runs/42/attempts/1',
+            'sourceRepositoryURI':'https://github.com/'+gate.REPOSITORY,
+            'buildSignerURI':'https://github.com/'+gate.REPOSITORY+'/'+contract.WORKFLOW+'@refs/tags/v0.1.0',
+            'sourceRepositoryRef':'refs/tags/v0.1.0','sourceRepositoryDigest':'a'*40,'buildSignerDigest':'a'*40,
+            'runnerEnvironment':'github-hosted','issuer':'https://token.actions.githubusercontent.com'}
+        self.rows=[{'verificationResult':{'signature':{'certificate':self.certificate}}}]
+        self.dirty=self.root/'operator-config';self.dirty.mkdir()
+        (self.dirty/'hosts.yml').write_text('credential-canary')
+        for filename in ['config.json','config','credentials','.git-credentials','.gitconfig']:(self.dirty/filename).write_text('credential-canary')
+        self.bad={'GH_TOKEN':'write-canary','GITHUB_TOKEN':'write-canary','GH_ENTERPRISE_TOKEN':'write-canary',
+            'GITHUB_ENTERPRISE_TOKEN':'write-canary','ACTIONS_ID_TOKEN_REQUEST_TOKEN':'oidc-canary',
+            'ACTIONS_ID_TOKEN_REQUEST_URL':'https://example.invalid/oidc','ACTIONS_RUNTIME_TOKEN':'runtime-canary',
+            'SSH_AUTH_SOCK':'agent-canary','GPG_AGENT_INFO':'agent-canary','GIT_ASKPASS':'helper-canary',
+            'SSH_ASKPASS':'helper-canary','GIT_CONFIG_PARAMETERS':'credential.helper=canary',
+            'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'http.extraheader','GIT_CONFIG_VALUE_0':'canary',
+            'DOCKER_AUTH_CONFIG':'credential-canary','UNKNOWN_FUTURE_SECRET':'canary',
+            **{k:'credential-canary' for k in channel_publish.SECRETS},
+            **{k:str(self.dirty) for k in ['HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','GH_CONFIG_DIR',
+                'GNUPGHOME','DOCKER_CONFIG','REGISTRY_AUTH_FILE','ORAS_CONFIG','ORAS_CONFIG_HOME','GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM']},
+            'PATH':str(self.tools)+os.pathsep+os.environ['PATH']}
+        script='#!'+sys.executable+'\n'+f'''import json,os,sys
+from pathlib import Path
+name=Path(sys.argv[0]).name
+with open({str(self.log)!r},'a') as out:out.write(json.dumps({{'tool':name,'args':sys.argv[1:],'env':dict(os.environ)}})+'\\n')
+if name=='gh': print({json.dumps(self.rows)!r})
+elif 'rev-parse' in sys.argv: print({'b'*40!r})
+elif 'cat-file' in sys.argv: print({'object '+'a'*40+chr(10)+'type commit'+chr(10)+'tag v0.1.0'+chr(10)+'tagger Test'+chr(10)+chr(10)+'message'+chr(10)!r})
+elif 'verify-tag' in sys.argv: print({'[GNUPG:] VALIDSIG '+tag_signature.FINGERPRINT+' 2026 1 0'+chr(10)!r},file=sys.stderr)
+'''
+        for name in ['gh','git','gpg']:
+            path=self.tools/name;path.write_text(script);path.chmod(0o755)
+
+    def children(self):return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def assert_clean(self):
+        rows=self.children();self.assertTrue(rows)
+        allowed_inputs={'PATH','SSL_CERT_FILE','NIX_SSL_CERT_FILE','SSL_CERT_DIR'}
+        # Nix's Python launcher injects these two noncredential runtime values
+        # after exec; they are not inherited by the subprocess environment.
+        runtime={'PYTHONNOUSERSITE','__CF_USER_TEXT_ENCODING'}
+        safe_config={'HOME','TMPDIR','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','XDG_STATE_HOME',
+                     'GH_CONFIG_DIR','GNUPGHOME','DOCKER_CONFIG','REGISTRY_AUTH_FILE','ORAS_CONFIG','ORAS_CONFIG_HOME',
+                     'GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM','GIT_CONFIG_NOSYSTEM','GIT_TERMINAL_PROMPT','GIT_NO_REPLACE_OBJECTS',
+                     'LC_ALL'}
+        for row in rows:
+            env=row['env']
+            self.assertLessEqual(set(env),allowed_inputs|safe_config|runtime,set(env))
+            if 'PYTHONNOUSERSITE' in env:self.assertEqual(env['PYTHONNOUSERSITE'],'true')
+            if '__CF_USER_TEXT_ENCODING' in env:self.assertRegex(env['__CF_USER_TEXT_ENCODING'],r'^0x[0-9A-Fa-f]+:0x0:0x0$')
+            for key,value in self.bad.items():
+                if key=='PATH':continue
+                self.assertNotEqual(env.get(key),value,(row['tool'],key))
+            self.assertTrue(all(not key.startswith('ACTIONS_') for key in env))
+            self.assertNotIn('UNKNOWN_FUTURE_SECRET',env)
+            self.assertNotEqual(env['HOME'],str(self.dirty))
+            self.assertNotEqual(env['GH_CONFIG_DIR'],str(self.dirty))
+            self.assertNotEqual(env['DOCKER_CONFIG'],str(self.dirty))
+        for key,value in self.bad.items():self.assertEqual(os.environ.get(key),value,'parent environment mutated')
+
+    def test_release_crypto_children_receive_only_explicit_credential_free_environment(self):
+        payload=self.root/'payload';payload.mkdir();test_contract.Contract().fixture(payload)
+        with patch.dict(os.environ,self.bad),patch.object(tag_signature,'verify'):
+            contract.verify(payload,'v0.1.0','a'*40,self.root/'bundle',42,1)
+            self.assertEqual(len(self.children()),3);self.assert_clean()
+
+    def test_standalone_image_consumer_child_is_also_credential_free(self):
+        manifest=self.root/'manifest';manifest.write_bytes(b'OCI manifest')
+        value={'tag':'v0.1.0','source_sha':'a'*40,'attesting':{'run_id':42,'run_attempt':1}}
+        with patch.dict(os.environ,self.bad):
+            verify.verify_image_subject('ghcr.io/'+gate.REPOSITORY+'@sha256:'+gate.digest(manifest.read_bytes()),value,
+                                       self.root/'bundle',manifest=manifest)
+            self.assert_clean()
+
+    def test_git_and_gpg_children_have_no_job_tokens_or_operator_configuration(self):
+        with patch.dict(os.environ,self.bad):
+            proof=tag_signature.verify('v0.1.0','a'*40,'b'*40)
+            self.assertEqual(proof['fingerprint'],tag_signature.FINGERPRINT);self.assert_clean()
+            self.assertFalse(any('origin' in row['args'] for row in self.children()),'tag fetch must use the fixed public repository')
+            git=[row['args'] for row in self.children() if row['tool']=='git']
+            self.assertEqual(sum('init' in args for args in git),1)
+            for args in git:
+                if 'init' in args:
+                    self.assertIn('--bare',args);self.assertIn('--template=',args)
+                else:self.assertTrue(any(arg.startswith('--git-dir=/tmp/hennery-verify-') for arg in args))
+
+    def test_parent_api_keeps_token_while_its_real_verifier_child_has_none(self):
+        payload=self.root/'payload';payload.mkdir();test_contract.Contract().fixture(payload)
+        def parent(*args):
+            self.assertEqual(os.environ['GH_TOKEN'],'write-canary')
+            contract.verify(payload,'v0.1.0','a'*40,self.root/'bundle',42,1)
+        with patch.dict(os.environ,self.bad),patch.object(tag_signature,'verify'),patch('release_run.verify',side_effect=parent):
+            channel_publish.shared_verify(payload,self.root,'github');self.assert_clean()
+
+    def test_folded_image_verifier_children_are_credential_free(self):
+        work=self.root/'work';blobs=work/'layout/blobs/sha256';blobs.mkdir(parents=True)
+        raw=b'OCI manifest';digest=gate.digest(raw);(blobs/digest).write_bytes(raw)
+        expected={'digest':'sha256:'+digest,'platforms':{}}
+        (self.root/'ghcr-index.json').write_bytes(gate.canonical(expected))
+        (work/'verified.json').write_bytes(gate.canonical(expected))
+        (self.root/'ghcr-index-provenance.json').write_text('local bundle')
+        value={'tag':'v0.1.0','source_sha':'a'*40,'attesting':{'run_id':42,'run_attempt':1}}
+        with patch.dict(os.environ,self.bad),patch.object(channel_publish,'image_helper',return_value=SimpleNamespace(inspect_release=lambda *a:expected)):
+            channel_publish.check_images(self.root,self.root,value,work);self.assert_clean()
+
+    def test_denied_verification_already_excludes_write_authority(self):
+        payload=self.root/'payload';payload.mkdir();test_contract.Contract().fixture(payload)
+        with patch.dict(os.environ,self.bad),patch.object(tag_signature,'verify'),patch.object(contract,'require_run',side_effect=gate.Refused('wrong run')):
+            with self.assertRaises(gate.Refused):contract.verify(payload,'v0.1.0','a'*40,self.root/'bundle',42,1)
+            self.assertEqual(len(self.children()),1);self.assert_clean()
+``````
+
 <!-- replay-file: {"path":"packaging/release/test_verify.py","mode":"100644","sha256":"768a6af6f9a7ffa24fe249619e24182d2f44a25bac60a0e2b447f3d109d0d5b0","encoding":"utf8"} -->
 ``````python
 """Consumer lifecycle and structural identity tests; real crypto is in test_verify_cli."""
@@ -9345,7 +10661,7 @@ class BinstallMetadata(unittest.TestCase):
 if __name__ == '__main__': unittest.main()
 ``````
 
-<!-- replay-file: {"path":"packaging/release/test_verify_cli.py","mode":"100644","sha256":"ba78e9ca9938846616da2e10daeee162d815787e5845d74f55a7659eaccaa843","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/release/test_verify_cli.py","mode":"100644","sha256":"8715e35bc0697b6811c2ee95352de7336c03900a1fd4c4553704fccf1fc68f24","encoding":"utf8"} -->
 ``````python
 """Actual pinned-gh crypto contract; substituted certificates test structure only."""
 import copy
@@ -9359,6 +10675,7 @@ import unittest
 
 import contract
 import gate
+import verifier_process
 
 FIXTURES = Path(__file__).with_name('fixtures') / 'attestation'
 SOURCE = '26d16513386ffaa790b1c32f927544f1322e4194'
@@ -9374,10 +10691,9 @@ class PinnedCLI(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix='release-cli-')
         cls.addClassCleanup(cls.tmp.cleanup)
-        cls.env = {k: v for k, v in os.environ.items() if k not in
-                   ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')}
-        for key in ('GH_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'):
-            cls.env[key] = str(Path(cls.tmp.name) / key)
+        isolated = verifier_process.environment()
+        cls.env = isolated.__enter__()
+        cls.addClassCleanup(isolated.__exit__, None, None, None)
         cls.env.update(HTTPS_PROXY='http://127.0.0.1:9', HTTP_PROXY='http://127.0.0.1:9',
                        ALL_PROXY='http://127.0.0.1:9', NO_PROXY='')
         for name, digest in HASHES.items():
@@ -9538,7 +10854,51 @@ class Workflows(unittest.TestCase):
                 with self.subTest(mutation=mutation),self.assertRaises(ValueError):workflow_policy.check_repository(root)
 ``````
 
-<!-- replay-file: {"path":"packaging/release/verify.py","mode":"100644","sha256":"f576feb68465125d1b35ebd637eeb9f182d10953c1c70c83af04af1f2ac02e10","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/release/verifier_process.py","mode":"100644","sha256":"5fb2099acd397ac88fa6d68d024e12a4c5fca530cb283d8441242b473e050a96","encoding":"utf8"} -->
+``````python
+"""Credential-free process boundary for unprivileged release verification."""
+from contextlib import contextmanager
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+
+@contextmanager
+def environment():
+    # Unknown future credentials must also be excluded. Certificate paths
+    # contain public trust data only; no ambient helper/config paths survive.
+    inherited = ('PATH', 'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', 'SSL_CERT_DIR')
+    env = {key: os.environ[key] for key in inherited if key in os.environ}
+    with tempfile.TemporaryDirectory(prefix='hennery-verify-', dir='/tmp') as temporary:
+        home = Path(temporary)
+        dirs = {'HOME': home, 'TMPDIR': home / 'tmp',
+                'XDG_CONFIG_HOME': home / 'config', 'XDG_CACHE_HOME': home / 'cache',
+                'XDG_DATA_HOME': home / 'data', 'XDG_STATE_HOME': home / 'state',
+                'GH_CONFIG_DIR': home / 'gh', 'GNUPGHOME': home / 'gpg',
+                'DOCKER_CONFIG': home / 'docker', 'ORAS_CONFIG_HOME': home / 'oras'}
+        for key, path in dirs.items():
+            path.mkdir(mode=0o700, exist_ok=True)
+            env[key] = str(path)
+        (dirs['GNUPGHOME'] / 'gpg.conf').write_text('no-autostart\nno-auto-key-retrieve\n')
+        auth = dirs['DOCKER_CONFIG'] / 'config.json'
+        auth.write_text('{"auths":{}}\n')
+        env.update(REGISTRY_AUTH_FILE=str(auth), ORAS_CONFIG=str(auth),
+                   GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_SYSTEM='/dev/null',
+                   GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0',
+                   GIT_NO_REPLACE_OBJECTS='1', LC_ALL='C.UTF-8')
+        yield env
+
+
+def run(command, **kwargs):
+    """Run a verifier without inheriting parent transport authority."""
+    if 'env' in kwargs:
+        raise TypeError('verifier environment cannot be overridden')
+    with environment() as env:
+        return subprocess.run(command, env=env, **kwargs)
+``````
+
+<!-- replay-file: {"path":"packaging/release/verify.py","mode":"100644","sha256":"deb25e2be9e6745c74d5b89ff11c81b8d7a49a582577dbff013fe836b3bc4544","encoding":"utf8"} -->
 ``````python
 #!/usr/bin/env python3
 """Authenticate release bytes and OCI subjects with signed source and provenance."""
@@ -9548,6 +10908,7 @@ import re
 import subprocess
 
 import contract
+import verifier_process
 import gate
 import supply
 import tag_signature
@@ -9593,7 +10954,7 @@ def verify_image_subject(image, value, bundle=None, predicate_type=PROVENANCE, m
     command = attestation_command(subject, value['tag'], value['source_sha'], bundle, trusted_root)
     command[command.index('--predicate-type') + 1] = predicate_type
     if bundle is None: command += ['--bundle-from-oci']
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    result = verifier_process.run(command, check=True, capture_output=True, text=True)
     verified = gate.strict_json(result.stdout)
     contract.require_identity(verified, value['tag'], value['source_sha'])
     contract.require_run(verified, value['attesting']['run_id'], value['attesting']['run_attempt'])
@@ -10261,7 +11622,7 @@ link_tool "$scratch/verifier-tools/git" "$scratch/no-gh-tools/git"
 echo 'ok: missing signature verifier refuses installation'
 ``````
 
-<!-- replay-file: {"path":"packaging/tests/test_ghcr.py","mode":"100644","sha256":"55a40fd699c9869035c146925067032de0cdbdb4a7bfaf7852a3f750a29dccbb","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/tests/test_ghcr.py","mode":"100644","sha256":"792bc2e4c0e0367fc12cae9cf0537f3d2f63ca893f53bd0f53f9c625cfac5104","encoding":"utf8"} -->
 ``````python
 """Folded GHCR lifecycle with deterministic transports and no registry access.
 
@@ -10283,7 +11644,7 @@ import gate
 
 class GHCR(unittest.TestCase):
     def execute(self, mode='new', boundary=0):
-        self.events=[];self.copies=0;self.attaches=0;present=mode=='present';reconciles=0;checks=0
+        self.events=[];self.copies=0;self.attaches=0;present=mode in ('present','partial');reconciles=0;checks=0
         digest='sha256:'+'a'*64
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);value={'tag':'v0.1.0'}
@@ -10291,10 +11652,13 @@ class GHCR(unittest.TestCase):
                 nonlocal checks
                 checks+=1;self.events.append('verify')
                 if checks==boundary:raise gate.Refused('verification withdrawn')
-                if kwargs.get('remote') and mode=='remote-failure':raise gate.Refused('remote signature refused')
+                if kwargs.get('subjects'):
+                    self.assertTrue(all(item[4].parent.name=='fetched' for item in kwargs['subjects']))
+                if kwargs.get('subjects') and mode=='remote-failure':raise gate.Refused('fetched signature refused')
             def shared(*args):
                 self.events.append('shared')
                 if mode=='approval-withdrawn' and self.copies==0 and self.events.count('shared')>1:raise gate.Refused('review withdrawn')
+                if mode=='referrer-withdrawn' and self.copies>0:raise gate.Refused('review withdrawn before referrer')
                 return value
             def reconcile(*args):
                 nonlocal reconciles
@@ -10314,23 +11678,28 @@ class GHCR(unittest.TestCase):
                     self.assertEqual(command[-1],'docker://ghcr.io/marcinwadon/hennery@'+digest)
                     self.assertNotIn(':latest',' '.join(command));self.assertNotIn(':0.1.0',' '.join(command));present=True
                     if mode=='copy-failure':raise subprocess.CalledProcessError(1,command)
-                if operation=='oras attach':
-                    self.attaches+=1
-                    if mode=='attach-failure':raise subprocess.CalledProcessError(1,command)
+            def bundles(subjects,output,before_write,**kwargs):
+                self.assertNotIn('GH_TOKEN',kwargs['environment'])
+                self.assertNotIn('ACTIONS_ID_TOKEN_REQUEST_TOKEN',kwargs['environment'])
+                missing=[] if mode=='present' else subjects[1:] if mode=='partial' else subjects
+                for _ in missing:
+                    before_write();self.attaches+=1
+                    if mode=='attach-failure':raise subprocess.CalledProcessError(1,['oras','copy'])
+                return [(*item[:4],output/item[4].name) for item in subjects]
             subjects=[('index','provenance',digest,'slsa',root/'index.json')]+[(arch,kind,digest,'slsa' if kind=='provenance' else 'spdx',root/(arch+kind+'.json')) for arch in ('amd64','arm64') for kind in ('provenance','image-sbom','binary-sbom')]
-            with patch.dict(os.environ,{'GHCR_PUBLISH_TOKEN':'offline-credential','GHCR_PUBLISH_USER':'fixture'}),patch.object(publisher,'shared_verify',side_effect=shared),patch.object(publisher,'image_helper',return_value=SimpleNamespace(inspect_release=lambda *a:{'digest':digest})),patch.object(publisher,'registry_helper',return_value=SimpleNamespace(reconcile=reconcile)),patch.object(publisher,'check_images',side_effect=verify),patch.object(publisher,'image_subjects',return_value=subjects),patch.object(publisher.subprocess,'run',side_effect=run):
+            with patch.dict(os.environ,{'GHCR_PUBLISH_TOKEN':'offline-credential','GHCR_PUBLISH_USER':'fixture','GH_TOKEN':'write-canary','ACTIONS_ID_TOKEN_REQUEST_TOKEN':'oidc-canary'}),patch.object(publisher,'shared_verify',side_effect=shared),patch.object(publisher,'image_helper',return_value=SimpleNamespace(inspect_release=lambda *a:{'digest':digest})),patch.object(publisher,'registry_helper',return_value=SimpleNamespace(reconcile=reconcile)),patch.object(publisher,'check_images',side_effect=verify),patch.object(publisher,'image_subjects',return_value=subjects),patch.object(publisher.registry_bundles,'reconcile',side_effect=bundles),patch.object(publisher.subprocess,'run',side_effect=run):
                 return publisher.publish(root,root,'ghcr')
 
     def test_absent_uploads_only_digest_and_all_seven_bundles(self):
         self.execute();self.assertEqual(self.copies,1);self.assertEqual(self.attaches,7)
     def test_matching_retry_uses_existing_content(self):
-        self.execute('present');self.assertEqual(self.copies,0);self.assertEqual(self.attaches,7)
+        self.execute('present');self.assertEqual(self.copies,0);self.assertEqual(self.attaches,0)
     def test_conflict_auth_timeout_and_late_version_never_overwrite(self):
         for mode in ('conflict','unauthorized','timeout','late-conflict'):
             with self.subTest(mode=mode),self.assertRaises(gate.Refused):self.execute(mode)
             self.assertEqual(self.copies,0);self.assertEqual(self.attaches,0)
     def test_each_verification_boundary_refuses_its_following_write(self):
-        # Initial local, upload local, each of seven attachments, remote final.
+        # Initial local, upload local, each missing referrer, fetched final.
         for count in range(1,11):
             with self.subTest(count=count),self.assertRaises(gate.Refused):self.execute(boundary=count)
             if count==1:self.assertNotIn('skopeo login',self.events)
@@ -10339,6 +11708,9 @@ class GHCR(unittest.TestCase):
     def test_approval_withdrawal_refuses_before_blob_upload(self):
         with self.assertRaises(gate.Refused):self.execute('approval-withdrawn')
         self.assertEqual(self.copies,0)
+    def test_approval_withdrawal_refuses_before_referrer_upload(self):
+        with self.assertRaises(gate.Refused):self.execute('referrer-withdrawn')
+        self.assertEqual(self.copies,1);self.assertEqual(self.attaches,0)
     def test_ambiguous_upload_stops_then_new_approved_retry_reconciles(self):
         with self.assertRaises(subprocess.CalledProcessError):self.execute('copy-failure')
         self.assertEqual(self.copies,1);self.assertEqual(self.attaches,0)
@@ -10346,7 +11718,8 @@ class GHCR(unittest.TestCase):
     def test_partial_bundle_upload_stops_then_matching_retry_finishes(self):
         with self.assertRaises(subprocess.CalledProcessError):self.execute('attach-failure')
         self.assertEqual(self.attaches,1)
-        self.execute('present');self.assertEqual(self.copies,0);self.assertEqual(self.attaches,7)
+        self.execute('partial');self.assertEqual(self.copies,0);self.assertEqual(self.attaches,6)
+        self.execute('present');self.assertEqual(self.copies,0);self.assertEqual(self.attaches,0)
     def test_remote_verification_failure_is_not_channel_success(self):
         with self.assertRaises(gate.Refused):self.execute('remote-failure')
         self.assertEqual(self.attaches,7)
@@ -10788,7 +12161,7 @@ class Workflow(unittest.TestCase):
             with self.subTest(mutation=mutation),self.assertRaises(ValueError):workflow_policy.check(changed,'release.yml')
 ``````
 
-<!-- replay-file: {"path":"packaging/tests/test_release_images.py","mode":"100644","sha256":"0e70cf29c7701b26d66ac63733c418a34ec0f145b351a1e4a772396ec097a87f","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/tests/test_release_images.py","mode":"100644","sha256":"2b7348fc3c052c8b4c5258cc1df51846c08109ec8c1d87eea1524ee32372a9eb","encoding":"utf8"} -->
 ``````python
 """New release contract binds real R4 OCI fixtures; crypto is covered separately."""
 from pathlib import Path
@@ -10860,6 +12233,34 @@ class ReleaseImages(ReleaseFixture,unittest.TestCase):
         layer.write_bytes(b'changed layer')
         with patch.object(channel_publish.subprocess,'run',side_effect=AssertionError('crypto or registry reached')),self.assertRaises((gate.Refused,ValueError)):
             channel_publish.check_images(self.candidate,signatures,value,self.work)
+
+    def test_registry_readback_uses_fetched_bundles_and_refuses_failed_crypto(self):
+        value=contract.load(self.candidate);signatures=self.root/'signatures';signatures.mkdir()
+        fetched=self.root/'fetched';fetched.mkdir()
+        self.helper.inspect_release(self.candidate,self.work,value)
+        subjects=[]
+        for label,kind,digest,predicate,bundle in channel_publish.image_subjects(self.work,signatures):
+            bundle.write_text('original local bundle')
+            remote=fetched/bundle.name;remote.write_text('retrieved registry bundle')
+            subjects.append((label,kind,digest,predicate,remote))
+        commands=[]
+        def crypto(command,**kwargs):
+            commands.append(command)
+            self.assertEqual(Path(command[command.index('--bundle')+1]).parent,fetched)
+            self.assertFalse(str(command[3]).startswith('oci://'))
+            raise subprocess.CalledProcessError(1,command,stderr='fetched signature refused')
+        with patch.object(channel_publish.subprocess,'run',side_effect=crypto),self.assertRaises(subprocess.CalledProcessError):
+            channel_publish.check_images(self.candidate,signatures,value,self.work,subjects=subjects)
+        self.assertEqual(len(commands),1)
+
+    def test_registry_readback_cannot_substitute_the_expected_subject_set(self):
+        value=contract.load(self.candidate);signatures=self.root/'signatures';signatures.mkdir()
+        self.helper.inspect_release(self.candidate,self.work,value)
+        subjects=list(channel_publish.image_subjects(self.work,signatures))
+        for *_,bundle in subjects:bundle.write_text('{}')
+        for bad in (subjects[:-1],subjects[::-1],[('other',*subjects[0][1:]),*subjects[1:]]):
+            with self.subTest(bad=bad),patch.object(channel_publish.subprocess,'run',side_effect=AssertionError('crypto reached')),self.assertRaises(gate.Refused):
+                channel_publish.check_images(self.candidate,signatures,value,self.work,subjects=bad)
 ``````
 
 Generated with Claude AI — please review before distribution.

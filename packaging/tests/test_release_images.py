@@ -68,3 +68,31 @@ class ReleaseImages(ReleaseFixture,unittest.TestCase):
         layer.write_bytes(b'changed layer')
         with patch.object(channel_publish.subprocess,'run',side_effect=AssertionError('crypto or registry reached')),self.assertRaises((gate.Refused,ValueError)):
             channel_publish.check_images(self.candidate,signatures,value,self.work)
+
+    def test_registry_readback_uses_fetched_bundles_and_refuses_failed_crypto(self):
+        value=contract.load(self.candidate);signatures=self.root/'signatures';signatures.mkdir()
+        fetched=self.root/'fetched';fetched.mkdir()
+        self.helper.inspect_release(self.candidate,self.work,value)
+        subjects=[]
+        for label,kind,digest,predicate,bundle in channel_publish.image_subjects(self.work,signatures):
+            bundle.write_text('original local bundle')
+            remote=fetched/bundle.name;remote.write_text('retrieved registry bundle')
+            subjects.append((label,kind,digest,predicate,remote))
+        commands=[]
+        def crypto(command,**kwargs):
+            commands.append(command)
+            self.assertEqual(Path(command[command.index('--bundle')+1]).parent,fetched)
+            self.assertFalse(str(command[3]).startswith('oci://'))
+            raise subprocess.CalledProcessError(1,command,stderr='fetched signature refused')
+        with patch.object(channel_publish.subprocess,'run',side_effect=crypto),self.assertRaises(subprocess.CalledProcessError):
+            channel_publish.check_images(self.candidate,signatures,value,self.work,subjects=subjects)
+        self.assertEqual(len(commands),1)
+
+    def test_registry_readback_cannot_substitute_the_expected_subject_set(self):
+        value=contract.load(self.candidate);signatures=self.root/'signatures';signatures.mkdir()
+        self.helper.inspect_release(self.candidate,self.work,value)
+        subjects=list(channel_publish.image_subjects(self.work,signatures))
+        for *_,bundle in subjects:bundle.write_text('{}')
+        for bad in (subjects[:-1],subjects[::-1],[('other',*subjects[0][1:]),*subjects[1:]]):
+            with self.subTest(bad=bad),patch.object(channel_publish.subprocess,'run',side_effect=AssertionError('crypto reached')),self.assertRaises(gate.Refused):
+                channel_publish.check_images(self.candidate,signatures,value,self.work,subjects=bad)

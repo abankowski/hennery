@@ -5,6 +5,7 @@ import subprocess
 
 import gate
 import workflow_policy
+import verifier_process
 
 CHECKSUMS = 'SHA256SUMS'
 METADATA = 'release-metadata.json'
@@ -169,7 +170,7 @@ def verify(root, tag, source_sha, bundle, run_id=None, attesting_attempt=None, t
     subjects = [CHECKSUMS] + [item['name'] for item in value['artifacts']]
     for subject in subjects:
         command = attestation_command(root / subject, tag, source_sha, bundle, trusted_root)
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = verifier_process.run(command, check=True, capture_output=True, text=True)
         results = gate.strict_json(result.stdout)
         require_identity(results, tag, source_sha)
         require_run(results, run_id, attesting_attempt)

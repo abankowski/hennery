@@ -6,6 +6,7 @@ import re
 import subprocess
 
 import contract
+import verifier_process
 import gate
 import supply
 import tag_signature
@@ -51,7 +52,7 @@ def verify_image_subject(image, value, bundle=None, predicate_type=PROVENANCE, m
     command = attestation_command(subject, value['tag'], value['source_sha'], bundle, trusted_root)
     command[command.index('--predicate-type') + 1] = predicate_type
     if bundle is None: command += ['--bundle-from-oci']
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    result = verifier_process.run(command, check=True, capture_output=True, text=True)
     verified = gate.strict_json(result.stdout)
     contract.require_identity(verified, value['tag'], value['source_sha'])
     contract.require_run(verified, value['attesting']['run_id'], value['attesting']['run_attempt'])
