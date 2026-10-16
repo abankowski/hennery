@@ -67,7 +67,7 @@ These implementation details require the parent's independent security review; n
 
 ## Reading the steps
 
-Apply each nonempty diff block to the stated base, in order, using `git apply`. No block is a sketch. The replay extractor must find seven blocks and at least one changed file before any green claim. Run focused tests after each task; compare the final implementation tree byte-for-byte. Generator outputs are included in Task 1 and checked by the two generator commands.
+Apply each nonempty diff block to the stated base, in order, using `git apply`. No block is a sketch. The initial replay extractor must find its seven task blocks and at least one changed file before any green claim. The later review amendment patch is separate from that historical replay. Run focused tests after each task; compare the final implementation tree byte-for-byte. Generator outputs are included in Task 1 and checked by the two generator commands.
 
 ### Task 1, step 1: specify scoped families, counts, takeover and typed authorship
 
@@ -5192,5 +5192,1187 @@ Retained copies for parent cleanup: root `probe-copy-1` and `replay-1` under
 `deleg-d4-ui-probe-1`; live worktree `deleg-d4-live` and its
 `.superpowers/sdd/deleg-d4-live/probe-1`. Private raw historical captures remain
 ignored and must not be published. No scratch copy was deleted by this lane.
+
+## Review amendment 1 — 2026-10-16
+
+The first D4 review returned CHANGES with three reproduced P2 findings. The
+supplied regressions were copied from the review copy and all three failed on
+`70bbf3b2`: takeover left the question version at 4, notice dispatch changed
+routing without changing the family revision, and a frozen hat changed the
+canonical family/counts without invalidating subscribers. Authorization,
+transport metadata and XSS were clean in that review; the unavailable Claude
+provider rows were not findings.
+
+### Fixes and regression evidence
+
+1. Takeover deletes only an unhanded, undelivered parent answer, records an
+   `answer_cancelled` event in the same transaction and publishes after commit.
+   The question's version and touched-question indexes include this event.
+   The fold recognizes it in both the current and earlier groups, while
+   delivered and terminal questions never reopen. Fold version is now 3.
+   Live and resumed item streams serve the newer canonical answerable card;
+   the legacy pending stream also refreshes. Repeated takeover emits no second
+   cancellation. The UI admits the newer version over obsolete local Sent or
+   uncertain state, including late HTTP outcomes and pinned deep links; an
+   actual POST in flight retains its single-answer guard.
+2. Notice state, reason and accepted-grant revision changes mark the child
+   family dirty. Config waits, dispatch, reconciliation, reason-only changes
+   (including NULL) and grant changes have positive tests; child and parent
+   invalidation and family revisions advance.
+3. Migration 21 seeds an owner revision row. The hat-freeze transaction updates
+   it atomically with the existing durable `purged_hats` marker. No event is
+   appended to a frozen session. List streams poll that scope revision as well
+   as the transcript cursor, send removals and update the badge even with no
+   host event or hub ring. New/resumed connections replay frozen removals
+   independently of their unchanged transcript cursor; SSE ids remain event
+   cursors, and removals are idempotent. Ordinary event polling omits the frozen
+   scope scan. Item streams use a persistent interval and remove a frozen
+   session live and on resume; an initial frozen page returns 404. The UI
+   regression confirms stream removal also removes displayed family links.
+
+The initial trigger-insert implementation failed the unchanged strict owner
+SQL audit. Replacing it with the pre-seeded owner-row update fixed the cause;
+no audit exemption, type, assertion or rule was relaxed. Owner-bound scope
+revision and restart persistence have explicit regressions. Historical rollback
+fixtures drop the new trigger/table before rolling migration 21 back.
+
+Meaningful RED output is retained under
+`.superpowers/sdd/deleg-d4/amendment-1/`: all three supplied tests, missing live
+freeze notification, unrecognized reopening in live/resumed groups and the
+pure fold. The UI lane observed stale local outcome and pinned-question
+regressions before its fix. Temporary test-helper compile errors are not RED
+evidence. Additional positive guards cover initial frozen reads and legacy
+pending-stream delivery.
+
+### Amendment verification
+
+All builds/tests/tools used the Nix dev shell. The web lockfile is unchanged,
+so the web dependency hash updater is unnecessary. No Playwright file changed
+in this amendment. Provider inference was not rerun for these review findings;
+the original provider evidence and release restriction remain as recorded above.
+
+The migration is a hotspot, so this amendment ran one full workspace suite in
+addition to targeted tests. It ran no fresh/full replay, as the amendment
+verification budget requires. New guard probes run only in the retained private
+`amendment-1/probe-1`, with an APFS clone of the target directory. The original
+D4 copies and the UI probe copy remain for parent cleanup.
+
+### Completed checks
+
+| Command or check | Result |
+| --- | --- |
+| `cargo fmt --all --check` | exit 0 on final staged source |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | exit 0 on final staged source |
+| `cargo clippy -p hennery --locked -- -D warnings` | exit 0 on final staged source |
+| `cargo test --workspace --locked` | exit 0; **2,466 passed, 0 failed, 4 ignored**, 161 final suite summaries |
+| `cargo run -p hennery-proto --bin gen --locked -- --check` | exit 0 |
+| `cargo run -p hennery-view --bin gen-view --locked -- --check` | exit 0 |
+| `cargo test -p hennery-sessions --lib --test delegation_d2 --test store --test owner --locked` | exit 0; 320 passed before two additional stream/helper cases; final `--lib review_` passed all 4 |
+| `cargo test -p hennery-testkit --test view --locked` | exit 0; 58 passed |
+| `cargo test -p hennery-testkit --test owner_filter --locked` | exit 0; 3 passed with unchanged audit |
+| `cargo test -p hennery-view --locked` | exit 0; 62 passed; strengthened terminal regression separately passed |
+| `nix flake check -L` | final exit 0; native aarch64-darwin package, Clippy, fmt, audit and embedded UI |
+| `pnpm --dir web install --frozen-lockfile` | exit 0; lockfile unchanged |
+| `pnpm --dir web typecheck` | exit 0 |
+| `pnpm --dir web test` | exit 0; **1,862 passed**, 111 files; targeted/restored 185 passed |
+| `pnpm --dir web build` | exit 0 |
+| Guard probes in cloned copies | **24 backend** cuts failed tests with exit 101; **7 UI** cuts failed assertions with exit 1; restored checks passed |
+| Four copies × three rounds | **36 Rust** stream/version/takeover executions and **84 UI** executions passed; every command exit 0 |
+
+One terminal-state guard initially escaped its probe. The regression was
+strengthened to assert the terminal outcome; that cut then failed as intended.
+No production implementation changed during the full workspace run. The
+stronger assertion was checked by its targeted test, restored-copy checks,
+final formatting/both Clippy commands and the final Nix gate. No test, type or
+rule was weakened. The initial escaped-probe log is retained alongside the
+successful rerun, rather than counted as a caught guard.
+
+The staged audit matched all **11 backend files** to restored probe bytes and
+all **4 UI files** to the independently tested UI lane. Its digest is
+`5ac788c29256f571d870f582ddac9c64cd54c4689b6cba245d2bd7a44bbe2e66`.
+Source commits before this record: `efd75033` (UI), `ff1ddf1f` (backend).
+All author addresses are the personal Gmail identity. Linux CI and full PR
+status (checks, reviewDecision, mergeStateStatus and unresolved threads,
+including bots) remain parent-owned.
+
+### Re-review request
+
+Review `70bbf3b2..HEAD` for atomic cancellation/version/publish ordering,
+current- and earlier-group live/resumed question delivery, stale HTTP versus
+canonical UI versions, NULL-safe notice transitions, owner-scoped freeze
+revision durability, unchanged-cursor removal replay and count correctness.
+The preview restriction is unchanged. Rebase still awaits the parent's D3b
+merge notification; no GitHub action is performed by this lane.
+
+### Exact review amendment patch
+
+Apply this subsequent patch after the initial seven task patches (source base `70bbf3b2`). It contains the tested amendment bytes; no full amendment replay was run.
+
+```diff
+diff --git a/crates/hennery-sessions/src/api.rs b/crates/hennery-sessions/src/api.rs
+index 16405f28..1bc97e63 100644
+--- a/crates/hennery-sessions/src/api.rs
++++ b/crates/hennery-sessions/src/api.rs
+@@ -1395,7 +1395,12 @@ fn sse_messages(store: &Store, e: &EventDto, catalog: bool) -> Vec<Result<Event,
+ fn pending_in(store: &Store, e: &EventDto) -> Option<PendingItem> {
+     if !matches!(
+         e.kind.as_str(),
+-        "pending_opened" | "pending_resolved" | "pending_cancelled" | "answer_submitted" | "answer_result"
++        "pending_opened"
++            | "pending_resolved"
++            | "pending_cancelled"
++            | "answer_submitted"
++            | "answer_result"
++            | "answer_cancelled"
+     ) {
+         return None;
+     }
+@@ -1593,6 +1598,54 @@ mod tests {
+     use super::*;
+     use std::sync::Mutex;
+ 
++    #[tokio::test]
++    async fn review_reopening_event_updates_the_legacy_pending_stream() {
++        let dir = tempfile::tempdir().unwrap();
++        let db = dir.path().join("hennery.db");
++        let state = AppState::new(
++            crate::store::Store::open(&db).unwrap(),
++            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
++            hennery_kernel::operator::Operator::open(&db).unwrap(),
++        );
++        state.store.create_session("s1", "h", "a", "/p", "hat", None).unwrap();
++        state
++            .store
++            .ingest("s1", 1, &SessionBody::session_started("r", "agent"))
++            .unwrap();
++        state
++            .store
++            .ingest(
++                "s1",
++                2,
++                &SessionBody::PendingOpened {
++                    pending_id: "q".into(),
++                    indexed: Indexed {
++                        pending: Some(Box::new(hennery_proto::frames::PendingExtract {
++                            id: "q".into(),
++                            kind: hennery_proto::frames::PendingKind::Elicitation,
++                            option_ids: None,
++                            title: None,
++                        })),
++                        ..Default::default()
++                    },
++                    payload: serde_json::json!({}),
++                },
++            )
++            .unwrap();
++        let event = EventDto {
++            kind: "answer_cancelled".into(),
++            body: serde_json::json!({"pending_id":"q"}),
++            ..event(3)
++        };
++        let messages = sse_messages(&state.store, &event, false);
++        assert_eq!(messages.len(), 2);
++        let text = format!("{:?}", messages[1]);
++        assert!(
++            text.contains("pending_changed") && text.contains(r#"\"answered\":false"#),
++            "{text}"
++        );
++    }
++
+     fn event(event_id: i64) -> EventDto {
+         EventDto {
+             event_id,
+diff --git a/crates/hennery-sessions/src/family.rs b/crates/hennery-sessions/src/family.rs
+index 334bde2e..88e17a6b 100644
+--- a/crates/hennery-sessions/src/family.rs
++++ b/crates/hennery-sessions/src/family.rs
+@@ -283,15 +283,49 @@ impl Store {
+                 OR (kind='question' AND state='parent_delivered'))",
+             params![self.owner_id(), id],
+         )?;
+-        tx.execute("DELETE FROM answer_queue WHERE owner_id = ?1 AND session_id = ?2 AND delegation_handoff=0 AND delivered IS NULL
+-            AND json_extract(input_origin,'$.kind')='parent'",params![self.owner_id(),id])?;
+-        // Ring after commit; the durable events created by triggers are the
+-        // cursor source, so the ring itself carries no authority or payload.
++        let cancelled = {
++            let mut stmt = tx.prepare("DELETE FROM answer_queue WHERE owner_id = ?1 AND session_id = ?2 AND delegation_handoff=0 AND delivered IS NULL
++                AND json_extract(input_origin,'$.kind')='parent' RETURNING pending_id")?;
++            stmt.query_map(params![self.owner_id(), id], |row| row.get::<_, String>(0))?
++                .collect::<rusqlite::Result<Vec<_>>>()?
++        };
++        let mut reopened = Vec::new();
++        for pending_id in cancelled {
++            reopened.push(crate::store::collector_event(
++                &tx,
++                self.owner_id(),
++                id,
++                "answer_cancelled",
++                serde_json::json!({"pending_id":pending_id,"reason":"operator_takeover"}),
++                &crate::store::stamp_ago(std::time::Duration::ZERO),
++            )?);
++        }
++        // The question event and cancellation commit together. Publish only
++        // afterward; dirty family projections drain separately.
+         tx.commit()?;
+         drop(conn);
++        for event in reopened {
++            hub.publish(event);
++        }
+         self.flush_family_changes(hub)?;
+         Ok(true)
+     }
++    /// Durable owner-scope sequence, independent of frozen transcript cursors.
++    pub fn view_scope_revision(&self) -> Result<i64> {
++        Ok(self.conn().query_row(
++            "SELECT COALESCE(MAX(revision),0) FROM view_scope_invalidations WHERE owner_id = ?1",
++            [self.owner_id()],
++            |row| row.get(0),
++        )?)
++    }
++    pub fn session_scope_frozen(&self, id: &str) -> Result<bool> {
++        Ok(self.conn().query_row(
++            "SELECT EXISTS(SELECT 1 FROM sessions s JOIN purged_hats p
++            ON p.owner_id = ?1 AND p.hat_id=s.hat_id WHERE s.owner_id = ?1 AND s.id = ?2)",
++            params![self.owner_id(), id],
++            |row| row.get(0),
++        )?)
++    }
+     pub fn operator_waiting_count(&self, hat: Option<&str>) -> Result<u32> {
+         Ok(self.conn().query_row("SELECT count(*) FROM sessions s WHERE s.owner_id = ?1 AND s.lifecycle<>'deleted'
+             AND (?2 IS NULL OR s.hat_id = ?2)
+@@ -301,8 +335,12 @@ impl Store {
+               OR (s.activity='blocked' AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=s.id AND p.state='open')))",params![self.owner_id(),hat],|r|r.get(0))?)
+     }
+     /// Both source and parent invalidations are derived from owner-authorized
+-    /// current edges. A deleted edge emits its own parent event in migration 21.
++    /// current edges. On resume, durable owner-scope removals replay even
++    /// when no transcript cursor advanced; ordinary event polls omit them.
+     pub fn family_changed_after(&self, after: i64) -> Result<Vec<String>> {
++        self.family_changes_after(after, true)
++    }
++    pub(crate) fn family_changes_after(&self, after: i64, include_scope: bool) -> Result<Vec<String>> {
+         let conn = self.conn();
+         let mut stmt = conn.prepare(
+             "SELECT session_id FROM (
+@@ -310,11 +348,13 @@ impl Store {
+             UNION ALL SELECT f.parent_id,e.event_id FROM events e JOIN session_families f ON f.owner_id = ?1 AND f.child_id=e.session_id
+             JOIN sessions p ON p.owner_id = ?1 AND p.id=f.parent_id AND p.hat_id=f.hat_id AND p.lifecycle<>'deleted'
+             JOIN sessions c ON c.owner_id = ?1 AND c.id=f.child_id AND c.hat_id=f.hat_id AND c.lifecycle<>'deleted'
+-            WHERE e.owner_id = ?1 AND e.event_id>?2 AND e.applied=1)
++            WHERE e.owner_id = ?1 AND e.event_id>?2 AND e.applied=1
++            UNION ALL SELECT s.id,?2 FROM sessions s JOIN purged_hats v
++                ON v.owner_id = ?1 AND v.hat_id=s.hat_id WHERE s.owner_id = ?1 AND s.lifecycle<>'deleted' AND ?3)
+             GROUP BY +session_id ORDER BY MAX(event_id)",
+         )?;
+         Ok(stmt
+-            .query_map(params![self.owner_id(), after], |r| r.get(0))?
++            .query_map(params![self.owner_id(), after, include_scope], |r| r.get(0))?
+             .collect::<rusqlite::Result<_>>()?)
+     }
+ }
+diff --git a/crates/hennery-sessions/src/family.sql b/crates/hennery-sessions/src/family.sql
+index 8c605289..d916292c 100644
+--- a/crates/hennery-sessions/src/family.sql
++++ b/crates/hennery-sessions/src/family.sql
+@@ -82,3 +82,22 @@ CREATE TRIGGER family_view_operation_insert AFTER INSERT ON session_operations
+ BEGIN
+  UPDATE sessions SET family_dirty=1 WHERE owner_id=NEW.owner_id AND id=NEW.child_id AND lifecycle<>'deleted';
+ END;
++
++-- A scope removal belongs to the owner, never to a now-frozen session.
++-- Its sequence is separate from transcript events. Resumed list streams
++-- replay frozen rows independently of their transcript-event cursor.
++CREATE TABLE view_scope_invalidations (
++ owner_id TEXT PRIMARY KEY,
++ revision INTEGER NOT NULL DEFAULT 0
++);
++INSERT INTO view_scope_invalidations(owner_id,revision)
++ SELECT id,(SELECT count(*) FROM purged_hats p WHERE p.owner_id=owners.id) FROM owners;
++CREATE TRIGGER family_view_hat_frozen AFTER INSERT ON purged_hats
++BEGIN
++ UPDATE view_scope_invalidations SET revision=revision+1 WHERE owner_id=NEW.owner_id;
++END;
++CREATE TRIGGER family_view_notice_update AFTER UPDATE OF state,reason,accepted_revision ON delegation_notices
++WHEN NEW.state IS NOT OLD.state OR NEW.reason IS NOT OLD.reason OR NEW.accepted_revision IS NOT OLD.accepted_revision
++BEGIN
++ UPDATE sessions SET family_dirty=1 WHERE owner_id=NEW.owner_id AND id=NEW.child_id AND lifecycle<>'deleted';
++END;
+diff --git a/crates/hennery-sessions/src/store.rs b/crates/hennery-sessions/src/store.rs
+index 23426e56..efe0e980 100644
+--- a/crates/hennery-sessions/src/store.rs
++++ b/crates/hennery-sessions/src/store.rs
+@@ -4401,7 +4401,7 @@ const GROUP_STARTS: &str = "SELECT event_id FROM events
+ /// its `pending_id`.
+ const PENDING_LAST_EVENT: &str = "SELECT MAX(event_id) FROM events
+      WHERE session_id = ?1
+-           AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'pending_resolved', 'pending_cancelled')
++           AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'answer_cancelled', 'pending_resolved', 'pending_cancelled')
+            AND json_extract(body, '$.pending_id') = ?2 AND applied = 1 AND owner_id = ?3";
+ 
+ /// A question's `pending_opened` event (`pending_opened_at`): the one its
+@@ -4732,7 +4732,7 @@ impl Store {
+         let mut stmt = conn.prepare(
+             "SELECT json_extract(body, '$.pending_id') AS pending_id FROM events
+              WHERE session_id = ?1
+-                   AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'pending_resolved',
++                   AND kind IN ('pending_opened', 'answer_submitted', 'answer_result', 'answer_cancelled', 'pending_resolved',
+                                 'pending_cancelled')
+                    AND event_id > ?2 AND applied = 1 AND owner_id = ?3
+              GROUP BY pending_id ORDER BY MIN(event_id)",
+diff --git a/crates/hennery-sessions/src/view.rs b/crates/hennery-sessions/src/view.rs
+index d2100e5b..e99436f8 100644
+--- a/crates/hennery-sessions/src/view.rs
++++ b/crates/hennery-sessions/src/view.rs
+@@ -244,6 +244,11 @@ async fn page(State(state): State<AppState>, Path(id): Path<String>, Query(param
+         Ok(None) => return not_found(),
+         Err(err) => return internal(err),
+     }
++    match state.store.session_scope_frozen(&id) {
++        Ok(true) => return not_found(),
++        Ok(false) => {}
++        Err(err) => return internal(err),
++    }
+     let limit = match params.limit.as_deref().map(str::parse::<u32>) {
+         None => PAGE_DEFAULT_GROUPS,
+         Some(Ok(limit)) => limit.clamp(1, PAGE_MAX_GROUPS),
+@@ -685,6 +690,11 @@ impl ItemStream {
+         mut doorbell: broadcast::Receiver<EventDto>,
+         tx: &Outbox,
+     ) -> Result<()> {
++        let mut scope_revision = self.store.view_scope_revision()?;
++        if self.store.session_scope_frozen(&self.id)? {
++            tx.send(removed(&self.id)?).await;
++            return Ok(());
++        }
+         let Some(burst) = self.resume(anchor, RESUME_MAX_BYTES)? else {
+             // Sent once, then the stream ends; a reader gone is no error.
+             tx.send(resync()).await;
+@@ -697,10 +707,22 @@ impl ItemStream {
+             tx.send(removed(&self.id)?).await;
+             return Ok(());
+         }
++        let mut scope_tick = tokio::time::interval(Duration::from_secs(1));
++        scope_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+         loop {
+             let flush_at = self.held.map(|held| held + COALESCE);
+             tokio::select! {
+                 () = tx.closed() => return Ok(()),
++                _ = scope_tick.tick() => {
++                    let current = self.store.view_scope_revision()?;
++                    if current != scope_revision {
++                        if self.store.session_scope_frozen(&self.id)? {
++                            tx.send(removed(&self.id)?).await;
++                            return Ok(());
++                        }
++                        scope_revision = current;
++                    }
++                },
+                 rung = doorbell.recv() => match rung {
+                     Ok(event) if event.session_id != self.id => continue,
+                     // Lagged: whatever it skipped is in the store.
+@@ -994,7 +1016,12 @@ fn is_chunk(event: &EventDto) -> bool {
+ fn question_event(event: &EventDto) -> Option<&str> {
+     matches!(
+         event.kind.as_str(),
+-        "pending_opened" | "answer_submitted" | "answer_result" | "pending_resolved" | "pending_cancelled"
++        "pending_opened"
++            | "answer_submitted"
++            | "answer_result"
++            | "answer_cancelled"
++            | "pending_resolved"
++            | "pending_cancelled"
+     )
+     .then(|| event.body.get("pending_id")?.as_str())
+     .flatten()
+@@ -1065,6 +1092,7 @@ async fn list_follow(
+ ) -> Result<()> {
+     // Read before the sessions that changed: an event stored between the
+     // two is sent now and again later, never missed.
++    let mut scope_revision = store.view_scope_revision()?;
+     let mut cursor = store.max_event_id()?;
+     let Some(after) = revision_of(anchor).filter(|after| *after <= cursor) else {
+         tx.send(resync()).await;
+@@ -1143,11 +1171,13 @@ async fn list_follow(
+             return Ok(());
+         }
+         let max = store.max_event_id()?;
+-        changed = if max > cursor {
+-            store.family_changed_after(cursor)?
++        let scope = store.view_scope_revision()?;
++        changed = if max > cursor || scope != scope_revision {
++            store.family_changes_after(cursor, scope != scope_revision)?
+         } else {
+             Vec::new()
+         };
++        scope_revision = scope;
+         cursor = cursor.max(max);
+     }
+ }
+@@ -1314,6 +1344,188 @@ mod tests {
+         assert!(rx.recv().await.is_none());
+     }
+ 
++    #[tokio::test(start_paused = true)]
++    async fn review_reopened_answer_streams_live_and_resumed_in_both_groups() {
++        for earlier_group in [false, true] {
++            let (_dir, store, conn) = store();
++            write(
++                &conn,
++                &store,
++                "user_turn",
++                serde_json::json!({"turn_id":"t1","content":[]}),
++            );
++            let opened = write(
++                &conn,
++                &store,
++                "pending_opened",
++                serde_json::json!({
++                    "pending_id":"q", "indexed":{"turn_id":"t1","pending":{"id":"q","kind":"elicitation"}},
++                    "payload":{"message":"Choose","requestedSchema":{"type":"object","properties":{}}}
++                }),
++            );
++            conn.execute("INSERT INTO pending(pending_id,session_id,kind,turn_id,payload,state,opened_at,opened_event_id,owner_id)
++                VALUES ('q','s','elicitation','t1','{}','open','2026-10-01T00:00:00.000Z',?1,?2)",
++                rusqlite::params![opened.event_id,store.owner_id()]).unwrap();
++            conn.execute(
++                "INSERT INTO answer_queue(pending_id,session_id,request_id,answer,submitted_at,owner_id)
++                VALUES ('q','s','r','{}','2026-10-01T00:00:00.000Z',?1)",
++                [store.owner_id()],
++            )
++            .unwrap();
++            write(&conn, &store, "answer_submitted", serde_json::json!({"pending_id":"q"}));
++            if earlier_group {
++                write(
++                    &conn,
++                    &store,
++                    "user_turn",
++                    serde_json::json!({"turn_id":"t2","content":[]}),
++                );
++            }
++            let cursor = store.max_event_id().unwrap();
++            let anchor = anchor_now(cursor);
++            let (bell, doorbell) = broadcast::channel(10);
++            let (tx, mut rx) = Outbox::new(QUEUE_BYTES);
++            let mut live = ItemStream::new(store.clone(), "s".into());
++            let live_anchor = anchor.clone();
++            let task = tokio::spawn(async move { live.run(Some(&live_anchor), doorbell, &tx).await });
++            tokio::task::yield_now().await;
++            conn.execute(
++                "DELETE FROM answer_queue WHERE owner_id=?1 AND pending_id='q'",
++                [store.owner_id()],
++            )
++            .unwrap();
++            let event = write(
++                &conn,
++                &store,
++                "answer_cancelled",
++                serde_json::json!({"pending_id":"q","reason":"operator_takeover"}),
++            );
++            bell.send(event.clone()).unwrap();
++            let message = item(&mut rx).await;
++            assert!(
++                message.contains(r#"\"answered\":false"#) && message.contains(r#"\"answerable\":true"#),
++                "{message}"
++            );
++            assert!(
++                message.contains(&format!(r#"\"version\":{}"#, event.event_id)),
++                "{message}"
++            );
++            let resumed = ItemStream::new(store.clone(), "s".into())
++                .resume(Some(&anchor), usize::MAX)
++                .unwrap()
++                .unwrap();
++            let resumed = texts(&resumed).join(" ");
++            assert!(
++                resumed.contains(r#"\"answered\":false"#) && resumed.contains(r#"\"answerable\":true"#),
++                "{resumed}"
++            );
++            assert!(
++                resumed.contains(&format!(r#"\"version\":{}"#, event.event_id)),
++                "{resumed}"
++            );
++            drop(rx);
++            task.await.unwrap().unwrap();
++        }
++    }
++
++    #[tokio::test]
++    async fn review_frozen_initial_page_is_not_served() {
++        let dir = tempfile::tempdir().unwrap();
++        let db = dir.path().join("hennery.db");
++        let store = Store::open(&db).unwrap();
++        store.create_session("s", "h", "a", "/p", "hat", None).unwrap();
++        rusqlite::Connection::open(&db)
++            .unwrap()
++            .execute(
++                "INSERT INTO purged_hats(owner_id,hat_id,purged_at) VALUES (?1,'hat',1)",
++                [store.owner_id()],
++            )
++            .unwrap();
++        let state = AppState::new(
++            store,
++            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
++            hennery_kernel::operator::Operator::open(&db).unwrap(),
++        );
++        let response = page(
++            State(state),
++            Path("s".into()),
++            Query(PageParams {
++                before_turn: None,
++                limit: None,
++            }),
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::NOT_FOUND);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn review_scope_freeze_removes_cached_list_and_items_live_and_resumed() {
++        let (_dir, store, conn) = store();
++        write(
++            &conn,
++            &store,
++            "user_turn",
++            serde_json::json!({"turn_id":"t1","content":[]}),
++        );
++        conn.execute(
++            "UPDATE sessions SET activity='blocked' WHERE owner_id=?1 AND id='s'",
++            [store.owner_id()],
++        )
++        .unwrap();
++        let cursor = store.max_event_id().unwrap();
++        let anchor = anchor_now(cursor);
++        let (bell, doorbell) = broadcast::channel(10);
++        let (tx, mut list_rx) = Outbox::new(QUEUE_BYTES);
++        let (follow, follow_anchor) = (store.clone(), anchor.clone());
++        let list = tokio::spawn(async move { list_follow(&follow, Some(&follow_anchor), None, doorbell, &tx).await });
++        assert!(item(&mut list_rx).await.contains(r#"\"count\":1"#));
++        let (tx, mut item_rx) = Outbox::new(QUEUE_BYTES);
++        let mut stream = ItemStream::new(store.clone(), "s".into());
++        let (item_anchor, item_bell) = (anchor.clone(), bell.subscribe());
++        let items = tokio::spawn(async move { stream.run(Some(&item_anchor), item_bell, &tx).await });
++        tokio::task::yield_now().await;
++        // Freeze only. No session event, hub ring or deletion follows.
++        conn.execute(
++            "INSERT INTO purged_hats(owner_id,hat_id,purged_at)
++            SELECT ?1,hat_id,1 FROM sessions WHERE owner_id=?1 AND id='s'",
++            [store.owner_id()],
++        )
++        .unwrap();
++        assert_eq!(store.max_event_id().unwrap(), cursor);
++        let a = item(&mut list_rx).await;
++        let b = item(&mut list_rx).await;
++        assert!(a.contains("session_removed") && b.contains(r#"\"count\":0"#), "{a} {b}");
++        assert!(item(&mut item_rx).await.contains("session_removed"));
++        items.await.unwrap().unwrap();
++        // A new connection with the SAME event cursor must replay the scope removal.
++        let (tx, mut resumed_rx) = Outbox::new(QUEUE_BYTES);
++        let (follow, follow_anchor) = (store.clone(), anchor.clone());
++        let resumed_bell = bell.subscribe();
++        let resumed =
++            tokio::spawn(async move { list_follow(&follow, Some(&follow_anchor), None, resumed_bell, &tx).await });
++        assert!(item(&mut resumed_rx).await.contains("session_removed"));
++        assert!(item(&mut resumed_rx).await.contains(r#"\"count\":0"#));
++        let (tx, mut resumed_item_rx) = Outbox::new(QUEUE_BYTES);
++        let mut stream = ItemStream::new(store.clone(), "s".into());
++        tokio::time::timeout(
++            Duration::from_secs(20),
++            stream.run(Some(&anchor), bell.subscribe(), &tx),
++        )
++        .await
++        .expect("a frozen resumed stream ends")
++        .unwrap();
++        assert!(item(&mut resumed_item_rx).await.contains("session_removed"));
++        assert_eq!(
++            store.max_event_id().unwrap(),
++            cursor,
++            "scope changes never append frozen-session events"
++        );
++        drop(list_rx);
++        drop(resumed_rx);
++        list.await.unwrap().unwrap();
++        resumed.await.unwrap().unwrap();
++    }
++
+     async fn item(rx: &mut mpsc::Receiver<Queued>) -> String {
+         let (event, _room) = tokio::time::timeout(Duration::from_secs(20), rx.recv())
+             .await
+diff --git a/crates/hennery-sessions/tests/delegation_d2.rs b/crates/hennery-sessions/tests/delegation_d2.rs
+index 352817a0..79a9207e 100644
+--- a/crates/hennery-sessions/tests/delegation_d2.rs
++++ b/crates/hennery-sessions/tests/delegation_d2.rs
+@@ -184,6 +184,201 @@ fn d4_counts_parent_handled_questions_and_takeover_are_factual_and_atomic() {
+     assert!(!w.store.take_over_child("unknown", &hub).unwrap());
+ }
+ 
++#[test]
++fn review_takeover_reopening_question_advances_its_stream_version() {
++    let (w, p) = pair();
++    let hub = Hub::new();
++    let mut heard = hub.subscribe();
++    pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
++    w.store
++        .queue_ordinary_answer(
++            &p,
++            1,
++            "digest",
++            &hennery_sessions::delegation_control::DelegatedAnswer {
++                key: "review",
++                child: "child",
++                pending: "ordinary",
++                answer: &answer(),
++            },
++            &hub,
++        )
++        .unwrap();
++    let before = w.store.question_snapshot("child", "ordinary").unwrap().unwrap();
++    let hennery_view::Body::Question(q) = &before.body else {
++        panic!()
++    };
++    assert!(q.answered && !q.answerable);
++    let cursor = w.store.max_event_id().unwrap();
++    assert!(w.store.take_over_child("child", &hub).unwrap());
++    let after = w.store.question_snapshot("child", "ordinary").unwrap().unwrap();
++    let hennery_view::Body::Question(q) = &after.body else {
++        panic!()
++    };
++    assert!(!q.answered && q.answerable, "takeover reopens canonical answerability");
++    assert!(
++        after.version > before.version,
++        "a reopened question must have a newer stream version: before={}, after={}",
++        before.version,
++        after.version
++    );
++    assert_eq!(
++        w.store.pending_touched_after("child", cursor).unwrap(),
++        vec!["ordinary".to_string()]
++    );
++    let mut published = Vec::new();
++    while let Ok(event) = heard.try_recv() {
++        published.push(event);
++    }
++    assert!(
++        published
++            .iter()
++            .any(|event| event.kind == "answer_cancelled" && event.body["pending_id"] == "ordinary")
++    );
++    let cursor = w.store.max_event_id().unwrap();
++    assert!(w.store.take_over_child("child", &hub).unwrap());
++    assert_eq!(
++        w.store.max_event_id().unwrap(),
++        cursor,
++        "repeated takeover creates no second reopening"
++    );
++}
++
++#[test]
++fn review_notice_routing_state_reason_and_grant_changes_invalidate_both_endpoints() {
++    let (w, _) = pair();
++    pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
++    let hub = Hub::new();
++    w.store.flush_family_changes(&hub).unwrap();
++    for (state, reason) in [
++        ("waiting_config", Some("config_wait")),
++        ("awaiting_reconciliation", None),
++        ("parent_delivered", None),
++        ("parent_delivered", Some("readback_changed")),
++        ("parent_delivered", None),
++    ] {
++        let cursor = w.store.max_event_id().unwrap();
++        raw(&w).execute("UPDATE delegation_notices SET state=?2,reason=?3 WHERE owner_id=?1 AND child_id='child' AND pending_id='ordinary'",params![w.store.owner_id(),state,reason]).unwrap();
++        w.store.flush_family_changes(&hub).unwrap();
++        let page = w.store.family_page("child", "", 20).unwrap().unwrap();
++        assert_eq!(page.questions[0].handling, state);
++        assert!(
++            page.summary.family.unwrap().revision > cursor,
++            "state={state} reason={reason:?}"
++        );
++        let changed = w.store.family_changed_after(cursor).unwrap();
++        assert!(changed.iter().any(|id| id == "parent") && changed.iter().any(|id| id == "child"));
++    }
++    let cursor = w.store.max_event_id().unwrap();
++    raw(&w).execute("UPDATE delegation_notices SET accepted_revision=accepted_revision+1 WHERE owner_id=?1 AND child_id='child' AND pending_id='ordinary'",[w.store.owner_id()]).unwrap();
++    w.store.flush_family_changes(&hub).unwrap();
++    let page = w.store.family_page("child", "", 20).unwrap().unwrap();
++    assert_eq!(page.questions[0].handling, "operator_required");
++    assert!(page.summary.family.unwrap().revision > cursor);
++}
++
++#[test]
++fn review_scope_invalidations_are_owner_bound_and_survive_reopen() {
++    let (w, _) = pair();
++    let before = w.store.view_scope_revision().unwrap();
++    raw(&w)
++        .execute(
++            "INSERT INTO view_scope_invalidations(owner_id,revision) VALUES ('other-owner',99)",
++            [],
++        )
++        .unwrap();
++    assert_eq!(w.store.view_scope_revision().unwrap(), before);
++    raw(&w)
++        .execute(
++            "INSERT INTO purged_hats(owner_id,hat_id,purged_at) VALUES (?1,?2,1)",
++            params![w.store.owner_id(), w.hat],
++        )
++        .unwrap();
++    assert!(w.store.view_scope_revision().unwrap() > before);
++    assert!(w.store.session_scope_frozen("child").unwrap());
++    assert!(!w.store.session_scope_frozen("foreign").unwrap());
++    let reopened = Store::open(&w.db).unwrap();
++    assert_eq!(
++        reopened.view_scope_revision().unwrap(),
++        w.store.view_scope_revision().unwrap()
++    );
++    let changed = reopened.family_changed_after(i64::MAX).unwrap();
++    assert!(
++        changed.iter().any(|id| id == "child"),
++        "a resumed event cursor cannot skip durable scope removal"
++    );
++}
++
++#[test]
++fn review_notice_dispatch_invalidates_family_routing() {
++    let (w, _) = pair();
++    ready_parent(&w);
++    pending(&w, "child", 2, "ordinary", PendingKind::Elicitation);
++    let (hub, _rx) = connected();
++    w.store.flush_family_changes(&hub).unwrap();
++    let before = w.store.family_page("child", "", 20).unwrap().unwrap();
++    assert_eq!(before.questions[0].handling, "parent_queued");
++    let cursor = w.store.max_event_id().unwrap();
++    assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
++    w.store.flush_family_changes(&hub).unwrap();
++    let after = w.store.family_page("child", "", 20).unwrap().unwrap();
++    assert_eq!(after.questions[0].handling, "awaiting_reconciliation");
++    assert!(
++        after.summary.family.unwrap().revision > before.summary.family.unwrap().revision,
++        "routing changed without a family revision"
++    );
++    assert!(
++        w.store
++            .family_changed_after(cursor)
++            .unwrap()
++            .contains(&"child".to_string())
++    );
++}
++
++#[test]
++fn review_freeze_invalidates_existing_family_and_attention_subscribers() {
++    let w = World::new();
++    let p = w.start("parent", &w.other, McpIsolation::ClaudeStrict).unwrap();
++    w.active("parent");
++    child(&w, &p, "child", &w.other);
++    for id in ["parent", "child"] {
++        w.store
++            .ingest(
++                id,
++                2,
++                &SessionBody::SessionParked {
++                    reason: ParkReason::Idle,
++                },
++            )
++            .unwrap();
++    }
++    raw(&w)
++        .execute(
++            "INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,state,incident)
++        VALUES (?1,'review-status','child',?2,'child_failed','open','review-status')",
++            params![w.store.owner_id(), w.other],
++        )
++        .unwrap();
++    let hub = Hub::new();
++    w.store.flush_family_changes(&hub).unwrap();
++    assert_eq!(w.store.operator_waiting_count(Some(&w.other)).unwrap(), 1);
++    let cursor = w.store.max_event_id().unwrap();
++    assert!(matches!(
++        Hosts::open(&w.db).unwrap().begin_purge(&w.other, 1).unwrap(),
++        hennery_kernel::hats::PurgeStart::Frozen { .. }
++    ));
++    w.store.refresh_delegation_attention(&hub, i64::MAX / 2).unwrap();
++    assert!(w.store.family_page("parent", "", 20).unwrap().is_none());
++    assert_eq!(w.store.operator_waiting_count(Some(&w.other)).unwrap(), 0);
++    assert!(
++        w.store
++            .family_changed_after(cursor)
++            .unwrap()
++            .contains(&"child".to_string()),
++        "family disappeared and badge changed, but subscribed clients have no invalidation"
++    );
++}
++
+ #[test]
+ fn d4_parent_child_counts_include_parent_handled_waiting_and_status_attention() {
+     let (w, _) = pair();
+diff --git a/crates/hennery-sessions/tests/fixtures/undo_delegation.sql b/crates/hennery-sessions/tests/fixtures/undo_delegation.sql
+index f66dda86..effc6758 100644
+--- a/crates/hennery-sessions/tests/fixtures/undo_delegation.sql
++++ b/crates/hennery-sessions/tests/fixtures/undo_delegation.sql
+@@ -1,3 +1,6 @@
++DROP TRIGGER family_view_hat_frozen;
++DROP TRIGGER family_view_notice_update;
++DROP TABLE view_scope_invalidations;
+ -- Test-only rollback of migration 18 before reconstructing a historical schema.
+ -- Production migrations remain append-only.
+ DROP TRIGGER family_view_attention_insert;
+diff --git a/crates/hennery-sessions/tests/fixtures/undo_family.sql b/crates/hennery-sessions/tests/fixtures/undo_family.sql
+index ee4de64c..71760f91 100644
+--- a/crates/hennery-sessions/tests/fixtures/undo_family.sql
++++ b/crates/hennery-sessions/tests/fixtures/undo_family.sql
+@@ -1,3 +1,6 @@
++DROP TRIGGER family_view_hat_frozen;
++DROP TRIGGER family_view_notice_update;
++DROP TABLE view_scope_invalidations;
+ -- Test-only rollback of sessions migration 21 for historical schema fixtures.
+ DROP TRIGGER family_view_attention_insert;
+ DROP TRIGGER family_view_attention_update;
+diff --git a/crates/hennery-view/src/fold.rs b/crates/hennery-view/src/fold.rs
+index 9f993502..7d4cf15f 100644
+--- a/crates/hennery-view/src/fold.rs
++++ b/crates/hennery-view/src/fold.rs
+@@ -269,7 +269,7 @@ impl Fold {
+         }
+         match kind {
+             "pending_opened" => return self.question_opened(event, answerable),
+-            "answer_submitted" | "answer_result" | "pending_resolved" | "pending_cancelled" => {
++            "answer_submitted" | "answer_result" | "answer_cancelled" | "pending_resolved" | "pending_cancelled" => {
+                 return self.question_changed(event, answerable);
+             }
+             _ => {}
+@@ -635,6 +635,17 @@ impl Fold {
+         let now = answerable.answerable(pending_id);
+         self.change(event, &question_id(pending_id), |body| match body {
+             Body::Question(question) => {
++                if event.kind == "answer_cancelled" {
++                    // Only the collector can cancel an undispatched answer.
++                    // A handed-off/delivered or closed question never reopens.
++                    if question.state != PendingState::Open || question.delivered == Some(true) {
++                        return false;
++                    }
++                    question.answered = false;
++                    question.delivered = None;
++                    question.answerable = now;
++                    return true;
++                }
+                 let mut changed = question.absorb(state, reason, answered, delivered);
+                 changed |= question.answerable != now;
+                 question.answerable = now;
+diff --git a/crates/hennery-view/src/lib.rs b/crates/hennery-view/src/lib.rs
+index c87c1d9d..dcb3a7bc 100644
+--- a/crates/hennery-view/src/lib.rs
++++ b/crates/hennery-view/src/lib.rs
+@@ -24,4 +24,4 @@ pub use item::*;
+ /// The fold's rules' version. Ordinal ids and versions follow the rules:
+ /// raise it whenever they change what an event makes, so a client holding
+ /// items of the old rules resyncs.
+-pub const FOLD_VERSION: u32 = 2;
++pub const FOLD_VERSION: u32 = 3;
+diff --git a/crates/hennery-view/tests/rules.rs b/crates/hennery-view/tests/rules.rs
+index cb25f2d8..b5fdfb34 100644
+--- a/crates/hennery-view/tests/rules.rs
++++ b/crates/hennery-view/tests/rules.rs
+@@ -1018,3 +1018,57 @@ fn a_free_text_pairing_past_its_cap_pairs_with_nothing() {
+         })
+     );
+ }
++
++#[test]
++fn review_answer_cancellation_reopens_only_undelivered_open_questions() {
++    let opened = ev(
++        2,
++        "pending_opened",
++        json!({"pending_id":"q","indexed":{"pending":{"id":"q","kind":"elicitation"}},"payload":{}}),
++    );
++    let mut f = Fold::new();
++    f.apply(&opened, &none);
++    f.apply(&ev(3, "answer_submitted", json!({"pending_id":"q"})), &none);
++    f.take();
++    assert!(f.apply(&ev(4, "answer_cancelled", json!({"pending_id":"q"})), &none));
++    let changed = f.take();
++    assert_eq!(changed.len(), 1);
++    let Body::Question(q) = &changed[0].body else { panic!() };
++    assert!(!q.answered && q.delivered.is_none());
++    assert_eq!(changed[0].version, 4);
++    f.apply(&ev(5, "answer_submitted", json!({"pending_id":"q"})), &none);
++    f.apply(
++        &ev(6, "answer_result", json!({"pending_id":"q","delivered":true})),
++        &none,
++    );
++    f.take();
++    f.apply(&ev(7, "answer_cancelled", json!({"pending_id":"q"})), &none);
++    let Body::Question(q) = &f.current().get("question:q").unwrap().body else {
++        panic!()
++    };
++    assert!(
++        q.answered && q.delivered == Some(true),
++        "delivered answers never reopen"
++    );
++    let mut f = Fold::new();
++    f.apply(&opened, &none);
++    f.apply(&ev(3, "answer_submitted", json!({"pending_id":"q"})), &none);
++    f.apply(
++        &ev(
++            4,
++            "pending_cancelled",
++            json!({"pending_id":"q","reason":"host_restarted"}),
++        ),
++        &none,
++    );
++    f.take();
++    assert!(!f.apply(&ev(5, "answer_cancelled", json!({"pending_id":"q"})), &none));
++    let Body::Question(q) = &f.current().get("question:q").unwrap().body else {
++        panic!()
++    };
++    assert_eq!(q.state, PendingState::Cancelled);
++    assert!(
++        q.answered && q.delivered == Some(false),
++        "terminal questions never reopen"
++    );
++}
+diff --git a/web/src/components/items/QuestionCard.takeover.test.tsx b/web/src/components/items/QuestionCard.takeover.test.tsx
+new file mode 100644
+index 00000000..a6d02337
+--- /dev/null
++++ b/web/src/components/items/QuestionCard.takeover.test.tsx
+@@ -0,0 +1,110 @@
++import { useEffect } from 'react'
++import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
++import { describe, expect, it } from 'vitest'
++import type { Item } from '../../generated/view'
++import { useSessionItems } from '../../store/useSessionItems'
++import { useAnswering, type AnswerBook } from '../../store/useAnswer'
++import { deferred } from '../../test-locks'
++import { json, liveStream, routed } from '../../test-stream'
++import { ItemView } from '../Transcript'
++
++type Question = Extract<Item, { kind: 'question' }>
++const ID = 'child/1'
++const PAGE = '/api/view/sessions/child%2F1'
++const STREAM = '/api/stream/view/sessions/child%2F1'
++const ANSWER = '/api/sessions/child%2F1/pending/p%2F1/answer'
++const CARD = '/api/view/sessions/child%2F1/questions/p%2F1'
++function question(version: number, answered = false): Question {
++  return { id: 'question:p/1', pending_id: 'p/1', kind: 'question', version,
++    ts: '2026-10-02T10:00:00Z', turn_id: 't1', question_kind: 'elicitation',
++    request: { type: 'elicitation', message: 'Continue?', fields: [], form_supported: true },
++    state: 'open', answered, answerable: !answered }
++}
++function setup(initial = question(1), post: () => Response | Promise<Response> = () => json({ pending_id: 'p/1', request_id: 'r1' }, 202), pinned = false) {
++  const streams = [liveStream(), liveStream()]
++  let book!: AnswerBook
++  let cardReads = 0
++  const t = routed(call => {
++    if (call.path === PAGE) return json({ items: pinned ? [{ id: 'tail', kind: 'message', version: 1, ts: '2026-10-03T10:00:00Z', turn_id: 't2', text: 'Newer turn' }] : [initial], older: pinned, epoch: 'e1', revision: initial.version })
++    if (call.path === STREAM) return streams.shift()!.response
++    if (call.path.endsWith('/catalog')) return json({ session_id: ID, config_options: [], commands: [] })
++    if (call.path === ANSWER && call.method === 'POST') return post()
++    if (call.path === CARD) return pinned && ++cardReads === 1 ? json(initial) : json({ code: 'unavailable', message: 'Offline' }, 503)
++    throw new Error(`Unexpected ${call.method} ${call.path}`)
++  })
++  // Both initial and resumed reads run through the real SSE parser/store.
++  const live = streams[0]
++  const resumed = streams[1]
++  function View() {
++    const s = useSessionItems(ID, { retryMs: () => 1 })
++    book = useAnswering(ID, undefined, s.items, s.loading, s.loads, true, s.mergeQuestion, s.pinned)
++    useEffect(() => { if (pinned && !s.loading) void s.loadQuestion('p/1') }, [s.loading, s.loadQuestion])
++    const items = [...s.pinned, ...s.items]
++    return <><output aria-label="Question version">{items.find(item => item.kind === 'question')?.version}</output>{items.map(item => <ItemView key={item.id} item={item} env={{ sessionId: ID, agent: 'Codex', answers: book }} />)}</>
++  }
++  render(<View />, { wrapper: t.wrapper })
++  return { ...t, live, resumed, book: () => book, posts: () => t.calls.filter(c => c.method === 'POST') }
++}
++
++describe('a question reopened by takeover on the item stream', () => {
++  it.each(['live', 'resumed'] as const)('replaces a parent-queued Sent card through the %s stream with enabled answer controls', async mode => {
++    const t = setup(question(4, true))
++    await screen.findByText('Sent', { exact: true })
++    expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull()
++    await waitFor(() => expect(t.calls.filter(c => c.path === STREAM)).toHaveLength(1))
++    if (mode === 'resumed') {
++      act(() => t.live.end())
++      await waitFor(() => expect(t.calls.filter(c => c.path === STREAM)).toHaveLength(2))
++      expect(t.calls.filter(c => c.path === STREAM)[1].headers['Last-Event-ID']).toBe('e1:4')
++    }
++    act(() => t[mode === 'live' ? 'live' : 'resumed'].event('item', question(5), 'e1:5'))
++    expect(await screen.findByRole('button', { name: 'Decline' })).toBeEnabled()
++    expect(screen.queryByText('Sent', { exact: true })).toBeNull()
++    fireEvent.click(screen.getByRole('button', { name: 'Decline' }))
++    await screen.findByText('Sent', { exact: true })
++    expect(t.posts()).toHaveLength(1)
++    expect(t.calls.filter(c => c.path === PAGE)).toHaveLength(1)
++  })
++
++  it.each([false, true])('retires a local Sent outcome only when the store admits a newer reopened version (pinned=%s)', async pinned => {
++    const t = setup(question(1), undefined, pinned)
++    fireEvent.click(await screen.findByRole('button', { name: 'Decline' }))
++    await screen.findByText('Sent', { exact: true })
++    act(() => t.live.event('item', question(1), 'e1:2'))
++    await act(async () => {})
++    expect(t.book().localOf('question:p/1')?.phase).toBe('sent')
++    expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull()
++    act(() => t.live.event('item', question(3), 'e1:3'))
++    expect(await screen.findByRole('button', { name: 'Decline' })).toBeEnabled()
++    expect(t.book().localOf('question:p/1')).toBeUndefined()
++  })
++
++  it('allows an explicit answer after a newer question supersedes an uncertain local outcome', async () => {
++    let attempt = 0
++    const t = setup(question(1), () => ++attempt === 1 ? json({ code: 'unavailable', message: 'Offline' }, 503) : json({ pending_id: 'p/1', request_id: 'r2' }, 202))
++    fireEvent.click(await screen.findByRole('button', { name: 'Decline' }))
++    await screen.findByText('Answer status unknown. Reconnect and refresh the question before retrying.', { exact: true })
++    act(() => t.live.event('item', question(3), 'e1:3'))
++    fireEvent.click(await screen.findByRole('button', { name: 'Decline' }))
++    await screen.findByText('Sent', { exact: true })
++    expect(t.posts()).toHaveLength(2)
++  })
++
++  it.each([202, 503])('does not retain a late HTTP %s outcome over a newer reopened stream item', async status => {
++    const response = deferred<Response>()
++    const t = setup(question(1), () => response.promise)
++    fireEvent.click(await screen.findByRole('button', { name: 'Decline' }))
++    act(() => t.live.event('item', question(3), 'e1:3'))
++    await waitFor(() => expect(screen.getByLabelText('Question version')).toHaveTextContent('3'))
++    expect(screen.getByRole('button', { name: 'Decline' })).toBeDisabled()
++    expect(screen.getByText('Sending…', { exact: true })).toBeInTheDocument()
++    // A second click cannot send while the original mutation is in flight.
++    fireEvent.click(screen.getByRole('button', { name: 'Decline' }))
++    expect(t.posts()).toHaveLength(1)
++    await act(async () => response.resolve(status === 202 ? json({ pending_id: 'p/1', request_id: 'r1' }, 202) : json({ code: 'unavailable', message: 'Offline' }, 503)))
++    await waitFor(() => expect(screen.getByRole('button', { name: 'Decline' })).toBeEnabled())
++    expect(t.book().localOf('question:p/1')).toBeUndefined()
++    expect(screen.queryByText('Sent', { exact: true })).toBeNull()
++    expect(screen.queryByRole('button', { name: 'Refresh question' })).toBeNull()
++  })
++})
+diff --git a/web/src/screens/Session.test.tsx b/web/src/screens/Session.test.tsx
+index 1cd49403..409a6945 100644
+--- a/web/src/screens/Session.test.tsx
++++ b/web/src/screens/Session.test.tsx
+@@ -223,14 +223,20 @@ describe('SessionView', () => {
+     expect(s.of(STREAM)).toHaveLength(0)
+   })
+ 
+-  it('says so when the stream says the session was removed', async () => {
++  it('clears the transcript and related family links when the stream removes the session', async () => {
+     const s = server({ pages: [() => json(page(rows(2, 't5')))] })
+-    render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
++    const summary: SessionSummary = { ...detail('codex'), question_waits: false, operator_attention: 0, parent_handled_questions: 0,
++      family: { revision: 1, parent: { session_id: 'parent1', title: 'Related parent', agent: 'claude' }, children: [],
++        child_counts: { total: 0, active: 0, waiting: 0 }, attention: 0 } }
++    render(<SessionView id={ID} summary={summary} timing={FAST} />, { wrapper: s.wrapper })
+     await screen.findByText('t5-1')
++    expect(await screen.findByRole('link', { name: 'Related parent', hidden: true })).toHaveAttribute('href', '/sessions/parent1')
+     await waitFor(() => expect(s.streams).toHaveLength(1))
+     act(() => s.streams[0].event('session_removed', { session_id: ID }))
+     expect(await screen.findByRole('heading', { name: 'This session was deleted' })).toBeInTheDocument()
+     expect(screen.queryByText('t5-1')).toBeNull()
++    expect(screen.queryByRole('region', { name: 'Session family' })).toBeNull()
++    expect(screen.queryByRole('link', { name: 'Related parent', hidden: true })).toBeNull()
+   })
+ 
+   it.each([
+diff --git a/web/src/screens/Session.tsx b/web/src/screens/Session.tsx
+index 6700b16e..737bb7e0 100644
+--- a/web/src/screens/Session.tsx
++++ b/web/src/screens/Session.tsx
+@@ -264,7 +264,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail =
+   const hats = useMemo(() => namesOf(hatItems, 'id'), [hatItems])
+   const plan = useMemo(() => latestPlan(s.items), [s.items])
+   const startNotice = useStartNotice(id)
+-  const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion)
++  const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion, s.pinned)
+   const announcement = useAnnouncement(answers)
+   const hostAway = useHostAway(answers)
+ 
+diff --git a/web/src/store/useAnswer.ts b/web/src/store/useAnswer.ts
+index 4e29ce32..00bc8570 100644
+--- a/web/src/store/useAnswer.ts
++++ b/web/src/store/useAnswer.ts
+@@ -30,12 +30,14 @@ import type { Draft } from '../lib/elicitation'
+ 
+ /** No draft: one object, so a card's snapshot stays the same. */
+ const NO_DRAFT: Draft = Object.freeze({})
++const NO_ITEMS: readonly Item[] = []
+ 
+ type Question = Extract<Item, { kind: 'question' }>
+ 
+ export class AnswerBook {
+   private readonly local = new Map<string, LocalAnswer>()
+   private readonly inFlight = new Set<string>()
++  private readonly versions = new Map<string, number>()
+   private readonly listeners = new Set<() => void>()
+   private away = false
+   private known: Set<string> | null = null
+@@ -64,7 +66,11 @@ export class AnswerBook {
+   }
+ 
+   private set(id: string, answer: LocalAnswer) {
+-    this.local.set(id, answer)
++    // An admitted stream/page version supersedes a settled HTTP outcome,
++    // including a late ambiguous response that would otherwise block retries.
++    // An actual POST in flight still keeps the single-answer guard.
++    if (answer.phase !== 'sending' && answer.version < (this.versions.get(id) ?? -Infinity)) this.local.delete(id)
++    else this.local.set(id, answer)
+     this.emit()
+   }
+ 
+@@ -143,16 +149,26 @@ export class AnswerBook {
+    *  `loads` counts the pages that replaced the items (the first, and each
+    *  resync's): a new one is a new baseline, so a question that came with a
+    *  resync is never fresh, wherever it sits. */
+-  observe(items: readonly Item[], loads: number) {
++  observe(items: readonly Item[], loads: number, pinned: readonly Item[] = NO_ITEMS) {
+     // The first page's newest time, once: host markers after it count.
+     if (this.since === undefined) this.since = newestTs(items)
+     const known = loads === this.loads ? this.known : null
+     this.loads = loads
+     for (const id of freshQuestions(items, known, this.lastId)) this.fresh.add(id)
+     const held = known ?? new Set<string>()
+-    for (const item of items) if (item.kind === 'question') held.add(item.id)
++    let changed = false
++    for (const item of [...items, ...pinned]) if (item.kind === 'question') {
++      held.add(item.id)
++      this.versions.set(item.id, Math.max(item.version, this.versions.get(item.id) ?? -Infinity))
++      const local = this.local.get(item.id)
++      if (local && local.phase !== 'sending' && local.version < item.version) {
++        this.local.delete(item.id)
++        changed = true
++      }
++    }
+     this.known = held
+     this.lastId = items.length > 0 ? items[items.length - 1].id : undefined
++    if (changed) this.emit()
+   }
+ 
+   /** Whether the card of question `id` may take the focus: once, and only
+@@ -215,7 +231,8 @@ export function useFormDraft(book: AnswerBook | undefined, id: string): [Draft,
+  *  count of pages that replaced the items (a resync's included).
+  *  `connected`: what the view's hosts list said of the session's host when
+  *  it opened (undefined: unknown), the seed the host markers since then
+- *  overrule. */
++ *  overrule. Pinned deep-link questions participate in version admission,
++ *  without counting as newly opened tail cards. */
+ export function useAnswering(
+   sessionId: string,
+   info: Pick<SessionItem, 'presumed_parked'> | undefined,
+@@ -224,14 +241,15 @@ export function useAnswering(
+   loads: number,
+   connected: boolean | undefined,
+   onQuestion?: (item: Item) => void,
++  pinned: readonly Item[] = NO_ITEMS,
+ ): AnswerBook {
+   const client = useClient()
+   const book = useMemo(() => new AnswerBook(client, sessionId, onQuestion), [client, sessionId, onQuestion])
+   // Before the cards' effects (a layout effect runs first): a fresh card
+   // finds itself fresh when it mounts.
+   useLayoutEffect(() => {
+-    if (!loading) book.observe(items, loads)
+-  }, [book, items, loading, loads])
++    if (!loading) book.observe(items, loads, pinned)
++  }, [book, items, loading, loads, pinned])
+   // After `observe`: the first page's time is known before its markers
+   // are read (before it, the store holds no items).
+   const presumedParked = Boolean(info?.presumed_parked)
+```
 
 Generated with Claude AI — please review before distribution.
