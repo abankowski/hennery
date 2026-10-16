@@ -194,6 +194,16 @@ def check_simplified(data):
 def check(data, name):
     if name == 'release.yml':
         return check_simplified(data)
+    if name == 'release-rehearsal.yml':
+        import rehearsal
+        real = load_workflow((Path(__file__).resolve().parents[2] / '.github/workflows/release.yml').read_bytes())
+        if data != rehearsal.workflow(real):
+            raise ValueError('release rehearsal must match the production graph with only unsigned authentication stubs')
+        if data.get('permissions') != {'contents': 'read'} or has_secrets(data):
+            raise ValueError('rehearsal must be read-only and secret-free')
+        for job in data['jobs'].values():
+            if 'environment' in job or 'uses' in job or job.get('permissions') != {'contents': 'read'}:
+                raise ValueError('rehearsal cannot have environment, reusable authority or write/OIDC permissions')
     if has_secrets(data):
         raise ValueError('release credentials outside authorized release workflow')
     if data.get('permissions', {}).get('contents') == 'write':
@@ -210,7 +220,7 @@ def check(data, name):
 
 def check_repository(root):
     paths=sorted((Path(root)/'.github/workflows').glob('*.y*ml'))
-    if not {'release.yml','release-tests.yml'} <= {p.name for p in paths}:
+    if not {'release.yml','release-tests.yml','release-rehearsal.yml'} <= {p.name for p in paths}:
         raise ValueError('tagged release and refusal-test workflows required')
     for path in paths:
         data=load_workflow(path.read_bytes())
