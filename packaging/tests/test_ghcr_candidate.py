@@ -51,7 +51,7 @@ class ReleaseFixture(CandidateFixtures):
                 directory = tarfile.TarInfo(prefix); directory.type = tarfile.DIRTYPE
                 output.addfile(directory)
                 for name, data in [('hennery', self.binary), ('LICENSE', b'licence'),
-                                   ('README.md', b'readme'), ('THIRD-PARTY-NOTICES.txt', b'notices')]:
+                                   ('CHANGELOG.md', b'changelog'), ('README.md', b'readme'), ('THIRD-PARTY-NOTICES.txt', b'notices')]:
                     member = tarfile.TarInfo(prefix + '/' + name); member.size = len(data)
                     output.addfile(member, io.BytesIO(data))
             archive.with_suffix(archive.suffix + '.sha256').write_text(gate.digest(archive.read_bytes()) + '  ' + archive.name + '\n')

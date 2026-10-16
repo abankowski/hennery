@@ -39,6 +39,13 @@ public-log entry is the maintainer's disclosure decision; tests do not mint an
 attestation. There is no runtime fixture-existence gate. Stable-tag and reviewed
 channel-selection constraints still apply.
 
+Binary archives contain exactly one target directory and regular files
+`hennery`, `CHANGELOG.md`, `LICENSE`, `README.md` and `THIRD-PARTY-NOTICES.txt`.
+PR qualification archives omit the separately generated dependency notices.
+Both archive checks enforce this closure; the installer and Homebrew proof
+fixtures carry the same documentation. Homebrew installs the changelog in its
+documentation directory. Crate tarballs have their own package-local inventories.
+
 ## Workflow and credentials
 
 Build and native acceptance jobs have read-only contents and no credentials.

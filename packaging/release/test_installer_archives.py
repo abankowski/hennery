@@ -4,11 +4,41 @@ import tempfile
 import unittest
 
 import gate
+import make_installer_fixture
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class InstallerArchives(unittest.TestCase):
+    def test_tiny_fixtures_refuse_an_unterminated_archive_arm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pristine = root / 'installer.sh'
+            pristine.write_text('\n'.join('"hennery-' + target + '.tar.xz")' for target in sorted(gate.TARGETS)))
+            with self.assertRaisesRegex(gate.Refused, 'no terminator'):
+                make_installer_fixture.make(pristine, root / 'fixture')
+
+    def test_tiny_fixtures_replace_existing_checksums_and_supply_all_docs(self):
+        import supply
+        for embedded in (False, True):
+            with self.subTest(embedded=embedded), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                pristine, output = root / 'installer.sh', root / 'fixture'
+                arms = []
+                for target in sorted(gate.TARGETS):
+                    arm = '"hennery-' + target + '.tar.xz")\n'
+                    if embedded:
+                        arm += '    _checksum_style="sha256"\n    _checksum_value="' + '0' * 64 + '"\n'
+                    arms.append(arm + '    ;;\n')
+                pristine.write_text('case "$1" in\n' + ''.join(arms) + 'esac\nprintf "%s %s" "$_checksum_style" "$_checksum_value"\n')
+                make_installer_fixture.make(pristine, output)
+                for target in sorted(gate.TARGETS):
+                    archive = output / ('hennery-' + target + '.tar.xz')
+                    result = subprocess.run(['sh', str(output / 'hennery-installer.sh'), archive.name], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, 'sha256 ' + gate.digest(archive.read_bytes()))
+                supply.binary_inventory(output, sorted(gate.TARGETS))
+
     def candidate(self, root, *, missing=False, extra=False):
         name = 'hennery-aarch64-apple-darwin.tar.xz'
         data = b'archive fixture'

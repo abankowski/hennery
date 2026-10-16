@@ -7,6 +7,7 @@ Native candidate installer jobs separately exercise the real release archives.
 import argparse
 import io
 from pathlib import Path
+import re
 import tarfile
 
 import gate
@@ -26,11 +27,22 @@ def make(pristine, output):
             binary = tarfile.TarInfo(name + '/hennery')
             binary.mode, binary.size = 0o755, len(data)
             tar.addfile(binary, io.BytesIO(data))
+            for document in ['CHANGELOG.md', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.txt']:
+                data = (document + ' installer-test fixture\n').encode()
+                entry = tarfile.TarInfo(name + '/' + document)
+                entry.size = len(data)
+                tar.addfile(entry, io.BytesIO(data))
         sha = gate.digest(archive.read_bytes())
         (output / (archive.name + '.sha256')).write_text(sha + '  ' + archive.name + '\n')
         anchor = '"' + archive.name + '")'
         gate.require(text.count(anchor) == 1, 'cargo-dist archive arm changed')
-        text = text.replace(anchor, anchor + '\n            _checksum_style="sha256"\n            _checksum_value="' + sha + '"')
+        start = text.index(anchor) + len(anchor)
+        end = text.find(';;', start)
+        gate.require(end != -1, 'cargo-dist archive arm has no terminator')
+        # A native build already embeds checksums. Replace those assignments
+        # within this arm so they cannot overwrite the tiny fixture's digest.
+        arm = re.sub(r'(?m)^[ \t]*_checksum_(?:style|value)="[^"\n]*"\n', '', text[start:end])
+        text = text[:start] + '\n            _checksum_style="sha256"\n            _checksum_value="' + sha + '"' + arm + text[end:]
     (output / 'hennery-installer.sh').write_text(text)
     # A retained candidate also carries application and dependency sources.
     # These are genuine tarballs, but the installer must never offer them.

@@ -11,6 +11,7 @@ TEST_BLOCK = '''  test do
     assert_match version.to_s, shell_output("#{bin}/hennery --version")
     refute_match "hennery-web-ui-not-embedded", File.binread(bin/"hennery")
     assert_path_exists pkgshare/"THIRD-PARTY-NOTICES.txt"
+    assert_path_exists doc/"CHANGELOG.md"
   end
 '''
 
@@ -42,7 +43,7 @@ def check(root, tag, targets, require_test=True):
         expected[f'https://github.com/{gate.REPOSITORY}/releases/download/{tag}/{name}'] = gate.digest(archive.read_bytes())
     gate.require(len(dict(pairs)) == len(pairs) and dict(pairs) == expected, 'formula URL or digest differs from candidate archives')
     if require_test:
-        gate.require(formula.count(TEST_BLOCK) == 1, 'formula must carry the version, UI and notices test')
+        gate.require(formula.count(TEST_BLOCK) == 1, 'formula must carry the version, UI, notices and changelog test')
     return raw
 
 

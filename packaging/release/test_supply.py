@@ -138,7 +138,7 @@ class Supply(unittest.TestCase):
                 directory = tarfile.TarInfo(base + '/')
                 directory.type = tarfile.DIRTYPE
                 tar.addfile(directory)
-                for name in ['hennery', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.txt']:
+                for name in ['hennery', 'CHANGELOG.md', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.txt']:
                     entry = tarfile.TarInfo(base + '/' + name)
                     entry.size = 1
                     tar.addfile(entry, io.BytesIO(b'x'))

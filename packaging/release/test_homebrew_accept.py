@@ -95,6 +95,10 @@ class ProofSequence(unittest.TestCase):
         with tarfile.open(archive,'w:xz') as output:
             entry=tarfile.TarInfo('hennery-'+target+'/hennery');entry.size=len(payload);entry.mode=0o755
             output.addfile(entry,io.BytesIO(payload))
+            for document in ['CHANGELOG.md', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.txt']:
+                raw = (document + ' proof fixture\n').encode()
+                entry = tarfile.TarInfo('hennery-'+target+'/'+document);entry.size=len(raw)
+                output.addfile(entry,io.BytesIO(raw))
         formula=('class Hennery < Formula\n  version "0.1.0-alpha.1"\n'
                  f'  url "https://github.com/{gate.REPOSITORY}/releases/download/{tag}/{archive.name}"\n'
                  f'  sha256 "{gate.digest(archive.read_bytes())}"\n  def install\n    bin.install "hennery"\n  end\nend\n')

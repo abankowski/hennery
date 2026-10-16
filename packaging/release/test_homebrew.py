@@ -36,6 +36,7 @@ class Formula(unittest.TestCase):
         self.assertIn('test do', result)
         self.assertIn('shell_output', result)
         self.assertIn('hennery-web-ui-not-embedded', result)
+        self.assertIn('assert_path_exists doc/"CHANGELOG.md"', result)
         homebrew.check(self.root, self.tag, self.targets)
 
     def test_prepare_is_idempotent(self):
