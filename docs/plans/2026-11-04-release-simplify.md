@@ -4,19 +4,19 @@
 - **Design:** [Simplified release model (operator decision 2026-10-16)](../specs/2026-10-15-distribution-release-design.md#simplified-release-model-operator-decision-2026-10-16).
 - **Phase A base:** `87cc219c`; branch `plan/release-simplify`.
 - **Review amendment base:** `10abd28f` (Homebrew #155 merged, parent confirmed).
-- **Execution base:** not yet assigned; still waits for R4 (#143), explicit
-  parent authorization and scoped re-confirmation of Phase A amendments.
+- **Execution base:** not yet assigned; Phase B is parent-authorized once the
+  parent confirms R4 (#143) has merged. Until then, documentation fixes only.
 - **Goal:** one signed-tag build/attestation run, summary approval, then draft,
   immutable release and selected channels in one protected job; no AWS/upload App.
 
 ## Execution status
 
-**Phase A only: design/plan outline, not implemented.** Review verdict is
-**APPROVE AFTER AMENDMENTS**; the changes below await scoped re-confirmation.
+**Phase A only: design/plan outline, not implemented.** First review verdict:
+**CHANGES**. Final status: **scoped re-review APPROVE at 0fddcc02 (2026-10-16)**.
 Exact-run binding, bootstrap, task split and absence of new service/cost were
 accepted. The parent accepted the early-publication/denial-of-service residual
 risk on the maintainer's behalf; the operator will be informed. The parent
-explicitly requested this review stop before Phase B. No implementation blocks,
+authorizes Phase B once it confirms R4 (#143) has merged. No implementation blocks,
 RED/GREEN evidence, replay, live settings inspection or publication are claimed.
 This is intentionally an outline in plan 3c's structure. After authorization,
 build each task first, embed exact code/anchors from the post-merge base, then
