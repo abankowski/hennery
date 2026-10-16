@@ -31,6 +31,7 @@ let
       ../crates/hennery-memory/tests/ui-client.test.mjs
       ../crates/hennery-sessions/tests/fixtures/undo_delegation.sql
       ../crates/hennery-testkit/tests/fixtures/delegation-codex-acp-1.13.0.jsonl
+      ../crates/hennery-testkit/tests/support/codex_mcp_probe.mjs
       ../crates/hennery-view/tests/fixtures
       (lib.fileset.maybeMissing ../adapters/manifest.json)
       (lib.fileset.maybeMissing ../crates/hennery-host/manifest.json)

@@ -187,7 +187,7 @@ fn stage_auth(source_variable: &str, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn command(root: &Path, runtime: &str) -> Result<(AgentCommand, Profile)> {
+fn command(root: &Path, runtime: &str, native_probe: bool) -> Result<(AgentCommand, Profile)> {
     let home = root.join(format!("{runtime}-home"));
     for leaf in [
         "",
@@ -258,7 +258,27 @@ fn command(root: &Path, runtime: &str) -> Result<(AgentCommand, Profile)> {
         let binary = adapters.join(format!(".pnpm/@openai+codex@0.155.1-{arch}/bin/codex"));
         ensure!(binary.is_file(), "pinned native Codex 0.155.1 is missing");
         hennery_testkit::first_exec(binary.to_str().context("Codex path encoding")?);
-        env.push(("CODEX_PATH".into(), binary.display().to_string()));
+        let program = if native_probe {
+            let script = root.join("native-mcp-probe.mjs");
+            std::fs::write(&script, include_str!("support/codex_mcp_probe.mjs"))?;
+            std::fs::write(
+                root.join("expected-mcp-schemas.json"),
+                serde_json::to_vec(&hennery_proto::delegation::argument_schemas())?,
+            )?;
+            let launcher = root.join("native-mcp-probe");
+            let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
+            std::fs::write(
+                &launcher,
+                format!("#!/bin/sh\nexec {} {} \"$@\"\n", quote(&node), quote(&script)),
+            )?;
+            std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700))?;
+            env.push(("HENNERY_D4_NATIVE_AUDIT_DIR".into(), root.display().to_string()));
+            env.push(("HENNERY_D4_NATIVE_AUDIT_BINARY".into(), binary.display().to_string()));
+            launcher
+        } else {
+            binary
+        };
+        env.push(("CODEX_PATH".into(), program.display().to_string()));
         ("codex-acp", "1.13.0", Profile::Codex)
     };
     let entry = adapters.join(format!("@agentclientprotocol/{package}"));
@@ -285,6 +305,7 @@ struct Harness {
     parent: String,
     trace: Arc<Mutex<Vec<Value>>>,
     identities: Arc<Mutex<BTreeMap<String, hennery_gateway::identity::SessionIdentity>>>,
+    probe_tokens: Arc<Mutex<BTreeMap<String, String>>>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     host: tokio::task::JoinHandle<anyhow::Result<()>>,
     server: tokio::task::JoinHandle<()>,
@@ -304,6 +325,14 @@ impl Harness {
         Self::new_with_worker(parent_runtime, child_runtime, true).await
     }
     async fn new_with_worker(parent_runtime: &str, child_runtime: Option<&str>, deliver_brief: bool) -> Result<Self> {
+        Self::with_probe(parent_runtime, child_runtime, deliver_brief, false).await
+    }
+    async fn with_probe(
+        parent_runtime: &str,
+        child_runtime: Option<&str>,
+        deliver_brief: bool,
+        native_probe: bool,
+    ) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let root = dir.path().canonicalize()?;
         let db = root.join("hennery.db");
@@ -356,15 +385,19 @@ impl Harness {
         let observed = trace.clone();
         let identities: Arc<Mutex<BTreeMap<String, hennery_gateway::identity::SessionIdentity>>> = Arc::default();
         let authenticated = identities.clone();
+        let probe_tokens: Arc<Mutex<BTreeMap<String, String>>> = Arc::default();
+        let tokens = probe_tokens.clone();
         let auth = gateway.runtime.store.clone();
         let builtin = hennery_sessions::builtin::router(state.clone(), gateway).layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| {
-                let observed = observed.clone(); let auth = auth.clone(); let authenticated = authenticated.clone();
+                let observed = observed.clone(); let auth = auth.clone(); let authenticated = authenticated.clone(); let tokens=tokens.clone();
                 async move {
-                    let caller = request.headers().get("authorization").and_then(|h| h.to_str().ok()).and_then(|h| h.strip_prefix("Bearer ")).and_then(|t| auth.authenticate_session(t).ok().flatten()).map(|i| {
+                    let bearer=request.headers().get("authorization").and_then(|h|h.to_str().ok()).and_then(|h|h.strip_prefix("Bearer "));
+                    let caller = bearer.and_then(|t| auth.authenticate_session(t).ok().flatten()).map(|i| {
                         let hennery_gateway::scope::PrincipalKind::Session { session_id, .. } = &i.principal.kind;
                         let session_id = session_id.clone();
                         authenticated.lock().unwrap().insert(session_id.clone(), i);
+                        if native_probe { tokens.lock().unwrap().insert(session_id.clone(),bearer.unwrap().to_owned()); }
                         session_id
                     });
                     let (parts, body) = request.into_parts();
@@ -405,7 +438,7 @@ impl Harness {
             .into_iter()
             .filter(|runtime| *runtime == parent_runtime || Some(*runtime) == child_runtime)
         {
-            let (command, profile) = command(&root, runtime)?;
+            let (command, profile) = command(&root, runtime, native_probe)?;
             config.agents.insert(runtime.into(), command);
             config.profiles.insert(runtime.into(), profile);
         }
@@ -421,6 +454,7 @@ impl Harness {
             parent: String::new(),
             trace,
             identities,
+            probe_tokens,
             shutdown: Some(shutdown),
             host,
             server,
@@ -438,13 +472,12 @@ impl Harness {
         );
         // Bound paid parent turns with the same catalog-selected model/effort
         // as children, while keeping the parent in ordinary collaboration mode.
-        let mut parent_config = requested(&catalog);
-        if parent_runtime == "codex" {
-            parent_config.axes.insert(
-                "collaboration_mode".into(),
-                hennery_proto::frames::ConfigValue::Id("default".into()),
-            );
-        }
+        let effort = match std::env::var("HENNERY_D4_CODEX_PARENT_EFFORT") {
+            Ok(value) => Some(value),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => bail!("HENNERY_D4_CODEX_PARENT_EFFORT must be low or medium"),
+        };
+        let parent_config = parent_configuration(&catalog, effort.as_deref())?;
         ensure!(
             hennery_sessions::delegation_runtime::config_offered(&catalog, &parent_config),
             "chosen parent configuration absent from actual catalog"
@@ -479,6 +512,25 @@ impl Harness {
                 .map(|_| ())
         })
         .await?;
+        let actual = h
+            .state
+            .store
+            .catalog(&h.parent)?
+            .context("parent configuration readback")?
+            .current;
+        println!(
+            "{}",
+            json!({"case":"parent_configuration_comparison","requested":parent_config,"actual":actual})
+        );
+        ensure!(
+            parent_config.model == actual.model
+                && parent_config.mode == actual.mode
+                && parent_config
+                    .axes
+                    .iter()
+                    .all(|(id, value)| actual.axes.get(id) == Some(value)),
+            "parent requested/actual configuration differs"
+        );
         Ok(h)
     }
     async fn wait<T>(&self, phase: &str, mut predicate: impl FnMut() -> Option<T>) -> Result<T> {
@@ -634,6 +686,10 @@ impl Harness {
         println!(
             "{}",
             json!({"phase":phase,"error_classes":errors,"errors":messages,"event_kinds":kinds,"mcp":*self.trace.lock().unwrap()})
+        );
+        println!(
+            "{}",
+            json!({"phase":"parent_diagnostics","assistant":scrub_error(&assistant_text(&events))?})
         );
         let conn = hennery_kernel::db::open(&self.dir.path().join("hennery.db"))?;
         println!(
@@ -897,7 +953,7 @@ impl Harness {
         self.idle(&self.parent).await?;
         self.approve_builtin.store(false, Ordering::SeqCst);
         let after = self.state.store.max_event_id()?;
-        let busy = self.prompt(&self.parent,"Call session_list exactly once using the hennery MCP tool, then reply BUSY_RELEASED. Do not call any other tools.").await?;
+        let busy = self.prompt(&self.parent, busy_parent_prompt()).await?;
         let held = self
             .question_for_turn(
                 &self.parent,
@@ -1497,6 +1553,125 @@ fn requested(catalog: &HostCatalog) -> SessionConfig {
         );
     }
     config
+}
+
+fn parent_configuration(catalog: &HostCatalog, effort: Option<&str>) -> Result<SessionConfig> {
+    let mut config = requested(catalog);
+    if catalog.agent == "codex" {
+        config.axes.insert(
+            "collaboration_mode".into(),
+            hennery_proto::frames::ConfigValue::Id("default".into()),
+        );
+    }
+    if let Some(effort) = effort {
+        ensure!(
+            catalog.agent == "codex" && matches!(effort, "low" | "medium"),
+            "parent effort override requires Codex and low or medium"
+        );
+        ensure!(
+            catalog
+                .config_options
+                .iter()
+                .any(|option| option["id"] == "reasoning_effort"
+                    && option["options"]
+                        .as_array()
+                        .is_some_and(|options| options.iter().any(|option| option["value"] == effort))),
+            "parent effort is absent from pinned catalog"
+        );
+        config.axes.insert(
+            "reasoning_effort".into(),
+            hennery_proto::frames::ConfigValue::Id(effort.into()),
+        );
+    }
+    Ok(config)
+}
+
+fn busy_parent_prompt() -> &'static str {
+    "New operator acceptance task. This supersedes earlier instructions to stop after spawning or avoid polling. Call the session_list tool from the hennery MCP server exactly once with arguments {}. Make an actual MCP tool call. If approval is requested, wait for the operator's response. Do not simulate tool output or finish before the actual call returns. Then reply exactly BUSY_RELEASED. Do not call any other tools."
+}
+
+#[test]
+fn busy_parent_prompt_specifies_new_task_tool_arguments_and_real_approval() {
+    let prompt = busy_parent_prompt();
+    for text in ["supersedes", "session_list", "{}", "approval", "BUSY_RELEASED"] {
+        assert!(prompt.contains(text), "missing {text}");
+    }
+}
+
+#[test]
+fn codex_parent_medium_is_explicit_catalog_checked_and_does_not_raise_child_effort() {
+    let catalog = HostCatalog {
+        agent: "codex".into(),
+        adapter_revision: String::new(),
+        config_options: vec![
+            json!({"category":"model","options":[{"value":"gpt-6-sol"}]}),
+            json!({"id":"reasoning_effort","options":[{"value":"low"},{"value":"medium"}]}),
+        ],
+        defaults: SessionConfig {
+            model: Some("gpt-6-sol".into()),
+            mode: Some("read-only".into()),
+            axes: Default::default(),
+        },
+        security: hennery_proto::delegation_host::SecurityClassification {
+            known: true,
+            axes: Default::default(),
+        },
+        freshness: hennery_proto::delegation_host::CatalogFreshness::Fresh,
+    };
+    let medium = parent_configuration(&catalog, Some("medium")).unwrap();
+    assert_eq!(
+        medium.axes["reasoning_effort"],
+        hennery_proto::frames::ConfigValue::Id("medium".into())
+    );
+    assert_eq!(medium.model.as_deref(), Some("gpt-6-sol"));
+    assert_eq!(
+        requested(&catalog).axes["reasoning_effort"],
+        hennery_proto::frames::ConfigValue::Id("low".into())
+    );
+    assert!(parent_configuration(&catalog, Some("ultra")).is_err());
+    let mut unavailable = catalog;
+    unavailable.config_options[1]["options"] = json!([{"value":"low"}]);
+    assert!(parent_configuration(&unavailable, Some("medium")).is_err());
+}
+
+#[tokio::test]
+#[ignore = "requires pinned Codex; adapter-local /mcp only, audited zero provider turns"]
+async fn pinned_codex_busy_tools_without_inference() -> Result<()> {
+    let h = Harness::with_probe("codex", None, false, true).await?;
+    let pause = h.dir.path().join("pause-mcp-status");
+    let result=async {
+        std::fs::write(&pause,[])?;
+        h.approve_builtin.store(false,Ordering::SeqCst);
+        let turn=h.prompt(&h.parent,"/mcp").await?;
+        let held=h.wait("native local MCP status held during busy turn",||{
+            if h.state.store.ended_turn_outcome(&turn).ok().flatten().is_some() {return Some(Err(anyhow::anyhow!("local /mcp ended without the audited native status request")));}
+            let row=h.state.store.find_session(&h.parent).ok().flatten()?;
+            if row.open_turn_id.as_deref()!=Some(&turn) {return None;}
+            std::fs::read(h.dir.path().join("held-mcp-status.json")).ok().and_then(|bytes|serde_json::from_slice::<Value>(&bytes).ok()).map(Ok)
+        }).await??;
+        ensure!(held["thread_scoped"]==true && held["schemas_valid"]==true,"native busy MCP status has different schemas: {held}");
+        ensure!(held["names"].as_array().is_some_and(|names|names.iter().any(|name|name=="session_list")),"session_list absent during busy native command");
+        let token=h.probe_tokens.lock().unwrap().get(&h.parent).context("probe-only in-memory bearer")?.clone();
+        let response=h.client.post(format!("{}/mcp/builtin/hennery",h.url)).bearer_auth(token)
+            .header("accept","application/json, text/event-stream")
+            .header("mcp-protocol-version","2025-11-25")
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list"})).send().await?;
+        ensure!(response.status()==reqwest::StatusCode::OK,"busy discovery refused: {}",response.status());
+        ensure!(valid_tool_schemas(&response.json::<Value>().await?["result"]["tools"]),"busy discovery schema changed");
+        ensure!(h.state.store.open_pending(&h.parent)?.is_empty(),"local status must request no provider permission");
+        std::fs::remove_file(&pause)?;
+        h.wait("local status turn completes",||h.state.store.ended_turn_outcome(&turn).ok().flatten()).await?;
+        let methods:Vec<String>=serde_json::from_slice(&std::fs::read(h.dir.path().join("native-methods.json"))?)?;
+        ensure!(methods.iter().any(|method|method=="mcpServerStatus/list"),"native status not queried");
+        ensure!(!methods.iter().any(|method|matches!(method.as_str(),"turn/start"|"review/start")),"probe invoked provider inference");
+        println!("{}",json!({"case":"native_busy_tools_without_inference","native_tools":held["names"],"advertised_input_schemas_valid":true,"provider_turn_starts":0,"busy_tools_available":true,"automatic_approval_enabled":false}));
+        Ok(())
+    }.await;
+    if pause.exists() {
+        std::fs::remove_file(pause)?;
+    }
+    let cleanup = h.finish().await;
+    result.and(cleanup)
 }
 
 #[tokio::test]
