@@ -66,6 +66,8 @@ def tokens(text):
 
 
 def required_paths(root):
+    # Compare canonical paths even when called directly with macOS /tmp aliases.
+    root = root.resolve()
     needed = set()
     for source in sorted((root / 'crates').rglob('*.rs')):
         stream = tokens(source.read_text())
