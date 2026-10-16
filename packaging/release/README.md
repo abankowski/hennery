@@ -32,10 +32,12 @@ alternate JSON path.
 
 The authentic upstream fixture proves crypto and JSON shape, and must fail
 production Hennery identity. Hennery-field substitutions are structural tests.
-Before enabling **any** channel switch, including GitHub, the maintainer must
-preserve and verify the first genuine Hennery tagged-workflow attestation as an
-authentic positive fixture. Creating that public-log entry is the maintainer's
-disclosure decision; tests do not mint an attestation.
+The latest operator decision (2026-10-16) enables all channels for the first
+release without waiting for a positive fixture. Preserve and verify that first
+genuine Hennery tagged-workflow attestation as follow-up evidence. Creating its
+public-log entry is the maintainer's disclosure decision; tests do not mint an
+attestation. There is no runtime fixture-existence gate. Stable-tag and reviewed
+channel-selection constraints still apply.
 
 ## Workflow and credentials
 
@@ -67,7 +69,7 @@ acceptance to succeed. Unselected owners alone may skip; native/no-op jobs still
 succeed. The policy checks the complete dependency graph, including descendants
 of optional jobs, and rejects reusable jobs. Secrets never appear at job scope.
 
-All `RELEASE_*_ENABLED` switches remain off until separately qualified. Secrets
+All `RELEASE_*_ENABLED` switches default off; the operator enables them. Secrets
 remaining in `release` are `RELEASE_HOMEBREW_TOKEN`, `GHCR_PUBLISH_TOKEN` and,
 only during explicit crates bootstrap, `RELEASE_CRATES_BOOTSTRAP_TOKEN`.
 `GHCR_PUBLISH_USER` is a non-secret variable. GitHub uses the built-in job token,

@@ -13,8 +13,9 @@ Pinned `gh 2.101.0` must verify the original payload and reject changed bytes.
 Its flattened certificate JSON must remain stable; a CLI bump requires explicit
 requalification. Production Hennery policy must reject this upstream identity.
 Tests substituting Hennery fields are structural tests, never crypto evidence.
-No real Hennery attestation was created. Before enablement the maintainer must
-verify the first genuine Hennery tagged attestation and preserve its authentic
-positive fixture, with corresponding payload and provenance.
+No real Hennery attestation was created. Under the latest operator decision
+(2026-10-16), all channels may be enabled for the first release without waiting
+for this fixture. Preserve and verify that release's genuine Hennery tagged
+attestation, payload and provenance as follow-up evidence.
 
 Generated with Claude AI — please review before distribution.

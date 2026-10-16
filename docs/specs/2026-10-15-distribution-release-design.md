@@ -34,6 +34,17 @@ acceptance, channel and rollback obligations otherwise remain. Implementation
 is recorded in [release simplification](../plans/2026-11-04-release-simplify.md);
 this design amendment authorizes no publication.
 
+**Latest operator decision, 2026-10-16:** enable all channels for the first
+release, without waiting for a first-release positive fixture. This supersedes
+the earlier GitHub-only rollout and pre-enablement-fixture requirement below.
+The crates bootstrap token is set in `release`, the Homebrew tap exists, and
+the operator supplies Homebrew/GHCR tokens. Preserve the authentic first
+Hennery fixture as follow-up evidence rather than an enablement gate. The
+builder still does not change switches or publish. Current code still requires
+a stable tag for non-GitHub channels and signed-source channel selection;
+`channels.json` currently selects only `github`. Resolve that tag/selection
+with the parent before the first all-channel run; no version gate is weakened.
+
 ### Authorization and threat model
 
 The maintainer signs **source**, by creating an annotated `v<version>` tag with
@@ -311,14 +322,15 @@ another workflow/dispatch or silently accept an incomplete immutable release.
   refusal of missing originals/window exhaustion. If GitHub reuses approval on
   retry, keep publication disabled until a reviewed enforceable renewal gate is
   in place. Live settings/approval evidence belongs to the maintainer, not mocks.
-- **First authentic Hennery positive:** with every channel switch still off,
-  the maintainer authorizes the first signed-tag build/attestation and its public
-  transparency-log disclosure. Download and independently verify its genuine
+- **First authentic Hennery positive:** following the latest operator decision,
+  collect this from the first authorized release, without delaying channel
+  enablement. The maintainer authorizes the public-log disclosure. Download and
+  independently verify its genuine
   tagged-workflow identity, source/signer digests, original run/attempt and
   payload/checksums with pinned `gh`; preserve bundle, payload and origin as the
-  authentic Hennery positive fixture. This must succeed before enabling any
-  channel switch, including GitHub publication. Never substitute the upstream
-  fixture or structural tests for this pre-enablement acceptance.
+  authentic Hennery positive fixture. The earlier pre-enablement requirement
+  is superseded; upstream fixtures and structural tests still do not constitute
+  authentic Hennery cryptographic evidence.
 - **Signing:** maintain the pinned public key and independently corroborated
   fingerprint; enable per-signature YubiKey touch (`on`), protect key/PIN and
   recovery material and ensure no accessible software copy bypasses hardware.

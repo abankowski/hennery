@@ -11,7 +11,8 @@
 
 ## Execution status
 
-**Phase B is implemented and replayed; PR #163 amendments await scoped re-review.** Phase A's
+**Phase B is implemented and replayed; PR #163 re-review APPROVE at `13060037`.**
+The subsequent CI fixture identity fix is recorded below. Phase A's
 first review verdict was **CHANGES**; **scoped re-review APPROVE at 0fddcc02 (2026-10-16)**. The parent then confirmed R4/Homebrew merged and authorized build.
 The implementation keeps the accepted early-publication/denial-of-service risk;
 it introduces no service, App, account, token or paid storage. No switch was
@@ -23,7 +24,16 @@ with authenticated transport/revalidation retained in the parent; GHCR uses
 deterministic missing-only referrer recovery and verifies fetched registry bundles.
 The amendment evidence below records 169 release plus 22 pinned-ORAS tests,
 125 image and 89 Node tests, 70 copy probes and the broker's 4×3 load runs.
-All publication/channel switches remain disabled. No new service or cost.
+The builder changed no publication/channel switches. No new service or cost.
+
+**Latest operator decision, 2026-10-16:** all channels are being enabled for the
+first release without waiting for a positive fixture. The crates bootstrap token
+is set in `release`, the tap exists, and the operator supplies Homebrew/GHCR
+tokens. This supersedes earlier fixture-before-enablement obligations, including
+historical records below. Capture the first authentic Hennery fixture afterwards.
+There is no runtime fixture-existence gate. Current prerelease/GitHub-only and
+signed-source selection guards remain unchanged; `channels.json` still selects
+only `github`, so the parent must resolve the tag/selection for all channels.
 
 Tasks 1–5 are complete. Release 147, image 122 and packaging Node 88 tests
 passed; the genuine pinned-gh contract has four passing tests. Actual
@@ -210,9 +220,9 @@ amendment base; re-anchor R4 after its merge before implementing.
    success and real JSON shape; production Hennery policy must reject its
    repo/workflow/ref. Substituted Hennery identity/run fields test structure
    only, explicitly labelled non-cryptographic. No real Hennery attestation is
-   created by this builder. Before any channel switch is enabled, the maintainer
+   created by this builder. Under the latest operator decision, the maintainer
    verifies the first genuine tagged Hennery attestation and preserves it with
-   its payload as the authentic Hennery positive fixture.
+   its payload after the first release; it no longer gates channel enablement.
 4. Run the release suite below, including the actual CLI contract; probe checksum,
    signature, identity and run-parser guards in one cloned copy. Commit tested
    task bytes and embed final source during Phase B. No speculative executable
@@ -545,6 +555,46 @@ print('Extracted',count,'files;',len(deleted),'deletions;',len(expected),'tracke
   tested source; no second full replay. Personal author and rule review precede
   the exact leased SSH push. Review focus: child authority, pipe lifecycle,
   deterministic reconciliation, fetched-bundle verification and write boundaries.
+
+### Ubuntu CI fixture identity follow-up (2026-10-16)
+
+- Parent reports PR #163 re-review **APPROVE at `13060037`**, followed by four
+  consumer-fixture setup errors on Ubuntu x86_64 and arm64. Reproduced locally
+  with empty HOME, `GIT_CONFIG_GLOBAL=/dev/null` and no system config. macOS Git
+  otherwise infers a tagger from Directory Services, so the regression also
+  sets `user.useConfigOnly=true` in the caller. The old unsigned annotated-tag
+  path failed with exit 128 and **“Please tell me who you are.”** Three new
+  regressions were RED (two assertion failures, one missing-diagnostic error).
+- All fixture Git commands now explicitly set disposable `user.name` and
+  `user.email`, including unsigned annotated tags. The class environment is a
+  public-tool allow-list with private HOME/XDG/GPG directories and disabled
+  global/system Git configuration. Caller Git config injection cannot mask
+  missing fixture configuration. The shared setup helper includes exit status,
+  command and captured stderr on failure, without dumping its environment.
+- `/tmp/release-simple-ci-fixture-release.log`: **194 release tests passed**,
+  exit 0, under empty HOME, `/dev/null` global Git config and disabled identity
+  auto-detection. `/tmp/release-simple-ci-fixture-targeted-final.log`: the three
+  final regressions passed, exit 0. The final stderr assertion additionally
+  requires actual GPG diagnostic text, since a canary in argv alone was too weak.
+- `/tmp/release-simple-ci-fixture-probes-final.log`: **10/10 assertion-killed
+  copy probes**, covering both identity fields, environment allow-list, private
+  HOME/XDG, global/system config guards, exit checking and captured stderr.
+  Retained copy `.superpowers/sdd/release-simplify/probes-ci-fixture-1` has its
+  own host APFS clone of target. An initial stderr probe survived the argv-only
+  assertion; strengthening the diagnostic regression killed it. No production
+  guard or refusal expectation was weakened.
+- `/tmp/release-simple-ci-fixture-rust.log`: fmt, both clippies and both
+  generators exit 0. No Rust/Nix changes, full workspace repeat, full replay or
+  timing load: this amendment changes deterministic test identity/configuration,
+  not timing/concurrency behavior. Final blocks and staged tested bytes checked.
+- Latest operator ruling: all channels for the first release, with no wait for
+  a first Hennery positive fixture. Current docs record the supersession and
+  token/tap setup supplied by the operator. Runtime publishers contain no
+  fixture-existence gate. The existing stable-only non-GitHub constraint and
+  signed channel selection remain unchanged (`channels.json` is `["github"]`);
+  the parent must resolve the first tag/selection before an all-channel run.
+  This builder changed no live switch, used no network `gh`, and published
+  nothing. Authentic first-release fixture collection is follow-up evidence.
 
 ## Exact replay files
 
@@ -2330,7 +2380,7 @@ pkg-url = "{ repo }/releases/download/v{ version }/hennery-aarch64-unknown-linux
 bin-dir = "hennery-aarch64-unknown-linux-musl/{ bin }"
 ``````
 
-<!-- replay-file: {"path":"docs/README.md","mode":"100644","sha256":"acee6dd26ac740273818b2e2d7e6da03a462ae7b128c3bb1366f752810772618","encoding":"utf8"} -->
+<!-- replay-file: {"path":"docs/README.md","mode":"100644","sha256":"728f921c49c8dbe981278692e7aa8f8073a8394a6951cf685750a94cfa5b4846","encoding":"utf8"} -->
 ``````markdown
 # hennery design documents
 
@@ -2366,7 +2416,7 @@ slice); everything else is design. The maintainer's decisions are recorded below
      and its [harness](../spikes/2026-09-25-mcp-per-session/).
 4. Plans:
    - [OAuth denial popup closure (flake 18)](plans/2026-11-04-flake-oauth-denial.md) — requires the popup's close event while accepting its self-closing click's target-closure acknowledgment; retains denial, grant and mount assertions. Controlled regression, copy probes, load and web verification are recorded; independent review and CI remain parent-owned.
-   - [Release simplification](plans/2026-11-04-release-simplify.md) — Phase B implements the operator’s source-signed single tag workflow, exact-run provenance, one protected folded publisher and consumer bootstrap; candidate storage, upload App and inventory signing removed. Design first review: CHANGES; scoped re-review APPROVE at 0fddcc02 (2026-10-16). Rebased onto merged R4/Homebrew at `98861052`. PR #163 review CHANGES at `1307f4e3` amended with credential-free verifier children, parent-only crates revalidation and deterministic GHCR referrer recovery with fetched-bundle verification. Release 169 plus 22 ORAS/image 125/Node 89, policy/actionlint, 70 copy probes and broker 4×3 passed. See the plan for Rust/Nix, prior fresh replay, retained copies and maintainer gates. Publication remains disabled; scoped re-review and full PR status are parent-owned.
+   - [Release simplification](plans/2026-11-04-release-simplify.md) — source-signed single tag workflow, exact-run provenance and one protected folded publisher; old candidate/storage/App protocols removed. Design scoped re-review APPROVE at `0fddcc02`; PR #163 security re-review APPROVE at `13060037` (2026-10-16). Ubuntu fixture identity follow-up: explicit disposable tagger, private HOME/Git config and captured stderr; release 194, targeted 3 and 10 copy probes passed. Prior image/Node, Rust/Nix, replay and security-probe evidence is in the plan. Latest operator decision enables all channels without a pre-existing Hennery positive fixture; current stable-tag and signed channel-selection constraints are reported. Full current PR status and platform acceptance remain parent-owned.
    - [List-stream and MCP timing (flakes 13–14)](plans/2026-11-02-flake-list-stream.md) — paused-clock deletion checks and an awaited OAuth popup cleanup assertion, with controlled regressions, guard probes, load and replay evidence. Independent review and Linux/macOS CI remain parent-owned.
    - [Proxy fixture port lifetimes (flake 15)](plans/2026-11-03-flake-proxy-ports.md) — leases stable proxy ports across pauses and test processes outside the kernel ephemeral ranges; deterministic contention regressions, copy probes, load and replay evidence recorded. Parent review and Linux/macOS CI remain pending.
    - [Walking skeleton](plans/2026-09-26-walking-skeleton.md) — the first
@@ -2571,15 +2621,17 @@ intact. Native runner CI is the acceptance evidence.
 Generated with Claude AI — please review before distribution.
 ``````
 
-<!-- replay-file: {"path":"docs/release-process.md","mode":"100644","sha256":"50e8bfffb036764e4ed5009e736666b03cb7e81177218657561a5e53d4a75c41","encoding":"utf8"} -->
+<!-- replay-file: {"path":"docs/release-process.md","mode":"100644","sha256":"b7a9f4bbd7d77de258a9e97af6b03baa4294fb9eaf67dd5941c0a4938e0da140","encoding":"utf8"} -->
 ``````markdown
 # Release process
 
 The operator's 2026-10-16 decision replaces the former candidate/storage and
 inventory-signature process. Publication remains disabled until the maintainer
-explicitly qualifies and enables it. The first version is `0.1.0-alpha.1`, GitHub
-only; stable `0.1.0` and additional channels require separate go-ahead. Building
-this pipeline performs no publication or external settings change.
+explicitly qualifies and enables it. The latest operator decision (2026-10-16)
+enables all channels for the first release without waiting for a first-release
+positive fixture. The crates bootstrap token is set in `release`, the Homebrew
+tap exists, and the operator supplies the Homebrew/GHCR tokens. Building or
+fixing this pipeline performs no publication or external settings change.
 
 ## Trust and maintainer setup
 
@@ -2631,7 +2683,7 @@ new signed version.
 
 ## Switches, credentials and acceptance
 
-All switches default off and remain disabled during implementation:
+Switches default off; only the operator changes their platform values:
 `RELEASE_PUBLICATION_ENABLED`, `RELEASE_GITHUB_ENABLED`,
 `RELEASE_HOMEBREW_ENABLED`, `RELEASE_CRATES_ENABLED`, `RELEASE_GHCR_ENABLED`
 and the temporary `RELEASE_CRATES_BOOTSTRAP_ENABLED`.
@@ -2668,14 +2720,19 @@ nor an approval digest. Start from
 `packaging/release/example-observations.json`; replace observations with verified
 facts, never merely copy them. No CI administration credential is needed.
 
-Before **any** switch is enabled, the maintainer must obtain the first genuine
-Hennery attestation from the authorized tagged build, make its public-log
-creation/disclosure decision, and preserve its original payload, bundle and
-trusted-root fixture as the authentic positive Hennery verifier fixture. Verify
-it with the pinned CLI and production policy before enabling GitHub or another
-channel. The checked-in upstream `sigstore/sigstore-js` fixture proves real
-cryptography/JSON shape and production Hennery rejection; substituted Hennery
-fields prove structure only. They do not replace this acceptance obligation.
+The latest operator decision supersedes the earlier pre-enablement fixture
+requirement. The maintainer authorizes the first release's public-log disclosure.
+After that release, preserve its original payload, genuine Hennery attestation
+bundle and trusted-root fixture as the authentic positive Hennery verifier fixture. Verify
+it with the pinned CLI and production policy as follow-up evidence, without
+delaying channel enablement. The checked-in upstream `sigstore/sigstore-js`
+fixture proves real cryptography/JSON shape and production Hennery rejection; substituted Hennery
+fields prove structure only. They do not replace authentic Hennery evidence.
+
+Current code still restricts prereleases to GitHub and defaults signed-source
+`packaging/release/channels.json` to `["github"]`. The first all-channel run
+requires the appropriate stable tag and reviewed channel selection. This CI
+fixture fix changes neither those guards nor platform switches.
 
 Maintainer platform acceptance also records first-run and publish-only retry
 approval behavior: exactly one `release` approval per publishing attempt, no
@@ -2825,7 +2882,7 @@ immutable versions. Retain corresponding source and document remediation.
 Generated with Claude AI — please review before distribution.
 ``````
 
-<!-- replay-file: {"path":"docs/specs/2026-10-15-distribution-release-design.md","mode":"100644","sha256":"d7c6b44290697d8f37537c28d5218e37604739174ddf9994a5e1dc2abceb855b","encoding":"utf8"} -->
+<!-- replay-file: {"path":"docs/specs/2026-10-15-distribution-release-design.md","mode":"100644","sha256":"2b709fac4e7e266649a95e9b7bffd63bb4c62692f4c1091e5bce5f369ab2cd79","encoding":"utf8"} -->
 ``````markdown
 # hennery — distribution and release design
 
@@ -2862,6 +2919,17 @@ App or recurring cost is authorized. Platform, licence/source, advisory,
 acceptance, channel and rollback obligations otherwise remain. Implementation
 is recorded in [release simplification](../plans/2026-11-04-release-simplify.md);
 this design amendment authorizes no publication.
+
+**Latest operator decision, 2026-10-16:** enable all channels for the first
+release, without waiting for a first-release positive fixture. This supersedes
+the earlier GitHub-only rollout and pre-enablement-fixture requirement below.
+The crates bootstrap token is set in `release`, the Homebrew tap exists, and
+the operator supplies Homebrew/GHCR tokens. Preserve the authentic first
+Hennery fixture as follow-up evidence rather than an enablement gate. The
+builder still does not change switches or publish. Current code still requires
+a stable tag for non-GitHub channels and signed-source channel selection;
+`channels.json` currently selects only `github`. Resolve that tag/selection
+with the parent before the first all-channel run; no version gate is weakened.
 
 ### Authorization and threat model
 
@@ -3140,14 +3208,15 @@ another workflow/dispatch or silently accept an incomplete immutable release.
   refusal of missing originals/window exhaustion. If GitHub reuses approval on
   retry, keep publication disabled until a reviewed enforceable renewal gate is
   in place. Live settings/approval evidence belongs to the maintainer, not mocks.
-- **First authentic Hennery positive:** with every channel switch still off,
-  the maintainer authorizes the first signed-tag build/attestation and its public
-  transparency-log disclosure. Download and independently verify its genuine
+- **First authentic Hennery positive:** following the latest operator decision,
+  collect this from the first authorized release, without delaying channel
+  enablement. The maintainer authorizes the public-log disclosure. Download and
+  independently verify its genuine
   tagged-workflow identity, source/signer digests, original run/attempt and
   payload/checksums with pinned `gh`; preserve bundle, payload and origin as the
-  authentic Hennery positive fixture. This must succeed before enabling any
-  channel switch, including GitHub publication. Never substitute the upstream
-  fixture or structural tests for this pre-enablement acceptance.
+  authentic Hennery positive fixture. The earlier pre-enablement requirement
+  is superseded; upstream fixtures and structural tests still do not constitute
+  authentic Hennery cryptographic evidence.
 - **Signing:** maintain the pinned public key and independently corroborated
   fingerprint; enable per-signature YubiKey touch (`on`), protect key/PIN and
   recovery material and ensure no accessible software copy bypasses hardware.
@@ -3917,7 +3986,7 @@ Generated with Claude AI — please review before distribution.
 }
 ``````
 
-<!-- replay-file: {"path":"packaging/README.md","mode":"100644","sha256":"70fb366bff61c3b87c6765f9b0393b36133c5ba66da74f70e7f2d88674668836","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/README.md","mode":"100644","sha256":"0df297c019dffaf9ba3dde49e6d75a161635c10dfcdb08e7411ceca36e695bc7","encoding":"utf8"} -->
 ``````markdown
 # Release builds
 
@@ -4151,9 +4220,10 @@ are the implementation contracts to recheck on changes.
   no environment or publication secrets. The separate `attest` job has OIDC and
   attestation write authority and does not upload to registries. No AWS, upload
   App, held-storage stage or maintainer byte-inventory signature remains.
-- Before enabling any switch, the first genuine maintainer-authorized tagged
-  Hennery attestation must pass the pinned CLI contract and full positive policy.
-  Its authentic fixture is retained. Builders never create transparency-log entries.
+- The latest operator decision (2026-10-16) enables all channels for the first
+  release without waiting for a positive fixture. Retain and verify the first
+  genuine Hennery attestation afterwards. Builders never create transparency-log
+  entries. Existing stable-tag and reviewed channel-selection constraints remain.
 - Homebrew uses `RELEASE_HOMEBREW_TOKEN`; GHCR uses `GHCR_PUBLISH_TOKEN` plus
   `GHCR_PUBLISH_USER`, all only in `release`, after verification. Configure tap
   permissions, GHCR namespace/linkage/visibility/retention and package Actions
@@ -5250,7 +5320,7 @@ for(const mutation of ['crate','source','extra','missing','duplicate','case-coll
 });
 ``````
 
-<!-- replay-file: {"path":"packaging/release/README.md","mode":"100644","sha256":"0fc1001df73921b71a61defde6a16040357c341dfea0db35b8fba3f150975b30","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/release/README.md","mode":"100644","sha256":"3eb050cfe34b14ce4fd616f12ba8b1fba537ad64a50ce721e756654774802eb0","encoding":"utf8"} -->
 ``````markdown
 # Signed-source release contract
 
@@ -5286,10 +5356,12 @@ alternate JSON path.
 
 The authentic upstream fixture proves crypto and JSON shape, and must fail
 production Hennery identity. Hennery-field substitutions are structural tests.
-Before enabling **any** channel switch, including GitHub, the maintainer must
-preserve and verify the first genuine Hennery tagged-workflow attestation as an
-authentic positive fixture. Creating that public-log entry is the maintainer's
-disclosure decision; tests do not mint an attestation.
+The latest operator decision (2026-10-16) enables all channels for the first
+release without waiting for a positive fixture. Preserve and verify that first
+genuine Hennery tagged-workflow attestation as follow-up evidence. Creating its
+public-log entry is the maintainer's disclosure decision; tests do not mint an
+attestation. There is no runtime fixture-existence gate. Stable-tag and reviewed
+channel-selection constraints still apply.
 
 ## Workflow and credentials
 
@@ -5321,7 +5393,7 @@ acceptance to succeed. Unselected owners alone may skip; native/no-op jobs still
 succeed. The policy checks the complete dependency graph, including descendants
 of optional jobs, and rejects reusable jobs. Secrets never appear at job scope.
 
-All `RELEASE_*_ENABLED` switches remain off until separately qualified. Secrets
+All `RELEASE_*_ENABLED` switches default off; the operator enables them. Secrets
 remaining in `release` are `RELEASE_HOMEBREW_TOKEN`, `GHCR_PUBLISH_TOKEN` and,
 only during explicit crates bootstrap, `RELEASE_CRATES_BOOTSTRAP_TOKEN`.
 `GHCR_PUBLISH_USER` is a non-secret variable. GitHub uses the built-in job token,
@@ -5917,7 +5989,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ``````
 
-<!-- replay-file: {"path":"packaging/release/fixtures/attestation/README.md","mode":"100644","sha256":"a1069f9c78d80bf9bb038e046a3dfb3230ac1584eda596da73c7a099d9cd8147","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/release/fixtures/attestation/README.md","mode":"100644","sha256":"7ce35b43099776644fae7a97045aa2c0212545561ec5ebd200254a177988dafe","encoding":"utf8"} -->
 ``````markdown
 # Authentic upstream attestation fixture
 
@@ -5934,9 +6006,10 @@ Pinned `gh 2.101.0` must verify the original payload and reject changed bytes.
 Its flattened certificate JSON must remain stable; a CLI bump requires explicit
 requalification. Production Hennery policy must reject this upstream identity.
 Tests substituting Hennery fields are structural tests, never crypto evidence.
-No real Hennery attestation was created. Before enablement the maintainer must
-verify the first genuine Hennery tagged attestation and preserve its authentic
-positive fixture, with corresponding payload and provenance.
+No real Hennery attestation was created. Under the latest operator decision
+(2026-10-16), all channels may be enabled for the first release without waiting
+for this fixture. Preserve and verify that release's genuine Hennery tagged
+attestation, payload and provenance as follow-up evidence.
 
 Generated with Claude AI — please review before distribution.
 ``````
@@ -6443,7 +6516,7 @@ def version(raw):
     return tuple(int(n) for n in versions[0])
 ``````
 
-<!-- replay-file: {"path":"packaging/release/installer_fixtures.py","mode":"100644","sha256":"d7386eb94f8549090c21e343fda31eeaa4c0bf2e18135f5db0c0540ca68bf78b","encoding":"utf8"} -->
+<!-- replay-file: {"path":"packaging/release/installer_fixtures.py","mode":"100644","sha256":"bbd9618704acb73d43fb82eba84d04676599e1b7c33f514b0e12bbfe2242bd96","encoding":"utf8"} -->
 ``````python
 """Offline consumer fixtures: genuine disposable OpenPGP tags, mocked provenance."""
 import hashlib
@@ -6451,6 +6524,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -6459,13 +6533,30 @@ FINGERPRINT = 'F26C7F594DFE84D131703AFC23E5A318AE8D2861'
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def checked_fixture(command, **kwargs):
+    """Keep setup failures diagnosable without dumping the environment."""
+    try:
+        return subprocess.run(command, check=True, capture_output=True, text=True, **kwargs)
+    except subprocess.CalledProcessError as error:
+        raise AssertionError('fixture command failed (exit ' + str(error.returncode) + '): '
+                             + shlex.join(command) + '\n' + (error.stderr or '(no stderr)')) from None
+
+
 class ConsumerFixtures:
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix='release-consumer-')
         cls.root = Path(cls.temp.name)
         cls.keyring = cls.root / 'signing'; cls.keyring.mkdir(mode=0o700)
-        cls.environment = dict(os.environ, GNUPGHOME=str(cls.keyring), GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_SYSTEM='/dev/null')
+        cls.environment = {key: os.environ[key] for key in
+                           ('PATH', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NIX_SSL_CERT_FILE') if key in os.environ}
+        for key, directory in [('HOME', 'home'), ('XDG_CONFIG_HOME', 'config'),
+                               ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data')]:
+            path = cls.root / directory; path.mkdir(mode=0o700)
+            cls.environment[key] = str(path)
+        cls.environment.update(GNUPGHOME=str(cls.keyring), TMPDIR=str(cls.root),
+                               GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null',
+                               GIT_CONFIG_SYSTEM='/dev/null', LC_ALL='C.UTF-8')
         cls.keys, cls.primary = [], []
         for name in ('approved', 'another'):
             cls.gpg('--quick-generate-key', 'Disposable consumer ' + name, 'ed25519', 'cert', '1d')
@@ -6480,21 +6571,23 @@ class ConsumerFixtures:
 
     @classmethod
     def tearDownClass(cls):
-        subprocess.run(['gpgconf', '--kill', 'gpg-agent'], env=cls.environment, check=True, capture_output=True)
+        checked_fixture(['gpgconf', '--kill', 'gpg-agent'], env=cls.environment)
         cls.temp.cleanup()
 
     @classmethod
     def gpg(cls, *arguments):
-        return subprocess.run(['gpg', '--batch', '--pinentry-mode', 'loopback', '--passphrase', '', *arguments], env=cls.environment, check=True, capture_output=True, text=True)
+        return checked_fixture(['gpg', '--batch', '--pinentry-mode', 'loopback', '--passphrase', '', *arguments], env=cls.environment)
 
     def fixture(self, case, script, *, hash_tool='sha256sum', conditional=False, installer=False):
         root = Path(tempfile.mkdtemp(prefix='case-', dir=self.root))
         release = root / 'release'; release.mkdir()
         source = root / 'source'
-        def git(*args):
-            return subprocess.run(['git', *args], env=self.environment, check=True, capture_output=True, text=True)
+        def git(*args, **kwargs):
+            return checked_fixture(['git', '-c', 'user.name=Disposable fixture',
+                                    '-c', 'user.email=fixture@example.invalid', *args],
+                                   env=self.environment, **kwargs)
         git('init', '--template=', str(source))
-        git('-C', str(source), '-c', 'user.name=Disposable fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'fixture')
+        git('-C', str(source), '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'fixture')
         sha = git('-C', str(source), 'rev-parse', 'HEAD').stdout.strip()
         tag = 'v0.1.0-alpha.1'
         if case == 'lightweight-tag':
@@ -6504,13 +6597,13 @@ class ConsumerFixtures:
         else:
             actual_tag = 'v9.9.9' if case == 'wrong-release-tag' else tag
             key = self.keys[1 if case == 'wrong-key-signature' else 0]
-            git('-C', str(source), '-c', 'user.name=Disposable fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'gpg.program=gpg', 'tag', '-s', '-u', key+'!', actual_tag, '-m', 'signed fixture')
+            git('-C', str(source), '-c', 'gpg.program=gpg', 'tag', '-s', '-u', key+'!', actual_tag, '-m', 'signed fixture')
             if actual_tag != tag:
                 git('-C', str(source), 'update-ref', 'refs/tags/'+tag, git('-C', str(source), 'rev-parse', actual_tag).stdout.strip())
         object_sha = git('-C', str(source), 'rev-parse', tag).stdout.strip()
         if case == 'malformed-signature':
             raw = git('-C', str(source), 'cat-file', 'tag', object_sha).stdout.replace('signed fixture', 'changed fixture')
-            result = subprocess.run(['git', '-C', str(source), 'hash-object', '-t', 'tag', '-w', '--stdin'], input=raw, env=self.environment, check=True, capture_output=True, text=True)
+            result = git('-C', str(source), 'hash-object', '-t', 'tag', '-w', '--stdin', input=raw)
             object_sha = result.stdout.strip()
             git('-C', str(source), 'update-ref', 'refs/tags/'+tag, object_sha)
         metadata = {'schema': 2, 'repository': 'marcinwadon/hennery', 'tag': tag, 'source_sha': sha, 'tag_object': object_sha, 'attesting': {'run_id': 10, 'run_attempt': 1}}
@@ -8031,6 +8124,70 @@ class ChannelDelivery(unittest.TestCase):
             with self.subTest(fault=fault),patch.object(release_run,'verify',side_effect=verify),patch.object(tap,'tap_api',side_effect=api),self.assertRaises(gate.Refused):
                 channel_publish.publish(fixture.root,Path('signatures'),'homebrew')
             self.assertEqual(events.count('PUT'),0 if fault in ('withdrawn','changed') else 1)
+``````
+
+<!-- replay-file: {"path":"packaging/release/test_consumer_fixtures.py","mode":"100644","sha256":"2c269f6c23ac9493d95d1f3a57cf1ed6676887fd569e0b37613a316a619200b3","encoding":"utf8"} -->
+``````python
+"""Real local tags must not depend on an operator's Git identity/configuration."""
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from installer_fixtures import ConsumerFixtures, FINGERPRINT
+
+
+class FixtureIsolation(ConsumerFixtures, unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.outer = tempfile.TemporaryDirectory(prefix='consumer-empty-home-')
+        cls.addClassCleanup(cls.outer.cleanup)
+        empty = {'PATH': os.environ['PATH'], 'HOME': cls.outer.name,
+                 'XDG_CONFIG_HOME': str(Path(cls.outer.name) / 'xdg'),
+                 'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1',
+                 # macOS Git can infer a tagger from Directory Services even
+                 # with no configuration; disable that fallback for the RED.
+                 'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'user.useConfigOnly',
+                 'GIT_CONFIG_VALUE_0': 'true'}
+        with patch.dict(os.environ, empty, clear=True):
+            super().setUpClass()
+
+    def test_signed_and_unsigned_fixture_tags_have_an_explicit_tagger(self):
+        # This script tests fixture construction only. The real bootstrap suite
+        # independently requires that an unsigned tag is refused.
+        script = 'release_fingerprint=' + FINGERPRINT + '\nexit 0\n'
+        for case in ('unsigned-tag', 'valid'):
+            with self.subTest(case=case):
+                try:
+                    _, marker = self.fixture(case, script)
+                except subprocess.CalledProcessError as error:
+                    self.fail('fixture construction failed: ' + error.stderr)
+                raw = subprocess.check_output(['git', '-C', str(marker.parent / 'source'),
+                                               'cat-file', 'tag', 'v0.1.0-alpha.1'],
+                                              env=self.environment, text=True)
+                self.assertTrue('tagger Disposable fixture <fixture@example.invalid> ' in raw,
+                                'fixture used an ambient or inferred tagger')
+
+    def test_fixture_configuration_is_private_even_with_an_empty_caller_home(self):
+        self.assertIn('HOME', self.environment)
+        self.assertIn('XDG_CONFIG_HOME', self.environment)
+        self.assertNotEqual(self.environment['HOME'], self.outer.name)
+        self.assertTrue(Path(self.environment['HOME']).is_relative_to(self.root))
+        self.assertTrue(Path(self.environment['XDG_CONFIG_HOME']).is_relative_to(self.root))
+        self.assertEqual(self.environment.get('GIT_CONFIG_GLOBAL'), '/dev/null')
+        self.assertEqual(self.environment.get('GIT_CONFIG_SYSTEM'), '/dev/null')
+        self.assertEqual(self.environment.get('GIT_CONFIG_NOSYSTEM'), '1')
+        for key in ('GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'):
+            self.assertNotIn(key, self.environment)
+
+    def test_fixture_subprocess_failure_includes_stderr(self):
+        with self.assertRaises(AssertionError) as failure:
+            self.gpg('--hennery-fixture-stderr-canary')
+        self.assertIn('hennery-fixture-stderr-canary', str(failure.exception))
+        self.assertIn('invalid option', str(failure.exception))
+        self.assertIn('exit ', str(failure.exception))
 ``````
 
 <!-- replay-file: {"path":"packaging/release/test_contract.py","mode":"100644","sha256":"751553a263a0f9691e2adcc8ab288dfaaaab1db3180503f893ab87050fb8a474","encoding":"utf8"} -->

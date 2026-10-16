@@ -230,9 +230,10 @@ are the implementation contracts to recheck on changes.
   no environment or publication secrets. The separate `attest` job has OIDC and
   attestation write authority and does not upload to registries. No AWS, upload
   App, held-storage stage or maintainer byte-inventory signature remains.
-- Before enabling any switch, the first genuine maintainer-authorized tagged
-  Hennery attestation must pass the pinned CLI contract and full positive policy.
-  Its authentic fixture is retained. Builders never create transparency-log entries.
+- The latest operator decision (2026-10-16) enables all channels for the first
+  release without waiting for a positive fixture. Retain and verify the first
+  genuine Hennery attestation afterwards. Builders never create transparency-log
+  entries. Existing stable-tag and reviewed channel-selection constraints remain.
 - Homebrew uses `RELEASE_HOMEBREW_TOKEN`; GHCR uses `GHCR_PUBLISH_TOKEN` plus
   `GHCR_PUBLISH_USER`, all only in `release`, after verification. Configure tap
   permissions, GHCR namespace/linkage/visibility/retention and package Actions

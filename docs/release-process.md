@@ -2,9 +2,11 @@
 
 The operator's 2026-10-16 decision replaces the former candidate/storage and
 inventory-signature process. Publication remains disabled until the maintainer
-explicitly qualifies and enables it. The first version is `0.1.0-alpha.1`, GitHub
-only; stable `0.1.0` and additional channels require separate go-ahead. Building
-this pipeline performs no publication or external settings change.
+explicitly qualifies and enables it. The latest operator decision (2026-10-16)
+enables all channels for the first release without waiting for a first-release
+positive fixture. The crates bootstrap token is set in `release`, the Homebrew
+tap exists, and the operator supplies the Homebrew/GHCR tokens. Building or
+fixing this pipeline performs no publication or external settings change.
 
 ## Trust and maintainer setup
 
@@ -56,7 +58,7 @@ new signed version.
 
 ## Switches, credentials and acceptance
 
-All switches default off and remain disabled during implementation:
+Switches default off; only the operator changes their platform values:
 `RELEASE_PUBLICATION_ENABLED`, `RELEASE_GITHUB_ENABLED`,
 `RELEASE_HOMEBREW_ENABLED`, `RELEASE_CRATES_ENABLED`, `RELEASE_GHCR_ENABLED`
 and the temporary `RELEASE_CRATES_BOOTSTRAP_ENABLED`.
@@ -93,14 +95,19 @@ nor an approval digest. Start from
 `packaging/release/example-observations.json`; replace observations with verified
 facts, never merely copy them. No CI administration credential is needed.
 
-Before **any** switch is enabled, the maintainer must obtain the first genuine
-Hennery attestation from the authorized tagged build, make its public-log
-creation/disclosure decision, and preserve its original payload, bundle and
-trusted-root fixture as the authentic positive Hennery verifier fixture. Verify
-it with the pinned CLI and production policy before enabling GitHub or another
-channel. The checked-in upstream `sigstore/sigstore-js` fixture proves real
-cryptography/JSON shape and production Hennery rejection; substituted Hennery
-fields prove structure only. They do not replace this acceptance obligation.
+The latest operator decision supersedes the earlier pre-enablement fixture
+requirement. The maintainer authorizes the first release's public-log disclosure.
+After that release, preserve its original payload, genuine Hennery attestation
+bundle and trusted-root fixture as the authentic positive Hennery verifier fixture. Verify
+it with the pinned CLI and production policy as follow-up evidence, without
+delaying channel enablement. The checked-in upstream `sigstore/sigstore-js`
+fixture proves real cryptography/JSON shape and production Hennery rejection; substituted Hennery
+fields prove structure only. They do not replace authentic Hennery evidence.
+
+Current code still restricts prereleases to GitHub and defaults signed-source
+`packaging/release/channels.json` to `["github"]`. The first all-channel run
+requires the appropriate stable tag and reviewed channel selection. This CI
+fixture fix changes neither those guards nor platform switches.
 
 Maintainer platform acceptance also records first-run and publish-only retry
 approval behavior: exactly one `release` approval per publishing attempt, no

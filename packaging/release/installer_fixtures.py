@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -12,13 +13,30 @@ FINGERPRINT = 'F26C7F594DFE84D131703AFC23E5A318AE8D2861'
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def checked_fixture(command, **kwargs):
+    """Keep setup failures diagnosable without dumping the environment."""
+    try:
+        return subprocess.run(command, check=True, capture_output=True, text=True, **kwargs)
+    except subprocess.CalledProcessError as error:
+        raise AssertionError('fixture command failed (exit ' + str(error.returncode) + '): '
+                             + shlex.join(command) + '\n' + (error.stderr or '(no stderr)')) from None
+
+
 class ConsumerFixtures:
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix='release-consumer-')
         cls.root = Path(cls.temp.name)
         cls.keyring = cls.root / 'signing'; cls.keyring.mkdir(mode=0o700)
-        cls.environment = dict(os.environ, GNUPGHOME=str(cls.keyring), GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_SYSTEM='/dev/null')
+        cls.environment = {key: os.environ[key] for key in
+                           ('PATH', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NIX_SSL_CERT_FILE') if key in os.environ}
+        for key, directory in [('HOME', 'home'), ('XDG_CONFIG_HOME', 'config'),
+                               ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data')]:
+            path = cls.root / directory; path.mkdir(mode=0o700)
+            cls.environment[key] = str(path)
+        cls.environment.update(GNUPGHOME=str(cls.keyring), TMPDIR=str(cls.root),
+                               GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null',
+                               GIT_CONFIG_SYSTEM='/dev/null', LC_ALL='C.UTF-8')
         cls.keys, cls.primary = [], []
         for name in ('approved', 'another'):
             cls.gpg('--quick-generate-key', 'Disposable consumer ' + name, 'ed25519', 'cert', '1d')
@@ -33,21 +51,23 @@ class ConsumerFixtures:
 
     @classmethod
     def tearDownClass(cls):
-        subprocess.run(['gpgconf', '--kill', 'gpg-agent'], env=cls.environment, check=True, capture_output=True)
+        checked_fixture(['gpgconf', '--kill', 'gpg-agent'], env=cls.environment)
         cls.temp.cleanup()
 
     @classmethod
     def gpg(cls, *arguments):
-        return subprocess.run(['gpg', '--batch', '--pinentry-mode', 'loopback', '--passphrase', '', *arguments], env=cls.environment, check=True, capture_output=True, text=True)
+        return checked_fixture(['gpg', '--batch', '--pinentry-mode', 'loopback', '--passphrase', '', *arguments], env=cls.environment)
 
     def fixture(self, case, script, *, hash_tool='sha256sum', conditional=False, installer=False):
         root = Path(tempfile.mkdtemp(prefix='case-', dir=self.root))
         release = root / 'release'; release.mkdir()
         source = root / 'source'
-        def git(*args):
-            return subprocess.run(['git', *args], env=self.environment, check=True, capture_output=True, text=True)
+        def git(*args, **kwargs):
+            return checked_fixture(['git', '-c', 'user.name=Disposable fixture',
+                                    '-c', 'user.email=fixture@example.invalid', *args],
+                                   env=self.environment, **kwargs)
         git('init', '--template=', str(source))
-        git('-C', str(source), '-c', 'user.name=Disposable fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'fixture')
+        git('-C', str(source), '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'fixture')
         sha = git('-C', str(source), 'rev-parse', 'HEAD').stdout.strip()
         tag = 'v0.1.0-alpha.1'
         if case == 'lightweight-tag':
@@ -57,13 +77,13 @@ class ConsumerFixtures:
         else:
             actual_tag = 'v9.9.9' if case == 'wrong-release-tag' else tag
             key = self.keys[1 if case == 'wrong-key-signature' else 0]
-            git('-C', str(source), '-c', 'user.name=Disposable fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'gpg.program=gpg', 'tag', '-s', '-u', key+'!', actual_tag, '-m', 'signed fixture')
+            git('-C', str(source), '-c', 'gpg.program=gpg', 'tag', '-s', '-u', key+'!', actual_tag, '-m', 'signed fixture')
             if actual_tag != tag:
                 git('-C', str(source), 'update-ref', 'refs/tags/'+tag, git('-C', str(source), 'rev-parse', actual_tag).stdout.strip())
         object_sha = git('-C', str(source), 'rev-parse', tag).stdout.strip()
         if case == 'malformed-signature':
             raw = git('-C', str(source), 'cat-file', 'tag', object_sha).stdout.replace('signed fixture', 'changed fixture')
-            result = subprocess.run(['git', '-C', str(source), 'hash-object', '-t', 'tag', '-w', '--stdin'], input=raw, env=self.environment, check=True, capture_output=True, text=True)
+            result = git('-C', str(source), 'hash-object', '-t', 'tag', '-w', '--stdin', input=raw)
             object_sha = result.stdout.strip()
             git('-C', str(source), 'update-ref', 'refs/tags/'+tag, object_sha)
         metadata = {'schema': 2, 'repository': 'marcinwadon/hennery', 'tag': tag, 'source_sha': sha, 'tag_object': object_sha, 'attesting': {'run_id': 10, 'run_attempt': 1}}
