@@ -18,10 +18,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(os.environ.get('HENNERY_TEST_DIST'), 'requires pinned cargo-dist (release-tests CI)')
 class NativeDist(unittest.TestCase):
-    def run_archive(self, root, missing=None):
-        target = {('Darwin', 'arm64'): 'aarch64-apple-darwin',
-                  ('Linux', 'x86_64'): 'x86_64-unknown-linux-musl',
-                  ('Linux', 'aarch64'): 'aarch64-unknown-linux-musl'}[(platform.system(), platform.machine())]
+    def run_archive(self, root, missing=None, *, host_only=False):
+        native_target = {('Darwin', 'arm64'): 'aarch64-apple-darwin',
+                         ('Linux', 'x86_64'): 'x86_64-unknown-linux-musl',
+                         ('Linux', 'aarch64'): 'aarch64-unknown-linux-musl'}[(platform.system(), platform.machine())]
+        target = native_target
+        if host_only:
+            # Linked Rustup fixtures have host std only and cannot add components.
+            # Cross-target release qualification belongs to the other archive test.
+            version = subprocess.check_output(['rustc', '-vV'], cwd=root, text=True)
+            target = next(line.removeprefix('host: ') for line in version.splitlines() if line.startswith('host: '))
         (root / 'src').mkdir()
         (root / 'src/main.rs').write_text('fn main() { println!("hennery 0.1.0-alpha.3"); }\n')
         (root / 'Cargo.toml').write_text(
@@ -36,10 +42,10 @@ class NativeDist(unittest.TestCase):
             (root / name).write_text('fixture documentation\n')
         (root / 'packaging').symlink_to(ROOT / 'packaging', target_is_directory=True)
         materials = root / 'release-materials'; materials.mkdir()
-        seed = test_assemble.candidates(root / 'seed') / ('candidate-' + target)
+        seed = test_assemble.candidates(root / 'seed') / ('candidate-' + native_target)
         for name in ('THIRD-PARTY-NOTICES.txt', 'licence-findings.json', 'third-party-source.tar.xz',
                      'rust-advisories.json', 'rust-advisory-revision.txt', 'web-advisories.json',
-                     'runtime-inventory.json', 'hennery-' + target + '.spdx.json'):
+                     'runtime-inventory.json', 'hennery-' + native_target + '.spdx.json'):
             shutil.copyfile(seed / name, materials / name)
         (materials / 'build-identity.json').write_text(json.dumps({
             'source_sha': 'a' * 40, 'ui_sha256': 'b' * 64, 'adapter_manifest_sha256': 'c' * 64}))
@@ -55,7 +61,9 @@ class NativeDist(unittest.TestCase):
                      ['-c', 'commit.gpgsign=false', '-c', 'user.name=Marcin Wadoń',
                       '-c', 'user.email=marcin.wadon@gmail.com', 'commit', '-qm', 'fixture']):
             subprocess.run(['git', *args], cwd=root, env=env, check=True, capture_output=True)
-        result = subprocess.run(['sh', str(ROOT / 'packaging/release/native-archive.sh')],
+        command = (['dist', 'build', '--artifacts=local', '--target=' + target] if host_only
+                   else ['sh', str(ROOT / 'packaging/release/native-archive.sh')])
+        result = subprocess.run(command,
                                 cwd=root, env=env, capture_output=True, text=True)
         return result, target
 
@@ -84,7 +92,8 @@ class NativeDist(unittest.TestCase):
             toolchain = root / 'toolchain'; (toolchain / 'bin').mkdir(parents=True)
             sysroot = Path(subprocess.check_output(['rustc', '--print', 'sysroot'], text=True).strip())
             for binary in ('cargo', 'rustc', 'rustdoc'):
-                installed = subprocess.run(['rustup', 'which', binary], capture_output=True, text=True)
+                installed = subprocess.run(['rustup', 'which', binary], capture_output=True, text=True,
+                                           env=dict(os.environ, RUSTUP_AUTO_INSTALL='0'))
                 (toolchain / 'bin' / binary).symlink_to(
                     installed.stdout.strip() if installed.returncode == 0 else shutil.which(binary))
             (toolchain / 'lib').symlink_to(sysroot / 'lib', target_is_directory=True)
@@ -99,6 +108,6 @@ class NativeDist(unittest.TestCase):
             environment.pop('RUSTUP_HOME'); environment.pop('RUSTUP_TOOLCHAIN', None)
             project = root / 'project'; project.mkdir()
             with patch.dict(os.environ, environment, clear=True):
-                result, target = self.run_archive(project)
+                result, target = self.run_archive(project, host_only=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            assemble.check_native(project / 'target/distrib', target)
+            self.assertTrue((project / 'target/distrib' / ('hennery-' + target + '.tar.xz')).is_file())
