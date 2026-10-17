@@ -7,16 +7,14 @@ import {publishFrozen,releaseGate} from './publish-crates.mjs';
 import {ORDER,sha256} from './crate-release.mjs';
 function fixture(){
   const dir=fs.mkdtempSync(join(tmpdir(),'r3-publish-'));
-  const source={sha:'a'.repeat(40),sha256:sha256(Buffer.from('source')),url:`https://github.com/marcinwadon/hennery/releases/download/v0.1.0-alpha.1/hennery-source-${'a'.repeat(40)}.tar.gz`};
-  fs.writeFileSync(join(dir,`hennery-source-${source.sha}.tar.gz`),'source');
+  const source={sha:'a'.repeat(40),url:`https://github.com/marcinwadon/hennery/tree/${'a'.repeat(40)}`};
   const crates=ORDER.map(name=>{const bytes=Buffer.from(name),file=`${name}-0.1.0-alpha.1.crate`;fs.writeFileSync(join(dir,file),bytes);return {name,file,sha256:sha256(bytes),size:bytes.length,upload:{name,vers:'0.1.0-alpha.1'}};});
   fs.writeFileSync(join(dir,'crates-inventory.json'),JSON.stringify({schema:1,version:'0.1.0-alpha.1',source,crates}));
   return {dir,crates,source,digest:sha256(fs.readFileSync(join(dir,'crates-inventory.json')))};
 }
-function network(f,{existing=false,mismatch=false,ambiguous=false,indexBad=false,unavailable=false,sourceBad=false}={}){
+function network(f,{existing=false,mismatch=false,ambiguous=false,indexBad=false,unavailable=false}={}){
   const uploads=[],published=new Set(existing?ORDER:[]);
   const fetcher=async(url,options={})=>{
-    if(url===f.source.url)return new Response(sourceBad?'bad':'source');
     if(url.endsWith('/new')){
       const body=options.body,n=body.readUInt32LE(0),meta=JSON.parse(body.subarray(4,n+4));
       assert.equal(options.headers.Authorization,'ephemeral');
@@ -42,17 +40,12 @@ test('new publication uploads exact bytes in order after gates, and confirms rem
   assert.deepEqual(n.uploads,ORDER);assert.equal(credentials,1);assert.ok(gates>=ORDER.length*3+2);
 });
 test('matching remote bytes reconcile without reupload',async()=>{const f=fixture(),n=network(f,{existing:true});await publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>'ephemeral'});assert.equal(n.uploads.length,0);});
-for(const [name,flags]of Object.entries({mismatch:{existing:true,mismatch:true},ambiguous:{ambiguous:true},index:{indexBad:true},remote:{unavailable:true},source:{sourceBad:true}}))test(`refuses ${name} and never uploads consumers`,async()=>{const f=fixture(),n=network(f,flags);await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>'ephemeral'}));assert.ok(n.uploads.length<=1);});
+for(const [name,flags]of Object.entries({mismatch:{existing:true,mismatch:true},ambiguous:{ambiguous:true},index:{indexBad:true},remote:{unavailable:true}}))test(`refuses ${name} and never uploads consumers`,async()=>{const f=fixture(),n=network(f,flags);await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>'ephemeral'}));assert.ok(n.uploads.length<=1);});
 test('approval failure refuses before obtaining credentials',async()=>{const f=fixture(),n=network(f);let acquired=false;await assert.rejects(publishFrozen({...f,...n,gate:async()=>{throw Error('refused');},credentials:async()=>{acquired=true;}}));assert.equal(acquired,false);});
 for(const changed of ['inventory','crate','missing'])test(`refuses ${changed} after approval`,async()=>{const f=fixture(),n=network(f);let count=0;await assert.rejects(publishFrozen({...f,...n,credentials:async()=>'ephemeral',gate:async()=>{if(++count===3){const p=join(f.dir,changed==='inventory'?'crates-inventory.json':f.crates[0].file);if(changed==='missing')fs.rmSync(p);else fs.appendFileSync(p,'bad');}}}));assert.equal(n.uploads.length,0);});
 test('missing release payload refuses before any broker authority',()=>{
  const cwd=process.cwd(),root=fs.mkdtempSync(join(tmpdir(),'r3-no-gate-'));
  try{process.chdir(root);assert.throws(()=>releaseGate({dir:root,signatures:root}));}finally{process.chdir(cwd);}
-});
-test('approval invalidated during source verification refuses credentials',async()=>{
- const f=fixture(),n=network(f);let invalid=false,acquired=false;
- await assert.rejects(publishFrozen({...f,fetcher:async(...args)=>{const r=await n.fetcher(...args);if(args[0]===f.source.url)invalid=true;return r;},gate:async()=>{if(invalid)throw Error('approval changed');},credentials:async()=>{acquired=true;return 'ephemeral';}}));
- assert.equal(acquired,false);assert.equal(n.uploads.length,0);
 });
 test('approval invalidated during registry reconciliation refuses the upload boundary',async()=>{
  const f=fixture(),n=network(f);let invalid=false;
@@ -77,7 +70,6 @@ test('loopback receiver gets frozen upload bytes through real fetch HTTP framing
   assert.equal(received,7);assert.deepEqual(n.uploads,ORDER);
  }finally{await new Promise(r=>server.close(r));}
 });
-test('changed retained source bytes stop before credentials',async()=>{const f=fixture(),n=network(f);fs.appendFileSync(join(f.dir,`hennery-source-${f.source.sha}.tar.gz`),'changed');let acquired=false;await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>{acquired=true;return 'ephemeral';}}));assert.equal(acquired,false);});
 test('valid JSON inventory tampering stops before obtaining credentials',async()=>{
  const f=fixture(),n=network(f),path=join(f.dir,'crates-inventory.json');const i=JSON.parse(fs.readFileSync(path));i.audit_note='tampered';fs.writeFileSync(path,JSON.stringify(i));let acquired=false;
  await assert.rejects(publishFrozen({...f,...n,gate:async()=>{},credentials:async()=>{acquired=true;return 'ephemeral';}}));assert.equal(acquired,false);assert.equal(n.uploads.length,0);
@@ -98,7 +90,7 @@ import { preflight } from './publish-crates.mjs';
 test('precredential preflight validates source and approval without any upload',async()=>{
  const f=fixture(),n=network(f);let gates=0;
  const result=await preflight({...f,...n,gate:async()=>{gates++;}});
- assert.equal(result.inventory.version,'0.1.0-alpha.1');assert.equal(gates,2);assert.equal(n.uploads.length,0);
+ assert.equal(result.inventory.version,'0.1.0-alpha.1');assert.equal(gates,1);assert.equal(n.uploads.length,0);
 });
 
 test('parent broker is mandatory with no subprocess or ambient-credential fallback',async()=>{

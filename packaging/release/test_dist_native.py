@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import assemble
 import gate
+import supply
 import test_assemble
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,7 +44,7 @@ class NativeDist(unittest.TestCase):
         (root / 'packaging').symlink_to(ROOT / 'packaging', target_is_directory=True)
         materials = root / 'release-materials'; materials.mkdir()
         seed = test_assemble.candidates(root / 'seed') / ('candidate-' + native_target)
-        for name in ('THIRD-PARTY-NOTICES.txt', 'licence-findings.json', 'third-party-source.tar.xz',
+        for name in ('THIRD-PARTY-NOTICES.txt', 'licence-findings.json',
                      'rust-advisories.json', 'rust-advisory-revision.txt', 'web-advisories.json',
                      'runtime-inventory.json', 'hennery-' + native_target + '.spdx.json'):
             shutil.copyfile(seed / name, materials / name)
@@ -75,6 +76,24 @@ class NativeDist(unittest.TestCase):
             assemble.check_native(root / 'target/distrib', target)
             self.assertEqual({p.name for p in (root / 'target/distrib').iterdir()},
                              assemble.native_files(target) | {'hennery-' + target})
+
+    def test_mpl_source_locations_from_real_cargo_metadata_are_in_notices(self):
+        produced = ROOT / 'cargo-metadata.json'
+        cargo = json.loads(produced.read_bytes() if produced.is_file() else subprocess.check_output(
+            ['cargo', 'metadata', '--locked', '--all-features', '--format-version=1'], cwd=ROOT))
+        mpl = [p for p in cargo['packages'] if p.get('source') and 'MPL-2.0' in (p.get('license') or '')]
+        self.assertTrue({'base64urlsafedata', 'webauthn-attestation-ca', 'webauthn-rs',
+                         'webauthn-rs-core', 'webauthn-rs-proto'} <= {p['name'] for p in mpl})
+        _, notices, findings = supply.components({'packages': mpl}, {})
+        self.assertEqual(findings, [])
+        for package in mpl:
+            with self.subTest(crate=package['name']):
+                self.assertTrue(package['name'] + '@' + package['version'] in notices, 'missing MPL name/version')
+                self.assertTrue('https://crates.io/api/v1/crates/' + package['name'] + '/' + package['version'] + '/download' in notices, 'missing MPL versioned source URL')
+                self.assertTrue(package['repository'] in notices, 'missing MPL repository')
+        missing_repository = dict(mpl[0], repository=None)
+        _, _, findings = supply.components({'packages': [missing_repository]}, {})
+        self.assertIn('cargo:' + mpl[0]['name'] + '@' + mpl[0]['version'] + ': MPL source repository missing', findings)
 
     def test_missing_advisory_input_stops_before_any_archive_can_reach_homebrew(self):
         for name in ('rust-advisories.json', 'rust-advisory-revision.txt', 'web-advisories.json'):

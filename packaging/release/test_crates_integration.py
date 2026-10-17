@@ -29,9 +29,8 @@ class CratesIntegration(unittest.TestCase):
 
     def fixture(self,kind='valid'):
         root=Path(tempfile.mkdtemp(prefix='case-',dir=self.root));payload=root/'payload';payload.mkdir()
-        version='0.1.0';source={'sha':'a'*40,'sha256':gate.digest(b'source'),
-            'url':'https://github.com/marcinwadon/hennery/releases/download/v0.1.0/hennery-source-'+'a'*40+'.tar.gz'}
-        (payload/('hennery-source-'+source['sha']+'.tar.gz')).write_bytes(b'source')
+        version='0.1.0';source={'sha':'a'*40,
+            'url':'https://github.com/marcinwadon/hennery/tree/'+'a'*40}
         crates=[]
         for name in ('hennery-proto','hennery-kernel','hennery-view','hennery-host','hennery-gateway','hennery-sessions','hennery'):
             filename=name+'-'+version+'.crate';data=name.encode();(payload/filename).write_bytes(data)

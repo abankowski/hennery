@@ -16,7 +16,9 @@ import gate
 def make(pristine, output):
     output.mkdir(parents=True, exist_ok=False)
     text = pristine.read_text()
-    for target in sorted(gate.TARGETS):
+    targets = [target for target in sorted(gate.TARGETS) if '"hennery-' + target + '.tar.xz")' in text]
+    gate.require(targets, 'cargo-dist installer offers no qualified archive')
+    for target in targets:
         name = 'hennery-' + target
         archive = output / (name + '.tar.xz')
         with tarfile.open(archive, 'w:xz') as tar:
@@ -44,14 +46,6 @@ def make(pristine, output):
         arm = re.sub(r'(?m)^[ \t]*_checksum_(?:style|value)="[^"\n]*"\n', '', text[start:end])
         text = text[:start] + '\n            _checksum_style="sha256"\n            _checksum_value="' + sha + '"' + arm + text[end:]
     (output / 'hennery-installer.sh').write_text(text)
-    # A retained candidate also carries application and dependency sources.
-    # These are genuine tarballs, but the installer must never offer them.
-    for name in ['hennery-source', *[target + '-third-party-source' for target in sorted(gate.TARGETS)]]:
-        with tarfile.open(output / (name + '.tar.xz'), 'w:xz') as tar:
-            data = b'source fixture\n'
-            entry = tarfile.TarInfo(name + '/README.md')
-            entry.size = len(data)
-            tar.addfile(entry, io.BytesIO(data))
 
 
 if __name__ == '__main__':

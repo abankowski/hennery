@@ -37,6 +37,6 @@ assert importlib.util.find_spec('yaml') is None, 'fixture must have no PyYAML'
                 pristine.write_text('\\n'.join('"hennery-'+target+'.tar.xz")\\n    ;;' for target in sorted(gate.TARGETS)))
                 make_installer_fixture.make(pristine,output)
                 assert (output/'hennery-installer.sh').is_file()
-                assert len(list(output.glob('*.tar.xz')))==2*len(gate.TARGETS)+1
+                assert len(list(output.glob('*.tar.xz')))==len(gate.TARGETS)
         ''')
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

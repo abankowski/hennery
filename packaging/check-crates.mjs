@@ -10,7 +10,7 @@ verifyCandidate(out,inventory);
 const session=fs.mkdtempSync(join(out,'acceptance-'));
 const buildEnvPath=(process.env.PATH||'').split(':').filter(p=>!fs.existsSync(join(p,'node')) && !fs.existsSync(join(p,'pnpm'))).join(':');
 const probe=join(session,'source-acceptance');requireThat(!fs.existsSync(probe),'acceptance directory must be fresh');
-extract(join(out,`hennery-source-${inventory.source.sha}.tar.gz`),probe);checkSourceTree(probe,inventory.source_files);
+extract(join(out,'source-snapshot.tar.gz'),probe);checkSourceTree(probe,inventory.source_files);
 const local=await registry(join(out,'registry-cache'));
 const cargoHome=join(session,'cargo-home');fs.mkdirSync(cargoHome);
 // A private copy of the download cache; no shared Cargo homes/configuration are changed.

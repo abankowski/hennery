@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { sha256, readJSON, requireThat, verifyCandidate, validateSource, publishBody } from './crate-release.mjs';
+import { sha256, readJSON, requireThat, verifyCandidate, publishBody } from './crate-release.mjs';
 import { indexPath } from './crate-registry.mjs';
 export async function preflight({dir,digest,gate,fetcher=fetch}) {
   const inventoryFile=join(dir,'crates-inventory.json');
@@ -14,12 +14,12 @@ export async function preflight({dir,digest,gate,fetcher=fetch}) {
   const inventory=validate();
   const authorize=async(phase='boundary')=>{validate();await gate({channel:'crates',dir,digest,source_sha:inventory.source.sha,version:inventory.version,phase});validate();};
   await authorize('preflight');
-  await validateSource(inventory.source,fetcher);
-  await authorize('preflight');
   return {inventory,authorize};
 }
 export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,pause=delay}) {
   const {inventory,authorize}=await preflight({dir,digest,gate,fetcher});
+  // Revalidate at the credential boundary after the awaited preflight returns.
+  await authorize('credentials');
   const token=await credentials();requireThat(typeof token==='string' && token.length>0,'publication credential missing');
   const completed=[];
   for(const c of inventory.crates) {
@@ -71,7 +71,6 @@ export function releaseCratesDigest(dir) {
  for(const name of names){const path=join(dir,name);requireThat(fs.lstatSync(path).isFile() && !fs.lstatSync(path).isSymbolicLink() && sha256(fs.readFileSync(path))===entries.get(name),'global payload differs: '+name);}
  const root=readJSON(join(dir,'release-metadata.json')),inventory=readJSON(join(dir,'crates-inventory.json'));
  requireThat([2,3].includes(root.schema) && root.repository==='marcinwadon/hennery' && root.channels?.includes('crates') && root.channels.includes('github') && root.source_sha===inventory.source.sha && root.tag===`v${inventory.version}`,'release crate source/tag/channel differs');
- requireThat(inventory.source.url===`https://github.com/marcinwadon/hennery/releases/download/${root.tag}/hennery-source-${root.source_sha}.tar.gz`,'release source URL differs');
  verifyCandidate(dir,inventory);
  return entries.get('crates-inventory.json');
 }

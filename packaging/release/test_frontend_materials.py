@@ -14,6 +14,7 @@ import tempfile
 import threading
 import unittest
 
+import assets
 import gate
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,7 +53,7 @@ def local_registry(package):
 
 
 class FrontendMaterials(unittest.TestCase):
-    def test_archive_materials_keep_frontend_notices_sbom_and_sources_without_node_modules(self):
+    def test_archive_materials_keep_notices_and_combined_sbom_without_node_modules_or_source_archives(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ui, archive = root / 'ui-job', root / 'archive-job'
@@ -79,20 +80,12 @@ class FrontendMaterials(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             licences = ui / 'frontend-licences.json'; licences.write_text(result.stdout)
             installed = Path(gate.strict_json(licences.read_bytes())['MIT'][0]['paths'][0])
-            os.link(installed / 'index.js', installed / 'duplicate.js')
             prepared = ui / 'frontend'
             result = subprocess.run([sys.executable, str(ROOT / 'packaging/release/supply.py'),
                 'frontend', '--output', str(prepared), '--frontend-licences', str(licences)],
                 cwd=ui, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr + '\n' + licences.read_text())
             shutil.copytree(prepared, archive / 'inputs/frontend')
-            (installed / 'linked.js').symlink_to('index.js')
-            result = subprocess.run([sys.executable, str(ROOT / 'packaging/release/supply.py'),
-                'frontend', '--output', str(ui / 'frontend-symlink'), '--frontend-licences', str(licences)],
-                cwd=ui, env=env, capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('third-party source symlink needs review', result.stderr)
-            (installed / 'linked.js').unlink()
             # A missing licence remains a finding across the same transfer.
             (installed / 'LICENSE').unlink()
             missing = ui / 'frontend-missing'
@@ -107,6 +100,7 @@ class FrontendMaterials(unittest.TestCase):
             (archive / 'adapters').mkdir()
             (archive / 'adapters/manifest.json').write_text('{"schema":1}\n')
             (archive / 'cargo-metadata.json').write_text('{"packages":[],"workspace_members":[]}')
+            (archive / 'Cargo.toml').write_text('[workspace.package]\nversion="0.1.0"\n')
             (archive / 'Cargo.lock').write_text('cargo lock fixture\n')
             (archive / 'web/dist').mkdir(parents=True)
             (archive / 'web/dist/index.html').write_text('prepared UI\n')
@@ -124,13 +118,28 @@ class FrontendMaterials(unittest.TestCase):
             packages = gate.strict_json((materials / 'hennery-aarch64-apple-darwin.spdx.json').read_bytes())['packages']
             self.assertEqual([(p['name'], p['versionInfo']) for p in packages], [('frontend-fixture', '1.2.3')])
             self.assertEqual(gate.strict_json((materials / 'licence-findings.json').read_bytes())['findings'], [])
-            with tarfile.open(materials / 'third-party-source.tar.xz') as sources:
-                self.assertEqual(sources.extractfile('npm/frontend-fixture@1.2.3/index.js').read(),
-                                 b'export const fixture = true;\n')
-                self.assertEqual(sources.extractfile('npm/frontend-fixture@1.2.3/duplicate.js').read(),
-                                 b'export const fixture = true;\n')
-                self.assertEqual(sources.extractfile('npm/frontend-fixture@1.2.3/LICENSE').read(),
-                                 b'frontend fixture licence text\n')
+            notices = (materials / 'THIRD-PARTY-NOTICES.txt').read_text()
+            self.assertIn('AGPL-3.0-only', notices)
+            self.assertIn('Signed release tag: https://github.com/marcinwadon/hennery/tree/v0.1.0', notices)
+            self.assertIn('https://github.com/marcinwadon/hennery/archive/refs/tags/v0.1.0.tar.gz', notices)
+            self.assertIn('https://github.com/marcinwadon/hennery/archive/refs/tags/v0.1.0.zip', notices)
+            self.assertFalse(any(p.name.endswith(('.tar.xz', '.tar.gz')) for p in materials.iterdir()))
+            # The combined SBOM consumes the real pnpm producer output after
+            # the original node_modules has been removed.
+            public = root / 'public'; public.mkdir()
+            sha = 'a' * 40
+            for target in sorted(gate.TARGETS):
+                shutil.copyfile(materials / 'hennery-aarch64-apple-darwin.spdx.json', public / ('hennery-' + target + '.spdx.json'))
+                (public / ('hennery-' + target + '.tar.xz')).write_bytes(b'native archive input')
+            (public / 'hennery-installer.sh').write_text('installer input')
+            result = subprocess.run([sys.executable, str(ROOT / 'packaging/release/assets.py'), str(public), sha,
+                                     '--targets', ','.join(sorted(gate.TARGETS))], cwd=archive, env=env,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            files = assets.files(public, sorted(gate.TARGETS))
+            self.assertEqual(len(files), 6)
+            self.assertEqual(files['SHA256SUMS'].read_bytes(), (public / assets.PUBLIC_CHECKSUMS).read_bytes())
+            self.assertEqual([p['name'] for p in gate.strict_json((public / assets.SBOM).read_bytes())['packages']], ['frontend-fixture'])
             shutil.copytree(archive / 'missing-frontend', archive / 'inputs/frontend', dirs_exist_ok=True)
             result = subprocess.run(['sh', str(ROOT / 'packaging/release/native-materials.sh')],
                 cwd=archive, env=env | {'RELEASE_SOURCE_SHA': 'a' * 40, 'TARGET': 'aarch64-apple-darwin'},

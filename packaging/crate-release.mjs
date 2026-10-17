@@ -31,16 +31,9 @@ export function gitSourceFiles(revision,cwd=process.cwd()) {
   }
   return result;
 }
-export function validateSource(source, fetcher) {
+export function validateSource(source) {
   requireThat(hex(source?.sha,40),'source revision must be immutable');
-  requireThat(hex(source.sha256,64),'source archive digest missing');
-  const pattern=new RegExp(`^https://github.com/marcinwadon/hennery/releases/download/v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?/hennery-source-${source.sha}\\.tar\\.gz$`);
-  requireThat(pattern.test(source.url),'invalid or mutable corresponding-source URL');
-  if(fetcher) return (async()=>{
-    const response=await fetcher(source.url,{signal:AbortSignal.timeout(120000)});
-    requireThat(response.ok,'corresponding source is unavailable');
-    requireThat(sha256(Buffer.from(await response.arrayBuffer()))===source.sha256,'corresponding source digest differs');
-  })();
+  requireThat(source.url===`https://github.com/marcinwadon/hennery/tree/${source.sha}`,'invalid or mutable corresponding-source URL');
 }
 export function inspectPackage(root,name,source) {
   requireThat(fs.readFileSync(join(root,'LICENSE'),'utf8')===fs.readFileSync(new URL('../LICENSE',import.meta.url),'utf8'),`${name}: missing or wrong licence text`);
@@ -87,8 +80,6 @@ export function verifyCandidate(dir,i) {
     const bytes=fs.readFileSync(join(dir,c.file));
     requireThat(bytes.length===c.size && sha256(bytes)===c.sha256,'candidate bytes differ: '+c.name);
   }
-  const archive=fs.readFileSync(join(dir,`hennery-source-${i.source.sha}.tar.gz`));
-  requireThat(sha256(archive)===i.source.sha256,'candidate source bytes differ');
 }
 export function extract(archive,dest) {
   const names=execFileSync('tar',['-tzf',archive],{encoding:'utf8'}).trim().split('\n');

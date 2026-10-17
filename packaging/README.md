@@ -150,7 +150,7 @@ fingerprint. Installed `gh` authenticates `SHA256SUMS` and the installer against
 `release.yml@refs/tags/<exact-tag>`, with source/signer digest binding. Verify hashes before executing downloaded
 code. A trusted
 checkout's [common verifier](release/verify.py) applies the same policy to all
-payloads and checks archive executable metadata. There is no inventory signature.
+six public assets; private qualification also checks archive executable metadata. There is no inventory signature.
 Bare Cargo installation waits for stable publication and public-path qualification;
 the first alpha remains GitHub-only.
 
@@ -160,15 +160,18 @@ The crate step is folded into the single `release` environment job, after
 immutable GitHub publication. The stable all-channel tag policy,
 `RELEASE_PUBLICATION_ENABLED`, `RELEASE_GITHUB_ENABLED` and `RELEASE_CRATES_ENABLED`
 must all permit it. Their values remain operator-controlled. All seven frozen `.crate`
-files, `crates-inventory.json` and `hennery-source-<sha>.tar.gz` are release payloads
-bound by `SHA256SUMS`, source/tag attestations. The publisher
+files and `crates-inventory.json` are private qualification payloads bound by
+`SHA256SUMS` and source/tag attestations. Corresponding source is public at the
+immutable commit recorded in `SOURCE.json`; the local packaging workspace
+snapshot is not staged as a release payload. The publisher
 never invokes Cargo to rebuild/repackage accepted tarballs.
 
 Native environment approval protects the publisher; its verifier checks signed tag, checksums,
 attestations and complete immutable public release bytes before any channel
-credential. Node repeats frozen-byte checks at every upload/index boundary and
-fetches the corresponding-source URL without credentials, requiring its expected
-SHA-256. Preserve source availability for the applicable AGPL period. Missing
+credential. Node repeats frozen-byte checks at every credential/upload/index boundary and
+requires the exact public source commit URL. It does not fetch a custom source
+asset. Hennery source is public at the signed tag and in GitHub's automatic Source
+code downloads; embedded notices link exact MPL dependency sources. Preserve source availability for the applicable AGPL period. Missing
 originals cause refusal. A matching registry digest is reused; differing, yanked,
 auth-failed or ambiguous remote state stops, with no aliases or announcement.
 After each crate, the index must resolve the exact version/checksum before any

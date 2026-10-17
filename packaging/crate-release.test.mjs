@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspectPackage, validateSource, sha256, publishBody, indexEntry, validateInventory } from './crate-release.mjs';
 const hex = 'a'.repeat(40);
-const source = { sha: hex, url: `https://github.com/marcinwadon/hennery/releases/download/v0.1.0-alpha.1/hennery-source-${hex}.tar.gz`, sha256: 'b'.repeat(64), notices_sha256:sha256(Buffer.from('React\nMIT License\nCopyright Meta\nPermission is hereby granted...')) };
+const source = { sha: hex, url: `https://github.com/marcinwadon/hennery/tree/${hex}`, notices_sha256:sha256(Buffer.from('React\nMIT License\nCopyright Meta\nPermission is hereby granted...')) };
 function fixture(name = 'hennery-kernel') {
   const root = mkdtempSync(join(tmpdir(), 'r3-package-'));
   cpSync('LICENSE', join(root, 'LICENSE'));
@@ -31,14 +31,8 @@ import { rmSync } from 'node:fs';
 for (const bad of ['main','v0.1.0','']) test(`refuses mutable/missing source revision ${bad}`, () => {
   assert.throws(() => validateSource({...source,sha:bad,url:source.url.replace(hex,bad)}));
 });
-test('source must use immutable expected repository/release URL and digest', () => {
-  for (const change of [{url:'https://example.com/source.tgz'},{url:source.url.replace(hex,'main')},{sha256:''}]) assert.throws(()=>validateSource({...source,...change}));
-});
-test('source availability checks actual bytes, status and digest', async () => {
-  const s={...source,sha256:sha256(Buffer.from('source'))};
-  await validateSource(s, async()=>new Response('source'));
-  await assert.rejects(validateSource(s,async()=>new Response('source',{status:404})));
-  await assert.rejects(validateSource(s,async()=>new Response('different')));
+test('source must use the exact immutable repository commit URL', () => {
+  for (const change of [{url:'https://example.com/source.tgz'},{url:source.url.replace(hex,'main')}]) assert.throws(()=>validateSource({...source,...change}));
 });
 test('inventory rejects changed/missing artifacts and refuses reordered graph', () => {
   const i={schema:1,version:'0.1.0-alpha.1',source,crates:[]};
@@ -142,9 +136,9 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 test('real packaged acceptance refuses active hooks before its first publish dry run', () => {
  const candidate=mkdtempSync(join(tmpdir(),'r3-feature-candidate-')),tree=sourceTree();
- const archive=join(candidate,`hennery-source-${hex}.tar.gz`);
+ const archive=join(candidate,'source-snapshot.tar.gz');
  execFileSync('tar',['-czf',archive,'-C',tree.root,'.']);
- const s={...source,sha256:sha256(readFileSync(archive))},i=inventoryFixture();i.source=s;i.source_files=tree.inventory;
+ const s={...source},i=inventoryFixture();i.source=s;i.source_files=tree.inventory;
  const home=mkdtempSync(join(tmpdir(),'r3-feature-home-')),cargoHome=join(home,'cargo');mkdirSync(cargoHome);
  const env={...process.env,HOME:home,CARGO_HOME:cargoHome};
  for(const c of i.crates){

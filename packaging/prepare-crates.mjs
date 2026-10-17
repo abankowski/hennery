@@ -36,7 +36,7 @@ export function frontendNotices(web) {
 }
 export function stageCrates(prepared,destination) {
   const inventory=readJSON(join(prepared,'crates-inventory.json'));verifyCandidate(prepared,inventory);
-  const names=['crates-inventory.json',`hennery-source-${inventory.source.sha}.tar.gz`,...inventory.crates.map(c=>c.file)];
+  const names=['crates-inventory.json',...inventory.crates.map(c=>c.file)];
   for(const name of names) {
     requireThat(fs.lstatSync(join(prepared,name)).isFile(),'nonregular crate staging input');
     requireThat(!fs.existsSync(join(destination,name)),'refusing to overwrite candidate material: '+name);
@@ -48,14 +48,15 @@ export async function prepare(destination,revision,retainedUI) {
   requireThat(/^[a-f0-9]{40}$/.test(revision),'use a full source SHA');
   fs.mkdirSync(out,{recursive:true});
   const src=join(out,'source');
-  const archive=join(out,`hennery-source-${revision}.tar.gz`);
+  // Local packaging workspace input only; never staged or uploaded as a release asset.
+  const archive=join(out,'source-snapshot.tar.gz');
   fs.writeFileSync(archive,execFileSync('git',['archive','--format=tar.gz',revision],{maxBuffer:100*1024*1024}));
   extract(archive,src);
   const sourceFiles=gitSourceFiles(revision);
   checkSourceTree(src,sourceFiles);
   const meta=JSON.parse(execFileSync('cargo',['metadata','--no-deps','--format-version','1'],{cwd:src,encoding:'utf8'}));
   const version=meta.packages.find(p=>p.name==='hennery').version;
-  const source={sha:revision,url:`https://github.com/marcinwadon/hennery/releases/download/v${version}/hennery-source-${revision}.tar.gz`,sha256:sha256(fs.readFileSync(archive))};
+  const source={sha:revision,url:`https://github.com/marcinwadon/hennery/tree/${revision}`};
   await run('pnpm',['--dir',join(src,'web'),'install','--frozen-lockfile','--store-dir',join(out,'pnpm-store')]);
   if(retainedUI)requireThat(isAbsolute(retainedUI) && fs.lstatSync(join(retainedUI,'index.html')).isFile(),'retained UI must be an absolute, existing build');
   else await run('pnpm',['--dir',join(src,'web'),'build']);
@@ -75,7 +76,7 @@ export async function prepare(destination,revision,retainedUI) {
   source.notices_sha256=sha256(Buffer.from(noticeText));
   fs.writeFileSync(join(kernel,'FRONTEND-NOTICES.txt'),noticeText);
   fs.writeFileSync(join(kernel,'SOURCE.json'),JSON.stringify(source,null,2)+'\n');
-  fs.writeFileSync(join(kernel,'README.md'),fs.readFileSync(join(kernel,'README.md'),'utf8').replace('Generated with Claude AI',`Corresponding source: ${source.url}\n\nSource archive SHA-256: ${source.sha256}\n\nGenerated with Claude AI`));
+  fs.writeFileSync(join(kernel,'README.md'),fs.readFileSync(join(kernel,'README.md'),'utf8').replace('Generated with Claude AI',`Corresponding source (AGPL): ${source.url}\n\nGitHub provides automatic Source code archives on the signed release tag page.\n\nGenerated with Claude AI`));
   fs.writeFileSync(join(kernel,'release-ui.json'),JSON.stringify({schema:1,source_sha:revision,files:files(dist)},null,2)+'\n');
   const local=await registry(join(out,'registry-cache'));
   const cargoConfig=join(out,'candidate-config.toml');

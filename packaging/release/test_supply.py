@@ -49,6 +49,7 @@ class Supply(unittest.TestCase):
     def materials(root):
         (root / 'metadata.json').write_text('{"packages":[],"workspace_members":[]}')
         (root / 'frontend.json').write_text('{}')
+        (root / 'Cargo.toml').write_text('[workspace.package]\nversion="0.1.0"\n')
         (root / 'Cargo.lock').write_text('cargo lock fixture')
         (root / 'web/dist').mkdir(parents=True)
         (root / 'web/dist/index.html').write_text('UI fixture')
