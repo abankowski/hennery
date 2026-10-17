@@ -1,10 +1,49 @@
 name: crates
 
-on:
+'on':
   pull_request:
+    paths:
+    - .github/workflows/**
+    - .github/actions/**
+    - packaging/**
+    - Cargo.toml
+    - Cargo.lock
+    - dist-workspace.toml
+    - flake.nix
+    - flake.lock
+    - nix/**
+    - .cargo/**
+    - rust-toolchain*
+    - crates/**/build.rs
+    - web/package.json
+    - web/pnpm-lock.yaml
+    - web/*.config.*
+    - web/tsconfig*.json
+    - adapters/**
+    - crates/hennery-host/manifest.json
   push:
-    branches: [main]
-  workflow_call:
+    branches:
+    - main
+    paths:
+    - .github/workflows/**
+    - .github/actions/**
+    - packaging/**
+    - Cargo.toml
+    - Cargo.lock
+    - dist-workspace.toml
+    - flake.nix
+    - flake.lock
+    - nix/**
+    - .cargo/**
+    - rust-toolchain*
+    - crates/**/build.rs
+    - web/package.json
+    - web/pnpm-lock.yaml
+    - web/*.config.*
+    - web/tsconfig*.json
+    - adapters/**
+    - crates/hennery-host/manifest.json
+  workflow_call: null
 
 permissions:
   contents: read

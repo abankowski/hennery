@@ -25,15 +25,17 @@ class CiSecurity(unittest.TestCase):
                       '--regid="$SUDO_GID"', '--init-groups', '--locked --offline'):
             self.assertIn(guard, script)
 
-    def test_audits_run_on_pr_and_schedule_without_publication_authority(self):
-        data = self.workflow('security-audit.yml')
-        workflow_policy.check(data, 'security-audit.yml')
+    def test_audits_run_on_lock_changes_and_schedule_without_publication_authority(self):
+        data = self.workflow('nix.yml')
+        workflow_policy.check(data, 'nix.yml')
         trigger = data.get('on', data.get(True))
-        self.assertIn('pull_request', trigger)
         self.assertTrue(trigger['schedule'][0]['cron'])
         self.assertEqual(data['permissions'], {'contents': 'read'})
-        jobs = data['jobs']
-        self.assertEqual(set(jobs), {'rust', 'web'})
+        ci = self.workflow('ci.yml')['jobs']['checks']
+        audit_steps = [s for s in ci['steps'] if 'Fresh ' in s.get('name', '')]
+        self.assertEqual({s['if'] for s in audit_steps}, {
+            "steps.paths.outputs.audit_rust == 'true'", "steps.paths.outputs.audit_web == 'true'"})
+        jobs = {'audit': data['jobs']['audit'], 'checks': ci}
         commands = '\n'.join(s.get('run', '') for j in jobs.values() for s in j['steps'])
         self.assertIn('mktemp -d', commands)
         self.assertIn('cargo-audit audit --file Cargo.lock --db "$audit_db"', commands)

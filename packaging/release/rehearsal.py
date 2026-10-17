@@ -34,7 +34,7 @@ JOB_FIELDS = {'name', 'needs', 'if', 'runs-on', 'timeout-minutes', 'permissions'
               'strategy', 'steps', 'env', 'defaults', 'concurrency', 'continue-on-error'}
 STEP_FIELDS = {'name', 'id', 'if', 'uses', 'with', 'env', 'run', 'shell',
                'working-directory', 'timeout-minutes', 'continue-on-error'}
-PATHS = ['.github/workflows/release*.yml', 'packaging/**', 'dist-workspace.toml', 'Cargo.*']
+PATHS = ['.github/workflows/**', '.github/actions/**', 'packaging/**', 'Cargo.toml', 'Cargo.lock', 'dist-workspace.toml', 'flake.nix', 'flake.lock', 'nix/**', '.cargo/**', 'rust-toolchain*', 'crates/**/build.rs', 'web/package.json', 'web/pnpm-lock.yaml', 'web/*.config.*', 'web/tsconfig*.json', 'adapters/**', 'crates/hennery-host/manifest.json']
 CHECKOUT = 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262'
 NIX = 'cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24'
 NIX_CACHE = 'DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39'
@@ -154,7 +154,7 @@ def workflow(real):
         if field in real['jobs']['attest']:
             jobs['verify'][field] = copy.deepcopy(real['jobs']['attest'][field])
     result = {'name': 'release-rehearsal',
-            'on': {'pull_request': {'paths': PATHS}, 'push': {'branches': ['main']}},
+            'on': {'pull_request': {'paths': PATHS}, 'push': {'branches': ['main'], 'paths': PATHS}},
             'permissions': {'contents': 'read'}}
     for field in ('env', 'defaults'):
         if field in real:
