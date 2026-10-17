@@ -7,6 +7,10 @@ on:
     - cron: '23 5 * * *'
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   rust:
     runs-on: ubuntu-24.04
@@ -18,6 +22,11 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
         with:
           github_access_token: ${{ github.token }}
+      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
+        with:
+          use-gha-cache: true
+          use-flakehub: false
+          diagnostic-endpoint: ''
       - name: Audit the lock against a freshly fetched RustSec database
         run: |
           audit_db=$(mktemp -d "$RUNNER_TEMP/rustsec.XXXXXX")
@@ -33,5 +42,10 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
         with:
           github_access_token: ${{ github.token }}
+      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
+        with:
+          use-gha-cache: true
+          use-flakehub: false
+          diagnostic-endpoint: ''
       - name: Query current registry advisories for every locked web dependency
         run: nix develop .#web -c pnpm --dir web audit

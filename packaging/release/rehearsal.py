@@ -27,8 +27,8 @@ JOB_DECISIONS = {
     'attest': 'replace: local byte verification; exclude OIDC/signing and attested upload',
     'publish': 'exclude: protected publication and all credentials',
 }
-# Identity, triggers and permissions are replaced for the unsigned PR context;
-# env/defaults/concurrency are carried through and jobs use JOB_DECISIONS.
+# Identity, triggers, permissions, caching and cancellation use the PR context;
+# env/defaults are carried through and jobs use JOB_DECISIONS.
 WORKFLOW_FIELDS = {'name', 'on', True, 'permissions', 'jobs', 'env', 'defaults', 'concurrency'}
 JOB_FIELDS = {'name', 'needs', 'if', 'runs-on', 'timeout-minutes', 'permissions',
               'strategy', 'steps', 'env', 'defaults', 'concurrency', 'continue-on-error'}
@@ -37,6 +37,7 @@ STEP_FIELDS = {'name', 'id', 'if', 'uses', 'with', 'env', 'run', 'shell',
 PATHS = ['.github/workflows/release*.yml', 'packaging/**', 'dist-workspace.toml', 'Cargo.*']
 CHECKOUT = 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262'
 NIX = 'cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24'
+NIX_CACHE = 'DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39'
 
 
 def require_handled(real):
@@ -97,7 +98,7 @@ def verify(root):
 def workflow(real):
     """All native jobs/steps come from release.yml, including artifact transport.
 
-    Only authentication is substituted; permissions, runners, matrices, needs,
+    Authentication and CI caching/cancellation differ; permissions, runners, matrices, needs,
     conditions, build commands and upload/download steps remain identical.
     The policy compares the entire generated object, making drift a failure.
     """
@@ -155,12 +156,31 @@ def workflow(real):
     result = {'name': 'release-rehearsal',
             'on': {'pull_request': {'paths': PATHS}, 'push': {'branches': ['main']}},
             'permissions': {'contents': 'read'}}
-    for field in ('env', 'defaults', 'concurrency'):
+    for field in ('env', 'defaults'):
         if field in real:
             result[field] = copy.deepcopy(real[field])
-    if 'concurrency' in result:
-        # Separate from real tag runs while preserving cancellation semantics.
-        result['concurrency']['group'] = 'rehearsal-' + result['concurrency']['group']
+    # Superseded PRs cancel; main commits remain independent of each other.
+    # The real tag workflow retains its per-tag publication serialization.
+    result['concurrency'] = {
+        'group': '${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}',
+        'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
+    }
+    for name, job in jobs.items():
+        # Package acceptance intentionally changes HOME/config directories;
+        # keep that complete candidate build uncached, like crates.yml.
+        if name == 'crates':
+            continue
+        steps = []
+        for step in job['steps']:
+            steps.append(step)
+            if step.get('uses') == NIX:
+                cache = {'uses': NIX_CACHE, 'with': {
+                    'use-gha-cache': True, 'use-flakehub': False, 'diagnostic-endpoint': '',
+                }}
+                if 'if' in step:
+                    cache['if'] = step['if']
+                steps.append(cache)
+        job['steps'] = steps
     result['jobs'] = jobs
     return result
 

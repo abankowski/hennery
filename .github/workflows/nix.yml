@@ -1,7 +1,8 @@
 # The Nix flake (distribution spec §4.3, §9; plan 7e-i): `nix flake check`
 # builds the package and runs clippy, rustfmt and cargo-audit through crane,
 # on Linux and on macOS, and the package's binary runs. Nothing is pushed to
-# a binary cache: that would publish. The tests stay `ci.yml`'s.
+# a public binary cache. GitHub-only CI caching reuses store paths.
+# The tests stay `ci.yml`'s.
 #
 # The Nix installer is pinned by commit. The job's own read-only token goes
 # to Nix only to fetch the locked GitHub inputs without hitting the
@@ -18,11 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  # A pull request's superseded run is cancelled. Outside pull requests
-  # (pushes to main, manual runs) every commit is a group of its own: a
-  # shared group would let a newer pending run replace an older one even
-  # without cancel-in-progress, so no run there is ever cancelled.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -41,6 +38,11 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ github.token }}
+      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
+        with:
+          use-gha-cache: true
+          use-flakehub: false
+          diagnostic-endpoint: ''
       - name: Check rendered Cargo arguments on every supported system
         run: python3 packaging/check-nix-args.py
       - name: Source input audit regressions

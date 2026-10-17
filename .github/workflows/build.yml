@@ -30,11 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  # A pull request's superseded run is cancelled. Outside pull requests
-  # (pushes to main, manual runs) every commit is a group of its own: a
-  # shared group would let a newer pending run replace an older one even
-  # without cancel-in-progress, so no run there is ever cancelled.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -46,6 +42,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
+        with:
+          use-gha-cache: true
+          use-flakehub: false
+          diagnostic-endpoint: ''
       - name: Image guards and workflow contracts (no credentials or external writes)
         run: |
           nix develop .#image -c python3 -m unittest discover -s packaging/tests -v
@@ -78,7 +79,9 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: ${{ matrix.target }}
+          shared-key: dist-${{ matrix.target }}
+          cache-bin: false
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       # `musl-gcc` builds the C parts (OpenSSL, SQLite, ring) for musl.
       - name: musl tools (Linux)
         if: runner.os == 'Linux'
@@ -92,6 +95,11 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ github.token }}
+      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
+        with:
+          use-gha-cache: true
+          use-flakehub: false
+          diagnostic-endpoint: ''
       - name: Build the web UI
         run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build'
       - name: Build the archive

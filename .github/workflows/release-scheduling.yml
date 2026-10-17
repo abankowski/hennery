@@ -22,6 +22,10 @@ name: release-scheduling
         - github,crates
         default: github
 permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tag-signature:
     runs-on: ubuntu-24.04
