@@ -156,13 +156,15 @@ def freeze(root, metadata):
     return contract.freeze(root, metadata)
 
 
-def dependency_sources(cargo, frontend, destination):
+def dependency_sources(cargo, frontend, destination, prepared_frontend=None):
     # Include registry source, native vendored source (OpenSSL, SQLite), web
     # packages and licence texts. No managed Node or agent downloads.
     roots = [('cargo', p['name'], p['version'], Path(p['manifest_path']).parent) for p in rust_packages(cargo) if p.get('source')]
     roots += [(ecosystem, name, version, root) for name, version, _, root, ecosystem in frontend_sources(frontend)]
     seen = set()
-    with tarfile.open(destination, 'w:xz', dereference=False, preset=1) as archive:
+    # Materialize filesystem hardlinks as regular bytes for the later merge.
+    # Filesystem symlinks are still refused below before archive.add().
+    with tarfile.open(destination, 'w:xz', dereference=True, preset=1) as archive:
         for ecosystem, name, version, root in sorted(roots):
             prefix = f'{ecosystem}/{name.replace("/", "_")}@{version}'
             if prefix in seen:
@@ -175,6 +177,12 @@ def dependency_sources(cargo, frontend, destination):
                 gate.require(not path.is_symlink(), f'third-party source symlink needs review: {prefix}/{relative}')
                 if path.is_file():
                     archive.add(path, arcname=f'{prefix}/{relative}', recursive=False)
+        if prepared_frontend is not None:
+            with tarfile.open(prepared_frontend / 'third-party-source.tar.xz', 'r:xz') as frontend_archive:
+                for member in frontend_archive:
+                    gate.require(member.isfile() and member.name.startswith('npm/')
+                                 and '..' not in Path(member.name).parts, 'invalid prepared frontend source')
+                    archive.addfile(member, frontend_archive.extractfile(member))
 
 
 
@@ -238,22 +246,37 @@ def require_contract(root, channels, targets, tag):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['materials'])
+    parser.add_argument('operation', choices=['frontend', 'materials'])
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--source-sha', required=True)
+    parser.add_argument('--source-sha')
     parser.add_argument('--target')
     parser.add_argument('--cargo-metadata', type=Path)
     parser.add_argument('--frontend-licences', type=Path)
+    parser.add_argument('--frontend-materials', type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    if args.operation == 'materials':
-        cargo = gate.strict_json(args.cargo_metadata.read_bytes())
+    if args.operation == 'frontend':
+        gate.require(args.frontend_licences is not None and args.frontend_materials is None,
+                     'frontend preparation requires local licences')
         frontend = gate.strict_json(args.frontend_licences.read_bytes())
+        packages, notices, findings = components({'packages': []}, frontend)
+        (args.output / 'frontend.json').write_bytes(gate.canonical({
+            'packages': packages, 'notices': notices, 'findings': findings}))
+        dependency_sources({'packages': []}, frontend, args.output / 'third-party-source.tar.xz')
+    if args.operation == 'materials':
+        gate.require(args.source_sha is not None, 'materials require source SHA')
+        gate.require((args.frontend_licences is None) != (args.frontend_materials is None),
+                     'choose prepared frontend materials or local licences')
+        cargo = gate.strict_json(args.cargo_metadata.read_bytes())
+        frontend = gate.strict_json(args.frontend_licences.read_bytes()) if args.frontend_licences else {}
         packages, notices, findings = components(cargo, frontend)
+        if args.frontend_materials is not None:
+            prepared = gate.strict_json((args.frontend_materials / 'frontend.json').read_bytes())
+            packages += prepared['packages']; notices += prepared['notices']; findings += prepared['findings']
         (args.output / 'THIRD-PARTY-NOTICES.txt').write_text(notices)
         (args.output / f'hennery-{args.target}.spdx.json').write_bytes(gate.canonical(spdx(packages, args.source_sha, args.target)))
         (args.output / 'licence-findings.json').write_bytes(gate.canonical({'findings': findings, 'scope': 'Rust and frontend including build/dev; assets and corresponding source still require maintainer review'}))
-        dependency_sources(cargo, frontend, args.output / 'third-party-source.tar.xz')
+        dependency_sources(cargo, frontend, args.output / 'third-party-source.tar.xz', args.frontend_materials)
         manifest = read_manifest()
         (args.output / 'runtime-inventory.json').write_bytes(gate.canonical({'adapter_manifest_sha256': gate.digest(manifest),
                                                                           'redistributed': False, 'manifest': gate.strict_json(manifest)}))

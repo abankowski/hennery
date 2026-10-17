@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import assemble
 import gate
@@ -46,6 +47,7 @@ class NativeDist(unittest.TestCase):
             (materials / missing).unlink()
         (root / 'home').mkdir()
         env = dict(os.environ, HOME=str(root / 'home'), CARGO_HOME=str(root / 'home/cargo'),
+                   RUSTUP_HOME=os.environ.get('RUSTUP_HOME', str(Path.home() / '.rustup')),
                    XDG_CONFIG_HOME=str(root / 'home/config'), XDG_CACHE_HOME=str(root / 'home/cache'),
                    GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull, TARGET=target,
                    PATH=str(Path(os.environ['HENNERY_TEST_DIST']).resolve().parent) + os.pathsep + os.environ['PATH'])
@@ -74,3 +76,29 @@ class NativeDist(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse((root / 'target/distrib' / ('hennery-' + target + '.tar.xz')).exists(),
                                  result.stdout + result.stderr)
+
+    def test_real_rustup_toolchain_survives_isolated_home_without_ambient_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner_home = root / 'runner-home'; runner_home.mkdir()
+            toolchain = root / 'toolchain'; (toolchain / 'bin').mkdir(parents=True)
+            sysroot = Path(subprocess.check_output(['rustc', '--print', 'sysroot'], text=True).strip())
+            for binary in ('cargo', 'rustc', 'rustdoc'):
+                installed = subprocess.run(['rustup', 'which', binary], capture_output=True, text=True)
+                (toolchain / 'bin' / binary).symlink_to(
+                    installed.stdout.strip() if installed.returncode == 0 else shutil.which(binary))
+            (toolchain / 'lib').symlink_to(sysroot / 'lib', target_is_directory=True)
+            setup = dict(os.environ, HOME=str(runner_home), RUSTUP_HOME=str(runner_home / '.rustup'),
+                         CARGO_HOME=str(runner_home / '.cargo'))
+            for command in (['toolchain', 'link', 'fixture-native', str(toolchain)], ['default', 'fixture-native']):
+                subprocess.run(['rustup', *command], env=setup, check=True, capture_output=True)
+            shims = runner_home / '.cargo/bin'; shims.mkdir(parents=True)
+            for binary in ('cargo', 'rustc', 'rustdoc'):
+                (shims / binary).symlink_to(shutil.which('rustup'))
+            environment = setup | {'PATH': str(shims) + os.pathsep + os.environ['PATH']}
+            environment.pop('RUSTUP_HOME'); environment.pop('RUSTUP_TOOLCHAIN', None)
+            project = root / 'project'; project.mkdir()
+            with patch.dict(os.environ, environment, clear=True):
+                result, target = self.run_archive(project)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            assemble.check_native(project / 'target/distrib', target)

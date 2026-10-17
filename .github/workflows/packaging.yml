@@ -110,7 +110,9 @@ jobs:
         nix develop .#web -c pnpm --dir web build
         mkdir -p "$RUNNER_TEMP/package-inputs/ui" release-materials
         cp -R web/dist/. "$RUNNER_TEMP/package-inputs/ui/"
-        nix develop .#web -c pnpm --dir web licenses list --json > "$RUNNER_TEMP/package-inputs/frontend-licences.json"
+        nix develop .#web -c pnpm --dir web licenses list --json > "$RUNNER_TEMP/frontend-licences.json"
+        nix develop .#release -c python3 packaging/release/supply.py frontend \
+          --frontend-licences "$RUNNER_TEMP/frontend-licences.json" --output "$RUNNER_TEMP/package-inputs/frontend"
     - name: Audit dependencies once; findings stop packaging
       run: |
         sh packaging/release/advisory-materials.sh
@@ -166,10 +168,7 @@ jobs:
         mkdir -p web/dist
         cp -R inputs/ui/. web/dist/
         cargo metadata --locked --all-features --filter-platform '${{ matrix.target }}' --format-version=1 > cargo-metadata.json
-        nix develop .#release -c python3 packaging/release/supply.py materials --output release-materials \
-          --source-sha "$RELEASE_SOURCE_SHA" --target '${{ matrix.target }}' \
-          --cargo-metadata cargo-metadata.json --frontend-licences inputs/frontend-licences.json
-        cp inputs/advisories/* release-materials/
+        TARGET='${{ matrix.target }}' nix develop .#release -c sh packaging/release/native-materials.sh
     - name: Archive and content acceptance
       env:
         HENNERY_WEB_REQUIRE: '1'
