@@ -46,7 +46,7 @@ class Rehearsal(unittest.TestCase):
             with patch.object(rehearsal, 'ROOT', root):
                 self.assertEqual(rehearsal.context(), {'tag': 'v0.1.0', 'tag_object': '0' * 40, 'channels': channels})
 
-    def test_production_execution_settings_are_preserved(self):
+    def test_production_execution_settings_and_ci_cancellation(self):
         real = self.workflow('release.yml')
         real['env'] = {'RUSTFLAGS': '-D warnings'}
         real['defaults'] = {'run': {'shell': 'bash', 'working-directory': '.'}}
@@ -54,8 +54,10 @@ class Rehearsal(unittest.TestCase):
         probe = rehearsal.workflow(real)
         for field in ('env', 'defaults'):
             self.assertEqual(probe[field], real[field])
-        self.assertEqual(probe['concurrency'], real['concurrency'] | {
-            'group': 'rehearsal-' + real['concurrency']['group']})
+        self.assertEqual(probe['concurrency'], {
+            'group': '${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}',
+            'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
+        })
 
     def test_production_mutations_require_regeneration_or_explicit_decisions(self):
         checked = self.workflow('release-rehearsal.yml')
@@ -63,7 +65,7 @@ class Rehearsal(unittest.TestCase):
             real = self.workflow('release.yml')
             if kind == 'env': real['env'] = {'RUSTFLAGS': '-D warnings'}
             if kind == 'defaults': real['defaults'] = {'run': {'shell': 'bash'}}
-            if kind == 'concurrency': real['concurrency']['cancel-in-progress'] = True
+            if kind == 'concurrency': real['jobs']['qualification']['concurrency'] = {'group': 'qualification'}
             if kind == 'runner': real['jobs']['qualification']['runs-on'] = 'ubuntu-24.04-arm'
             if kind == 'step': real['jobs']['qualification']['steps'].append({'run': 'echo new qualification'})
             with self.subTest(kind=kind):
