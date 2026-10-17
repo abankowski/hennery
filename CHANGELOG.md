@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0
+
+First stable release, building on the published alpha.3.
+
+- Stable distribution through all four channels: GitHub Releases, Homebrew,
+  crates.io and GHCR. Seven crates publish in dependency order from frozen
+  tarballs, with registry/index propagation checks before dependent uploads.
+- Six GitHub release assets: three native archives (Linux musl x86_64/arm64
+  and macOS arm64), the installer, `SHA256SUMS` and one combined SBOM. Licence
+  notices inside each archive link exact MPL dependency sources; hennery source
+  remains public at the signed tag and GitHub's automatic source downloads.
+- Shared packaging builds the UI once and reuses accepted archives for installers,
+  Homebrew and images. Linux-only PR checks avoid macOS queues; main retains
+  macOS smoke and full macOS/ARM suites run weekly, alongside scheduled audits.
+- Simpler release verification binds attested bytes to the maintainer-signed tag,
+  exact tagged workflow and source digest. Official attestation actions and the
+  standard GitHub publisher retain protected approval, immutable uploads and
+  explicit recovery for partial releases, without producing-run/name policies.
+
 ## 0.1.0-alpha.3
 
 - Assemble the exact native release material while validating cargo-dist staging

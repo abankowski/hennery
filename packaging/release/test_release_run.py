@@ -19,7 +19,7 @@ class Orchestrator(unittest.TestCase):
         env={'GITHUB_REPOSITORY':gate.REPOSITORY,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/tags/v'+version,
              'GITHUB_REF_NAME':'v'+version,'GITHUB_SHA':'a'*40,'GITHUB_RUN_ATTEMPT':'1'}
         with patch.dict(os.environ,env,clear=True),patch.object(release_run.tag_signature,'verify',return_value={'object_sha':'b'*40}):
-            self.assertEqual(release_run.configuration()['channels'],['github'])
+            self.assertEqual(release_run.configuration()['channels'],['crates', 'ghcr', 'github', 'homebrew'])
             for field,value in [('GITHUB_RUN_ATTEMPT','2'),('GITHUB_REF','refs/heads/main'),('GITHUB_REPOSITORY','other/repo'),('GITHUB_EVENT_NAME','workflow_dispatch'),('GITHUB_REF_NAME','v9.9.9')]:
                 with self.subTest(field=field),patch.dict(os.environ,{field:value}),self.assertRaises(gate.Refused):release_run.configuration()
 
