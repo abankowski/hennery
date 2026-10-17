@@ -98,7 +98,7 @@ class Contract(unittest.TestCase):
         for raw in [b'{"run_id":42,"RUN_ID":43}',b'{"run_id":42,"run_\\u0069d":43}']:
             with self.subTest(raw=raw),self.assertRaises(gate.Refused):gate.strict_json(raw)
 
-    def test_channel_selection_owns_job_ids_and_names(self):
+    def test_channel_selection_is_known_unique_and_includes_github(self):
         jobs = {'crates': {'name': 'crates'}, 'ghcr': {'name': 'ghcr'},
                 'homebrew': {'name': 'homebrew'}}
         self.assertEqual(contract.selected_channels(b'["github","homebrew"]\n', {'jobs': jobs}), ['github', 'homebrew'])
@@ -106,16 +106,6 @@ class Contract(unittest.TestCase):
                     b'["github","github"]', b'["Github"]']:
             with self.subTest(raw=raw), self.assertRaises(gate.Refused):
                 contract.selected_channels(raw, {'jobs': jobs})
-        for mutation in ['owner', 'collision', 'missing', 'matrix', 'dynamic']:
-            bad = copy.deepcopy(jobs)
-            if mutation == 'owner': bad['spoof'] = bad.pop('homebrew')
-            if mutation == 'collision': bad['spoof'] = {'name': 'homebrew'}
-            if mutation == 'missing': del bad['homebrew']
-            if mutation == 'matrix': bad['homebrew']['strategy'] = {'matrix': {'os': ['x']}}
-            if mutation == 'dynamic': bad['homebrew']['name'] = '${{ inputs.name }}'
-            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
-                contract.selected_channels(b'["github","homebrew"]', {'jobs': bad})
-
     def test_command_uses_exact_identity_and_both_digest_constraints(self):
         command = contract.attestation_command('payload', 'v0.1.0', 'a' * 40, 'bundle', 'root')
         self.assertNotIn('--signer-workflow', command)

@@ -5,6 +5,11 @@ case "$TARGET" in
     aarch64-apple-darwin|aarch64-unknown-linux-musl|x86_64-unknown-linux-musl) ;;
     *) echo 'unqualified native release target' >&2; exit 1 ;;
 esac
+# Advisory inputs travel with the single prepared UI. Reject an incomplete
+# transfer before spending a build or handing any archive to Homebrew.
+for file in rust-advisories.json rust-advisory-revision.txt web-advisories.json; do
+    [ -s "release-materials/$file" ] || { echo "missing advisory input: $file" >&2; exit 1; }
+done
 export HENNERY_WEB_REQUIRE=1
 HENNERY_BUILD_SOURCE_SHA=$(python3 -c 'import json; print(json.load(open("release-materials/build-identity.json"))["source_sha"])')
 HENNERY_BUILD_UI_SHA256=$(python3 -c 'import json; print(json.load(open("release-materials/build-identity.json"))["ui_sha256"])')

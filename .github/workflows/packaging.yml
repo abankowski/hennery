@@ -1,0 +1,366 @@
+# Shared read-only packaging. PRs exercise every local channel; only release.yml can attest or publish.
+name: packaging
+'on':
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
+        required: false
+    outputs:
+      channels:
+        value: ${{ jobs.prepare.outputs.channels }}
+      artifact_id:
+        value: ${{ jobs.assemble.outputs.artifact_id }}
+  pull_request:
+    paths:
+    - .github/workflows/**
+    - .github/actions/**
+    - packaging/**
+    - Cargo.toml
+    - Cargo.lock
+    - dist-workspace.toml
+    - flake.nix
+    - flake.lock
+    - nix/**
+    - .cargo/**
+    - rust-toolchain*
+    - crates/**/build.rs
+    - crates/**/Cargo.toml
+    - crates/**/package_ui.rs
+    - Dockerfile
+    - .dockerignore
+    - web/package.json
+    - web/.npmrc
+    - web/pnpm-lock.yaml
+    - web/*.config.*
+    - web/tsconfig*.json
+    - adapters/**
+    - crates/hennery-host/manifest.json
+  push:
+    branches:
+    - main
+    paths:
+    - .github/workflows/**
+    - .github/actions/**
+    - packaging/**
+    - Cargo.toml
+    - Cargo.lock
+    - dist-workspace.toml
+    - flake.nix
+    - flake.lock
+    - nix/**
+    - .cargo/**
+    - rust-toolchain*
+    - crates/**/build.rs
+    - crates/**/Cargo.toml
+    - crates/**/package_ui.rs
+    - Dockerfile
+    - .dockerignore
+    - web/package.json
+    - web/.npmrc
+    - web/pnpm-lock.yaml
+    - web/*.config.*
+    - web/tsconfig*.json
+    - adapters/**
+    - crates/hennery-host/manifest.json
+permissions:
+  contents: read
+concurrency:
+  group: packaging-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.context.outputs.tag }}
+      source: ${{ steps.context.outputs.source }}
+      channels: ${{ steps.context.outputs.channels }}
+      extended: ${{ steps.context.outputs.extended }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - id: context
+      name: Authenticate release context or label unsigned PR inputs
+      env:
+        PACKAGING_RELEASE: ${{ inputs.release || false }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      run: |
+        args=()
+        if [ "$PACKAGING_RELEASE" = true ]; then args+=(--release); fi
+        nix develop .#release -c python3 packaging/release/package_context.py prepare "${args[@]}" --base "$BASE_SHA" >> "$GITHUB_OUTPUT"
+    - name: Successful main CI for the exact signed source
+      if: inputs.release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: nix develop .#release -c python3 packaging/release/core_ci.py
+    - name: Build the UI and collect frontend licences once
+      run: |
+        nix develop .#web -c pnpm --dir web install --frozen-lockfile
+        nix develop .#web -c pnpm --dir web build
+        mkdir -p "$RUNNER_TEMP/package-inputs/ui" release-materials
+        cp -R web/dist/. "$RUNNER_TEMP/package-inputs/ui/"
+        nix develop .#web -c pnpm --dir web licenses list --json > "$RUNNER_TEMP/frontend-licences.json"
+        nix develop .#release -c python3 packaging/release/supply.py frontend \
+          --frontend-licences "$RUNNER_TEMP/frontend-licences.json" --output "$RUNNER_TEMP/package-inputs/frontend"
+    - name: Audit dependencies once; findings stop packaging
+      run: |
+        sh packaging/release/advisory-materials.sh
+        mkdir "$RUNNER_TEMP/package-inputs/advisories"
+        cp release-materials/* "$RUNNER_TEMP/package-inputs/advisories/"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: release-inputs
+        path: ${{ runner.temp }}/package-inputs/
+        if-no-files-found: error
+        retention-days: 90
+  archive:
+    needs:
+    - prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - target: x86_64-unknown-linux-musl
+          runner: ubuntu-24.04
+          image: amd64
+        - target: aarch64-unknown-linux-musl
+          runner: ubuntu-24.04-arm
+          image: arm64
+        - target: aarch64-apple-darwin
+          runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      with:
+        toolchain: 1.98.1
+        targets: ${{ matrix.target }}
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - name: Native build tools
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y musl-tools
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-inputs
+        path: inputs
+    - name: Pinned dist and source and licence inputs
+      run: |
+        sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+        echo "$RUNNER_TEMP/dist-bin" >> "$GITHUB_PATH"
+        mkdir -p web/dist
+        cp -R inputs/ui/. web/dist/
+        cargo metadata --locked --all-features --filter-platform '${{ matrix.target }}' --format-version=1 > cargo-metadata.json
+        TARGET='${{ matrix.target }}' nix develop .#release -c sh packaging/release/native-materials.sh
+    - name: Archive and content acceptance
+      env:
+        HENNERY_WEB_REQUIRE: '1'
+        TARGET: ${{ matrix.target }}
+      run: |
+        sh packaging/release/native-archive.sh
+    - name: Alpine executable and retained release image acceptance
+      if: runner.os == 'Linux'
+      env:
+        IMAGE_ARCH: ${{ matrix.image }}
+        TARGET: ${{ matrix.target }}
+        RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      run: |
+        binary="$PWD/unpacked/hennery-$TARGET/hennery"
+        docker run --rm -v "$binary:/hennery:ro" alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 /hennery --version
+        mkdir -p "dist/linux-$IMAGE_ARCH"
+        cp "$binary" "dist/linux-$IMAGE_ARCH/hennery"
+        cp release-materials/THIRD-PARTY-NOTICES.txt "dist/linux-$IMAGE_ARCH/THIRD-PARTY-NOTICES"
+        cp "release-materials/hennery-$TARGET.spdx.json" "dist/linux-$IMAGE_ARCH/binary.spdx.json"
+        docker buildx create --use --name r4 --driver docker-container --driver-opt image=moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+        sh packaging/image-build.sh "$IMAGE_ARCH" image-output "${RELEASE_TAG#v}" "$RELEASE_SOURCE_SHA" "$(git show -s --format=%ct HEAD)"
+        python3 - <<'PY'
+        import hashlib,json,os
+        from pathlib import Path
+        arch=os.environ['IMAGE_ARCH']
+        Path('native-binaries.json').write_text(json.dumps({arch:hashlib.sha256(Path('dist/linux-'+arch+'/hennery').read_bytes()).hexdigest()}))
+        PY
+        python3 packaging/image.py verify image-output/layout native-binaries.json "$RELEASE_SOURCE_SHA" "${RELEASE_TAG#v}" > image-output/verified.json
+        python3 packaging/image-signing-inputs.py image-output/layout "$IMAGE_ARCH" native-signing-inputs
+        sudo apt-get update
+        sudo apt-get install -y skopeo
+        sh packaging/test-image-registry.sh image-output/layout "$IMAGE_ARCH"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: runner.os == 'Linux'
+      with:
+        name: release-image-${{ matrix.image }}
+        retention-days: 90
+        if-no-files-found: error
+        path: image-output/
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: candidate-${{ matrix.target }}
+        retention-days: 90
+        if-no-files-found: error
+        path: target/distrib/
+    permissions:
+      contents: read
+    env:
+      RELEASE_SOURCE_SHA: ${{ github.sha }}
+  crates:
+    needs:
+    - prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-inputs
+        path: inputs
+    - name: Isolate package acceptance homes and the MSRV toolchain
+      run: |
+        mkdir -p "$RUNNER_TEMP/r3-home"
+        for name in HOME CARGO_HOME RUSTUP_HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME npm_config_userconfig npm_config_cache; do
+          case "$name" in
+            HOME) value="$RUNNER_TEMP/r3-home" ;;
+            *) value="$RUNNER_TEMP/r3-home/$name" ;;
+          esac
+          echo "$name=$value" >> "$GITHUB_ENV"
+        done
+    - name: Pinned dist plan contains only the shipped CLI
+      run: |
+        nix develop -c sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
+        R3_DIST="$RUNNER_TEMP/dist-bin/dist" nix develop -c node packaging/check-dist-plan.mjs
+    - name: Prepare and qualify all seven using the already built candidate UI
+      run: |
+        if [ "$R3_EXTENDED" = true ]; then nix develop -c rustup toolchain install 1.88.0 --profile minimal; fi
+        nix develop -c node --test packaging/crates.test.mjs packaging/crate-release.test.mjs packaging/publish-crates.test.mjs packaging/binstall-policy.test.mjs packaging/stage-crates.test.mjs
+        nix develop -c node packaging/check-offline.mjs
+        nix develop -c node packaging/prepare-crates.mjs "$RUNNER_TEMP/crates-prepared" "$GITHUB_SHA" "$PWD/inputs/ui"
+        nix develop -c sh packaging/ci-crates.sh "$RUNNER_TEMP/crates-prepared"
+        nix develop -c node packaging/check-binstall.mjs
+        nix develop -c cargo build -p hennery-kernel --locked
+        nix develop -c node --test packaging/check-package-build.test.mjs
+        mkdir crates-flat
+        nix develop -c node packaging/prepare-crates.mjs --stage "$RUNNER_TEMP/crates-prepared" crates-flat
+      env:
+        R3_EXTENDED: ${{ needs.prepare.outputs.extended }}
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: release-crates
+        retention-days: 90
+        if-no-files-found: error
+        path: crates-flat/
+    permissions:
+      contents: read
+  assemble:
+    needs:
+    - prepare
+    - archive
+    - crates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact_id: ${{ steps.payload.outputs.artifact-id }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        pattern: candidate-*
+        path: candidates
+        merge-multiple: false
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-crates
+        path: crates-flat
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        pattern: release-image-*
+        path: images
+    - name: Assemble and accept transported archives, crates, installers and OCI index
+      env:
+        RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        RELEASE_CHANNELS: ${{ needs.prepare.outputs.channels }}
+        PACKAGING_RELEASE: ${{ inputs.release || false }}
+      run: nix develop .#release -c sh packaging/release/assemble-package.sh
+    - id: payload
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: release-payload-${{ github.run_id }}-1
+        path: target/distrib/
+        retention-days: 90
+        if-no-files-found: error
+    permissions:
+      contents: read
+  native:
+    needs:
+    - assemble
+    - crates
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+        - ubuntu-24.04
+        - ubuntu-24.04-arm
+        - macos-15
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        artifact-ids: ${{ needs.assemble.outputs.artifact_id }}
+        merge-multiple: true
+        path: candidate
+    - name: Native installer positives and refusals
+      run: sh packaging/test-installer.sh candidate
+    - name: Install, smoke, upgrade, test and uninstall the existing archives through Homebrew
+      run: nix develop .#release -c python3 packaging/release/homebrew_accept.py candidate "$RUNNER_TEMP/homebrew-proof"
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      if: runner.os == 'macOS'
+      with:
+        name: release-crates
+        path: crates-flat
+    - name: One native packaged CLI install on macOS
+      if: runner.os == 'macOS'
+      run: nix develop -c node packaging/check-native-crate.mjs crates-flat "$RUNNER_TEMP/native-crate"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: homebrew-proof-${{ matrix.runner }}
+        path: ${{ runner.temp }}/homebrew-proof/result.json
+        if-no-files-found: error
+    permissions:
+      contents: read

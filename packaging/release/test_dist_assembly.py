@@ -65,10 +65,8 @@ class DistAssembly(unittest.TestCase):
                 (source / ('candidate-' + target) / (target + '-dist-manifest.json')).write_text(json.dumps(manifest))
             assemble.assemble(source, root / 'target/distrib')
             # Execute the checked-in production shell, including stdout redirection
-            # and any final move. Rehearsal is generated from this same step.
-            workflow = workflow_policy.load_workflow((ROOT / '.github/workflows/release.yml').read_bytes())
-            script = next(s['run'] for s in workflow['jobs']['assemble']['steps']
-                          if 'build --artifacts=global' in s.get('run', ''))
+            # and any final move. PR and tag packaging both execute this same script.
+            script = (ROOT / 'packaging/release/assemble-package.sh').read_text()
             command = script[script.index('"$RUNNER_TEMP/dist-bin/dist" build'):]
             command = command[:command.index('python3 packaging/harden-installer.py')]
             result = subprocess.run(['sh', '-eu', '-c', command], cwd=root, env=env, capture_output=True, text=True)

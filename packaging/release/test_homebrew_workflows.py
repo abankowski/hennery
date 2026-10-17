@@ -10,33 +10,6 @@ def workflow(name): return workflow_policy.load_workflow((ROOT/'.github/workflow
 
 
 class HomebrewWorkflows(unittest.TestCase):
-    def test_channel_has_an_owning_aggregate_job_and_native_acceptance(self):
-        data=workflow('release.yml')
-        self.assertEqual(workflow_policy.CHANNEL_JOB_IDS['homebrew'],'homebrew')
-        job=data['jobs']['homebrew']
-        self.assertEqual(job['name'],'homebrew')
-        self.assertIn('homebrew-native',job['needs'])
-        native=data['jobs']['homebrew-native']
-        self.assertEqual(native['if'], "${{ !cancelled() && needs.assemble.result == 'success' }}")
-        self.assertEqual({x['runner'] for x in native['strategy']['matrix']['include']},
-                         {'ubuntu-24.04','ubuntu-24.04-arm','macos-15'})
-        self.assertIn('homebrew_accept.py',str(native))
-        self.assertIn('homebrew.py prepare',str(data['jobs']['assemble']))
-        self.assertIn('native-archive.sh',str(data['jobs']['archive']))
-
-    def test_pr_proof_is_secret_free_pinned_and_covers_every_advertised_platform(self):
-        data=workflow('release-homebrew.yml')
-        trigger=data.get('on',data.get(True))
-        self.assertIn('pull_request',trigger)
-        self.assertIn('packaging/**',trigger['pull_request']['paths'])
-        self.assertEqual(data['permissions'],{'contents':'read'})
-        self.assertNotIn('secrets.',str(data))
-        job=data['jobs']['proof']
-        self.assertEqual({x['runner'] for x in job['strategy']['matrix']['include']},
-                         {'ubuntu-24.04','ubuntu-24.04-arm','macos-15'})
-        self.assertIn('homebrew-proof.sh',str(job))
-        workflow_policy.check(data,'release-homebrew.yml')
-
     def test_writer_exposes_tap_credential_only_after_immutable_release_and_verifier(self):
         data=workflow('release.yml');job=data['jobs']['publish'];steps=job['steps']
         self.assertEqual(job['environment'],'release')

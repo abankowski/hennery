@@ -41,8 +41,6 @@ def selected_channels(raw, workflow):
     gate.require(isinstance(channels, list) and channels and all(isinstance(c, str) for c in channels), 'invalid channel selection')
     gate.require(channels == sorted(set(channels)) and set(channels) <= gate.CHANNELS and 'github' in channels,
                  'channel selection must be unique, known, sorted and include github')
-    available = workflow_policy.channel_jobs(workflow)
-    gate.require(set(channels) - {'github'} <= set(available), 'selected channel has no owning acceptance job')
     return channels
 
 

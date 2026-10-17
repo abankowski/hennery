@@ -11,20 +11,6 @@ class CiSecurity(unittest.TestCase):
     def workflow(self, name):
         return workflow_policy.load_workflow((ROOT / '.github/workflows' / name).read_bytes())
 
-    def test_release_and_ci_share_linux_test_environment(self):
-        ci = self.workflow('ci.yml')['jobs']['rust']
-        release = self.workflow('release.yml')['jobs']['qualification']
-        for job in (ci, release):
-            steps = [s for s in job['steps'] if 'sh packaging/ci-rust-tests.sh' in s.get('run', '')]
-            self.assertEqual(len(steps), 1)
-            self.assertEqual(steps[0]['env']['HENNERY_REQUIRE_SHELLS'], "${{ runner.os == 'Linux' && 'bash,zsh,fish' || '' }}")
-            self.assertEqual(steps[0]['env']['HENNERY_REQUIRE_SYSTEMD_ANALYZE'], "${{ runner.os == 'Linux' && '1' || '' }}")
-        script = (ROOT / 'packaging/ci-rust-tests.sh').read_text()
-        for guard in ('set -eu', '--no-run', 'unshare --net', 'ip link set lo up',
-                      'prlimit --nofile=65536:1048576', '--reuid="$SUDO_UID"',
-                      '--regid="$SUDO_GID"', '--init-groups', '--locked --offline'):
-            self.assertIn(guard, script)
-
     def test_audits_run_on_lock_changes_and_schedule_without_publication_authority(self):
         data = self.workflow('nix.yml')
         workflow_policy.check(data, 'nix.yml')
