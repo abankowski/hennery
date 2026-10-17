@@ -1,75 +1,252 @@
 name: ci
-
-on:
+'on':
   push:
-    branches: [main]
-  pull_request:
-
+    branches:
+    - main
+  pull_request: null
 permissions:
   contents: read
-
 concurrency:
-  # Cancel superseded PRs; main/manual runs are independent.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The web UI (plan 4b): its types, unit tests and build, then the browser
-  # checks against the binary it is embedded in. Node, pnpm, the Rust
-  # toolchain and Chromium all come from the flake's dev shell.
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      macos: ${{ steps.paths.outputs.macos }}
+      web: ${{ steps.paths.outputs.web }}
+      nix: ${{ steps.paths.outputs.nix }}
+      macos_full: ${{ steps.paths.outputs.macos_full }}
+      recipes: ${{ steps.paths.outputs.recipes }}
+      audit_rust: ${{ steps.paths.outputs.audit_rust }}
+      audit_web: ${{ steps.paths.outputs.audit_web }}
+      nix_matrix: ${{ steps.paths.outputs.nix_matrix }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+    - id: paths
+      name: Select work from the actual Git diff
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      run: python3 packaging/ci-paths.py --base "$BASE_SHA" >> "$GITHUB_OUTPUT"
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
+    - name: Workflow and shell lint
+      run: |
+        nix develop .#release -c actionlint .github/workflows/*.yml
+        nix develop .#release -c shellcheck packaging/ci-*.sh packaging/image-build.sh packaging/image-ci.sh packaging/test-image-registry.sh packaging/smoke-image.sh
+    - name: Git path classification regressions
+      run: nix develop .#release -c python3 -m unittest discover -s packaging -p test_ci_paths.py
+    - name: Portable release and image regressions
+      run: |
+        nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_*.py'
+        nix develop .#release -c python3 -m unittest discover -s packaging/tests
+    - name: Fresh Rust advisories when the lock changes
+      if: steps.paths.outputs.audit_rust == 'true'
+      run: |
+        audit_db=$(mktemp -d "$RUNNER_TEMP/rustsec.XXXXXX")
+        nix develop .#release -c cargo-audit audit --file Cargo.lock --db "$audit_db"
+        git -C "$audit_db" rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
+    - name: Fresh web advisories when the lock changes
+      if: steps.paths.outputs.audit_web == 'true'
+      run: nix develop .#web -c pnpm --dir web audit
+
+  rust:
+    runs-on: ubuntu-24.04
+    env:
+      HENNERY_WEB_REQUIRE: '1'
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      with:
+        toolchain: stable
+        components: clippy, rustfmt
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        shared-key: native-debug
+        cache-bin: false
+        save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
+    - name: The web UI
+      run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build'
+    - name: OpenSSL headers (ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+    - name: Login shells (ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get install -y zsh fish
+    - run: cargo fmt --all --check
+    - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+    - name: Clippy on the shipped binary (test-hooks off)
+      run: cargo clippy -p hennery --locked -- -D warnings
+    - name: Real proxy binaries for the deployment gate
+      run: |
+        nix develop -c sh >> "$GITHUB_PATH" <<'SH'
+        dirname "$(command -v caddy)"
+        dirname "$(command -v nginx)"
+        SH
+    - name: Tests
+      run: sh packaging/ci-rust-tests.sh
+      env:
+        HENNERY_REQUIRE_SHELLS: ${{ runner.os == 'Linux' && 'bash,zsh,fish' || '' }}
+        HENNERY_REQUIRE_SYSTEMD_ANALYZE: ${{ runner.os == 'Linux' && '1' || '' }}
+    - name: Generated files are up to date
+      run: cargo run -p hennery-proto --bin gen --locked -- --check
+    - name: Generated view types are up to date
+      run: cargo run -p hennery-view --bin gen-view --locked -- --check
+    needs: checks
+    if: needs.checks.outputs.rust == 'true'
+    timeout-minutes: 60
+
+  macos:
+    runs-on: macos-15
+    env:
+      HENNERY_WEB_REQUIRE: '1'
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      with:
+        toolchain: stable
+        components: clippy, rustfmt
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        shared-key: native-debug
+        cache-bin: false
+        save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
+    - name: The web UI
+      run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build'
+    - name: Real proxy binaries for the deployment gate
+      run: |
+        nix develop -c sh >> "$GITHUB_PATH" <<'SH'
+        dirname "$(command -v caddy)"
+        dirname "$(command -v nginx)"
+        SH
+    - name: OpenSSL (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew list openssl@3 > /dev/null 2>&1 || brew install openssl@3
+        echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+    - name: Native process, service, path and CLI smoke
+      if: needs.checks.outputs.macos_full != 'true'
+      run: sh packaging/ci-macos-smoke.sh
+    - name: Full suite for platform-sensitive changes
+      if: needs.checks.outputs.macos_full == 'true'
+      run: sh packaging/ci-rust-tests.sh
+    needs: checks
+    if: needs.checks.outputs.macos == 'true'
+    timeout-minutes: 60
+
   web:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      HENNERY_WEB_REQUIRE: "1"
+      HENNERY_WEB_REQUIRE: '1'
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
-        with:
-          github_access_token: ${{ github.token }}
-      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
-        with:
-          use-gha-cache: true
-          use-flakehub: false
-          diagnostic-endpoint: ''
-      # The action hashes OS/architecture, rustc and Cargo inputs. Fingerprint
-      # the compiler inside Nix; share only when that environment matches.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: native-debug
-          cmd-format: nix develop -c {0}
-          cache-bin: false
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      - name: Install
-        run: nix develop -c pnpm --dir web install --frozen-lockfile
-      - name: Types
-        run: nix develop -c pnpm --dir web typecheck
-      - name: Optional memory screen client
-        run: nix develop -c sh -c 'node --check crates/hennery-memory/src/ui-client.mjs && node --test crates/hennery-memory/tests/ui-client.test.mjs'
-      - name: Unit tests
-        run: nix develop -c pnpm --dir web test
-      - name: Build
-        run: nix develop -c pnpm --dir web build
-      - name: The binary, with the UI embedded, and the fake agent
-        run: nix develop -c cargo build -p hennery -p hennery-testkit --bins --locked
-      - name: Browser checks
-        run: nix develop -c pnpm --dir web e2e
-        env:
-          CI: "1"
-      - name: Optional memory screen browser checks
-        run: nix develop -c sh -c 'cargo build -p hennery-memory --bin hennery-memory --locked && node crates/hennery-memory/tests/browser.mjs'
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        shared-key: native-debug
+        cmd-format: nix develop -c {0}
+        cache-bin: false
+        save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    - name: Install
+      run: nix develop -c pnpm --dir web install --frozen-lockfile
+    - name: Types
+      run: nix develop -c pnpm --dir web typecheck
+    - name: Optional memory screen client
+      run: nix develop -c sh -c 'node --check crates/hennery-memory/src/ui-client.mjs && node --test crates/hennery-memory/tests/ui-client.test.mjs'
+    - name: Unit tests
+      run: nix develop -c pnpm --dir web test
+    - name: Build
+      run: nix develop -c pnpm --dir web build
+    - name: The binary, with the UI embedded, and the fake agent
+      run: nix develop -c cargo build -p hennery -p hennery-testkit --bins --locked
+    - name: Browser checks
+      run: nix develop -c pnpm --dir web e2e
+      env:
+        CI: '1'
+    - name: Optional memory screen browser checks
+      run: nix develop -c sh -c 'cargo build -p hennery-memory --bin hennery-memory --locked && node crates/hennery-memory/tests/browser.mjs'
+    needs: checks
+    if: needs.checks.outputs.web == 'true'
 
-  # The README's quickstart (plan 4f): its clone and build blocks, run as
-  # written, by name (`packaging/readme-blocks.sh`). The rest of its blocks
-  # run in `crates/hennery/tests/readme.rs`, which checks every name has a
-  # runner. No job-wide HENNERY_WEB_REQUIRE: the build block sets it itself.
+  nix:
+    needs: checks
+    if: needs.checks.outputs.nix == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.checks.outputs.nix_matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
+    - name: Check rendered Cargo arguments
+      run: nix develop .#release -c python3 packaging/check-nix-args.py
+    - name: Package, source inputs and embedded UI (Rust lint and audits run elsewhere)
+      env:
+        SYSTEM: ${{ matrix.system }}
+      run: |
+        nix build -L ".#checks.$SYSTEM.package" ".#checks.$SYSTEM.source-inputs" ".#checks.$SYSTEM.web-ui"
+        nix run . -- --version
+    - name: The README Nix recipe
+      if: needs.checks.outputs.recipes == 'true'
+      run: |
+        sh packaging/readme-blocks.sh README.md nix > "$RUNNER_TEMP/nix.sh"
+        sh -eux "$RUNNER_TEMP/nix.sh"
+
   readme:
+    needs: checks
+    if: needs.checks.outputs.recipes == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -77,7 +254,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
@@ -113,7 +290,10 @@ jobs:
 
   # The alternative README build: no Nix, no global pnpm install and no
   # system OpenSSL. Run the documented block on both supported OSes.
+
   readme-without-nix:
+    needs: checks
+    if: needs.checks.outputs.recipes == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -150,84 +330,38 @@ jobs:
           CHECK
           sh -eux "$RUNNER_TEMP/build-without-nix.sh"
 
-  rust:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    # Every build here embeds the real UI, built first (plan 4b): the
-    # kernel's build script fails without it.
-    env:
-      HENNERY_WEB_REQUIRE: "1"
+
+  result:
+    needs:
+    - checks
+    - rust
+    - macos
+    - web
+    - nix
+    - readme
+    - readme-without-nix
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: native-debug
-          cache-bin: false
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
-        with:
-          github_access_token: ${{ github.token }}
-      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
-        with:
-          use-gha-cache: true
-          use-flakehub: false
-          diagnostic-endpoint: ''
-      - name: The web UI
-        run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build'
-      # `webauthn-rs` links OpenSSL (plan 3c): the system's for these checks.
-      # Release builds build their own (`vendored-openssl`, build.yml).
-      - name: OpenSSL headers (ubuntu)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
-      # Named rather than left to the image (plan 7a): installed if a future
-      # image lacks it, and pointed at, so no other OpenSSL is picked up.
-      - name: OpenSSL (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew list openssl@3 > /dev/null 2>&1 || brew install openssl@3
-          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
-      # `hennery service install` captures the login shell's PATH; its tests
-      # run bash, zsh and fish (plan 7c), and must not skip here.
-      - name: Login shells (ubuntu)
-        if: runner.os == 'Linux'
-        run: sudo apt-get install -y zsh fish
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Clippy on the shipped binary (test-hooks off)
-        run: cargo clippy -p hennery --locked -- -D warnings
-      # On Linux the tests run with no network but loopback: built first,
-      # while the network is there, then run in a network namespace of their
-      # own whose only link is `lo`. A test that reaches a registry, or any
-      # host but 127.0.0.1 and ::1, fails here instead of passing on whatever
-      # answers (plan 7b's review found one that reached npm). They run as the
-      # runner's own user again (`setpriv`), so permission checks still bite,
-      # with the environment kept and the hard RLIMIT_NOFILE raised past the
-      # adapter's closing loop's cap (`MAX_CLOSED_FD`, 65536, the runner's own
-      # hard limit), so the test of `close_range` can hold a descriptor past
-      # it (it asserts it ran, under `CI`).
-      # macOS has no network namespaces (`sandbox-exec` is deprecated), so its
-      # tests run with the network: ubuntu is where a leak is caught.
-      - name: Real proxy binaries for the deployment gate
-        run: |
-          nix develop -c sh >> "$GITHUB_PATH" <<'SH'
-          dirname "$(command -v caddy)"
-          dirname "$(command -v nginx)"
-          SH
-      - name: Tests
-        run: sh packaging/ci-rust-tests.sh
-        env:
-          # On ubuntu the PATH-capture and unit-lint tests fail rather than
-          # skip when a shell or `systemd-analyze` is missing.
-          HENNERY_REQUIRE_SHELLS: ${{ runner.os == 'Linux' && 'bash,zsh,fish' || '' }}
-          HENNERY_REQUIRE_SYSTEMD_ANALYZE: ${{ runner.os == 'Linux' && '1' || '' }}
-      - name: Generated files are up to date
-        run: cargo run -p hennery-proto --bin gen --locked -- --check
-      - name: Generated view types are up to date
-        run: cargo run -p hennery-view --bin gen-view --locked -- --check
+    - name: Require success for every selected job
+      env:
+        NEEDS: ${{ toJSON(needs) }}
+      run: |
+        python3 - <<'PYCODE'
+        import json, os
+        needs = json.loads(os.environ['NEEDS'])
+        if needs['checks']['result'] != 'success':
+            raise SystemExit('checks failed or was cancelled')
+        outputs = needs['checks']['outputs']
+        for job, flag in [('rust', 'rust'), ('macos', 'macos'), ('web', 'web'), ('nix', 'nix'),
+                          ('readme', 'recipes'), ('readme-without-nix', 'recipes')]:
+            selected = outputs.get(flag)
+            if selected not in ('true', 'false'):
+                raise SystemExit(f'{job}: missing selection output')
+            expected = 'success' if selected == 'true' else 'skipped'
+            actual = needs[job]['result']
+            if actual != expected:
+                raise SystemExit(f'{job}: expected {expected}, got {actual}')
+            print(f'{job}: {actual}')
+        PYCODE

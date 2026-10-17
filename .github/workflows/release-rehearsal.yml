@@ -3,14 +3,29 @@
 name: release-rehearsal
 'on':
   pull_request:
-    paths:
-    - .github/workflows/release*.yml
+    paths: &id001
+    - .github/workflows/**
+    - .github/actions/**
     - packaging/**
+    - Cargo.toml
+    - Cargo.lock
     - dist-workspace.toml
-    - Cargo.*
+    - flake.nix
+    - flake.lock
+    - nix/**
+    - .cargo/**
+    - rust-toolchain*
+    - crates/**/build.rs
+    - web/package.json
+    - web/pnpm-lock.yaml
+    - web/*.config.*
+    - web/tsconfig*.json
+    - adapters/**
+    - crates/hennery-host/manifest.json
   push:
     branches:
     - main
+    paths: *id001
 permissions:
   contents: read
 concurrency:

@@ -1,58 +1,181 @@
-# The Nix flake (distribution spec §4.3, §9; plan 7e-i): `nix flake check`
-# builds the package and runs clippy, rustfmt and cargo-audit through crane,
-# on Linux and on macOS, and the package's binary runs. Nothing is pushed to
-# a public binary cache. GitHub-only CI caching reuses store paths.
-# The tests stay `ci.yml`'s.
-#
-# The Nix installer is pinned by commit. The job's own read-only token goes
-# to Nix only to fetch the locked GitHub inputs without hitting the
-# anonymous API rate limit that shared runners share.
-name: nix
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
-
+# Scheduled maintenance; the filename keeps the documented Nix recipe runner stable.
+name: maintenance
+'on':
+  schedule:
+  - cron: 23 5 * * *
+  - cron: 17 4 * * 1
+  workflow_dispatch: null
 permissions:
   contents: read
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
+    - name: Audit the lock against a freshly fetched RustSec database
+      run: |
+        audit_db=$(mktemp -d "$RUNNER_TEMP/rustsec.XXXXXX")
+        nix develop .#release -c cargo-audit audit --file Cargo.lock --db "$audit_db"
+        git -C "$audit_db" rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
+    - name: Query current registry advisories for every locked web dependency
+      run: nix develop .#web -c pnpm --dir web audit
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '23 5 * * *'
   flake:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 4 * * 1'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+        include:
+        - os: ubuntu-24.04-arm
+          system: aarch64-linux
+        - os: macos-15
+          system: aarch64-darwin
     runs-on: ${{ matrix.os }}
-    # A cold build takes about 9 minutes; a hung one should not run for hours.
-    timeout-minutes: 30
+    timeout-minutes: 150
+    env:
+      HENNERY_WEB_REQUIRE: '1'
+      CI: '1'
+      HENNERY_REQUIRE_SHELLS: ${{ matrix.system == 'aarch64-linux' && 'bash,zsh,fish' || '' }}
+      HENNERY_REQUIRE_SYSTEMD_ANALYZE: ${{ matrix.system == 'aarch64-linux' && '1' || '' }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
-        with:
-          github_access_token: ${{ github.token }}
-      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
-        with:
-          use-gha-cache: true
-          use-flakehub: false
-          diagnostic-endpoint: ''
-      - name: Check rendered Cargo arguments on every supported system
-        run: python3 packaging/check-nix-args.py
-      - name: Source input audit regressions
-        run: python3 packaging/test-nix-sources.py
-      - name: Flake checks (source inputs, package, clippy, rustfmt, cargo-audit)
-        run: nix flake check -L
-      - name: The package runs
-        run: nix run . -- --version
-      # The README's nix block (plan 4f), run as written.
-      - name: The README's nix block
-        run: |
-          sh packaging/readme-blocks.sh README.md nix > "$RUNNER_TEMP/nix.sh"
-          sh -eux "$RUNNER_TEMP/nix.sh"
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        shared-key: native-debug
+        cmd-format: nix develop -c {0}
+        cache-bin: false
+        save-if: false
+    - name: Full Rust and web platform suites
+      run: |
+        nix develop -c bash -e -o pipefail <<'SH'
+        pnpm --dir web install --frozen-lockfile
+        pnpm --dir web typecheck
+        pnpm --dir web test
+        pnpm --dir web build
+        node --check crates/hennery-memory/src/ui-client.mjs
+        node --test crates/hennery-memory/tests/ui-client.test.mjs
+        cargo fmt --all --check
+        cargo clippy --workspace --all-targets --locked -- -D warnings
+        cargo clippy -p hennery --locked -- -D warnings
+        sh packaging/ci-rust-tests.sh
+        cargo run -p hennery-proto --bin gen --locked -- --check
+        cargo run -p hennery-view --bin gen-view --locked -- --check
+        cargo build -p hennery -p hennery-testkit --bins --locked
+        pnpm --dir web e2e
+        cargo build -p hennery-memory --bin hennery-memory --locked
+        node crates/hennery-memory/tests/browser.mjs
+        SH
+    - name: Nix platform package, source inputs and embedded UI
+      env:
+        SYSTEM: ${{ matrix.system }}
+      run: |
+        nix develop .#release -c python3 packaging/check-nix-args.py
+        nix build -L ".#checks.$SYSTEM.package" ".#checks.$SYSTEM.source-inputs" ".#checks.$SYSTEM.web-ui"
+        nix run . -- --version
+    - name: The README Nix recipe
+      run: |
+        sh packaging/readme-blocks.sh README.md nix > "$RUNNER_TEMP/nix.sh"
+        sh -eux "$RUNNER_TEMP/nix.sh"
+  readme:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      with:
+        github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        shared-key: native-release
+        cmd-format: nix develop -c {0}
+        cache-bin: false
+        save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    - name: The README's clone block
+      run: |
+        sh packaging/readme-blocks.sh README.md clone > "$RUNNER_TEMP/clone.sh"
+        scratch=$(mktemp -d)
+        (cd "$scratch" && sh -eux "$RUNNER_TEMP/clone.sh" && test -f hennery/Cargo.toml)
+        rm -rf "$scratch"
+    - name: The README's build block
+      run: |
+        sh packaging/readme-blocks.sh README.md build > "$RUNNER_TEMP/build.sh"
+        cat >> "$RUNNER_TEMP/build.sh" <<'SH'
+        sh packaging/check-web-ui.sh "$(command -v hennery)"
+        SH
+        sh -eux "$RUNNER_TEMP/build.sh"
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 4 * * 1'
+  readme-without-nix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      with:
+        toolchain: stable
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: 24
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        shared-key: native-release-vendored
+        cache-bin: false
+        save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    - name: Vendored OpenSSL build tools (ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y build-essential perl
+    - name: Vendored OpenSSL build tools (macOS)
+      if: runner.os == 'macOS'
+      run: xcode-select -p && cc --version && make --version && perl -v
+    - name: The README's build without Nix block
+      run: |
+        sh packaging/readme-blocks.sh README.md build-without-nix > "$RUNNER_TEMP/build-without-nix.sh"
+        cat >> "$RUNNER_TEMP/build-without-nix.sh" <<'CHECK'
+        sh packaging/check-web-ui.sh "$(command -v hennery)"
+        CHECK
+        sh -eux "$RUNNER_TEMP/build-without-nix.sh"
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 4 * * 1'
