@@ -29,3 +29,5 @@ python3 - <<'PY' > target/distrib/builder.json
 import json,os,platform,subprocess
 print(json.dumps({'os':platform.platform(),'runner_image':os.environ.get('ImageVersion'),'rust':subprocess.check_output(['rustc','-vV'],text=True),'sdk':subprocess.getoutput('xcrun --show-sdk-version') if platform.system()=='Darwin' else subprocess.getoutput('ldd --version')}))
 PY
+# upload-artifact follows links. Refuse them before transport can erase type.
+python3 packaging/release/assemble.py --check-native "$TARGET" target/distrib

@@ -48,6 +48,35 @@ documentation directory. Crate tarballs have their own package-local inventories
 
 ## Workflow and credentials
 
+`release-rehearsal.yml` runs the actual native release graph on matching pull
+requests and every main push, through assembly/freeze, native installer tests
+and local verification. Generate it from `release.yml` with
+`nix develop .#release -c python3 packaging/release/rehearsal.py generate`.
+Workflow policy and refusal tests compare every generated job/step to its source,
+including runners, dependencies and upload/download inputs. Rehearsal has only
+contents read permission, no environment, secrets, OIDC, attest or publish job.
+It uses the workspace version as a synthetic tag context without creating a tag;
+its zero tag-object placeholder cannot pass production signature verification.
+The production freeze and rehearsal share payload construction; rehearsal's
+clearly marked local verification checks checksum closure, supply requirements
+and binary inventories, without claiming signed source or provenance.
+
+Native uploads retain per-target artifact directories. Pinned cargo-dist leaves
+an expanded `hennery-$TARGET/` beside its archive. Assembly uses an explicit file
+manifest and checks that staging tree against the archive before excluding it.
+The same check runs before upload because the pinned upload action follows links.
+Unknown files/directories, links and differing shared inputs refuse. Flattening
+candidate downloads would lose the conflicting-input check and is forbidden.
+
+Rehearsal cannot prove OIDC issuance, GitHub attestation registration, the genuine
+Hennery certificate identity, protected-environment approvals, token permissions,
+remote release uploads or immutable publication. Offline tests cover the exact
+attestation subject set, payload/signatures transport layout, publication HTTP
+routing and redirect credential handling, plus publication/retry reconciliation.
+Retain and independently verify the first genuine Hennery attestation after the
+maintainer-authorized run. Large-payload publisher duration remains a hosted-run
+observation; native archive and installer success alone cannot establish it.
+
 Build and native acceptance jobs have read-only contents and no credentials.
 Only `attest` has OIDC/attestation write; it emits every asset/digest and original
 run/artifact identity in the approval summary. The maintainer reviews the run

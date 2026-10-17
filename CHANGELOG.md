@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-alpha.3
+
+- Assemble the exact native release material while validating cargo-dist staging
+  directories and refusing unexpected files, symlinks and conflicting inputs.
+- Rehearse the production release graph and artifact transport on pull requests
+  and main, through archive assembly, freezing, native installers and local
+  verification, without signed tags, attestation or publication authority.
+- Alpha.2 failed assembly before publication and was never published.
+
 ## 0.1.0-alpha.2
 
 - Update rustls to fix RUSTSEC-2026-0346, RUSTSEC-2026-0347,

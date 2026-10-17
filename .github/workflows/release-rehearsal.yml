@@ -1,0 +1,530 @@
+# Generated from release.yml by packaging/release/rehearsal.py generate.
+# UNSIGNED local verification replaces tag authentication and attest; nothing publishes.
+name: release-rehearsal
+'on':
+  pull_request:
+    paths:
+    - .github/workflows/release*.yml
+    - packaging/**
+    - dist-workspace.toml
+    - Cargo.*
+  push:
+    branches:
+    - main
+permissions:
+  contents: read
+concurrency:
+  group: rehearsal-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  tag-signature:
+    name: tag-signature
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      channels: ${{ steps.configuration.outputs.channels }}
+      channels_csv: ${{ steps.configuration.outputs.channels_csv }}
+      tag_object: ${{ steps.configuration.outputs.tag_object }}
+      tag: ${{ steps.configuration.outputs.tag }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - id: configuration
+      name: UNSIGNED rehearsal context; no tag-signature verification
+      run: nix develop .#release -c python3 packaging/release/rehearsal.py configure
+        >> "$GITHUB_OUTPUT"
+  web-ui:
+    needs: tag-signature
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - name: Build the UI once from the pinned lock
+      run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile &&
+        pnpm --dir web build'
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: release-ui
+        retention-days: 90
+        if-no-files-found: error
+        path: web/dist/
+    name: web-ui
+    permissions:
+      contents: read
+  archive:
+    needs:
+    - web-ui
+    - tag-signature
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - target: x86_64-unknown-linux-musl
+          runner: ubuntu-24.04
+          image: amd64
+        - target: aarch64-unknown-linux-musl
+          runner: ubuntu-24.04-arm
+          image: arm64
+        - target: aarch64-apple-darwin
+          runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: UNSIGNED rehearsal exact source; no git tag required
+      env:
+        RELEASE_TAG: ${{ needs.tag-signature.outputs.tag }}
+      run: python3 packaging/release/rehearsal.py source >> "$GITHUB_ENV"
+    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      with:
+        toolchain: 1.98.1
+        targets: ${{ matrix.target }}
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - name: Native build tools
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y musl-tools
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-ui
+        path: web/dist/
+    - name: Pinned dist and source and licence inputs
+      run: "sh packaging/install-dist.sh \"$RUNNER_TEMP/dist-bin\"\necho \"$RUNNER_TEMP/dist-bin\"\
+        \ >> \"$GITHUB_PATH\"\nnix develop .#web -c sh -c 'pnpm --dir web install\
+        \ --frozen-lockfile && pnpm --dir web licenses list --json > frontend-licences.json'\n\
+        cargo metadata --locked --all-features --filter-platform '${{ matrix.target\
+        \ }}' --format-version=1 > cargo-metadata.json\nnix develop .#release -c python3\
+        \ packaging/release/supply.py materials --output release-materials \\\n  --source-sha\
+        \ \"$RELEASE_SOURCE_SHA\" --target '${{ matrix.target }}' \\\n  --cargo-metadata\
+        \ cargo-metadata.json --frontend-licences frontend-licences.json\n"
+    - name: Current advisory databases; findings stop candidate creation
+      run: sh packaging/release/advisory-materials.sh
+    - name: Build fresh final archive with notices
+      env:
+        HENNERY_WEB_REQUIRE: '1'
+      run: "python3 - <<'PY' >> \"$GITHUB_ENV\"\nimport json\ni=json.load(open('release-materials/build-identity.json'))\n\
+        for key, field in [('HENNERY_BUILD_SOURCE_SHA','source_sha'),('HENNERY_BUILD_UI_SHA256','ui_sha256'),('HENNERY_BUILD_MANIFEST_SHA256','adapter_manifest_sha256')]:\n\
+        \    print(key+'='+i[field])\nPY\n"
+    - name: Archive and content acceptance
+      env:
+        HENNERY_WEB_REQUIRE: '1'
+        TARGET: ${{ matrix.target }}
+      run: 'sh packaging/release/native-archive.sh
+
+        '
+    - name: Alpine executable and retained release image acceptance
+      if: runner.os == 'Linux'
+      env:
+        IMAGE_ARCH: ${{ matrix.image }}
+        TARGET: ${{ matrix.target }}
+        RELEASE_TAG: ${{ needs.tag-signature.outputs.tag }}
+      run: 'binary="$PWD/unpacked/hennery-$TARGET/hennery"
+
+        docker run --rm -v "$binary:/hennery:ro" alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+        /hennery --version
+
+        mkdir -p "dist/linux-$IMAGE_ARCH"
+
+        cp "$binary" "dist/linux-$IMAGE_ARCH/hennery"
+
+        cp release-materials/THIRD-PARTY-NOTICES.txt "dist/linux-$IMAGE_ARCH/THIRD-PARTY-NOTICES"
+
+        cp "release-materials/hennery-$TARGET.spdx.json" "dist/linux-$IMAGE_ARCH/binary.spdx.json"
+
+        docker buildx create --use --name r4 --driver docker-container --driver-opt
+        image=moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+
+        sh packaging/image-build.sh "$IMAGE_ARCH" image-output "${RELEASE_TAG#v}"
+        "$RELEASE_SOURCE_SHA" "$(git show -s --format=%ct HEAD)"
+
+        python3 - <<''PY''
+
+        import hashlib,json,os
+
+        from pathlib import Path
+
+        arch=os.environ[''IMAGE_ARCH'']
+
+        Path(''native-binaries.json'').write_text(json.dumps({arch:hashlib.sha256(Path(''dist/linux-''+arch+''/hennery'').read_bytes()).hexdigest()}))
+
+        PY
+
+        python3 packaging/image.py verify image-output/layout native-binaries.json
+        "$RELEASE_SOURCE_SHA" "${RELEASE_TAG#v}" > image-output/verified.json
+
+        python3 packaging/image-signing-inputs.py image-output/layout "$IMAGE_ARCH"
+        native-signing-inputs
+
+        sudo apt-get update
+
+        sudo apt-get install -y skopeo
+
+        sh packaging/test-image-registry.sh image-output/layout "$IMAGE_ARCH"
+
+        '
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: runner.os == 'Linux'
+      with:
+        name: release-image-${{ matrix.image }}
+        retention-days: 90
+        if-no-files-found: error
+        path: image-output/
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: candidate-${{ matrix.target }}
+        retention-days: 90
+        if-no-files-found: error
+        path: target/distrib/
+    name: archive
+    permissions:
+      contents: read
+  crates:
+    name: crates
+    needs:
+    - web-ui
+    - tag-signature
+    if: ${{ !cancelled() && needs.web-ui.result == 'success' && contains(fromJSON(needs.tag-signature.outputs.channels),
+      'crates') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-ui
+        path: web/dist/
+    - name: Isolate package acceptance homes and the MSRV toolchain
+      run: "mkdir -p \"$RUNNER_TEMP/r3-home\"\nfor name in HOME CARGO_HOME RUSTUP_HOME\
+        \ XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME npm_config_userconfig npm_config_cache;\
+        \ do\n  case \"$name\" in\n    HOME) value=\"$RUNNER_TEMP/r3-home\" ;;\n \
+        \   *) value=\"$RUNNER_TEMP/r3-home/$name\" ;;\n  esac\n  echo \"$name=$value\"\
+        \ >> \"$GITHUB_ENV\"\ndone\n"
+    - name: Prepare and qualify all seven using the already built candidate UI
+      run: 'nix develop -c rustup toolchain install 1.88.0 --profile minimal
+
+        nix develop -c node packaging/prepare-crates.mjs "$RUNNER_TEMP/crates-prepared"
+        "$GITHUB_SHA" "$PWD/web/dist"
+
+        nix develop -c sh packaging/ci-crates.sh "$RUNNER_TEMP/crates-prepared"
+
+        mkdir crates-flat
+
+        nix develop -c node packaging/prepare-crates.mjs --stage "$RUNNER_TEMP/crates-prepared"
+        crates-flat
+
+        '
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: release-crates
+        retention-days: 90
+        if-no-files-found: error
+        path: crates-flat/
+    permissions:
+      contents: read
+  assemble:
+    needs:
+    - archive
+    - crates
+    - tag-signature
+    if: ${{ !cancelled() && needs.archive.result == 'success' && (needs.crates.result
+      == 'success' || (needs.crates.result == 'skipped' && !contains(fromJSON(needs.tag-signature.outputs.channels),
+      'crates'))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        pattern: candidate-*
+        merge-multiple: false
+        path: candidates
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      if: needs.crates.result == 'success'
+      with:
+        name: release-crates
+        path: crates-flat
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      if: contains(fromJSON(needs.tag-signature.outputs.channels), 'ghcr')
+      with:
+        pattern: release-image-*
+        path: images
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - name: Assemble global inputs; never silently merge conflicting materials
+      env:
+        RELEASE_TAG: ${{ needs.tag-signature.outputs.tag }}
+        RELEASE_CHANNELS: ${{ needs.tag-signature.outputs.channels_csv }}
+      run: "sh packaging/install-dist.sh \"$RUNNER_TEMP/dist-bin\"\necho \"$RUNNER_TEMP/dist-bin\"\
+        \ >> \"$GITHUB_PATH\"\npython3 packaging/release/assemble.py candidates target/distrib\n\
+        if test -d crates-flat; then\n  nix develop -c node packaging/prepare-crates.mjs\
+        \ --stage crates-flat target/distrib\nfi\n# dist imports every *dist-manifest.json\
+        \ in distrib before building.\n# Keep stdout outside that input directory\
+        \ until the build succeeds.\n\"$RUNNER_TEMP/dist-bin/dist\" build --artifacts=global\
+        \ --output-format=json > \"$RUNNER_TEMP/global-dist-manifest.json\"\nmv \"\
+        $RUNNER_TEMP/global-dist-manifest.json\" target/distrib/dist-manifest.json\n\
+        python3 packaging/harden-installer.py target/distrib/hennery-installer.sh\n\
+        sh packaging/test-installer.sh target/distrib\nsh packaging/check-formula.sh\
+        \ target/distrib\nnix develop .#release -c python3 packaging/release/homebrew.py\
+        \ prepare target/distrib --tag \"$RELEASE_TAG\" --targets aarch64-apple-darwin,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl\n\
+        git show HEAD:CHANGELOG.md > target/distrib/release-notes.md\ngit archive\
+        \ --format=tar --prefix=hennery-source/ HEAD | xz > target/distrib/hennery-source.tar.xz\n\
+        case \",$RELEASE_CHANNELS,\" in\n  *,ghcr,*)\n    python3 packaging/ghcr-candidate.py\
+        \ assemble target/distrib image-assembly \"$(git rev-parse HEAD)\" \"${RELEASE_TAG#v}\"\
+        \ \\\n      images/release-image-amd64/layout images/release-image-arm64/layout\n\
+        \    sudo apt-get update\n    sudo apt-get install -y skopeo\n    sh packaging/test-image-registry.sh\
+        \ image-assembly/layout\n    ;;\nesac\nnix develop .#release -c python3 packaging/release/rehearsal.py\
+        \ freeze target/distrib\n"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: release-payload-${{ github.run_id }}-1
+        retention-days: 90
+        if-no-files-found: error
+        path: target/distrib/
+    name: assemble
+    permissions:
+      contents: read
+  ghcr:
+    name: ghcr
+    needs:
+    - assemble
+    - tag-signature
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(fromJSON(needs.tag-signature.outputs.channels),
+      'ghcr') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-payload-${{ github.run_id }}-1
+        path: candidate
+    - name: Verify the frozen GHCR payload, then accept the retained index through
+        loopback
+      env:
+        RELEASE_TAG: ${{ needs.tag-signature.outputs.tag }}
+      run: 'nix develop .#image -c python3 packaging/ghcr-candidate.py accept candidate
+        image-acceptance "$GITHUB_SHA" "${RELEASE_TAG#v}"
+
+        nix develop .#image -c sh packaging/test-image-registry.sh image-acceptance/layout
+
+        '
+    permissions:
+      contents: read
+  installer:
+    needs:
+    - assemble
+    - tag-signature
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+        - ubuntu-24.04
+        - ubuntu-24.04-arm
+        - macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-payload-${{ github.run_id }}-1
+        path: candidate
+    - name: Native installer positives and refusals
+      run: sh packaging/test-installer.sh candidate
+    name: installer
+    permissions:
+      contents: read
+  homebrew-native:
+    needs:
+    - assemble
+    - tag-signature
+    if: ${{ !cancelled() && needs.assemble.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: macos-15
+        - runner: ubuntu-24.04
+        - runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+    - name: Preserve successful native no-ops for unselected Homebrew
+      run: echo 'Native acceptance executes only for a selected Homebrew channel'
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      if: contains(fromJSON(needs.tag-signature.outputs.channels), 'homebrew')
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+      if: contains(fromJSON(needs.tag-signature.outputs.channels), 'homebrew')
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      if: contains(fromJSON(needs.tag-signature.outputs.channels), 'homebrew')
+      with:
+        name: release-payload-${{ github.run_id }}-1
+        path: candidate
+    - name: Real isolated tap install, smoke, upgrade and uninstall of frozen bytes
+      if: contains(fromJSON(needs.tag-signature.outputs.channels), 'homebrew')
+      run: nix develop .#release -c python3 packaging/release/homebrew_accept.py candidate
+        "$RUNNER_TEMP/homebrew-proof"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: contains(fromJSON(needs.tag-signature.outputs.channels), 'homebrew')
+      with:
+        name: homebrew-proof-${{ matrix.runner }}
+        if-no-files-found: error
+        path: ${{ runner.temp }}/homebrew-proof/result.json
+    name: homebrew-native
+    permissions:
+      contents: read
+  homebrew:
+    name: homebrew
+    needs:
+    - assemble
+    - homebrew-native
+    - tag-signature
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && contains(fromJSON(needs.tag-signature.outputs.channels),
+      'homebrew') && needs.homebrew-native.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - name: All advertised native Homebrew platforms passed
+      run: echo 'Native local-tap acceptance passed on all three platforms'
+    permissions:
+      contents: read
+  qualification:
+    name: qualification
+    needs:
+    - tag-signature
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+        - ubuntu-24.04
+        - ubuntu-24.04-arm
+        - macos-15
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - name: Exact-source web gates and Rust lint checks
+      env:
+        CI: '1'
+        HENNERY_WEB_REQUIRE: '1'
+      run: 'nix develop -c pnpm --dir web install --frozen-lockfile
+
+        nix develop -c pnpm --dir web typecheck
+
+        nix develop -c pnpm --dir web test
+
+        nix develop -c pnpm --dir web build
+
+        nix develop -c cargo fmt --all --check
+
+        nix develop -c cargo clippy --workspace --all-targets --locked -- -D warnings
+
+        nix develop -c cargo clippy -p hennery --locked -- -D warnings
+
+        '
+    - name: Tests with the same isolation and descriptor limits as CI
+      env:
+        CI: '1'
+        HENNERY_WEB_REQUIRE: '1'
+        HENNERY_REQUIRE_SHELLS: ${{ runner.os == 'Linux' && 'bash,zsh,fish' || ''
+          }}
+        HENNERY_REQUIRE_SYSTEMD_ANALYZE: ${{ runner.os == 'Linux' && '1' || '' }}
+      run: nix develop -c sh packaging/ci-rust-tests.sh
+    - name: Generated files, browser, packaging and Nix gates
+      env:
+        CI: '1'
+        HENNERY_WEB_REQUIRE: '1'
+      run: 'nix develop -c cargo run -p hennery-proto --bin gen --locked -- --check
+
+        nix develop -c cargo run -p hennery-view --bin gen-view --locked -- --check
+
+        nix develop -c cargo build -p hennery -p hennery-testkit --bins --locked
+
+        nix develop -c pnpm --dir web e2e
+
+        nix develop .#release -c python3 -m unittest discover -s packaging/release
+        -p ''test_*.py''
+
+        nix develop .#image -c python3 -m unittest discover -s packaging/tests -p
+        ''test_*.py''
+
+        nix develop .#release -c actionlint
+
+        nix flake check -L
+
+        '
+  verify:
+    name: verify
+    needs:
+    - tag-signature
+    - qualification
+    - assemble
+    - installer
+    - homebrew-native
+    - homebrew
+    - crates
+    - ghcr
+    if: ${{ !cancelled() && needs.tag-signature.result == 'success' && needs.qualification.result
+      == 'success' && needs.assemble.result == 'success' && needs.installer.result
+      == 'success' && needs.homebrew-native.result == 'success' && (needs.homebrew.result
+      == 'success' || (needs.homebrew.result == 'skipped' && !contains(fromJSON(needs.tag-signature.outputs.channels),
+      'homebrew'))) && (needs.crates.result == 'success' || (needs.crates.result ==
+      'skipped' && !contains(fromJSON(needs.tag-signature.outputs.channels), 'crates')))
+      && (needs.ghcr.result == 'success' || (needs.ghcr.result == 'skipped' && !contains(fromJSON(needs.tag-signature.outputs.channels),
+      'ghcr'))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-payload-${{ github.run_id }}-1
+        path: payload
+    - name: UNSIGNED local verification stub; no attest or publish
+      run: nix develop .#release -c python3 packaging/release/rehearsal.py verify
+        payload
