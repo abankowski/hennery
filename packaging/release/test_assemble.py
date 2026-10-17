@@ -11,8 +11,8 @@ import assemble
 import gate
 
 
-def candidates(root):
-    for target in sorted(gate.TARGETS):
+def candidates(root, targets=None):
+    for target in sorted(gate.TARGETS if targets is None else targets):
         directory = root / ('candidate-' + target)
         directory.mkdir(parents=True)
         base = 'hennery-' + target
@@ -28,7 +28,7 @@ def candidates(root):
             for name, data in (files | {'THIRD-PARTY-NOTICES.txt': b'notices'}).items():
                 entry = tarfile.TarInfo(base + '/' + name); entry.size = len(data)
                 archive.addfile(entry, io.BytesIO(data))
-        for name in ('builder.json', 'third-party-source.tar.xz', 'rust-advisories.json',
+        for name in ('builder.json', 'rust-advisories.json',
                      'rust-advisory-revision.txt', 'web-advisories.json', 'build-identity.json',
                      'runtime-inventory.json', base + '.spdx.json', target + '-dist-manifest.json'):
             (directory / name).write_bytes(b'{}')

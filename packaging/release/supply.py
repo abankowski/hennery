@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate notices, source material, SPDX and final release materials before attestation.
+"""Generate notices, SPDX and final release materials before attestation.
 
 Includes build/dev dependencies conservatively. Missing licence material is a
 finding, never automatically treated as permission to redistribute. Downloaded
@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import subprocess
 import tarfile
+import tomllib
 import uuid
 import urllib.parse
 
@@ -80,9 +81,11 @@ def supplemental(ecosystem, name, version):
 
 def components(cargo, frontend):
     packages, notices, findings = [], [], []
+    repositories = {}
     sources = []
     for p in rust_packages(cargo):
         if p.get('source') is not None:
+            repositories[p['name'], p['version']] = p.get('repository')
             sources.append((p['name'], p['version'], p.get('license'), Path(p['manifest_path']).parent, 'cargo'))
     sources.extend(frontend_sources(frontend))
     seen = set()
@@ -91,6 +94,14 @@ def components(cargo, frontend):
             continue
         seen.add((ecosystem, name, version))
         p, texts = component(name, version, licence, root, ecosystem)
+        if ecosystem == 'cargo' and 'MPL-' in (licence or ''):
+            url = f'https://crates.io/api/v1/crates/{name}/{version}/download'
+            repository = repositories[name, version]
+            if not repository or not repository.startswith('https://'):
+                findings.append(f'cargo:{name}@{version}: MPL source repository missing')
+            notices.append(f'\nMPL source: {name}@{version}\nSource download: {url}\nUpstream repository: {repository or "UNKNOWN"}\n')
+            p['downloadLocation'] = url
+            p['sourceInfo'] = 'Upstream repository: ' + (repository or 'UNKNOWN')
         packages.append(p)
         if not texts:
             texts = supplemental(ecosystem, name, version)
@@ -109,7 +120,7 @@ def components(cargo, frontend):
                 version = re.search(r'#define SQLITE_VERSION\s+"([^"]+)"', header.read_text())
                 gate.require(version is not None, 'bundled SQLite version missing')
                 p, _ = component('SQLite', version.group(1), None, root / 'sqlite3', 'generic')
-                p['sourceInfo'] = 'Bundled SQLite C source in libsqlite3-sys; public-domain declaration preserved in sqlite3.c and corresponding source.'
+                p['sourceInfo'] = 'Bundled SQLite C source in libsqlite3-sys; public-domain declaration preserved below; source available in the exact libsqlite3-sys crate on crates.io.'
                 packages.append(p)
                 notices.append('\n===== Bundled SQLite public-domain declaration =====\n' + (root / 'sqlite3/sqlite3.c').read_text()[:1000])
         if native['name'] == 'openssl-src':
@@ -118,7 +129,7 @@ def components(cargo, frontend):
                 fields = dict(re.findall(r'^(MAJOR|MINOR|PATCH)=(\d+)$', version_file.read_text(), re.M))
                 gate.require(set(fields) == {'MAJOR', 'MINOR', 'PATCH'}, 'bundled OpenSSL version missing')
                 p, _ = component('OpenSSL', '.'.join(fields[k] for k in ('MAJOR', 'MINOR', 'PATCH')), 'Apache-2.0', root / 'openssl', 'generic')
-                p['sourceInfo'] = 'Vendored OpenSSL source shipped by openssl-src; exact source preserved.'
+                p['sourceInfo'] = 'Vendored OpenSSL source available in the exact openssl-src crate on crates.io.'
                 packages.append(p)
     return packages, ''.join(notices), findings
 
@@ -156,37 +167,6 @@ def freeze(root, metadata):
     return contract.freeze(root, metadata)
 
 
-def dependency_sources(cargo, frontend, destination, prepared_frontend=None):
-    # Include registry source, native vendored source (OpenSSL, SQLite), web
-    # packages and licence texts. No managed Node or agent downloads.
-    roots = [('cargo', p['name'], p['version'], Path(p['manifest_path']).parent) for p in rust_packages(cargo) if p.get('source')]
-    roots += [(ecosystem, name, version, root) for name, version, _, root, ecosystem in frontend_sources(frontend)]
-    seen = set()
-    # Materialize filesystem hardlinks as regular bytes for the later merge.
-    # Filesystem symlinks are still refused below before archive.add().
-    with tarfile.open(destination, 'w:xz', dereference=True, preset=1) as archive:
-        for ecosystem, name, version, root in sorted(roots):
-            prefix = f'{ecosystem}/{name.replace("/", "_")}@{version}'
-            if prefix in seen:
-                continue
-            seen.add(prefix)
-            for path in sorted(root.rglob('*')):
-                relative = path.relative_to(root)
-                if any(part in ('node_modules', '.git', 'target') for part in relative.parts):
-                    continue
-                gate.require(not path.is_symlink(), f'third-party source symlink needs review: {prefix}/{relative}')
-                if path.is_file():
-                    archive.add(path, arcname=f'{prefix}/{relative}', recursive=False)
-        if prepared_frontend is not None:
-            with tarfile.open(prepared_frontend / 'third-party-source.tar.xz', 'r:xz') as frontend_archive:
-                for member in frontend_archive:
-                    gate.require(member.isfile() and member.name.startswith('npm/')
-                                 and '..' not in Path(member.name).parts, 'invalid prepared frontend source')
-                    archive.addfile(member, frontend_archive.extractfile(member))
-
-
-
-
 def binary_inventory(root, targets):
     binaries = {}
     for target in targets:
@@ -210,12 +190,12 @@ def verify_binary_inventory(inventory, root):
 
 
 def required_payloads(channels, targets, tag):
-    required = {'hennery-installer.sh', 'hennery.rb', 'hennery-source.tar.xz', 'dist-manifest.json',
+    required = {'hennery-installer.sh', 'hennery.rb', 'dist-manifest.json',
                 'THIRD-PARTY-NOTICES.txt', 'licence-findings.json', 'runtime-inventory.json', 'build-identity.json', 'release-notes.md'}
     for target in targets:
         base = 'hennery-' + target
         required.update({base + '.tar.xz', base + '.tar.xz.sha256', base + '.spdx.json',
-                         target + '-third-party-source.tar.xz', target + '-builder.json', target + '-rust-advisories.json',
+                         target + '-builder.json', target + '-rust-advisories.json',
                          target + '-rust-advisory-revision.txt', target + '-web-advisories.json'})
     if 'crates' in channels:
         required.update(name + '-' + tag.removeprefix('v') + '.crate' for name in
@@ -262,7 +242,6 @@ def main():
         packages, notices, findings = components({'packages': []}, frontend)
         (args.output / 'frontend.json').write_bytes(gate.canonical({
             'packages': packages, 'notices': notices, 'findings': findings}))
-        dependency_sources({'packages': []}, frontend, args.output / 'third-party-source.tar.xz')
     if args.operation == 'materials':
         gate.require(args.source_sha is not None, 'materials require source SHA')
         gate.require((args.frontend_licences is None) != (args.frontend_materials is None),
@@ -273,10 +252,19 @@ def main():
         if args.frontend_materials is not None:
             prepared = gate.strict_json((args.frontend_materials / 'frontend.json').read_bytes())
             packages += prepared['packages']; notices += prepared['notices']; findings += prepared['findings']
-        (args.output / 'THIRD-PARTY-NOTICES.txt').write_text(notices)
+        version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+        tag = 'v' + version
+        own_source = (f'Hennery {version} — AGPL-3.0-only\n'
+                      f'Signed release tag: https://github.com/{gate.REPOSITORY}/tree/{tag}\n'
+                      f'Source commit: https://github.com/{gate.REPOSITORY}/tree/{args.source_sha}\n'
+                      'GitHub automatically provides Source code archives on the release page:\n'
+                      f'https://github.com/{gate.REPOSITORY}/releases/tag/{tag}\n'
+                      f'https://github.com/{gate.REPOSITORY}/archive/refs/tags/{tag}.tar.gz\n'
+                      f'https://github.com/{gate.REPOSITORY}/archive/refs/tags/{tag}.zip\n'
+                      'Dependency sources are publicly available at their exact versions; no dependency source tarballs are bundled.\n')
+        (args.output / 'THIRD-PARTY-NOTICES.txt').write_text(own_source + notices)
         (args.output / f'hennery-{args.target}.spdx.json').write_bytes(gate.canonical(spdx(packages, args.source_sha, args.target)))
-        (args.output / 'licence-findings.json').write_bytes(gate.canonical({'findings': findings, 'scope': 'Rust and frontend including build/dev; assets and corresponding source still require maintainer review'}))
-        dependency_sources(cargo, frontend, args.output / 'third-party-source.tar.xz', args.frontend_materials)
+        (args.output / 'licence-findings.json').write_bytes(gate.canonical({'findings': findings, 'scope': 'Rust and frontend including build/dev; source availability and licence notices require maintainer review'}))
         manifest = read_manifest()
         (args.output / 'runtime-inventory.json').write_bytes(gate.canonical({'adapter_manifest_sha256': gate.digest(manifest),
                                                                           'redistributed': False, 'manifest': gate.strict_json(manifest)}))

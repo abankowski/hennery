@@ -7,15 +7,15 @@ import {ORDER,sha256} from './crate-release.mjs';
 import * as stage from './prepare-crates.mjs';
 function fixture(){
  const root=fs.mkdtempSync(join(tmpdir(),'r3-stage-')),from=join(root,'prepared'),to=join(root,'flat');fs.mkdirSync(from);fs.mkdirSync(to);
- const source={sha:'a'.repeat(40),sha256:sha256('source'),url:`https://github.com/marcinwadon/hennery/releases/download/v0.1.0/hennery-source-${'a'.repeat(40)}.tar.gz`};
- fs.writeFileSync(join(from,`hennery-source-${source.sha}.tar.gz`),'source');
+ const source={sha:'a'.repeat(40),url:`https://github.com/marcinwadon/hennery/tree/${'a'.repeat(40)}`};
  const crates=ORDER.map(name=>{const file=name+'-0.1.0.crate';fs.writeFileSync(join(from,file),name);return{name,file,sha256:sha256(name),size:name.length,upload:{name,vers:'0.1.0'}};});
  fs.writeFileSync(join(from,'crates-inventory.json'),JSON.stringify({schema:1,version:'0.1.0',source,crates}));
+ fs.writeFileSync(join(from,'source-snapshot.tar.gz'),'local preparation snapshot; never exported');
  fs.mkdirSync(join(from,'pnpm-store'));fs.writeFileSync(join(from,'candidate-config.toml'),'scratch registry config');
  return{from,to,crates};
 }
-test('flat R1 staging exports only final immutable crates, channel inventory and source',()=>{
- const f=fixture();stage.stageCrates(f.from,f.to);assert.equal(fs.readdirSync(f.to).length,9);
+test('flat R1 staging exports only final immutable crates, channel inventory without a source asset',()=>{
+ const f=fixture();stage.stageCrates(f.from,f.to);assert.equal(fs.readdirSync(f.to).length,8);
  for(const file of fs.readdirSync(f.to))assert.deepEqual(fs.readFileSync(join(f.to,file)),fs.readFileSync(join(f.from,file)));
 });
 test('flat staging refuses changed preparation bytes before any copy',()=>{

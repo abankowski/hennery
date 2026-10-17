@@ -7,8 +7,7 @@ import {releaseCratesDigest} from './publish-crates.mjs';
 import {ORDER,sha256} from './crate-release.mjs';
 function fixture(){
  const dir=fs.mkdtempSync(join(tmpdir(),'release-crates-'));
- const source={sha:'a'.repeat(40),sha256:sha256(Buffer.from('source')),url:`https://github.com/marcinwadon/hennery/releases/download/v0.1.0/hennery-source-${'a'.repeat(40)}.tar.gz`};
- fs.writeFileSync(join(dir,`hennery-source-${source.sha}.tar.gz`),'source');
+ const source={sha:'a'.repeat(40),url:`https://github.com/marcinwadon/hennery/tree/${'a'.repeat(40)}`};
  const crates=ORDER.map(name=>{const bytes=Buffer.from(name),file=`${name}-0.1.0.crate`;fs.writeFileSync(join(dir,file),bytes);return {name,file,sha256:sha256(bytes),size:bytes.length,upload:{name,vers:'0.1.0'}};});
  fs.writeFileSync(join(dir,'crates-inventory.json'),JSON.stringify({schema:1,version:'0.1.0',source,crates}));
  fs.writeFileSync(join(dir,'release-metadata.json'),JSON.stringify({schema:3,repository:'marcinwadon/hennery',source_sha:source.sha,tag:'v0.1.0',channels:['crates','github']}));
@@ -18,10 +17,9 @@ function fixture(){
 test('global checksums bind the frozen crate manifest and every tarball',()=>{
  const f=fixture();assert.equal(releaseCratesDigest(f.dir),sha256(fs.readFileSync(join(f.dir,'crates-inventory.json'))));
 });
-for(const mutation of ['crate','source','extra','missing','duplicate','case-collision','metadata'])test(`release binding refuses ${mutation}`,()=>{
+for(const mutation of ['crate','extra','missing','duplicate','case-collision','metadata'])test(`release binding refuses ${mutation}`,()=>{
  const f=fixture(),sum=join(f.dir,'SHA256SUMS');
  if(mutation==='crate')fs.appendFileSync(join(f.dir,f.crates[0].file),'x');
- if(mutation==='source')fs.appendFileSync(join(f.dir,`hennery-source-${'a'.repeat(40)}.tar.gz`),'x');
  if(mutation==='extra')fs.writeFileSync(join(f.dir,'extra'),'x');
  if(mutation==='missing')fs.unlinkSync(join(f.dir,f.crates[0].file));
  if(mutation==='duplicate')fs.appendFileSync(sum,fs.readFileSync(sum,'utf8').split('\n')[0]+'\n');

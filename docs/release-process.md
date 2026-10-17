@@ -153,14 +153,16 @@ The tag-only `release.yml` calls read-only reusable `packaging.yml`. Prepare
 requires successful main-push core CI for the exact signed commit, builds the UI
 and audits dependencies once. Native builders share their archives with image,
 installer and Homebrew acceptance; Linux qualifies all seven crate tarballs.
-Every local channel acceptance runs for packaging PRs and releases, regardless
-of publication selection. No restored project build cache is used in releases.
+PRs run Linux packaging only; main/release add macOS. Core macOS smoke runs on
+main, with full macOS/ARM suites weekly. Crate acceptance runs on tags and PRs
+changing package metadata/version, dist configuration or crate packaging scripts;
+dependency-only Cargo and unrelated packaging edits skip it. No restored project build cache is used in releases.
 Actions remain commit-pinned. Native YAML dependencies and actionlint replace
 custom job-name, DAG and command-order policing.
 
 Build/acceptance jobs have read-only contents and no publishing secrets. The
-separate `attest` job alone adds OIDC/attestation write. It attests `SHA256SUMS`
-and every payload, then writes a run summary showing every asset/hash, bundle
+separate `attest` job alone adds OIDC/attestation write. It attests the private
+checksum list, public checksum list and every payload, then writes a run summary showing every asset/hash, bundle
 hash, tag/source, channels/targets and immutable artifact IDs.
 The maintainer approves that summary. There is no draft before approval; this
 is the deliberate trade-off for keeping all authorized draft mutation protected.
@@ -191,6 +193,32 @@ GitHub CLI and Docker/ORAS configuration, including no GitHub or Actions/OIDC
 tokens. The crates writer asks the parent to revalidate over private pipes; it
 does not spawn a verifier with its upload token.
 
+GitHub receives exactly six uploaded assets: three native archives, installer,
+`SHA256SUMS` and `hennery.spdx.json`. No custom hennery or dependency source
+archives are uploaded. Under the operator's correction of 2026-10-18, hennery's
+AGPL source is available at the signed tag/source commit and in GitHub's automatic
+**Source code** downloads. Those automatic downloads are outside the uploaded
+asset set and checksum list. Embedded `THIRD-PARTY-NOTICES.txt` identifies each
+MPL crate's name, exact version, crates.io source download URL and upstream
+repository, and links hennery's signed tag and automatic source archives.
+See the [source-location policy](../packaging/release/README.md#assets-and-verification).
+
+Formula, per-file sums, per-target SBOM/advisory/builder records, runtime/licence
+findings, metadata, identity, dist manifests and Sigstore bundles remain Actions
+artifacts or attestation inputs. Crate source notices point to the immutable
+public source commit. Their local preparation snapshot is not staged or uploaded;
+the publisher no longer requires a custom source asset. Release notes go in the
+body and the formula goes to the tap.
+
+Public `SHA256SUMS` covers the other five downloads. Its internal frozen name is
+`public-SHA256SUMS`; upload copies those attested bytes under `SHA256SUMS`.
+The private full-payload checksum closure is retained for publisher/channel
+verification and recovery. Consumers fetch bundles anonymously by digest from
+GitHub, then use official `gh attestation verify --bundle`; they require neither
+an account/token nor public metadata/bundle assets. The exact README block
+checks alpha.3 as well as the lean asset set. A cached offline bundle can be
+provided separately.
+
 Consumers independently verify the signed tag, the attested canonical
 `SHA256SUMS` and each consumed payload. The exact certificate identity is
 `https://github.com/marcinwadon/hennery/.github/workflows/release.yml@refs/tags/<exact-tag>`.
@@ -206,7 +234,7 @@ Use independently trusted installed verification tools/key and reviewed source;
 never execute a downloaded installer/verifier to authenticate itself. Native
 cargo-binstall remains disabled without a reviewed bridge enforcing this policy.
 Authenticate source before evaluating a release flake, and use its verified full
-commit SHA. Preserve corresponding source, licence notices and rollback backups.
+commit SHA. Preserve public source availability, licence notices and rollback backups.
 
 ## Failure and recovery
 
@@ -253,7 +281,7 @@ Public install, Homebrew service/PATH, crate UI/source and image runtime
 acceptance remain maintainer-owned after authorized publication. Stop services,
 back up complete data/config/keys and check schema compatibility before rollback.
 Restore a compatible backup or ship a forward fix rather than overwriting
-immutable versions. Retain corresponding source and document remediation.
+immutable versions. Retain source availability at the signed tag and document remediation.
 
 ## Qualification before legacy cleanup
 
