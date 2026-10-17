@@ -94,11 +94,6 @@ test('OIDC acquisition follows shared verifier and explicit bootstrap mode',()=>
  assert.match(yaml,/RELEASE_CRATES_BOOTSTRAP_ENABLED/);
  assert.ok(yaml.indexOf('id: crates-publish')>auth);
 });
-test('single workflow freezes qualified crates after the same source/UI build',()=>{
- const yaml=fs.readFileSync('.github/workflows/release.yml','utf8');
- assert.match(yaml,/prepare-crates\.mjs/);assert.match(yaml,/ci-crates\.sh/);
- assert.ok(yaml.indexOf('prepare-crates.mjs --stage')<yaml.indexOf('release_run.py freeze'));
-});
 import { preflight } from './publish-crates.mjs';
 test('precredential preflight validates source and approval without any upload',async()=>{
  const f=fixture(),n=network(f);let gates=0;

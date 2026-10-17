@@ -41,25 +41,27 @@ channel-selection constraints still apply.
 
 Binary archives contain exactly one target directory and regular files
 `hennery`, `CHANGELOG.md`, `LICENSE`, `README.md` and `THIRD-PARTY-NOTICES.txt`.
-PR qualification archives omit the separately generated dependency notices.
-Both archive checks enforce this closure; the installer and Homebrew proof
-fixtures carry the same documentation. Homebrew installs the changelog in its
+PR and release archives use the same notices and archive checks; the installer
+and Homebrew proof fixtures carry the same documentation. Homebrew installs the changelog in its
 documentation directory. Crate tarballs have their own package-local inventories.
 
 ## Workflow and credentials
 
-`release-rehearsal.yml` runs the actual native release graph on matching pull
-requests and every main push, through assembly/freeze, native installer tests
-and local verification. Generate it from `release.yml` with
-`nix develop .#release -c python3 packaging/release/rehearsal.py generate`.
-Workflow policy and refusal tests compare every generated job/step to its source,
-including runners, dependencies and upload/download inputs. Rehearsal has only
-contents read permission, no environment, secrets, OIDC, attest or publish job.
-It uses the workspace version as a synthetic tag context without creating a tag;
-its zero tag-object placeholder cannot pass production signature verification.
-The production freeze and rehearsal share payload construction; rehearsal's
-clearly marked local verification checks checksum closure, supply requirements
-and binary inventories, without claiming signed source or provenance.
+`packaging.yml` is the shared read-only workflow used by packaging-input PRs,
+main pushes and the tag workflow. Prepare builds the UI and audits dependencies
+once; three native builders produce archives and reuse their musl binaries for
+images. One Linux job qualifies all seven crate tarballs; assembly generates
+installers/formula from the transported archives. Three native jobs combine
+installer and Homebrew acceptance, with one packaged CLI install on macOS.
+Release and dependency/compiler changes also select unlocked installs and MSRV.
+
+PR mode uses the workspace version as a synthetic tag without creating a tag.
+Its zero tag-object placeholder cannot pass production signature verification.
+All channels receive local acceptance; unselected crate/OCI materials are removed
+from the publishable payload before checksum assembly. The reusable workflow has
+no publication secrets, protected environment, OIDC or attestation authority.
+Release mode authenticates signed source and waits for successful main-push core
+CI for that exact commit before building. Only the tag wrapper attests/publishes.
 
 Native uploads retain per-target artifact directories. Pinned cargo-dist leaves
 an expanded `hennery-$TARGET/` beside its archive. Assembly uses an explicit file
@@ -68,7 +70,7 @@ The same check runs before upload because the pinned upload action follows links
 Unknown files/directories, links and differing shared inputs refuse. Flattening
 candidate downloads would lose the conflicting-input check and is forbidden.
 
-Rehearsal cannot prove OIDC issuance, GitHub attestation registration, the genuine
+Local packaging cannot prove OIDC issuance, GitHub attestation registration, the genuine
 Hennery certificate identity, protected-environment approvals, token permissions,
 remote release uploads or immutable publication. Offline tests cover the exact
 attestation subject set, payload/signatures transport layout, publication HTTP
@@ -91,7 +93,7 @@ There are no downstream environment jobs requiring another approval.
 
 `release_run.py` supplies `configure`, `freeze`, `check`, `summary`, `verify`,
 `publish` and `channel` entry points. The workflow invokes them in the pinned
-release shell. `run_policy.py` fetches read-only original run/jobs/artifact and
+release shell. `run_policy.py` fetches read-only original run/artifact and
 review evidence; publishers do not read private platform settings or receive an
 administration credential. `settings_audit.py` separately records maintainer-local
 setup acceptance, using `--payload`, `--observations` and a create-only
@@ -99,11 +101,10 @@ setup acceptance, using `--payload`, `--observations` and a create-only
 be replaced by personally verified facts.
 
 Channel selection is the reviewed `channels.json`, initially `["github"]`.
-The explicit channel-to-owning-job registry retains literal names `crates`,
-`ghcr` and `homebrew`, forbids collisions/dynamic names, and requires selected
-acceptance to succeed. Unselected owners alone may skip; native/no-op jobs still
-succeed. The policy checks the complete dependency graph, including descendants
-of optional jobs, and rejects reusable jobs. Secrets never appear at job scope.
+Channel selection affects payload/publication, while all local packaging acceptance
+must succeed. Native YAML dependencies express that requirement; the former API
+job-name registry and optional-channel DAG policy have been removed. Publisher
+permissions and credential guards remain until the next trust-simplification step.
 
 All `RELEASE_*_ENABLED` switches default off; the operator enables them. Secrets
 remaining in `release` are `RELEASE_HOMEBREW_TOKEN`, `GHCR_PUBLISH_TOKEN` and,

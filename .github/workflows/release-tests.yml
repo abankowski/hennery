@@ -16,7 +16,12 @@ name: release-tests
     - .cargo/**
     - rust-toolchain*
     - crates/**/build.rs
+    - crates/**/Cargo.toml
+    - crates/**/package_ui.rs
+    - Dockerfile
+    - .dockerignore
     - web/package.json
+    - web/.npmrc
     - web/pnpm-lock.yaml
     - web/*.config.*
     - web/tsconfig*.json
@@ -37,7 +42,12 @@ name: release-tests
     - .cargo/**
     - rust-toolchain*
     - crates/**/build.rs
+    - crates/**/Cargo.toml
+    - crates/**/package_ui.rs
+    - Dockerfile
+    - .dockerignore
     - web/package.json
+    - web/.npmrc
     - web/pnpm-lock.yaml
     - web/*.config.*
     - web/tsconfig*.json
@@ -79,10 +89,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12
         with:
           toolchain: 1.98.1
+          targets: ${{ matrix.os == 'ubuntu-24.04-arm' && 'aarch64-unknown-linux-musl' || matrix.os == 'ubuntu-24.04' && 'x86_64-unknown-linux-musl' || 'aarch64-apple-darwin' }}
+      - name: Native fixture musl tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: cargo-dist's actual installer with tiny shell executables
         run: |
           sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
-          HENNERY_TEST_DIST="$RUNNER_TEMP/dist-bin/dist" nix develop .#release -c python3 -m unittest discover -s packaging/release -p test_dist_assembly.py
+          HENNERY_TEST_DIST="$RUNNER_TEMP/dist-bin/dist" nix develop .#release -c python3 -m unittest discover -s packaging/release -p 'test_dist_*.py'
           "$RUNNER_TEMP/dist-bin/dist" build --artifacts=global
           python3 packaging/release/make_installer_fixture.py target/distrib/hennery-installer.sh "$RUNNER_TEMP/installer-fixture"
           python3 packaging/harden-installer.py "$RUNNER_TEMP/installer-fixture/hennery-installer.sh"

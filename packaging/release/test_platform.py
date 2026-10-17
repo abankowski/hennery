@@ -18,11 +18,6 @@ class Platform(unittest.TestCase):
         self.fixture = test_run_policy.RunPolicy()
         self.fixture.setUp()
 
-    def validate(self, jobs):
-        evidence = copy.deepcopy(self.fixture.evidence)
-        evidence['jobs'] = jobs
-        return run_policy.validate(self.fixture.metadata, evidence, self.fixture.env, self.fixture.now)
-
     def test_original_evidence_is_read_only_and_keeps_original_attempt(self):
         calls=[]
         fixture=self.fixture
@@ -33,14 +28,9 @@ class Platform(unittest.TestCase):
                         '/actions/artifacts/77':fixture.evidence['artifact'],
                         '/':{'owner':fixture.evidence['owner']},
                         '/actions/runs/42/approvals':fixture.evidence['reviews']}[path]
-            def pages(self, path, key):
-                calls.append(('pages',path,key))
-                self_path='/actions/runs/42/attempts/1/jobs'
-                if path!=self_path or key!='jobs': raise AssertionError(path)
-                return fixture.evidence['jobs']
         evidence=run_policy.evidence(API(),fixture.metadata,fixture.env)
         self.assertEqual(evidence,fixture.evidence)
-        self.assertEqual(len(calls),5)
+        self.assertEqual(len(calls),4)
         self.assertFalse(any('/rulesets' in str(call) or '/environments/' in str(call) for call in calls))
 
     def test_checked_in_platform_examples_match_policy(self):
@@ -54,59 +44,10 @@ class Platform(unittest.TestCase):
         self.assertEqual(environment['reviewers'],[{'type':'User','id':0}])
         self.assertEqual(gate.strict_json((root/'.github/release-branch-policy.json').read_bytes()),{'name':'v*','type':'tag'})
 
-    def test_only_unselected_registered_owner_may_skip(self):
-        self.validate(self.fixture.evidence['jobs'])
-        for channel in workflow_policy.CHANNEL_JOB_IDS:
-            self.fixture.metadata['channels']=sorted(['github',channel])
-            changed=copy.deepcopy(self.fixture.evidence['jobs'])
-            for job in changed:
-                if job['name']==channel: job['conclusion']='success'
-            self.validate(changed)
-            for conclusion,status in [('skipped','completed'),('failure','completed'),('cancelled','completed'),(None,'queued')]:
-                broken=copy.deepcopy(changed)
-                for job in broken:
-                    if job['name']==channel:job.update(conclusion=conclusion,status=status)
-                with self.subTest(channel=channel,conclusion=conclusion),self.assertRaises(gate.Refused):self.validate(broken)
-            self.fixture.metadata['channels']=['github']
-            for mutation in ('absent','duplicate','failure','pending'):
-                broken=copy.deepcopy(changed)
-                if mutation=='absent':broken=[j for j in broken if j['name']!=channel]
-                if mutation=='duplicate':broken += [next(j for j in broken if j['name']==channel)]
-                for job in broken:
-                    if job['name']==channel and mutation=='failure':job['conclusion']='failure'
-                    if job['name']==channel and mutation=='pending':job['status']='queued'
-                with self.subTest(channel=channel,mutation=mutation),self.assertRaises(gate.Refused):self.validate(broken)
-
-    def test_skipped_native_and_ordinary_jobs_cannot_hide_in_successful_run(self):
-        required=[job['name'] for job in self.fixture.evidence['jobs'] if job['conclusion']=='success']
-        for name in required+['licence-review']:
-            jobs=copy.deepcopy(self.fixture.evidence['jobs'])
-            if name=='licence-review':jobs.append({'name':name,'status':'completed','conclusion':'skipped'})
-            else:next(j for j in jobs if j['name']==name)['conclusion']='skipped'
-            with self.subTest(name=name),self.assertRaises(gate.Refused):self.validate(jobs)
-
-    def test_reserved_names_require_literal_unique_owning_nonmatrix_job(self):
-        for channel,owner in workflow_policy.CHANNEL_JOB_IDS.items():
-            valid={'jobs':{owner:{'name':channel},'archive':{}}}
-            self.assertEqual(workflow_policy.channel_jobs(valid),{channel:owner})
-            for mutation in ('spoof','collision','dynamic','matrix','renamed'):
-                workflow=copy.deepcopy(valid)
-                if mutation=='spoof':workflow['jobs']={'ordinary':{'name':channel}}
-                if mutation=='collision':workflow['jobs']['ordinary']={'name':channel}
-                if mutation=='dynamic':workflow['jobs']['ordinary']={'name':"${{ '"+channel+"' }}"}
-                if mutation=='matrix':workflow['jobs'][owner]['strategy']={'matrix':{'os':['linux']}}
-                if mutation=='renamed':workflow['jobs'][owner]['name']='ordinary'
-                with self.subTest(channel=channel,mutation=mutation),self.assertRaises(ValueError):workflow_policy.channel_jobs(workflow)
-        with patch.dict(workflow_policy.CHANNEL_JOB_IDS,{'ghcr':'container-acceptance'}):
-            self.assertEqual(workflow_policy.channel_jobs({'jobs':{'container-acceptance':{'name':'ghcr'}}}),{'ghcr':'container-acceptance'})
-
     def test_workflow_parser_rejects_missing_mapping_and_duplicate_keys(self):
         for raw in ('[]','jobs: {archive: {}, archive: {}}','jobs: {archive: {}, "\\u0061rchive": {}}',
                     '\ufeffjobs: {archive: {}, archive: {}}'):
             with self.subTest(raw=raw),self.assertRaises(ValueError):workflow_policy.load_workflow(raw)
-        for raw in ('{}','jobs: []','jobs: {}'):
-            with self.subTest(raw=raw),self.assertRaises(ValueError):workflow_policy.channel_jobs(workflow_policy.load_workflow(raw))
-
     def test_environment_bypass_must_be_explicit_false(self):
         for value in (None,True,'false'):
             data=settings();data['environment']['can_admins_bypass']=value

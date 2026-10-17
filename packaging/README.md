@@ -1,18 +1,19 @@
 # Release builds
 
-What a hennery release would ship is built by the `build` workflow
-(`.github/workflows/build.yml`) on every pull request and every push to
-`main` (distribution spec §2, plan 7a). It is checked, then kept as workflow
-artifacts for a week. **Nothing is published:** there are no releases yet.
+The read-only `packaging` workflow (`.github/workflows/packaging.yml`) builds
+release candidates for packaging-input PRs and main pushes. The signed-tag
+`release.yml` calls the same workflow with authenticated release context. It
+builds the UI once, reuses native archives for installers/Homebrew, and uses the
+same musl binaries in collector images. All channels receive local acceptance,
+including channels not selected for publication. PR artifacts are unsigned
+qualification evidence and are never promoted to releases.
 
-The single signed-tag `release.yml` builds fresh archives/UI/source/materials,
-runs acceptance, produces one `SHA256SUMS` and attests final bytes in that exact
-run. The maintainer reviews its exhaustive asset/hash summary, then one job in
-protected environment `release` creates/read-back-verifies a draft, publishes an
-immutable GitHub release and runs selected channels behind their default-off
-switches. The [release process](../docs/release-process.md) describes setup and
-[shared verification contract](release/README.md). Ordinary `build` artifacts
-remain qualification probes and are never promoted to releases.
+After packaging succeeds, the tag workflow attests final bytes. The maintainer
+reviews its asset/hash summary before one protected `release` environment job
+publishes an immutable GitHub release and selected channels. The [release
+process](../docs/release-process.md) describes setup and the [shared verification
+contract](release/README.md). Alpha.3 has shipped; the approved CI migration is
+being applied in stacked steps.
 
 | Artifact | Built by | Checked by |
 |---|---|---|
@@ -21,7 +22,7 @@ remain qualification probes and are never promoted to releases.
 | `hennery-installer.sh` | `dist build --artifacts=global`, then `harden-installer.py` | `test-installer.sh`, on Linux x86_64 and on macOS |
 | `hennery.rb` (Homebrew formula) | `dist build --artifacts=global` | `check-formula.sh` |
 | `SHA256SUMS` (release only) | final single-run assembly | canonical exact payload closure; tagged-workflow provenance for checksum file and every payload |
-| CI collector images and a two-platform OCI index | native BuildKit of `Dockerfile --target release` on staged musl binaries with marked CI fixture notices/SPDX; preserves SBOM/provenance metadata | OCI payload verification, signing-input extraction, then retained-digest loopback round-trip and `smoke-image.sh` |
+| Collector images and a two-platform OCI index | native BuildKit of `Dockerfile --target release` on the accepted archive binaries with release notices/SPDX; preserves SBOM/provenance metadata | OCI payload verification, signing-input extraction, then retained-digest loopback round-trip and `smoke-image.sh` |
 
 [R4's collector-image guide](images.md) describes the release target, labels,
 reviewed notices and binary/image SBOMs, native OCI inputs, gated GHCR
@@ -101,9 +102,10 @@ pin generator remain private. Library compatibility is pre-1.0 application
 support, not a separately stable SDK. Protocol/view generators are build tools,
 not advertised install products.
 
-The `crates` CI workflow prepares from a fresh git-archive snapshot outside the
-checkout. `packaging/prepare-crates.mjs` builds the locked web UI, copies only
-its distributable output into the kernel, gathers licence texts for production
+The shared workflow prepares all seven crates on Linux from a fresh git-archive
+snapshot outside the checkout. `packaging/prepare-crates.mjs` reuses the UI built
+in prepare (or builds it for standalone local use), copies only its distributable
+output into the kernel, gathers licence texts for production
 dependencies and configured build tools (including emitted helpers and CSS), and
 writes its source/UI inventories.
 The canonical host manifest is `crates/hennery-host/manifest.json`; pin generation,
@@ -123,10 +125,12 @@ run on extracted tarballs, then builds/installations run with Cargo offline and
 OS network access denied to subprocesses. The OS restriction includes build
 scripts and is tested with a reachable loopback positive control. Cargo's
 publish dry run itself needs registry HTTP, so it is separate from that phase.
-Both locked and unlocked registry installs run from an empty directory. Their
-collectors run in disposable homes with Node/pnpm absent from PATH, serve all
-HTML-referenced assets and render the app in the pinned Chromium. A separate
-Rust 1.88 toolchain builds the extracted CLI's complete dependency graph.
+One locked registry install runs from an empty directory; unlocked installation
+and a Rust 1.88 build also run before releases and for dependency/compiler changes.
+Compilation is reused within this immutable candidate. The installed collectors
+run in disposable homes with Node/pnpm absent from PATH, serve all HTML-referenced
+assets and render the app in the pinned Chromium. A single native packaged-CLI
+install also runs on macOS.
 Source installs need Rust, a C compiler, make and Perl (macOS: Xcode Command
 Line Tools); default vendored OpenSSL removes the system OpenSSL prerequisite.
 
