@@ -10,7 +10,7 @@ export function indexPath(name) {
   if(name.length===3)return `3/${name[0]}/${name}`;
   return `${name.slice(0,2)}/${name.slice(2,4)}/${name}`;
 }
-export async function registry(cache) {
+export async function registry(cache, port=0) {
   fs.mkdirSync(cache,{recursive:true});
   const entries=new Map(), archives=new Map(); let offline=false, origin;
   const server=createServer(async(req,res)=>{
@@ -33,7 +33,7 @@ export async function registry(cache) {
       res.end(fs.readFileSync(file));
     }catch(error){res.writeHead(502).end(String(error));}
   });
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});
   origin=`http://127.0.0.1:${server.address().port}`;
   return {url:`sparse+${origin}/`, add(entry,archive){entries.set('/'+indexPath(entry.name),entry);archives.set(`/download/${entry.name}/${entry.vers}/download`,archive);},
     offline(){offline=true;},close(){return new Promise(resolve=>server.close(resolve));}};

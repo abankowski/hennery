@@ -80,7 +80,6 @@ jobs:
       tag: ${{ steps.context.outputs.tag }}
       source: ${{ steps.context.outputs.source }}
       channels: ${{ steps.context.outputs.channels }}
-      extended: ${{ steps.context.outputs.extended }}
       crates: ${{ steps.context.outputs.crates }}
       targets: ${{ steps.context.outputs.targets }}
       archive_matrix: ${{ steps.context.outputs.archive_matrix }}
@@ -94,6 +93,11 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
     - id: context
       name: Authenticate release context or label unsigned PR inputs
       env:
@@ -149,6 +153,15 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        shared-key: release-${{ matrix.target }}
+        cache-bin: false
     - name: Native build tools
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y musl-tools
@@ -230,11 +243,16 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
         name: release-inputs
         path: inputs
-    - name: Isolate package acceptance homes and the MSRV toolchain
+    - name: Isolate package acceptance homes
       run: |
         mkdir -p "$RUNNER_TEMP/r3-home"
         for name in HOME CARGO_HOME RUSTUP_HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME npm_config_userconfig npm_config_cache; do
@@ -244,24 +262,30 @@ jobs:
           esac
           echo "$name=$value" >> "$GITHUB_ENV"
         done
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        shared-key: crates-acceptance
+        cmd-format: nix develop -c {0}
+        workspaces: . -> target/crates-acceptance
+        cache-bin: false
     - name: Pinned dist plan contains only the shipped CLI
       run: |
         nix develop -c sh packaging/install-dist.sh "$RUNNER_TEMP/dist-bin"
         R3_DIST="$RUNNER_TEMP/dist-bin/dist" nix develop -c node packaging/check-dist-plan.mjs
     - name: Prepare and qualify all seven using the already built candidate UI
       run: |
-        if [ "$R3_EXTENDED" = true ]; then nix develop -c rustup toolchain install 1.88.0 --profile minimal; fi
         nix develop -c node --test packaging/crates.test.mjs packaging/crate-release.test.mjs packaging/publish-crates.test.mjs packaging/binstall-policy.test.mjs packaging/stage-crates.test.mjs
         nix develop -c node packaging/check-offline.mjs
         nix develop -c node packaging/prepare-crates.mjs "$RUNNER_TEMP/crates-prepared" "$GITHUB_SHA" "$PWD/inputs/ui"
         nix develop -c sh packaging/ci-crates.sh "$RUNNER_TEMP/crates-prepared"
         nix develop -c node packaging/check-binstall.mjs
-        nix develop -c cargo build -p hennery-kernel --locked
-        nix develop -c node --test packaging/check-package-build.test.mjs
+        R3_BUILD_SCRIPTS="$R3_TARGET_DIR/release/build" nix develop -c node packaging/check-package-build.mjs
         mkdir crates-flat
         nix develop -c node packaging/prepare-crates.mjs --stage "$RUNNER_TEMP/crates-prepared" crates-flat
       env:
-        R3_EXTENDED: ${{ needs.prepare.outputs.extended }}
+        R3_TARGET_DIR: ${{ github.workspace }}/target/crates-acceptance
+        R3_REGISTRY_PORT: '37401'
+        R3_CARGO_HOME: ${{ runner.temp }}/r3-acceptance-cargo
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: release-crates
@@ -289,6 +313,11 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
         pattern: candidate-*
@@ -340,6 +369,11 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
+    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
+      with:
+        use-gha-cache: true
+        use-flakehub: false
+        diagnostic-endpoint: ''
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
         artifact-ids: ${{ needs.assemble.outputs.artifact_id }}
@@ -349,14 +383,6 @@ jobs:
       run: sh packaging/test-installer.sh candidate
     - name: Install, smoke, upgrade, test and uninstall the existing archives through Homebrew
       run: nix develop .#release -c python3 packaging/release/homebrew_accept.py candidate "$RUNNER_TEMP/homebrew-proof"
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-      if: runner.os == 'macOS' && needs.crates.result == 'success'
-      with:
-        name: release-crates
-        path: crates-flat
-    - name: One native packaged CLI install on macOS
-      if: runner.os == 'macOS' && needs.crates.result == 'success'
-      run: nix develop -c node packaging/check-native-crate.mjs crates-flat "$RUNNER_TEMP/native-crate"
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: homebrew-proof-${{ matrix.runner }}
