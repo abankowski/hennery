@@ -1,9 +1,21 @@
 # Changelog
 
+## 0.1.3
+
+- First complete release on all four channels: GitHub Releases, Homebrew,
+  crates.io and GHCR, following the partial crates.io publication of 0.1.2.
+- Verify the whole release once before the crates writer starts, rather than
+  at every gate call (#179), so publishing can finish within its deadline.
+- Faster qualification and CI through one cached locked install of the frozen
+  crate tarballs, weekly unlocked/MSRV checks, parallel tests with nextest and
+  fewer redundant Nix builds (#180, #181).
+
 ## 0.1.2
 
-- v0.1.1 is published on GitHub Releases and Homebrew only; crates.io and
-  GHCR follow in v0.1.2.
+- Published on GitHub Releases and Homebrew. On crates.io, only
+  `hennery-proto`, `hennery-kernel`, `hennery-view` and `hennery-host` 0.1.2
+  were published. The tag's crates writer re-verified the whole release at
+  every gate call and exhausted its deadline before publishing the rest.
 - Check crate existence through the crates.io version API before uploading.
   Missing downloads return a CDN 403, which must not decide existence. Send an
   identifying User-Agent and wait for API/CDN propagation after upload before

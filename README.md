@@ -11,8 +11,9 @@ to each agent CLI on your own machines; hennery only drives the sessions.
 
 ## Status
 
-**Early testing.** v0.1.1 is available on GitHub Releases and Homebrew.
-The v0.1.2 release is being prepared; crates.io and GHCR follow in v0.1.2.
+**Early testing.** v0.1.2 is available on GitHub Releases and Homebrew.
+v0.1.3 is being prepared as the first complete release on GitHub Releases,
+Homebrew, crates.io and GHCR.
 Stored data may not survive an upgrade: expect things to change.
 
 What works:
@@ -115,7 +116,7 @@ permission requests still require the operator's answer in hennery.
 
 ## Verify a release installer before running it
 
-This procedure targets the 0.1.2 stable release once it is published. You need trusted, already installed
+This procedure targets the 0.1.3 stable release once it is published. You need trusted, already installed
 `curl`, Git, GnuPG, `jq`, `gh`, and either `sha256sum` or `shasum`.
 
 The release signing subkey's **full fingerprint** is
@@ -149,7 +150,7 @@ printed directory for inspection. Only the authenticated installer is executed.
 (
 set -eu
 release_fingerprint=F26C7F594DFE84D131703AFC23E5A318AE8D2861
-release_tag=v0.1.2
+release_tag=v0.1.3
 release_dir=$(mktemp -d "${TMPDIR:-/tmp}/hennery-release.XXXXXXXX") || exit 1
 printf 'Release verification directory: %s\n' "$release_dir"
 mkdir "$release_dir/keyring" || exit 1
@@ -266,16 +267,16 @@ sh "$release_dir/hennery-installer.sh"
 
 ## Installing
 
-**v0.1.1 is published on GitHub Releases and Homebrew only.** v0.1.2 is
-being prepared and will add crates.io and GHCR. After publication, all four
-channels below provide v0.1.2. Use the
+**v0.1.2 is published on GitHub Releases and Homebrew.** Its crates.io
+publication stopped after four support crates. v0.1.3 is being prepared as
+the first complete release on all four channels below. Use the
 verification procedure above for GitHub downloads:
 
 | Channel | After publication |
 |---|---|
-| Homebrew | `brew install marcinwadon/tap/hennery` (0.1.2) from the project's tap. |
-| crates.io | `cargo install hennery --version 0.1.2`; the `hennery` crate installs the binary with its embedded UI. |
-| GHCR | The collector-only image at `ghcr.io/marcinwadon/hennery` (0.1.2 release digest); agent hosts run separately on your machines. |
+| Homebrew | `brew install marcinwadon/tap/hennery` (0.1.3) from the project's tap. |
+| crates.io | `cargo install hennery --version 0.1.3`; the `hennery` crate installs the binary with its embedded UI. |
+| GHCR | The collector-only image at `ghcr.io/marcinwadon/hennery` (0.1.3 release digest); agent hosts run separately on your machines. |
 | GitHub Releases | Platform archives and `hennery-installer.sh` on the [Releases page](https://github.com/marcinwadon/hennery/releases), with `SHA256SUMS`, one combined SBOM. Attestations are stored on GitHub. Use the verification procedure above before running the installer. |
 
 The six uploaded assets are the three native archives, installer, `SHA256SUMS`
