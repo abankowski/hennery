@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import fs from 'node:fs';
 import { join } from 'node:path';
 import { sha256 } from './crate-release.mjs';
+export const CRATES_USER_AGENT='hennery-release (https://github.com/marcinwadon/hennery)';
 export function indexPath(name) {
   if(name.length===1)return `1/${name}`;
   if(name.length===2)return `2/${name}`;
@@ -25,7 +26,7 @@ export async function registry(cache) {
       const file=join(cache,sha256(Buffer.from(url)));
       if(!fs.existsSync(file)) {
         if(offline){res.writeHead(503).end('prefetch required');return;}
-        const upstream=await fetch(url,{signal:AbortSignal.timeout(120000)});
+        const upstream=await fetch(url,{headers:{'User-Agent':CRATES_USER_AGENT},signal:AbortSignal.timeout(120000)});
         if(!upstream.ok){res.writeHead(upstream.status).end();return;}
         fs.writeFileSync(file,Buffer.from(await upstream.arrayBuffer()));
       }

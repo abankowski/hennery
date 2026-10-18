@@ -33,6 +33,15 @@ jobs:
         git -C "$audit_db" rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
     - name: Query current registry advisories for every locked web dependency
       run: nix develop .#web -c pnpm --dir web audit
+    - name: Check the live crates.io existence contract (read-only)
+      run: |
+        nix develop .#release -c node --input-type=module <<'JS'
+        import assert from 'node:assert/strict';
+        import {crateExists} from './packaging/publish-crates.mjs';
+        assert.equal(await crateExists('hennery-proto','0.0.0-existence-probe-never-published'),false);
+        assert.equal(await crateExists('serde','1.0.0'),true);
+        console.log('crates.io: missing version = 404, serde/1.0.0 = 200');
+        JS
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '23 5 * * *'
   flake:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 4 * * 1'

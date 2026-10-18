@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2
+
+- v0.1.1 is published on GitHub Releases and Homebrew only; crates.io and
+  GHCR follow in v0.1.2.
+- Check crate existence through the crates.io version API before uploading.
+  Missing downloads return a CDN 403, which must not decide existence. Send an
+  identifying User-Agent and wait for API/CDN propagation after upload before
+  checking the remote digest and index.
+
 ## 0.1.1
 
 - 0.1.0 was tagged but never published: the GHCR SBOM predicate check failed

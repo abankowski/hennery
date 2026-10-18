@@ -174,6 +174,11 @@ asset. Hennery source is public at the signed tag and in GitHub's automatic Sour
 code downloads; embedded notices link exact MPL dependency sources. Preserve source availability for the applicable AGPL period. Missing
 originals cause refusal. A matching registry digest is reused; differing, yanked,
 auth-failed or ambiguous remote state stops, with no aliases or announcement.
+Existence comes from the crates.io version API: 404 permits upload, 200 requires
+downloading and matching the frozen digest; any other status refuses. All registry
+requests identify the release client. After upload, up to 48 polls spaced 10 seconds
+apart wait for API visibility and CDN bytes (403/404 can mean propagation), with
+per-request timeouts. An already-present version with unavailable bytes refuses.
 After each crate, the index must resolve the exact version/checksum before any
 consumer uploads. Partial or ambiguously successful publication is recovered by
 a newly approved publish-only retry with the same artifacts/attestations, while
