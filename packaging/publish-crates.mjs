@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { sha256, readJSON, requireThat, verifyCandidate, publishBody } from './crate-release.mjs';
-import { indexPath } from './crate-registry.mjs';
+import { indexPath, CRATES_USER_AGENT } from './crate-registry.mjs';
 
 async function registryError(response, context) {
   let errors;
@@ -12,6 +12,15 @@ async function registryError(response, context) {
   const detail=(Array.isArray(errors)?errors.flatMap(error=>typeof error?.detail==='string'?[error.detail]:[]):[])
     .join('; ').replace(/\s+/g,' ').slice(0,300);
   return new Error(`${context}: HTTP ${response.status}${detail?': '+detail:''}`);
+}
+
+export async function crateExists(name,version,fetcher=fetch) {
+  const response=await fetcher(`https://crates.io/api/v1/crates/${name}/${version}`,{
+    headers:{'User-Agent':CRATES_USER_AGENT},cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(30000),
+  });
+  if(response.status!==200 && response.status!==404)throw await registryError(response,`registry version unavailable: ${name}`);
+  await response.body?.cancel();
+  return response.status===200;
 }
 
 export async function preflight({dir,digest,gate,fetcher=fetch}) {
@@ -34,26 +43,39 @@ export async function publishFrozen({dir,digest,gate,credentials,fetcher=fetch,p
   for(const c of inventory.crates) {
     await authorize();
     const download=`https://crates.io/api/v1/crates/${c.name}/${inventory.version}/download`;
-    let remote=await fetcher(download,{signal:AbortSignal.timeout(120000)});
-    if(remote.status===404) {
+    const downloadBytes=()=>fetcher(download,{headers:{'User-Agent':CRATES_USER_AGENT},cache:'no-store',signal:AbortSignal.timeout(120000)});
+    let remote;
+    if(!await crateExists(c.name,inventory.version,fetcher)) {
       // Revalidate at the actual credentialed boundary. No repackaging or UI rebuild occurs.
       await authorize();
       const bytes=fs.readFileSync(join(dir,c.file));
       requireThat(sha256(bytes)===c.sha256,'package changed at upload boundary');
       let response;
       try {
-        response=await fetcher('https://crates.io/api/v1/crates/new',{method:'PUT',headers:{Authorization:token,'Content-Type':'application/octet-stream','User-Agent':'hennery-release-r3'},body:publishBody(c.upload,bytes),signal:AbortSignal.timeout(120000)});
+        response=await fetcher('https://crates.io/api/v1/crates/new',{method:'PUT',headers:{Authorization:token,'Content-Type':'application/octet-stream','User-Agent':CRATES_USER_AGENT},body:publishBody(c.upload,bytes),signal:AbortSignal.timeout(120000)});
       } catch {throw new Error(`ambiguous upload for ${c.name}: stop; a newly approved attempt must reconcile remote bytes`);}
       if(!response.ok)throw await registryError(response,`upload refused/ambiguous for ${c.name}; stop and reconcile in a newly approved attempt`);
-      // Fetch final remote bytes after upload. A successful response alone proves nothing.
-      remote=await fetcher(download,{signal:AbortSignal.timeout(120000)});
-    }
+      // The API and CDN can propagate separately. Never re-upload on a lagging read.
+      let unavailable=`remote package unavailable after upload: ${c.name}: HTTP 404 (version not visible)`;
+      for(let attempt=0;attempt<48;attempt++) {
+        await authorize();
+        if(await crateExists(c.name,inventory.version,fetcher)) {
+          remote=await downloadBytes();
+          if(remote.ok)break;
+          if(![403,404].includes(remote.status))throw await registryError(remote,`remote package unavailable/unverifiable: ${c.name}`);
+          unavailable=(await registryError(remote,`remote package unavailable after upload: ${c.name}`)).message;
+          remote=undefined;
+        }
+        if(attempt<47)await pause(10000);
+      }
+      requireThat(remote?.ok,unavailable);
+    }else remote=await downloadBytes();
     if(!remote.ok)throw await registryError(remote,`remote package unavailable/unverifiable: ${c.name}`);
     requireThat(sha256(Buffer.from(await remote.arrayBuffer()))===c.sha256,`remote digest differs: ${c.name}; new signed version required`);
     let resolvable=false;
     for(let attempt=0;attempt<48;attempt++) {
       await authorize();
-      const index=await fetcher(`https://index.crates.io/${indexPath(c.name)}`,{cache:'no-store',signal:AbortSignal.timeout(30000)});
+      const index=await fetcher(`https://index.crates.io/${indexPath(c.name)}`,{headers:{'User-Agent':CRATES_USER_AGENT},cache:'no-store',signal:AbortSignal.timeout(30000)});
       if(!index.ok && index.status!==404)throw await registryError(index,'registry index unavailable');
       if(index.ok) {
         const entry=(await index.text()).trim().split('\n').map(line=>JSON.parse(line)).find(e=>e.vers===inventory.version);
