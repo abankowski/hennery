@@ -64,8 +64,11 @@ class ChannelDelivery(unittest.TestCase):
         for failure in [False,True]:
             with tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp);messages=[]
+                raw=gate.canonical({'version':'0.1.0','source':{'sha':'a'*40}})
+                (root/'crates-inventory.json').write_bytes(raw)
+                value={'tag':'v0.1.0','source_sha':'a'*40,'artifacts':[{'name':'crates-inventory.json','sha256':gate.digest(raw)}]}
                 env={'RELEASE_CRATES_BOOTSTRAP_ENABLED':'true','RELEASE_CRATES_BOOTSTRAP_TOKEN':'offline-bootstrap'}
-                with patch.dict(os.environ,env),patch.object(release_run,'verify',return_value={'tag':'v0.1.0'}),patch('builtins.print',side_effect=lambda text:messages.append(text)),patch.object(channel_publish.crates_delivery,'run',side_effect=RuntimeError('upload failed') if failure else None):
+                with patch.dict(os.environ,env),patch.object(release_run,'verify',return_value=value),patch('builtins.print',side_effect=lambda text:messages.append(text)),patch.object(channel_publish.crates_delivery,'run',side_effect=RuntimeError('upload failed') if failure else None):
                     if failure:
                         with self.assertRaises(RuntimeError):channel_publish.publish(root,root,'crates')
                     else:channel_publish.publish(root,root,'crates')

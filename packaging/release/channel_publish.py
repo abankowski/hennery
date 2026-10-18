@@ -154,12 +154,12 @@ def publish(root, signatures, channel):
         if channel=='homebrew':return homebrew_upload(root,signatures,value)
         if channel=='ghcr':return ghcr_upload(root,signatures,value)
         gate.require(channel=='crates','unknown folded publisher')
+        digest=next(item['sha256'] for item in value['artifacts'] if item['name']=='crates-inventory.json')
+        raw=contract.regular(Path(root)/'crates-inventory.json');inventory=gate.strict_json(raw)
+        gate.require(gate.digest(raw)==digest and inventory['source']['sha']==value['source_sha']
+                     and 'v'+inventory['version']==value['tag'],'crates inventory source/tag/digest differs')
         token=crates_token(os.environ)
-        def authorize_crates():
-            shared_verify(root,signatures,'crates')
-            return gate.digest(contract.regular(Path(root)/'crates-inventory.json'))
-        with verifier_process.environment() as env:
-            return crates_delivery.run(root,signatures,token,authorize_crates,environment=env)
+        return crates_delivery.run(root,token,digest,environment=os.environ)
     finally:
         if bootstrap:
             print('BOOTSTRAP: revoke the bootstrap token and confirm revocation on success or abandonment; remove its release secret and disable bootstrap before any later run.')

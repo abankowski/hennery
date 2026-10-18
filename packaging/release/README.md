@@ -117,7 +117,14 @@ and crates either explicit temporary bootstrap authority or normal trusted
 publishing OIDC, with no fallback. Crate uploads retain the exact seven frozen
 tarballs and dependency order. Revoke bootstrap authority on success or
 abandonment. Verifier children receive isolated configuration and no publication
-or OIDC credentials; the crates writer revalidates through private parent pipes.
+or OIDC credentials. The crates parent verifies the full release once before
+choosing the registry token, then passes only that token and the verified inventory
+digest to the isolated uploader. Before each upload the uploader checks the local
+inventory digest and the SHA-256 of the exact crate bytes it sends. Registry polling
+does not repeat release verification. API/CDN and index propagation share an
+eight-minute window per crate (48 polls at ten seconds, including request time).
+The writer deadline derives from those same limits and seven crates: 75.5 minutes,
+including request bounds and startup/local hashing allowance.
 
 `hosting.py` wraps the pinned `gh release` commands. It creates a draft with
 `--verify-tag` and `--latest=false`, uploads missing frozen files without

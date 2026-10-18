@@ -1,0 +1,6 @@
+{
+  "poll_attempts": 48,
+  "poll_interval_ms": 10000,
+  "api_timeout_ms": 30000,
+  "transfer_timeout_ms": 120000
+}
