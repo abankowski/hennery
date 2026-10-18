@@ -36,11 +36,6 @@ jobs:
         fetch-depth: 0
         persist-credentials: false
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
         artifact-ids: ${{ needs.packaging.outputs.artifact_id }}
@@ -187,11 +182,6 @@ jobs:
         fetch-depth: 0
         persist-credentials: false
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
         artifact-ids: ${{ needs.attest.outputs.artifact_id }}
