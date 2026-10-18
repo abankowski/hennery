@@ -1,10 +1,12 @@
 """Offline transport only: no token, signature, registry or tap access."""
 import base64
 import copy
+import io
 import os
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 import gate
@@ -27,10 +29,24 @@ class Transport(unittest.TestCase):
         with patch.object(publisher.urllib.request,'build_opener',side_effect=opener),patch.dict(os.environ,{'HOMEBREW_TAP_TOKEN':'offline-fixture'}):
             publisher.tap_api('GET');publisher.tap_api('PUT',{'content':'eA==','branch':'main'})
         self.assertEqual(calls[0].full_url,'https://api.github.com'+publisher.TAP_PATH+'?ref=main')
-        self.assertNotIn('Authorization',calls[0].headers)
+        self.assertEqual(calls[0].headers['Authorization'],'Bearer offline-fixture')
         self.assertEqual(calls[1].full_url,'https://api.github.com'+publisher.TAP_PATH)
         self.assertEqual(calls[1].headers['Authorization'],'Bearer offline-fixture')
         self.assertEqual(calls[1].data,gate.canonical({'content':'eA==','branch':'main'}))
+
+    def test_http_refusal_includes_bounded_github_message_without_token(self):
+        token='offline-tap-secret'
+        for body in (gate.canonical({'message':'API rate limit exceeded: '+token+' '+('x'*600)}),b'not JSON'):
+            error=urllib.error.HTTPError('https://example.invalid',403,'Forbidden',{},io.BytesIO(body))
+            self.addCleanup(error.close)
+            opener=unittest.mock.Mock();opener.open.side_effect=error
+            with patch.object(publisher.urllib.request,'build_opener',return_value=opener),patch.dict(os.environ,{'HOMEBREW_TAP_TOKEN':token}):
+                with self.assertRaises(gate.Refused) as failure:publisher.tap_api('GET')
+            message=str(failure.exception)
+            self.assertIn('tap HTTP 403',message)
+            if body.startswith(b'{'):self.assertIn('API rate limit exceeded',message)
+            self.assertNotIn(token,message)
+            self.assertLess(len(message),400)
 
     def test_only_authoritative_get_404_is_absence(self):
         import urllib.error

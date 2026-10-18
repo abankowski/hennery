@@ -23,13 +23,14 @@ def blob_sha(raw):
 def tap_api(method='GET', data=None):
     gate.require(method in ('GET', 'PUT'), 'unsupported tap operation')
     headers = {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
-    if method == 'PUT':
-        token = os.environ.get('HOMEBREW_TAP_TOKEN')
-        gate.require(token, 'protected tap credential absent')
+    token = os.environ.get('HOMEBREW_TAP_TOKEN')
+    if token:
         headers['Authorization'] = 'Bearer ' + token
+    if method == 'PUT':
+        gate.require(token, 'protected tap credential absent')
         headers['Content-Type'] = 'application/json'
-    # Public reads do not need the tap credential. Only this one fixed path
-    # can receive it; the main-repository GH_TOKEN remains read-only.
+    # Authenticate reads when available to avoid shared-runner anonymous rate
+    # limits. Only this fixed path can receive the dedicated tap credential.
     url = 'https://api.github.com' + TAP_PATH + ('?ref=main' if method == 'GET' else '')
     request = urllib.request.Request(url, method=method, data=gate.canonical(data) if data is not None else None, headers=headers)
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -41,7 +42,17 @@ def tap_api(method='GET', data=None):
     except urllib.error.HTTPError as error:
         if error.code == 404 and method == 'GET':
             return None
-        raise gate.Refused(f'tap HTTP {error.code}; reconcile manually before retry') from error
+        detail = ''
+        try:
+            message = gate.strict_json(error.read(4096)).get('message')
+            if isinstance(message, str):
+                detail = ' '.join(message.split())
+                if token: detail = detail.replace(token, '[REDACTED]')
+                detail = detail[:300]
+        except (gate.Refused, OSError, AttributeError):
+            pass
+        raise gate.Refused(f'tap HTTP {error.code}' + (': ' + detail if detail else '')
+                           + '; reconcile manually before retry') from None
     except urllib.error.URLError as error:
         raise gate.Refused('ambiguous tap response; reconcile manually before retry') from error
 

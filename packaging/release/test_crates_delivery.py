@@ -98,6 +98,21 @@ for i in range(1,4):
         self.execute(code,lambda:calls.append(1) or 'a'*64)
         self.assertEqual(calls,[1,1,1])
 
+    def test_writer_stderr_is_bounded_drained_and_token_redacted(self):
+        code='''import os,sys
+os.write(int(os.environ['CRATES_GATE_REQUEST_FD']),b'gate-v1:1\\n')
+os.read(int(os.environ['CRATES_GATE_REPLY_FD']),128)
+sys.stderr.write('HTTP 400: A verified email address is required '+os.environ['CARGO_REGISTRY_TOKEN']+' '+('x'*131072)+' END-OF-STDERR')
+raise SystemExit(1)
+'''
+        with self.assertRaises(gate.Refused) as failure:self.execute(code)
+        message=str(failure.exception)
+        self.assertIn('HTTP 400: A verified email address is required',message)
+        self.assertIn('[REDACTED]',message)
+        self.assertNotIn('chosen-crates-token',message)
+        self.assertNotIn('END-OF-STDERR',message)
+        self.assertLess(len(message),4300)
+
     def test_refusal_details_from_parent_are_not_exposed(self):
         code="import os;os.write(int(os.environ['CRATES_GATE_REQUEST_FD']),b'gate-v1:1\\n');os.read(int(os.environ['CRATES_GATE_REPLY_FD']),128)"
         def denied():raise gate.Refused('sensitive-parent-context')

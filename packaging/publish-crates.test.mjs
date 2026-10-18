@@ -53,6 +53,28 @@ test('approval invalidated during registry reconciliation refuses the upload bou
  assert.equal(n.uploads.length,0);
 });
 import {createServer} from 'node:http';
+test('registry refusals expose bounded errors detail through real fetch at upload, download and index',async()=>{
+ for(const phase of ['upload','download','index']){
+  const f=fixture(),n=network(f,{existing:phase!=='upload'});
+  const server=createServer(async(req,res)=>{
+   const url=new URL(req.url,'http://loopback').searchParams.get('upstream');
+   if((phase==='upload' && req.method==='PUT') || (phase==='download' && url.endsWith('/download')) || (phase==='index' && url.startsWith('https://index.crates.io/'))){
+    res.writeHead(phase==='upload'?400:503,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({errors:[{detail:'A verified email address is required. '+('x'.repeat(600))+' END-OF-DETAIL'}]}));
+   }else{const response=await n.fetcher(url);res.writeHead(response.status);res.end(Buffer.from(await response.arrayBuffer()));}
+  });
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  try{
+   const origin=`http://127.0.0.1:${server.address().port}`;
+   await assert.rejects(publishFrozen({...f,gate:async()=>{},credentials:async()=>'ephemeral',fetcher:(url,options)=>fetch(origin+'/?upstream='+encodeURIComponent(url),options)}),error=>{
+    assert.match(error.message,new RegExp(`HTTP ${phase==='upload'?400:503}`));
+    assert.match(error.message,/A verified email address is required/);
+    assert.ok(!error.message.includes('END-OF-DETAIL'));
+    assert.ok(error.message.length<500);return true;
+   });
+  }finally{await new Promise(r=>server.close(r));}
+ }
+});
 test('loopback receiver gets frozen upload bytes through real fetch HTTP framing',async()=>{
  const f=fixture(),n=network(f);let received=0;
  const server=createServer(async(req,res)=>{
