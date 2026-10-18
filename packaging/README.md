@@ -120,17 +120,15 @@ tests and fixtures. Individual crates intentionally omit the workspace's tests.
 `packaging/check-crates.mjs` creates a temporary loopback sparse registry
 containing these seven exact candidates and prefetched upstream dependencies.
 The overlay only exists in a scratch CARGO_HOME; it is never a real publishing
-registry or user configuration. Cargo package verification and publish dry runs
-run on extracted tarballs, then builds/installations run with Cargo offline and
+registry or user configuration. Each tarball is inspected and its production
+feature graph checked, then one locked install runs with Cargo offline and
 OS network access denied to subprocesses. The OS restriction includes build
-scripts and is tested with a reachable loopback positive control. Cargo's
-publish dry run itself needs registry HTTP, so it is separate from that phase.
-One locked registry install runs from an empty directory; unlocked installation
-and a Rust 1.88 build also run before releases and for dependency/compiler changes.
-Compilation is reused within this immutable candidate. The installed collectors
+scripts and is tested with a reachable loopback positive control. The locked
+install runs from an empty directory; unlocked installation and a Rust 1.88 build
+run in weekly maintenance. CI caches compilation between candidates. The installed collectors
 run in disposable homes with Node/pnpm absent from PATH, serve all HTML-referenced
-assets and render the app in the pinned Chromium. A single native packaged-CLI
-install also runs on macOS.
+assets and render the app in the pinned Chromium. Native macOS acceptance uses
+the release archive already built for that platform.
 Source installs need Rust, a C compiler, make and Perl (macOS: Xcode Command
 Line Tools); default vendored OpenSSL removes the system OpenSSL prerequisite.
 

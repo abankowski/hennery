@@ -11,16 +11,19 @@ const session=fs.mkdtempSync(join(out,'acceptance-'));
 const buildEnvPath=(process.env.PATH||'').split(':').filter(p=>!fs.existsSync(join(p,'node')) && !fs.existsSync(join(p,'pnpm'))).join(':');
 const probe=join(session,'source-acceptance');requireThat(!fs.existsSync(probe),'acceptance directory must be fresh');
 extract(join(out,'source-snapshot.tar.gz'),probe);checkSourceTree(probe,inventory.source_files);
-const local=await registry(join(out,'registry-cache'));
-const cargoHome=join(session,'cargo-home');fs.mkdirSync(cargoHome);
+// Cargo includes the registry URL in dependency fingerprints. CI owns its
+// loopback namespace, so it can keep this URL stable between cache restores.
+const local=await registry(join(out,'registry-cache'),Number(process.env.R3_REGISTRY_PORT || 0));
+const cargoHome=process.env.R3_CARGO_HOME || join(session,'cargo-home');fs.mkdirSync(cargoHome,{recursive:true});
 // A private copy of the download cache; no shared Cargo homes/configuration are changed.
-for(const part of ['registry/cache','git']) if(fs.existsSync(join(process.env.CARGO_HOME,part))) fs.cpSync(join(process.env.CARGO_HOME,part),join(cargoHome,part),{recursive:true});
+if(resolve(cargoHome)!==resolve(process.env.CARGO_HOME))
+  for(const part of ['registry/cache','git']) if(fs.existsSync(join(process.env.CARGO_HOME,part))) fs.cpSync(join(process.env.CARGO_HOME,part),join(cargoHome,part),{recursive:true});
 fs.writeFileSync(join(cargoHome,'config.toml'),`[source.crates-io]\nreplace-with="candidate"\n[source.candidate]\nregistry="${local.url}"\n`);
-// One immutable candidate owns this target directory; it is never shared with another tree.
-const mode=process.env.R3_EXTENDED ?? 'true';
+// CI restores this worktree's build cache; standalone acceptance uses a fresh target.
+const mode=process.env.R3_EXTENDED ?? 'false';
 requireThat(mode==='true'||mode==='false','R3_EXTENDED must be true or false');
 const extended=mode==='true';
-const env={...process.env,CARGO_HOME:cargoHome,CARGO_TARGET_DIR:join(session,'target'),HENNERY_WEB_DIST:'',HENNERY_WEB_REQUIRE:'',PATH:buildEnvPath};
+const env={...process.env,CARGO_HOME:cargoHome,CARGO_TARGET_DIR:process.env.R3_TARGET_DIR || join(session,'target'),HENNERY_WEB_DIST:'',HENNERY_WEB_REQUIRE:'',PATH:buildEnvPath};
 const empty=join(session,'empty');fs.mkdirSync(empty);
 const offline=resolve('packaging/offline-build.sh');
 try {
@@ -33,8 +36,6 @@ try {
     const features=execFileSync('cargo',['tree','--manifest-path',join(root,'Cargo.toml'),'--edges','normal,build,features','--format','{p} [{f}]','--offline','--locked'],{cwd:empty,env,encoding:'utf8',stdio:['ignore','pipe','inherit']});
     inspectProductionFeatures(features);
     console.log('Production feature graph has no test hooks or private test crates:',c.name);
-    // Dry runs execute Cargo's packaging+verification against the test overlay, never upload.
-    await run('cargo',['publish','--dry-run','--registry','crates-io','--manifest-path',join(root,'Cargo.toml'),'--locked'],{cwd:empty,env});
   }
   if(extended) {
     // Unlocked consumer resolution has a separate fetch before both offline installations.

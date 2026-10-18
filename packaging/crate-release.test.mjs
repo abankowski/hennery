@@ -134,13 +134,23 @@ test('production dependency audit refuses active hooks and private test crates',
 
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-test('real packaged acceptance refuses active hooks before its first publish dry run', () => {
+import { registry } from './crate-registry.mjs';
+test('acceptance registry reuses its URL across fresh sessions and refuses a busy port', async () => {
+ const cache=mkdtempSync(join(tmpdir(),'r3-stable-registry-'));
+ const first=await registry(cache),url=first.url,port=Number(new URL(url.slice('sparse+'.length)).port);
+ try { await assert.rejects(registry(cache,port),{code:'EADDRINUSE'}); }
+ finally { await first.close(); }
+ const second=await registry(cache,port);
+ try { assert.equal(second.url,url);assert.equal((await fetch(url.slice('sparse+'.length)+'config.json')).status,200); }
+ finally { await second.close(); }
+});
+test('real packaged acceptance refuses active hooks before its first install', () => {
  const candidate=mkdtempSync(join(tmpdir(),'r3-feature-candidate-')),tree=sourceTree();
  const archive=join(candidate,'source-snapshot.tar.gz');
  execFileSync('tar',['-czf',archive,'-C',tree.root,'.']);
  const s={...source},i=inventoryFixture();i.source=s;i.source_files=tree.inventory;
  const home=mkdtempSync(join(tmpdir(),'r3-feature-home-')),cargoHome=join(home,'cargo');mkdirSync(cargoHome);
- const env={...process.env,HOME:home,CARGO_HOME:cargoHome};
+ const env={...process.env,HOME:home,CARGO_HOME:cargoHome,R3_CARGO_HOME:'',R3_REGISTRY_PORT:'',R3_TARGET_DIR:''};
  for(const c of i.crates){
   const parent=join(candidate,'extracted',c.name),root=join(parent,`${c.name}-${i.version}`);mkdirSync(join(root,'src'),{recursive:true});
   cpSync('LICENSE',join(root,'LICENSE'));writeFileSync(join(root,'src/lib.rs'),'pub fn ready() {}\n');
@@ -154,5 +164,5 @@ test('real packaged acceptance refuses active hooks before its first publish dry
  const result=spawnSync(process.execPath,[resolve('packaging/check-crates.mjs'),candidate],{env,encoding:'utf8',timeout:120000});
  assert.equal(result.error,undefined);assert.equal(result.status,1,result.stdout+result.stderr);
  assert.match(result.stderr,/test-only production dependency/);
- assert.doesNotMatch(result.stdout,/\+ cargo publish/);
+ assert.doesNotMatch(result.stdout,/\+ sh .*offline-build.sh cargo install/);
 });

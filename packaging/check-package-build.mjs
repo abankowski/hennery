@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { sha256,requireThat } from './crate-release.mjs';
-const directory=resolve('target/debug/build');
+const directory=resolve(process.env.R3_BUILD_SCRIPTS || 'target/debug/build');
 const candidates=fs.readdirSync(directory).filter(n=>n.startsWith('hennery-kernel-')).map(n=>join(directory,n,'build-script-build')).filter(p=>fs.existsSync(p)).sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs);
 requireThat(candidates.length>0,'build hennery-kernel before checking its build script');
 let checks=0;

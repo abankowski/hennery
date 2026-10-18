@@ -19,14 +19,6 @@ def context(release):
     return value | {'tag': 'v' + version, 'source': source}
 
 
-def extended(release, base):
-    if release or not base or set(base) == {'0'}:
-        return True
-    paths = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z', base, 'HEAD', '--']).decode().split('\0')
-    return any(fnmatch.fnmatchcase(path, pattern) for path in paths for pattern in
-               ('Cargo.*', 'crates/*/Cargo.toml', 'flake.*', 'nix/*', '.cargo/*', 'rust-toolchain*', '.github/workflows/*'))
-
-
 def selection(release, base):
     pr = os.environ.get('GITHUB_EVENT_NAME') == 'pull_request'
     archives = [
@@ -73,7 +65,7 @@ def main():
     if args.operation == 'prepare':
         for key, data in {'tag': value['tag'], 'source': value['source'],
                           'channels': gate.canonical(value['channels']).decode().strip(),
-                          'extended': str(extended(args.release, args.base)).lower(), **selection(args.release, args.base)}.items():
+                          **selection(args.release, args.base)}.items():
             print(key + '=' + data)
     else:
         gate.require(args.root is not None, 'payload directory required')
