@@ -45,9 +45,10 @@ class ChangedPaths(unittest.TestCase):
     def test_documentation_selects_only_checks_and_result(self):
         self.write('docs/nested/new design.md')
         self.commit()
-        outputs = self.select()
+        outputs = self.select(event='pull_request')
         for key in ('rust', 'macos', 'web', 'nix', 'recipes', 'audit_rust', 'audit_web'):
             self.assertEqual(outputs[key], 'false', key)
+        self.assertEqual(self.select(event='push')['nix'], 'true')
 
     def test_source_and_unknown_paths_select_all_core_jobs(self):
         for path in ('crates/hennery-view/src/new.rs', 'web/src/new.ts', 'new-build-input',
@@ -118,6 +119,23 @@ class ChangedPaths(unittest.TestCase):
         outputs = self.select()
         self.assertEqual(outputs['macos'], 'true')
         self.assertEqual(set(json.loads(outputs['recipe_matrix'])), {'ubuntu-latest', 'macos-latest'})
+
+    def test_source_only_pr_skips_the_duplicate_nix_build(self):
+        self.write('crates/hennery-view/src/new.rs')
+        self.commit()
+        pr = self.select(event='pull_request')
+        self.assertEqual(pr['rust'], 'true')
+        self.assertEqual(pr['web'], 'true')
+        self.assertEqual(pr['nix'], 'false')
+        self.assertEqual(self.select(event='push')['nix'], 'true')
+
+    def test_nix_inputs_keep_the_pr_nix_build(self):
+        for path in ('flake.nix', 'flake.lock', 'Cargo.lock', 'nix/package.nix'):
+            with self.subTest(path=path):
+                base = self.git('rev-parse', 'HEAD').strip()
+                self.write(path)
+                self.commit()
+                self.assertEqual(self.select(base, event='pull_request')['nix'], 'true')
 
 
 class PackagingSelection(unittest.TestCase):

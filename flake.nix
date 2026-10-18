@@ -70,6 +70,7 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             cargo
+            cargo-nextest
             rustc
             clippy
             rustfmt

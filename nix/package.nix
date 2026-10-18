@@ -47,14 +47,19 @@ let
     nativeBuildInputs = [ pkgs.pkg-config ];
     buildInputs = [ pkgs.openssl ] ++ lib.optionals stdenv.hostPlatform.isDarwin [ pkgs.libiconv ];
   };
-  # Every dependency of the workspace, built once and shared by the package
-  # and the checks.
-  cargoArtifacts = craneLib.buildDepsOnly common;
+  # Match the shipped package's feature graph. Tests and workspace lint run
+  # outside Nix in CI; compiling their dependencies here duplicates that work.
+  packageArgs = "--locked -p hennery --no-default-features";
+  cargoArtifacts = craneLib.buildDepsOnly (common // {
+    cargoExtraArgs = packageArgs;
+    buildPhaseCargoCommand = "cargoWithProfile build ${packageArgs}";
+    doCheck = false;
+  });
   package = craneLib.buildPackage (
     common
     // {
       inherit cargoArtifacts;
-      cargoExtraArgs = "--locked -p hennery --no-default-features";
+      cargoExtraArgs = packageArgs;
       # The web UI's build (`nix/web.nix`, plan 7e-ii-b), embedded by the
       # kernel's build script. Without it the build fails rather than embed
       # the placeholder page. The checks below build without it.

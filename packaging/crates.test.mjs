@@ -24,7 +24,8 @@ test('host includes its canonical package-local manifest and generator writes it
 });
 test('source builders opt out of default vendored OpenSSL', () => {
   assert.match(read('crates/hennery/Cargo.toml'), /default = \["vendored-openssl"\]/);
-  assert.match(read('nix/package.nix'), /cargoExtraArgs = "--locked -p hennery --no-default-features"/);
+  const phase = execFileSync('nix', ['eval', '--raw', '.#checks.x86_64-linux.package.buildPhase'], { encoding: 'utf8' });
+  assert.match(phase, /cargoWithProfile build .*--locked -p hennery --no-default-features/);
 });
 
 // Cargo's include entries use gitignore-style matching: an unanchored basename
