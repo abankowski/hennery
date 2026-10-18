@@ -6,6 +6,10 @@ name: ci
   pull_request: null
 permissions:
   contents: read
+# CI favours compile/link speed; release profiles are unchanged.
+env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_INCREMENTAL: '0'
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -74,15 +78,6 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         persist-credentials: false
-    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
-      with:
-        toolchain: stable
-        components: clippy, rustfmt
-    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-      with:
-        shared-key: native-debug
-        cache-bin: false
-        save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
@@ -91,33 +86,27 @@ jobs:
         use-gha-cache: true
         use-flakehub: false
         diagnostic-endpoint: ''
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      with:
+        shared-key: native-debug
+        cmd-format: nix develop -c {0}
+        cache-bin: false
+        cache-workspace-crates: true
     - name: The web UI
       run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build'
-    - name: OpenSSL headers (ubuntu)
-      if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
-    - name: Login shells (ubuntu)
-      if: runner.os == 'Linux'
-      run: sudo apt-get install -y zsh fish
-    - run: cargo fmt --all --check
-    - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+    - run: nix develop -c cargo fmt --all --check
+    - run: nix develop -c cargo clippy --workspace --all-targets --locked -- -D warnings
     - name: Clippy on the shipped binary (test-hooks off)
-      run: cargo clippy -p hennery --locked -- -D warnings
-    - name: Real proxy binaries for the deployment gate
-      run: |
-        nix develop -c sh >> "$GITHUB_PATH" <<'SH'
-        dirname "$(command -v caddy)"
-        dirname "$(command -v nginx)"
-        SH
+      run: nix develop -c cargo clippy -p hennery --locked -- -D warnings
     - name: Tests
-      run: sh packaging/ci-rust-tests.sh
+      run: nix develop -c sh packaging/ci-rust-tests.sh
       env:
         HENNERY_REQUIRE_SHELLS: ${{ runner.os == 'Linux' && 'bash,zsh,fish' || '' }}
         HENNERY_REQUIRE_SYSTEMD_ANALYZE: ${{ runner.os == 'Linux' && '1' || '' }}
     - name: Generated files are up to date
-      run: cargo run -p hennery-proto --bin gen --locked -- --check
+      run: nix develop -c cargo run -p hennery-proto --bin gen --locked -- --check
     - name: Generated view types are up to date
-      run: cargo run -p hennery-view --bin gen-view --locked -- --check
+      run: nix develop -c cargo run -p hennery-view --bin gen-view --locked -- --check
     needs: checks
     if: needs.checks.outputs.rust == 'true'
     timeout-minutes: 60
@@ -188,7 +177,7 @@ jobs:
         shared-key: native-debug
         cmd-format: nix develop -c {0}
         cache-bin: false
-        save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        cache-workspace-crates: true
     - name: Install
       run: nix develop -c pnpm --dir web install --frozen-lockfile
     - name: Types

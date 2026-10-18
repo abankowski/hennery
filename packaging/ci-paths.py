@@ -28,7 +28,10 @@ def classify(paths, event="push"):
         '.github/workflows/ci.yml', '.github/workflows/nix.yml',
     )) for path in paths)
     result = {name: str(value).lower() for name, value in {
-        'rust': code, 'macos': code and event != 'pull_request', 'web': code, 'nix': code or recipes,
+        'rust': code, 'macos': code and event != 'pull_request', 'web': code,
+        'nix': event != 'pull_request' or any(matches(path, (
+            'flake.nix', 'flake.lock', 'Cargo.lock', 'nix/*',
+        )) for path in paths),
         'recipes': recipes,
         'audit_rust': any(path == 'Cargo.lock' for path in paths),
         'audit_web': any(path == 'web/pnpm-lock.yaml' for path in paths),
