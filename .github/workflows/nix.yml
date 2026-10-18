@@ -21,11 +21,6 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - name: Audit the lock against a freshly fetched RustSec database
       run: |
         audit_db=$(mktemp -d "$RUNNER_TEMP/rustsec.XXXXXX")
@@ -67,6 +62,7 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
+    # Cache custom crane dependencies and the web UI; shell inputs use cache.nixos.org.
     - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
       with:
         use-gha-cache: true
@@ -125,11 +121,6 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: native-release
@@ -204,11 +195,6 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - name: Isolate acceptance and MSRV homes
       run: |
         mkdir -p "$RUNNER_TEMP/crates-home"
@@ -218,6 +204,7 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: crates-acceptance
+        save-if: ${{ github.ref == 'refs/heads/main' }}
         cmd-format: nix develop -c {0}
         workspaces: . -> target/crates-acceptance
         cache-bin: false

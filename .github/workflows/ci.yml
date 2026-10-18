@@ -41,11 +41,6 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - name: Workflow and shell lint
       run: |
         nix develop .#release -c actionlint .github/workflows/*.yml
@@ -81,14 +76,11 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
+        # Rust and web share this key; rust-cache restores by environment prefix across lock changes.
         shared-key: native-debug
+        save-if: ${{ github.ref == 'refs/heads/main' }}
         cmd-format: nix develop -c {0}
         cache-bin: false
         cache-workspace-crates: true
@@ -126,16 +118,11 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: native-debug
+        save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-bin: false
-        save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - name: The web UI
       run: nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build'
     - name: Real proxy binaries for the deployment gate
@@ -167,14 +154,10 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: native-debug
+        save-if: ${{ github.ref == 'refs/heads/main' }}
         cmd-format: nix develop -c {0}
         cache-bin: false
         cache-workspace-crates: true
@@ -214,6 +197,7 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
+    # Cache custom crane dependencies and the web UI; shell inputs use cache.nixos.org.
     - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
       with:
         use-gha-cache: true
@@ -249,17 +233,12 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ github.token }}
-      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
-        with:
-          use-gha-cache: true
-          use-flakehub: false
-          diagnostic-endpoint: ''
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: native-release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cmd-format: nix develop -c {0}
           cache-bin: false
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       # The clone is of `main`, not of this change: it checks the address
       # and the directory, and the build below runs on this checkout.
       - name: The README's clone block
@@ -302,8 +281,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: native-release-vendored
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: false
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Vendored OpenSSL build tools (ubuntu)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential perl

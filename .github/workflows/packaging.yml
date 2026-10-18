@@ -93,11 +93,6 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - id: context
       name: Authenticate release context or label unsigned PR inputs
       env:
@@ -153,14 +148,10 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: release-${{ matrix.target }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-bin: false
     - name: Native build tools
       if: runner.os == 'Linux'
@@ -243,11 +234,6 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
         name: release-inputs
@@ -265,6 +251,7 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: crates-acceptance
+        save-if: ${{ github.ref == 'refs/heads/main' }}
         cmd-format: nix develop -c {0}
         workspaces: . -> target/crates-acceptance
         cache-bin: false
@@ -313,11 +300,6 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
         pattern: candidate-*
@@ -369,11 +351,6 @@ jobs:
     - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
       with:
         github_access_token: ${{ github.token }}
-    - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39
-      with:
-        use-gha-cache: true
-        use-flakehub: false
-        diagnostic-endpoint: ''
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
         artifact-ids: ${{ needs.assemble.outputs.artifact_id }}
