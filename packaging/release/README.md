@@ -58,6 +58,13 @@ attestation of identical bytes from that signed source is acceptable. Legacy
 schema-2 alpha.3 and private schema-3 qualification directories remain readable;
 producing-run fields convey no authority.
 
+OCI provenance uses `--predicate-type https://slsa.dev/provenance/v1`. The image
+and binary SBOM attestations produced by `actions/attest-sbom` require the exact
+`--predicate-type https://spdx.dev/Document/v2.3`, also accepted by `verify.py`.
+BuildKit's retained in-toto SBOM statements use the separate unversioned
+`https://spdx.dev/Document` predicate; those are inputs to the official action,
+not its signed output.
+
 The real pinned-CLI test uses genuine alpha.3 checksums, metadata and bundle,
 with the existing Sigstore trust-root snapshot and no network or account.
 Wrong identity/source/tag/predicate and altered bytes fail. Disposable signed

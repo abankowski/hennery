@@ -67,7 +67,7 @@ def image_subjects(work,signatures):
     index=gate.strict_json(contract.regular(work/'verified.json'))
     for subject,digest in [('index',index['digest']),*index['platforms'].items()]:
         for kind in (['provenance'] if subject=='index' else ['provenance','image-sbom','binary-sbom']):
-            yield subject,kind,digest,('https://slsa.dev/provenance/v1' if kind=='provenance' else 'https://spdx.dev/Document'),signatures/f'ghcr-{subject}-{kind}.json'
+            yield subject,kind,digest,(verify.PROVENANCE if kind=='provenance' else verify.SPDX),signatures/f'ghcr-{subject}-{kind}.json'
 
 
 def check_images(root,signatures,value,work):

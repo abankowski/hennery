@@ -48,7 +48,7 @@ class ReleaseImages(ReleaseFixture,unittest.TestCase):
             channel_publish.check_images(self.candidate,signatures,value,self.work)
         self.assertEqual(len(calls),7)
         self.assertTrue(all(c[0]=='gh' and not str(c[3]).startswith('oci://') and '--signer-workflow' not in c for c in calls))
-        self.assertEqual(sum(c[c.index('--predicate-type')+1]=='https://spdx.dev/Document' for c in calls),4)
+        self.assertEqual(sum(c[c.index('--predicate-type')+1]=='https://spdx.dev/Document/v2.3' for c in calls),4)
         next(channel_publish.image_subjects(self.work,signatures))[-1].unlink()
         with patch.object(channel_publish.subprocess,'run',side_effect=crypto),self.assertRaises(gate.Refused):
             channel_publish.check_images(self.candidate,signatures,value,self.work)
