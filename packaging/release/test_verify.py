@@ -63,8 +63,9 @@ class Verification(unittest.TestCase):
 
     def test_cli_parser_requires_release_source_and_tag(self):
         args = verify.arguments(['--release-directory', str(self.root), '--bundle', 'bundle', '--source-sha', 'a' * 40,
-                                 '--tag', 'v0.1.0'])
+                                 '--tag', 'v0.1.0', '--predicate-type', 'https://spdx.dev/Document/v2.3'])
         self.assertEqual(args.tag, 'v0.1.0')
+        self.assertEqual(args.predicate_type, 'https://spdx.dev/Document/v2.3')
         self.assertFalse(hasattr(args, 'run_id'))
 
 

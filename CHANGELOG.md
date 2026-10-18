@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- 0.1.0 was tagged but never published: the GHCR SBOM predicate check failed
+  before any channel wrote a release. Verify official `actions/attest-sbom`
+  output with its exact `https://spdx.dev/Document/v2.3` predicate in both the
+  publisher and consumer CLI. The stable release includes the changes below.
+
 ## 0.1.0
 
 First stable release, building on the published alpha.3.

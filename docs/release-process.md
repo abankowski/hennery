@@ -272,8 +272,10 @@ retrying. The workflow deliberately writes no moving GitHub/image aliases.
 - After GHCR, preserve and reconcile the accepted index/platform digests. Attach
   preverified provenance and SBOM bundles with standard ORAS transport, then use
   `gh attestation verify --bundle-from-oci` on fetched immutable subjects with the
-  same tag/source/workflow policy. No canonical seven-referrer manifest set or
-  fixed creation timestamp is required. Duplicate valid attachments on retry are
+  same tag/source/workflow policy. Use `--predicate-type https://slsa.dev/provenance/v1`
+  for provenance and `--predicate-type https://spdx.dev/Document/v2.3` for official
+  `actions/attest-sbom` output (image and binary SBOMs). No canonical seven-referrer
+  manifest set or fixed creation timestamp is required. Duplicate valid attachments on retry are
   acceptable; different image digests, invalid provenance and ambiguous writes
   stop publication. Do not move aliases until every selected channel succeeds.
 

@@ -14,7 +14,9 @@ import supply
 import tag_signature
 
 PROVENANCE = 'https://slsa.dev/provenance/v1'
-SPDX = 'https://spdx.dev/Document'
+# actions/attest-sbom emits the versioned predicate; BuildKit's retained
+# in-toto statements use a separate, unversioned predicate in image.py.
+SPDX = 'https://spdx.dev/Document/v2.3'
 
 
 def attestation_command(subject, tag, source_sha, bundle=None, trusted_root=None):
