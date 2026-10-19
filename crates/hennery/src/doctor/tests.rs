@@ -1762,11 +1762,15 @@ fn adapters_start_as_the_host_starts_them_and_are_all_stopped() {
     let Some(agents) = fake_agents(dir.path()) else {
         return;
     };
+    let pinned_claude = std::fs::read_to_string(agents.entry("claude")).unwrap();
     let dirs = Dirs::by_contents(agents.host.clone(), Found::Given);
     let check3 = || line(&checked(&cx, dirs.clone(), &nothing, &agents.host), 3).clone();
     let check = check3();
     assert_eq!(check.status, Status::Ok, "{check:?}");
-    assert!(check.summary.contains("claude 0.81.0 answers"), "{check:?}");
+    assert!(
+        check.summary.contains(&format!("claude {pinned_claude} answers")),
+        "{check:?}"
+    );
     all_gone(&agents);
     for env in agents.runs("env-") {
         assert!(!env.contains("CLAUDECODE"), "{env}");
@@ -1784,7 +1788,10 @@ fn adapters_start_as_the_host_starts_them_and_are_all_stopped() {
     std::fs::write(agents.entry("claude"), "0.80.9").unwrap();
     let check = check3();
     assert_eq!(check.status, Status::Warn, "{check:?}");
-    assert!(check.summary.contains("not the pinned 0.81.0"), "{check:?}");
+    assert!(
+        check.summary.contains(&format!("not the pinned {pinned_claude}")),
+        "{check:?}"
+    );
 
     // Silent, elsewhere: a failure, within its budget.
     std::fs::write(agents.entry("claude"), "silent").unwrap();
