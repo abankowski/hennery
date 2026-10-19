@@ -673,7 +673,7 @@ fn image_echo(block: &ContentBlock) -> Option<String> {
         return None;
     };
     let digest = match base64::engine::general_purpose::STANDARD.decode(&image.data) {
-        Ok(bytes) => format!("{:x}", sha2::Sha256::digest(bytes)),
+        Ok(bytes) => hex::encode(sha2::Sha256::digest(bytes)),
         Err(_) => "undecodable".into(),
     };
     Some(format!("image:{}:{digest}\n", image.mime_type))

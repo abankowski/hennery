@@ -6,7 +6,7 @@ use hennery_kernel::{
     secret::{random_bytes, sha256_hex, unix_now},
 };
 use hennery_proto::plugin::{Excerpt, Provenance, SourceRef};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

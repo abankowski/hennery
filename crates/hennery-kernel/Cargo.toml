@@ -39,6 +39,7 @@ zeroize.workspace = true
 
 # The web UI's build is embedded by `build.rs` (plan 4b): it hashes each file.
 [build-dependencies]
+hex.workspace = true
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true

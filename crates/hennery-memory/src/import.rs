@@ -10,7 +10,7 @@ use hennery_kernel::{
     redact,
     secret::{sha256_hex, unix_now},
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use rusqlite::{OptionalExtension, params};
 use serde::{
     Deserialize, Serialize,

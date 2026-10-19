@@ -17,7 +17,7 @@
 use crate::tokens::token_hash;
 use axum::http::HeaderValue;
 use hennery_kernel::secret::random_bytes;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::sync::Arc;
 use zeroize::Zeroizing;
