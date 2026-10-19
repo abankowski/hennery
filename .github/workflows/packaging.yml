@@ -85,12 +85,12 @@ jobs:
       archive_matrix: ${{ steps.context.outputs.archive_matrix }}
       native_matrix: ${{ steps.context.outputs.native_matrix }}
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702
       with:
         github_access_token: ${{ github.token }}
     - id: context
@@ -121,7 +121,7 @@ jobs:
         sh packaging/release/advisory-materials.sh
         mkdir "$RUNNER_TEMP/package-inputs/advisories"
         cp release-materials/* "$RUNNER_TEMP/package-inputs/advisories/"
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: release-inputs
         path: ${{ runner.temp }}/package-inputs/
@@ -136,16 +136,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
       with:
         toolchain: 1.98.1
         targets: ${{ matrix.target }}
-    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702
       with:
         github_access_token: ${{ github.token }}
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
@@ -156,7 +156,7 @@ jobs:
     - name: Native build tools
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y musl-tools
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-inputs
         path: inputs
@@ -202,14 +202,14 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y skopeo
         sh packaging/test-image-registry.sh image-output/layout "$IMAGE_ARCH"
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: runner.os == 'Linux'
       with:
         name: release-image-${{ matrix.image }}
         retention-days: 90
         if-no-files-found: error
         path: image-output/
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: candidate-${{ matrix.target }}
         retention-days: 90
@@ -226,15 +226,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702
       with:
         github_access_token: ${{ github.token }}
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-inputs
         path: inputs
@@ -273,7 +273,7 @@ jobs:
         R3_TARGET_DIR: ${{ github.workspace }}/target/crates-acceptance
         R3_REGISTRY_PORT: '37401'
         R3_CARGO_HOME: ${{ runner.temp }}/r3-acceptance-cargo
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: release-crates
         retention-days: 90
@@ -292,25 +292,25 @@ jobs:
     outputs:
       artifact_id: ${{ steps.payload.outputs.artifact-id }}
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702
       with:
         github_access_token: ${{ github.token }}
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         pattern: candidate-*
         path: candidates
         merge-multiple: false
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       if: needs.crates.result == 'success'
       with:
         name: release-crates
         path: crates-flat
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         pattern: release-image-*
         path: images
@@ -323,7 +323,7 @@ jobs:
         PACKAGING_CRATES: ${{ needs.prepare.outputs.crates }}
       run: nix develop .#release -c sh packaging/release/assemble-package.sh
     - id: payload
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: release-payload-${{ github.run_id }}
         path: target/distrib/
@@ -343,15 +343,15 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.native_matrix) }}
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+    - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702
       with:
         github_access_token: ${{ github.token }}
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         artifact-ids: ${{ needs.assemble.outputs.artifact_id }}
         merge-multiple: true
@@ -360,7 +360,7 @@ jobs:
       run: sh packaging/test-installer.sh candidate
     - name: Install, smoke, upgrade, test and uninstall the existing archives through Homebrew
       run: nix develop .#release -c python3 packaging/release/homebrew_accept.py candidate "$RUNNER_TEMP/homebrew-proof"
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: homebrew-proof-${{ matrix.runner }}
         path: ${{ runner.temp }}/homebrew-proof/result.json
