@@ -14,6 +14,9 @@ updates:
   # pnpm uses the npm ecosystem. Adapter locks belong to pins-watch.
   - package-ecosystem: npm
     directory: /web
+    # Upgrade Playwright together with nixpkgs-web's browser bundle in flake.nix.
+    ignore:
+      - dependency-name: "@playwright/test"
     schedule:
       interval: weekly
     open-pull-requests-limit: 1
