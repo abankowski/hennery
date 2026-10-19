@@ -30,13 +30,13 @@ jobs:
     outputs:
       artifact_id: ${{ steps.frozen.outputs.artifact-id }}
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+    - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         artifact-ids: ${{ needs.packaging.outputs.artifact_id }}
         merge-multiple: true
@@ -44,7 +44,7 @@ jobs:
     - name: Original payload checksum closure
       run: nix develop .#release -c python3 packaging/release/release_run.py check payload
     - id: provenance
-      uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
       with:
         subject-path: payload/*
     - name: Preserve complete global bundle
@@ -61,7 +61,7 @@ jobs:
         python3 packaging/image-signing-inputs.py image-signing/layout index signing-index >> "$GITHUB_OUTPUT"
     - id: index-provenance
       if: ${{ contains(fromJSON(needs.packaging.outputs.channels), 'ghcr') }}
-      uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
       with:
         subject-name: ghcr.io/marcinwadon/hennery
         subject-digest: ${{ steps.input-index.outputs.digest }}
@@ -77,7 +77,7 @@ jobs:
         python3 packaging/image-signing-inputs.py image-signing/layout amd64 signing-amd64 >> "$GITHUB_OUTPUT"
     - id: amd64-provenance
       if: ${{ contains(fromJSON(needs.packaging.outputs.channels), 'ghcr') }}
-      uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
       with:
         subject-name: ghcr.io/marcinwadon/hennery
         subject-digest: ${{ steps.input-amd64.outputs.digest }}
@@ -88,7 +88,7 @@ jobs:
       run: cp "$BUNDLE" signatures/ghcr-amd64-provenance.json
     - id: amd64-image-sbom
       if: ${{ contains(fromJSON(needs.packaging.outputs.channels), 'ghcr') }}
-      uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b
+      uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
       with:
         subject-name: ghcr.io/marcinwadon/hennery
         subject-digest: ${{ steps.input-amd64.outputs.digest }}
@@ -100,7 +100,7 @@ jobs:
       run: cp "$BUNDLE" signatures/ghcr-amd64-image-sbom.json
     - id: amd64-binary-sbom
       if: ${{ contains(fromJSON(needs.packaging.outputs.channels), 'ghcr') }}
-      uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b
+      uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
       with:
         subject-name: ghcr.io/marcinwadon/hennery
         subject-digest: ${{ steps.input-amd64.outputs.digest }}
@@ -117,7 +117,7 @@ jobs:
         python3 packaging/image-signing-inputs.py image-signing/layout arm64 signing-arm64 >> "$GITHUB_OUTPUT"
     - id: arm64-provenance
       if: ${{ contains(fromJSON(needs.packaging.outputs.channels), 'ghcr') }}
-      uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
       with:
         subject-name: ghcr.io/marcinwadon/hennery
         subject-digest: ${{ steps.input-arm64.outputs.digest }}
@@ -128,7 +128,7 @@ jobs:
       run: cp "$BUNDLE" signatures/ghcr-arm64-provenance.json
     - id: arm64-image-sbom
       if: ${{ contains(fromJSON(needs.packaging.outputs.channels), 'ghcr') }}
-      uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b
+      uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
       with:
         subject-name: ghcr.io/marcinwadon/hennery
         subject-digest: ${{ steps.input-arm64.outputs.digest }}
@@ -140,7 +140,7 @@ jobs:
       run: cp "$BUNDLE" signatures/ghcr-arm64-image-sbom.json
     - id: arm64-binary-sbom
       if: ${{ contains(fromJSON(needs.packaging.outputs.channels), 'ghcr') }}
-      uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b
+      uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
       with:
         subject-name: ghcr.io/marcinwadon/hennery
         subject-digest: ${{ steps.input-arm64.outputs.digest }}
@@ -154,7 +154,7 @@ jobs:
       name: Exhaustive original asset digest summary
       run: nix develop .#release -c python3 packaging/release/release_run.py summary payload signatures >> "$GITHUB_STEP_SUMMARY"
     - id: frozen
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: attested-release-${{ github.run_id }}
         retention-days: 90
@@ -176,13 +176,13 @@ jobs:
       attestations: read
       id-token: write
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+    - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         artifact-ids: ${{ needs.attest.outputs.artifact_id }}
         merge-multiple: true

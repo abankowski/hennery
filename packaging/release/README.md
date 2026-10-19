@@ -148,6 +148,46 @@ run on the selected native archive builders (Linux on PRs; all three on main/tag
 already consumes the assembled archives on all three targets. There are four
 core workflows (`ci`, packaging, release, scheduled maintenance) plus `pins`.
 
+## Pinned action compatibility (2026-10-19)
+
+The action upgrade has no contract change requiring a publisher or verifier
+migration. The pinned
+[`attest-sbom` v4.1.0 wrapper](https://github.com/actions/attest-sbom/blob/c604332985a26aa8cf1bdc465b92731239ec6b9e/action.yml)
+forwards to `actions/attest` v4.1.0. Its
+[SBOM producer](https://github.com/actions/attest/blob/59d89421af93a897026c735860bf21b6eb4f7b26/src/sbom.ts)
+derives `https://spdx.dev/Document/v2.3` from `SPDX-2.3`, matching `verify.py`.
+The pinned
+[`attest-build-provenance` v4.2.2 wrapper](https://github.com/actions/attest-build-provenance/blob/4d101475d8b20a2381f78447822ac1eab6504dd8/action.yml)
+forwards to `actions/attest` v4.2.1, whose bundled SDK still produces SLSA v1
+with the source ref, commit and workflow identity consumed by the verifier.
+Both wrappers retain `bundle-path`; their producers write the SDK's Sigstore
+v0.3 DSSE bundle as newline-terminated JSON, the same media type as our genuine
+alpha.3 fixture (`application/vnd.dev.sigstore.bundle.v0.3+json`). Our consumer
+delegates bundle decoding and cryptographic verification to the pinned CLI.
+The new storage-record feature
+requires registry push, which this attester disables; no extra permission is
+needed. The SBOM wrapper is deprecated upstream; migration to `actions/attest`
+can be a separate update.
+
+[`upload-artifact` v7.0.2](https://github.com/actions/upload-artifact/blob/cf430e030ddbb5b0abf93d22962f4752f3646cd9/action.yml)
+keeps ZIP upload as the default (`archive: true`), retaining our explicit names
+and `artifact-id` output. Its new direct-file mode would ignore `name`, but is
+unused. Hidden files remain excluded, overwrite remains disabled, and extracted
+file/directory modes remain 0644/0755; executable binaries stay inside tarballs.
+[`download-artifact` v8.0.2](https://github.com/actions/download-artifact/blob/9000827ccba6bdab643e8b6fd33ac0654aef8333/src/download-artifact.ts)
+preserves named downloads and our pattern grouping. The single-artifact ID path
+change introduced in v5 is already covered by our explicit `merge-multiple:
+true`; the candidate/image patterns select multiple artifacts. v8 now fails on
+digest mismatch and still decompresses ZIPs by default. Same-run downloads use
+the Actions runtime credential; explicit token downloads retain `actions: read`.
+The [upload v7](https://github.com/actions/upload-artifact/releases/tag/v7.0.0),
+[download v8](https://github.com/actions/download-artifact/releases/tag/v8.0.0)
+and [SBOM](https://github.com/actions/attest-sbom/releases/tag/v4.1.0) and
+[provenance](https://github.com/actions/attest-build-provenance/releases/tag/v4.2.2)
+release notes were checked alongside these pinned sources.
+The actions use Node 24 on GitHub-hosted runners. Hosted signing/transport still
+requires the next authorized release; local tests cannot exercise OIDC.
+
 ## OCI and recovery
 
 Local provenance and image/binary SPDX bundles are checked against accepted
