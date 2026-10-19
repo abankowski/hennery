@@ -40,7 +40,7 @@ cli = ["node_modules/@openai/codex-"]
 
 # How a forget deletes a Codex session's thread (plan 9d decision 9):
 # `<node> <bin> app-server`, `initialize`, then `thread/delete`, with the
-# call shape read from this Codex version's source (`rust-v0.155.1`,
+# call shape read from this Codex version's source (`rust-v0.160.1`,
 # `app-server-protocol`). The generator refuses it unless the codex
 # lockfile bundles exactly `codex_version`; a bump re-reads the shape, and
 # the live check in packaging/README.md ("Pin bumps") is the operator's.

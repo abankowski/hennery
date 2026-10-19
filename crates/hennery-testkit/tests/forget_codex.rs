@@ -1,6 +1,6 @@
 //! The Codex path of a forget on the host (plan 9d decisions 9, 10, 12;
 //! B4–B6), run directly against roots of the test's own. The fake
-//! app-server (`hennery-fake-codex`) stands in for Codex 0.155.1's CLI and
+//! app-server (`hennery-fake-codex`) stands in for Codex 0.160.1's CLI and
 //! the fake adapter for codex-acp: the contract test checks the exact frames
 //! the host sends, and every answer maps to its outcome. These run on Linux
 //! CI as on macOS (R4).
@@ -94,10 +94,10 @@ impl Root {
         self.base.join("archive.log")
     }
 
-    /// The fake app-server answering as `delete` says, version 0.155.1.
+    /// The fake app-server answering as `delete` says, version 0.160.1.
     fn fake(&self, delete: FakeDelete) -> FakeCodex {
         FakeCodex {
-            version: "0.155.1".into(),
+            version: "0.160.1".into(),
             log: self.codex_log().to_str().unwrap().into(),
             delete,
             ..FakeCodex::default()
@@ -236,7 +236,7 @@ fn removed(forgotten: &Forgotten, kind: ForgetKind) -> u32 {
         .sum()
 }
 
-/// The exact frames the host sends Codex 0.155.1 (decision 9): the pinned
+/// The exact frames the host sends Codex 0.160.1 (decision 9): the pinned
 /// `initialize`, then `thread/delete` with the thread id. One JSON object
 /// per line, no `jsonrpc` field, as codex-acp sends them.
 fn pinned_frames() -> [String; 2] {
@@ -437,7 +437,7 @@ fn assert_fell_back(root: &Root, forgotten: &Forgotten, why: &str) {
 /// B5: the fallback runs when the app-server path is unavailable, and
 /// only then: no binary, a binary that does not spawn, a version the
 /// manifest pins no shape for (or no pin at all), an `initialize` that
-/// fails or ends, and a `thread/delete` this Codex does not know (0.155.1
+/// fails or ends, and a `thread/delete` this Codex does not know (0.160.1
 /// answers an unknown method `-32600 Invalid request`, and JSON-RPC's own
 /// is `-32601`).
 #[tokio::test]
