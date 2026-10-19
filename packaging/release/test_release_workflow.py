@@ -27,6 +27,9 @@ class ReleaseWorkflow(unittest.TestCase):
                     publishers.append((name, key))
                     self.assertEqual(permissions, {'contents': 'write', 'actions': 'read',
                                                    'attestations': 'read', 'id-token': 'write'})
+                elif (name, key) == ('pins-watch.yml', 'bump'):
+                    # Opens pin-bump PRs and dispatches their checks; holds no secrets.
+                    self.assertEqual(permissions, {'contents': 'write', 'pull-requests': 'write', 'actions': 'write'})
                 elif any(v == 'write' for v in permissions.values()):
                     self.assertEqual((name, key), ('release.yml', 'attest'))
                     self.assertEqual(permissions, {'contents': 'read', 'attestations': 'write', 'id-token': 'write'})

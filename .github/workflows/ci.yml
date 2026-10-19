@@ -4,6 +4,7 @@ name: ci
     branches:
     - main
   pull_request: null
+  workflow_dispatch:
 permissions:
   contents: read
 # CI favours compile/link speed; release profiles are unchanged.

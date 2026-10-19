@@ -14,12 +14,12 @@
 npm_before = "2026-10-01T00:00:00Z"
 
 [node]
-# Proposed, operator to confirm (plan 7b): the newest Node 24 LTS.
+# Operator confirmed the current pins on 2026-10-19 (plan 7b).
 version = "24.21.0"
 
 [adapters.claude]
-# Proposed, operator to confirm (plan 7b): the version the per-session MCP
-# spike measured (docs/spikes/2026-09-25-per-session-mcp.md).
+# Operator confirmed on 2026-10-19; measured in the per-session MCP
+# spike (docs/spikes/2026-09-25-per-session-mcp.md).
 package = "@agentclientprotocol/claude-agent-acp"
 version = "0.81.0"
 entry = "dist/index.js"
@@ -28,7 +28,7 @@ entry = "dist/index.js"
 cli = ["node_modules/@anthropic-ai/claude-agent-sdk-"]
 
 [adapters.codex]
-# Proposed, operator to confirm (plan 7b): the version the spike measured.
+# Operator confirmed on 2026-10-19; the version the spike measured.
 # `@zed-industries/codex-acp` is deprecated in its favour; the unscoped
 # `codex-acp` is an unrelated third party.
 package = "@agentclientprotocol/codex-acp"
