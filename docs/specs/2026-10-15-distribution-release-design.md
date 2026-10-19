@@ -47,6 +47,15 @@ with the parent before the first all-channel run; no version gate is weakened.
 
 ### Authorization and threat model
 
+**GHCR tags (operator decision, 2026-10-19):** starting with 0.1.4, after
+upload and remote attestation readback succeed, tag the exact verified index
+digest with the version and, for stable releases, `latest`. Prereleases receive
+only their version tag if GHCR is enabled for them. Read every written tag back
+against that digest. An existing matching version tag is reusable; a differing
+version tag refuses. This supersedes earlier alias-withholding rules for these
+GHCR tags. Only the remote OCI readback verifier receives the job's `GH_TOKEN`
+for GitHub authentication; it never receives registry publication credentials.
+
 The maintainer signs **source**, by creating an annotated `v<version>` tag with
 the YubiKey signing subkey `F26C7F594DFE84D131703AFC23E5A318AE8D2861`.
 Retain `tag_signature.py`: freshly fetch the tag object, require a direct commit

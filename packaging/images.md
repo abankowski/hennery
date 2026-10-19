@@ -1,9 +1,14 @@
 # Collector images (R4)
 
-No GHCR image has been published by this work. The intended package is
+The collector image is published at
 `ghcr.io/marcinwadon/hennery`, for `linux/amd64` and `linux/arm64`.
-Publication remains disabled pending independent review, platform qualification
-and maintainer approval for this channel. A merged workflow is not approval.
+The 0.1.3 image is published without tags at
+`ghcr.io/marcinwadon/hennery@sha256:48de562c392a47c0273b901330601c67d89766af6bf0f637d0fec0df441f9aad`.
+From 0.1.4 onward, pull stable releases as
+`ghcr.io/marcinwadon/hennery:<version>` (for example `:0.1.4`) or
+`ghcr.io/marcinwadon/hennery:latest`. Tags are written only after upload and
+remote attestation verification succeed. GHCR currently selects stable releases
+only; if enabled for a prerelease, it receives only its version tag.
 
 ## What runs here
 
@@ -46,10 +51,12 @@ Set your deployment's image to `ghcr.io/marcinwadon/hennery@sha256:<verified-ind
 the angle-bracket value is a placeholder, not an existing release digest.
 Use a release's immutable version tag only when selecting the digest. A base
 image security rebuild gets a new immutable revision/version and provenance;
-never overwrite an existing version tag. R4 deliberately creates no `latest`
-or minor aliases. Any future alias mechanism needs review and may advance only after all
-selected channels and both architectures and their attestations are healthy.
-Prereleases never advance moving aliases.
+never overwrite an existing version tag. Starting with 0.1.4, the publisher
+checks an existing version tag against the verified index digest and refuses
+different bytes. Stable releases update `latest` after both architectures and
+their attestations verify; prereleases never update it. No minor aliases are
+created. Pin the verified digest for deployment so later `latest` updates do
+not change the selected image.
 
 Publish the collector port on loopback, for example Docker's
 `-p 127.0.0.1:8080:8080`, behind a TLS reverse proxy with the intended
@@ -125,10 +132,16 @@ The publisher rechecks exact root/layout/bundles at each boundary, reconciles th
 remote version/digest and copies only absent content with `--preserve-digests`.
 A matching digest skips image upload. Only an authenticated structured absence
 permits a new write; differing bytes and auth/network/ambiguous responses refuse.
-Writes target immutable digests, so a version tag appearing during reconciliation
-cannot be overwritten. Pinned ORAS attaches the seven preverified bundles by
-digest, with fresh checks before each attachment, then all remote subjects verify.
-No `latest`, minor aliases or announcement is written by this implementation.
+The initial upload targets the immutable digest. Pinned ORAS attaches the seven
+preverified bundles by digest, with fresh checks before each attachment, then
+all remote subjects verify. Only this remote readback verifier receives the
+job's `GH_TOKEN` for GitHub authentication; its fresh environment excludes
+registry credentials and the GHCR publish token. The publisher then rechecks
+the version tag, reuses a matching tag or creates an absent one, and updates
+`latest` for stable releases. Skopeo preserves the verified index digest and
+all platform manifests; each written tag is read back against that exact digest.
+An existing version tag with different bytes refuses. No minor aliases or
+announcement is written.
 
 After an ambiguous successful image write or any failed bundle attachment, keep
 aliases withheld and obtain renewed approval for a publish-only retry. Reconcile

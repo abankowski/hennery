@@ -255,7 +255,10 @@ unavailable, repair the cause and use a new signed version. The final publishing
 summary records each channel step's outcome and original artifact ID even after
 failure. A failed/cancelled channel may already have written remotely; its step
 outcome is diagnostic, not proof of absence. Verify its remote state before
-retrying. The workflow deliberately writes no moving GitHub/image aliases.
+retrying. The workflow writes no moving GitHub aliases. From 0.1.4 onward,
+GHCR receives its version tag and, for stable releases, `latest` after successful
+image upload and remote attestation readback. The 0.1.3 image has no tags; use
+`ghcr.io/marcinwadon/hennery@sha256:48de562c392a47c0273b901330601c67d89766af6bf0f637d0fec0df441f9aad`.
 
 - Before immutable GitHub publication, reconcile the draft's exact asset set.
   Upload only verified missing assets; extra/different bytes refuse. If the
@@ -277,7 +280,13 @@ retrying. The workflow deliberately writes no moving GitHub/image aliases.
   `actions/attest-sbom` output (image and binary SBOMs). No canonical seven-referrer
   manifest set or fixed creation timestamp is required. Duplicate valid attachments on retry are
   acceptable; different image digests, invalid provenance and ambiguous writes
-  stop publication. Do not move aliases until every selected channel succeeds.
+  stop publication. Only the remote readback verifier receives the job's
+  `GH_TOKEN`; registry credentials and `GHCR_PUBLISH_TOKEN` remain excluded.
+  After readback succeeds, reconcile the version tag again: matching bytes are
+  reusable and differing bytes refuse. Copy the verified index digest to an
+  absent version tag, then update `latest` for a stable release. Read each
+  written tag back against that exact index digest. A prerelease receives only
+  its version tag if GHCR is enabled for it; current channel selection is stable-only.
 
 Public install, Homebrew service/PATH, crate UI/source and image runtime
 acceptance remain maintainer-owned after authorized publication. Stop services,

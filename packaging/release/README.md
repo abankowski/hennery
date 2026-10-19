@@ -134,7 +134,8 @@ stops; only an explicitly missing release permits draft creation. The wrapper
 does not implement HTTP routing, redirect authentication or pagination. Each
 write command revalidates authority and local bytes; uploads use one CLI batch.
 An interrupted batch can leave a partial draft that the next approved attempt
-reconciles. No moving GitHub/image aliases are written.
+reconciles. No moving GitHub aliases are written. Starting with 0.1.4, GHCR
+version tags and the stable-only `latest` tag follow successful image readback.
 
 Official pinned provenance/SBOM actions sign final files and OCI digests. The
 attester receives no registry credential and never pushes there; it materializes
@@ -153,7 +154,13 @@ Local provenance and image/binary SPDX bundles are checked against accepted
 index/platform manifests before registry login. Standard `oras attach` delivers
 bundles by immutable subject digest. Publisher remote readback uses the supported verifier
 with `--bundle-from-oci`, exact source/tag/workflow identity and provenance/SPDX
-predicates. Public `verify.py --image` instead retrieves provenance/SPDX
+predicates. Only that readback call receives the step's `GH_TOKEN` for GitHub
+authentication, in an isolated environment without registry publication authority.
+After all remote subjects verify, Skopeo copies the verified index digest to
+the version tag and, for stable releases, `latest`, preserving all digests.
+Matching version tags are reusable; conflicting version tags refuse. Every
+written tag is read back and hashed against the verified index digest.
+Public `verify.py --image` instead retrieves provenance/SPDX
 bundles by image digest from GitHub, with the same signed-tag/source constraints;
 private qualification also binds the image to the accepted native binary inventory.
 A deterministic seven-referrer layout and fixed timestamps are not
@@ -161,8 +168,8 @@ required; duplicate valid attachments on retry are acceptable.
 
 Retry only publication with renewed environment approval and original artifact
 IDs/bytes/bundles. Identical remote bytes are reusable; only missing bytes may
-upload. Different or ambiguous state stops, and moving aliases wait for all
-channels. Missing originals or a conflicting/incomplete immutable release require
+upload. Different or ambiguous state stops; GHCR tags wait for successful OCI
+upload and readback. Missing originals or a conflicting/incomplete immutable release require
 a new signed version. See the runbook for per-channel partial-release recovery.
 
 Local fixtures cannot prove hosted OIDC, protected approvals, immutable-release
