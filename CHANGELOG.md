@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4
+
+- Managed adapters: Node 24.22.0, claude-agent-acp 0.93.0 and codex-acp 2.2.2
+  with bundled Codex 0.160.1. New picker models: Codex gpt-6.1-sol, Claude
+  Sonnet 5.5 and Haiku 5.5.
+- GHCR images now tagged `:<version>` and `:latest` (#192).
+- crates.io trusted publishing through OIDC, with no long-lived token.
+- Faster CI and releases (#179–#183).
+- Automatic upstream watch (pins-watch) and Dependabot (#184, #185).
+- Dependency updates (#186, #187, #189).
+
 ## 0.1.3
 
 - First complete release on all four channels: GitHub Releases, Homebrew,
