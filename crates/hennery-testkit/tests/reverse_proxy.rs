@@ -215,6 +215,7 @@ async fn real_proxy_two_client_budgets_and_backend_origin_rules() {
 }
 
 async fn streaming_and_reload(kind: &str) {
+    const IDLE_TIMEOUT: Duration = Duration::from_secs(8);
     let root = tempfile::tempdir().unwrap();
     let router = Router::new()
         .route(
@@ -248,7 +249,24 @@ async fn streaming_and_reload(kind: &str) {
         .route("/mcp/fixture", post(stream));
     let (addr, task) = backend(router).await;
     let ca = TestCa::new();
-    let mut proxy = RecipeProxy::start(kind, addr, &ca, root.path()).await;
+    let mut proxy = RecipeProxy::start_with_idle_timeout(kind, addr, &ca, root.path(), IDLE_TIMEOUT).await;
+    let config =
+        std::fs::read_to_string(
+            root.path()
+                .join(kind)
+                .join(if kind == "caddy" { "Caddyfile" } else { "nginx.conf" }),
+        )
+        .unwrap();
+    for directive in if kind == "caddy" {
+        &["keepalive"][..]
+    } else {
+        &["proxy_read_timeout", "proxy_send_timeout"][..]
+    } {
+        assert!(
+            config.contains(&format!("{directive} {}s", IDLE_TIMEOUT.as_secs())),
+            "{config}"
+        );
+    }
     for path in ["/api/stream/fixture", "/mcp/fixture"] {
         let req = client(&ca).request(
             if path.starts_with("/mcp") {
@@ -293,9 +311,12 @@ async fn streaming_and_reload(kind: &str) {
             .into_data(),
         large
     );
-    // Run beyond both recipes' 120s idle timeout, with ping/pong traffic.
+    // The same nine heartbeats span more than the configured idle duration.
+    // nginx needs pong traffic to renew its read timeout; Caddy has no absolute
+    // WebSocket lifetime (its keepalive controls only the upstream idle pool).
+    let started = tokio::time::Instant::now();
     for _ in 0..9 {
-        tokio::time::sleep(Duration::from_secs(15)).await;
+        tokio::time::sleep(IDLE_TIMEOUT / 8).await;
         ws.send(tokio_tungstenite::tungstenite::Message::Ping(vec![7].into()))
             .await
             .unwrap();
@@ -308,6 +329,7 @@ async fn streaming_and_reload(kind: &str) {
             tokio_tungstenite::tungstenite::Message::Pong(_)
         ));
     }
+    assert!(started.elapsed() > IDLE_TIMEOUT);
     proxy.renew_and_reload(&ca).await;
     let _ = ws.close(None).await;
     let (mut reconnected, _) = transport
@@ -368,6 +390,8 @@ fn recipe_policy_disables_buffering_post_retries_and_access_logging() {
         "proxy_next_upstream off;",
         "access_log off;",
         "gzip off;",
+        "proxy_read_timeout 120s;",
+        "proxy_send_timeout 120s;",
         "limit_req_zone $binary_remote_addr zone=requests:10m rate=100r/s;",
         "limit_req zone=requests burst=200 nodelay;",
     ] {
@@ -379,7 +403,7 @@ fn recipe_policy_disables_buffering_post_retries_and_access_logging() {
     }
     let caddy = std::fs::read_to_string(root.join("Caddyfile")).unwrap();
     let directives: Vec<_> = caddy.lines().map(str::trim).collect();
-    for required in ["flush_interval -1", "lb_retries 0", "versions 1.1"] {
+    for required in ["flush_interval -1", "lb_retries 0", "versions 1.1", "keepalive 120s"] {
         assert_eq!(
             directives.iter().filter(|line| **line == required).count(),
             1,

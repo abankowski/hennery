@@ -12,7 +12,11 @@ The collector still enforces each route's body limits and 32 MiB WSS messages.
 Choose [Caddyfile](Caddyfile) or [nginx.conf](nginx.conf). These exact files
 are executed by `hennery-testkit/tests/reverse_proxy.rs` and the CLI deployment
 and README tests, using disposable CA/leaf certificates and loopback ports.
-All replacements are explicit placeholders, never changes to security rules:
+Replacements use the explicit placeholders below. The heartbeat/renewal tests
+also scale only the fixture's idle durations from 120 s to 8 s, retaining nine
+ping/pong rounds past that duration. The recipe policy test pins the production
+durations. Caddy's `keepalive` governs idle upstream connections; nginx's
+read/send timeouts also cover upgraded WebSockets.
 
 | Placeholder | Deployment value |
 |---|---|
@@ -71,8 +75,9 @@ suite, `proxy_attribution` and `reverse_proxy` testkit suites, and the binary's
 its Linux/macOS Rust jobs; unavailable binaries fail tests, never silently skip.
 These gates require overwritten duplicates, two separate login/enrollment
 budgets and client-specific success clearing, preserved nonce/Origin, 32 MiB
-frames, ping/pong traffic past 120 seconds, SSE/MCP chunks before stream end,
-certificate reload and reconnect, and direct backend/spoof refusal. CLI checks
+frames, ping/pong traffic past the fixture's configured idle duration, SSE/MCP
+chunks before stream end, certificate reload and reconnect, and direct
+backend/spoof refusal. CLI checks
 lose committed replies through both proxies (reset, 502, 504, truncated and
 malformed success), restart join/run/up/doctor without a second POST/key, reject
 plaintext redirects/overrides with zero hello, and retry a visible transport

@@ -176,7 +176,20 @@ impl RecipeProxy {
         command
     }
     pub async fn start(kind: &str, backend: SocketAddr, ca: &TestCa, root: &Path) -> Self {
+        Self::start_with_idle_timeout(kind, backend, ca, root, Duration::from_secs(120)).await
+    }
+    /// Scale only the recipe's idle durations for the long-running heartbeat
+    /// check. Caddy's keepalive is for pooled upstream connections; nginx's
+    /// read/send timeouts also apply to upgraded WebSocket connections.
+    pub async fn start_with_idle_timeout(
+        kind: &str,
+        backend: SocketAddr,
+        ca: &TestCa,
+        root: &Path,
+        idle_timeout: Duration,
+    ) -> Self {
         assert!(matches!(kind, "caddy" | "nginx"));
+        assert!(!idle_timeout.is_zero() && idle_timeout.subsec_nanos() == 0);
         let root = root.join(kind);
         std::fs::create_dir_all(root.join("home")).unwrap();
         let version = Self::command(kind, &root)
@@ -209,6 +222,15 @@ impl RecipeProxy {
             config = config.replace(placeholder, &value);
         }
         assert!(!config.contains('@'), "unsubstituted recipe placeholder");
+        for directive in if kind == "caddy" {
+            &["keepalive"][..]
+        } else {
+            &["proxy_read_timeout", "proxy_send_timeout"][..]
+        } {
+            let shipped = format!("{directive} 120s");
+            assert_eq!(config.matches(&shipped).count(), 1, "recipe idle duration changed");
+            config = config.replace(&shipped, &format!("{directive} {}s", idle_timeout.as_secs()));
+        }
         let file = root.join(if kind == "caddy" { "Caddyfile" } else { "nginx.conf" });
         std::fs::write(&file, config).unwrap();
         let mut validate = Self::command(kind, &root);

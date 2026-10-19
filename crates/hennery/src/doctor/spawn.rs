@@ -19,7 +19,13 @@ use std::time::{Duration, Instant};
 pub const MAX_OUTPUT: u64 = 4096;
 
 /// How long an adapter has to answer `initialize` (distribution §7, check 3).
+#[cfg(not(test))]
 pub const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(20);
+
+// Unit fixtures deliberately stay silent. Exercise the same real timeout and
+// process-group cleanup without waiting out the shipping first-run budget.
+#[cfg(test)]
+pub const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How long `auth status` / `login status`, or a CLI's `--version`, may
 /// take (checks 4, 13, 17). A CLI's first run after an install can wait

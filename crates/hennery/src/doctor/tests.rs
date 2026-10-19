@@ -1799,8 +1799,9 @@ fn adapters_start_as_the_host_starts_them_and_are_all_stopped() {
     let check = check3();
     assert_eq!(check.status, Status::Fail, "{check:?}");
     assert!(check.summary.contains("did not answer `initialize`"), "{check:?}");
+    assert!(started.elapsed() >= spawn::INITIALIZE_TIMEOUT);
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(40),
+        started.elapsed() < std::time::Duration::from_secs(10),
         "{:?}",
         started.elapsed()
     );
@@ -1812,12 +1813,13 @@ fn adapters_start_as_the_host_starts_them_and_are_all_stopped() {
     let check = line(&checked(&mac, dirs.clone(), &nothing, &agents.host), 3).clone();
     assert_eq!(check.status, Status::Warn, "{check:?}");
     assert!(check.summary.contains("did not answer `initialize`"), "{check:?}");
+    assert!(started.elapsed() >= spawn::INITIALIZE_TIMEOUT);
     assert!(
         check.summary.contains("macOS checks a newly written program"),
         "{check:?}"
     );
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(40),
+        started.elapsed() < std::time::Duration::from_secs(10),
         "{:?}",
         started.elapsed()
     );
