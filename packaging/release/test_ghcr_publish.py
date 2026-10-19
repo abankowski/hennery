@@ -73,13 +73,15 @@ class GHCRPublish(unittest.TestCase):
                'GHCR_PUBLISH_TOKEN': 'registry-only', 'GHCR_PUBLISH_USER': 'fixture',
                'ACTIONS_ID_TOKEN_REQUEST_TOKEN': 'oidc-only'}
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, env), \
-                patch.object(channel_publish, 'image_helper', return_value=SimpleNamespace(inspect_release=lambda *a: self.index)), \
-                patch.object(channel_publish, 'check_images'), patch.object(channel_publish, 'shared_verify', return_value=value), \
+                patch.object(channel_publish, 'materialize_image', return_value=self.index), \
+                patch.object(channel_publish, 'check_images', side_effect=AssertionError('repeated image verification')), \
                 patch.object(channel_publish, 'registry_helper', return_value=SimpleNamespace(reconcile=reconcile)), \
                 patch.object(channel_publish, 'image_subjects', side_effect=lambda *a: iter(subjects)), \
                 patch.object(channel_publish, 'attach_bundle', side_effect=lambda *a: self.events.append(('attach', a[0]))), \
                 patch('subprocess.run', side_effect=processes):
-            return channel_publish.ghcr_upload(Path(tmp), Path(tmp), value)
+            (Path(tmp)/'unused-bundle').write_bytes(b'changed' if failure=='bundle-changed' else b'bundle')
+            subjects=[(*s[:-1],Path(tmp)/'unused-bundle') for s in subjects]
+            return channel_publish.ghcr_upload(Path(tmp), Path(tmp), value, {'unused-bundle':gate.digest(b'bundle')})
 
     def test_stable_tags_follow_all_remote_readbacks_and_are_read_back_by_digest(self):
         self.assertEqual(self.publish(), {'state': 'published', 'digest': self.digest})
@@ -109,6 +111,10 @@ class GHCRPublish(unittest.TestCase):
     def test_failed_remote_verification_withholds_tags(self):
         with self.assertRaises(subprocess.CalledProcessError): self.publish(failure='verify')
         self.assertFalse(any(event == 'tag' for event, _ in self.events))
+
+    def test_changed_bundle_is_refused_before_attachment(self):
+        with self.assertRaises(gate.Refused): self.publish(failure='bundle-changed')
+        self.assertFalse(any(event in ('attach','tag') for event, _ in self.events))
 
     def test_failed_version_tag_readback_withholds_latest(self):
         with self.assertRaises(gate.Refused): self.publish(failure='readback')

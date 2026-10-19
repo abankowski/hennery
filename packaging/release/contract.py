@@ -112,6 +112,14 @@ def load(root):
                                   for name, digest in entries.items()]}
 
 
+def frozen_file(root, metadata, name):
+    """Cheap send-time check against the manifest verified earlier in this job."""
+    entry = next(item for item in metadata['artifacts'] if item['name'] == name)
+    raw = regular(Path(root) / name)
+    gate.require(gate.digest(raw) == entry['sha256'], 'frozen release file changed: ' + name)
+    return raw
+
+
 def verify(root, tag, source_sha, bundle, trusted_root=None):
     import tag_signature
     root = Path(root)

@@ -105,8 +105,8 @@ elif 'verify-tag' in sys.argv: print({'[GNUPG:] VALIDSIG '+tag_signature.FINGERP
         def parent(*args):
             self.assertEqual(os.environ['GH_TOKEN'],'write-canary')
             contract.verify(payload,'v0.1.0','a'*40,self.root/'bundle')
-        with patch.dict(os.environ,self.bad),patch.object(tag_signature,'verify'),patch('release_run.verify',side_effect=parent):
-            channel_publish.shared_verify(payload,self.root,'github');self.assert_clean()
+        with patch.dict(os.environ,self.bad),patch.object(tag_signature,'verify'):
+            parent(payload,self.root,'github');self.assert_clean()
 
     def test_folded_image_verifier_children_are_credential_free(self):
         work=self.root/'work';blobs=work/'layout/blobs/sha256';blobs.mkdir(parents=True)

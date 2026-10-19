@@ -88,23 +88,42 @@ def require_public(root,signatures,metadata):
     hosting.require_public(root,signatures,metadata)
 
 
-def verify(root,signatures,channel='github',public=False):
+def verify(root,signatures):
     value=contract.load(root)
     publication_context(value)
-    if channel == 'github':
-        gate.require(all(os.environ.get('RELEASE_' + c.upper() + '_ENABLED') == 'true'
-                         for c in value['channels']), 'a selected publication channel is disabled')
-    gate.require(channel in value['channels'],'channel is not selected')
-    if channel!='github':
-        gate.require(os.environ.get('RELEASE_'+channel.upper()+'_ENABLED')=='true','channel publication is disabled')
+    gate.require(all(os.environ.get('RELEASE_' + c.upper() + '_ENABLED') == 'true'
+                     for c in value['channels']), 'a selected publication channel is disabled')
     contract.verify(root,value['tag'],os.environ['GITHUB_SHA'],signatures/contract.BUNDLE)
     supply.require_contract(root,value['channels'],value['targets'],value['tag'])
     supply.verify_binary_inventory(value,root)
     if 'ghcr' in value['channels']:
         import channel_publish
         channel_publish.verify_images(root,signatures,value)
-    if public or channel!='github':require_public(root,signatures,value)
     return value
+
+
+def signature_hashes(signatures):
+    return {p.name: gate.digest(contract.regular(p)) for p in Path(signatures).iterdir()}
+
+
+def verified_manifest(root, signatures):
+    """Run the full verifier once and retain its local send-time digest inputs."""
+    before = signature_hashes(signatures)
+    value = verify(root, signatures)
+    gate.require(signature_hashes(signatures) == before, 'attestation sidecars changed during verification')
+    return {'metadata': value, 'signatures': before}
+
+
+def load_verified(root, path, channel):
+    # This is a job-local handoff, not reusable publication authority. The
+    # workflow orders every writer after its single successful verification.
+    manifest = gate.strict_json(contract.regular(path))
+    value = manifest['metadata']
+    publication_context(value)
+    gate.require(channel in value['channels'] and os.environ.get('RELEASE_' + channel.upper() + '_ENABLED') == 'true',
+                 'channel is not selected or enabled')
+    contract.frozen_file(root, value, contract.METADATA)
+    return manifest
 
 
 def summary(root,signatures):
@@ -126,7 +145,10 @@ def main():
     parser.add_argument('other',nargs='?',type=Path)
     parser.add_argument('channel',nargs='?',choices=sorted(gate.CHANNELS))
     parser.add_argument('--outputs',type=Path)
+    parser.add_argument('--verified',type=Path,help='job-local manifest written by verify and required by every writer')
     args=parser.parse_args()
+    if args.operation in ('verify','publish','channel') and args.verified is None:
+        parser.error(args.operation+' requires --verified')
     if args.operation=='configure':
         value=configuration();print('channels='+gate.canonical(value['channels']).decode().strip());print('channels_csv='+','.join(value['channels']));print('tag_object='+value['tag_object'])
     elif args.operation=='freeze':freeze(args.root)
@@ -134,15 +156,17 @@ def main():
     elif args.operation=='summary':summary(args.root,args.other)
     elif args.operation=='image-inputs':image_inputs(args.root,args.other)
     elif args.operation=='verify':
-        value=verify(args.root,args.other,args.channel)
+        manifest=verified_manifest(args.root,args.other)
+        args.verified.write_bytes(gate.canonical(manifest))
+        value=manifest['metadata']
         if args.outputs:
             with args.outputs.open('a') as output:output.write('channels='+gate.canonical(value['channels']).decode())
     elif args.operation=='publish':
-        result=hosting.release(args.root,args.other,lambda:verify(args.root,args.other))
+        result=hosting.release(args.root,args.other,load_verified(args.root,args.verified,'github'))
         print(gate.canonical(result).decode(),end='')
     else:
         import channel_publish
-        channel_publish.publish(args.root,args.other,args.channel)
+        channel_publish.publish(args.root,args.other,args.channel,load_verified(args.root,args.verified,args.channel))
 
 
 if __name__=='__main__':

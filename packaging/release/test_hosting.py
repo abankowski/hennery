@@ -76,6 +76,10 @@ class Hosting(unittest.TestCase):
         (self.root / assets.PUBLIC_CHECKSUMS).write_text(''.join(
             gate.digest((self.root / name).read_bytes()) + '  ' + name + '\n'
             for name in assets.names(self.metadata['targets'])))
+        self.verified = {'metadata': self.metadata | {'artifacts': [
+            {'name': p.name, 'sha256': gate.digest(p.read_bytes())}
+            for p in self.root.iterdir() if p.name != contract.CHECKSUMS]},
+            'signatures': release_run.signature_hashes(self.signatures)}
         self.remote, self.assets, self.writes, self.fault = None, {}, [], None
         self.server.case = self
         self.real_run = subprocess.run
@@ -115,7 +119,8 @@ class Hosting(unittest.TestCase):
         return self.metadata
 
     def publish(self):
-        return hosting.release(self.root, self.signatures, self.authorize)
+        self.authorize()
+        return hosting.release(self.root, self.signatures, self.verified)
 
     def record(self, draft=True, immutable=False):
         return {'id': 7, 'node_id': 'RE_fixture', 'tag_name': self.metadata['tag'], 'name': self.metadata['tag'],
@@ -200,20 +205,21 @@ class Hosting(unittest.TestCase):
         with self.assertRaises(gate.Refused): self.publish()
         self.assertEqual(self.writes, [])
 
-    def test_byte_change_after_verification_prevents_first_write(self):
-        calls = 0
-
-        def authorize():
-            nonlocal calls
-            metadata = self.authorize()
-            calls += 1
-            if calls == 2:
-                with (self.signatures / contract.BUNDLE).open('ab') as bundle:
-                    bundle.write(b'changed after verification')
-            return metadata
-
+    def test_changed_public_asset_and_checksums_refuse_verified_digest(self):
+        (self.root / 'hennery-installer.sh').write_bytes(b'changed installer')
+        (self.root / assets.PUBLIC_CHECKSUMS).write_text(''.join(
+            gate.digest((self.root / name).read_bytes()) + '  ' + name + '\n'
+            for name in assets.names(self.metadata['targets'])))
         with self.assertRaises(gate.Refused):
-            hosting.release(self.root, self.signatures, authorize)
+            hosting.release(self.root, self.signatures, self.verified)
+        self.assertEqual(self.writes, [])
+
+    def test_byte_change_after_verification_prevents_first_write(self):
+        self.authorize()
+        with (self.signatures / contract.BUNDLE).open('ab') as bundle:
+            bundle.write(b'changed after verification')
+        with self.assertRaises(gate.Refused):
+            hosting.release(self.root, self.signatures, self.verified)
         self.assertEqual(self.writes, [])
 
     def test_missing_or_unsafe_local_sidecar_never_writes(self):

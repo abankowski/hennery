@@ -1,17 +1,15 @@
-"""Folded channel delivery; credentials are read only after the shared verifier."""
+"""Deliver the job's verified release, checking frozen bytes at each send."""
 import base64
 import importlib.util
 import os
 from pathlib import Path
 import re
 import subprocess
-import sys
 import tempfile
 
 import contract
 import crates_delivery
 import gate
-import homebrew
 import homebrew_publish as tap
 import verifier_process
 import verify
@@ -19,12 +17,6 @@ import verify
 ROOT=Path(__file__).resolve().parents[2]
 SECRETS=('HOMEBREW_TAP_TOKEN','GHCR_PUBLISH_TOKEN','CARGO_REGISTRY_TOKEN','RELEASE_CRATES_BOOTSTRAP_TOKEN')
 
-
-def shared_verify(root,signatures,channel):
-    import release_run
-    # Authenticated API transport stays in this parent; verifier children use
-    # verifier_process's credential-free allow-list without mutating os.environ.
-    return release_run.verify(root,signatures,channel)
 
 def crates_token(environment):
     bootstrap=environment.get('RELEASE_CRATES_BOOTSTRAP_TOKEN')
@@ -38,7 +30,7 @@ def crates_token(environment):
 
 def homebrew_upload(root,signatures,value):
     gate.require(re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',value['tag']),'Homebrew publication requires stable version')
-    frozen=homebrew.check(root,value['tag'],value['targets'])
+    frozen=contract.frozen_file(root,value,'hennery.rb')
     previous=tap.tap_api('GET')
     payload={'message':'chore(formula): release hennery '+value['tag'],'branch':'main',
              'content':base64.b64encode(frozen).decode(),
@@ -48,8 +40,7 @@ def homebrew_upload(root,signatures,value):
         if raw==frozen:return {'state':'already-present','sha':previous['sha']}
         gate.require(tap.version(raw)<tap.version(frozen),'tap same-version conflict or downgrade refused')
         payload['sha']=previous['sha']
-    current=shared_verify(root,signatures,'homebrew')
-    gate.require(current==value and homebrew.check(root,current['tag'],current['targets'])==frozen,'formula changed at write boundary')
+    gate.require(contract.frozen_file(root,value,'hennery.rb')==frozen,'formula changed at write boundary')
     result=tap.tap_api('PUT',payload)
     gate.require(isinstance(result,dict) and result.get('content',{}).get('sha')==tap.blob_sha(frozen)
                  and re.fullmatch('[0-9a-f]{40}',result.get('commit',{}).get('sha','')),'tap write unconfirmed; reconcile on retry')
@@ -90,12 +81,20 @@ def verify_images(root,signatures,value):
         return check_images(root,signatures,value,work)
 
 
-def ghcr_upload(root,signatures,value):
+def materialize_image(root, work, value):
+    helper=image_helper()
+    files=helper.tar_files(contract.frozen_file(root,value,'ghcr-oci-layout.tar'))
+    helper.materialize_layout(work/'layout',files)
+    index=gate.strict_json(contract.frozen_file(root,value,'ghcr-index.json'))
+    (work/'verified.json').write_bytes(gate.canonical(index))
+    return index
+
+
+def ghcr_upload(root,signatures,value,signature_hashes):
     with tempfile.TemporaryDirectory(prefix='release-ghcr-') as tmp,verifier_process.environment() as transport:
-        work=Path(tmp)/'image';index=image_helper().inspect_release(root,work,value)
-        check_images(root,signatures,value,work)
-        # No credential is read or registry contacted before all local subjects
-        # and their exact-tag/source provenance have verified.
+        work=Path(tmp)/'image';index=materialize_image(root,work,value)
+        # The first workflow step verified the full OCI closure and provenance;
+        # materialize only that digest-checked frozen archive for transport.
         token=os.environ.get('GHCR_PUBLISH_TOKEN');user=os.environ.get('GHCR_PUBLISH_USER','')
         gate.require(token and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]*',user),'dedicated GHCR credential/user missing')
         auth=Path(tmp)/'config.json'
@@ -110,16 +109,14 @@ def ghcr_upload(root,signatures,value):
         exists=remote.reconcile(version,digest,auth)==0
         if not exists:exists=remote.reconcile(digest,digest,auth)==0
         if not exists:
-            shared_verify(root,signatures,'ghcr');check_images(root,signatures,value,work)
-            # Reconcile again after a potentially slow cryptographic boundary.
-            if remote.reconcile(version,digest,auth)!=0 and remote.reconcile(digest,digest,auth)!=0:
-                subprocess.run(['skopeo','copy','--all','--preserve-digests','--authfile',str(auth),
-                                'oci:'+str(work/'layout'),'docker://ghcr.io/marcinwadon/hennery@'+digest],check=True,env=registry_env)
+            subprocess.run(['skopeo','copy','--all','--preserve-digests','--authfile',str(auth),
+                            'oci:'+str(work/'layout'),'docker://ghcr.io/marcinwadon/hennery@'+digest],check=True,env=registry_env)
             gate.require(remote.reconcile(digest,digest,auth)==0,'GHCR upload ambiguous; stop and reconcile')
         # Standard OCI attachments may duplicate valid bundles on retry. Their
         # content-addressed image subjects must still match the accepted digest.
         for _, _, subject, predicate, bundle in image_subjects(work, signatures):
-            shared_verify(root, signatures, 'ghcr')
+            gate.require(gate.digest(contract.regular(bundle))==signature_hashes[bundle.name],
+                         'frozen image attestation changed: '+bundle.name)
             attach_bundle(subject, predicate, bundle, auth, registry_env)
         # Fetch through the supported verifier, rather than matching a canonical
         # seven-referrer layout. Crypto children never inherit registry authority.
@@ -160,15 +157,15 @@ def registry_helper():
     return remote
 
 
-def publish(root, signatures, channel):
+def publish(root, signatures, channel, verified):
     bootstrap=channel=='crates' and os.environ.get('RELEASE_CRATES_BOOTSTRAP_ENABLED')=='true'
     try:
-        value=shared_verify(root,signatures,channel)
+        value=verified['metadata']
         if channel=='homebrew':return homebrew_upload(root,signatures,value)
-        if channel=='ghcr':return ghcr_upload(root,signatures,value)
+        if channel=='ghcr':return ghcr_upload(root,signatures,value,verified['signatures'])
         gate.require(channel=='crates','unknown folded publisher')
         digest=next(item['sha256'] for item in value['artifacts'] if item['name']=='crates-inventory.json')
-        raw=contract.regular(Path(root)/'crates-inventory.json');inventory=gate.strict_json(raw)
+        raw=contract.frozen_file(root,value,'crates-inventory.json');inventory=gate.strict_json(raw)
         gate.require(gate.digest(raw)==digest and inventory['source']['sha']==value['source_sha']
                      and 'v'+inventory['version']==value['tag'],'crates inventory source/tag/digest differs')
         token=crates_token(os.environ)

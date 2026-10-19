@@ -128,11 +128,11 @@ if(error)process.exitCode=1;'''
             stack.enter_context(patch('channel_publish.verify_images'))
             stack.enter_context(patch.object(supply,'require_contract',return_value=None))
             stack.enter_context(patch.object(supply,'verify_binary_inventory',return_value=None))
-            stack.enter_context(patch.object(release_run,'require_public',side_effect=lambda *a:(root/'public-checked').touch()))
             stack.enter_context(patch.object(contract.subprocess,'run',side_effect=crypto))
             try:
                 with patch.dict(os.environ,{'CARGO_REGISTRY_TOKEN':'offline-chosen-crates-token'}):
-                    channel_publish.publish(payload,signatures,'crates')
+                    verified=release_run.verified_manifest(payload,signatures)
+                    channel_publish.publish(payload,signatures,'crates',verified)
             except Exception as failure:parenterror=type(failure).__name__
         result=json.loads(resultfile.read_text()) if resultfile.exists() else {'credentials':int((root/'credential-read').read_text()) if (root/'credential-read').exists() else 0,'uploads':0,'error':parenterror,'completed':[]}
         if parenterror:result['error']=result['error'] or parenterror
@@ -141,7 +141,7 @@ if(error)process.exitCode=1;'''
     def test_authenticated_global_bytes_reach_credentials_through_real_adapter(self):
         result,root,calls=self.run_publish('valid')
         self.assertEqual((result['credentials'],result['uploads'],result['error']),(1,7,''))
-        self.assertEqual(len(result['completed']),7);self.assertTrue((root/'public-checked').is_file())
+        self.assertEqual(len(result['completed']),7)
         self.assertEqual(len(calls),1,'full release verification must run once per publication')
 
     def test_each_authority_failure_prevents_credentials_and_uploads(self):

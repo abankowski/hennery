@@ -199,15 +199,12 @@ jobs:
         RELEASE_CRATES_ENABLED: ${{ vars.RELEASE_CRATES_ENABLED }}
         RELEASE_GHCR_ENABLED: ${{ vars.RELEASE_GHCR_ENABLED }}
       run: nix develop .#release -c python3 packaging/release/release_run.py verify original/payload original/signatures github
-        --outputs "$GITHUB_OUTPUT"
+        --outputs "$GITHUB_OUTPUT" --verified "$RUNNER_TEMP/verified-release.json"
     - id: github-publish
       name: gh release draft, frozen uploads, readback and immutable publication
       env: *id001
       run: nix develop .#release -c python3 packaging/release/release_run.py publish original/payload original/signatures
-    - id: homebrew-verify
-      if: ${{ vars.RELEASE_HOMEBREW_ENABLED == 'true' && contains(fromJSON(steps.verified.outputs.channels), 'homebrew') }}
-      env: *id001
-      run: nix develop .#release -c python3 packaging/release/release_run.py verify original/payload original/signatures homebrew
+        --verified "$RUNNER_TEMP/verified-release.json"
     - id: homebrew-publish
       if: ${{ vars.RELEASE_HOMEBREW_ENABLED == 'true' && contains(fromJSON(steps.verified.outputs.channels), 'homebrew') }}
       env:
@@ -218,11 +215,7 @@ jobs:
         RELEASE_HOMEBREW_ENABLED: ${{ vars.RELEASE_HOMEBREW_ENABLED }}
         HOMEBREW_TAP_TOKEN: ${{ secrets.RELEASE_HOMEBREW_TOKEN }}
       run: nix develop .#release -c python3 packaging/release/release_run.py channel original/payload original/signatures
-        homebrew
-    - id: crates-verify
-      if: ${{ vars.RELEASE_CRATES_ENABLED == 'true' && contains(fromJSON(steps.verified.outputs.channels), 'crates') }}
-      env: *id001
-      run: nix develop .#release -c python3 packaging/release/release_run.py verify original/payload original/signatures crates
+        homebrew --verified "$RUNNER_TEMP/verified-release.json"
     - id: cratesio
       if: ${{ vars.RELEASE_CRATES_ENABLED == 'true' && contains(fromJSON(steps.verified.outputs.channels), 'crates') && vars.RELEASE_CRATES_BOOTSTRAP_ENABLED
         != 'true' }}
@@ -239,11 +232,7 @@ jobs:
         RELEASE_CRATES_BOOTSTRAP_ENABLED: ${{ vars.RELEASE_CRATES_BOOTSTRAP_ENABLED }}
         RELEASE_CRATES_BOOTSTRAP_TOKEN: ${{ secrets.RELEASE_CRATES_BOOTSTRAP_TOKEN }}
       run: nix develop .#release -c python3 packaging/release/release_run.py channel original/payload original/signatures
-        crates
-    - id: ghcr-verify
-      if: ${{ vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(steps.verified.outputs.channels), 'ghcr') }}
-      env: *id001
-      run: nix develop .#release -c python3 packaging/release/release_run.py verify original/payload original/signatures ghcr
+        crates --verified "$RUNNER_TEMP/verified-release.json"
     - id: ghcr-publish
       if: ${{ vars.RELEASE_GHCR_ENABLED == 'true' && contains(fromJSON(steps.verified.outputs.channels), 'ghcr') }}
       env:
@@ -255,7 +244,7 @@ jobs:
         GHCR_PUBLISH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
         GHCR_PUBLISH_USER: ${{ vars.GHCR_PUBLISH_USER }}
       run: nix develop .#release -c python3 packaging/release/release_run.py channel original/payload original/signatures
-        ghcr
+        ghcr --verified "$RUNNER_TEMP/verified-release.json"
     - name: Bootstrap token revocation obligation
       if: ${{ always() && vars.RELEASE_CRATES_BOOTSTRAP_ENABLED == 'true' }}
       run: echo 'Revoke and confirm revocation of the crates bootstrap token on success or abandonment; remove the secret
