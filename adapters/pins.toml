@@ -15,7 +15,7 @@ npm_before = "2026-10-01T00:00:00Z"
 
 [node]
 # Operator confirmed the current pins on 2026-10-19 (plan 7b).
-version = "24.21.0"
+version = "24.22.0"
 
 [adapters.claude]
 # Operator confirmed on 2026-10-19; measured in the per-session MCP
