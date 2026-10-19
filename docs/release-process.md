@@ -125,8 +125,8 @@ For the first claim of unregistered crate names, the maintainer:
    relevant acceptance above. Approves the same protected `publish` job. The
    explicit bootstrap mode uses the existing frozen-byte API uploader; it never
    invokes `cargo publish` or rebuilds packages.
-3. The uploader re-verifies immutable GitHub bytes and exact provenance before
-   credentials and each write, then publishes in dependency order:
+3. The publish job verifies the complete release once before credentials. The
+   uploader checks frozen crate digests at each write, in dependency order:
    `hennery-proto`, `hennery-kernel`, `hennery-view`, `hennery-host`,
    `hennery-gateway`, `hennery-sessions`, `hennery`.
    Existing identical crate versions are idempotent; mismatching bytes,
@@ -169,10 +169,12 @@ is the deliberate trade-off for keeping all authorized draft mutation protected.
 
 The single `publish` job enters `release`, downloads the immutable artifact ID
 from the original producing attempt, verifies the checksum closure, tag and
-attestations, creates/uploads the draft, reads back/re-verifies uploaded bytes,
+attestations once, saves a job-local manifest of verified digests, creates/uploads
+the draft, reads back uploaded bytes,
 publishes and requires immutable state. It then serially runs selected/enabled
-Homebrew, crates and GHCR steps. Each re-verifies the immutable public bytes and
-provenance before its credential/login/OIDC exchange and at write boundaries.
+Homebrew, crates and GHCR steps. Each checks only its frozen files against the
+verified manifest before sending them. Final live remote readbacks remain for
+every channel; local qualification and cryptographic checks are not repeated.
 The job has contents write, Actions/attestations read and OIDC write; other
 permissions are absent. Job permissions exist at job start; scripts do not mint
 the built-in token only after verification.
@@ -185,7 +187,7 @@ uses `create --draft --verify-tag --latest=false`, `upload` without `--clobber`,
 immutability. It refuses unapproved/duplicate assets, mismatching bytes, wrong
 tag/prerelease state and any ambiguous command failure. The standard client owns
 HTTP authentication, redirects and pagination. Uploads form one CLI batch after
-fresh verification; a partial upload is reconciled on the next approved attempt.
+local digest checks; a partial upload is reconciled on the next approved attempt.
 
 Authenticated GitHub transport stays in the publisher parent. Verifier children
 receive only an explicit credential-free allow-list and fresh private Git/GPG,

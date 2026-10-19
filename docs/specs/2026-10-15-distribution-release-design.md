@@ -212,6 +212,16 @@ to the cryptographic verifier subprocess.
 
 ### Verification, publication and recovery
 
+**Publish-job performance (operator decision, 2026-10-19):** verify the signed
+source, every frozen payload and local OCI attestations once, in the first
+verification step of each protected publish attempt. Retain the verified file
+and attestation digests in a job-local manifest. Subsequent GitHub, Homebrew,
+crates and GHCR writes check the frozen bytes they send against that manifest;
+they do not repeat full source/provenance verification or OCI qualification.
+Keep final live remote readbacks for every channel. This supersedes repeated
+cryptographic verification at channel/write boundaries below. Publish-only
+retries still verify the original immutable artifact once per new attempt.
+
 Consumers, channel publishers and the README verify-then-run bootstrap must:
 
 1. Use independently trusted installed Git, GnuPG, `gh` and SHA-256 tools, and a

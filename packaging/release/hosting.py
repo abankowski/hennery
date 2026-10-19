@@ -92,11 +92,12 @@ def require_public(root, signatures, metadata):
     gate.require(not reconcile(metadata['tag'], remote, expected), 'immutable public release is incomplete')
 
 
-def release(root, signatures, authorize):
-    metadata = authorize()
+def release(root, signatures, verified):
+    metadata = verified['metadata']
     paths = files(root, signatures, metadata)
-    expected = hashes(paths)
-    private_signatures = hashes({p.name: p for p in Path(signatures).iterdir()})
+    inventory = {item['name']: item['sha256'] for item in metadata['artifacts']}
+    expected = {name: inventory[path.name] for name, path in paths.items()}
+    private_signatures = verified['signatures']
     tag = metadata['tag']
     remote = view(tag)
     missing = reconcile(tag, remote, expected)
@@ -104,7 +105,8 @@ def release(root, signatures, authorize):
                  'immutable release is incomplete; use a new signed version')
 
     def boundary():
-        gate.require(authorize() == metadata and hashes(paths) == expected
+        contract.frozen_file(root, metadata, contract.METADATA)
+        gate.require(hashes(paths) == expected
                      and hashes({p.name: p for p in Path(signatures).iterdir()}) == private_signatures,
                      'release authority or bytes changed before write')
 
@@ -112,7 +114,7 @@ def release(root, signatures, authorize):
         boundary()
         notes = ('Source: https://github.com/' + gate.REPOSITORY + '/tree/' + metadata['source_sha']
                  + '\nSHA256SUMS: ' + expected[contract.CHECKSUMS] + '\n\n'
-                 + contract.regular(Path(root) / 'release-notes.md').decode())
+                 + contract.frozen_file(root, metadata, 'release-notes.md').decode())
         with tempfile.TemporaryDirectory(prefix='hennery-notes-') as temporary:
             note_file = Path(temporary) / 'notes.txt'
             note_file.write_text(notes)

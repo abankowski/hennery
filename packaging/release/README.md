@@ -41,7 +41,14 @@ same bytes are frozen and attested as `public-SHA256SUMS`, then copied under
 `SHA256SUMS` for upload. Official provenance verifies subject digests, independent
 of that filename. The full private qualification payload retains its own
 `SHA256SUMS`, metadata, sidecars and per-target materials as an immutable Actions
-artifact; publisher/channel acceptance still checks that complete closure.
+artifact. The publish job verifies the signed source, complete payload closure and
+all local OCI provenance once, in its first verification step. That step writes a
+job-local manifest of verified digests. GitHub, Homebrew, crates and GHCR then
+check the frozen files they send against that manifest, without repeating full
+qualification or cryptographic verification. Writers run only after verification
+succeeds; retries rerun verification against the original downloaded artifact.
+Final remote readbacks remain: public immutable GitHub assets, tap bytes, crate
+bytes/index checks, and GHCR subjects and named tags.
 
 `verify.py` accepts the six-file download directory. It freshly authenticates
 the annotated signed tag and invokes supported `gh attestation verify` for

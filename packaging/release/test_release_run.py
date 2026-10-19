@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import tomllib
 import unittest
+import sys
 from unittest.mock import patch
 
 import contract
@@ -14,6 +15,33 @@ import test_contract
 
 
 class Orchestrator(unittest.TestCase):
+    def test_verified_handoff_requires_selected_enabled_context_and_original_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);manifest=root/'verified.json'
+            metadata={'schema':3,'repository':gate.REPOSITORY,'source_sha':'a'*40,'tag':'v0.1.0',
+                      'tag_object':'b'*40,'channels':sorted(gate.CHANNELS),'targets':sorted(gate.TARGETS)}
+            payload=root/'payload';payload.mkdir();contract.freeze(payload,metadata)
+            manifest.write_bytes(gate.canonical({'metadata':contract.load(payload),'signatures':{}}))
+            env={'GITHUB_REPOSITORY':gate.REPOSITORY,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/tags/v0.1.0',
+                 'GITHUB_SHA':'a'*40,'GITHUB_WORKFLOW_REF':gate.REPOSITORY+'/'+contract.WORKFLOW+'@refs/tags/v0.1.0',
+                 'RELEASE_PUBLICATION_ENABLED':'true',**{'RELEASE_'+c.upper()+'_ENABLED':'true' for c in gate.CHANNELS}}
+            with patch.dict(os.environ,env,clear=True):
+                for channel in sorted(gate.CHANNELS):
+                    release_run.load_verified(payload,manifest,channel)
+                    with patch.dict(os.environ,{'RELEASE_'+channel.upper()+'_ENABLED':'false'}),self.assertRaises(gate.Refused):
+                        release_run.load_verified(payload,manifest,channel)
+                with self.assertRaises(gate.Refused):release_run.load_verified(payload,root/'absent','github')
+                (payload/contract.METADATA).write_bytes(b'changed after verification')
+                with self.assertRaises(gate.Refused):release_run.load_verified(payload,manifest,'github')
+
+    def test_failed_initial_verification_never_writes_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);signatures=root/'signatures';signatures.mkdir();manifest=root/'verified.json'
+            with patch.object(sys,'argv',['release_run.py','verify',str(root),str(signatures),'github','--verified',str(manifest)]), \
+                    patch.object(release_run,'verify',side_effect=gate.Refused('verification failed')),self.assertRaises(gate.Refused):
+                release_run.main()
+            self.assertFalse(manifest.exists())
+
     def test_configuration_binds_original_signed_tag_and_checked_source(self):
         version=tomllib.loads((release_run.ROOT/'Cargo.toml').read_text())['workspace']['package']['version']
         env={'GITHUB_REPOSITORY':gate.REPOSITORY,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/tags/v'+version,
