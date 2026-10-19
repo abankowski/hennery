@@ -924,4 +924,36 @@ These are not verified live.
 
 ---
 
+## Pin-bump verification — Codex 0.160.1 (2026-10-19)
+
+The codex-acp 2.2.2 lock bundles Codex 0.160.1. Re-read the official
+[`rust-v0.160.1` source](https://github.com/openai/codex/tree/rust-v0.160.1/codex-rs)
+before advancing the embedded manifest's explicit verification guard:
+
+- `app-server-protocol/src/protocol/v2/thread.rs` still defines
+  `ThreadDeleteParams { thread_id: String }` with camelCase serialization:
+  `thread/delete { "threadId": "<UUID>" }`, returning `{}`.
+- `app-server/src/request_processors/thread_delete.rs` is unchanged from
+  0.155.1. Its ephemeral-thread refusal and the forked-history, live-worker
+  and not-found refusals in `thread-store/src/local/delete_thread.rs`,
+  `core/src/thread_manager.rs` and `thread-store/src/local/read_thread.rs`
+  retain every string and error code matched by `classify_delete`.
+- `message_processor.rs` retains the `Invalid request: ` serde-error wrapper.
+  A live scratch-home app-server returned `-32600` with the expected unknown
+  variant, missing field and invalid type prefixes, the no-rollout refusal
+  for an absent UUID, and the not-persisted refusal for an ephemeral thread.
+- The bundled launcher's `--version` printed `codex-cli 0.160.1` (exit 0).
+  `initialize.codexHome` returned the canonical directory when `CODEX_HOME`
+  named a symlink into that scratch directory.
+
+The deletion path still removes rollouts, session-index entries, thread-history
+rows and state rows. `thread_history_projection_state` is also cleared.
+State-owned logs, queues, memories, goals, dynamic tools and spawn edges were
+already cleared in 0.155.1; the earlier inference about log residue was too
+broad. The new agent-message-board cleanup removes board content but retains
+an ID-only `deleted_boards` tombstone. `history.jsonl` is not part of this
+deletion contract. The live pin-bump gate must still check the enumerated
+stores after a real turn and deletion through hennery; source inspection and
+these protocol probes do not replace that gate.
+
 _Generated with Claude AI — please review before distribution._

@@ -121,7 +121,7 @@ enum Unavailable {
     /// `initialize` failed: an error, or the app-server's end.
     Initialize,
     /// This Codex does not know `thread/delete` (`-32601`, or `-32600
-    /// Invalid request`: how 0.155.1 answers a method or params it cannot
+    /// Invalid request`: how 0.160.1 answers a method or params it cannot
     /// read, before any handler runs).
     MethodNotFound,
     /// The collector flagged the forget `fallback` (B5 as ruled, the
@@ -137,7 +137,7 @@ enum Answer {
     Error { code: i64, message: String },
 }
 
-/// How 0.155.1 answers a request it could not deserialize (seen live):
+/// How 0.160.1 answers a request it could not deserialize (seen live):
 /// an unknown method, a missing field, a field of another type.
 const NOT_UNDERSTOOD: [&str; 3] = [
     "Invalid request: unknown variant",
@@ -145,9 +145,9 @@ const NOT_UNDERSTOOD: [&str; 3] = [
     "Invalid request: invalid type",
 ];
 
-/// `thread/delete`'s answer, as Codex 0.155.1 gives it (its
+/// `thread/delete`'s answer, as Codex 0.160.1 gives it (its
 /// `thread_delete.rs`, `delete_thread.rs`, `thread_manager.rs` and
-/// `message_processor.rs` at `rust-v0.155.1`). The text only picks the
+/// `message_processor.rs` at `rust-v0.160.1`). The text only picks the
 /// reason: what is left is decided by the check afterwards (B4).
 fn classify_delete(answer: &Answer) -> Verdict {
     let (code, message) = match answer {
@@ -157,12 +157,12 @@ fn classify_delete(answer: &Answer) -> Verdict {
     match code {
         -32601 => Verdict::Unavailable(Unavailable::MethodNotFound),
         // The request did not deserialize: an unknown method, or params of
-        // another shape (the prefixes 0.155.1 was seen to give). No handler
+        // another shape (the prefixes 0.160.1 was seen to give). No handler
         // ran.
         -32600 if NOT_UNDERSTOOD.iter().any(|p| message.starts_with(p)) => {
             Verdict::Unavailable(Unavailable::MethodNotFound)
         }
-        // Nothing of the thread is there (0.155.1 says either).
+        // Nothing of the thread is there (0.160.1 says either).
         -32600 if message.starts_with("no rollout found for thread id") || message.starts_with("thread not found:") => {
             Verdict::Deleted
         }
@@ -177,7 +177,7 @@ fn classify_delete(answer: &Answer) -> Verdict {
     }
 }
 
-/// The version a Codex CLI's `--version` prints (`codex-cli 0.155.1`).
+/// The version a Codex CLI's `--version` prints (`codex-cli 0.160.1`).
 fn parse_version(out: &str) -> Option<&str> {
     let version = out.lines().next()?.strip_prefix("codex-cli ")?.trim();
     let plain = version.split('.').count() == 3
@@ -852,13 +852,13 @@ mod tests {
 
     #[test]
     fn the_version_is_codex_clis_own_line() {
-        assert_eq!(parse_version("codex-cli 0.155.1\n"), Some("0.155.1"));
-        assert_eq!(parse_version("codex-cli 0.155.1"), Some("0.155.1"));
+        assert_eq!(parse_version("codex-cli 0.160.1\n"), Some("0.160.1"));
+        assert_eq!(parse_version("codex-cli 0.160.1"), Some("0.160.1"));
         for bad in [
             "",
-            "codex 0.155.1",
+            "codex 0.160.1",
             "codex-cli 0.155",
-            "codex-cli 0.155.1-alpha",
+            "codex-cli 0.160.1-alpha",
             "codex-cli  \n",
         ] {
             assert_eq!(parse_version(bad), None, "{bad:?}");

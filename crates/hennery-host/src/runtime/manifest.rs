@@ -482,7 +482,7 @@ mod tests {
     fn the_embedded_manifest_pins_codexs_delete_for_its_bundled_version() {
         let manifest = Manifest::embedded();
         let pin = manifest.codex_app_server.as_ref().expect("pinned");
-        assert_eq!(pin.codex_version, "0.155.1");
+        assert_eq!(pin.codex_version, "0.160.1");
         assert_eq!(pin.bin, "node_modules/@openai/codex/bin/codex.js");
         assert_eq!(pin.delete_method, "thread/delete");
         assert_eq!(
