@@ -11,6 +11,7 @@
 name: pins
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - adapters/**
