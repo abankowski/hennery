@@ -12,7 +12,7 @@ fn fixture() -> tempfile::TempDir {
         root.path().join("release-ui.json"),
         serde_json::json!({
             "schema": 1, "source_sha": "a".repeat(40),
-            "files": {"index.html": format!("{:x}", Sha256::digest(b"<html>real UI</html>"))}
+            "files": {"index.html": hex::encode(Sha256::digest(b"<html>real UI</html>"))}
         })
         .to_string(),
     )
@@ -46,12 +46,12 @@ fn accepts_inventory_and_rejects_each_damaged_package() {
             "map" => {
                 let bytes = b"source map";
                 fs::write(root.path().join("web-dist/app.js.map"), bytes).unwrap();
-                json["files"]["app.js.map"] = format!("{:x}", Sha256::digest(bytes)).into();
+                json["files"]["app.js.map"] = hex::encode(Sha256::digest(bytes)).into();
             }
             "hidden" => {
                 let bytes = b"hidden file";
                 fs::write(root.path().join("web-dist/.hidden"), bytes).unwrap();
-                json["files"][".hidden"] = format!("{:x}", Sha256::digest(bytes)).into();
+                json["files"][".hidden"] = hex::encode(Sha256::digest(bytes)).into();
             }
             "escape" => {
                 json["files"]["../secret"] = "a".repeat(64).into();

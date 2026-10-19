@@ -54,7 +54,7 @@ fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) -> Res
         } else if kind.is_file() {
             let bytes = fs::read(&path).map_err(|e| e.to_string())?;
             let name = path.strip_prefix(root).unwrap().to_str().ok_or("non-UTF8 UI path")?;
-            files.insert(name.into(), format!("{:x}", Sha256::digest(bytes)));
+            files.insert(name.into(), hex::encode(Sha256::digest(bytes)));
         } else {
             return Err("release UI contains a non-regular file".into());
         }

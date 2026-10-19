@@ -788,7 +788,7 @@ pub fn is_activity_token(token: &str) -> bool {
 }
 
 pub(crate) fn secret_intent(key: &MasterKey, id: &str, operation: &str, payload: &[u8]) -> String {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let mut mac = Hmac::<sha2::Sha256>::new_from_slice(key.bytes()).expect("master key length");
     for bytes in [id.as_bytes(), operation.as_bytes(), payload] {
         mac.update(&(bytes.len() as u64).to_be_bytes());

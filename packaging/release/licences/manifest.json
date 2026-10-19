@@ -6,6 +6,13 @@
       "source": "https://raw.githubusercontent.com/agentclientprotocol/rust-sdk/2a78849d3eb3dcb140dade3b8fc938cf1e2b9ce5/LICENSE"
     }
   ],
+  "cargo:agent-client-protocol-schema@1.12.0": [
+    {
+      "file": "f250d08cee4549b22b3b4aaaf3a743473336fd280316df5d0340717e5127a221.txt",
+      "sha256": "f250d08cee4549b22b3b4aaaf3a743473336fd280316df5d0340717e5127a221",
+      "source": "https://raw.githubusercontent.com/agentclientprotocol/agent-client-protocol/e2d83349bc9e28a4059ea3acefa1c91c966f74e2/LICENSE"
+    }
+  ],
   "cargo:agent-client-protocol-schema@1.9.1": [
     {
       "file": "f250d08cee4549b22b3b4aaaf3a743473336fd280316df5d0340717e5127a221.txt",
