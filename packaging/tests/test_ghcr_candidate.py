@@ -15,9 +15,11 @@ from test_image import CandidateFixtures, image
 PACKAGING = Path(__file__).parents[1]
 sys.path.insert(0, str(PACKAGING / 'release'))
 import contract
+import channel_publish
 import gate
 import supply
 import verify as release_verify
+import verifier_process
 
 TARGETS = {'amd64': 'x86_64-unknown-linux-musl', 'arm64': 'aarch64-unknown-linux-musl'}
 
@@ -91,6 +93,48 @@ class ReleaseFixture(CandidateFixtures):
 
 
 class Candidate(ReleaseFixture, unittest.TestCase):
+    def test_skopeo_tags_preserve_the_actual_multiarch_index_and_all_blobs(self):
+        helper = self.assembled()
+        index = helper.inspect_release(self.candidate, self.work, self.inventory)
+        destinations = []
+        with verifier_process.environment() as environment:
+            # Local fixture data has no containers/image policy installation.
+            # Its integrity is asserted below against the production OCI bytes.
+            policy = Path(environment['XDG_CONFIG_HOME']) / 'containers/policy.json'
+            policy.parent.mkdir()
+            policy.write_text(json.dumps({'default': [{'type': 'insecureAcceptAnything'}]}))
+            def transport(command, **kwargs):
+                self.assertEqual(command[:2], ['skopeo', 'copy'])
+                self.assertEqual(command[-2], 'docker://ghcr.io/marcinwadon/hennery@' + index['digest'])
+                tag = command[-1].split(':')[-1]
+                destination = self.root / ('tag-' + tag)
+                destinations.append(destination)
+                # Only substitute registry transport; real Skopeo must preserve
+                # the index built by the production release helper and its DAG.
+                command = command[:-2] + ['oci:' + str(self.work / 'layout'), 'oci:' + str(destination) + ':' + tag]
+                return self.real_run(command, **kwargs)
+
+            def reconcile(tag, digest, auth):
+                destination = self.root / ('tag-' + tag)
+                if not destination.exists(): return 1
+                raw = json.loads((destination / 'index.json').read_bytes())
+                descriptor, = raw['manifests']
+                manifest = image.blob(destination, descriptor)
+                self.assertEqual('sha256:' + gate.digest(manifest), digest)
+                retained = json.loads(manifest)
+                self.assertEqual({d['digest'] for d in retained['manifests']},
+                                 {d['digest'] for d in json.loads((self.work / 'layout/blobs/sha256' / digest[7:]).read_bytes())['manifests']})
+                return 0
+
+            with patch.object(subprocess, 'run', side_effect=transport):
+                channel_publish.publish_image_tags(type('Remote', (), {'reconcile': staticmethod(reconcile)}),
+                                                   self.version, index['digest'], 'unused-auth', environment)
+        self.assertEqual(len(destinations), 2)
+        expected_blobs = {p.name: p.read_bytes() for p in (self.work / 'layout/blobs/sha256').iterdir()}
+        for destination in destinations:
+            for name, data in expected_blobs.items():
+                self.assertEqual((destination / 'blobs/sha256' / name).read_bytes(), data)
+
     def test_acceptance_binds_exact_source_tag_without_publication_authority(self):
         helper = self.assembled()
         for revision, version in [('b' * 40, self.version), (self.revision, '0.2.0')]:

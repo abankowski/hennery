@@ -58,7 +58,8 @@ def image_descriptor(root, value):
     return index
 
 
-def verify_image_subject(image, value, bundle=None, predicate_type=PROVENANCE, manifest=None, trusted_root=None):
+def verify_image_subject(image, value, bundle=None, predicate_type=PROVENANCE, manifest=None, trusted_root=None,
+                         *, github_token=None):
     gate.require(re.fullmatch(r'ghcr\.io/marcinwadon/hennery@sha256:[0-9a-f]{64}', image), 'verification requires an immutable image digest')
     gate.require(predicate_type in (PROVENANCE, SPDX), 'unexpected attestation predicate')
     subject = 'oci://' + image
@@ -70,7 +71,12 @@ def verify_image_subject(image, value, bundle=None, predicate_type=PROVENANCE, m
     command = attestation_command(subject, value['tag'], value['source_sha'], bundle, trusted_root)
     command[command.index('--predicate-type') + 1] = predicate_type
     if bundle is None: command += ['--bundle-from-oci']
-    verifier_process.run(command, check=True, capture_output=True, text=True)
+    with verifier_process.environment() as env:
+        # Only publisher OCI readback opts into GitHub API authentication.
+        # Registry publication credentials/configuration never enter this env.
+        if github_token is not None:
+            env['GH_TOKEN'] = github_token
+        subprocess.run(command, env=env, check=True, capture_output=True, text=True)
 
 
 def verify_image(image, tag, bundle=None, predicate_type=PROVENANCE, release_directory=None,

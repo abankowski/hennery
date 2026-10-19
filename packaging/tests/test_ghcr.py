@@ -18,8 +18,9 @@ import gate
 
 class GHCR(unittest.TestCase):
     def execute(self, mode='new', boundary=0):
-        self.events=[];self.copies=0;self.attaches=0;present=mode in ('present','partial');reconciles=0;checks=0
+        self.events=[];self.copies=0;self.attaches=0;self.tags=[];present=mode in ('present','partial');reconciles=0;checks=0
         digest='sha256:'+'a'*64
+        version_present=present
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);value={'tag':'v0.1.0'}
             def verify(*args,**kwargs):
@@ -39,6 +40,8 @@ class GHCR(unittest.TestCase):
                 reconciles+=1;self.events.append('reconcile')
                 if mode in ('conflict','unauthorized','timeout'):raise gate.Refused('remote refused')
                 if mode=='late-conflict' and reconciles>=3:raise gate.Refused('new conflicting version')
+                if args[0]=='0.1.0':return 0 if version_present or '0.1.0' in self.tags else 1
+                if args[0]=='latest':return 0 if 'latest' in self.tags else 1
                 return 0 if present else 1
             def run(command,**kwargs):
                 nonlocal present
@@ -48,10 +51,16 @@ class GHCR(unittest.TestCase):
                     self.assertNotIn('offline-credential',str(command))
                     Path(command[command.index('--authfile')+1]).write_text('{}')
                 if operation=='skopeo copy':
-                    self.copies+=1;self.assertIn('--preserve-digests',command);self.assertIn('--all',command)
-                    self.assertEqual(command[-1],'docker://ghcr.io/marcinwadon/hennery@'+digest)
-                    self.assertNotIn(':latest',' '.join(command));self.assertNotIn(':0.1.0',' '.join(command));present=True
-                    if mode=='copy-failure':raise subprocess.CalledProcessError(1,command)
+                    self.assertIn('--preserve-digests',command);self.assertIn('--all',command)
+                    if command[-1]=='docker://ghcr.io/marcinwadon/hennery@'+digest:
+                        self.copies+=1
+                        self.assertNotIn(':latest',' '.join(command));self.assertNotIn(':0.1.0',' '.join(command));present=True
+                        if mode=='copy-failure':raise subprocess.CalledProcessError(1,command)
+                    else:
+                        self.assertEqual(command[-2],'docker://ghcr.io/marcinwadon/hennery@'+digest)
+                        self.assertIn(command[-1],['docker://ghcr.io/marcinwadon/hennery:0.1.0','docker://ghcr.io/marcinwadon/hennery:latest'])
+                        self.assertEqual(self.attaches,7);self.assertIn('fetched-verify',self.events)
+                        self.tags.append(command[-1].split(':')[-1])
             def attach(digest,predicate,bundle,auth,environment):
                 self.assertNotIn('GH_TOKEN',environment)
                 self.assertNotIn('ACTIONS_ID_TOKEN_REQUEST_TOKEN',environment)
@@ -59,13 +68,14 @@ class GHCR(unittest.TestCase):
                 if mode=='attach-failure':raise subprocess.CalledProcessError(1,['oras','attach'])
             def fetched(*args,**kwargs):
                 self.events.append('fetched-verify')
+                self.assertEqual(kwargs['github_token'],'write-canary')
                 if mode=='remote-failure':raise gate.Refused('fetched signature refused')
             subjects=[('index','provenance',digest,'slsa',root/'index.json')]+[(arch,kind,digest,'slsa' if kind=='provenance' else 'spdx',root/(arch+kind+'.json')) for arch in ('amd64','arm64') for kind in ('provenance','image-sbom','binary-sbom')]
             with patch.dict(os.environ,{'GHCR_PUBLISH_TOKEN':'offline-credential','GHCR_PUBLISH_USER':'fixture','GH_TOKEN':'write-canary','ACTIONS_ID_TOKEN_REQUEST_TOKEN':'oidc-canary'}),patch.object(publisher,'shared_verify',side_effect=shared),patch.object(publisher,'image_helper',return_value=SimpleNamespace(inspect_release=lambda *a:{'digest':digest})),patch.object(publisher,'registry_helper',return_value=SimpleNamespace(reconcile=reconcile)),patch.object(publisher,'check_images',side_effect=verify),patch.object(publisher,'image_subjects',return_value=subjects),patch.object(publisher,'attach_bundle',side_effect=attach),patch.object(publisher.verify,'verify_image_subject',side_effect=fetched),patch.object(publisher.subprocess,'run',side_effect=run):
                 return publisher.publish(root,root,'ghcr')
 
-    def test_absent_uploads_only_digest_and_all_seven_bundles(self):
-        self.execute();self.assertEqual(self.copies,1);self.assertEqual(self.attaches,7)
+    def test_absent_uploads_digest_and_all_seven_bundles_before_tagging(self):
+        self.execute();self.assertEqual(self.copies,1);self.assertEqual(self.attaches,7);self.assertEqual(self.tags,['0.1.0','latest'])
     def test_matching_retry_reuses_image_and_allows_duplicate_bundles(self):
         self.execute('present');self.assertEqual(self.copies,0);self.assertEqual(self.attaches,7)
     def test_conflict_auth_timeout_and_late_version_never_overwrite(self):

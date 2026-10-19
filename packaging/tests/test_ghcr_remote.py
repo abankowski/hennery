@@ -106,11 +106,18 @@ class HTTP(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
     def test_invalid_boundary_arguments_refuse_before_http(self):
-        for version, digest in [('latest', self.digest), ('0.1.0', 'invalid')]:
+        for version, digest in [('arbitrary-alias', self.digest), ('0.1.0', 'invalid')]:
             with self.subTest(version=version, digest=digest):
                 with self.assertRaises(ValueError):
                     remote.reconcile(version, digest, self.authfile, self)
         self.assertEqual(self.calls, [])
+
+    def test_latest_readback_requires_exact_manifest_bytes(self):
+        self.assertEqual(remote.reconcile('latest', self.digest, self.authfile, self), 0)
+        self.assertTrue(self.calls[-1][0].full_url.endswith('/manifests/latest'))
+        self.body = b'other manifest bytes'
+        with self.assertRaisesRegex(ValueError, 'digest mismatch'):
+            remote.reconcile('latest', self.digest, self.authfile, self)
 
     def test_invalid_token_refuses_before_manifest_request(self):
         for token in ['', None, 'injected\r\nheader']:

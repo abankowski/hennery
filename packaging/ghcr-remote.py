@@ -21,7 +21,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def reconcile(version, expected, authfile, opener=None):
-    if not re.fullmatch(r'(?:[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?|sha256:[0-9a-f]{64})', version):
+    if not re.fullmatch(r'(?:latest|[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?|sha256:[0-9a-f]{64})', version):
         raise ValueError('invalid image version')
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', expected):
         raise ValueError('invalid image digest')

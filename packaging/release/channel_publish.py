@@ -125,8 +125,21 @@ def ghcr_upload(root,signatures,value):
         # seven-referrer layout. Crypto children never inherit registry authority.
         for subject, predicate in {(s[2], s[3]) for s in image_subjects(work, signatures)}:
             verify.verify_image_subject('ghcr.io/marcinwadon/hennery@' + subject, value,
-                                        predicate_type=predicate)
+                                        predicate_type=predicate, github_token=os.environ.get('GH_TOKEN'))
+        publish_image_tags(remote,version,digest,auth,registry_env)
         return {'state':'published','digest':digest}
+
+
+def publish_image_tags(remote,version,digest,auth,environment):
+    # Called only after every remote subject has verified. Reconcile the
+    # version again here: retries may reuse it, but never replace it.
+    for tag in [version, *(['latest'] if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version) else [])]:
+        if tag != 'latest' and remote.reconcile(tag,digest,auth)==0:
+            continue
+        subprocess.run(['skopeo','copy','--all','--preserve-digests','--authfile',str(auth),
+                        'docker://ghcr.io/marcinwadon/hennery@'+digest,
+                        'docker://ghcr.io/marcinwadon/hennery:'+tag],check=True,env=environment)
+        gate.require(remote.reconcile(tag,digest,auth)==0,'GHCR tag read-back differs; stop and reconcile')
 
 
 def attach_bundle(digest, predicate, bundle, auth, environment):
