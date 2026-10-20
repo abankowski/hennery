@@ -1,76 +1,88 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { THEME_KEY, saveTheme } from './theme'
-
-/** `/theme.js` as the page runs it, before anything else. */
-function runBootstrap() {
-  const source = readFileSync(join(process.cwd(), 'public/theme.js'), 'utf8')
-  new Function(source)()
-}
-
-const root = () => document.documentElement.style
-
-afterEach(() => {
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { deriveAccent } from './accent'
+import { THEME_KEY, makeTheme, readTheme } from './theme-record'
+const runBootstrap = () => new Function(readFileSync('public/theme.js', 'utf8'))()
+let change: (() => void) | undefined
+let dark = false
+beforeEach(() => {
   localStorage.clear()
-  root().removeProperty('--accent')
-  root().removeProperty('--accent-2')
+  vi.resetModules()
+  dark = false
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ get matches() { return dark }, addEventListener: (_: string, f: () => void) => { change = f } })))
+  document.documentElement.removeAttribute('style')
+  document.head.innerHTML = '<meta name="theme-color" content="#ffffff">'
 })
-
-describe('the theme bootstrap', () => {
-  it('applies the saved colours', () => {
-    localStorage.setItem(THEME_KEY, JSON.stringify({ '--accent': '#112233', '--accent-2': '#445566' }))
+afterEach(() => vi.unstubAllGlobals())
+describe('blocking theme bootstrap', () => {
+  it('selects per-theme derived palettes before React, including system dark', () => {
+    localStorage.setItem(THEME_KEY, JSON.stringify(makeTheme('dark', '#ffff00')))
     runBootstrap()
-    expect(root().getPropertyValue('--accent')).toBe('#112233')
-    expect(root().getPropertyValue('--accent-2')).toBe('#445566')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.style.getPropertyValue('--hn-on-accent')).toBe(deriveAccent('#ffff00').dark['on-accent'])
+    expect(document.documentElement.style.colorScheme).toBe('dark')
+    expect(document.querySelector('meta')?.content).toBe('#141517')
+    localStorage.clear(); dark = true; runBootstrap()
+    expect(document.documentElement.dataset.theme).toBe('dark')
   })
-
-  it('applies only the listed properties, only as #rrggbb', () => {
-    localStorage.setItem(
-      THEME_KEY,
-      JSON.stringify({
-        '--accent': 'red; background:url(https://evil.example/x)',
-        '--accent-2': '#12345',
-        '--bg': '#000000',
-        color: '#000000',
-      }),
-    )
+  it('migrates legacy colours once without touching the selected hat', () => {
+    localStorage.setItem('hennery.hat', 'saved')
+    const legacy = JSON.stringify({ '--accent': '#112233', '--accent-2': '#445566' })
+    expect(readTheme(legacy)).toEqual(makeTheme('system', '#112233'))
+    localStorage.setItem(THEME_KEY, legacy)
     runBootstrap()
-    expect(root().getPropertyValue('--accent')).toBe('')
-    expect(root().getPropertyValue('--accent-2')).toBe('')
-    expect(root().getPropertyValue('--bg')).toBe('')
-    expect(root().cssText).toBe('')
+    expect(JSON.parse(localStorage.getItem(THEME_KEY)!)).toEqual(makeTheme('system', '#112233'))
+    expect(localStorage.getItem('hennery.hat')).toBe('saved')
+    runBootstrap()
+    expect(readTheme(localStorage.getItem(THEME_KEY)).source).toBe('#112233')
   })
-
-  it('survives nothing saved, or something damaged', () => {
-    runBootstrap()
-    for (const value of ['not json', 'null', '"#112233"', '[]']) {
-      localStorage.setItem(THEME_KEY, value)
-      expect(runBootstrap).not.toThrow()
+  it('rejects malformed records, arbitrary properties and CSS payloads atomically', () => {
+    const good = makeTheme()
+    for (const raw of ['not json', 'null', '[]', '"#112233"', JSON.stringify({ ...good, background: '#000000' }), JSON.stringify({ ...good, dark: { ...good.dark, accent: 'red; background:url(https://example.invalid)' } }), JSON.stringify({ ...good, light: { ...good.light, 'on-accent': '#777777' } }), JSON.stringify({ ...good, source: '#fff' }), JSON.stringify({ ...good, preference: 'purple' })]) {
+      localStorage.setItem(THEME_KEY, raw)
+      runBootstrap()
+      expect(readTheme(localStorage.getItem(THEME_KEY))).toEqual(good)
+      expect(document.documentElement.style.getPropertyValue('--hn-accent')).toBe(good.light.accent)
+      expect(document.documentElement.style.background).toBe('')
     }
-    expect(root().cssText).toBe('')
   })
-
-  it('reads what the app saves', () => {
-    saveTheme({ accent: '#0a0b0c', accent2: '#0d0e0f' })
-    root().removeProperty('--accent')
-    root().removeProperty('--accent-2')
-    runBootstrap()
-    expect(root().getPropertyValue('--accent')).toBe('#0a0b0c')
-    expect(root().getPropertyValue('--accent-2')).toBe('#0d0e0f')
+  it('works with storage denied', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw Error('denied') })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw Error('denied') })
+    expect(runBootstrap).not.toThrow()
+    expect(document.documentElement.dataset.theme).toBe('light')
+    vi.restoreAllMocks()
   })
 })
-
-describe('saveTheme', () => {
-  it('refuses a colour that is not #rrggbb', () => {
-    expect(() => saveTheme({ accent: 'red', accent2: '#000000' })).toThrow()
-    expect(localStorage.getItem(THEME_KEY)).toBeNull()
+describe('live appearance', () => {
+  it('cycles preferences, follows System only and preserves the hat source', async () => {
+    const t = await import('./theme')
+    t.saveTheme(deriveAccent('#ff00ff'))
+    dark = true; change?.()
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    t.cycleAppearance()
+    expect(t.getTheme().preference).toBe('light')
+    change?.()
+    expect(document.documentElement.dataset.theme).toBe('light')
+    t.cycleAppearance(); expect(t.getTheme().preference).toBe('dark')
+    t.cycleAppearance(); expect(t.getTheme().preference).toBe('system')
+    expect(t.getTheme().source).toBe('#ff00ff')
+    t.saveTheme(null)
+    expect(t.getTheme().source).toBe('#64748b')
   })
-
-  it('forgets the theme', () => {
-    saveTheme({ accent: '#0a0b0c', accent2: '#0d0e0f' })
-    saveTheme(null)
-    expect(localStorage.getItem(THEME_KEY)).toBeNull()
-    expect(root().getPropertyValue('--accent')).toBe('')
+  it('reconciles storage changes without modifying hat scope or other storage', async () => {
+    const t = await import('./theme')
+    localStorage.setItem('hennery.hat', 'hat-a')
+    localStorage.setItem('draft', 'keep')
+    const notify = vi.fn()
+    const unsubscribe = t.subscribeTheme(notify)
+    localStorage.setItem(THEME_KEY, JSON.stringify(makeTheme('dark', '#0000ff')))
+    window.dispatchEvent(new StorageEvent('storage', { key: THEME_KEY }))
+    expect(t.getTheme()).toEqual(makeTheme('dark', '#0000ff'))
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(localStorage.getItem('hennery.hat')).toBe('hat-a')
+    expect(localStorage.getItem('draft')).toBe('keep')
+    expect(notify).toHaveBeenCalled()
+    unsubscribe()
   })
 })

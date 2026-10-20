@@ -1,36 +1,60 @@
-// The colours `/theme.js` applies before the first paint (frontend spec §8).
-// The app saves them when the selected hat changes (4c, 4d), from the hat's
-// colours on the server, and applies them at once.
-
-export const THEME_KEY = 'hennery.theme'
-
-export interface Theme {
-  accent: string
-  accent2: string
+import { useSyncExternalStore } from 'react'
+import { deriveAccent, paletteProperties, type Accent, type Appearance } from './accent'
+import { THEME_KEY, applyTheme, isPreference, makeTheme, readTheme, type Preference, type ThemeRecord } from './theme-record'
+export { THEME_KEY, type Preference }
+export type Theme = Accent
+let current: ThemeRecord | undefined
+let resolved: Appearance = 'light'
+const listeners = new Set<() => void>()
+let watching = false
+function media() { return window.matchMedia?.('(prefers-color-scheme: dark)') }
+function read(): ThemeRecord {
+  try { return readTheme(localStorage.getItem(THEME_KEY)) } catch { return makeTheme() }
+}
+function apply() {
+  resolved = applyTheme(current ??= read(), media()?.matches ?? false)
+  for (const notify of listeners) notify()
+}
+function watch() {
+  if (watching) return
+  watching = true
+  media()?.addEventListener('change', () => { if (getTheme().preference === 'system') apply() })
+  window.addEventListener('storage', (e) => {
+    if (e.key === THEME_KEY || e.key === null) { current = read(); apply() }
+  })
+  apply()
+}
+export function getTheme(): ThemeRecord { return current ??= read() }
+function save(record: ThemeRecord) {
+  current = record
+  watch()
+  apply()
+  try { localStorage.setItem(THEME_KEY, JSON.stringify(record)) } catch { /* current document only */ }
+}
+/** Compatibility seam for SessionScope; null means All's neutral accent. */
+export function saveTheme(theme: Theme | null): void { save({ version: 1, preference: getTheme().preference, ...(theme ?? deriveAccent()) }) }
+export function setAppearance(preference: Preference): void {
+  if (!isPreference(preference)) throw new Error('Unknown appearance.')
+  save({ ...getTheme(), preference })
+}
+export function cycleAppearance(): void {
+  const order: Preference[] = ['system', 'light', 'dark']
+  setAppearance(order[(order.indexOf(getTheme().preference) + 1) % order.length])
+}
+export function subscribeTheme(notify: () => void): () => void {
+  watch(); listeners.add(notify)
+  return () => { listeners.delete(notify) }
+}
+export function useAppearance(): { preference: Preference; resolved: Appearance } {
+  const preference = useSyncExternalStore(subscribeTheme, () => getTheme().preference)
+  const theme = useSyncExternalStore(subscribeTheme, () => resolved)
+  return { preference, resolved: theme }
+}
+/** Session/launcher owners scope this style without changing overview hat choice. */
+export function useAccentStyle(source: string | undefined): Record<string, string> {
+  const { resolved: appearance } = useAppearance()
+  return paletteProperties(deriveAccent(source)[appearance])
 }
 
-const COLOUR = /^#[0-9a-fA-F]{6}$/
-
-/** Save `theme` for the next load and apply it now. A colour that is not
- *  `#rrggbb` is refused, as `/theme.js` would refuse it. */
-export function saveTheme(theme: Theme | null): void {
-  const root = document.documentElement.style
-  if (theme === null) {
-    root.removeProperty('--accent')
-    root.removeProperty('--accent-2')
-    try {
-      localStorage.removeItem(THEME_KEY)
-    } catch {
-      // No storage: the default colours stay anyway.
-    }
-    return
-  }
-  if (!COLOUR.test(theme.accent) || !COLOUR.test(theme.accent2)) throw new Error('A theme colour must be #rrggbb.')
-  root.setProperty('--accent', theme.accent)
-  root.setProperty('--accent-2', theme.accent2)
-  try {
-    localStorage.setItem(THEME_KEY, JSON.stringify({ '--accent': theme.accent, '--accent-2': theme.accent2 }))
-  } catch {
-    // No storage: applied for this load only.
-  }
-}
+// Document-lifetime listeners also cover gateway screens and failed hat reads.
+watch()
