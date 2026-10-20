@@ -239,7 +239,7 @@ describe('Composer: a turn in flight', () => {
 describe('Composer: prompt refusals keep the draft', () => {
   it.each([
     [409, 'host_offline', 'The host is offline; send again once it is back.'],
-    [409, 'turn_in_progress', 'A turn is still running: wait for it to end, or stop it, then send again.'],
+    [409, 'turn_in_progress', 'The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.'],
     [409, 'images_unsupported', 'This host takes no images: remove them, then send again.'],
     [400, 'empty_prompt', 'There is nothing to send: write something, or attach an image.'],
     [400, 'invalid_content', 'This prompt holds something that cannot be sent (srv-x).'],
@@ -877,4 +877,17 @@ it('renders every catalog effort choice as a native radio and sends its exact ax
   await waitFor(() => expect(c.posts).toEqual([{ path: '/api/sessions/s1/config', body: { config_id: 'reasoning_effort', value: 'deep' } }]))
   await screen.findByRole('alert')
   expect(screen.getByRole('radio', { name: 'Balanced' })).toBeChecked()
+})
+
+it('explains a raw busy-turn 409, preserves the draft and offers the open request', async () => {
+  const jump = vi.fn()
+  const view = mount(() => json({ code: 'conflict', message: 'wait for the current turn to end' }, 409), { onJumpToQuestion: jump })
+  type('Keep my next prompt')
+  fireEvent.click(sendButton())
+  expect(await screen.findByText('The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.', { exact: true })).toBeVisible()
+  expect(textarea()).toHaveValue('Keep my next prompt')
+  expect(screen.queryByText('wait for the current turn to end', { exact: true })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Go to open request' }))
+  expect(jump).toHaveBeenCalledOnce()
+  expect(view.prompts()).toHaveLength(1)
 })

@@ -48,7 +48,7 @@ import { sendingFor, track } from '../lib/sending'
 import { undeliveredDraft, type DraftPart } from '../lib/sendAgain'
 import { Icon } from '../lib/ui'
 import SessionConfig from './SessionConfig'
-import { CANCEL_OUTCOME, SEND_AGAIN_LABEL, cancelRefusal, configRefusal, promptRefusal } from './composerWords'
+import { CANCEL_OUTCOME, SEND_AGAIN_LABEL, cancelRefusal, configRefusal, isBusyTurn, promptRefusal } from './composerWords'
 
 /** What the session screen may ask of its composer. */
 export interface ComposerHandle {
@@ -86,6 +86,7 @@ export interface ComposerProps {
    *  rejects with the refusal to show. The view passes its one resume, the
    *  one its footer's Resume goes through. */
   onResume: () => Promise<unknown>
+  onJumpToQuestion?: () => void
   /** The handle above, bound to the composer of the session shown. */
   handle?: Ref<ComposerHandle>
 }
@@ -106,12 +107,13 @@ interface Notice {
   text: string
   /** Offer "Resume and send" (a prompt refused with `not_attached`). */
   resume?: boolean
+  busyTurn?: boolean
 }
 
 /** How a send ended: sent (a 202), or refused, saying why. */
 type Outcome = { sent: true } | { sent: false; notice: Notice }
 
-function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, handle }: ComposerProps) {
+function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, onJumpToQuestion, handle }: ComposerProps) {
   const client = useClient()
   const ids = useId()
   const [text, setText] = useState(() => loadDraft(sessionId))
@@ -312,7 +314,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
     } catch (err) {
       return {
         sent: false,
-        notice: { text: promptRefusal(err), resume: err instanceof ApiFailure && err.code === 'not_attached' },
+        notice: { text: promptRefusal(err), resume: err instanceof ApiFailure && err.code === 'not_attached', busyTurn: isBusyTurn(err) },
       }
     }
     saveDraft(sessionId, '')
@@ -613,6 +615,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
                 Resume and send
               </button>
             )}
+            {notice.busyTurn && onJumpToQuestion && <button className="btn btn-ghost btn-sm" type="button" onClick={onJumpToQuestion}>Go to open request</button>}
           </div>
         )}
         <div className="composer-hint">

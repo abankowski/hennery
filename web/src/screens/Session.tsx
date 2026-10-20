@@ -253,6 +253,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   const [taking, setTaking] = useState(false)
   const [takeError, setTakeError] = useState<string | null>(null)
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null)
+  const [jumpPending, setJumpPending] = useState<string | null>(null)
   const [answerNotice, setAnswerNotice] = useState<string | null>(null)
   const s = useSessionItems(id, timing)
   const mcp = useMcpDelivery(id, summary?.lifecycle, Math.max(0, s.loads - 1))
@@ -280,6 +281,15 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
     }
   }, [id, targetQuestion, s.items, s.pinned])
   const win = useTailWindow(s.items, s.loads, tail, targetQuestion)
+  const openPending = legacy ?? selectedQuestion ?? [...s.pinned, ...s.items].filter(item => item.kind === 'question').find(item => item.state === 'open' && !item.answered)?.pending_id
+  useLayoutEffect(() => {
+    if (!jumpPending) return
+    const card = [...(questionRegion.current?.querySelectorAll<HTMLElement>('[data-pending-id]') ?? [])].find(el => el.dataset.pendingId === jumpPending)
+    if (!card) return
+    card.tabIndex = -1
+    card.scrollIntoView?.({ block: 'center' }); card.focus({ preventScroll: true })
+    setJumpPending(null)
+  }, [jumpPending, win.visible, s.pinned])
   const narrow = useMediaQuery('(max-width: 767px)')
   useLayoutEffect(() => {
     if (!selectedQuestion) return
@@ -508,6 +518,11 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         catalog={s.catalog}
         onCatalog={s.setCatalog}
         onResume={onResume}
+        onJumpToQuestion={openPending ? () => {
+          setJumpPending(openPending)
+          navigate(`/sessions/${encodeURIComponent(id)}?pending=${encodeURIComponent(openPending)}`)
+          void s.loadQuestion(openPending)
+        } : undefined}
       />
       {info && (
         <SessionFooter

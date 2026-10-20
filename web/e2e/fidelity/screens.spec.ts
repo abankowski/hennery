@@ -19,7 +19,7 @@ const rows = [
  { ...base, session_id: 'question', title: 'Choose provider fallback', agent: 'codex', activity: 'blocked', operator_attention: 1, question_waits: true },
  { ...base, session_id: 'running', title: 'Regenerate protocol', activity: 'running', agent: 'codex', git_branch: 'protocol', family: { revision: 1, children: [{ session_id: 'permission', title: 'Port parser tests', agent: 'claude' }], child_counts: { total: 1, active: 1, waiting: 1 }, attention: 0 } },
  { ...base, session_id: 'idle', title: 'Update project documentation', hat_id: 'personal' },
-]
+].map(row => screen === 'busy-turn' && row.session_id === 'permission' ? { ...row, activity: 'idle' } : row)
 const question = { id: 'question:permission', version: 1, ts, kind: 'question', pending_id: 'permission', question_kind: 'permission', request: { type: 'permission', title: 'Run pnpm test for the parser', options: [{ option_id: 'once', name: 'Allow once', option_kind: 'allow_once' }, { option_id: 'always', name: 'Always', option_kind: 'allow_always' }, { option_id: 'reject', name: 'Reject', option_kind: 'reject_once' }] }, answerable: true, answered: false, state: 'open' }
 const elicitation = { ...question, id: 'question:question', pending_id: 'question', question_kind: 'elicitation', request: { type: 'elicitation', message: 'Which provider should the service fall back to first?', form_supported: true, fields: [{ key: 'provider', field_kind: 'single', label: 'Provider', options: [{ value: 'azure', label: 'Azure first' }, { value: 'google', label: 'Google first' }] }], required: ['provider'] } }
 const select = (id: string, name: string, values: string[]) => ({ id, name, category: id === 'effort' ? 'thought_level' : id, type: 'select', currentValue: values[0], options: values.map(value => ({ value, name: value })) })
@@ -36,6 +36,7 @@ async function fixtures(context: BrowserContext) {
   if (path === '/api/view/sessions') return json({ sessions: rows, epoch: 'fixture', revision: 1, waiting: 2 })
   if (/\/questions\//.test(path)) return json(path.endsWith('question') ? elicitation : question)
   if (path.endsWith('/answer')) { expect(route.request().method()).toBe('POST'); return json({ status: 'queued' }, 202) }
+  if (path.endsWith('/prompt') && screen === 'busy-turn') return json({ code: 'conflict', message: 'wait for the current turn to end' }, 409)
   if (/^\/api\/sessions\/[^/]+$/.test(path)) { const row = rows.find(r => path.endsWith(r.session_id)) ?? rows[0]; return json({ ...row, pending: ['permission', 'question'].includes(row.session_id) ? [{ pending_id: row.session_id, kind: row.session_id === 'question' ? 'elicitation' : 'permission', state: 'open', answered: false }] : [] }) }
   if (/^\/api\/view\/sessions\/[^/]+$/.test(path)) return json({ items: [{ id: 'message', version: 1, ts, kind: 'message', text: 'Converted all parser tests. Running the suite next to check the fixtures.' }, { id: 'plan', version: 1, ts, kind: 'plan', entries: [{ content: 'Find existing tests', status: 'completed' }, { content: 'Convert parser fixtures', status: 'completed' }, { content: 'Run the parser suite', status: 'in_progress' }, { content: 'Report the results', status: 'pending' }] }, ...(path.endsWith('running') ? [] : [path.endsWith('question') ? elicitation : question])], older: false, epoch: 'items', revision: 1 })
   if (path.endsWith('/catalog')) return json({ session_id: 'permission', config_options: [], commands: [] })
@@ -71,7 +72,7 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
  try {
   const app = await context.newPage(), reference = await context.newPage()
   await app.clock.setFixedTime(new Date('2026-10-20T10:05:00Z'))
-  const route = screen === 'overview' ? '/sessions' : screen === 'session' ? '/sessions/permission?pending=permission' : screen === 'running-family' ? '/sessions/running' : screen === 'elicitation' ? '/sessions/question?pending=question' : screen === 'new-session' ? '/new' : screen === 'palette' ? '/sessions' : '/' + screen
+  const route = screen === 'overview' ? '/sessions' : ['session', 'busy-turn'].includes(screen) ? '/sessions/permission?pending=permission' : screen === 'running-family' ? '/sessions/running' : screen === 'elicitation' ? '/sessions/question?pending=question' : screen === 'new-session' ? '/new' : screen === 'palette' ? '/sessions' : '/' + screen
   await app.goto(collector.origin + route)
   await expect(app.locator('main')).toBeVisible()
   if (screen === 'new-session') {
@@ -88,20 +89,30 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
   }
   if ((screen === 'overview' && width === 1280) || screen === 'needs-you') await expect(app.getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
   if (screen === 'session') await expect(app.locator('.transcript').getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
+  if (screen === 'busy-turn') {
+   await expect(app.locator('.transcript').getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
+   if (width === 390) await app.locator('.ask[data-pending-id="permission"]').getByRole('button', { name: 'Write a prompt', exact: true }).click()
+   await app.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Keep the next check as a draft')
+   await app.locator('.composer').getByRole('button', { name: 'Send', exact: true }).click()
+   await expect(app.getByText('The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.', { exact: true })).toBeVisible()
+   await expect(app.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveValue('Keep the next check as a draft')
+   await app.getByRole('button', { name: 'Go to open request', exact: true }).click()
+   await expect(app.locator('.ask[data-pending-id="permission"]')).toBeFocused()
+  }
   if (screen === 'elicitation') {
    await expect(app.locator('.transcript').getByText('Which provider should the service fall back to first?', { exact: true })).toBeVisible()
    await app.getByRole('radio', { name: 'Azure first', exact: true }).check()
   }
   if (screen === 'running-family' && width === 390) await app.getByRole('button', { name: 'Session details', exact: true }).click()
   await app.evaluate(() => document.fonts.ready)
-  const mobileFrames: Record<string, string> = { overview: '1b · Sessions tab', 'needs-you': '1 · Needs you tab', session: '3 · Deep link → permission card', 'running-family': '1c · Running session · family sheet', elicitation: '4 · Answer a question', 'new-session': '5 · New session sheet' }
+  const mobileFrames: Record<string, string> = { overview: '1b · Sessions tab', 'needs-you': '1 · Needs you tab', session: '3 · Deep link → permission card', 'busy-turn': '3 · Deep link → permission card', 'running-family': '1c · Running session · family sheet', elicitation: '4 · Answer a question', 'new-session': '5 · New session sheet' }
   const mobile = width === 390 && mobileFrames[screen]
   await reference.goto(pathToFileURL(join(prototype!, mobile ? 'Hennery Mobile.dc.html' : 'Hennery Desktop.dc.html')).href)
   await reference.evaluate(({ theme, mobile }) => { (window as unknown as { __dcSetProps: (name: string, props: object) => void }).__dcSetProps(mobile ? 'Hennery Mobile' : 'Hennery Desktop', { theme }) }, { theme, mobile: !!mobile })
   await expect(reference.locator('.tw-dark')).toHaveCount(theme === 'dark' ? 1 : 0)
   await reference.evaluate(() => document.fonts.ready)
   if (!mobile && !['overview', 'needs-you'].includes(screen)) {
-   if (screen === 'session' || screen === 'elicitation' || screen === 'running-family') await reference.getByRole('button', { name: /^Port VAD tests/ }).first().click()
+   if (screen === 'session' || screen === 'busy-turn' || screen === 'elicitation' || screen === 'running-family') await reference.getByRole('button', { name: /^Port VAD tests/ }).first().click()
    else if (screen === 'new-session') await reference.getByRole('button', { name: /^New session/ }).first().click()
    else if (screen === 'palette') { await reference.getByRole('button', { name: /^Jump to/ }).click(); await app.keyboard.press('ControlOrMeta+k') }
    else await reference.getByRole('button', { name: new RegExp('^' + screen[0].toUpperCase() + screen.slice(1), 'i') }).first().click()
