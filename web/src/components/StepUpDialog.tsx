@@ -1,3 +1,4 @@
+import { useModalLayer } from './ui/useModalLayer'
 // The step-up dialog (frontend spec §3, kernel spec §3.4): a refused request
 // waits while the owner confirms with a passkey, or else the password; then
 // the client sends it once more. It sits over the page, so nothing under it
@@ -22,6 +23,7 @@ export default function StepUpDialog({ onDone, onCancel, returnTo }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const dialog = useRef<HTMLDivElement>(null)
+  const { trap, holdFocus } = useModalLayer(dialog)
 
   // The passkey's options are fetched first, so the click that follows can
   // open the browser's prompt at once (a prompt needs the click itself).
@@ -88,8 +90,8 @@ export default function StepUpDialog({ onDone, onCancel, returnTo }: Props) {
   }
 
   return (
-    <div className="overlay" onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
-      <div className="modal dialog" role="dialog" aria-modal="true" aria-labelledby="step-up-title" ref={dialog}>
+    <div className="overlay" onKeyDown={(e) => trap(e, onCancel, !busy)} onMouseDown={holdFocus}>
+      <div className="modal dialog" role="dialog" aria-modal="true" aria-labelledby="step-up-title" ref={dialog} tabIndex={-1}>
         <div className="modal-head">
           <div className="modal-eyebrow">Confirm it is you</div>
           <h2 className="modal-title" id="step-up-title">

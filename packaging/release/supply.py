@@ -131,6 +131,11 @@ def components(cargo, frontend):
                 p, _ = component('OpenSSL', '.'.join(fields[k] for k in ('MAJOR', 'MINOR', 'PATCH')), 'Apache-2.0', root / 'openssl', 'generic')
                 p['sourceInfo'] = 'Vendored OpenSSL source available in the exact openssl-src crate on crates.io.'
                 packages.append(p)
+    # Fonts and bundled SVG paths have no npm manifest. Keep their complete
+    # upstream texts in both prepared frontend material and direct notices.
+    assets = Path(__file__).resolve().parents[2] / 'web/THIRD_PARTY_NOTICES.txt'
+    if assets.is_file() and frontend:
+        notices.append('\n===== Bundled frontend assets =====\n' + assets.read_text())
     return packages, ''.join(notices), findings
 
 

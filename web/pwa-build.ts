@@ -1,7 +1,7 @@
 // Runs after Vite has emitted every chunk. The worker isn't part of its own
 // precache. No network-generated URL or query parameter enters this list.
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { cpSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { deflateSync } from 'node:zlib'
 import { build, type Plugin } from 'vite'
@@ -39,6 +39,8 @@ export function pwaBuild(): Plugin {
     name: 'hennery-pwa', apply: 'build',
     configResolved(config) { root = config.root; out = resolve(root, config.build.outDir) },
     async closeBundle() {
+      cpSync(resolve(root, 'THIRD_PARTY_NOTICES.txt'), resolve(out, 'THIRD_PARTY_NOTICES.txt'))
+      cpSync(resolve(root, 'third-party-licenses'), resolve(out, 'third-party-licenses'), { recursive: true })
       for (const size of [180, 192, 512]) writeFileSync(resolve(out, `icon-${size}.png`), png(size))
       writeFileSync(resolve(out, 'icon-maskable.png'), png(512))
       const mime: Record<string, string> = { html: 'text/html', js: 'text/javascript', css: 'text/css', svg: 'image/svg+xml', png: 'image/png', webmanifest: 'application/manifest+json', woff2: 'font/woff2' }

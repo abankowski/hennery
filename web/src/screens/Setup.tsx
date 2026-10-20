@@ -1,3 +1,4 @@
+import { AppearanceOptions } from '../components/ui/Appearance'
 // The one-time setup (frontend spec §3, kernel spec §3.1): the owner's
 // password, `public_url` (this page's origin unless changed) and the default
 // hat's name, with the token the link carried; then the offer of a passkey,
@@ -146,6 +147,7 @@ export default function Setup() {
             </button>
           </form>
         )}
+        <AppearanceOptions />
       </div>
     </main>
   )
@@ -210,6 +212,7 @@ function PasskeyOffer() {
             {added || !supported ? 'Continue' : 'Skip'}
           </button>
         </p>
+        <AppearanceOptions />
       </div>
     </main>
   )

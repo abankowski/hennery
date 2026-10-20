@@ -80,6 +80,8 @@ class Supply(unittest.TestCase):
             components, notices, findings = supply.components(cargo, frontend)
             self.assertEqual({c['name'] for c in components}, {'dependency', 'frontend'})
             self.assertIn('Frontend licence', notices)
+            asset_notices = Path(supply.__file__).resolve().parents[2] / 'web/THIRD_PARTY_NOTICES.txt'
+            self.assertIn(asset_notices.read_text(), notices)
             self.assertIn('OpenSSL Apache-2.0', notices)
             self.assertEqual(findings, [])
             sbom = supply.spdx(components, 'a' * 40, 'test-target')

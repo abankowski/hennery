@@ -659,10 +659,10 @@ describe('hats', () => {
     render(<App fetchImpl={s.fetch} />)
     const region = await list()
     await userEvent.click(await within(region).findByRole('button', { name: 'Work' }))
-    await waitFor(() => expect(JSON.parse(localStorage.getItem(THEME_KEY)!)['--accent']).toBe('#112233'))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(THEME_KEY)!).source).toBe('#112233'))
     expect(within(region).getByRole('button', { name: 'Work' })).toHaveAttribute('aria-pressed', 'true')
     await userEvent.click(within(region).getByRole('button', { name: 'Home' }))
-    await waitFor(() => expect(localStorage.getItem(THEME_KEY)).toBeNull())
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(THEME_KEY)!).source).toBe('#64748b'))
   })
 
   it('keeps the saved colours when the hats cannot be read', async () => {

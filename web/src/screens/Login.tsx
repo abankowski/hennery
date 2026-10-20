@@ -1,3 +1,4 @@
+import { AppearanceOptions } from '../components/ui/Appearance'
 // Sign in (frontend spec §3, client view spec D6): "Sign in with passkey"
 // first, the password second. The passkey's ceremony is started when the
 // page loads, so the button's click can open the browser's prompt at once;
@@ -134,6 +135,7 @@ export default function Login() {
             Sign in
           </button>
         </form>
+        <AppearanceOptions />
       </div>
     </main>
   )
