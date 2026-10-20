@@ -20,7 +20,7 @@ it('registers actual session context and actions, scopes its server hat, and rem
   act(() => setAppearance('dark'))
   expect(session.style.getPropertyValue('--hn-accent')).toBe(deriveAccent('#e51595').dark.accent)
   act(() => { actions.dispatch('toggle-details') })
-  expect(screen.getByRole('tab', { name: 'Family' })).toBeVisible()
+  expect(screen.getByRole('region', { name: 'Family' })).toBeVisible()
   act(() => { actions.dispatch('focus-composer') })
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveFocus())
   fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'keep draft' } })

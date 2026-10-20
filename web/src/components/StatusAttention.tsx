@@ -1,3 +1,4 @@
+import { useSessionNames } from './SessionNames'
 // Attention is paged across the selected hat, then narrowed to the current
 // session and the family children already loaded. Never scan extra pages or
 // guess completion from a successful acknowledgement request.
@@ -79,13 +80,15 @@ export default function StatusAttention({ session, children, enabled, refreshKey
     finally { setAcknowledging(previous => previous?.key === key && previous.id === row.id ? null : previous) }
   }
 
+  const names = useSessionNames([...sessions.values(), ...visible.filter(row => !sessions.has(row.child_id)).map(row => ({ session_id: row.child_id }))])
   if (!enabled) return null
   return <section className="family-attention" aria-label="Delegation attention">
     <h2>Needs your attention</h2>
     {visible.map(row => {
-      const title = sessions.get(row.child_id)?.title || row.child_id
+      const named = names(sessions.get(row.child_id) ?? { session_id: row.child_id }, row.child_id)
+      const title = named.text
       return <p key={row.id}>
-        <Link to={sessionPath(row.child_id)}><bdi>{title}</bdi></Link>{' · '}<bdi>{attentionReason(row.reason)}</bdi>{' '}
+        <Link to={sessionPath(row.child_id)}><bdi className={named.provisional ? 'session-name-provisional' : undefined}>{title}</bdi></Link>{' · '}<bdi>{attentionReason(row.reason)}</bdi>{' '}
         {row.pending_id === null
           ? <button type="button" className="btn btn-ghost btn-sm" aria-label={`Acknowledge ${attentionReason(row.reason)} for ${title}`} disabled={ackId !== null} onClick={() => void acknowledge(row)}>{ackId === row.id ? 'Acknowledging…' : 'Acknowledge'}</button>
           : <Link to={`${sessionPath(row.child_id)}?pending=${encodeURIComponent(row.pending_id)}`}>Open question</Link>}

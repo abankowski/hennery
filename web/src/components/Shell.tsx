@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { capabilities } from '../api/auth'
 import { messageOf } from '../api/errors'
 import { useClient } from '../app-client'
@@ -32,7 +32,8 @@ function SessionRoute({ id }: { id: string }) {
 }
 function NavigationAction({ view, enabled }: { view: View; enabled: boolean }) {
   const id = view === 'new' ? 'new-session' : `open-${view}` as AppActionId
-  useRegisterAction(id, { label: LABEL[view], enabled, run: () => navigate(PATH[view]) }, -1)
+  const run = useCallback(() => navigate(PATH[view]), [view])
+  useRegisterAction(id, { label: LABEL[view], enabled, run }, -1)
   return null
 }
 function Frame({ caps, route }: { caps: CapabilitiesResponse; route: Route }) {
@@ -44,6 +45,7 @@ function Frame({ caps, route }: { caps: CapabilitiesResponse; route: Route }) {
   const scope = useSessionScope()
   useRegisterContext({ hatId: scope?.hat || undefined }, -1)
   useRegisterAction('toggle-rail', { label: 'Toggle navigation', enabled: true, run: () => setCollapsed(!collapsed) }, -1)
+  useRegisterAction('add-host', { label: 'Add host', enabled: views.includes('hosts'), run: () => navigate('/hosts?add=1') })
   useRegisterAction('search-sessions', { label: 'Search sessions', enabled: caps.mode === 'full', run: () => {
     navigate('/sessions?search=1')
     // A request on another route focuses only after the overview has mounted.

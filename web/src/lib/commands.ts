@@ -2,7 +2,7 @@ import type { AppActionId, AppActions } from '../app-actions'
 import type { SessionSummary } from '../generated/view'
 
 export const COMMAND_ACTIONS: readonly AppActionId[] = [
-  'new-session', 'search-sessions', 'open-needs-you', 'open-sessions',
+  'new-session', 'add-host', 'search-sessions', 'open-needs-you', 'open-sessions',
   'open-hosts', 'open-mcp', 'open-hats', 'open-defaults', 'open-settings',
   'toggle-rail', 'toggle-details', 'focus-composer',
 ]

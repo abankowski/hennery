@@ -12,6 +12,13 @@ export function agentLabel(agent: string | undefined): string {
 
 export const USER_LABEL = 'You'
 
+/** Keep opaque ids in tooltips; shorten familiar dated Claude ids in rows. */
+export function modelLabel(model: string): string {
+  const short = model.replace(/-\d{8}$/, '')
+  const claude = /^claude-(haiku|sonnet|opus)-(\d+)(?:-(\d+))?$/.exec(short)
+  return claude ? `${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}` : short
+}
+
 /** An avatar's one letter: the label's first character, never anyone's
  *  initials. */
 export function avatarLetter(label: string): string {

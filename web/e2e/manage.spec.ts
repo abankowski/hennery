@@ -75,7 +75,11 @@ for (const width of [1280, 390]) {
 
     test('a host pairs with the command the page shows, and the code goes', async () => {
       await page.goto('/hosts')
-      await page.getByRole('button', { name: 'Add host' }).click()
+      await expect(page.getByRole('button', { name: 'Add host', exact: true })).toBeVisible()
+      await expect(page.locator('.command-entry')).toBeEnabled()
+      const mod = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control')
+      await page.keyboard.press(`${mod}+k`)
+      await page.getByRole('dialog', { name: 'Command palette', exact: true }).getByRole('option', { name: 'Add host', exact: true }).click()
       await captureManagement(page, 'hosts-pairing', 'Desktop hosts / pairing')
       const command = (await page.getByLabel('Pairing command', { exact: true }).textContent())!
       expect(command).toMatch(new RegExp(`^hennery host join ${collector.origin} [0-9A-Z]{4}-[0-9A-Z]{4}$`))
@@ -99,9 +103,11 @@ for (const width of [1280, 390]) {
       const project = realpathSync(host.dir)
       mkdirSync(join(project, 'work'), { recursive: true })
       await page.goto('/hats')
+      await page.getByRole('button', { name: '+ New hat', exact: true }).click()
       await page.getByRole('textbox', { name: 'Name' }).fill('Work')
       await page.getByRole('button', { name: 'Create' }).click()
       await expect(page.getByRole('listitem', { name: 'Work' })).toBeVisible()
+      await page.getByText('Manage path rules', { exact: true }).click()
       const tester = page.getByLabel('Test a path', { exact: true })
       await tester.fill(join(project, 'work'))
       const resolution = page.getByLabel('Resolution', { exact: true })
@@ -138,6 +144,7 @@ for (const width of [1280, 390]) {
         await page.goto(route)
         const summary = route === '/hats' ? page.getByRole('listitem', { name: 'Work', exact: true }) : page.getByRole('region', { name: 'Session defaults', exact: true })
         if (route === '/settings') await summary.getByRole('combobox', { name: 'Defaults hat', exact: true }).selectOption(work.id)
+        if (route === '/hats') await summary.getByText('Choose defaults agent', { exact: true }).click()
         await summary.getByText('Other configured agent', { exact: true }).click()
         await summary.getByRole('textbox', { name: 'Configured agent name', exact: true }).fill('custom-agent')
         await summary.getByRole('button', { name: 'Load saved defaults', exact: true }).click()

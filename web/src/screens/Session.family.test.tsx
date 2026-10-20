@@ -1,10 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { json, liveStream, routed } from '../test-stream'
 import { familyPage } from '../test-family'
 import SessionView from './Session'
+afterEach(() => vi.unstubAllGlobals())
 
 it('loads family state for a notification deep link with no list summary, and invalidates it on resync', async () => {
+  vi.stubGlobal('matchMedia', vi.fn((query: string) => ({ matches: query === '(max-width: 1023px)', addEventListener() {}, removeEventListener() {} })))
   const streams: ReturnType<typeof liveStream>[] = []
   const page = familyPage(); page.questions = []
   const s = routed(call => {

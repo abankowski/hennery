@@ -17,6 +17,10 @@ import { navigate, useLocation, type Route } from '../router'
 import { useSessionList, type SessionList } from '../store/useSessionList'
 import type { StatusFilter } from '../lib/status'
 import { useRegisterContext } from '../app-actions'
+import type { SessionGrouping } from '../lib/sessionGroups'
+import { useDismissedAttention } from '../lib/dismissedAttention'
+import { useAttentionSessions } from '../hooks/useAttentionSessions'
+import type { SessionSummary } from '../generated/view'
 
 export const HIDE_CLOSED_KEY = 'hennery.hideClosed'
 /** How long typing rests before a search goes to the server. */
@@ -28,6 +32,9 @@ export const SEARCH_DEBOUNCE_MS = 250
 export const SEARCH_MAX_CHARS = 200
 
 export interface SessionScopeValue {
+  attentionRows: SessionSummary[]
+  isAttentionDismissed: (id: string) => boolean
+  reportAttentionKey: (id: string, key: string) => void
   list: SessionList
   /** The hats, or `null` until (or unless) they load. */
   hats: HatItem[] | null
@@ -41,8 +48,8 @@ export interface SessionScopeValue {
   setHost: (host: string) => void
   status: StatusFilter
   setStatus: (status: StatusFilter) => void
-  group: 'hat' | 'host'
-  setGroup: (group: 'hat' | 'host') => void
+  group: SessionGrouping
+  setGroup: (group: SessionGrouping) => void
   hideClosed: boolean
   setHideClosed: (on: boolean) => void
   /** One lifecycle, or `''` for any. */
@@ -84,10 +91,10 @@ export default function SessionScope({ route, children }: { route: Route; deskto
   const [hosts, setHosts] = useState<HostItem[] | null>(null)
   const [host, setHost] = useState('')
   const [status, setStatus] = useState<StatusFilter>('all')
-  const [group, updateGroup] = useState<'hat' | 'host'>(() => {
-    try { return localStorage.getItem('hennery.group') === 'host' ? 'host' : 'hat' } catch { return 'hat' }
+  const [group, updateGroup] = useState<SessionGrouping>(() => {
+    try { const held = localStorage.getItem('hennery.group'); return held === 'host' || held === 'project' || held === 'time' ? held : 'hat' } catch { return 'hat' }
   })
-  const setGroup = useCallback((next: 'hat' | 'host') => {
+  const setGroup = useCallback((next: SessionGrouping) => {
     updateGroup(next)
     try { localStorage.setItem('hennery.group', next) } catch { /* document only */ }
   }, [])
@@ -97,7 +104,13 @@ export default function SessionScope({ route, children }: { route: Route; deskto
   const q = useDebounced(query, SEARCH_DEBOUNCE_MS)
   const attention = route.name === 'needs-you'
   const list = useSessionList({ pageScope: attention ? 'attention' : 'overview', hat: hat || null, hideClosed: attention ? false : hideClosed, lifecycle: !attention && lifecycle ? [lifecycle] : undefined, q: attention ? '' : q })
-  useRegisterContext({ loadedSessions: list.all })
+  const attentionRows = useAttentionSessions(list, hat)
+  const dismissed = useDismissedAttention()
+  const [attentionKeys, setAttentionKeys] = useState<ReadonlyMap<string, string>>(new Map())
+  const reportAttentionKey = useCallback((id: string, key: string) => setAttentionKeys(before => before.get(id) === key ? before : new Map(before).set(id, key)), [])
+  const isAttentionDismissed = useCallback((id: string) => Object.hasOwn(dismissed, id) && (!attentionKeys.has(id) || dismissed[id] === attentionKeys.get(id)), [dismissed, attentionKeys])
+  const visibleWaiting = attentionRows.filter(row => !isAttentionDismissed(row.session_id)).length
+  useRegisterContext({ loadedSessions: list.all, hats: hats ?? undefined, hosts: hosts ?? undefined })
   const selectedId = route.name === 'session' && route.id !== undefined ? route.id : null
   useEffect(() => {
     if (route.name !== 'sessions') return
@@ -157,7 +170,7 @@ export default function SessionScope({ route, children }: { route: Route; deskto
 
   // The hat's count, kept through a search or a lifecycle filter: the
   // server's, or the rows' that the list store carries (`waitingCount`).
-  const waiting = list.counts.waiting
+  const waiting = visibleWaiting
   useEffect(() => {
     document.title = titleOf(waiting)
   }, [waiting])
@@ -177,7 +190,8 @@ export default function SessionScope({ route, children }: { route: Route; deskto
 
   const value = useMemo<SessionScopeValue>(
     () => ({
-      list,
+      list: { ...list, counts: { waiting: visibleWaiting } },
+      attentionRows, isAttentionDismissed, reportAttentionKey,
       hats,
       hat,
       chooseHat,
@@ -191,19 +205,19 @@ export default function SessionScope({ route, children }: { route: Route; deskto
       setQuery,
       selectedId,
     }),
-    [list, hats, hat, chooseHat, hostNames, hosts, host, status, group, setGroup, hideClosed, setHideClosed, lifecycle, query, selectedId],
+    [list, visibleWaiting, attentionRows, isAttentionDismissed, reportAttentionKey, hats, hat, chooseHat, hostNames, hosts, host, status, group, setGroup, hideClosed, setHideClosed, lifecycle, query, selectedId],
   )
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>
 }
 
 /** The rail's and the top bar's count of sessions waiting on you. */
-export function WaitingBadge() {
+export function WaitingBadge({ className = 'badge badge-attn' }: { className?: string } = {}) {
   const scope = useSessionScope()
   const n = scope?.list.counts.waiting ?? 0
   if (n === 0) return null
   const text = `${n} waiting on you`
   return (
-    <span className="badge badge-attn" role="status" aria-label={text} title={text}>
+    <span className={className} role="status" aria-label={text} title={text}>
       {n}
     </span>
   )

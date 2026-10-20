@@ -1,6 +1,6 @@
 import { captureManagement } from './management-captures'
 import { expect, test, type Page } from '@playwright/test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { startCollector } from './collector'
@@ -20,9 +20,13 @@ async function fixtureBinary(dir: string) {
   // Cargo supplies exact dependency identities, including Tokio feature sets.
   // Reuse downloaded source caches offline, with fresh compiler configuration.
   const toolchain = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(?:NIX_|SDKROOT$|CC$|CXX$|AR$|PKG_CONFIG_PATH$|PKG_CONFIG_LIBDIR$|OPENSSL_DIR$|LIBCLANG_PATH$|RUSTFLAGS$|CARGO_ENCODED_RUSTFLAGS$)/.test(key)))
-  const cargoHome = join(dirname(BIN), '..', 'ui-r5-compiler-home'), cache = process.env.CARGO_HOME ?? join(homedir(), '.cargo')
+  const cargoHome = join(dirname(BIN), '..', 'ui-fidelity-compiler-home'), cache = process.env.CARGO_HOME ?? join(homedir(), '.cargo')
   mkdirSync(cargoHome, { recursive: true })
-  for (const part of ['registry', 'git']) if (existsSync(join(cache, part)) && !existsSync(join(cargoHome, part))) symlinkSync(join(cache, part), join(cargoHome, part), 'dir')
+  for (const part of ['registry', 'git']) if (existsSync(join(cache, part)) && !existsSync(join(cargoHome, part))) {
+    const target = join(cargoHome, part)
+    if (lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) unlinkSync(target)
+    symlinkSync(join(cache, part), target, 'dir')
+  }
   toolchain.CARGO_HOME = cargoHome
   const binary = join(dirname(BIN), '..', 'hennery-delegation-host')
   const build = spawnHennery([resolve('e2e/build-delegation-host.sh')], dir, toolchain, ['ignore', 'ignore', 'pipe'], '/bin/sh')
@@ -68,26 +72,23 @@ for (const width of [1280, 390]) test(`Settings authorization drives real delega
     }).toPass({ timeout: 30_000 })
     console.log('Delegation acceptance: host ready')
     await page.goto('/settings')
-    const toggle = page.getByLabel('Enable delegation session tools', { exact: true })
+    const toggle = page.getByRole('switch', { name: 'Delegation', exact: true })
     await expect(toggle).not.toBeChecked()
     await captureManagement(page, 'settings', 'Desktop settings; mobile adaptation')
     const policyPath = `/api/hats/${hat}/delegation-policy`, toolsPath = `/api/hats/${hat}/session-tools`
     const empty = await (await page.request.get(policyPath)).json(); expect(empty.allowed).toEqual({})
-    // Force the same fresh-confirmation response that an expired session gets.
-    let toolsRefused = false
-    await page.route(`**${toolsPath}`, async route => {
-      if (route.request().method() === 'PATCH' && !toolsRefused) { toolsRefused = true; return route.fulfill({ status: 403, json: { code: 'step_up_required' } }) }
-      return route.continue()
-    })
+    let confirmations = 0
+    page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/auth/step-up/password') confirmations++ })
     await toggle.click(); await confirm(page); await expect(toggle).toBeChecked()
-    await page.unroute(`**${toolsPath}`)
-    expect((await (await page.request.get(policyPath)).json()).allowed).toEqual({})
+    expect(confirmations).toBe(1)
+    const allModes = ['default', 'plan', 'bypassPermissions']
+    expect((await (await page.request.get(policyPath)).json()).allowed).toEqual({ claude: { mode: allModes }, custom: { mode: allModes } })
     const started = await page.request.post('/api/sessions', { headers: origin, data: { host_id: hostId, agent: 'claude', cwd: project } })
     expect(started.status()).toBe(202)
     const parent = (await started.json()).session_id
     await expect(async () => expect((await (await page.request.get(`/api/sessions/${parent}`)).json()).lifecycle).toBe('active')).toPass({ timeout: 30_000 })
     const records = () => existsSync(receipt) ? readFileSync(receipt, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : []
-    const descriptor = records().find(row => row.method === 'session/new').params.mcpServers.find((server: { name: string }) => server.name === 'hennery')
+    const descriptor = records().find(row => row.method === 'session/new' && row.params.mcpServers.some((server: { name: string }) => server.name === 'hennery')).params.mcpServers.find((server: { name: string }) => server.name === 'hennery')
     expect(!!descriptor).toBe(true)
     const token = descriptor.headers.find((header: { name: string }) => header.name.toLowerCase() === 'authorization').value
     const rpc = async (name: string, args: object, expectedStatus = 200) => {
@@ -98,8 +99,6 @@ for (const width of [1280, 390]) test(`Settings authorization drives real delega
     }
     const spawnChild = (key: string, mode: string, agent = 'claude', expectedStatus = 200) => rpc('session_spawn', { operation_key: key, cwd: project, agent, brief: `Reviewed brief ${key}`, config: { mode } }, expectedStatus)
     console.log('Delegation acceptance: tools enabled')
-    const baseline = await spawnChild('baseline', 'default')
-    expect(typeof baseline.child_id).toBe('string')
     const waitChild = async (id: string, mode: string, key: string) => {
       await expect(async () => {
         const detail = await (await page.request.get(`/api/sessions/${id}`)).json()
@@ -113,58 +112,20 @@ for (const width of [1280, 390]) test(`Settings authorization drives real delega
         expect(actual.config_options.find((option: { id: string }) => option.id === 'mode').currentValue).toBe(mode)
       }).toPass({ timeout: 30_000 })
     }
-    await waitChild(baseline.child_id, 'default', 'baseline')
-    console.log('Delegation acceptance: baseline child confirmed')
-    const before = records().length
-    const refused = await spawnChild('permissive', 'bypassPermissions')
-    expect(refused.code).toBe('operator_required')
-    expect(records().length).toBe(before)
-    const sessionsBefore = (await (await page.request.get('/api/view/sessions')).json()).sessions.map((session: { session_id: string }) => session.session_id).sort()
-    console.log('Delegation acceptance: permissive child refused')
-    const unknown = await spawnChild('unknown', 'default', 'custom')
-    expect(unknown.code).toBe('operator_required')
-    // A previously unprobed runtime starts an empty catalog probe, never
-    // the requested child or its brief. Assert the actual session boundary.
-    console.log('Delegation acceptance: unknown profile refused')
-    const sessionsAfter = (await (await page.request.get('/api/view/sessions')).json()).sessions.map((session: { session_id: string }) => session.session_id).sort()
-    expect(sessionsAfter).toEqual(sessionsBefore)
-    // The only grant is deliberately selected from the real runtime catalog.
-    await page.getByLabel('Grant host', { exact: true }).selectOption(hostId)
-    await expect(page.getByLabel('Grant agent', { exact: true })).toBeEnabled()
-    await page.getByLabel('Grant agent', { exact: true }).fill('custom')
-    await page.getByLabel('Grant project path', { exact: true }).fill(project)
-    await page.getByRole('button', { name: 'Load grant choices', exact: true }).click()
-    const unknownAxis = page.getByRole('group', { name: 'Permissions', exact: true })
-    await expect(unknownAxis.getByLabel('Use as policy setting Permissions', { exact: true })).not.toBeChecked()
-    await expect(unknownAxis.getByLabel('Default', { exact: true })).toBeDisabled()
+    const permissive = await spawnChild('permissive', 'bypassPermissions')
+    expect(typeof permissive.child_id).toBe('string')
+    await waitChild(permissive.child_id, 'bypassPermissions', 'permissive')
+    const custom = await spawnChild('custom-permissive', 'bypassPermissions', 'custom')
+    expect(typeof custom.child_id).toBe('string')
+    await waitChild(custom.child_id, 'bypassPermissions', 'custom-permissive')
+    console.log('Delegation acceptance: permissive children confirmed for both runtimes')
+    await toggle.click(); await confirm(page); await expect(toggle).not.toBeChecked()
+    expect(confirmations).toBe(2)
     expect((await (await page.request.get(policyPath)).json()).allowed).toEqual({})
-    await captureManagement(page, 'settings-unknown-profile', 'Desktop settings / explicit unknown profile; no prototype frame')
-    await page.getByLabel('Grant agent', { exact: true }).fill('claude')
-    await page.getByRole('button', { name: 'Load grant choices', exact: true }).click()
-    const axis = page.getByRole('group', { name: 'Permissions', exact: true })
-    await axis.getByLabel('Override Permissions', { exact: true }).check()
-    await axis.getByLabel('Bypass permissions', { exact: true }).check()
-    await captureManagement(page, 'settings-grants', 'Desktop settings / delegation extension')
-    await page.getByRole('button', { name: 'Review execution grants', exact: true }).click()
-    const review = page.getByRole('dialog', { name: 'Save execution grants?', exact: true })
-    await captureManagement(page, 'settings-grant-review', 'Design System confirmation; no prototype frame')
-    let grantRefused = false
-    await page.route(`**${policyPath}`, async route => {
-      if (route.request().method() === 'PATCH' && !grantRefused) { grantRefused = true; return route.fulfill({ status: 403, json: { code: 'step_up_required' } }) }
-      return route.continue()
-    })
-    await review.getByRole('button', { name: 'Save execution grants', exact: true }).click()
-    await confirm(page); await expect(review).toBeHidden(); await page.unroute(`**${policyPath}`)
-    expect((await (await page.request.get(policyPath)).json()).allowed).toEqual({ claude: { mode: ['default', 'plan', 'bypassPermissions'] } })
-    console.log('Delegation acceptance: explicit grant saved')
-    const retried = await spawnChild('permissive-retry', 'bypassPermissions')
-    expect(typeof retried.child_id).toBe('string')
-    await waitChild(retried.child_id, 'bypassPermissions', 'permissive-retry')
-    console.log('Delegation acceptance: granted child confirmed')
-    await toggle.click(); await expect(toggle).not.toBeChecked()
+    expect((await (await page.request.get(toolsPath)).json()).delegation_enabled).toBe(false)
     const afterDisable = await spawnChild('disabled', 'default', 'claude', 404)
     expect(afterDisable.code).toBe('not_found')
-    expect((await (await page.request.get(`/api/sessions/${retried.child_id}`)).json()).lifecycle).toBe('active')
+    expect((await (await page.request.get(`/api/sessions/${permissive.child_id}`)).json()).lifecycle).toBe('active')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   } catch (error) {
     console.error('Delegation acceptance failed before cleanup:', error)

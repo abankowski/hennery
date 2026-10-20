@@ -15,7 +15,7 @@ import { Text, visible } from '../lib/text'
 export const TEST_DELAY_MS = 400
 
 /** `purges` counts the purges tried: each may have deleted rules here. */
-export default function PathRules({ hosts, hats, purges }: { hosts: HostItem[]; hats: HatItem[]; purges: number }) {
+export default function PathRules({ hosts, hats, purges, onSaved }: { hosts: HostItem[]; hats: HatItem[]; purges: number; onSaved?: () => void }) {
   const [hostId, setHostId] = useState<string | null>(null)
   const [saves, setSaves] = useState(0)
   const host = hosts.find((h) => h.host_id === hostId) ?? hosts[0]
@@ -51,7 +51,7 @@ export default function PathRules({ hosts, hats, purges }: { hosts: HostItem[]; 
       </label>
       {/* After a purge the rules are read again; after a save, the answer
           is the set as stored already. The tester asks again after both. */}
-      <Rules key={`${host.host_id}-${purges}`} host={host} hats={hats} onSaved={() => setSaves((n) => n + 1)} />
+      <Rules key={`${host.host_id}-${purges}`} host={host} hats={hats} onSaved={() => { setSaves((n) => n + 1); onSaved?.() }} />
       <Tester key={`t-${host.host_id}`} host={host} hats={hats} rules={`${purges}.${saves}`} />
     </section>
   )

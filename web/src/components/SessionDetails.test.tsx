@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import SessionDetails, { type SessionDetailsTab } from './SessionDetails'
 
 function View() {
@@ -12,7 +12,9 @@ function View() {
 }
 
 describe('SessionDetails', () => {
+  afterEach(() => vi.unstubAllGlobals())
   it('offers semantic arrow/Home/End tabs and empty states without inventing plan data', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({ matches: query === '(max-width: 1023px)', addEventListener() {}, removeEventListener() {} })))
     render(<View />)
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Session details' }))
@@ -27,6 +29,15 @@ describe('SessionDetails', () => {
     fireEvent.keyDown(document.activeElement!, { key: 'Home' })
     expect(family).toHaveFocus()
     expect(screen.getByRole('link', { name: 'Worker' })).toBeVisible()
+  })
+
+  it('shows Family, Plan and Details together in the desktop sidebar', async () => {
+    render(<View />)
+    await userEvent.click(screen.getByRole('button', { name: 'Session details' }))
+    expect(screen.queryByRole('tablist')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Worker' })).toBeVisible()
+    expect(screen.getByText('No plan has been shared.', { exact: true })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'MCP delivery' })).toBeVisible()
   })
 
   it('makes the phone sheet modal, traps focus, preserves drafts and returns focus on Escape', async () => {

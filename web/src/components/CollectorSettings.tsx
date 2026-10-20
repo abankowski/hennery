@@ -7,6 +7,7 @@ import type { AttachmentUsage, HatItem, HostRemovalItem, RemovalState } from '..
 import { useResource } from '../hooks/useResource'
 import { Text } from '../lib/text'
 import { Link } from '../router'
+import { AppearanceOptions } from './ui'
 
 const REMOVAL: Record<RemovalState, string> = {
   removed: 'Transcript removed',
@@ -27,6 +28,7 @@ export default function CollectorSettings({ push, sessions, hats }: { push: bool
     {!config.data && !config.error && <p role="status">Loading collector information…</p>}
     <dl className="facts"><dt>Public URL</dt><dd>{config.data ? <Text>{config.data.public_url}</Text> : 'Not loaded'}</dd>
       {sessions && <><dt>Default for new hosts</dt><dd>{hats ? <Text>{hats.find(hat => hat.default_for_new_hosts)?.name ?? 'None reported'}</Text> : 'Not loaded'}</dd></>}
+      <dt>Theme</dt><dd><AppearanceOptions /><p className="hint">System follows this device. The selected hat supplies the accent.</p></dd>
       {usage.data && <><dt>Attachments</dt><dd>{usage.data.count} images · {usage.data.bytes.toLocaleString()} bytes</dd></>}
     </dl>
     <p className="hint">The public URL is managed on the collector. <code>hennery admin reset-public-url</code> ends logins and push registrations; a changed host name removes passkeys.</p>

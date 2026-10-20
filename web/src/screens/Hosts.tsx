@@ -1,7 +1,7 @@
 // Hosts (frontend spec §8, kernel spec §4): every paired host, revoked ones
 // included, with its online state and versions; pairing a new one; and
 // renaming, re-hatting or revoking one, each confirmed, then stepped up.
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { messageOf } from '../api/errors'
 import { hats as listHats, hosts as listHosts, mintPairingCode, revokeHost, settings, updateHost } from '../api/manage'
 import { useClient } from '../app-client'
@@ -12,6 +12,8 @@ import { useResource } from '../hooks/useResource'
 import { HOST_STATE_LABEL, hostState } from '../lib/manage'
 import { Text, visible } from '../lib/text'
 import When from '../components/When'
+import { useSessionScope } from '../components/SessionScope'
+import { navigate, useLocation } from '../router'
 import '../manage.css'
 
 /** Each carries where focus goes when the confirmation closes and what
@@ -30,6 +32,8 @@ interface Panel {
 
 export default function Hosts() {
   const client = useClient()
+  const { search } = useLocation()
+  const scope = useSessionScope()
   const list = useResource(() => listHosts(client))
   const hatList = useResource(() => listHats(client))
   const [panel, setPanel] = useState<Panel | null>(null)
@@ -41,7 +45,7 @@ export default function Hosts() {
   // The URL and the hosts already paired are read first: a failed read then
   // spends no code, and a host that pairs is told from the ones before it
   // even when the list above never loaded.
-  const add = async () => {
+  const add = useCallback(async () => {
     setAdding(true)
     setAddError(null)
     try {
@@ -54,7 +58,15 @@ export default function Hosts() {
     } finally {
       setAdding(false)
     }
-  }
+  }, [client])
+  const requested = useRef(false)
+  useEffect(() => {
+    if (new URLSearchParams(search).get('add') !== '1') { requested.current = false; return }
+    if (requested.current) return
+    requested.current = true
+    navigate('/hosts', { replace: true })
+    if (!adding && !minted) void add()
+  }, [add, search, adding, minted])
 
   // A page restored from the back-forward cache must not show a code: it
   // is dropped as the page is hidden. Switching tabs to paste it keeps it.
@@ -69,7 +81,7 @@ export default function Hosts() {
   const hatName = (id: string) => hatList.data?.find((h) => h.id === id)?.name
 
   return (
-    <div className="manage">
+    <div className="manage hosts-screen">
       <header className="manage-head">
         <h1>Hosts</h1>
         <button type="button" className="btn btn-primary btn-sm" onClick={add} disabled={adding || minted !== null}>
@@ -102,13 +114,15 @@ export default function Hosts() {
         </p>
       )}
       {list.data && list.data.length === 0 && <p className="empty">No host is paired yet.</p>}
-      <ul className="cards" aria-label="Hosts">
+      <div className="host-inventory-head" aria-hidden="true"><span>Host</span><span>Status</span><span>hennery</span><span>Agents on this host</span><span>Default hat</span><span>Sessions</span><span /></div>
+      <ul className="cards host-inventory" aria-label="Hosts">
         {(list.data ?? []).map((host) => (
           <HostCard
             key={host.host_id}
             host={host}
             hats={hatList.data ?? []}
             hatName={hatName(host.default_hat_id)}
+            sessions={scope ? `${scope.list.shown.filter(s => s.host_id === host.host_id).length} shown` : '—'}
             onRename={(name, back) => setPending({ kind: 'rename', host, name, back })}
             onDefaultHat={(hat, back) => setPending({ kind: 'default_hat', host, hat, back })}
             onRevoke={(back) => setPending({ kind: 'revoke', host, back })}
@@ -174,12 +188,13 @@ interface CardProps {
   host: HostItem
   hats: HatItem[]
   hatName?: string
+  sessions: string
   onRename: (name: string, back: Back) => void
   onDefaultHat: (hat: HatItem, back: Back) => void
   onRevoke: (back: Back) => void
 }
 
-function HostCard({ host, hats, hatName, onRename, onDefaultHat, onRevoke }: CardProps) {
+function HostCard({ host, hats, hatName, sessions, onRename, onDefaultHat, onRevoke }: CardProps) {
   const state = hostState(host)
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState(host.name)
@@ -206,26 +221,20 @@ function HostCard({ host, hats, hatName, onRename, onDefaultHat, onRevoke }: Car
   }
 
   return (
-    <li className={`card host host-${state}`} aria-labelledby={titleId}>
-      <div className="card-head">
+    <li className={`card host host-row host-${state}${renaming ? ' host-row-editing' : ''}`} aria-labelledby={titleId}>
+      <div className="host-identity">
         <h2 className="card-title" id={titleId} ref={title} tabIndex={-1}>
           <Text>{host.name}</Text>
         </h2>
-        <span className={`state state-${state}`}>{HOST_STATE_LABEL[state]}</span>
+        <p className="host-platform"><Text>{host.platform}</Text></p>
       </div>
-      {/* One row per fact; the agents, the last doctor result and the
-          host's notices join these when the host reports them. */}
+      <span className={`state state-${state}`}>{HOST_STATE_LABEL[state]}</span>
+      <span className="host-version"><Text>{host.host_version}</Text></span>
+      <span className="host-agents" title="Agent versions and sign-in status are not reported by the host API">Not reported</span>
+      <div className="host-hat">{state !== 'revoked' ? <label className="select-field"><span className="field-label">Default hat</span><select value={host.default_hat_id} onChange={event => { const hat = hats.find(h => h.id === event.target.value); if (hat) onDefaultHat(hat, toTitle) }}>{hats.filter(h => !h.purging || h.id === host.default_hat_id).map(h => <option key={h.id} value={h.id}>{visible(h.name)}</option>)}</select></label> : <Text>{hatName ?? host.default_hat_id}</Text>}</div>
+      <span className="host-session-count">{sessions}</span>
+      <details className="host-history"><summary>Details</summary>
       <dl className="facts">
-        <dt>Platform</dt>
-        <dd>
-          <Text>{host.platform}</Text>
-        </dd>
-        <dt>hennery</dt>
-        <dd>
-          <Text>{host.host_version}</Text>
-        </dd>
-        <dt>Default hat</dt>
-        <dd>{hatName !== undefined ? <Text>{hatName}</Text> : <Text className="mono">{host.default_hat_id}</Text>}</dd>
         <dt>Paired</dt>
         <dd>
           <When at={host.created_at} />
@@ -240,7 +249,7 @@ function HostCard({ host, hats, hatName, onRename, onDefaultHat, onRevoke }: Car
             </dd>
           </>
         )}
-      </dl>
+      </dl></details>
       {state !== 'revoked' && (
         <div className="card-actions">
           {renaming ? (
@@ -288,24 +297,6 @@ function HostCard({ host, hats, hatName, onRename, onDefaultHat, onRevoke }: Car
               >
                 Rename
               </button>
-              <label className="select-field">
-                <span className="field-label">Default hat</span>
-                <select
-                  value={host.default_hat_id}
-                  onChange={(e) => {
-                    const hat = hats.find((h) => h.id === e.target.value)
-                    if (hat) onDefaultHat(hat, toTitle)
-                  }}
-                >
-                  {hats
-                    .filter((h) => !h.purging || h.id === host.default_hat_id)
-                    .map((h) => (
-                      <option key={h.id} value={h.id}>
-                        {visible(h.name)}
-                      </option>
-                    ))}
-                </select>
-              </label>
               <span className="spacer" />
               <button type="button" className="btn btn-danger btn-sm" onClick={() => onRevoke(toTitle)}>
                 Revoke

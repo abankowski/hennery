@@ -99,7 +99,7 @@ for (const width of [1280, 390]) test(`family navigation, takeover, attention an
     const page = await context.newPage(); await page.goto(`${collector.origin}/sessions/parent`)
     await expect(page.locator('.session-head .badge')).toHaveText('Waiting on children')
     const family = page.getByRole('region', { name: 'Session family', exact: true })
-    await page.getByRole('button', { name: 'Session details', exact: true }).click()
+    if (await page.getByRole('button', { name: 'Session details', exact: true }).getAttribute('aria-pressed') !== 'true') await page.getByRole('button', { name: 'Session details', exact: true }).click()
     const child = family.getByRole('article', { name: 'Parser worker', exact: true })
     for (const text of ['Codex', 'reasoner', 'worker host', '/srv/worker', 'active', 'blocked', 'Start child: Accepted', 'Parent is handling']) {
       await expect(child.getByText(text, { exact: true })).toBeVisible()
@@ -112,7 +112,7 @@ for (const width of [1280, 390]) test(`family navigation, takeover, attention an
     await expect(card.getByText('Parent is handling', { exact: true })).toBeVisible()
     await expect(card.getByRole('button', { name: 'Decline', exact: true })).toBeEnabled()
     await expect(page.getByRole('status', { name: '1 waiting on you', exact: true })).toHaveCount(0)
-    await page.getByRole('button', { name: 'Session details', exact: true }).click()
+    if (await page.getByRole('button', { name: 'Session details', exact: true }).getAttribute('aria-pressed') !== 'true') await page.getByRole('button', { name: 'Session details', exact: true }).click()
     const take = family.getByRole('button', { name: 'Take over', exact: true })
     if (width === 390) expect((await take.boundingBox())!.height).toBeGreaterThanOrEqual(44)
     await take.click()
@@ -167,7 +167,7 @@ test('phone status-only child attention can be acknowledged without an answer ca
   try {
     const page = await context.newPage(); await page.goto(`${collector.origin}/sessions/parent`)
     const family = page.getByRole('region', { name: 'Session family', exact: true })
-    await page.getByRole('button', { name: 'Session details', exact: true }).click()
+    if (await page.getByRole('button', { name: 'Session details', exact: true }).getAttribute('aria-pressed') !== 'true') await page.getByRole('button', { name: 'Session details', exact: true }).click()
     const attention = family.getByRole('region', { name: 'Delegation attention', exact: true })
     await expect(attention.getByText('Child session failed', { exact: true })).toBeVisible()
     await expect(attention.getByRole('link', { name: 'Parser worker', exact: true })).toHaveAttribute('href', '/sessions/child')

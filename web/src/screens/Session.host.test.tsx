@@ -112,13 +112,15 @@ describe('SessionView: the host’s reach on a question card', () => {
     await settled(s)
     expect(screen.queryByText(NOTE, { exact: true })).toBeNull()
     const calls = s.calls.length
+    const ends = s.calls.filter(call => call.path.startsWith('/api/sessions/s1/events?')).length
 
     r.rerender(<SessionView id="s1" summary={summary(true)} timing={FAST} />)
     expect(await screen.findByText(NOTE, { exact: true }, WAIT)).toBeInTheDocument()
 
     r.rerender(<SessionView id="s1" summary={summary(false)} timing={FAST} />)
     await waitFor(() => expect(screen.queryByText(NOTE, { exact: true })).toBeNull(), WAIT)
-    expect(s.calls.length).toBe(calls + 3)
+    expect(s.calls.filter(call => call.path.startsWith('/api/sessions/s1/events?'))).toHaveLength(ends + 2)
+    expect(s.calls.length).toBe(calls + 5)
     expect(s.of('/api/view/sessions/s1/family')).toHaveLength(3)
   })
 })

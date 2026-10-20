@@ -15,7 +15,7 @@ export function defaultsAgents(hosts: HostItem[] | null): string[] {
 }
 
 /** Stored overrides, without implying that a host supports them or probing one. */
-export default function HatDefaultsSummary({ hatId, agents }: { hatId: string; agents: string[] }) {
+export default function HatDefaultsSummary({ hatId, agents, compact = false }: { hatId: string; agents: string[]; compact?: boolean }) {
   const client = useClient(), id = useId()
   const [selected, setSelected] = useState<string | null>(null), [other, setOther] = useState(''), [refresh, setRefresh] = useState(0)
   const agent = selected ?? agents[0] ?? ''
@@ -34,7 +34,8 @@ export default function HatDefaultsSummary({ hatId, agents }: { hatId: string; a
   const current = result?.request === request ? result : null
   const entries = current?.record ? Object.entries(flatConfig(current.record.config)) : null
   const options = [...new Set([...agents, ...(agent ? [agent] : [])])]
-  return <div className="hat-defaults-summary">
+  return <div className={`hat-defaults-summary${compact ? ' compact-defaults' : ''}`}>
+    <details className="defaults-agent-picker" open={!compact || undefined}><summary>Choose defaults agent</summary>
     <label className="field"><span className="field-label">Defaults agent</span><select value={agent} onChange={event => setSelected(event.target.value)}>
       {!agent && <option value="">Choose an agent</option>}{options.map(value => <option key={value} value={value}>{visible(agentLabel(value))}</option>)}
     </select></label>
@@ -42,6 +43,7 @@ export default function HatDefaultsSummary({ hatId, agents }: { hatId: string; a
       <label className="field" htmlFor={id}>Configured agent name<input id={id} className="text-input" value={other} onChange={event => setOther(event.target.value)} /></label>
       <button className="btn btn-secondary btn-sm" disabled={!other.trim()}>Load saved defaults</button>
     </form></details>
+    </details>
     {!agent && <p className="hint">Choose a configured agent to inspect its saved overrides.</p>}
     {agent && !current && <p role="status">Loading saved defaults…</p>}
     {current?.error && <p role="alert">Unable to load saved defaults. <Text>{current.error}</Text> <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRefresh(value => value + 1)}>Retry saved defaults</button></p>}

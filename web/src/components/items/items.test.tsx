@@ -105,7 +105,7 @@ describe('tool_call', () => {
     const { container } = show(item('tool_call', { ...base, input: { command: 'echo hi' }, output: 'hi\n' }))
     expect(screen.getByText('Run a command')).toBeInTheDocument()
     expect(screen.getByText('echo hi')).toBeInTheDocument()
-    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.getByText('Completed')).toBeInTheDocument()
     expect(container.querySelectorAll('.tool-io')).toHaveLength(0)
   })
 
