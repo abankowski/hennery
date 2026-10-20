@@ -197,13 +197,13 @@ export default function SessionScope({ route, children }: { route: Route; deskto
 }
 
 /** The rail's and the top bar's count of sessions waiting on you. */
-export function WaitingBadge() {
+export function WaitingBadge({ className = 'badge badge-attn' }: { className?: string } = {}) {
   const scope = useSessionScope()
   const n = scope?.list.counts.waiting ?? 0
   if (n === 0) return null
   const text = `${n} waiting on you`
   return (
-    <span className="badge badge-attn" role="status" aria-label={text} title={text}>
+    <span className={className} role="status" aria-label={text} title={text}>
       {n}
     </span>
   )

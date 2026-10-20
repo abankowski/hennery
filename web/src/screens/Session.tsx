@@ -242,7 +242,8 @@ export default function SessionView(props: Props) {
 function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timing, onRemoved }: Props) {
   const client = useClient()
   const scope = useSessionScope()
-  const [detailsOpen, setDetailsOpen] = useState(false)
+  const wide = useMediaQuery('(min-width: 1024px)')
+  const [detailsOpen, setDetailsOpen] = useState(wide)
   const [detailsTab, setDetailsTab] = useState<SessionDetailsTab>('Family')
   const detailsTrigger = useRef<HTMLButtonElement>(null)
   const toggleDetails = useCallback(() => setDetailsOpen(open => !open), [])
