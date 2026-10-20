@@ -529,6 +529,11 @@
             "cwd": {
               "type": "string"
             },
+            "operator_initiated": {
+              "default": false,
+              "description": "Operator previews use ordinary session path rules. Delegated probes\nretain the host workspace boundary. Set only by the collector.",
+              "type": "boolean"
+            },
             "request_id": {
               "type": "string"
             },

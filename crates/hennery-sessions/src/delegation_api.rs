@@ -126,7 +126,13 @@ async fn catalog(
     }
     let resolved = match crate::resolve::resolve_on_host(&state, &host, &query.cwd).await {
         Ok(cwd) if cwd.exists && cwd.is_dir => cwd,
-        _ => return error(StatusCode::BAD_REQUEST, "invalid_cwd", "invalid cwd"),
+        _ => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "cwd_unavailable",
+                "the working directory is unavailable",
+            );
+        }
     };
     let hat = match state.hosts.session_hat(&host, &resolved.canonical) {
         Ok(Some(hennery_kernel::hats::SessionHat::Decided(r))) => r.hat_id,
@@ -134,7 +140,7 @@ async fn catalog(
     };
     match state
         .catalogs
-        .get(&state, &host, &hat, &resolved.canonical, &query.agent)
+        .get_operator(&state, &host, &hat, &resolved.canonical, &query.agent)
         .await
     {
         Ok(catalog) => Json(catalog).into_response(),

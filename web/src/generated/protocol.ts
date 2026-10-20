@@ -538,7 +538,12 @@ truncated: boolean, };
 /**
  * Collector -> host.
  */
-export type CollectorFrame = { "type": "probe_catalog", request_id: string, agent: string, cwd: string, } | { "type": "delegated_attach", request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue },
+export type CollectorFrame = { "type": "probe_catalog", request_id: string, agent: string, cwd: string,
+/**
+ * Operator previews use ordinary session path rules. Delegated probes
+ * retain the host workspace boundary. Set only by the collector.
+ */
+operator_initiated: boolean, } | { "type": "delegated_attach", request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue },
 /**
  * Passed in `session/new` / `session/load`. Only to a host that
  * announced `mcp_servers`.

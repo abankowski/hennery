@@ -226,11 +226,13 @@ async fn catalog_timeout_releases_permit_and_leaves_no_adapter() {
         args: vec!["-c".into(), "echo $$ > \"$PROBE_PID_FILE\"; exec sleep 100".into()],
         env: vec![("PROBE_PID_FILE".into(), pid_file.display().to_string())],
     };
-    assert!(
+    assert_eq!(
         probes
             .catalog("hang", hanging, Profile::Generic, cwd.clone(), vec![cwd.clone()])
             .await
-            .is_err()
+            .unwrap_err()
+            .to_string(),
+        "timeout"
     );
     let pid: i32 = std::fs::read_to_string(pid_file).unwrap().trim().parse().unwrap();
     assert!(!hennery_testkit::pid_alive(pid), "probe process survived timeout");
@@ -574,6 +576,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
             request_id: "catalog".into(),
             agent: "chosen".into(),
             cwd: cwd.display().to_string(),
+            operator_initiated: false,
         },
     )
     .await;

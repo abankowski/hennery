@@ -1001,6 +1001,10 @@ pub enum CollectorFrame {
         request_id: String,
         agent: String,
         cwd: String,
+        /// Operator previews use ordinary session path rules. Delegated probes
+        /// retain the host workspace boundary. Set only by the collector.
+        #[serde(default)]
+        operator_initiated: bool,
     },
     /// A delegated attach uses an independently allocated, nonzero generation.
     /// `agent_session_id` absent starts a new adapter session; present loads it.

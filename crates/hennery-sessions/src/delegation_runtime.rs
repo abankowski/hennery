@@ -20,7 +20,7 @@ pub(crate) fn same_hat_in(tx: &Transaction<'_>, owner: &str, host: &str, hat: &s
         matches!(hennery_kernel::hats::session_hat_in(tx,owner,host,cwd)?,Some(hennery_kernel::hats::SessionHat::Decided(resolution)) if resolution.hat_id==hat),
     )
 }
-type CatalogKey = (String, String, String, String, String, u64);
+type CatalogKey = (String, String, String, String, String, u64, bool);
 type CatalogCache = BTreeMap<CatalogKey, (Instant, HostCatalog)>;
 #[derive(Default)]
 pub struct Catalogs {
@@ -28,6 +28,27 @@ pub struct Catalogs {
 }
 impl Catalogs {
     pub async fn get(&self, state: &AppState, host: &str, hat: &str, cwd: &str, agent: &str) -> Result<HostCatalog> {
+        self.get_for_origin(state, host, hat, cwd, agent, false).await
+    }
+    pub async fn get_operator(
+        &self,
+        state: &AppState,
+        host: &str,
+        hat: &str,
+        cwd: &str,
+        agent: &str,
+    ) -> Result<HostCatalog> {
+        self.get_for_origin(state, host, hat, cwd, agent, true).await
+    }
+    async fn get_for_origin(
+        &self,
+        state: &AppState,
+        host: &str,
+        hat: &str,
+        cwd: &str,
+        agent: &str,
+        operator_initiated: bool,
+    ) -> Result<HostCatalog> {
         state.store.catalog_scope(host, hat, cwd)?;
         ensure!(
             state.hub.has_capability(host, Capability::CatalogProbe),
@@ -48,6 +69,7 @@ impl Catalogs {
             cwd.into(),
             agent.into(),
             connection,
+            operator_initiated,
         );
         // A single bounded disposable probe at a time also deduplicates identical
         // cold requests. The probe has its own timeout and the host its own cap.
@@ -63,18 +85,32 @@ impl Catalogs {
         if let Some((_, catalog)) = cache.get(&key) {
             return Ok(catalog.clone());
         }
-        ensure!(cache.len() < 128, "catalog_busy");
+        ensure!(cache.len() < 128, "busy");
         let request_id = uuid::Uuid::now_v7().to_string();
         let frame = CollectorFrame::ProbeCatalog {
             request_id: request_id.clone(),
             agent: agent.into(),
             cwd: cwd.into(),
+            operator_initiated,
         };
         let answer = state
             .hub
             .probe(host, &request_id, frame, Duration::from_secs(30))
             .await
-            .map_err(|_| anyhow::anyhow!("catalog_unavailable"))?;
+            .map_err(|error| {
+                anyhow::anyhow!(match error {
+                    crate::hub::RequestError::Rejected { code, .. } => match code.as_str() {
+                        "cwd_unavailable" => "cwd_unavailable",
+                        "busy" => "busy",
+                        "timeout" => "timeout",
+                        _ => "adapter_failed",
+                    },
+                    crate::hub::RequestError::Busy => "busy",
+                    crate::hub::RequestError::NotConnected => "host_offline",
+                    crate::hub::RequestError::DeliveryUnknown => "timeout",
+                    _ => "catalog_unavailable",
+                })
+            })?;
         let HostFrame::Catalog { catalog, .. } = answer else {
             anyhow::bail!("catalog_unavailable")
         };
