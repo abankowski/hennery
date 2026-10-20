@@ -168,3 +168,29 @@
 .manage .defaults-link { display:flex; }
 @media (max-width:767px) { .pairing-live { grid-template-columns:minmax(0,1fr); gap:12px; } }
 .device-settings .field { display:flex; flex-direction:column; gap:6px; }
+/* Fidelity: compact host inventory with the same real management controls. */
+.hosts-screen { max-width:none; }
+.hosts-screen .manage-head { margin:-24px -24px 0; padding:10px 24px; border-bottom:1px solid var(--hn-line); min-height:52px; }
+.host-inventory-head,.hosts-screen .host-row { display:grid; grid-template-columns:minmax(120px,1.6fr) 75px 75px minmax(95px,1fr) minmax(110px,1fr) 55px 120px; align-items:center; gap:10px; }
+.host-inventory-head { padding:8px 12px; border:1px solid var(--hn-line); border-radius:8px 8px 0 0; font-size:10px; text-transform:uppercase; color:var(--hn-fg-3); background:var(--hn-sunken); margin-bottom:-20px; }
+.hosts-screen .host-inventory { display:block; border:1px solid var(--hn-line); border-radius:0 0 8px 8px; overflow:hidden; }
+.hosts-screen .host-row { border:0; border-bottom:1px solid var(--hn-line); border-radius:0; padding:12px; background:var(--hn-surface); position:relative; }
+.host-row:last-child { border-bottom:0; }.host-row .card-title { font-size:13px; margin:0; }.host-platform { margin:3px 0 0; color:var(--hn-fg-3); font-size:11px; }
+.host-version { font:12px var(--font-mono); }.host-agents,.host-session-count { color:var(--hn-fg-3); font-size:11px; }
+.host-hat .field-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }.host-hat { position:relative; }
+.hosts-screen .host-hat select { padding:5px; font-size:12px; width:100%; }
+.hosts-screen .host-row .card-actions { grid-column:7; grid-row:1; display:flex; gap:4px; flex-wrap:nowrap; border:0; padding:0; margin:0; }
+.hosts-screen .host-row .card-actions .btn { min-height:28px; padding:4px 6px; font-size:10px; }
+.host-history { grid-column:1 / -1; font-size:11px; color:var(--hn-fg-3); }.host-history summary { cursor:pointer; width:fit-content; }.host-history .facts { margin-top:8px; }
+.hosts-screen .host-row-editing .card-actions { grid-column:1/-1; grid-row:3; }.host-row-editing .inline-form { width:100%; }
+.shell:has(.hosts-screen) > .mtopbar { display:none; }
+@media(max-width:1000px) and (min-width:768px) { .hosts-screen .host-inventory-head,.hosts-screen .host-row { grid-template-columns:minmax(110px,1.4fr) 65px 65px minmax(80px,1fr) minmax(95px,1fr) 45px 110px; gap:6px; } }
+@media(max-width:767px) {
+ .hosts-screen .manage-head { margin:-16px -16px 0; padding:12px 16px; }
+ .host-inventory-head { display:none; }.hosts-screen .host-inventory { border:0; display:grid; gap:12px; border-radius:0; }
+ .hosts-screen .host-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; border:1px solid var(--hn-line); border-radius:14px; padding:14px; }
+ .host-row .host-identity { grid-column:1; }.host-row > .state { grid-column:2; }.host-version::before { content:'hennery '; color:var(--hn-fg-3); }
+ .host-hat { grid-column:1; }.host-hat .field-label { position:static; width:auto; height:auto; clip-path:none; }
+ .hosts-screen .host-row .card-actions { grid-column:1/-1; grid-row:auto; justify-content:flex-end; }.hosts-screen .host-row .card-actions .btn { min-height:44px; padding:8px 12px; font-size:12px; }
+ .host-history { grid-column:1/-1; }.host-history summary { min-height:44px; display:flex; align-items:center; }.host-session-count { font-size:12px; }
+}

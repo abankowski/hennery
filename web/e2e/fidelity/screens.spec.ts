@@ -32,6 +32,7 @@ async function fixtures(context: BrowserContext) {
   if (path === '/api/capabilities') return json({ mode: 'full', features: ['session_defaults', 'mcp_connections', 'mcp_stdio'] })
   if (path === '/api/hats') return json(hats)
   if (path === '/api/hosts') return json(hosts)
+  if (path === '/api/hosts/pairing-codes') return json({ code: 'TEST-1234', expires_at: '2026-10-20T10:15:00Z' })
   if (path === '/api/view/sessions') return json({ sessions: rows, epoch: 'fixture', revision: 1, waiting: 2 })
   if (/\/questions\//.test(path)) return json(path.endsWith('question') ? elicitation : question)
   if (path.endsWith('/answer')) { expect(route.request().method()).toBe('POST'); return json({ status: 'queued' }, 202) }
@@ -73,6 +74,10 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
    await expect(dialog.locator('.config-summary')).toHaveText('Model: Sonnet · Permission mode: Default · Reasoning effort: Medium')
   }
   if (screen === 'defaults') await expect(app.getByRole('group', { name: 'Model for Studio', exact: true }).getByRole('combobox')).toBeEnabled()
+  if (screen === 'hosts') {
+   await app.getByRole('button', { name: 'Add host', exact: true }).click()
+   await expect(app.getByRole('heading', { name: 'Pairing code', exact: true })).toBeVisible()
+  }
   if ((screen === 'overview' && width === 1280) || screen === 'needs-you') await expect(app.getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
   if (screen === 'session') await expect(app.locator('.transcript').getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
   if (screen === 'elicitation') {
