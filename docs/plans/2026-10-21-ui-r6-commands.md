@@ -32,6 +32,35 @@ Visual files are `palette-loaded-{390,1280}-{light,dark}.png`, `palette-search-{
 
 No ownership exceptions, other-lane edits, dependency/hash changes, design-bundle assets, README index edit, GitHub action or shared-memory write. Backend-only full Rust/clippy/generator gates were not repeated for this frontend-only lane (spec §9.1). Contextual R3–R5 live integration awaits those providers. Scratch copies `.superpowers/sdd/ui-r6/probe-1` and `replay-1` retain private APFS-cloned targets for parent cleanup per AGENTS.md.
 
+### PR #209 amendment (2026-10-20)
+
+The independent review of `fbe7d974..55ee77e8` returned APPROVE AFTER AMENDMENTS. All four P2 findings are addressed in this delta; parent scoped re-confirmation and current PR CI remain pending. The original replay/check matrix above is historical evidence for `55ee77e8`; the code blocks below now reflect the amended implementation. No new full replay or full e2e run is claimed for the amendment, per the parent's verification budget.
+
+1. **Authentication lifetime:** the real App retains CommandHost while navigating to sign-in. The host now unmounts stateful controls on Login/Setup and keys their lifetime to the existing session capability. Cached results, query and pending reads disappear, modal inertness is released, and old overlays cannot revive on the next sign-in. Real-App regressions cover confirmed cross-tab logout and search-triggered 401; retained-provider cases cover auth routes before cleanup and capability loss/return.
+2. **Summary freshness:** cached search rows replace shared summaries only when strictly newer by `last_event_at`, matching the shared list reducer's page/stream rule. Shared stream state wins ties. Real reducer upserts cover completed and delayed search responses after reassignment, ties and newer HTTP summaries; hat filtering runs after reconciliation.
+3. **Server matches:** current-query server membership is preserved independently of abbreviated display fields. Local substring matching remains for loaded-only rows, and current freshness/hat checks still apply. The regression follows SessionItem::bounded's 128-byte cwd tail rule and retains a match on an omitted stored prefix.
+4. **IME Escape:** the dialog skips its modal trap for isComposing/keyCode 229, allowing native composition cancellation without closing the query. Enter and ordinary topmost Escape retain their existing tests; both IME Escape forms also run in the browser matrix.
+
+Observed RED before implementation: 8 intended failures / 9 existing passes, exit 1. Amendment checks completed on the staged source bytes:
+
+| Amendment check | Observed result |
+|---|---|
+| Focused command/shortcut suites | Exit 0; 64 tests, 4 files |
+| Fresh copy before mutation | Exit 0; 20 component tests |
+| New guard probes | 9/9 detected by assertion failures; source restored exactly |
+| Web typecheck | Exit 0 |
+| Complete web tests | Exit 0; 2,219 tests, 124 files (2,208 before amendment) |
+| Web build | Exit 0; 3 CSS guard tests, 3 same-origin CSS assets |
+| Embedded hennery/testkit build | Exit 0; locked dependencies |
+| Owned commands browser spec | Exit 0; 4/4 width/theme cases, 28.3 seconds |
+| Staged/source/plan check | Seven changed files match the tested bytes; all 11 source blocks match |
+
+The nine probes independently remove the auth-route lifetime, capability lifetime, newer-stream preference, tie preference, newer-HTTP preference, server membership, local-match bypass, composing Escape and keyCode-229 protections. New screenshots retain the same 12 frame names under `amendment-1/screenshots/`; no CSS or presentation change is introduced. No full replay, full e2e suite, Rust workspace gates or additional load run was repeated under the explicit amendment budget. The new response-order cases use explicit deferred completion rather than new timing thresholds.
+
+ The unchanged fresh guard copy passes 20 component cases. The owned browser matrix adds real App cross-tab logout, password sign-in without cache revival, search 401, bounded prefix matching and both IME Escape forms at 390/1280 px in both themes. Source ownership, dependencies, wire/API contracts and CSS are unchanged. No old assertion is weakened.
+
+Amendment evidence: `.superpowers/sdd/ui-r6/amendment-1/`. Fresh guard copy: `amendment-1/probe-1`, with a private APFS-cloned target. Parent retains cleanup ownership. No new timing threshold or concurrency mechanism is introduced; the deferred-response regressions control completion order explicitly.
+
 ## Scope
 
 Implement the App-mounted R6 entry point, Command palette and Keyboard shortcuts dialogs, global keyboard guard and command definitions. Read enabled handlers from R2's action registry and summaries from `useLoadedSessions()`. Use existing summary-search HTTP reads and the shared Client. No second store, list/item stream, transcript scan, new runtime dependency, wire change or screen mutation implementation.
@@ -117,8 +146,10 @@ export function sessionMatches(session: SessionSummary, query: string) {
   const q = query.trim().toLocaleLowerCase()
   return [session.title, session.cwd, session.git_branch, session.session_id].some(value => value?.toLocaleLowerCase().includes(q))
 }
-export function recentSessions(rows: Iterable<SessionSummary>, query: string, hat?: string) {
-  return [...rows].filter(row => (!hat || row.hat_id === hat) && sessionMatches(row, query))
+export function recentSessions(rows: Iterable<SessionSummary>, query: string, hat?: string, serverMatches?: ReadonlySet<string>) {
+  // The server searches full stored fields; bounded display summaries can
+  // omit the matching prefix. Only loaded-only rows need local matching.
+  return [...rows].filter(row => (!hat || row.hat_id === hat) && (serverMatches?.has(row.session_id) || sessionMatches(row, query)))
     .sort((a, b) => b.last_event_at.localeCompare(a.last_event_at) || a.session_id.localeCompare(b.session_id))
 }
 export const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"], [role="searchbox"]'
@@ -401,8 +432,15 @@ export default function CommandPalette({ actions, loaded, close }: {
     })
   }
   const merged = new Map(loaded)
-  if (q) for (const row of current?.rows ?? []) merged.set(row.session_id, row)
-  const rows = recentSessions(merged.values(), q, hat)
+  const serverMatches = new Set<string>()
+  if (q) for (const row of current?.rows ?? []) {
+    serverMatches.add(row.session_id)
+    const held = merged.get(row.session_id)
+    // Match the list store's page/stream reconciliation: a page must be
+    // strictly newer; the shared stream wins ties (including a hat change).
+    if (!held || row.last_event_at > held.last_event_at) merged.set(row.session_id, row)
+  }
+  const rows = recentSessions(merged.values(), q, hat, serverMatches)
   const run = (action: () => void) => { close(); requestAnimationFrame(action) }
   const sessionResult = (row: SessionSummary) => ({
     id: `session:${row.session_id}`, label: row.title || row.session_id,
@@ -421,7 +459,11 @@ export default function CommandPalette({ actions, loaded, close }: {
   const choose = (index: number) => { if (results[index]) run(results[index].run) }
   let offset = 0
   return <div className="command-overlay" onMouseDown={holdFocus}>
-    <div className="command-dialog" ref={dialog} role="dialog" aria-modal="true" aria-label="Command palette" tabIndex={-1} onKeyDown={event => trap(event, close)}>
+    <div className="command-dialog" ref={dialog} role="dialog" aria-modal="true" aria-label="Command palette" tabIndex={-1} onKeyDown={event => {
+      // Let Escape cancel native IME composition without dismissing its draft.
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return
+      trap(event, close)
+    }}>
       <div className="command-search"><Icon name="magnifying-glass" size={20} />
         <input ref={input} role="combobox" aria-label="Jump to a session or command" placeholder="Jump to a session, or type a command…" aria-autocomplete="list" aria-expanded="true" aria-controls={listId} aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined} value={query} onChange={event => { setQuery(event.target.value); select(0) }} onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return
@@ -584,6 +626,65 @@ it('help shows route/provider-appropriate keys and restores the trigger', async 
   expect(within(dialog).getByRole('button', { name: 'Close shortcuts' })).toHaveFocus()
   await user.keyboard('{Escape}'); expect(screen.getByRole('button', { name: 'Help' })).toHaveFocus()
 })
+
+// Review amendment: exercise the same shared reducer that receives stream upserts.
+it.each(['completed', 'in-flight'] as const)('fences a %s search hit after the shared stream reassigns its session', async phase => {
+  const { EMPTY_LIST, listReducer } = await import('../store/sessionList')
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  const old = summary('moved', { title: 'Parser project', last_event_at: '2026-10-20T10:00:00Z' })
+  const initial = listReducer(EMPTY_LIST, { type: 'first', search: false, page: { sessions: [old], epoch: 'e', revision: 1, waiting: 0 } })
+  let answer!: (response: Response) => void
+  const fetchImpl = vi.fn(() => new Promise<Response>(resolve => { answer = resolve }))
+  const client = browserClient(async () => {}, fetchImpl), actions = new AppActions()
+  actions.registerContext({ hatId: 'hat' })
+  const view = (loaded: ReadonlyMap<string, SessionSummary>) => <ClientContext.Provider value={client}><CommandPalette actions={actions} loaded={loaded} close={() => {}} /></ClientContext.Provider>
+  const rendered = render(view(initial.all))
+  await userEvent.type(screen.getByRole('combobox'), 'Parser')
+  await waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce())
+  if (phase === 'completed') {
+    await act(async () => answer(page([old])))
+    expect(screen.getByRole('option', { name: 'Parser project /srv/demo' })).toBeInTheDocument()
+  }
+  const updated = listReducer(initial, { type: 'upsert', summary: { ...old, hat_id: 'other', last_event_at: '2026-10-20T11:00:00Z' } })
+  rendered.rerender(view(updated.all))
+  if (phase === 'in-flight') await act(async () => answer(page([old])))
+  await screen.findByText('Session search complete.', { exact: true })
+  expect(screen.queryByRole('option', { name: 'Parser project /srv/demo' })).not.toBeInTheDocument()
+})
+it('keeps shared stream state on equal versions and newer HTTP state over older loaded state', async () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  const old = summary('moved', { title: 'Parser project', last_event_at: '2026-10-20T10:00:00Z' })
+  const newer = { ...old, hat_id: 'other', last_event_at: '2026-10-20T11:00:00Z' }
+  const client = browserClient(async () => {}, async () => page([old, { ...newer, session_id: 'http-newer' }]))
+  const actions = new AppActions(); actions.registerContext({ hatId: 'hat' })
+  render(<ClientContext.Provider value={client}><CommandPalette actions={actions} loaded={new Map([['moved', { ...old, hat_id: 'other' }], ['http-newer', { ...old, session_id: 'http-newer' }]])} close={() => {}} /></ClientContext.Provider>)
+  await userEvent.type(screen.getByRole('combobox'), 'Parser')
+  await screen.findByText('Session search complete.', { exact: true })
+  expect(screen.queryAllByRole('option')).toHaveLength(0)
+})
+it('preserves a server match when bounding omitted its matching path prefix', async () => {
+  // SessionItem::bounded keeps the tail within CWD_MAX_JSON_BYTES=128.
+  // The stored path is /needle/ followed by 140 x characters.
+  const boundedCwd = '…' + 'x'.repeat(125)
+  const { user } = setup(async () => page([summary('bounded', { title: 'Project', cwd: boundedCwd })]), new Map([['unmatched', summary('unmatched')]]))
+  await user.click(screen.getByRole('button', { name: 'Jump to' }))
+  await user.type(screen.getByRole('combobox'), 'needle')
+  await screen.findByText('Session search complete.', { exact: true })
+  expect(screen.getByRole('option', { name: `Project ${boundedCwd}` })).toBeInTheDocument()
+  expect(screen.queryByRole('option', { name: 'unmatched /srv/demo' })).not.toBeInTheDocument()
+})
+it.each([{ isComposing: true }, { keyCode: 229 }])('lets IME Escape cancel composition without dismissing the query: %j', async composition => {
+  const { user } = setup()
+  const trigger = screen.getByRole('button', { name: 'Jump to' }); await user.click(trigger)
+  const input = screen.getByRole('combobox'); await user.type(input, 'project')
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...composition })
+  fireEvent(input, event)
+  expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeInTheDocument()
+  expect(input).toHaveValue('project'); expect(event.defaultPrevented).toBe(false)
+  fireEvent.keyDown(input, { key: 'Escape' })
+  expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument()
+  expect(trigger).toHaveFocus()
+})
 ```
 
 Create `web/src/components/ShortcutHelp.tsx` with:
@@ -638,6 +739,15 @@ import ShortcutHelp from './ShortcutHelp'
 import '../styles/commands.css'
 
 export default function CommandHost() {
+  const { pathname } = useLocation()
+  const actions = useActionSnapshot()
+  // App keeps this lazy host mounted across authentication routes. Unmount
+  // its stateful controls so cached hits and pending reads cannot cross login.
+  return ['login', 'setup'].includes(match(pathname).name) ? null
+    : <CommandControls key={actions?.get('open-sessions')?.enabled ? 'sessions' : 'gateway'} />
+}
+
+function CommandControls() {
   const actions = useActionSnapshot(), loaded = useLoadedSessions()
   const { pathname } = useLocation()
   const [overlay, setOverlay] = useState<'palette' | 'help' | null>(null)
@@ -700,6 +810,93 @@ it('consumes live registry providers, keeps an open query on Mod+K and suppresse
   expect(screen.queryByText('Focus composer', { exact: true })).not.toBeInTheDocument()
   await user.keyboard('{Escape}')
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+})
+
+// Keep auth regressions at the real App boundary: App.test mocks this lazy host.
+it.each(['cross-tab logout', 'search 401'] as const)('drops cached palette metadata on %s and does not revive it after sign-in', async reason => {
+  const { default: App } = await import('../App')
+  const { stubServer } = await import('../test-server')
+  const channels: { name: string; onmessage: ((event: MessageEvent) => void) | null }[] = []
+  vi.stubGlobal('BroadcastChannel', class {
+    onmessage: ((event: MessageEvent) => void) | null = null
+    constructor(readonly name: string) { channels.push(this) }
+    postMessage() {}
+    close() {}
+  })
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  localStorage.clear(); sessionStorage.clear()
+  const hit = { session_id: 'private', title: 'Private project', host_id: 'host', hat_id: 'hat', agent: 'claude', cwd: '/srv/private', lifecycle: 'parked', activity: 'idle', presumed_parked: false, created_at: '2026-10-20', last_event_at: '2026-10-20', question_waits: false, operator_attention: 0, parent_handled_questions: 0 }
+  const response = (sessions: unknown[]) => json(200, { sessions, epoch: 'e', revision: 1, waiting: 0 })
+  const server = stubServer({
+    'GET /api/capabilities': json(200, { mode: 'full', features: [] }),
+    'GET /api/view/sessions': response([]),
+    'GET /api/view/sessions?limit=30&q=Private': response([hit]),
+    'GET /api/view/sessions?limit=30&q=expired': json(401, { code: 'unauthenticated', message: 'Sign in.' }),
+  })
+  const signals: AbortSignal[] = []
+  const fetchImpl: typeof fetch = (url, init) => { if (String(url).includes('limit=30') && init?.signal) signals.push(init.signal); return server.fetch(url, init) }
+  act(() => navigate('/sessions'))
+  render(<App fetchImpl={fetchImpl} />)
+  const user = userEvent.setup()
+  const open = async () => {
+    const trigger = await screen.findByRole('button', { name: 'Jump to' })
+    await waitFor(() => expect(trigger).toBeEnabled())
+    await waitFor(() => expect(document.querySelector('.command-announcement')).not.toBeNull())
+    await user.click(trigger)
+    return screen.findByRole('combobox', { name: 'Jump to a session or command' })
+  }
+  const input = await open(); await user.type(input, 'Private')
+  await screen.findByRole('option', { name: 'Private project /srv/private' })
+  if (reason === 'cross-tab logout') {
+    await act(async () => { channels.find(channel => channel.name === 'hennery-auth')!.onmessage!(new MessageEvent('message', { data: { version: 1, kind: 'logout' } })) })
+  } else { await user.clear(input); await user.type(input, 'expired') }
+  await waitFor(() => expect(location.pathname).toBe('/login'))
+  expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument()
+  expect(screen.queryByText('Private project', { exact: true })).not.toBeInTheDocument()
+  expect(document.querySelector('.page')).not.toHaveAttribute('inert')
+  expect(signals.every(signal => signal.aborted)).toBe(true)
+  act(() => navigate('/sessions')) // Simulate successful sign-in returning to the app.
+  await screen.findByRole('heading', { name: 'Sessions' })
+  expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument()
+  const fresh = await open(); expect(fresh).toHaveValue('')
+  expect(screen.queryByText('Private project', { exact: true })).not.toBeInTheDocument()
+})
+
+function retainedProviderHost() {
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  let actions!: AppActions
+  function Provider() {
+    actions = useAppActions()!
+    useRegisterAction('open-sessions', { label: 'Sessions', enabled: true, run() {} })
+    return <button onClick={() => actions.dispatch('open-commands')}>Jump to</button>
+  }
+  act(() => navigate('/sessions'))
+  render(<ClientContext.Provider value={browserClient(async () => {}, async () => json(200, { sessions: [], epoch: 'e', revision: 1, waiting: 0 }))}><AppActionsProvider><Provider /><CommandHost /></AppActionsProvider></ClientContext.Provider>)
+  return { actions, user: userEvent.setup() }
+}
+it.each(['/login', '/setup'])('clears overlay state on %s even before session providers disappear', async route => {
+  const { actions, user } = retainedProviderHost()
+  await user.click(screen.getByRole('button', { name: 'Jump to' }))
+  await user.type(screen.getByRole('combobox'), 'private')
+  act(() => navigate(route))
+  expect(actions.get('open-sessions')?.enabled).toBe(true) // Intentionally stale provider.
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  act(() => navigate('/sessions'))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Jump to' }))
+  expect(screen.getByRole('combobox')).toHaveValue('')
+})
+it('unmounts cached controls when session capability disappears, without reviving them on return', async () => {
+  const { actions, user } = retainedProviderHost()
+  await user.click(screen.getByRole('button', { name: 'Jump to' }))
+  await user.type(screen.getByRole('combobox'), 'private')
+  let remove!: () => void
+  act(() => { remove = actions.register('open-sessions', { label: 'Unavailable', enabled: false, run() {} }) })
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  act(() => remove())
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Jump to' }))
+  expect(screen.getByRole('combobox')).toHaveValue('')
 })
 ```
 
@@ -788,12 +985,16 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
     const url = new URL(route.request().url()), path = url.pathname
     requests.push({ method: route.request().method(), path: path + url.search })
     const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+    if (path === '/api/auth/login') return route.fulfill({ status: 204 })
+    if (path === '/api/auth/passkeys/login/start') return json({ code: 'no_passkeys', message: 'No passkeys.' }, 409)
     if (path === '/api/capabilities') return json({ mode: gateway ? 'gateway' : 'full', features: ['mcp_connections'] })
     if (path === '/api/hats') return json([{ id: 'fixture-hat', name: 'Personal', colour: '#8050d0', created_at: ts, default_for_new_hosts: true }])
     if (path === '/api/hosts') return json([{ host_id: 'fixture-host', name: 'Development host', platform: 'linux', host_version: '0.1.4', capabilities: ['projects', 'resolve_path'], default_hat_id: 'fixture-hat', workspace_roots: [], connected: true, created_at: ts, last_seen_at: ts }])
     if (path === '/api/view/sessions') {
       const q = url.searchParams.get('q')
       const envelope = (sessions: unknown[], next_cursor?: string) => ({ sessions, next_cursor, epoch: 'fixture', revision: 1, waiting: 1 })
+      if (q === 'expired') return json({ code: 'unauthenticated', message: 'Sign in.' }, 401)
+      if (q === 'needle') return json(envelope([{ ...row('bounded', 'Project'), cwd: '…' + 'x'.repeat(125) }]))
       if (q === 'slow') { slow = () => json(envelope([row('stale', 'fresh stale result')])); return }
       if (q === 'fresh') return json(envelope([row('fresh', 'fresh result')]))
       if (q?.toLowerCase() === 'parser') return json(envelope([url.searchParams.has('cursor') ? row('remote/second', 'Parser remote second') : row('remote', 'Parser remote')], url.searchParams.has('cursor') ? undefined : 'second'))
@@ -840,6 +1041,15 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
     await expect(palette.getByRole('option', { name: 'Parser remote /srv/project', exact: true })).toBeVisible()
     await expect(palette.getByText('More matching sessions are available.', { exact: true })).toBeVisible()
     await input.press(`${mod}+k`); await expect(input).toHaveValue('parser')
+    for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
+      const native = await input.evaluate((element, composition) => {
+        const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...composition })
+        element.dispatchEvent(event)
+        return event.defaultPrevented
+      }, composition)
+      expect(native).toBe(false)
+      await expect(input).toHaveValue('parser'); await expect(palette).toBeVisible()
+    }
     await palette.getByRole('button', { name: 'Load more matches', exact: true }).click()
     await expect(palette.getByRole('option', { name: 'Parser remote second /srv/project', exact: true })).toBeVisible()
     await expect(palette.getByText('Session search complete.', { exact: true })).toBeVisible()
@@ -881,6 +1091,37 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
     await prompt.press(`${mod}+k`); await expect(palette).toHaveCount(0); await expect(prompt).toHaveValue('n?[]/rk19')
     expect(requests.filter(r => r.method !== 'GET')).toHaveLength(0)
     await prompt.press('Escape')
+    await focus.focus(); await focus.press(`${mod}+k`)
+    await input.fill('needle')
+    await expect(palette.getByRole('option', { name: 'Project …' + 'x'.repeat(125), exact: true })).toBeVisible()
+    await input.fill('parser')
+    await expect(palette.getByRole('option', { name: 'Parser remote /srv/project', exact: true })).toBeVisible()
+    // A second same-origin channel delivers the production cross-tab logout.
+    await page.evaluate(() => {
+      const channel = new BroadcastChannel('hennery-auth')
+      channel.postMessage({ version: 1, kind: 'logout' }); channel.close()
+    })
+    await expect(page).toHaveURL(collector.origin + '/login')
+    await expect(palette).toHaveCount(0)
+    expect(await page.locator('.page').evaluate(el => el instanceof HTMLElement && el.inert)).toBe(false)
+    const signIn = async () => {
+      await page.getByLabel('Password', { exact: true }).fill('synthetic password')
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+      await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
+      await expect(palette).toHaveCount(0)
+      await focus.focus(); await focus.press(`${mod}+k`)
+      await expect(input).toHaveValue('')
+      await expect(palette.getByRole('option', { name: 'Parser remote /srv/project', exact: true })).toHaveCount(0)
+    }
+    await signIn()
+    await input.fill('parser')
+    await expect(palette.getByRole('option', { name: 'Parser remote /srv/project', exact: true })).toBeVisible()
+    await input.fill('expired')
+    await expect(page).toHaveURL(collector.origin + '/login?next=%2Fsessions')
+    await expect(palette).toHaveCount(0)
+    expect(await page.locator('.page').evaluate(el => el instanceof HTMLElement && el.inert)).toBe(false)
+    await signIn()
+    await input.press('Escape')
     gateway = true
     await page.goto(collector.origin + '/more')
     await expect(page.getByRole('navigation', { name: 'More navigation', exact: true })).toBeVisible()

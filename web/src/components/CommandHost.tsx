@@ -8,6 +8,15 @@ import ShortcutHelp from './ShortcutHelp'
 import '../styles/commands.css'
 
 export default function CommandHost() {
+  const { pathname } = useLocation()
+  const actions = useActionSnapshot()
+  // App keeps this lazy host mounted across authentication routes. Unmount
+  // its stateful controls so cached hits and pending reads cannot cross login.
+  return ['login', 'setup'].includes(match(pathname).name) ? null
+    : <CommandControls key={actions?.get('open-sessions')?.enabled ? 'sessions' : 'gateway'} />
+}
+
+function CommandControls() {
   const actions = useActionSnapshot(), loaded = useLoadedSessions()
   const { pathname } = useLocation()
   const [overlay, setOverlay] = useState<'palette' | 'help' | null>(null)

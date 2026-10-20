@@ -16,8 +16,10 @@ export function sessionMatches(session: SessionSummary, query: string) {
   const q = query.trim().toLocaleLowerCase()
   return [session.title, session.cwd, session.git_branch, session.session_id].some(value => value?.toLocaleLowerCase().includes(q))
 }
-export function recentSessions(rows: Iterable<SessionSummary>, query: string, hat?: string) {
-  return [...rows].filter(row => (!hat || row.hat_id === hat) && sessionMatches(row, query))
+export function recentSessions(rows: Iterable<SessionSummary>, query: string, hat?: string, serverMatches?: ReadonlySet<string>) {
+  // The server searches full stored fields; bounded display summaries can
+  // omit the matching prefix. Only loaded-only rows need local matching.
+  return [...rows].filter(row => (!hat || row.hat_id === hat) && (serverMatches?.has(row.session_id) || sessionMatches(row, query)))
     .sort((a, b) => b.last_event_at.localeCompare(a.last_event_at) || a.session_id.localeCompare(b.session_id))
 }
 export const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"], [role="searchbox"]'

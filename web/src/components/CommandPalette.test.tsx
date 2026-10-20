@@ -125,3 +125,62 @@ it('help shows route/provider-appropriate keys and restores the trigger', async 
   expect(within(dialog).getByRole('button', { name: 'Close shortcuts' })).toHaveFocus()
   await user.keyboard('{Escape}'); expect(screen.getByRole('button', { name: 'Help' })).toHaveFocus()
 })
+
+// Review amendment: exercise the same shared reducer that receives stream upserts.
+it.each(['completed', 'in-flight'] as const)('fences a %s search hit after the shared stream reassigns its session', async phase => {
+  const { EMPTY_LIST, listReducer } = await import('../store/sessionList')
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  const old = summary('moved', { title: 'Parser project', last_event_at: '2026-10-20T10:00:00Z' })
+  const initial = listReducer(EMPTY_LIST, { type: 'first', search: false, page: { sessions: [old], epoch: 'e', revision: 1, waiting: 0 } })
+  let answer!: (response: Response) => void
+  const fetchImpl = vi.fn(() => new Promise<Response>(resolve => { answer = resolve }))
+  const client = browserClient(async () => {}, fetchImpl), actions = new AppActions()
+  actions.registerContext({ hatId: 'hat' })
+  const view = (loaded: ReadonlyMap<string, SessionSummary>) => <ClientContext.Provider value={client}><CommandPalette actions={actions} loaded={loaded} close={() => {}} /></ClientContext.Provider>
+  const rendered = render(view(initial.all))
+  await userEvent.type(screen.getByRole('combobox'), 'Parser')
+  await waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce())
+  if (phase === 'completed') {
+    await act(async () => answer(page([old])))
+    expect(screen.getByRole('option', { name: 'Parser project /srv/demo' })).toBeInTheDocument()
+  }
+  const updated = listReducer(initial, { type: 'upsert', summary: { ...old, hat_id: 'other', last_event_at: '2026-10-20T11:00:00Z' } })
+  rendered.rerender(view(updated.all))
+  if (phase === 'in-flight') await act(async () => answer(page([old])))
+  await screen.findByText('Session search complete.', { exact: true })
+  expect(screen.queryByRole('option', { name: 'Parser project /srv/demo' })).not.toBeInTheDocument()
+})
+it('keeps shared stream state on equal versions and newer HTTP state over older loaded state', async () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  const old = summary('moved', { title: 'Parser project', last_event_at: '2026-10-20T10:00:00Z' })
+  const newer = { ...old, hat_id: 'other', last_event_at: '2026-10-20T11:00:00Z' }
+  const client = browserClient(async () => {}, async () => page([old, { ...newer, session_id: 'http-newer' }]))
+  const actions = new AppActions(); actions.registerContext({ hatId: 'hat' })
+  render(<ClientContext.Provider value={client}><CommandPalette actions={actions} loaded={new Map([['moved', { ...old, hat_id: 'other' }], ['http-newer', { ...old, session_id: 'http-newer' }]])} close={() => {}} /></ClientContext.Provider>)
+  await userEvent.type(screen.getByRole('combobox'), 'Parser')
+  await screen.findByText('Session search complete.', { exact: true })
+  expect(screen.queryAllByRole('option')).toHaveLength(0)
+})
+it('preserves a server match when bounding omitted its matching path prefix', async () => {
+  // SessionItem::bounded keeps the tail within CWD_MAX_JSON_BYTES=128.
+  // The stored path is /needle/ followed by 140 x characters.
+  const boundedCwd = '…' + 'x'.repeat(125)
+  const { user } = setup(async () => page([summary('bounded', { title: 'Project', cwd: boundedCwd })]), new Map([['unmatched', summary('unmatched')]]))
+  await user.click(screen.getByRole('button', { name: 'Jump to' }))
+  await user.type(screen.getByRole('combobox'), 'needle')
+  await screen.findByText('Session search complete.', { exact: true })
+  expect(screen.getByRole('option', { name: `Project ${boundedCwd}` })).toBeInTheDocument()
+  expect(screen.queryByRole('option', { name: 'unmatched /srv/demo' })).not.toBeInTheDocument()
+})
+it.each([{ isComposing: true }, { keyCode: 229 }])('lets IME Escape cancel composition without dismissing the query: %j', async composition => {
+  const { user } = setup()
+  const trigger = screen.getByRole('button', { name: 'Jump to' }); await user.click(trigger)
+  const input = screen.getByRole('combobox'); await user.type(input, 'project')
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...composition })
+  fireEvent(input, event)
+  expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeInTheDocument()
+  expect(input).toHaveValue('project'); expect(event.defaultPrevented).toBe(false)
+  fireEvent.keyDown(input, { key: 'Escape' })
+  expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument()
+  expect(trigger).toHaveFocus()
+})

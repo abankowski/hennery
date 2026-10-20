@@ -54,8 +54,15 @@ export default function CommandPalette({ actions, loaded, close }: {
     })
   }
   const merged = new Map(loaded)
-  if (q) for (const row of current?.rows ?? []) merged.set(row.session_id, row)
-  const rows = recentSessions(merged.values(), q, hat)
+  const serverMatches = new Set<string>()
+  if (q) for (const row of current?.rows ?? []) {
+    serverMatches.add(row.session_id)
+    const held = merged.get(row.session_id)
+    // Match the list store's page/stream reconciliation: a page must be
+    // strictly newer; the shared stream wins ties (including a hat change).
+    if (!held || row.last_event_at > held.last_event_at) merged.set(row.session_id, row)
+  }
+  const rows = recentSessions(merged.values(), q, hat, serverMatches)
   const run = (action: () => void) => { close(); requestAnimationFrame(action) }
   const sessionResult = (row: SessionSummary) => ({
     id: `session:${row.session_id}`, label: row.title || row.session_id,
@@ -74,7 +81,11 @@ export default function CommandPalette({ actions, loaded, close }: {
   const choose = (index: number) => { if (results[index]) run(results[index].run) }
   let offset = 0
   return <div className="command-overlay" onMouseDown={holdFocus}>
-    <div className="command-dialog" ref={dialog} role="dialog" aria-modal="true" aria-label="Command palette" tabIndex={-1} onKeyDown={event => trap(event, close)}>
+    <div className="command-dialog" ref={dialog} role="dialog" aria-modal="true" aria-label="Command palette" tabIndex={-1} onKeyDown={event => {
+      // Let Escape cancel native IME composition without dismissing its draft.
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return
+      trap(event, close)
+    }}>
       <div className="command-search"><Icon name="magnifying-glass" size={20} />
         <input ref={input} role="combobox" aria-label="Jump to a session or command" placeholder="Jump to a session, or type a command…" aria-autocomplete="list" aria-expanded="true" aria-controls={listId} aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined} value={query} onChange={event => { setQuery(event.target.value); select(0) }} onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return
