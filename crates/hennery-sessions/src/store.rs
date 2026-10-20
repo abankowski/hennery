@@ -376,6 +376,18 @@ const MIGRATIONS: &[&str] = &[
     include_str!("delegation_attention.sql"),
     include_str!("family.sql"),
     include_str!("idle_hold.sql"),
+    // Session titles (23): preserve the latest agent title beneath an override.
+    "ALTER TABLE sessions ADD COLUMN agent_title TEXT;
+     ALTER TABLE sessions ADD COLUMN prompt_title TEXT;
+     ALTER TABLE sessions ADD COLUMN title_source TEXT CHECK(title_source IN ('agent','operator','prompt'));
+     UPDATE sessions SET agent_title=title,title_source='agent' WHERE title IS NOT NULL;
+     CREATE TRIGGER family_view_title AFTER UPDATE OF title,title_source ON sessions
+     WHEN NEW.title IS NOT OLD.title OR NEW.title_source IS NOT OLD.title_source
+     BEGIN
+       UPDATE sessions SET family_dirty=1 WHERE owner_id=NEW.owner_id AND lifecycle<>'deleted'
+       AND (id=NEW.id OR id IN (SELECT parent_id FROM session_families WHERE owner_id=NEW.owner_id AND child_id=NEW.id)
+         OR id IN (SELECT child_id FROM session_families WHERE owner_id=NEW.owner_id AND parent_id=NEW.id));
+     END;",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -554,7 +566,12 @@ impl From<&SessionRow> for EdgeSession {
         Self {
             id: row.id.clone(),
             hat_id: row.hat_id.clone(),
-            title: row.title.clone(),
+            // Provisional names can contain prompt content; push retains its
+            // existing directory fallback until an agent/operator names it.
+            title: row
+                .title
+                .clone()
+                .filter(|_| row.title_source.as_deref() != Some("prompt")),
             cwd: row.cwd.clone(),
         }
     }
@@ -611,6 +628,8 @@ pub struct SessionRow {
     /// The title the agent last reported, on one line and capped (plan 6b
     /// decision 1); `None` until it reports one, or once it clears it.
     pub title: Option<String>,
+    /// Source of the effective title; prompt-derived names stay out of push.
+    pub title_source: Option<String>,
     /// Whether `cwd` was in a linked work tree, as the host last reported.
     pub git_worktree: Option<bool>,
     /// The commit a new session started from, recorded once (ACP core §7).
@@ -1209,17 +1228,14 @@ pub(crate) fn one_line(raw: &str, max_chars: usize, max_json_bytes: usize) -> Op
 fn store_state(tx: &Transaction<'_>, owner: &str, session_id: &str, indexed: &Indexed, ts: &str) -> Result<()> {
     if let Some(title) = indexed.title.as_deref() {
         let title = one_line(title, TITLE_MAX_CHARS, TITLE_MAX_JSON_BYTES);
-        if !indexed.early {
-            tx.execute(
-                "UPDATE sessions SET title = ?2 WHERE id = ?1 AND owner_id = ?3",
-                params![session_id, title, owner],
-            )?;
-        } else if title.is_some() {
-            tx.execute(
-                "UPDATE sessions SET title = ?2 WHERE id = ?1 AND title IS NULL AND owner_id = ?3",
-                params![session_id, title, owner],
-            )?;
-        }
+        tx.execute(
+            "UPDATE sessions SET agent_title=?2,
+             title=CASE WHEN title_source='operator' THEN title ELSE COALESCE(?2,prompt_title) END,
+             title_source=CASE WHEN title_source='operator' THEN 'operator'
+                WHEN ?2 IS NOT NULL THEN 'agent' WHEN prompt_title IS NOT NULL THEN 'prompt' END
+             WHERE id=?1 AND owner_id = ?3 AND (?4=0 OR (agent_title IS NULL AND ?2 IS NOT NULL))",
+            params![session_id, title, owner, indexed.early],
+        )?;
     }
     if let Some(commands) = &indexed.commands {
         tx.execute(
@@ -1235,7 +1251,7 @@ fn store_state(tx: &Transaction<'_>, owner: &str, session_id: &str, indexed: &In
 
 /// The columns of a list item, in `read_item`'s order.
 const SESSION_ITEM_COLUMNS: &str = "id, host_id, agent, cwd, title, lifecycle, activity, failure_reason,
-     presumed_parked, git_branch, git_dirty, model, mode, created_at, last_event_at, hat_id";
+     presumed_parked, git_branch, git_dirty, model, mode, created_at, last_event_at, hat_id, title_source";
 
 /// A row of `SESSION_ITEM_COLUMNS` as a list item, as stored.
 pub(crate) fn read_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionItem> {
@@ -1245,6 +1261,12 @@ pub(crate) fn read_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionItem> 
         agent: r.get(2)?,
         cwd: r.get(3)?,
         title: r.get(4)?,
+        title_source: match r.get::<_, Option<String>>(16)?.as_deref() {
+            Some("agent") => Some(hennery_proto::rest::TitleSource::Agent),
+            Some("operator") => Some(hennery_proto::rest::TitleSource::Operator),
+            Some("prompt") => Some(hennery_proto::rest::TitleSource::Prompt),
+            _ => None,
+        },
         lifecycle: r.get(5)?,
         activity: r.get(6)?,
         failure_reason: r.get(7)?,
@@ -2218,7 +2240,7 @@ impl Store {
             .query_row(
                 "SELECT id, host_id, agent, cwd, lifecycle, activity, open_turn_id, failure_reason, close_requested,
                         presumed_parked, model, mode, config_axes, last_event_at, last_event_id, title,
-                        git_worktree, base_commit, hat_id, agent_session_id
+                        git_worktree, base_commit, hat_id, agent_session_id, title_source
                  FROM sessions WHERE id = ?1 AND lifecycle <> 'deleted' AND owner_id = ?2",
                 [id, &self.owner],
                 |r| {
@@ -2240,6 +2262,7 @@ impl Store {
                         last_event_at: r.get(13)?,
                         last_event_id: r.get(14)?,
                         title: r.get(15)?,
+                        title_source: r.get(20)?,
                         git_worktree: r.get(16)?,
                         base_commit: r.get(17)?,
                     };
@@ -2300,6 +2323,27 @@ impl Store {
                 read_item,
             )
             .optional()?)
+    }
+
+    /// Replace the operator override, or restore the latest agent/prompt title.
+    pub fn rename_session(&self, id: &str, title: Option<&str>) -> Result<Option<EventDto>> {
+        let title = title.and_then(|s| one_line(s, TITLE_MAX_CHARS, TITLE_MAX_JSON_BYTES));
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let changed = tx.execute(
+            "UPDATE sessions SET title=COALESCE(?3,agent_title,prompt_title),
+             title_source=CASE WHEN ?3 IS NOT NULL THEN 'operator'
+               WHEN agent_title IS NOT NULL THEN 'agent' WHEN prompt_title IS NOT NULL THEN 'prompt' END
+             WHERE owner_id = ?1 AND id=?2 AND lifecycle<>'deleted'
+             AND NOT EXISTS(SELECT 1 FROM purged_hats WHERE owner_id = ?1 AND hat_id=sessions.hat_id)",
+            params![self.owner, id, title],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        let event = collector_event(&tx, &self.owner, id, "session_renamed", json!({}), &now())?;
+        tx.commit()?;
+        Ok(Some(event))
     }
 
     /// One page of the session list (ACP core §9; decision 8), each item
@@ -3082,7 +3126,8 @@ impl Store {
         )?;
         let event = collector_event(&tx, &self.owner, session_id, "session_deleted", json!({}), &now())?;
         let scrubbed = tx.execute(
-            "UPDATE sessions SET lifecycle = 'deleted', cwd = '', agent = '', title = NULL, git_branch = NULL,
+            "UPDATE sessions SET lifecycle = 'deleted', cwd = '', agent = '', title = NULL,
+             agent_title = NULL, prompt_title = NULL, title_source = NULL, git_branch = NULL,
                  git_dirty = NULL, git_worktree = NULL, base_commit = NULL, model = NULL, mode = NULL,
                  config_axes = NULL, agent_session_id = NULL, failure_reason = NULL, hat_rule_id = NULL,
                  open_turn_id = NULL, activity = NULL, presumed_parked = 0, close_requested = 0, agent_home = NULL,
@@ -3868,6 +3913,21 @@ impl Store {
                         )
                         .optional()?;
                     if let Some(content) = content {
+                        let blocks: Vec<Value> = serde_json::from_str(&content)?;
+                        let first_line = blocks
+                            .iter()
+                            .filter(|b| b["type"] == "text")
+                            .find_map(|b| b["text"].as_str())
+                            .and_then(|text| text.lines().next());
+                        let title = first_line.and_then(|s| one_line(s, TITLE_MAX_CHARS, TITLE_MAX_JSON_BYTES));
+                        tx.execute(
+                            "UPDATE sessions SET prompt_title=?3,
+                             title=COALESCE(title,?3),
+                             title_source=CASE WHEN title IS NULL AND ?3 IS NOT NULL THEN 'prompt' ELSE title_source END
+                             WHERE owner_id = ?1 AND id=?2 AND NOT EXISTS(
+                               SELECT 1 FROM events WHERE owner_id = ?1 AND session_id=?2 AND kind='user_turn' AND applied=1)",
+                            params![self.owner,session_id,title],
+                        )?;
                         // Origin belongs to the reserved turn, written by an
                         // authenticated operator or verified parent dispatcher.
                         let raw_origin: String = tx.query_row(
@@ -4226,7 +4286,8 @@ impl Store {
                 source_event_id: fact_id,
                 kind,
                 session: tx.query_row(
-                    "SELECT id, hat_id, title, cwd FROM sessions WHERE id = ?1 AND owner_id = ?2",
+                    "SELECT id, hat_id, CASE WHEN title_source='prompt' THEN NULL ELSE title END, cwd
+                     FROM sessions WHERE id = ?1 AND owner_id = ?2",
                     [session_id, &self.owner],
                     |r| {
                         Ok(EdgeSession {

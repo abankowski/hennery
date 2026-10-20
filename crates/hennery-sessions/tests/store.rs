@@ -1973,6 +1973,75 @@ fn title_of(store: &Store) -> Option<String> {
     store.find_session("s1").unwrap().unwrap().title
 }
 
+#[test]
+fn first_delivered_prompt_supplies_a_provisional_title() {
+    let store = Store::open_in_memory().unwrap();
+    started(&store);
+    store
+        .open_turn(
+            "s1",
+            "t1",
+            &[json!({"type":"text", "text":"  Investigate login\nDetails here"})],
+        )
+        .unwrap();
+    assert_eq!(title_of(&store), None);
+    store
+        .ingest(
+            "s1",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "r1".into(),
+                turn_id: "t1".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(title_of(&store).as_deref(), Some("Investigate login"));
+    assert_eq!(
+        store.find_session_item("s1").unwrap().unwrap().title_source,
+        Some(hennery_proto::rest::TitleSource::Prompt)
+    );
+    store.ingest("s1", 3, &ended("t1")).unwrap();
+    store
+        .open_turn("s1", "t2", &[json!({"type":"text", "text":"Second prompt"})])
+        .unwrap();
+    store
+        .ingest(
+            "s1",
+            4,
+            &SessionBody::TurnStarted {
+                request_id: "r2".into(),
+                turn_id: "t2".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(title_of(&store).as_deref(), Some("Investigate login"));
+    store.ingest("s1", 5, &titled("Agent title")).unwrap();
+    assert_eq!(title_of(&store).as_deref(), Some("Agent title"));
+}
+
+#[test]
+fn operator_title_survives_agent_updates_and_reset_uses_latest_agent_title() {
+    use hennery_proto::rest::TitleSource;
+    let store = Store::open_in_memory().unwrap();
+    started(&store);
+    store.ingest("s1", 2, &titled("Initial agent title")).unwrap();
+    store.rename_session("s1", Some(" My\nname ")).unwrap().unwrap();
+    assert_eq!(title_of(&store).as_deref(), Some("My name"));
+    store.ingest("s1", 3, &titled("Latest agent title")).unwrap();
+    assert_eq!(title_of(&store).as_deref(), Some("My name"));
+    assert_eq!(
+        store.find_session_item("s1").unwrap().unwrap().title_source,
+        Some(TitleSource::Operator)
+    );
+    store.rename_session("s1", None).unwrap().unwrap();
+    assert_eq!(title_of(&store).as_deref(), Some("Latest agent title"));
+    assert_eq!(
+        store.find_session_item("s1").unwrap().unwrap().title_source,
+        Some(TitleSource::Agent)
+    );
+    assert!(store.rename_session("missing", Some("No")).unwrap().is_none());
+}
+
 /// Decision 1: the title is kept on one line and capped, for the list; an
 /// empty one (the agent cleared it) clears it; one in an update that does
 /// not apply changes nothing. The event keeps what the agent sent.
@@ -2127,6 +2196,7 @@ fn a_session_item_is_the_row_with_its_title_and_current_model_and_mode() {
             cwd,
             hat_id: "hat-1".into(),
             title: Some("Fix the login bug".into()),
+            title_source: Some(hennery_proto::rest::TitleSource::Agent),
             lifecycle: "active".into(),
             activity: Some("idle".into()),
             failure_reason: None,

@@ -1,3 +1,8 @@
+-- Test-only rollback of sessions migration 23 before historical fixtures.
+DROP TRIGGER family_view_title;
+ALTER TABLE sessions DROP COLUMN agent_title;
+ALTER TABLE sessions DROP COLUMN prompt_title;
+ALTER TABLE sessions DROP COLUMN title_source;
 -- Test-only rollback of sessions migration 22 before historical fixtures.
 DROP TRIGGER idle_hold_session;
 DROP TRIGGER idle_hold_family_insert;

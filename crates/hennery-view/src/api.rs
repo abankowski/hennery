@@ -67,6 +67,9 @@ pub struct FamilyLink {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title_source: Option<hennery_proto::rest::TitleSource>,
     pub agent: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -251,6 +254,7 @@ mod tests {
             cwd: "/tmp".into(),
             hat_id: String::new(),
             title: None,
+            title_source: None,
             lifecycle: "active".into(),
             activity: None,
             failure_reason: None,

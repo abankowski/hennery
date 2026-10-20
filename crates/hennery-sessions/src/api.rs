@@ -644,47 +644,67 @@ async fn update_session(
     Path(id): Path<String>,
     ApiJson(req): ApiJson<UpdateSessionRequest>,
 ) -> Response {
-    let Some(hat_id) = req.hat_id else {
-        return session_detail(State(state), Path(id)).await;
-    };
-    if !operator_session.stepped_up(unix_now()) {
-        return hennery_kernel::auth::step_up_required();
+    if req.title.as_ref().and_then(|t| t.as_ref()).is_some_and(|t| {
+        crate::store::one_line(
+            t,
+            hennery_proto::rest::TITLE_MAX_CHARS,
+            hennery_proto::rest::TITLE_MAX_JSON_BYTES,
+        )
+        .is_none()
+    }) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "invalid",
+            "title must contain visible text; use null to reset it",
+        );
     }
-    match state.store.reassign_hat(&id, &hat_id) {
-        Ok(Reassign::Done(event)) => {
-            tracing::info!(session_id = %id, %hat_id, "session re-assigned");
-            state.hub.publish(event);
+    if let Some(hat_id) = req.hat_id {
+        if !operator_session.stepped_up(unix_now()) {
+            return hennery_kernel::auth::step_up_required();
         }
-        Ok(Reassign::Unchanged) => {}
-        Ok(Reassign::PluginExposure) => {
-            return error(
-                StatusCode::CONFLICT,
-                "plugin_exposure",
-                "start a clean session to change hats after plug-in exposure",
-            );
+        match state.store.reassign_hat(&id, &hat_id) {
+            Ok(Reassign::Done(event)) => {
+                tracing::info!(session_id = %id, %hat_id, "session re-assigned");
+                state.hub.publish(event);
+            }
+            Ok(Reassign::Unchanged) => {}
+            Ok(Reassign::PluginExposure) => {
+                return error(
+                    StatusCode::CONFLICT,
+                    "plugin_exposure",
+                    "start a clean session to change hats after plug-in exposure",
+                );
+            }
+            Ok(Reassign::Attached(lifecycle)) => {
+                return error(
+                    StatusCode::CONFLICT,
+                    &lifecycle,
+                    match lifecycle.as_str() {
+                        "presumed_parked" => {
+                            "its host has been away and may still run it: close the session first".to_string()
+                        }
+                        other => format!("the session is {other}: park or close it first"),
+                    },
+                );
+            }
+            Ok(Reassign::UnknownHat) => return error(StatusCode::BAD_REQUEST, "invalid", "no such hat"),
+            Ok(Reassign::HatPurging) => {
+                return error(
+                    StatusCode::CONFLICT,
+                    "hat_purging",
+                    "the session's hat or the one it would move to is being purged",
+                );
+            }
+            Ok(Reassign::NotFound) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+            Err(err) => return internal(err),
         }
-        Ok(Reassign::Attached(lifecycle)) => {
-            return error(
-                StatusCode::CONFLICT,
-                &lifecycle,
-                match lifecycle.as_str() {
-                    "presumed_parked" => {
-                        "its host has been away and may still run it: close the session first".to_string()
-                    }
-                    other => format!("the session is {other}: park or close it first"),
-                },
-            );
+    }
+    if let Some(title) = req.title {
+        match state.store.rename_session(&id, title.as_deref()) {
+            Ok(Some(event)) => state.hub.publish(event),
+            Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+            Err(err) => return internal(err),
         }
-        Ok(Reassign::UnknownHat) => return error(StatusCode::BAD_REQUEST, "invalid", "no such hat"),
-        Ok(Reassign::HatPurging) => {
-            return error(
-                StatusCode::CONFLICT,
-                "hat_purging",
-                "the session's hat or the one it would move to is being purged",
-            );
-        }
-        Ok(Reassign::NotFound) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
-        Err(err) => return internal(err),
     }
     session_detail(State(state), Path(id)).await
 }

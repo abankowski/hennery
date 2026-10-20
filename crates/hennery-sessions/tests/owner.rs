@@ -239,6 +239,13 @@ fn another_owners_sessions_are_invisible_to_the_store() {
     );
 
     let before = all_rows(&conn, None);
+    assert!(
+        store
+            .rename_session("session-b", Some("Unreachable"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(store.rename_session("session-b", None).unwrap().is_none());
     assert_eq!(store.find_session("session-b").unwrap(), None);
     assert_eq!(store.find_session_item("session-b").unwrap(), None);
     // The list, and a search that would match only the other owner's.

@@ -703,9 +703,9 @@ cwd: string,
  */
 hat_id: string,
 /**
- * The title the agent reported, on one line and capped.
+ * The effective title, on one line and capped.
  */
-title?: string | undefined, lifecycle: string, activity?: string | undefined, failure_reason?: string | undefined,
+title?: string | undefined, title_source?: TitleSource, lifecycle: string, activity?: string | undefined, failure_reason?: string | undefined,
 /**
  * Parked only because its host has been offline past the threshold
  * (ACP core §5.3); the host may still be running it.
@@ -732,6 +732,8 @@ created_at: string,
  * fractional digits): the list's sort key, newest first.
  */
 last_event_at: string, };
+
+export type TitleSource = "agent" | "operator" | "prompt";
 
 /**
  * `GET /api/sessions` (ACP core §9): one page of the session list, newest
@@ -769,9 +771,9 @@ cwd: string,
  */
 hat_id: string,
 /**
- * The title the agent reported, on one line and capped.
+ * The effective title, on one line and capped.
  */
-title?: string | undefined, lifecycle: string, activity?: string | undefined, failure_reason?: string | undefined,
+title?: string | undefined, title_source?: TitleSource, lifecycle: string, activity?: string | undefined, failure_reason?: string | undefined,
 /**
  * Parked only because its host has been offline past the threshold
  * (ACP core §5.3); the host may still be running it.
@@ -1269,7 +1271,11 @@ export type HatResolution = { canonical: string, exists: boolean, is_dir: boolea
  * `hat_id` re-assigns the session (ACP core §4.9): only with no running
  * adapter, and with a fresh step-up.
  */
-export type UpdateSessionRequest = { hat_id?: string | undefined, };
+export type UpdateSessionRequest = { hat_id?: string | undefined,
+/**
+ * Omitted: unchanged. Null: restore the agent or provisional title.
+ */
+title?: string | null, };
 
 /**
  * `GET /api/push/vapid` (kernel spec §6): the collector's VAPID public key,
