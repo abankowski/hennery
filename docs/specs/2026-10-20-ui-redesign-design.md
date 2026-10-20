@@ -4,6 +4,9 @@
 - **Status:** Proposed implementation contract; independent design/security review
   and scoped confirmation belong to the fleet parent. Recommendations below
   are not recorded as operator approvals.
+- **Review:** Independent review of `b641f40f..0ebd3f7a` returned APPROVE
+  AFTER AMENDMENTS. Findings 1–4 are addressed below; scoped re-confirmation
+  remains with the parent. O8 records the operator's subsequent font decision.
 - **Base:** `b641f40f`, the `redesign` integration branch.
 - **Amends:** [frontend](2026-09-26-frontend-design.md) §§2, 5–8, 10 and
   [client view](2026-10-02-client-view-design.md) §5's visual reuse decision.
@@ -35,18 +38,18 @@ approved. No application code or plan files are part of this change.
 | O5 | Retain the hat-logo backend and wire field; render no hat logos or logo editor in this UI. | Operator, 2026-10-20. |
 | O6 | Accent comes from the hat. Implement both light and dark; use design surfaces, text and status colors. | Operator, 2026-10-20. Fixed prototype blue is not the application accent. |
 | O7 | Stack all redesign work into `redesign`; release through one final integration PR to `main`. | Operator, 2026-10-20. No partial redesign release. |
-| D1 | Retain the system sans/mono stacks; reproduce the design's sizes, weights and spacing. | **designer's recommendation**: no font downloads, extra binary payload or new font licensing work; platform metrics are an explicit visual deviation. |
+| O8 | Use the design's Inter for body/content and Roboto for headings/UI labels; commit self-hosted WOFF2 latin + latin-ext subsets, including Polish characters, with `font-display: swap` and OFL license/notice. No npm/fontsource package, remote font load or CSP change. R1 owns this. | Operator, 2026-10-20; replaces and removes D1. |
 | D2 | Keep CSS variables and existing class-based CSS with Tailwind 4. Add semantic tokens and temporary aliases, rather than migrate components to another styling system. | **designer's recommendation**: fits `index.css`/`manage.css` and protects the Markdown scope. |
 | D3 | Use system/light/dark appearance, browser-persisted, through the blocking external `/theme.js`; derive contrast-checked palettes per theme. | **designer's recommendation**; CSP/no-inline behavior is settled by the implementation. |
 | D4 | Use `/needs-you`, `/sessions`, `/new`, `/more`, `/defaults` and existing management/session routes; desktop Sessions becomes an overview without automatic session selection. | **designer's recommendation**: follows the new overview and mobile tabs, superseding the old list/detail rail layout. |
 | D5 | Count actual operator attention, never infer a question from assistant prose. Queue previews are read-only and open the canonical session card for answering. | **designer's recommendation**: current summaries cannot authorize a quick answer; avoids a second answer-book/stream implementation. |
 | D6 | Show supported data only; omit invented progress, diagnostics, version/auth claims and password-change metadata. | **designer's recommendation**: this release adds defaults, not a diagnostics or account API. |
-| D7 | Agent baseline is read-only and comes from the selected host/cwd catalog. Persist sparse overrides by owner × hat × agent, not host or display name. | **designer's recommendation**: the same hat spans different adapter pins; no new global agent-preference layer. |
+| D7 | Agent baseline is read-only and comes from the selected host/cwd catalog. Persist sparse overrides by owner × hat × agent, not host or display name; on a different effective model, prune inherited nonsecurity axes as in §6.3. | **designer's recommendation**: the same hat spans different adapter pins and model-dependent axes; no new global agent-preference layer. |
 | D8 | Kernel owns defaults storage; sessions owns its operator HTTP facade. Require step-up on every PUT, including resets. | **designer's recommendation**: hat lifetime belongs to the kernel; all-write step-up covers permissive and unknown security modes without trusting labels. |
 | D9 | The launcher resolves and sends explicit config using existing start/config APIs. Defaults do not implicitly change resume, delegated spawn, or delegation execution policy. | **designer's recommendation**: keeps operator preferences separate from agent authorization. |
 | D10 | Unsupported stored values are omitted with a visible, field-specific notice; unavailable explicit picks block Start until corrected. Hold a first prompt when requested config is not confirmed. | **designer's recommendation**: no silent alternate model or weaker permission setting. |
 | D11 | Use bundled Heroicons SVG paths, native controls where practical, and no new runtime dependency. | **designer's recommendation**: matches the design within current CSP and bundle limits. |
-| D12 | Use the responsive geometry, focus/shortcut contract, honest paging and exclusive file ownership in §§3–10. | **designer's recommendation**: resolves prototype-only and parallel-lane gaps. |
+| D12 | Use the responsive geometry, focus/shortcut contract, hat-only/all-lifecycle Needs you query, honest paging and exclusive file ownership in §§3–10; expose the existing execution-grant editor separately from the delegation toggle. | **designer's recommendation**: resolves prototype-only and parallel-lane gaps. |
 
 ## 2. Existing implementation boundaries
 
@@ -102,7 +105,7 @@ the prototype's stylesheet, its Google Fonts import or global element rules.
 | Radius | `--radius-xs/sm/md/lg/xl/full` | 4/6/8/12/16/9999 px. Mobile cards 14 px and sheets 20 px are explicit frame variants. |
 | Spacing | `--space-1/2/3/4/5/6/8/10/12/16/20/24` | 4/8/12/16/20/24/32/40/48/64/80/100 px, matching the source scale's actual final value. |
 | Shadow/motion | `--shadow-xs`, `--hn-pop-shadow`, `--hn-scrim`, durations/easings | Design's subtle xs shadow, paired light/dark popover shadows, 50% dark-text or 60% black scrim; 120/180/240 ms, standard/out easing. Disable animation and smooth scrolling under reduced motion. |
-| Typography | `--font-display`, `--font-body`, `--font-mono` plus size classes | Existing system stacks. Desktop heading 18/1.2 medium, row title 13/1.3 medium, prose 14/1.55–1.6, mono 12–13/1.5; mobile heading 20, title 16, prose/input 15–16, labels 12–13. Section labels 11 bold uppercase; tab labels 10. |
+| Typography | `--font-display`, `--font-body`, `--font-mono` plus size classes | Self-hosted Roboto display/headings/UI labels and Inter body/content, with system fallbacks; existing system mono stack. Desktop heading 18/1.2 medium, row title 13/1.3 medium, prose 14/1.55–1.6, mono 12–13/1.5; mobile heading 20, title 16, prose/input 15–16, labels 12–13. Section labels 11 bold uppercase; tab labels 10. |
 
 The source color scales are local numeric inputs, not application branding:
 neutral 050–1000, primary/orange/success/error 050–800 and warning 500.
@@ -208,9 +211,33 @@ verify the actual cascade, including on-accent and status tints.
 
 ### 3.4 Fonts, icons and CSP
 
-Keep the system fonts (D1); no external or self-hosted font assets are added.
-The deliberate difference from Roboto/Inter must be mentioned beside visual
-comparisons; typography hierarchy and line lengths still follow the frames.
+Use **Inter** for body/content and **Roboto** for headings, buttons and UI
+labels, as the design specifies (O8). Commit the actual `.woff2` font assets
+under `web/public/fonts/`, including **latin + latin-ext** subsets for both
+families; Polish characters must render from these faces. Include every
+weight/style used by the UI: normal 400/500/600/700 and Inter italic for
+thinking text, using variable faces where appropriate. Define local
+`@font-face` rules with matching weight/style and Unicode ranges in
+`styles/fonts.css`; use `font-display: swap`. System stacks remain fallbacks
+while fonts load, not the selected production fonts. Keep system mono.
+
+Use pinned OFL-licensed upstream font files; R1 records their upstream
+version/source and checksums in the font notices. Commit each family's full
+OFL license text/copyright alongside its notice under
+`web/third-party-licenses/`, referenced from the shipped
+`web/THIRD_PARTY_NOTICES.txt` and distribution notices. Do not add npm,
+`@fontsource` or another font-fetching runtime/build dependency. Font files
+ship through the existing Vite/static embedding and PWA precache pipeline;
+all font URLs are same-origin and need **no CSP change**.
+
+R1 adds a post-build test over **every shipped CSS asset**, including
+imports and `@font-face` URLs, asserting it references no external origin.
+Inspect emitted CSS, not only source files; cover absolute and network-path
+external references in the check's regression fixtures. Browser acceptance
+waits for both families, verifies normal/italic/weight selection, and renders
+the Polish sample “Zażółć gęślą jaźń” in Inter and Roboto with their latin-ext
+font assets loaded. Confirm no remote font request or CSP violation.
+
 Bundle the used Heroicons v2 SVG paths as React components in
 `web/src/components/ui/Icon.tsx`, using currentColor and the source's
 24 outline/24 solid/20 solid/16 solid variants. Do not fetch icons, inject
@@ -306,6 +333,24 @@ Needs you selects summaries with `operator_attention > 0`. Preserve
 becomes operator work. Do not regex assistant prose for a final question
 or create a read/unread state. A factual `question_waits` alone does not
 override modern operator-attention routing.
+
+**Needs you has its own effective page query:** the selected `hat` only,
+across **all non-deleted lifecycles**, including closed sessions. Omit `q`
+and `lifecycle` from its summary requests; set the store's effective
+`hideClosed` to false and apply no overview host/status filter. Overview
+search, Hide closed, lifecycle, host and status choices remain saved for
+returning to Sessions; entering Needs you must not overwrite them or reuse
+their filtered page/cursor as the queue's baseline. Its Search control opens
+Sessions search rather than narrowing this attention dataset.
+
+Keep one persistent list store and **one list SSE**. Switch/reset the page
+query and its cursor with a distinct query key when entering/leaving Needs
+you; abort/fence responses from the previous query while preserving summary
+upserts and the hat-scoped waiting count. The queue is complete only after
+this all-lifecycle query is exhausted, not after an overview-filtered cursor
+ends. Its session predicate remains `operator_attention > 0`, so a closed
+session with real status-only attention is reachable and parent-handled or
+already-queued answers remain excluded as before.
 
 Use existing paged summaries and list SSE. A queue visit may scan at most
 three pages sequentially, then offers Load more; show “X loaded · N need
@@ -527,6 +572,7 @@ never replaces a form while typing or moves focus to another request.
 | Push devices, labels, last acceptance/error, remove | Restyle; registrations are not physical device identities or delivery guarantees | `NotificationSettings.tsx` |
 | Per-hat mute/details/generic title and preview/Save | Restyle existing `PushPolicyItem`; explain details can expose agent text/secrets | `NotificationSettings.tsx`, `api/device.ts` |
 | Per-hat delegation switches, loading/error, activation/disable notices | Build frontend on GET/PATCH session-tools; Settings only, stepped up | `components/DelegationSettings.tsx` (new) |
+| Separate per-hat delegation execution-grant editor, profile baseline, catalog choices and explicit Save | Build frontend on existing GET/PATCH delegation-policy; step-up on PATCH; no automatic grant expansion | `DelegationSettings.tsx`, `api/delegation.ts` (new shared facade) |
 | Signed-in devices/Revoke, current login/Sign out | Restyle existing behavior and cleanup | `AccountSettings.tsx`, `SignOut.tsx` |
 | Collector Public URL, default hat, Theme | Build/restyle read-only collector info; default-for-new-hosts from hats, per-host defaults stay in Hosts; appearance radios in Settings | `components/CollectorSettings.tsx` (new), `Settings.tsx` |
 | Push contact, attachment usage/cleanup status and deployment explanation omitted by prototype | Restyle/add reads from existing routes; display only reported values and existing isolation guidance | `CollectorSettings.tsx`, `Settings.tsx` |
@@ -669,6 +715,41 @@ remaining axes. Reasoning effort is one catalog axis, not a special
 three-value hard-coded field. Render other select/boolean axes; unsupported
 shapes display unavailable and are never sent.
 
+**Model-dependent axis rule:** the pre-start endpoint accepts agent/cwd,
+not a model, and describes the probe's default model. Keep the origin of
+each candidate value (catalog baseline, stored override, explicit pick).
+When the effective model differs from `catalog.defaults.model`, mirror
+`launch_configuration` in
+`crates/hennery-sessions/src/delegation_runtime.rs:180`: remove inherited
+baseline `axes` entries unless their id is a security axis named by
+`catalog.security.axes` or by the selected agent's existing
+`ExecutionPolicy.allowed` keys. Read that policy through the existing
+operator GET `/api/hats/{id}/delegation-policy`; using its axis identities
+does not change its grants or make the operator launcher subject to an
+implicit delegation-policy merge. Preserve the baseline mode and all
+security requirements; never prune a sandbox/approval requirement simply
+because the model changed, or classify axes from display labels.
+
+After that pruning, overlay applicable **stored and explicit** axes; they
+are deliberate requests, not inherited probe defaults. A coarse pre-start
+catalog cannot prove they exist for the newly selected model. Send only
+choices offered by that context, then require the actual post-start
+read-back to confirm every requested value before the first prompt (§6.4).
+Do not call an invented per-model catalog endpoint or silently erase a
+stored/explicit request merely to pass the read-back gate.
+
+Concrete regression: the Claude probe's default is Opus with inherited
+`fast=false`, but the operator or hat selects Sonnet, which omits `fast`.
+With no stored/explicit `fast` request, omit that inherited nonsecurity axis;
+retain the required mode/security fields and any deliberate supported
+effort choice. The Sonnet session must start and receive its first prompt
+after its actual configuration is confirmed, without `config_failed` from
+the inherited `fast`. If `fast=false` was explicitly picked or stored as
+an override, preserve its provenance/request; Sonnet's refusal or missing
+read-back keeps the first prompt as a draft and visibly explains the
+unsupported requested axis. Never report success or substitute another
+axis/model to satisfy it.
+
 Example without private fixtures: a hat stores model A and effort High;
 the selected host offers only model B and Low/Medium. The launcher uses
 that host's baseline for both, lists “Saved model A is unavailable on this
@@ -760,6 +841,51 @@ routes outstanding attention to the operator; already delivered work keeps
 running as ordinary sessions. Re-enabling does not replay cancelled work.
 Do not say disabling stops all child processes, removes unrelated MCP
 mounts, or that enabling broadens the execution policy. No hat-card toggle.
+
+In the same Settings section, expose a **separate explicit execution-grant
+editor** through existing `GET/PATCH /api/hats/{id}/delegation-policy`.
+GET returns `ExecutionPolicy {revision, allowed}`; PATCH sends the existing
+`SetExecutionPolicy {allowed}` through cookie/Origin and fresh step-up,
+then displays the returned stored policy. This is the existing whole-map
+replacement API: preserve unrelated agent/axis entries deliberately and
+show the complete change for review, rather than silently dropping them
+when editing one agent. Do not invent an optimistic revision request that
+the current API does not accept. Keep saved values/input on refusal or
+cancel, and show stale/unavailable catalog entries without silently removing
+their grants.
+
+Explain that enabling session tools alone suffices **when the child's
+requested/actual configuration fits the effective execution policy**. For
+known profiles with no explicit override, the current baseline permits
+Claude `default`/`plan` and Codex `read-only`; own-CLI/generic profiles have
+no known safe baseline. More permissive modes or unknown profiles can
+produce `operator_required` until the operator explicitly configures a
+grant. The toggle still requires a fresh start/resume to deliver the tools;
+a grant is separate from descriptor delivery and runtime/MCP availability.
+
+Use the selected owned host/agent/validated-cwd runtime catalog for field
+ids and offered values, and trusted profile security classification for
+known security axes. For an unknown profile, require the operator to
+explicitly identify its policy axes and allowed catalog values; do not
+claim an automatically inferred safe policy. Show the effective baseline
+and overrides together, the affected hat/agent, and the reduced-prompting
+consequences before explicit Save. Unknown/stale catalogs are read-only
+for new choices, with Retry; existing grants remain inspectable/resettable.
+Retain the backend's semantics that an explicit axis entry replaces that
+axis's baseline allowed set, and that removing the override returns to the
+profile baseline. Never broaden grants automatically when enabling
+delegation, saving launcher defaults, changing model, encountering
+`operator_required`, or retrying a refused spawn.
+
+Acceptance must enable delegation through Settings and actually spawn a
+child under a supported baseline, then exercise **refusal → explicit
+stepped-up grant → successful spawn** for an out-of-baseline mode. Assert
+the refused configuration returns `operator_required` without launching
+its brief; save only the reviewed grant via Settings, retry deliberately,
+and verify the child config and brief delivery. Also cover the unknown
+profile's explicit-grant requirement and prove that the toggle/defaults
+write alone does not mutate `allowed`. An enabled switch or successful
+policy PATCH alone is not evidence that delegation works.
 
 Keep per-hat `PushPolicyItem` settings and their current unmuted/no-details/
 session-title defaults. No per-event global switch or “only when hidden”
@@ -868,13 +994,14 @@ builds. The following are requirements for the implementation plans.
 | Area | Required evidence / affected tests |
 |---|---|
 | Theme/accent | Extend `lib/theme.test.ts`, `lib/hats.test.ts`; new `lib/accent.test.ts`; bootstrap VM/DOM tests. Hostile colors and final CSS contrast in both themes, storage migration/denial, system/explicit mode and initial paint. |
+| Fonts / shipped CSS | R1 post-build check of every emitted CSS asset/import/font URL: no external origin; regression fixtures exercise external references. Browser coverage loads committed Inter/Roboto WOFF2 latin + latin-ext, used weights/italic, Polish glyphs, swap fallback, embedding/precache and unchanged CSP; check full OFL texts/notices. |
 | Shell/router | `router.test.tsx`, `App.test.tsx`, Shell/view tests and `web/e2e/shell.spec.ts`: new URLs, More destinations, collapse, capabilities/gateway, auth return, direct reload and no desktop auto-selection. |
-| Overview/queue | `SessionList.test.tsx`, `SessionRow.test.tsx`, scope/store tests and new NeedsYou tests: grouping, counts/paging/partial states, zero vs parent-handled attention, real status-only fallback, no transcript fan-out or extra SSE. |
+| Overview/queue | `SessionList.test.tsx`, `SessionRow.test.tsx`, scope/store tests and new NeedsYou tests: grouping, counts/paging/partial states, zero vs parent-handled attention, real status-only fallback, no transcript fan-out or extra SSE. Start from restrictive overview search/lifecycle/host/status/Hide closed, enter Needs you and reach an excluded active permission plus a closed-session status-only attention record through the hat-only/all-lifecycle query; exhaust pages and verify completion/counts. Return to Sessions and assert original filters restored; query-transition late responses cannot overwrite queue pages. |
 | Push navigation | `pwa/notification.test.ts`, `pwa/navigation.test.ts`, `pwa/worker.test.ts`, `web/e2e/pwa.spec.ts`, existing producer tests: real URL → worker data.url → click → exact session/card, auth return, older question, dirty/exact window, gateway and invalid URL cases. |
 | Session | Existing `screens/Session*.test.tsx`, Composer/Transcript/item/AnswerBook/FamilyPanel suites; `web/e2e/sessions.spec.ts`, `family.spec.ts`: panel/sheet, parent banner/takeover, actual option ids, multi-question input, queued/uncertain/conflict/withdrawn/delivered, cancel/resume/draft preservation. |
 | Defaults backend | New kernel storage/migration tests and sessions HTTP integration tests: upgrade/reopen, owner/foreign hat, atomic revision race, empty reset/false, purge freeze/cascade, all PUT step-up/expiry/Origin/body bounds/invalid fields; add owner-audit cases and generator checks. |
-| Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, missing stored ids visibly omitted, explicit invalid pick blocked, unknown catalog explicit opt-out, stale responses, config clamp/failure prevents first prompt. Assert actual start frame and no prompt before confirmation. |
-| Settings/management | Existing settings/manage/API tests, `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts`: new layout, default-hat controls, delegation enable/disable/step-up/cancel, per-hat privacy, secrets and device lifecycle intact. |
+| Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, missing stored ids visibly omitted, explicit invalid pick blocked, unknown catalog explicit opt-out, stale responses, config clamp/failure prevents first prompt. Exercise the real Opus→Sonnet case: inherited `fast=false` omitted, required security axes preserved, supported deliberate effort retained and first prompt delivered after read-back. An explicit/stored unsupported `fast` request remains visible and prevents first prompt on failed/missing read-back. Assert actual start frame and no prompt before confirmation. |
+| Settings/management | Existing settings/manage/API tests, `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts` and new `delegation-settings.spec.ts`: new layout, default-hat controls, delegation enable/disable/step-up/cancel, separate execution-grant controls, per-hat privacy, secrets and device lifecycle intact. Actually spawn through enabled Settings under a known baseline; then require `operator_required` refusal → explicit stepped-up catalog-based grant → deliberately retried successful spawn with confirmed config/brief. Unknown profiles require explicit grants; enabling tools/defaults writes do not broaden `allowed`. |
 | Keyboard | New command/shortcut and palette tests plus browser checks: every key, editable/composed-path/select/IME guards, card-focus digits, dialog focus/return, typing never mutates an answer or starts a session. |
 | Rendering/CSP | Existing `security.test.ts`, `deps.test.ts`, browser CSP collectors and Markdown computed-style checks; no external assets, inline script, lost list markers or mobile controls. |
 
@@ -921,8 +1048,9 @@ content into fixtures/screenshots.
 Mobile `2 · Push on the lock screen` is a native notification reference,
 not an app screenshot target or promise of lock-screen buttons. Demonstrate
 the tap-to-session flow instead. Compare geometry, density, hierarchy,
-surfaces and responsive behavior; document the deliberate system-font,
-hat-accent, read-only queue and unsupported-data deviations. A screenshot
+surfaces and responsive behavior; wait for the self-hosted Inter/Roboto
+faces before capture. Document the deliberate hat-accent, read-only queue
+and unsupported-data deviations. A screenshot
 alone cannot prove contrast, focus or delivery semantics; pair it with the
 behavior/computed-style checks above.
 
@@ -946,11 +1074,11 @@ another lane's files.
 
 | Plan | Scope and dependency | Owned files / verification focus |
 |---|---|---|
-| R1 — tokens, appearance, assets | Foundation; no dependency | `styles/tokens.css`, `lib/accent.ts`, `lib/theme.ts`, hat palette helpers, `web/public/theme.js`, `components/ui/**`, notices and appearance tests. Own `index.css`/`manage.css` only for token aliases/base cleanup in this step. Capture all existing screens after token adoption, both themes; prove contrast/bootstrap/CSP. |
-| R2 — shell, overview, queue, router, push | After R1; establishes all parallel seams | `components/Shell.tsx`, `SessionScope.tsx`, `NavigationRail.tsx`, `BottomNavigation.tsx`, `SessionList.tsx`, `SessionRow.tsx`, `HatSwitch.tsx`, `SessionFilters.tsx`, `NeedsYouQueue.tsx`, `AttentionPreview.tsx`, `CommandEntry.tsx`; `screens/Sessions.tsx`, `NeedsYou.tsx`, `More.tsx`, `Placeholder.tsx`; `router.tsx`, `lib/views.ts`, status/group helpers, `styles/shell.css`; shell/list/router/push tests, `web/e2e/shell.spec.ts`, `pwa.spec.ts`. Own worker/app-route allowlist integration and deep-link preservation. |
-| R3 — session | After R2 | `screens/Session.tsx`, session header/footer/menu, Transcript/Composer/FamilyPanel/StepList/McpDelivery/StatusAttention, `components/items/**`, new SessionDetails/QuestionActions/SessionConfig, `styles/session.css`; corresponding tests; `web/e2e/sessions.spec.ts`, `family.spec.ts`. Own session action-provider registration, read-back display and mobile forms; do not edit launcher or shared catalog parser. |
+| R1 — tokens, appearance, assets | Foundation; no dependency | `styles/tokens.css`, `styles/fonts.css`, `web/public/fonts/**`, `web/third-party-licenses/**`, `web/THIRD_PARTY_NOTICES.txt`, `lib/accent.ts`, `lib/theme.ts`, hat palette helpers, `web/public/theme.js`, `components/ui/**`; `screens/Login.tsx`, `screens/Setup.tsx`, `components/ConfirmDialog.tsx`, `components/StepUpDialog.tsx` and their tests. Own the emitted-CSS origin check/fixtures, font browser coverage and any required build-script wiring. Own `index.css`/`manage.css` only for token aliases/base cleanup in this step. Capture all existing screens after token/font adoption, both themes; prove Polish coverage, contrast/bootstrap/CSP. |
+| R2 — shell, overview, queue, router, push | After R1; establishes all parallel seams | `App.tsx`/`App.test.tsx`, `app-actions.tsx` and its tests, `api/delegation.ts` and its tests; `components/Shell.tsx`, `SessionScope.tsx`, `NavigationRail.tsx`, `BottomNavigation.tsx`, `SessionList.tsx`, `SessionRow.tsx`, `HatSwitch.tsx`, `SessionFilters.tsx`, `NeedsYouQueue.tsx`, `AttentionPreview.tsx`, `CommandEntry.tsx`; `screens/Sessions.tsx`, `NeedsYou.tsx`, `More.tsx`, `Placeholder.tsx`; `router.tsx`, `lib/views.ts`, status/group helpers, `styles/shell.css`; shell/list/router/push tests, `web/e2e/shell.spec.ts`, `pwa.spec.ts`. Own worker/app-route allowlist integration, hat-only/all-lifecycle queue query and deep-link preservation. |
+| R3 — session | After R2 | `screens/Session.tsx`, session header/footer/menu, Transcript/Composer/FamilyPanel/StepList/McpDelivery/StatusAttention, `components/items/**`, new SessionDetails/QuestionActions/SessionConfig, `styles/session.css`; corresponding tests; `web/e2e/sessions.spec.ts`, `family.spec.ts`, `windowing.spec.ts`. Own session action-provider registration, read-back display, mobile forms and preservation of windowing measurements; do not edit launcher or shared catalog parser. |
 | R4 — launcher and defaults | After R2 | `screens/NewSession.tsx`, `Defaults.tsx`, ProjectPicker/NewSessionFrame/LaunchConfig/CatalogContext/DefaultsEditor, `api/defaults.ts`, `lib/defaults.ts`, `lib/start.ts`, `lib/catalog.ts`, `styles/launch.css`; new defaults backend/store/proto/schema/owner-audit changes; launcher/defaults tests and `web/e2e/new-session.spec.ts`. Own protocol generation and defaults capability; verify persistence/security/catalog divergence/first-prompt gate. |
-| R5 — management and Settings | After R2; final defaults summaries after R4 | `screens/Hosts.tsx`, `Mcp.tsx`, `Hats.tsx`, `Settings.tsx`; Pairing/PathRules/Mounts/MCP/stdio/OAuth forms, new Account/Notification/Delegation/CollectorSettings, management API helpers, `manage.css`; related tests; `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts`. Preserve current backend authorization and write-only secrets. |
+| R5 — management and Settings | After R2; final defaults summaries after R4 | `screens/Hosts.tsx`, `Mcp.tsx`, `Hats.tsx`, `Settings.tsx`; Pairing/PathRules/Mounts/MCP/stdio/OAuth forms, new Account/Notification/Delegation/CollectorSettings, management API helpers, `manage.css`; related tests; `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts`, `delegation-settings.spec.ts`. Own both delegation-toggle and separate execution-grant UI using R2's shared API facade; preserve current backend authorization and write-only secrets. |
 | R6 — commands and shortcuts | After R2; contextual acceptance with R3–R5 | `components/CommandPalette.tsx`, `ShortcutHelp.tsx`, `CommandHost.tsx`, `hooks/useShortcuts.ts`, `lib/commands.ts`, `styles/commands.css`; command tests and new `web/e2e/commands.spec.ts`. Consume registered actions, never copy another screen's mutation logic. |
 
 R2 must finish these integration seams before parallel branches start:
@@ -960,11 +1088,14 @@ R2 must finish these integration seams before parallel branches start:
    placeholders at those entry points; file ownership transfers to R4/R6
    after R2. No lane needs to edit `Shell.tsx`, `router.tsx` or `lib/views.ts`
    merely to insert its screen later.
-2. Establish an application action/context registry with stable actions for
+2. Establish the action/context registry in `web/src/app-actions.tsx`
+   (and its colocated tests), owned by R2. Its stable actions cover
    opening New session, focusing overview search, toggling rail/details,
    focusing composer and opening configured management destinations.
    Screen owners register enabled handlers in their own files; R6 only
-   dispatches. Unavailable actions are disabled/omitted, never guessed.
+   dispatches through those exports. R6 owns command definitions in
+   `web/src/lib/commands.ts`, not the registry; it does not edit `App.tsx`
+   or the provider. Unavailable actions are disabled/omitted, never guessed.
 3. Extract shared shell CSS and existing session-specific CSS from
    `index.css` before ownership transfers, maintaining current behavior.
    Subsequent lane CSS imports live in each owned screen/module. R5 owns
@@ -977,6 +1108,25 @@ R2 must finish these integration seams before parallel branches start:
    R3 consumes `lib/catalog.ts` read-only; R4 owns additive parser changes
    and preserves existing exports/semantics. Session and launch config
    presentations have separate owned modules using the same primitives.
+6. R2 provides `web/src/api/delegation.ts` with generated-type wrappers for
+   GET/PATCH session-tools, GET/PATCH delegation-policy and the existing
+   runtime-catalog GET. R4 consumes its execution-policy read for security
+   axis identity; R5 consumes its reads/writes for Settings. Both use this
+   facade read-only after R2, so parallel work does not duplicate wire types
+   or collide in the helper file. Any API-contract change goes through
+   the parent as a shared-foundation amendment.
+
+The remaining ownership boundaries are explicit: R1 finishes Login/Setup
+and shared confirmation/step-up presentation, focus containment and stable
+props before R2; those components/tests remain R1-owned shared foundation,
+with no transfer to R3/R5. R2 owns `App.tsx` and its root integration/tests
+after R1, including mounting the R6 placeholder host; R6 only replaces its
+owned placeholder implementation. `index.css` transfers from R1 to R2 for
+the extraction above and is then frozen for parallel lanes. `manage.css`
+transfers R1 → R5 after R2. R3 alone adapts `windowing.spec.ts` to the
+session layout without weakening measurement assertions. No other implicit
+transfer of a shared file is authorized; integration changes go through
+the parent.
 
 Generated protocol/schema files and the owner-audit suite are shared
 hotspots owned only by R4 for this redesign; parent integrates any outside
@@ -1002,8 +1152,10 @@ public-URL editing and a password-change API; new memory/board/workflow pages.
 The existing backends for logos, public URL, delegation policy and optional
 plug-ins remain available under their established contracts.
 
-The parent should request stronger-model design/security review of D1–D12,
-especially sparse defaults storage and all-write step-up, catalog fallback
+The parent should request scoped re-confirmation of review findings 1–4
+and O8's font implementation contract, then record the outcome. D2–D12
+remain designer's recommendations; D1 is replaced by operator decision O8.
+Focus the review on sparse defaults storage and all-write step-up, catalog fallback
 and first-prompt read-back, separation from delegation authority, partial
 queue coverage, the read-only queue deviation, accent contrast and the
 parallel ownership seams. Record approval/amendments and scoped
