@@ -34,7 +34,10 @@ def selection(release, base):
                    'packaging/crate-registry.mjs', 'packaging/ci-crates.sh', 'packaging/check-crates.mjs',
                    'packaging/check-package-build.mjs', 'packaging/check-native-crate.mjs',
                    'packaging/check-binstall.mjs', 'packaging/smoke-crate-ui.mjs',
-                   'packaging/check-offline.mjs', 'packaging/offline-build.sh', 'packaging/check-dist-plan.mjs')
+                   'packaging/check-offline.mjs', 'packaging/offline-build.sh', 'packaging/check-dist-plan.mjs',
+                   # The crates job's own suites, their imports, and the workflows they read or run.
+                   'packaging/*crate*', 'packaging/*binstall*',
+                   '.github/workflows/release.yml', '.github/workflows/packaging.yml')
         for path in paths:
             if any(fnmatch.fnmatchcase(path, pattern) for pattern in scripts):
                 crates = True

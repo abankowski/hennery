@@ -168,6 +168,17 @@ class PackagingSelection(unittest.TestCase):
         self.commit()
         self.assertEqual(self.select(base)['crates'], 'true')
 
+    def test_crates_suites_and_the_workflows_they_read_select_crates(self):
+        # #196 changed release.yml, which publish-crates.test.mjs reads, and the
+        # skipped job left main red until an unrelated PR ran it.
+        for path in ('.github/workflows/release.yml', '.github/workflows/packaging.yml',
+                     'packaging/publish-crates.test.mjs', 'packaging/crates-publish-limits.json',
+                     'packaging/binstall-policy.test.mjs'):
+            base = self.git('rev-parse', 'HEAD').strip()
+            self.write(path)
+            self.commit()
+            self.assertEqual(self.select(base)['crates'], 'true', path)
+
     def test_other_packaging_and_dependency_only_changes_skip_crates(self):
         self.write('packaging/release/hosting.py')
         self.write('Cargo.lock')
