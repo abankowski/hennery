@@ -64,7 +64,7 @@ impl Status {
     }
 }
 
-/// One check's line of the report.
+/// One check of the report, optionally rendered as separate findings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
     /// Its number in distribution spec §7's table.
@@ -75,6 +75,8 @@ pub struct Check {
     pub summary: String,
     /// What to do, in one sentence: empty when `status` is `Ok`.
     pub fix: String,
+    /// Optional separate findings, with each fix next to the finding it addresses.
+    details: Vec<(Status, String, String)>,
 }
 
 /// What one check came to: a verdict, or nothing to look at here.
@@ -130,7 +132,16 @@ impl Verdict {
             status,
             summary,
             fix: fixes.join(" "),
+            details: Vec::new(),
         }
+    }
+
+    /// Keep the individual findings for checks with several independent fixes.
+    pub fn detailed_check(self, number: u8, name: &'static str) -> Check {
+        let details = self.parts.clone();
+        let mut check = self.check(number, name);
+        check.details = details;
+        check
     }
 }
 
@@ -294,7 +305,7 @@ pub fn printable(text: &str) -> String {
         .collect()
 }
 
-/// The report: which directory, then one line per check (and its fix),
+/// The report: which directory, then each check (and its findings and fixes),
 /// then the checks that had nothing to look at.
 pub fn render(dirs: &Dirs, findings: &[Finding], out: &mut dyn Write) -> Result<()> {
     writeln!(
@@ -311,6 +322,16 @@ pub fn render(dirs: &Dirs, findings: &[Finding], out: &mut dyn Write) -> Result<
     for finding in findings {
         match finding {
             Finding::Checked(check) => {
+                if !check.details.is_empty() {
+                    writeln!(out, "{:<4} {:>2} {}:", check.status.label(), check.number, check.name)?;
+                    for (status, summary, fix) in &check.details {
+                        writeln!(out, "        {}: {}", status.label(), printable(summary))?;
+                        if !fix.is_empty() {
+                            writeln!(out, "        fix: {}", printable(fix))?;
+                        }
+                    }
+                    continue;
+                }
                 writeln!(
                     out,
                     "{:<4} {:>2} {}: {}",

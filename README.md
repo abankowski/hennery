@@ -4,7 +4,11 @@ hennery is a self-hosted cockpit for coding agents. It lets one developer drive
 [Agent Client Protocol](https://agentclientprotocol.com) (ACP) sessions — Claude
 Code, Codex, or any other ACP adapter — running on any of their machines, from a
 single browser tab or a phone. It also includes an MCP gateway: connect a
-server once, then choose its hat and the hosts whose sessions may use it.
+server once, then choose its hat and the machines whose sessions may use it.
+
+A **collector** is the server that stores sessions, serves the browser UI and
+connects your machines. A **host** is the process on an agent machine that runs
+agents against that machine's projects and connects out to the collector.
 
 hennery never proxies agent licences. You bring your own subscriptions and log in
 to each agent CLI on your own machines; hennery only drives the sessions.
@@ -315,6 +319,104 @@ The bundled CLIs are not added to your `PATH`. After `up` or `host join`
 installs the runtime, run `hennery doctor` on each agent machine. Check 4,
 **logged in**, reports whether each agent is logged in and prints a fix when
 it is not; doctor does not log in for you.
+
+### Deployment modes
+
+```mermaid
+flowchart LR
+    browser[Browser / phone] --> proxy[Optional TLS reverse proxy]
+    proxy --> collector[Collector]
+    host1[Host: laptop + agents] --> collector
+    host2[Host: workstation + agents] --> collector
+```
+
+| Mode | Command | What runs | When to choose it |
+|---|---|---|---|
+| Collector only | `hennery collector` | Server and browser UI; no host or agents | A VM/server that coordinates your agent machines. The GHCR image runs this mode. |
+| Host only | `hennery host join <url> <code>`, then `hennery host run` | Agents on this machine, connected to an existing collector | Each laptop/workstation with projects and agent CLI logins. Join pairs it once; run keeps it connected. |
+| Both, paired | `hennery up` | Collector and local host, as two child processes | Start everything on one agent machine; other hosts can join later. |
+
+The collector VM does **not** need a host unless you also want to run agents
+there. For a local trial, continue with steps 1 and 2 below.
+
+#### Collector on a VM/server behind Caddy
+
+Install or build hennery on the server and each agent machine. Run Caddy on
+the **same server** as the collector, with DNS and a trusted TLS certificate
+for your chosen public name. Use the [tested Caddyfile and deployment
+instructions](packaging/proxy/README.md), setting its backend port to `7117`
+and its TLS port to `443`. The template needs your certificate and key paths;
+it does not obtain a certificate automatically. It preserves WebSockets and
+overwrites the client-address header. Keep ingress restricted to trusted
+users while the [public deployment gate](packaging/proxy/README.md#public-deployment-gate)
+remains pending.
+
+On the server, start only the collector. Replace `hennery.example` with your
+DNS name; `7117` is a collector-backend placeholder for your chosen port:
+
+<!-- check: collector-public -->
+```sh
+hennery collector --listen 127.0.0.1:7117 --public-url https://hennery.example
+```
+
+Loopback is the default so the plaintext backend is reachable only on this
+machine; Caddy exposes HTTPS to browsers and hosts. To bind another interface,
+use e.g. `--listen 0.0.0.0:7117` (all IPv4 interfaces) or a specific interface
+address, and restrict backend access to your proxy. `--listen` is repeatable
+and accepts comma-separated addresses, as does `HENNERY_LISTEN`.
+`--public-url` / `HENNERY_PUBLIC_URL` sets the browser's origin, not the bind
+address; it does not enable TLS on the collector.
+
+Instead of passing flags each time, create `config.toml` in the collector's
+data directory (alongside `master.key`):
+
+| Platform / mode | Config file with default data directory |
+|---|---|
+| Linux, `collector` | `$XDG_DATA_HOME/hennery/config.toml` when XDG_DATA_HOME is absolute; otherwise `~/.local/share/hennery/config.toml` |
+| macOS, `collector` | `~/Library/Application Support/hennery/config.toml` |
+| `up`, either platform | `collector/config.toml` under that platform's default data directory |
+
+With `--data-dir <dir>` or `HENNERY_DATA_DIR`, the file is `<dir>/config.toml`
+for `collector`, or `<dir>/collector/config.toml` for `up`. Startup logs print
+the exact path. The file is **not created by default**; create the directory
+and file yourself, as the user running the collector. Example for same-server
+Caddy (use your DNS name and backend port):
+
+<!-- example: collector-config -->
+```toml
+listen = ["127.0.0.1:7117"]
+public_url = "https://hennery.example"
+proxy_client_ip_peers = ["127.0.0.1"]
+```
+
+Only trust Caddy's exact backend peer address in `proxy_client_ip_peers`;
+the linked recipe overwrites `Hennery-Client-IP` from the connection peer.
+Other users must not be able to write the config file. Restart the collector
+after editing it. Flags override environment variables, which override the
+file, then defaults. Doctor check 16 reads this file, not flags or the URL
+stored at setup; keeping `listen` and `public_url` here lets it check your
+deployment. Run `hennery doctor` as the collector's user (add `--data-dir <dir>`
+for a custom directory).
+
+Open the one-time link in `<collector-data>/setup-url` (also printed when
+running in a terminal) through your HTTPS address, and complete setup as in
+step 2. For remote access, HTTPS is required: passkeys need a browser secure
+context and a DNS name, and hennery sets Secure session cookies on HTTPS.
+Local `http://localhost` is the secure-context exception for development;
+loopback HTTP uses cookies without Secure. Passkeys are unavailable at IP
+addresses, even over HTTPS. Web Push also needs a secure context; on iOS it
+needs an installed PWA over HTTPS.
+
+After setup, the saved browser origin takes precedence over `--public-url`
+and the file. To move an existing installation, use
+`hennery admin reset-public-url https://hennery.example` as described in
+[Recovery](#recovery); changing the flag alone does not move it.
+
+On **each agent machine**, use **Hosts → Add host** in the browser to get a
+fresh pairing code, run the [HTTPS join command](#3-pair-another-machine), then
+`hennery host run`. Keep that process running, or install a host service.
+Agent subscriptions and CLI logins belong on those machines, not the
+collector-only VM.
 
 ### 1. Build
 

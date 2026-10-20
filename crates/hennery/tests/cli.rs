@@ -2602,6 +2602,67 @@ fn config_toml_yields_to_the_environment_and_the_environment_to_flags() {
     );
 }
 
+#[test]
+fn collector_startup_explains_config_path_and_loopback_listeners() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery"));
+    for (name, config, listens, loopback) in [
+        ("missing", false, vec!["127.0.0.1:0"], true),
+        ("loaded", true, vec!["127.0.0.1:0", "[::1]:0"], true),
+        ("mixed", false, vec!["127.0.0.1:0", "0.0.0.0:0"], false),
+    ] {
+        let dir = scratch_dir(&format!("startup-{name}"));
+        let _cleanup = RemoveDir(dir.clone());
+        let data = dir.join("collector");
+        let path = data.join("config.toml");
+        if config {
+            std::fs::create_dir_all(&data).unwrap();
+            std::fs::write(&path, "").unwrap();
+        }
+        let log = dir.join("collector.log");
+        let mut command = hennery();
+        command
+            .arg("collector")
+            .arg("--data-dir")
+            .arg(&data)
+            .env_remove("HENNERY_LISTEN");
+        for listen in &listens {
+            command.arg("--listen").arg(listen);
+        }
+        let child = command
+            .stdout(std::fs::File::create(&log).unwrap())
+            .stderr(std::fs::File::create(log.with_extension("err")).unwrap())
+            .spawn()
+            .unwrap();
+        let mut collector = KillTree::new(child, &log);
+        collector.wait_until("setup link after startup diagnostics", || {
+            data.join("setup-url").exists()
+        });
+        let output = std::fs::read_to_string(&log).unwrap();
+        let config_line = output
+            .lines()
+            .find(|line| line.contains("collector config"))
+            .expect(&output);
+        assert!(config_line.contains(&path.display().to_string()), "{output}");
+        assert_eq!(config_line.contains("does not exist"), !config, "{output}");
+        assert_eq!(path.exists(), config, "startup created config.toml");
+        assert_eq!(
+            output.contains("all collector listeners are loopback"),
+            loopback,
+            "{output}"
+        );
+        if loopback {
+            let hint = output
+                .lines()
+                .find(|line| line.contains("all collector listeners are loopback"))
+                .unwrap();
+            for fix in ["--listen", "listen in config.toml", "public_url"] {
+                assert!(hint.contains(fix), "{hint}");
+            }
+        }
+        assert_eq!(listening_addresses(&output).len(), listens.len(), "{output}");
+    }
+}
+
 /// A `config.toml` that does not parse, names a key hennery does not know,
 /// or that other users can write, stops the start with the file's name,
 /// before anything is bound or created.

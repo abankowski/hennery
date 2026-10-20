@@ -507,18 +507,27 @@ pub fn listeners(doctor: &Doctor) -> Finding {
         };
     };
     let mut verdict = Verdict::default();
+    let config_path = collector.join(crate::config::CONFIG_FILE);
+    let config_path = config_path.display().to_string();
+    if collector.join(crate::config::CONFIG_FILE).exists() {
+        verdict.ok(format!("config: {config_path}"));
+    } else {
+        verdict.ok(format!(
+            "config: {config_path} (does not exist; create it to configure this collector)"
+        ));
+    }
     let file = match crate::config::FileConfig::load(collector) {
         Ok(file) => file,
         Err(err) => {
-            verdict.fail(format!("{err}"), "fix the collector's config.toml");
-            return Finding::Checked(verdict.check(16, "listeners"));
+            verdict.fail(format!("{err}"), format!("fix {config_path}"));
+            return Finding::Checked(verdict.detailed_check(16, "listeners"));
         }
     };
     let addresses = match file.listen(&[]).and_then(|given| crate::listen_addresses(&given)) {
         Ok(addresses) => addresses,
         Err(err) => {
-            verdict.fail(format!("{err}"), "fix listen in the collector's config.toml");
-            return Finding::Checked(verdict.check(16, "listeners"));
+            verdict.fail(format!("{err}"), format!("fix listen in {config_path}"));
+            return Finding::Checked(verdict.detailed_check(16, "listeners"));
         }
     };
     let running = served(doctor, collector);
@@ -529,11 +538,11 @@ pub fn listeners(doctor: &Doctor) -> Finding {
             Ok(()) => verdict.ok(format!("{address} answers")),
             Err(_) if running => verdict.fail(
                 format!("{address}: nothing answers, though the service runs"),
-                "check listen in config.toml against the collector's log (a taken port fails its start)",
+                format!("check listen in {config_path} against the collector's log (a taken port fails its start)"),
             ),
             Err(_) => verdict.warn(
                 format!("{address}: no collector answers (is it running?)"),
-                "start it (`hennery up`, `hennery collector`, or the service)",
+                "start `hennery collector` or its service; use `hennery up` if this machine should also run agents",
             ),
         }
     }
@@ -541,11 +550,16 @@ pub fn listeners(doctor: &Doctor) -> Finding {
         verdict.ok("HENNERY_LISTEN is set in this shell: a service does not see it");
     }
     match file.public_url(None) {
-        None => verdict.ok("no public_url in config.toml (the one stored at setup is not read)"),
+        None => {
+            verdict.ok(
+                "no public_url in this config; add public_url = \"https://your-dns-name\" to check external access",
+            );
+            verdict.ok("the public_url stored at setup is not read by doctor");
+        }
         Some(public) => match hennery_host::pairing::parse_public_url(&public) {
             Err(err) => verdict.warn(
                 format!("{err}").replace(&public, &shown_url(&public)),
-                "fix public_url in config.toml",
+                format!("fix public_url in {config_path}"),
             ),
             Ok(url) => match if doctor.collector_trust == CollectorTrust::System {
                 healthz(&url)
@@ -567,19 +581,26 @@ pub fn listeners(doctor: &Doctor) -> Finding {
         },
     }
     let configured = file.proxy_policy().expect("validated config").is_configured();
-    let attribution = format!(
-        "proxy-address attribution is {}; missing header uses the TCP peer; health success cannot prove header stripping or separate limiter budgets",
-        if configured { "configured" } else { "unconfigured" }
-    );
-    if configured
+    let proxy_deployment = configured
         || file
             .public_url(None)
-            .is_some_and(|url| Url::parse(&url).is_ok_and(|url| url.scheme() == "https"))
-    {
-        verdict.warn(attribution, "verify the exact peer and overwritten Hennery-Client-IP header with two clients; restrict ingress until the public deployment gate passes");
+            .is_some_and(|url| Url::parse(&url).is_ok_and(|url| url.scheme() == "https"));
+    let attribution = format!(
+        "proxy-address attribution is {}",
+        if configured { "configured" } else { "unconfigured" }
+    );
+    if proxy_deployment {
+        verdict.warn(attribution, format!("set proxy_client_ip_peers in {config_path} to only the proxy's exact backend IP; have the proxy overwrite Hennery-Client-IP from its connection peer"));
     } else {
         verdict.ok(attribution);
     }
+    verdict.ok("missing header uses the TCP peer");
+    let limits = "health success cannot prove header stripping or separate limiter budgets";
+    if proxy_deployment {
+        verdict.warn(limits, "verify header stripping and separate budgets with two clients; restrict ingress until the public deployment gate passes (packaging/proxy/README.md)");
+    } else {
+        verdict.ok(limits);
+    }
     verdict.ok(format!("external collector trust: {}", doctor.collector_trust.source()));
-    Finding::Checked(verdict.check(16, "listeners"))
+    Finding::Checked(verdict.detailed_check(16, "listeners"))
 }
