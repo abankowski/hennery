@@ -6,6 +6,9 @@ export type RouteName =
   | 'setup'
   | 'login'
   | 'sessions'
+  | 'needs-you'
+  | 'more'
+  | 'defaults'
   | 'session'
   | 'new'
   | 'hosts'
@@ -24,6 +27,9 @@ const STATIC: Record<string, RouteName> = {
   '/setup': 'setup',
   '/login': 'login',
   '/sessions': 'sessions',
+  '/needs-you': 'needs-you',
+  '/more': 'more',
+  '/defaults': 'defaults',
   '/new': 'new',
   '/hosts': 'hosts',
   '/mcp': 'mcp',

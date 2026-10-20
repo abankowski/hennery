@@ -11,6 +11,8 @@ import Setup from './screens/Setup'
 import PwaStatus from './components/PwaStatus'
 import { completeLogout } from './pwa/logout'
 import NotificationNavigation from './components/NotificationNavigation'
+import { AppActionsProvider } from './app-actions'
+import CommandHost from './components/CommandHost'
 
 interface Waiting {
   resolve: () => void
@@ -52,6 +54,7 @@ export default function App({ fetchImpl }: { fetchImpl?: typeof fetch }) {
 
   return (
     <ClientContext.Provider value={client}>
+      <AppActionsProvider>
       <div className="application-root">
       <PwaStatus />
       <NotificationNavigation />
@@ -61,7 +64,9 @@ export default function App({ fetchImpl }: { fetchImpl?: typeof fetch }) {
         {route.name === 'setup' ? <Setup /> : route.name === 'login' ? <Login /> : <Shell route={route} />}
       </div>
       {waiting && <StepUpDialog returnTo={focusBeforeStepUp.current} onDone={() => close('done')} onCancel={() => close('cancelled')} />}
+      <CommandHost />
       </div>
+      </AppActionsProvider>
     </ClientContext.Provider>
   )
 }

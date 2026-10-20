@@ -1,0 +1,26 @@
+import { expect, it, vi } from 'vitest'
+import { AppActions } from './app-actions'
+it('dispatches only the current enabled provider and unregisters by identity', () => {
+  const actions = new AppActions(), first = vi.fn(), second = vi.fn()
+  expect(actions.dispatch('focus-composer')).toBe(false)
+  const removeFirst = actions.register('focus-composer', { label: 'Reply', enabled: true, run: first })
+  const removeSecond = actions.register('focus-composer', { label: 'Reply', enabled: false, run: second })
+  expect(actions.dispatch('focus-composer')).toBe(false)
+  expect(actions.available()).toEqual([])
+  removeFirst()
+  expect(actions.get('focus-composer')?.enabled).toBe(false)
+  removeSecond()
+  actions.register('focus-composer', { label: 'Reply', enabled: true, run: second })
+  expect(actions.dispatch('focus-composer')).toBe(true)
+  expect(second).toHaveBeenCalledOnce(); expect(first).not.toHaveBeenCalled()
+})
+it('restores contexts without retaining a departed session', () => {
+  const actions = new AppActions(), changed = vi.fn()
+  const stop = actions.subscribe(changed)
+  const shell = actions.registerContext({ hatId: 'hat' })
+  const session = actions.registerContext({ sessionId: 's', hostId: 'h', cwd: '/project' })
+  expect(actions.context()).toEqual({ hatId: 'hat', sessionId: 's', hostId: 'h', cwd: '/project' })
+  session(); expect(actions.context()).toEqual({ hatId: 'hat' })
+  shell(); expect(actions.context()).toEqual({})
+  expect(changed).toHaveBeenCalledTimes(4); stop()
+})
