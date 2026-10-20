@@ -3,10 +3,17 @@ import { saveContact } from '../api/device'
 import { settings } from '../api/manage'
 import { messageOf } from '../api/errors'
 import { useClient } from '../app-client'
-import type { AttachmentUsage, HatItem, HostRemovalItem } from '../generated/protocol'
+import type { AttachmentUsage, HatItem, HostRemovalItem, RemovalState } from '../generated/protocol'
 import { useResource } from '../hooks/useResource'
 import { Text } from '../lib/text'
 import { Link } from '../router'
+
+const REMOVAL: Record<RemovalState, string> = {
+  removed: 'Transcript removed',
+  partial: 'Transcript removed in part',
+  none: 'No agent transcript record',
+  pending: 'Transcript removal unconfirmed',
+}
 
 export default function CollectorSettings({ push, sessions, hats }: { push: boolean; sessions: boolean; hats: HatItem[] | null }) {
   const client = useClient()
@@ -34,8 +41,8 @@ export default function CollectorSettings({ push, sessions, hats }: { push: bool
       {removals.error && <p role="alert">Cleanup status could not be loaded. <button className="btn btn-ghost" onClick={removals.reload}>Retry cleanup</button></p>}
       {removals.data?.length === 0 && <p>No host cleanup records reported.</p>}
       {!removals.data && !removals.error && <p role="status">Loading cleanup status…</p>}
-      <ul className="cards">{removals.data?.map(row => <li className="card" key={row.id}><p><Text>{row.agent}</Text>: {row.state === 'pending' ? 'Waiting for the host to retry' : row.last_result?.state === 'removed' ? 'Transcript removed' : 'Cleanup completed with remaining copies'}</p>
-        <p>{row.attempts} attempts · {row.last_result?.remaining.reduce((sum, item) => sum + item.count, 0) ?? 0} entries reported remaining</p>
+      <ul className="cards">{removals.data?.map(row => <li className="card" key={row.id}><p><Text>{row.agent}</Text>: {row.state === 'pending' ? 'Waiting for the host to retry' : row.last_result ? REMOVAL[row.last_result.state] : 'No cleanup result reported'}</p>
+        <p>{row.attempts} attempts · {row.last_result ? `${row.last_result.remaining.reduce((sum, item) => sum + item.count, 0)} entries reported remaining` : 'No cleanup result reported yet'}</p>
       </li>)}</ul>
       <p className="hint">Agents run as the host’s OS user. Use a separate OS user for stronger isolation. Cleanup is best effort; copies outside the reported transcript may remain.</p>
     </>}

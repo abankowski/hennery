@@ -1,3 +1,4 @@
+import { captureManagement } from './management-captures'
 import { expect, test, type Page } from '@playwright/test'
 import { startCollector, type Collector } from './collector'
 import { startVendor, type Vendor } from './oauth-vendor'
@@ -62,6 +63,7 @@ for (const width of [1280, 390]) test.describe(`OAuth at ${width} px`, () => {
     await add('OAuth docs', 'oauth-docs')
     expect((await listed()).has_credential).toBe(false)
     await allow(await popup('OAuth docs', 'Connect'))
+    await captureManagement(page, 'mcp-oauth', 'Desktop mcp / OAuth')
     expect((await listed()).has_credential).toBe(true); expect(vendor.counts.registrations).toBe(1); expect(vendor.counts.exchanges).toBe(1)
     const stored = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))
     expect(stored).not.toContain(vendor.origin); expect(stored).not.toContain('/authorize')

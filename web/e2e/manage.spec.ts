@@ -1,3 +1,4 @@
+import { captureManagement } from './management-captures'
 // Hosts and hats in a real browser, against the real binary (plan 4d): a
 // host paired with the command the page shows, a revoke that steps up and
 // goes through, and the path tester asking that host, at 1280 px and at
@@ -75,6 +76,7 @@ for (const width of [1280, 390]) {
     test('a host pairs with the command the page shows, and the code goes', async () => {
       await page.goto('/hosts')
       await page.getByRole('button', { name: 'Add host' }).click()
+      await captureManagement(page, 'hosts-pairing', 'Desktop hosts / pairing')
       const command = (await page.getByLabel('Pairing command', { exact: true }).textContent())!
       expect(command).toMatch(new RegExp(`^hennery host join ${collector.origin} [0-9A-Z]{4}-[0-9A-Z]{4}$`))
       const code = command.split(' ').at(-1)!
@@ -106,6 +108,7 @@ for (const width of [1280, 390]) {
       await expect(resolution).toContainText(join(project, 'work'))
       await expect(resolution).toContainText('Personal')
       await expect(resolution).toContainText('the host’s default hat')
+      await captureManagement(page, 'hats', 'Desktop hats; mobile adaptation')
       await page.getByRole('button', { name: 'Add rule' }).click()
       await page.getByLabel('Path 1', { exact: true }).fill(join(project, 'work'))
       // The label holds the select, so its name is "Hat 1" and the options'
@@ -120,6 +123,31 @@ for (const width of [1280, 390]) {
       await expect(resolution).toContainText('Work')
       await expect(resolution).toContainText('a path rule')
       await expect(resolution).toContainText('does not exist')
+    })
+
+    test('Settings adds and removes a real passkey and keeps per-hat notification privacy', async () => {
+      const cdp = await page.context().newCDPSession(page)
+      await cdp.send('WebAuthn.enable')
+      await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } })
+      await page.goto('/settings')
+      await page.getByLabel('Passkey label', { exact: true }).fill('Test passkey')
+      await page.getByRole('button', { name: 'Add passkey', exact: true }).click()
+      const keys = page.getByRole('list', { name: 'Passkeys', exact: true })
+      await expect(keys.getByRole('heading', { name: 'Test passkey', exact: true })).toBeVisible()
+      await captureManagement(page, 'settings-passkeys', 'Desktop settings / sign-in; mobile adaptation')
+      const privacy = page.getByRole('group', { name: 'Work', exact: true })
+      await privacy.getByLabel('Use a generic title', { exact: true }).check()
+      await privacy.getByRole('button', { name: 'Save policy', exact: true }).click()
+      await page.reload()
+      await expect(privacy.getByLabel('Use a generic title', { exact: true })).toBeChecked()
+      await keys.getByRole('button', { name: 'Remove Test passkey', exact: true }).click()
+      const removal = page.getByRole('dialog', { name: 'Remove this passkey?', exact: true })
+      await captureManagement(page, 'settings-passkey-remove', 'Design System confirmation; no prototype frame')
+      await removal.getByRole('button', { name: 'Remove passkey', exact: true }).click()
+      await expect(keys.getByRole('heading', { name: 'Test passkey', exact: true })).toHaveCount(0)
+      const listed = await page.request.get('/api/auth/passkeys')
+      expect(await listed.json()).toEqual([])
+      await cdp.detach()
     })
 
     test('a revoke asks for a fresh confirmation, then goes through', async () => {
@@ -142,7 +170,9 @@ for (const width of [1280, 390]) {
         }
       })
       const card = page.getByRole('listitem', { name: 'e2e host' })
+      await captureManagement(page, 'hosts', 'Desktop hosts; mobile adaptation')
       await card.getByRole('button', { name: 'Revoke' }).click()
+      await captureManagement(page, 'hosts-revoke', 'Design System confirmation; no prototype frame')
       const confirm = page.getByRole('dialog', { name: 'Revoke this host?' })
       await expect(confirm).toContainText('stop only when it next connects')
       await confirm.getByRole('button', { name: 'Revoke' }).click()

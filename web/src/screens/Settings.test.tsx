@@ -35,6 +35,9 @@ function page(push = true, routes: Record<string, Answer | Answer[]> = {}) {
     'GET /api/settings/attachments': json(200, { count: 2, bytes: 42 }),
     'GET /api/settings/host-removals': json(200, []),
     'GET /api/hats': json(200, [{ id: 'hat', name: 'Personal', colour: '#000', default_for_new_hosts: true }]),
+    'GET /api/hosts': json(200, []),
+    'GET /api/hats/hat/session-tools': json(200, { delegation_enabled: false, revision: 1 }),
+    'GET /api/hats/hat/delegation-policy': json(200, { allowed: {}, revision: 1 }),
     'GET /api/push/policies': json(200, [{ hat_id: 'hat', muted: false, details: false, generic_title: false }]),
     'PATCH /api/settings': json(200, { public_url: 'https://app.example', contact: 'mailto:new@example.invalid' }),
     'PUT /api/push/policies/hat': json(200, { hat_id: 'hat', muted: false, details: true, generic_title: true }),
@@ -46,12 +49,46 @@ function page(push = true, routes: Record<string, Answer | Answer[]> = {}) {
   return { server, confirm }
 }
 describe('minimum device Settings', () => {
+  it('registers a passkey through the ceremony and displays the returned credential label', async () => {
+    vi.stubGlobal('PublicKeyCredential', class {})
+    const original = Object.getOwnPropertyDescriptor(navigator, 'credentials')
+    const credential = { id: 'credential', type: 'public-key' }
+    const create = vi.fn(async () => ({ toJSON: () => credential }))
+    Object.defineProperty(navigator, 'credentials', { configurable: true, value: { create } })
+    try {
+      const { server } = page(true, {
+        'POST /api/auth/passkeys/register/start': json(200, { ceremony_id: 'ceremony', options: { publicKey: { challenge: 'AQ', user: { id: 'Ag' } } } }),
+        'POST /api/auth/passkeys/register/finish': json(200, { id: 'new-key', label: 'Returned label', created_at: '2026-10-20T12:00:00Z' }),
+      })
+      await userEvent.type(await screen.findByLabelText('Passkey label', { exact: true }), 'New key')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Add passkey' })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: 'Add passkey' }))
+      expect(await screen.findByRole('heading', { name: 'Returned label' })).toBeVisible()
+      expect(create).toHaveBeenCalledTimes(1)
+      expect(server.sent.find(row => row.path.endsWith('/register/start'))?.body).toEqual({ label: 'New key' })
+      expect(server.sent.find(row => row.path.endsWith('/register/finish'))?.body).toEqual({ ceremony_id: 'ceremony', credential })
+    } finally {
+      if (original) Object.defineProperty(navigator, 'credentials', original)
+      else Reflect.deleteProperty(navigator, 'credentials')
+    }
+  })
+  it('describes cleanup from actual receipts without claiming unreported removal or copies', async () => {
+    page(true, { 'GET /api/settings/host-removals': json(200, [
+      { id: 'pending', agent: 'Pending agent', state: 'pending', attempts: 0 },
+      { id: 'missing', agent: 'Unknown agent', state: 'final', attempts: 1 },
+      ...(['removed', 'partial', 'none', 'pending'] as const).map((state, index) => ({ id: String(index), agent: `Agent ${index}`, state: 'final', attempts: 1, last_result: { state, remaining: [], notes: [] } })),
+    ]) })
+    for (const text of ['Pending agent: Waiting for the host to retry', 'Unknown agent: No cleanup result reported', 'Agent 0: Transcript removed', 'Agent 1: Transcript removed in part', 'Agent 2: No agent transcript record', 'Agent 3: Transcript removal unconfirmed']) {
+      expect(await screen.findByText((_, element) => element?.tagName === 'P' && element.textContent === text)).toBeVisible()
+    }
+  })
   it('isolates failed notification checks from passkeys, privacy and collector reads', async () => {
     page(true, { 'GET /api/push/vapid': json(500, { message: 'Notification service unavailable' }) })
     expect(await screen.findByRole('button', { name: 'Remove Personal key' })).toBeVisible()
     expect(await screen.findByText('https://app.example', { exact: true })).toBeVisible()
     expect(await screen.findByRole('group', { name: 'Personal' })).toBeVisible()
     expect(await screen.findByRole('alert')).toHaveTextContent('Notification service unavailable')
+    expect(screen.queryByText('Notifications are off on this browser.', { exact: true })).toBeNull()
   })
   it('keeps a passkey when removal confirmation is cancelled', async () => {
     const { server } = page()
@@ -98,6 +135,8 @@ describe('minimum device Settings', () => {
     expect(screen.queryByRole('heading', { name: 'Notification privacy by hat' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeVisible()
     expect(server.sent.some((c) => c.path.includes('/api/push'))).toBe(false)
+    expect(server.sent.some(c => /^\/api\/(?:hats|hosts|settings\/(?:attachments|host-removals))/.test(c.path))).toBe(false)
+    expect(screen.queryByRole('heading', { name: 'Delegation by hat' })).toBeNull()
   })
   it('sends only contact and uses read-back, with no public_url field', async () => {
     const { server } = page()

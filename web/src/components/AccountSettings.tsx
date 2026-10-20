@@ -25,7 +25,7 @@ export default function AccountSettings() {
   }
   return <>
     <section className="card" aria-labelledby="sign-in-heading">
-      <h2 id="sign-in-heading">Sign-in and passkeys</h2>
+      <h2 id="sign-in-heading" tabIndex={-1}>Sign-in and passkeys</h2>
       <p>Sensitive changes ask you to confirm with your password or a passkey.</p>
       <p className="hint">To reset a password, use <code>hennery admin reset-password</code> on the collector. This removes passkeys and ends every login. Changing the public host name also invalidates passkeys.</p>
       {keys.error && <p role="alert">Unable to load passkeys. <Text>{keys.error}</Text> <button className="btn btn-ghost" onClick={keys.reload}>Retry passkeys</button></p>}
@@ -50,7 +50,7 @@ export default function AccountSettings() {
       </li>)}</ul>
     </section>
     <section className="card"><h2>This login</h2><SignOut className="btn btn-ghost" /></section>
-    {remove && <ConfirmDialog title="Remove this passkey?" confirm="Remove passkey" danger onClose={() => setRemove(null)} action={async () => { await removePasskey(client, remove.id); keys.set(rows => (rows ?? []).filter(key => key.id !== remove.id)) }}>
+    {remove && <ConfirmDialog title="Remove this passkey?" confirm="Remove passkey" danger returnFocus={() => document.getElementById('sign-in-heading')} onClose={() => setRemove(null)} action={async () => { await removePasskey(client, remove.id); keys.set(rows => (rows ?? []).filter(key => key.id !== remove.id)) }}>
       <p>Remove <Text>{remove.label}</Text>? You can still sign in with your password or another passkey.</p>
     </ConfirmDialog>}
   </>

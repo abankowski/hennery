@@ -56,6 +56,15 @@ export default function Hats() {
     }
   }
 
+  const serverSummary = (hatId: string) => {
+    const hostRows = hosts.data, connectionRows = mcp.data
+    if (!hostRows || !connectionRows) return null
+    return connectionRows.filter(c => c.hat_id === hatId).map(c => {
+      const mounted = hostRows.filter(h => !h.revoked_at && c.mounts.includes(h.host_id)).map(h => h.name)
+      return `${c.label} — ${mounted.length ? `on ${mounted.join(', ')}` : 'not mounted on a paired host'}`
+    })
+  }
+
   return (
     <div className="manage">
       <header className="manage-head">
@@ -80,7 +89,7 @@ export default function Hats() {
             hat={hat}
             isDefault={isDefault(hat, hosts.data ?? [])}
             defaultOn={hosts.data ? hosts.data.filter(h => !h.revoked_at && h.default_hat_id === hat.id).map(h => h.name) : null}
-            servers={mcp.data ? mcp.data.filter(c => c.hat_id === hat.id).map(c => c.label) : null}
+            servers={serverSummary(hat.id)}
             onChanged={replace}
             onPurge={() => askPurge(hat)}
           />

@@ -76,9 +76,9 @@ export default function NotificationSettings({ push, sessions }: { push: boolean
       {hint && <div><p>Install hennery for convenient access. Enable notifications only when you want them.</p>
         <button className="btn btn-ghost" onClick={() => { try { sessionStorage.setItem('hennery.install-hint-dismissed', '1') } catch { /* Nonessential preference. */ } setHint(false) }}>Dismiss install hint</button></div>}
       {iosTab && <p>Use your browser’s Share or menu control, Add to Home Screen, then launch that app and sign in there if needed before enabling notifications.</p>}
-      <p role="status">{COPY[state]}</p>
+      <p role="status">{inspection === null && !['unsupported', 'insecure', 'blocked'].includes(state) ? 'Notification registration has not been verified.' : COPY[state]}</p>
       {!pwa.registration && !pwa.error && supported() && globalThis.isSecureContext === true && <p role="status">Preparing the offline shell…</p>}
-      {pwa.error && <p role="alert">{pwa.error} <button className="btn btn-ghost" onClick={() => void registerWorker()}>Retry worker setup</button></p>}
+      {pwa.error && <p role="alert">This browser could not prepare offline access. <button className="btn btn-ghost" onClick={() => void registerWorker()}>Retry worker setup</button></p>}
       <label className="field">Device label (optional)<input className="input" value={label} maxLength={64} onChange={(e) => setLabel(e.target.value)} /></label>
       <div className="card-actions">
         {canEnable && (prepared ? <button className="btn btn-primary" disabled={busy} onClick={() => {
