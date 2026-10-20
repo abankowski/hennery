@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { attentionPage, type OperatorAttention } from '../api/attention'
 import { messageOf } from '../api/errors'
 import { questionCard, sessionDetail } from '../api/view'
@@ -8,6 +8,38 @@ import type { Item, SessionSummary } from '../generated/view'
 import { Link } from '../router'
 import { sessionPath } from './SessionRow'
 import { attentionReason } from '../lib/attentionReason'
+import { AnswerBook, useAnswerState } from '../store/useAnswer'
+import QuestionCard from './items/QuestionCard'
+import { agentLabel } from '../lib/agent'
+import { useSessionScope } from './SessionScope'
+import { deliveryOf } from '../lib/delivery'
+
+function QuickChoices({ question, book }: { question: Extract<Item, { kind: 'question' }>; book: AnswerBook }) {
+  const { local, hostAway } = useAnswerState(book, question.id)
+  const delivery = deliveryOf(question, local, hostAway)
+  const request = question.request
+  if (request.type !== 'elicitation') return null
+  const field = request.fields[0]
+  if (field.field_kind !== 'single') return null
+  return <div className="preview-choices"><p className="preview-question"><bdi>{request.message}</bdi></p>
+    {delivery.controls && <div className="q-opts">{(field.options ?? []).map(option => <button key={option.value} type="button" className="btn btn-secondary btn-sm" disabled={delivery.busy} onClick={() => void book.answer(question, { action: 'accept', content: { [field.key]: option.value } })}>{option.label || option.value}</button>)}</div>}
+    {!delivery.controls && <p role="status">{delivery.text}</p>}
+    {delivery.error && <p role="alert" className="form-error"><bdi>{delivery.error}</bdi></p>}
+    {local?.phase === 'uncertain' && <button className="btn btn-ghost" type="button" onClick={() => void book.checkAnswer(question)}>Refresh question</button>}
+  </div>
+}
+
+function InlineQuestion({ question, session }: { question: Extract<Item, { kind: 'question' }>; session: SessionSummary }) {
+  const client = useClient(), scope = useSessionScope()
+  const [current, setCurrent] = useState(question)
+  const book = useMemo(() => new AnswerBook(client, session.session_id, item => { if (item.kind === 'question') setCurrent(item) }), [client, session.session_id])
+  useEffect(() => { setCurrent(question); book.observe([question], 1) }, [book, question])
+  const connected = scope?.hosts?.find(h => h.host_id === session.host_id)?.connected
+  useEffect(() => { book.setHostAway(session.presumed_parked || connected === false) }, [book, connected, session.presumed_parked])
+  const request = current.request
+  if (request.type === 'elicitation' && request.form_supported && request.fields.length === 1 && request.fields[0].field_kind === 'single' && (request.required ?? []).every(key => key === request.fields[0].key)) return <QuickChoices question={current} book={book} />
+  return <QuestionCard item={current} env={{ sessionId: session.session_id, agent: agentLabel(session.agent), answers: book }} />
+}
 
 type Preview = { question?: Extract<Item, { kind: 'question' }>; attention?: OperatorAttention; partial?: boolean }
 /** One scheduler per visit, including detail, question and attention reads. */
@@ -93,8 +125,7 @@ export default function AttentionPreview({ session }: { session: SessionSummary 
   const title = request?.type === 'permission' ? request.title || 'Permission request' : request?.type === 'elicitation' ? request.message : undefined
   const target = question ? `${sessionPath(session.session_id)}?pending=${encodeURIComponent(question.pending_id)}` : sessionPath(session.session_id)
   return <div ref={box} className="attention-preview">
-    {title && <p className="preview-question"><bdi>{title}</bdi></p>}
-    {question && (!question.answerable || question.answered || question.state !== 'open') && <p>The request changed. Open the session for its current state.</p>}
+    {question ? <InlineQuestion key={question.pending_id} question={question} session={session} /> : title && <p className="preview-question"><bdi>{title}</bdi></p>}
     {held?.value?.attention && <p><bdi>{attentionReason(held.value.attention.reason)}</bdi></p>}
     {held?.value?.partial && !held.value.attention && <p>More attention records are available in the session.</p>}
     {held?.error && <p className="preview-error">Preview unavailable: <bdi>{held.error}</bdi></p>}

@@ -3,7 +3,7 @@ import { useNow } from '../hooks/useNow'
 import type { SessionSummary } from '../generated/view'
 import { BUCKET_ORDER, bucketOf, type Bucket } from '../lib/time'
 import { sessionGroups } from '../lib/sessionGroups'
-import { matchesStatus } from '../lib/status'
+import { matchesStatus, needsOperator } from '../lib/status'
 import { Link, useLocation } from '../router'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useModalLayer } from './ui'
@@ -12,6 +12,7 @@ import SessionRow from './SessionRow'
 import HatSwitch from './HatSwitch'
 import SessionFilters from './SessionFilters'
 import { useSessionScope } from './SessionScope'
+import NeedsYouQueue from './NeedsYouQueue'
 export const PAGE_ROWS = 50
 export const CLOCK_MS = 60_000
 // Retained for consumers of the old calendar helper; overview uses hats/hosts.
@@ -40,7 +41,7 @@ function FilterDialog({ children, close }: { children: ReactNode; close: () => v
   }, [])
   return <div className="overlay" onMouseDown={holdFocus}><div ref={ref} className="modal filter-sheet" role="dialog" aria-modal="true" aria-label="Session filters" tabIndex={-1} onKeyDown={event => trap(event, close)}><header className="overview-head"><h2>Session filters</h2><button type="button" className="btn btn-ghost" onClick={close}>Close filters</button></header>{children}</div></div>
 }
-export default function SessionList({ screen = false }: { screen?: boolean }) {
+export default function SessionList({ screen = false, attentionOnly = false }: { screen?: boolean; attentionOnly?: boolean }) {
   const scope = useSessionScope(), now = useNow(CLOCK_MS)
   const desktop = useMediaQuery('(min-width: 768px)')
   const { pathname, search } = useLocation()
@@ -54,13 +55,14 @@ export default function SessionList({ screen = false }: { screen?: boolean }) {
   if (!scope) return null
   const { list, hats, hat, chooseHat, hostNames, host, status, group, selectedId } = scope
   const limit = shownRows.query === list.queryKey ? shownRows.n : PAGE_ROWS
-  const filtered = list.shown.filter(s => list.searching || ((!host || s.host_id === host) && matchesStatus(s, status)))
+  const filtered = list.shown.filter(s => attentionOnly ? needsOperator(s) : list.searching || ((!host || s.host_id === host) && matchesStatus(s, status)))
   const rows = filtered.slice(0, limit)
   const more = filtered.length > limit || list.hasMore
   return <section className={'slist overview' + (screen ? ' slist-screen' : '')} aria-label="Session list" onKeyDown={moveListFocus}>
-    <header className="overview-head"><h1>Sessions</h1><span>{filtered.length}{list.hasMore ? ' shown' : ' sessions'}</span><button type="button" className="btn btn-ghost filter-trigger" onClick={() => setFilters(!filters)} aria-expanded={filters}>Filters</button><Link to="/new" className="btn btn-primary">New session</Link></header>
+    <header className="overview-head"><h1 aria-label={attentionOnly ? 'Needs you' : 'Sessions'}>{attentionOnly ? 'Needs you' : desktop ? 'All sessions' : 'Sessions'}</h1><span>{filtered.length}{list.hasMore ? ' shown' : ' sessions'} · {scope.hosts?.filter(h => h.revoked_at == null).length ?? 0} hosts</span>{attentionOnly && <button type="button" className="btn btn-ghost" onClick={() => document.querySelector<HTMLInputElement>('[aria-label="Search sessions"]')?.focus()}>Search</button>}<button type="button" className="btn btn-ghost filter-trigger" onClick={() => setFilters(!filters)} aria-expanded={filters}>Filters</button><Link to="/new" className="btn btn-primary">New session</Link></header>
     <HatSwitch hats={hats} hat={hat} onHat={chooseHat} />
     {!desktop && filters ? <FilterDialog close={() => setFilters(false)}><SessionFilters /></FilterDialog> : <div className="filters-default"><SessionFilters /></div>}
+    {desktop && !list.searching && <NeedsYouQueue embedded />}
     {list.error && <p role="alert" className="form-error list-note"><bdi>{list.error}</bdi></p>}
     {!list.loading && (list.stream === 'reconnecting' || list.resynced) && <p className="list-note" role="status">{list.stream === 'reconnecting' ? 'Reconnecting…' : 'Resynced'}</p>}
     {list.loading ? <p className="list-note" role="status">Loading…</p> : !rows.length ? <p className="list-note">{list.searching ? 'No matches' : 'No sessions'}</p> : sessionGroups(rows, group).map(([id, sessions]) => <div className="grp" key={id}><h2 className="grp-head"><span className="grp-title"><bdi>{group === 'hat' ? hats?.find(h => h.id === id)?.name ?? 'Unknown hat' : hostNames.get(id) ?? 'Unknown host'}</bdi></span><span className="grp-count">{sessions.length}{list.hasMore ? ' shown' : ''}</span></h2><table className="session-table"><thead><tr><th>Session</th><th>Doing</th><th>Host</th><th>Agent / model</th><th>Last</th></tr></thead><tbody>{sessions.map(s => <SessionRow key={s.session_id} session={s} selected={s.session_id === selectedId} hostName={hostNames.get(s.host_id)} now={now} table indent={!!s.family?.parent && sessions.some(p => p.session_id === s.family?.parent?.session_id)} />)}</tbody></table></div>)}

@@ -12,6 +12,7 @@ import { agentLabel } from '../lib/agent'
 import { statusOf } from '../lib/status'
 import { basename, relTime } from '../lib/time'
 import { Link } from '../router'
+import { Icon } from './ui'
 
 export function sessionPath(id: string): string {
   return `/sessions/${encodeURIComponent(id)}`
@@ -50,7 +51,7 @@ export default function SessionRow({ session, selected, hostName, now, table, in
         aria-current={selected ? 'page' : undefined}
       >
         <div className="sess-row1">
-          <span className={'sess-led led-' + status.tone} role="img" aria-label={status.label} title={markerTitle} />
+          <span className={'sess-led led-' + status.tone} role="img" aria-label={status.label} title={markerTitle}><Icon name={status.tone === 'attn' ? 'hand-raised' : status.tone === 'run' ? 'play-circle' : status.tone === 'fail' ? 'exclamation-circle' : 'clock'} size={14} /></span>
           <span className="sess-kind sess-agent">{agentLabel(session.agent)}</span>
           <span className="sess-name">
             <bdi>{title}</bdi>

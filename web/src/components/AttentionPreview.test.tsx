@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
+import userEvent from '@testing-library/user-event'
 import type { SessionSummary, Item } from '../generated/view'
 import { routed, json } from '../test-stream'
 import AttentionPreview, { AttentionPreviews, PreviewReader } from './AttentionPreview'
@@ -27,15 +28,18 @@ it('limits every preview request to two, caches a snapshot and invalidates a sam
   expect(t.calls.filter(call => call.path === '/api/sessions/a')).toHaveLength(2)
   reader.stop()
 })
-it('uses the bounded typed question route, exposes only Open, and refetches on focus', async () => {
-  const t = routed(call => call.path.includes('/questions/') ? json(question('pending/a')) : json({ pending: [{ pending_id: 'pending/a', state: 'open', answered: false, payload: { title: 'Never render payload' } }] }))
+it('uses the bounded typed question route, answers with the real option id, and refetches on focus', async () => {
+  const t = routed(call => call.method === 'POST' ? json({}, 202) : call.path.includes('/questions/') ? json(question('pending/a')) : json({ pending: [{ pending_id: 'pending/a', state: 'open', answered: false, payload: { title: 'Never render payload' } }] }))
   render(<AttentionPreviews><AttentionPreview session={session('s/a')} /></AttentionPreviews>, { wrapper: t.wrapper })
   const link = await screen.findByRole('link', { name: 'Open s/a' })
   await screen.findByText('Typed read-only request', { exact: true })
   expect(link).toHaveAttribute('href', '/sessions/s%2Fa?pending=pending%2Fa')
   expect(screen.queryByText('Never render payload', { exact: true })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull()
   expect(t.calls.every(call => call.method === 'GET' && !call.path.includes('/stream/'))).toBe(true)
+  await userEvent.click(screen.getByRole('button', { name: 'Allow' }))
+  expect(t.calls.find(call => call.method === 'POST')).toMatchObject({ path: '/api/sessions/s%2Fa/pending/pending%2Fa/answer' })
+  expect(JSON.parse(String(t.fetch.mock.calls.find(([, options]) => options?.method === 'POST')?.[1]?.body))).toEqual({ option_id: 'allow' })
+  await screen.findByText('Sent', { exact: true })
   const count = t.calls.length
   act(() => window.dispatchEvent(new Event('focus')))
   await waitFor(() => expect(t.calls.length).toBe(count + 2))
