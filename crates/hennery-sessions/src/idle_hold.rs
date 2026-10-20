@@ -166,6 +166,50 @@ mod tests {
     use super::*;
     use hennery_proto::frames::{AgentIsolation, Capabilities, Capability};
 
+    #[test]
+    fn deleted_and_purged_sessions_scrub_idle_pin_and_dirty_state() {
+        for purge in [true, false] {
+            let store = Store::open_in_memory().unwrap();
+            store
+                .create_session("s", "offline", "fake", "/project", "hat", None)
+                .unwrap();
+            store
+                .ingest(
+                    "s",
+                    1,
+                    &hennery_proto::frames::SessionBody::session_started("start", "agent"),
+                )
+                .unwrap();
+            store.set_idle_pin("s", true).unwrap().unwrap();
+            store
+                .ingest("s", 2, &hennery_proto::frames::SessionBody::SessionClosed)
+                .unwrap();
+            let deletion = if purge {
+                store
+                    .conn()
+                    .execute(
+                        "INSERT INTO purged_hats(hat_id,owner_id,purged_at) VALUES ('hat',?1,0)",
+                        [store.owner_id()],
+                    )
+                    .unwrap();
+                store.delete_session_owing_checkpoint("s", None).unwrap()
+            } else {
+                store.delete_session("s", None).unwrap()
+            };
+            assert!(matches!(deletion, crate::store::Deletion::Done { .. }));
+            assert!(store.idle_hold("s").unwrap().is_none());
+            let bits: (bool, bool) = store
+                .conn()
+                .query_row(
+                    "SELECT idle_pinned,idle_hold_dirty FROM sessions WHERE owner_id = ?1 AND id='s'",
+                    [store.owner_id()],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(bits, (false, false), "obsolete idle state retained; purge={purge}");
+        }
+    }
+
     fn connected() -> (Store, Arc<Hub>, tokio::sync::mpsc::UnboundedReceiver<CollectorFrame>) {
         let store = Store::open_in_memory().unwrap();
         let hub = Arc::new(Hub::new());
