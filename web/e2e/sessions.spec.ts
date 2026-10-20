@@ -135,7 +135,6 @@ for (const width of [1280, 390]) {
       // The form's own controls: the session list beside it has a search.
       const form = page.getByRole('form', { name: 'New session', exact: true })
       await expect(form).toBeVisible()
-      if (width === 390) await form.getByRole('button', { name: 'Host and agent', exact: true }).click()
       await expect(form.getByRole('radio', { name: 'e2e host', exact: true })).toBeChecked()
       await expect(form.getByRole('radio', { name: 'Claude', exact: true })).toBeChecked()
       await form.getByRole('combobox').fill(project)
@@ -145,7 +144,9 @@ for (const width of [1280, 390]) {
       await expect(form.getByRole('status').filter({ hasText: /^Starts in the hat / })).toHaveText(new RegExp(`^Starts in the hat .+ at ${at}$`))
       await form.getByRole('textbox', { name: /^First prompt/ }).fill(PROMPT)
       // This delivery/session fixture reports no settings catalog.
-      await form.getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+      await form.getByRole('button', { name: 'Session settings', exact: true }).click()
+      await page.getByRole('dialog', { name: 'Session settings', exact: true }).getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+      await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
       await form.getByRole('button', { name: 'Start session', exact: true }).click()
       // The start waits for the host to start the agent: on a loaded runner,
       // more than the default wait, and on macOS a fresh binary's first exec
@@ -179,6 +180,15 @@ for (const width of [1280, 390]) {
     })
 
     test('the composer’s Send, and a phone’s way back, are on screen', async () => {
+      const composer = page.locator('.composer')
+      expect((await composer.boundingBox())!.height).toBeLessThanOrEqual(88)
+      const prompt = page.getByRole('textbox', { name: 'Prompt', exact: true })
+      const idleHeight = (await prompt.boundingBox())!.height
+      await prompt.fill('A line of text\n'.repeat(40))
+      expect((await prompt.boundingBox())!.height).toBeGreaterThan(idleHeight)
+      expect((await prompt.boundingBox())!.height).toBeLessThanOrEqual(160)
+      await prompt.fill('')
+      expect((await prompt.boundingBox())!.height).toBe(idleHeight)
       const send = page.getByRole('button', { name: 'Send', exact: true })
       await expect(send).toBeVisible()
       await expect(send).toBeInViewport()
@@ -252,6 +262,19 @@ for (const width of [1280, 390]) {
       await expect(trigger).toHaveAttribute('aria-expanded', 'false')
     })
 
+    test('closes an active session from its header menu', async () => {
+      await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+      const trigger = page.getByRole('button', { name: 'Session actions', exact: true })
+      if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
+      await expect(page.getByRole('button', { name: 'Park', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Close', exact: true }).click()
+      await expect(page.locator('.session-head .badge')).toHaveText('Closed')
+      await trigger.click()
+      await expect(page.getByRole('button', { name: 'Close', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Park', exact: true })).toHaveCount(0)
+      await page.keyboard.press('Escape')
+    })
+
     test('broke no Content-Security-Policy rule', async () => {
       expect(violations).toEqual([])
       const seen = await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? [])
@@ -290,7 +313,7 @@ test.describe('redesigned session', () => {
       ] })
       const items: Item[] = [
         { id: 'prompt', kind: 'user_turn', version: 1, ts: now, origin: { kind: 'parent', session_id: 'coordinator', operation_id: 'parent-instruction' }, content: [{ type: 'text', text: 'Review the parser and report what needs changing.' }] },
-        { id: 'message', kind: 'message', version: 1, ts: now, text: 'I checked the parser.\n\n- Input types are preserved.\n- The remaining checks need permission.' },
+        { id: 'message', kind: 'message', version: 1, ts: now, text: 'I checked the parser.\n\n- Input types are preserved.\n- The remaining checks need permission.\n\n| Check | Result |\n| --- | --- |\n| Input types | Preserved |\n\n```ts\nconst result = parse(input)\n```' },
         { id: 'thinking', kind: 'thinking', version: 1, ts: now, text: 'Consider the boundary cases before changing the parser.' },
         { id: 'tool', kind: 'tool_call', tool_call_id: 'read-parser', version: 1, ts: now, title: 'Read', status: 'completed', input: { path: 'src/parser.ts' }, output: 'Parser input rules inspected.', content: [{ type: 'diff', path: 'src/parser.ts', old_text: 'return input;', new_text: 'return parse(input);' }] }, plan, question, form,
       ]
@@ -362,17 +385,18 @@ test.describe('redesigned session', () => {
         const prompt = page.getByRole('textbox', { name: 'Prompt', exact: true })
         await expect(prompt).toBeInViewport()
         await prompt.fill('Keep this draft')
+        await page.getByRole('button', { name: 'Session settings', exact: true }).click()
         await page.getByRole('combobox', { name: 'Model', exact: true }).selectOption('model-b')
         await expect(page.getByRole('alert')).toContainText('the agent kept model-a instead of model-b')
         await expect(page.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('model-a')
-        await expect(prompt).toHaveValue('Keep this draft')
         await shot('composer')
+        await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
+        await expect(prompt).toHaveValue('Keep this draft')
         await page.getByRole('button', { name: 'Session actions', exact: true }).click()
         const pin = page.getByRole('switch', { name: 'Do not park', exact: true })
         await expect(pin).toBeEnabled()
         await expect(pin).not.toBeChecked()
         await expect(page.getByRole('status').filter({ hasText: 'Family work requests a parking hold.' })).toBeVisible()
-        await expect(page.getByRole('status').filter({ hasText: 'Parking hold requested from the host.' })).toBeVisible()
         await pin.click(); await expect(pin).toBeChecked()
         await shot('parking-menu')
         await page.keyboard.press('Escape')
@@ -385,6 +409,18 @@ test.describe('redesigned session', () => {
         await page.reload()
         await expect(page.locator('.session-head .badge')).toHaveText('Running')
         await page.locator('.transcript').evaluate(el => { el.scrollTop = 0 })
+        const userBubble = page.locator('.bubble.user').first(), agentBubble = page.locator('.bubble:not(.user)').first()
+        expect(await userBubble.evaluate(el => getComputedStyle(el).backgroundColor)).not.toBe(await agentBubble.evaluate(el => getComputedStyle(el).backgroundColor))
+        expect(await agentBubble.evaluate(el => getComputedStyle(el).borderTopWidth)).toBe('1px')
+        if (width === 1280) {
+          await page.setViewportSize({ width: 1920, height: 900 })
+          const inner = (await page.locator('.transcript-inner').boundingBox())!
+          expect(inner.width).toBeGreaterThan(1000)
+          expect((await page.getByRole('button', { name: 'Read Done', exact: true }).boundingBox())!.width).toBeGreaterThan(inner.width - 70)
+          expect((await page.locator('.bubble table').boundingBox())!.width).toBeGreaterThan(inner.width - 100)
+          expect((await page.locator('.bubble pre').boundingBox())!.width).toBeGreaterThan(inner.width - 100)
+          await page.setViewportSize({ width, height: 900 })
+        }
         await shot('running')
         await page.getByRole('button', { name: 'Read Done', exact: true }).click()
         await expect(page.locator('.tool-diff')).toContainText('return parse(input);')

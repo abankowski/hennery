@@ -42,8 +42,8 @@ async function fixtures(context: BrowserContext) {
   if (path.endsWith('/prompt') && screen === 'busy-turn') return json({ code: 'conflict', message: 'wait for the current turn to end' }, 409)
   if (path.endsWith('/events')) return json([{ event_id: 1, session_id: path.split('/')[3], kind: 'user_turn', body: { content: [{ type: 'text', text: `${firstPrompts[path.split('/')[3]] ?? 'Inspect project work'}\nKeep later details out of the name` }] }, ts }])
   if (/^\/api\/sessions\/[^/]+$/.test(path)) { const row = rows.find(r => path.endsWith(r.session_id)) ?? rows[0]; return json({ ...row, pending: ['permission', 'question'].includes(row.session_id) ? [{ pending_id: row.session_id, kind: row.session_id === 'question' ? 'elicitation' : 'permission', state: 'open', answered: false }] : [] }) }
-  if (/^\/api\/view\/sessions\/[^/]+$/.test(path)) return json({ items: [{ id: 'message', version: 1, ts, kind: 'message', text: 'Converted all parser tests. Running the suite next to check the fixtures.' }, { id: 'plan', version: 1, ts, kind: 'plan', entries: [{ content: 'Find existing tests', status: 'completed' }, { content: 'Convert parser fixtures', status: 'completed' }, { content: 'Run the parser suite', status: 'in_progress' }, { content: 'Report the results', status: 'pending' }] }, ...(path.endsWith('running') ? [] : [path.endsWith('question') ? elicitation : question])], older: false, epoch: 'items', revision: 1 })
-  if (path.endsWith('/catalog')) return json({ session_id: 'permission', config_options: [], commands: [] })
+  if (/^\/api\/view\/sessions\/[^/]+$/.test(path)) return json({ items: [{ id: 'prompt', version: 1, ts, kind: 'user_turn', content: [{ type: 'text', text: 'Check the parser fixtures and report the results.' }] }, { id: 'message', version: 2, ts, kind: 'message', text: 'Converted all parser tests. Running the suite next to check the fixtures.\n\n| Check | Result |\n| --- | --- |\n| Parser fixtures | Passed |\n\n```ts\nconst result = parse(input)\n```' }, { id: 'tool', version: 3, ts, kind: 'tool_call', tool_call_id: 'test', title: 'Run checks', status: 'completed', input: { command: 'pnpm test parser' }, output: 'All parser checks passed.' }, { id: 'plan', version: 4, ts, kind: 'plan', entries: [{ content: 'Find existing tests', status: 'completed' }, { content: 'Convert parser fixtures', status: 'completed' }, { content: 'Run the parser suite', status: 'in_progress' }, { content: 'Report the results', status: 'pending' }] }, ...(path.endsWith('running') ? [] : [path.endsWith('question') ? elicitation : question])], older: false, epoch: 'items', revision: 4 })
+  if (path.endsWith('/catalog')) return json({ session_id: 'permission', config_options: [select('model', 'Model', ['Sonnet', 'Opus']), select('mode', 'Mode', ['Default', 'Bypass permissions']), select('effort', 'Effort', ['Medium', 'High'])], commands: [] })
   if (path.endsWith('/family')) { const row = rows.find(r => path.split('/').at(-2) === r.session_id) ?? rows[0]; return json({ summary: row, routing: row.session_id === 'permission' ? 'active' : undefined, children: row.session_id === 'running' ? [{ summary: rows[0], routing: 'active', operations: [], questions: [{ pending_id: 'permission', kind: 'permission', handling: 'operator_required' }] }] : [], questions: [] }) }
   if (path.endsWith('/projects')) return json({ home: '/srv', recents_hat_id: 'work', recents: [{ path: '/srv/project', last_used_at: ts }], items: [{ path: '/srv/project' }], partial: false })
   if (path.endsWith('/browse')) return json({ path: '/srv', entries: [{ name: 'project' }, { name: 'project-archive' }], truncated: false })
@@ -89,7 +89,11 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
     await expect(dialog.getByRole('option', { name: 'project-archive', exact: true })).toBeVisible()
    } else await dialog.getByRole('option', { name: /project/ }).click()
    await expect(dialog.getByRole('region', { name: 'Session settings', exact: true })).toBeVisible()
-   await expect(dialog.locator('.config-summary')).toHaveText('Model: Sonnet · Permission mode: Default · Reasoning effort: Medium')
+   await expect(dialog.getByRole('button', { name: 'Session settings', exact: true })).toHaveText('Settings: Sonnet · Default · Medium⌄')
+   await expect(dialog.getByRole('button', { name: 'Session settings', exact: true })).toHaveAttribute('aria-expanded', 'false')
+   const edit = await dialog.getByRole('link', { name: 'Edit defaults', exact: true }).boundingBox()
+   const start = await dialog.getByRole('button', { name: 'Start session', exact: true }).boundingBox()
+   expect(edit && start && Math.abs(edit.y + edit.height / 2 - start.y - start.height / 2) < 2 && edit.x < start.x).toBe(true)
   }
   if (screen === 'defaults') await expect(app.getByRole('group', { name: 'Model for Studio', exact: true }).getByRole('combobox')).toBeEnabled()
   if (screen === 'hosts') {
@@ -97,6 +101,12 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
    await expect(app.getByRole('heading', { name: 'Pairing code', exact: true })).toBeVisible()
   }
   if ((screen === 'overview' && width === 1280) || screen === 'needs-you') await expect(app.getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
+  if (screen === 'needs-you') {
+   const actions = app.getByRole('article', { name: 'Port parser tests', exact: true })
+   const allow = await actions.getByRole('button', { name: 'Allow once', exact: true }).boundingBox()
+   const reject = await actions.getByRole('button', { name: 'Reject', exact: true }).boundingBox()
+   expect(allow && reject && Math.abs(allow.y - reject.y) < 2 && allow.x < reject.x).toBe(true)
+  }
   if (screen === 'session') await expect(app.locator('.transcript').getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
   if (screen === 'busy-turn') {
    await expect(app.locator('.transcript').getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
@@ -134,6 +144,16 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
    await phone.screenshot({ path: join(output, `${name}-prototype.png`) })
   } else await reference.screenshot({ path: join(output, `${name}-prototype.png`) })
   await app.screenshot({ path: join(output, `${name}-app.png`) })
+  if (screen === 'session') {
+   if (width === 390) await app.locator('[data-pending-id="permission"]').getByRole('button', { name: 'Write a prompt', exact: true }).click()
+   await app.locator('.transcript').evaluate(el => { el.scrollTop = 0 })
+   expect((await app.locator('.composer').boundingBox())!.height).toBeLessThanOrEqual(88)
+   await app.screenshot({ path: join(output, `${name}-conversation-app.png`) })
+   await app.getByRole('button', { name: 'Session settings', exact: true }).click()
+   await expect(app.getByRole('dialog', { name: 'Session settings', exact: true })).toBeVisible()
+   await app.screenshot({ path: join(output, `${name}-settings-app.png`) })
+   await app.getByRole('button', { name: 'Close session settings', exact: true }).click()
+  }
   if (screen === 'settings') {
    await app.locator('.delegation-settings').scrollIntoViewIfNeeded()
    await expect(app.getByRole('switch', { name: 'Delegation', exact: true })).toBeVisible()
@@ -145,10 +165,8 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
   writeFileSync(join(output, `${name}.html`), `<!doctype html><meta charset="utf-8"><title>${name}</title><style>body{margin:0;display:flex;gap:12px;background:#888}figure{margin:0}figcaption{font:16px sans-serif;padding:8px}img{max-width:none}</style><figure><figcaption>Prototype · ${width}px · ${theme}</figcaption><img src="${name}-prototype.png"></figure><figure><figcaption>Application · ${width}px · ${theme}</figcaption><img src="${name}-app.png"></figure>`)
   if (screen === 'overview' && width === 1280) {
    const choice = app.getByRole('article', { name: 'Choose provider fallback', exact: true })
-   const answer = app.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/pending/question/answer'))
-   await choice.getByRole('button', { name: 'Azure first', exact: true }).click()
-   expect((await answer).postDataJSON()).toEqual({ action: 'accept', content: { provider: 'azure' } })
-   await expect(choice.getByText('Sent', { exact: true })).toBeVisible()
+   await expect(choice.getByRole('button', { name: 'Azure first', exact: true })).toHaveCount(0)
+   await expect(choice.getByRole('link', { name: 'Open Choose provider fallback', exact: true })).toHaveAttribute('href', '/sessions/question?pending=question')
    const permission = app.getByRole('article', { name: 'Port parser tests', exact: true })
    const post = app.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/pending/permission/answer'))
    await permission.getByRole('button', { name: 'Allow once', exact: true }).click()

@@ -5,8 +5,6 @@ import { useAccentStyle } from '../lib/theme'
 import { useRegisterContext } from '../app-actions'
 import { confirmStart, rememberConfigurationReview } from '../lib/start'
 import type { Picks } from '../lib/defaults'
-import McpPrediction from '../components/McpPrediction'
-import { predictionHat } from '../lib/mcpDelivery'
 // New session (frontend spec §7): a host, an agent, a project, the hat the
 // project resolves to, an optional first prompt, then Start.
 //
@@ -42,7 +40,6 @@ import { isLiteralPath, projectEntries } from '../lib/projects'
 import { readNewSessionPrefill, sessionHref, startRefusal } from '../lib/start'
 import { Icon } from '../lib/ui'
 import { Link, navigate, useLocation } from '../router'
-import { useMediaQuery } from '../hooks/useMediaQuery'
 
 /** How long the path must stay unchanged before its hat is resolved. */
 export const RESOLVE_DEBOUNCE_MS = 300
@@ -64,7 +61,6 @@ type Resolved =
   | { state: 'failed'; error: string }
 
 export default function NewSession() {
-  const desktop = useMediaQuery('(min-width: 768px)')
   const client = useClient()
   const { search } = useLocation()
   // Read once: the form owns its fields after that.
@@ -96,8 +92,7 @@ export default function NewSession() {
   const [picks, setPicks] = useState<Picks>(draft?.picks ?? {})
   const [optOut, setOptOut] = useState(false)
   const [generation, setGeneration] = useState(0)
-  const [expanded, setExpanded] = useState(desktop)
-  const [runtimeExpanded, setRuntimeExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false), liveRef = useRef(true)
   const [draftOwner] = useState(() => crypto.randomUUID())
@@ -273,6 +268,7 @@ export default function NewSession() {
     if (!canStart || busyRef.current || !sameLogin()) return
     busyRef.current = true
     setBusy(true)
+    setExpanded(false)
     e.currentTarget.closest<HTMLElement>('[role="dialog"]')?.focus()
     setError(null)
     const request: StartSessionRequest = { host_id: hostId, agent: agentName, cwd: current!.canonical, ...config }
@@ -331,7 +327,7 @@ export default function NewSession() {
   const options = choices ? agentOptions(choices.agents) : []
 
   return (
-    <form className="new-session hn-accent-scope" data-runtime-expanded={runtimeExpanded} style={accent} onSubmit={start} aria-busy={busy} aria-labelledby="new-session-title" onKeyDown={e => { if (!e.defaultPrevented && !e.repeat && !e.altKey && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (canStart) e.currentTarget.requestSubmit() } }}>
+    <form className="new-session hn-accent-scope" style={accent} onSubmit={start} aria-busy={busy} aria-labelledby="new-session-title" onKeyDown={e => { if (!e.defaultPrevented && !e.repeat && !e.altKey && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (canStart) e.currentTarget.requestSubmit() } }}>
       <div className="modal-head">
         <div className="modal-eyebrow">Start a session</div>
         <h1 className="modal-title" id="new-session-title">
@@ -355,6 +351,7 @@ export default function NewSession() {
                 <textarea
                   disabled={busy}
                   id={ids.prompt}
+                  aria-label="First prompt optional"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder={`What should ${agentName && agent !== OTHER ? agentLabel(agentName) : 'the agent'} work on?`}
@@ -362,11 +359,10 @@ export default function NewSession() {
               </div>
             </div>
         )}
-        <button type="button" className="launch-runtime-toggle btn btn-ghost" aria-label="Host and agent" aria-expanded={runtimeExpanded} onClick={() => setRuntimeExpanded(value => !value)}><bdi>{host?.name || 'Choose host'}</bdi> · {agentLabel(agentName)} <span>Change</span></button>
-        <fieldset className="field launch-choice" disabled={busy}>
-          <legend className="field-label" id={ids.host}>
+        <div className="field launch-choice" role="group" aria-labelledby={ids.host}>
+          <div className="field-label" id={ids.host}>
             <Icon.Terminal size={16} /> Host <span className="hint">where the agent runs</span>
-          </legend>
+          </div>
           {hostsError !== null ? (
             <p className="form-error" role="alert">
               <bdi>{hostsError}</bdi>
@@ -383,7 +379,7 @@ export default function NewSession() {
                 <label
                   key={h.host_id}
                   className={'seg-item' + (hostId === h.host_id ? ' sel' : '')}
-                  title={h.connected ? undefined : 'Offline'}
+                  title={h.connected ? h.name : `${h.name} · Offline`}
                 >
                   <input type="radio" name={ids.host} value={h.host_id} checked={hostId === h.host_id} disabled={!h.connected} onChange={() => chooseHost(h.host_id)} />
                   <span className={'seg-led ' + (h.connected ? 'led-run' : 'led-idle')} />
@@ -397,14 +393,14 @@ export default function NewSession() {
               ))}
             </div>
           )}
-        </fieldset>
+        </div>
 
         {hostId !== '' && (
           <>
-            <fieldset className="field launch-choice" disabled={busy}>
-              <legend className="field-label" id={ids.agent}>
+            <div className="field launch-choice" role="group" aria-labelledby={ids.agent}>
+              <div className="field-label" id={ids.agent}>
                 <Icon.Cpu size={16} /> Agent
-              </legend>
+              </div>
               {choices === null ? (
                 <p className="hint">Loading…</p>
               ) : (
@@ -447,7 +443,7 @@ export default function NewSession() {
                   />
                 </div>
               )}
-            </fieldset>
+            </div>
 
             <div className="field">
               <div className="field-label" id={ids.project}>
@@ -462,12 +458,8 @@ export default function NewSession() {
                 initialText={initialText}
                 onChange={setCwd}
                 labelledBy={ids.project}
+                recentHat={projects?.recents.length ? hatName(projects.recents_hat_id) : undefined}
               />
-              {projects !== null && projects.recents.length > 0 && (
-                <div className="picker-path">
-                  Recent projects of the hat <bdi>{hatName(projects.recents_hat_id)}</bdi>
-                </div>
-              )}
               {projects?.partial && <div className="picker-path">The host listed only some of its repositories.</div>}
               {projectsError !== null && (
                 <div className="picker-path" role="alert">
@@ -475,19 +467,15 @@ export default function NewSession() {
                 </div>
               )}
               <HatPreview resolved={resolved} hatName={hatName} />
-              <McpPrediction host={host} agent={agentName} hatId={predictionHat(
-                resolved.state === 'ok' ? { hostId: resolved.hostId, path: resolved.path, hat: resolved.resolution.hat_id } : undefined,
-                hostId, cwd,
-              )} />
             </div>
 
-            {current && <><LaunchConfig context={context} picks={picks} onPicks={setPicks} optOut={optOut} onOptOut={setOptOut} retry={() => setGeneration(g => g + 1)} expanded={expanded} onExpanded={setExpanded} />
-              <Link aria-disabled={busy} tabIndex={busy ? -1 : undefined} onClick={event => { if (busy) event.preventDefault() }} to={`/defaults?${new URLSearchParams({ host: hostId, cwd: current.canonical, agent: agentName, hat: current.hat_id, return: 'new' })}`}>Edit defaults</Link></>}
+            {current && <LaunchConfig context={context} picks={picks} onPicks={setPicks} optOut={optOut} onOptOut={setOptOut} retry={() => setGeneration(g => g + 1)} expanded={expanded} onExpanded={setExpanded} />}
 
           </>
         )}
       </fieldset></div>
       <div className="modal-foot">
+        {current && <Link className="btn btn-ghost launch-edit-defaults" inert={busy} aria-disabled={busy} tabIndex={busy ? -1 : undefined} onClick={event => { if (busy) event.preventDefault() }} to={`/defaults?${new URLSearchParams({ host: hostId, cwd: current.canonical, agent: agentName, hat: current.hat_id, return: 'new' })}`}>Edit defaults</Link>}
         {error !== null && (
           <p className="form-error" role="alert">
             <bdi>{error}</bdi>
@@ -495,7 +483,7 @@ export default function NewSession() {
         )}
         <div className="spacer" />
         <button type="submit" className="btn btn-primary" aria-label={busy ? 'Starting…' : 'Start session'} disabled={!canStart}>
-          <Icon.Bolt size={16} /> {busy ? 'Starting…' : desktop ? 'Start session' : `Start on ${host?.name || 'host'}`}
+          <Icon.Bolt size={16} /> {busy ? 'Starting…' : 'Start session'}
         </button>
       </div>
     </form>
@@ -522,7 +510,7 @@ function HatPreview({ resolved, hatName }: { resolved: Resolved; hatName: (id: s
   const { resolution } = resolved
   return (
     <p className="picker-path" role="status">
-      Starts in the hat <b><bdi>{hatName(resolution.hat_id)}</bdi></b> at <bdi>{resolution.canonical}</bdi>
+      Starts in the hat <b><bdi>{hatName(resolution.hat_id)}</bdi></b> at <span className="launch-path"><bdi>{resolution.canonical}</bdi></span>
       {!resolution.exists ? ': this directory does not exist yet' : !resolution.is_dir ? ': this is not a directory' : ''}
     </p>
   )

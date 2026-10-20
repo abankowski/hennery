@@ -120,17 +120,18 @@ function mount(routes: Record<string, Answer | Answer[]> = {}, path = '/new') {
   return { ...server, client, unmount: view.unmount }
 }
 
-it('predicts delivery for the resolved hat and chosen agent', async () => {
+it('keeps technical MCP predictions out of the launcher while retaining the resolved hat and agent choice', async () => {
   mount({ 'GET /api/hosts': json(200, [host('h1', 'laptop', {
     capabilities: ['projects', 'resolve_path', 'mcp_servers'],
     mcp_delivery: { claude: 'isolated', codex: 'default_hat_only' },
   })]) })
   const field = await screen.findByRole('combobox', { name: /^Project/ })
   await userEvent.type(field, '/srv/work/cat')
-  await waitFor(() => expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent("This agent was given only this hat's MCP servers."))
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  expect(screen.queryByRole('region', { name: 'MCP prediction' })).toBeNull()
   await userEvent.click(screen.getByRole('radio', { name: 'Codex' }))
-  expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('not isolated per hat')
-  expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('~/.codex')
+  expect(screen.getByRole('radio', { name: 'Codex' })).toBeChecked()
+  expect(screen.queryByText(/not isolated per hat/)).toBeNull()
 })
 
 const hostButton = (name: string) => screen.getByRole('radio', { name: new RegExp(`^${name}`) })
@@ -289,6 +290,8 @@ describe('project picker', () => {
       }),
     })
     await fill('~/notes')
+    await waitFor(() => expect(server.sent.map((s) => s.path)).toContain('/api/hosts/h1/projects?path=%2Fsrv%2Fnotes'))
+    await userEvent.clear(await projectField())
     await waitFor(() => expect(screen.getByText(/Recent projects of the hat/)).toHaveTextContent('of the hat Home'), {
       timeout: 3000,
     })
@@ -669,6 +672,8 @@ describe('reviewed configuration', () => {
     })
     const user = await fill('/srv/work/cat', 'Keep this prompt')
     await waitFor(() => expect(startButton()).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Session settings' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('combobox', { name: 'Model' })).toBeNull()
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat', model: 'sonnet', mode: 'default' })
@@ -695,10 +700,14 @@ describe('reviewed configuration', () => {
   it('requires explicit opt-out when no catalog is available, then sends no unverified config', async () => {
     const server = mount({ [`GET ${runtime}`]: json(409, { code: 'catalog_unavailable', message: 'Offline catalog' }) })
     const user = await fill('/srv/work/cat', 'Start deliberately')
+    expect(await screen.findByLabelText('Settings need attention')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Session settings' })).toHaveAttribute('aria-expanded', 'false')
+    await user.click(await screen.findByRole('button', { name: 'Session settings' }))
     const optOut = await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' })
     expect(startButton()).toBeDisabled()
     await user.click(optOut)
     expect(startButton()).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Close session settings' }))
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat' })
@@ -740,7 +749,9 @@ it('retains the prompt on a hat mismatch even after explicitly opting out of cat
     'GET /api/sessions/s-1': json(200, { session_id: 's-1', hat_id: 'hat-b', lifecycle: 'active' }),
   })
   const user = await fill('/srv/work/cat', 'Check the hat first')
+  await user.click(await screen.findByRole('button', { name: 'Session settings' }))
   await user.click(await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' }))
+  await user.click(screen.getByRole('button', { name: 'Close session settings' }))
   await user.click(startButton())
   await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
   expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')

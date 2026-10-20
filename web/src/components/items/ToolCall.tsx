@@ -15,7 +15,7 @@ import type { ItemEnv, ItemOf } from './types'
 const STATUS_WORDS: Record<string, string> = {
   pending: 'Pending',
   in_progress: 'Running',
-  completed: 'Done',
+  completed: 'Completed',
   failed: 'Failed',
 }
 
@@ -40,9 +40,11 @@ export function toolSummary(tool: Tool): string {
     const command = (input as Record<string, unknown>).command
     if (typeof command === 'string') return command
     if (Array.isArray(command) && command.every((part) => typeof part === 'string')) return command.join(' ')
+    const path = (input as Record<string, unknown>).path ?? (input as Record<string, unknown>).file_path
+    if (typeof path === 'string') return path
   }
   const first = tool.locations?.[0]
-  return first ? locationText(first) : ''
+  return first ? locationText(first) : input === undefined || input === null ? '' : inputText(input).replace(/\s+/g, ' ').slice(0, 140)
 }
 
 function locationText(location: Location): string {
@@ -138,6 +140,9 @@ export default function ToolCall({ item, env }: { item: Tool; env: ItemEnv }) {
   const expandable = hasInput || !!item.output || content.length > 0 || locations.length > 0
   const summary = toolSummary(item)
   const status = item.status
+  const inputCommand = item.input && typeof item.input === 'object' && !Array.isArray(item.input) ? (item.input as Record<string, unknown>).command : undefined
+  const accessibleSummary = typeof inputCommand === 'string' ? inputCommand : Array.isArray(inputCommand) && inputCommand.every(part => typeof part === 'string') ? inputCommand.join(' ') : locations[0] ? locationText(locations[0]) : ''
+  const accessibleStatus = status === 'completed' ? 'Done' : status && Object.hasOwn(STATUS_WORDS, status) ? STATUS_WORDS[status] : status
   return (
     <Speaker who="agent" label={env.agent} ts={item.ts}>
       {item.fabricated !== undefined && (
@@ -149,6 +154,7 @@ export default function ToolCall({ item, env }: { item: Tool; env: ItemEnv }) {
       <button
         type="button"
         className="tool-line"
+        aria-label={[toolName(item), accessibleSummary, accessibleStatus].filter(Boolean).join(' ')}
         aria-expanded={expandable ? open : undefined}
         onClick={() => expandable && setOpen((o) => !o)}
       >
@@ -156,7 +162,7 @@ export default function ToolCall({ item, env }: { item: Tool; env: ItemEnv }) {
         <span className="tool-name">{toolName(item)}</span>
         {summary && <span className="tool-summary">{summary}</span>}
         {status && (
-          <span className="tool-status" style={{ color: Object.hasOwn(STATUS_COLOUR, status) ? STATUS_COLOUR[status] : 'var(--fg-quiet)' }}>
+          <span className="tool-status" aria-label={status === 'completed' ? 'Done' : undefined} style={{ color: Object.hasOwn(STATUS_COLOUR, status) ? STATUS_COLOUR[status] : 'var(--fg-quiet)' }}>
             {Object.hasOwn(STATUS_WORDS, status) ? STATUS_WORDS[status] : status}
           </span>
         )}

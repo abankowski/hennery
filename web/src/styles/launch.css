@@ -215,3 +215,36 @@
 .shell:has(.defaults-screen) > .mtopbar { display:none; }
 @media(max-width:767px) { .defaults-screen > header { align-items:flex-start; }.matrix-pin { min-height:32px; } }
 @media(max-width:767px) { .defaults-matrix .config-select select { font-size:16px; } }
+
+/* Operator review: one form rhythm and one collapsed settings disclosure. */
+.launcher-frame .modal-head { align-items:baseline; }.launcher-frame .modal-head,.launcher-frame .modal-foot { padding:18px 24px; }
+.launcher-frame .field,.launcher-frame .launch-choice { display:grid; grid-template-columns:100px minmax(0,1fr); gap:8px 14px; align-items:start; }
+.launcher-frame .field > :not(.field-label) { grid-column:2; }
+.launcher-frame .field > .field-label,.launcher-frame .first-prompt .field-label { position:static; width:auto; height:auto; padding:0; margin:0; overflow:visible; clip-path:none; grid-column:1; grid-row:1; display:flex; align-items:center; min-height:36px; gap:6px; font:500 12px var(--font-body); }
+.launcher-frame .field-label .hint { display:none; }
+.launcher-frame .prompt-box textarea { min-height:88px; resize:vertical; }
+.launcher-frame .seg { display:flex; flex-wrap:wrap; width:fit-content; max-width:100%; gap:2px; border:1px solid var(--hn-line); border-radius:8px; background:var(--hn-sunken); padding:3px; }
+.launcher-frame .launch-choice .seg-item { position:relative; display:flex; align-items:center; min-height:28px; border:0; border-radius:5px; padding:4px 10px; font-size:12px; background:transparent; }
+.launcher-frame .launch-choice .seg-item.sel { background:var(--hn-surface); color:var(--hn-fg-1); box-shadow:var(--sh-sm); }
+.launcher-frame .seg-name { display:block; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.launcher-frame .picker-row { align-items:flex-start; gap:6px; }.launcher-frame .path-input { min-height:36px; border-radius:8px; }
+.launcher-frame .picker-row > button { width:36px; height:36px; min-height:36px; flex:none; display:flex; align-items:center; justify-content:center; padding:0; border:1px solid var(--hn-control-strong); border-radius:8px; background:var(--hn-surface); }
+.launcher-frame .hint,.launcher-frame .picker-path,.picker-list-header { font:400 11px/1.5 var(--font-body); color:var(--hn-fg-3); }
+.launcher-frame .path-input input,.launch-path { font-family:var(--font-mono); }
+.picker-list-header { padding:7px 10px; border-bottom:1px solid var(--hn-line); }
+.launcher-frame .launch-config { margin-left:114px; border:0; background:transparent; padding:0; }
+.launch-settings-disclosure { max-width:100%; width:100%; justify-content:flex-start; padding:4px 0; border:0; background:transparent; text-align:left; }
+.launch-settings-disclosure > span:last-child { margin-left:auto; }.config-warning-icon { flex:none; color:var(--st-wait-fg); }
+.composer-settings-panel .config-fields { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
+.composer-settings-panel .config-field { padding:0; background:transparent; border:0; }.composer-settings-panel .config-select { display:flex; gap:12px; align-items:center; justify-content:space-between; }
+.composer-settings-panel .config-select select { min-width:0; max-width:65%; }.composer-settings-panel .config-source { font:400 10px var(--font-body); color:var(--hn-fg-3); }
+.launch-edit-defaults { font-size:12px; }.launcher-frame .modal-foot { align-items:center; gap:12px; }.launcher-frame .modal-foot .spacer { display:block; }
+@media(max-width:767px) {
+  .launcher-frame .modal-head,.launcher-frame .modal-foot { padding:14px 16px; }.launch-subtitle { display:inline; font-size:10px; }
+  .launcher-frame .field,.launcher-frame .launch-choice { grid-template-columns:64px minmax(0,1fr); gap:6px 10px; }
+  .launcher-frame .field > .field-label,.launcher-frame .first-prompt .field-label { min-height:44px; font-size:11px; }
+  .launcher-frame .seg-item { flex:0 1 auto; }.launcher-frame .launch-choice .seg-item { min-height:36px; padding:5px 9px; }.launcher-frame .seg-name { max-width:165px; }
+  .launcher-frame .path-input,.launcher-frame .picker-row > button { min-height:44px; }.launcher-frame .picker-row > button { width:44px; height:44px; }
+  .launcher-frame .launch-config { margin-left:74px; }.launcher-frame .modal-foot { flex-wrap:nowrap; }.launcher-frame .modal-foot .btn-primary { flex:none; width:auto; min-height:44px; }
+  .launch-settings-disclosure { max-width:100%; min-height:44px; }.launch-settings-disclosure:has(.config-warning-icon) bdi { display:block; }
+}

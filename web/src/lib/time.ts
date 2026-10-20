@@ -42,9 +42,9 @@ export const BUCKET_ORDER: readonly Bucket[] = [
 export const BUCKET_LABEL: Record<Bucket, string> = {
   today: 'Today',
   yesterday: 'Yesterday',
-  week: 'This week',
-  month: 'This month',
-  earlier: 'Earlier',
+  week: 'Last 7 days',
+  month: 'Last 30 days',
+  earlier: 'Older',
 }
 
 /** Local midnight of the day containing `ms`. Uses the local getters, which is

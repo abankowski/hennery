@@ -15,6 +15,7 @@ import { Icon as Glyph } from './ui'
 
 interface Props {
   inline?: boolean
+  recentHat?: string
   hostId: string
   /** Recents then repositories, already merged and labelled. */
   entries: ProjectEntry[]
@@ -44,7 +45,7 @@ function completionPath(query: string, home?: string): { parent: string; prefix:
   return { parent: expanded.slice(0, slash) || '/', prefix: expanded.slice(slash + 1), expanded }
 }
 
-export default function ProjectPicker({ hostId, entries, browseRoot, initialText = '', onChange, labelledBy, inline = false }: Props) {
+export default function ProjectPicker({ hostId, entries, browseRoot, initialText = '', onChange, labelledBy, inline = false, recentHat }: Props) {
   const client = useClient()
   // From React, never the host's id: an id reference holds no spaces.
   const listId = useId()
@@ -170,6 +171,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
           </div>
           {showList && (
             <ul className="picker-list" id={listId} role="listbox">
+              {recentHat && <li className="picker-list-header" role="presentation">Recent projects of the hat <bdi>{recentHat}</bdi></li>}
               {matches.map((m, i) => (
                 <li
                   key={m.path}
@@ -246,6 +248,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
         <button
           type="button"
           className="btn btn-ghost btn-sm"
+          aria-label="Browse"
           disabled={browseRoot === undefined}
           title={browseRoot === undefined ? 'This host reported no directory to browse from' : undefined}
           aria-pressed={browsing}
@@ -258,7 +261,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
             if (browseRoot !== undefined) go(isLiteralPath(query) && query.startsWith('/') ? query : browseRoot)
           }}
         >
-          Browse
+          <Glyph name="folder" size={16} />
         </button>
       </div>
     </div>

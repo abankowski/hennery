@@ -12,6 +12,7 @@ import { PAGE_ROWS, byDay } from './SessionList'
 import { navigate } from '../router'
 import { host } from '../test-fixtures'
 import { DESKTOP } from './Shell'
+import * as markers from '../lib/status'
 
 const LIST = '/api/view/sessions'
 const STREAM = '/api/stream/sessions'
@@ -116,6 +117,7 @@ async function list() {
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.removeItem('hennery.expandedFamilies')
   document.title = 'hennery'
   width(false)
 })
@@ -287,7 +289,7 @@ describe('filters', () => {
   it('loads the next page by its cursor', async () => {
     at('/sessions')
     const s = server({
-      list: (params) => (params.get('cursor') === 'c1' ? page([summary('older', { last_event_at: '2026-10-01T10:00:00.000Z' })]) : page([summary('newer')], 'c1')),
+      list: (params) => (params.get('cursor') === 'c1' ? page([summary('older', { created_at: '2026-09-30T10:00:00.000Z', last_event_at: '2026-10-01T10:00:00.000Z' })]) : page([summary('newer')], 'c1')),
     })
     render(<App fetchImpl={s.fetch} />)
     const region = await list()
@@ -411,13 +413,13 @@ describe('the waiting count', () => {
   // The server's count: 3, whatever the rows say (one blocked), and the
   // same on every page of the hat, searched or filtered.
   const countedList = (params: URLSearchParams) =>
-    params.get('q')
+    params.get('limit') === '100' ? page([summary('asks', { activity: 'blocked' }), summary('closed-one', { lifecycle: 'closed', operator_attention: 1 }), summary('closed-two', { lifecycle: 'closed', operator_attention: 1 })], undefined, 3) : params.get('q')
       ? page([], undefined, 3)
       : params.get('lifecycle') === 'closed'
         ? page([summary('done', { lifecycle: 'closed', activity: undefined })], undefined, 3)
         : page([summary('asks', { activity: 'blocked' }), summary('calm')], undefined, 3)
 
-  it('is the server’s count, kept while a search or a lifecycle filter is set', async () => {
+  it('includes discovered closed attention and keeps its cards available across overview filters', async () => {
     at('/sessions')
     const s = server({ list: countedList })
     const { container } = render(<App fetchImpl={s.fetch} />)
@@ -428,7 +430,7 @@ describe('the waiting count', () => {
       expect(within(bar).getByRole('status', { name: '3 waiting on you' })).toHaveTextContent('3')
     }
     await waitFor(() => expect(names(region)).toEqual(['calm', 'asks']))
-    counted()
+    await waitFor(counted)
     const search = within(region).getByRole('searchbox', { name: 'Search sessions' })
     await userEvent.type(search, 'zz')
     await waitFor(() => expect(s.of(LIST).at(-1)!.searchParams.get('q')).toBe('zz'))
@@ -455,7 +457,7 @@ describe('the waiting count', () => {
     const region = await list()
     const bar = container.querySelector('.tabbar') as HTMLElement
     await waitFor(() => expect(names(region)).toEqual(['calm', 'asks']))
-    expect(document.title).toBe('(3) hennery')
+    await waitFor(() => expect(document.title).toBe('(3) hennery'))
     await userEvent.click(within(region).getByRole('searchbox', { name: 'Search sessions' }))
     await userEvent.paste('a\tb')
     await waitFor(() => expect(s.of(LIST).at(-1)!.searchParams.get('q')).toBe('a\tb'))
@@ -468,7 +470,7 @@ describe('the waiting count', () => {
     expect(within(bar).getByRole('status', { name: '3 waiting on you' })).toHaveTextContent('3')
   })
 
-  it('follows waiting_changed, never an upsert, while a search is set', async () => {
+  it('counts the cards available after an upsert and honours an authoritative zero while searching', async () => {
     at('/sessions')
     const s = server({ list: countedList })
     render(<App fetchImpl={s.fetch} />)
@@ -481,7 +483,7 @@ describe('the waiting count', () => {
     const live = s.streams.filter((x) => !x.cancelled)[0]
     act(() => live.event('session_upsert', summary('asks', { activity: 'running', last_event_at: '2026-10-02T11:00:00.000Z' }), 'e1:5'))
     await new Promise((r) => setTimeout(r, 30))
-    expect(document.title).toBe('(3) hennery')
+    expect(document.title).toBe('(2) hennery')
     act(() => live.event('waiting_changed', { count: 2 }, 'e1:6'))
     await waitFor(() => expect(document.title).toBe('(2) hennery'))
     act(() => live.event('waiting_changed', { count: 0 }, 'e1:7'))
@@ -492,7 +494,10 @@ describe('the waiting count', () => {
     localStorage.setItem('hennery.hat', 'hat-a')
     at('/sessions')
     const counts: Record<string, number> = { 'hat-a': 3, 'hat-b': 1 }
-    const s = server({ list: (params) => page([], undefined, counts[params.get('hat') ?? ''] ?? 7) })
+    const s = server({ list: (params) => {
+      const hat = params.get('hat'), count = counts[hat ?? ''] ?? 7
+      return page(params.get('limit') === '100' ? Array.from({ length: count }, (_, i) => summary(`attention-${hat ?? 'all'}-${i}`, { hat_id: hat ?? (i < 3 ? 'hat-a' : 'hat-b'), operator_attention: 1 })) : [], undefined, count)
+    } })
     render(<App fetchImpl={s.fetch} />)
     const region = await list()
     await waitFor(() => expect(document.title).toBe('(3) hennery'))
@@ -509,7 +514,7 @@ describe('the waiting count', () => {
 })
 
 describe('route selection and overview', () => {
-  const rows = () => page([summary('a'), summary('b', { hat_id: 'hat-b' }), summary('a-old', { last_event_at: '2026-10-01T00:00:00Z' }), summary('closed', { lifecycle: 'closed' })])
+  const rows = () => page([summary('a'), summary('b', { hat_id: 'hat-b' }), summary('a-old', { created_at: '2026-09-30T00:00:00Z', last_event_at: '2026-10-01T00:00:00Z' }), summary('closed', { lifecycle: 'closed' })])
   it.each([false, true])('keeps /sessions as an overview at desktop=%s', async desktop => {
     width(desktop); at('/sessions'); const s = server({ list: rows }); render(<App fetchImpl={s.fetch} />)
     const region = await list(); await waitFor(() => expect(names(region)).toEqual(['b', 'a', 'a-old']))
@@ -663,7 +668,7 @@ describe('windowed rows', () => {
   it(`renders ${PAGE_ROWS} rows at a time, and fetches only past the rows held`, async () => {
     at('/sessions')
     const many = Array.from({ length: 120 }, (_, i) =>
-      summary(`s${String(i).padStart(3, '0')}`, { last_event_at: new Date(Date.UTC(2026, 9, 2, 10, 0, 120 - i)).toISOString() }),
+      summary(`s${String(i).padStart(3, '0')}`, { created_at: new Date(Date.UTC(2026, 9, 1, 10, 0, 120 - i)).toISOString(), last_event_at: new Date(Date.UTC(2026, 9, 2, 10, 0, 120 - i)).toISOString() }),
     )
     const s = server({ list: () => page(many) })
     render(<App fetchImpl={s.fetch} />)
@@ -681,7 +686,7 @@ describe('windowed rows', () => {
   it('opens a new query at one page of rows again', async () => {
     at('/sessions')
     const many = Array.from({ length: 120 }, (_, i) =>
-      summary(`s${String(i).padStart(3, '0')}`, { last_event_at: new Date(Date.UTC(2026, 9, 2, 10, 0, 120 - i)).toISOString() }),
+      summary(`s${String(i).padStart(3, '0')}`, { created_at: new Date(Date.UTC(2026, 9, 1, 10, 0, 120 - i)).toISOString(), last_event_at: new Date(Date.UTC(2026, 9, 2, 10, 0, 120 - i)).toISOString() }),
     )
     const s = server({ list: () => page(many) })
     render(<App fetchImpl={s.fetch} />)
@@ -698,7 +703,7 @@ describe('windowed rows', () => {
   it('fetches the next page only once every row held is shown', async () => {
     at('/sessions')
     const many = Array.from({ length: 120 }, (_, i) =>
-      summary(`s${String(i).padStart(3, '0')}`, { last_event_at: new Date(Date.UTC(2026, 9, 2, 10, 0, 120 - i)).toISOString() }),
+      summary(`s${String(i).padStart(3, '0')}`, { created_at: new Date(Date.UTC(2026, 9, 1, 10, 0, 120 - i)).toISOString(), last_event_at: new Date(Date.UTC(2026, 9, 2, 10, 0, 120 - i)).toISOString() }),
     )
     const older = summary('older', { last_event_at: '2026-10-01T10:00:00.000Z' })
     const s = server({ list: (params) => (params.get('cursor') === 'c1' ? page([older]) : page(many, 'c1')) })
@@ -720,14 +725,14 @@ describe('windowed rows', () => {
 })
 
 describe('the list stream, as the list shows it', () => {
-  async function open(rows: SessionSummary[], hatChosen = '') {
+  async function open(rows: SessionSummary[], hatChosen = '', visibleCount = rows.filter(row => row.lifecycle !== 'closed').length) {
     localStorage.setItem('hennery.hat', hatChosen)
     at('/sessions')
     const s = server({ list: (params) => (params.get('q') ? page([summary('found', { title: 'fix it' })]) : page(rows)) })
     render(<App fetchImpl={s.fetch} />)
     const region = await list()
     await waitFor(() => expect(s.streams).toHaveLength(1))
-    await waitFor(() => expect(names(region)).toHaveLength(rows.length))
+    await waitFor(() => expect(names(region)).toHaveLength(visibleCount))
     return { s, region }
   }
 
@@ -738,9 +743,56 @@ describe('the list stream, as the list shows it', () => {
   })
 
   it('an upsert updates a row in place', async () => {
-    const { s, region } = await open([summary('a'), summary('b', { last_event_at: '2026-10-02T09:00:00.000Z' })])
-    act(() => s.streams[0].event('session_upsert', summary('b', { title: 'Renamed', last_event_at: '2026-10-02T09:00:00.000Z' }), 'e1:2'))
+    const b = summary('b', { created_at: '2026-09-30T00:00:00.000Z', last_event_at: '2026-10-02T09:00:00.000Z' })
+    const { s, region } = await open([summary('a'), b])
+    act(() => s.streams[0].event('session_upsert', { ...b, title: 'Renamed' }, 'e1:2'))
     await waitFor(() => expect(names(region)).toEqual(['a', 'Renamed']))
+  })
+
+  it('keeps order, DOM identity and untouched row renders stable through streaming activity', async () => {
+    const parent = summary('parent', { title: 'Coordinator', created_at: '2026-10-01T09:00:00Z', family: { revision: 1, children: [{ session_id: 'child', agent: 'claude' }, { session_id: 'child', agent: 'claude' }, { session_id: 'closed', agent: 'claude' }], child_counts: { total: 2, active: 1, waiting: 0 }, attention: 0 } })
+    const child = summary('child', { title: 'Worker', created_at: '2026-10-01T11:00:00Z', family: { revision: 1, parent: { session_id: 'parent', agent: 'claude' }, children: [], child_counts: { total: 0, active: 0, waiting: 0 }, attention: 0 } })
+    const quiet = summary('quiet', { title: 'Untouched', created_at: '2026-10-01T10:00:00Z' })
+    const closed = { ...child, session_id: 'closed', title: 'Closed worker', lifecycle: 'closed' }
+    const { s, region } = await open([parent, child, quiet, closed], '', 2)
+    await userEvent.click(within(region).getByRole('button', { name: /↳ 1 child/ }))
+    const links = () => [...region.querySelectorAll('[data-session-link]')]
+    await waitFor(() => expect(names(region)).toEqual(['Untouched', 'Coordinator', 'Worker']))
+    const before = links()
+    const renders = vi.spyOn(markers, 'statusOf')
+    try {
+      for (let n = 0; n < 40; n++) {
+        const activity = n % 2 ? 'running' : 'idle'
+        act(() => s.streams[0].event('session_upsert', { ...child, activity, last_event_at: new Date(Date.UTC(2026, 9, 2, 11, 0, n)).toISOString() }, `e1:${n + 2}`))
+        await waitFor(() => expect(within(before[2].closest('tr')!).getByRole('img', { name: activity === 'running' ? 'Running' : 'Idle' })).toBeInTheDocument())
+        expect(names(region)).toEqual(['Untouched', 'Coordinator', 'Worker'])
+        links().forEach((link, index) => expect(link).toBe(before[index]))
+      }
+      expect(renders.mock.calls.filter(([s]) => 'session_id' in s && s.session_id === 'quiet')).toHaveLength(0)
+      expect(within(region).getByText('↳ 1 child')).toBeInTheDocument()
+      expect(within(region).queryByText(/^(Parent:|Child:)/)).not.toBeInTheDocument()
+      await userEvent.click(within(region).getByRole('button', { name: 'Filters' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Hide closed' }))
+      await waitFor(() => expect(within(region).getByText('↳ 2 children')).toBeInTheDocument())
+      expect(region.querySelectorAll('[data-session-id="closed"]')).toHaveLength(1)
+    } finally { renders.mockRestore() }
+  })
+
+  it('collapses 100 children, previews at most five with running first, and remembers expansion', async () => {
+    const parent = summary('parent', { title: 'Coordinator', family: { revision: 1, children: [], child_counts: { total: 100, active: 1, waiting: 0 }, attention: 0 } })
+    const children = Array.from({ length: 100 }, (_, i) => summary(`child-${i}`, { title: `Worker ${i}`, activity: i === 0 ? 'running' : 'idle', created_at: new Date(Date.UTC(2026, 9, 2, 0, 0, i)).toISOString(), family: { revision: 1, parent: { session_id: 'parent', agent: 'claude' }, children: [], child_counts: { total: 0, active: 0, waiting: 0 }, attention: 0 } }))
+    const { region } = await open([parent, ...children], '', 1)
+    const chip = within(region).getByRole('button', { name: '↳ 100 children' })
+    expect(chip).toHaveAttribute('aria-description', '1 running · 99 idle')
+    expect(chip).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(chip)
+    expect(names(region)).toEqual(['Coordinator', 'Worker 0', 'Worker 99', 'Worker 98', 'Worker 97', 'Worker 96'])
+    expect(region.querySelectorAll('.sess-child')).toHaveLength(5)
+    expect(within(region).getByRole('link', { name: 'Show all 100 children' })).toHaveAttribute('href', '/sessions/parent?family=1')
+    act(() => navigate('/more')); act(() => navigate('/sessions'))
+    const returned = await list()
+    await waitFor(() => expect(within(returned).getByRole('button', { name: '↳ 100 children' })).toHaveAttribute('aria-expanded', 'true'))
+    expect(returned.querySelectorAll('.sess-child')).toHaveLength(5)
   })
 
   it('an upsert that closes a session takes its row out while Hide closed is on', async () => {

@@ -90,9 +90,9 @@ describe('BUCKET_ORDER / BUCKET_LABEL', () => {
     expect(BUCKET_ORDER.map((b) => BUCKET_LABEL[b])).toEqual([
       'Today',
       'Yesterday',
-      'This week',
-      'This month',
-      'Earlier',
+      'Last 7 days',
+      'Last 30 days',
+      'Older',
     ])
   })
 })

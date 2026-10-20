@@ -39,6 +39,7 @@ class Names {
   constructor(private client: Client, private active: boolean) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   snapshot = () => this.revision
+  prompt = (id: string) => this.cache.get(id)?.text ?? null
   name(session: NamedSession, fallback?: string): Name {
     if (session.title?.trim()) return { text: visible(session.title), provisional: false, source: 'agent' }
     const prompt = this.cache.get(session.session_id)?.text
@@ -88,7 +89,13 @@ export function useSessionNames(sessions: readonly NamedSession[]) {
   useEffect(() => { for (const session of sessions) names?.ensure(session) }, [names, sessions])
   return (session: NamedSession, fallback?: string): Name => names?.name(session, fallback) ?? { text: session.title || fallback || basename(session.cwd ?? '') || session.session_id, provisional: !session.title, source: session.title ? 'agent' : 'project' }
 }
-export function useSessionName(session: NamedSession, fallback?: string, ready = true) { return useSessionNames(ready ? [session] : [])(session, fallback) }
+export function useSessionName(session: NamedSession, fallback?: string, ready = true) {
+  const names = useContext(Context)
+  // A name arriving for another session must not render every memoized row.
+  useSyncExternalStore(names?.subscribe ?? noSubscribe, () => names?.prompt(session.session_id) ?? null)
+  useEffect(() => { if (ready) names?.ensure(session) }, [names, session, ready])
+  return names?.name(session, fallback) ?? { text: session.title || fallback || basename(session.cwd ?? '') || session.session_id, provisional: !session.title, source: session.title ? 'agent' : 'project' }
+}
 export default function SessionName({ session, fallback, ready = true }: { session: NamedSession; fallback?: string; ready?: boolean }) {
   const name = useSessionName(session, fallback, ready)
   return <bdi className={name.provisional ? 'session-name-provisional' : undefined} title={name.source === 'prompt' ? 'Provisional name from the first prompt' : name.provisional ? 'No agent title or first prompt is available yet' : undefined}>{name.text}</bdi>

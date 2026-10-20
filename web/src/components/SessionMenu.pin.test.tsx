@@ -5,15 +5,15 @@ import SessionMenu from './SessionMenu'
 
 const initial = { pinned: false, family_active: true, notices_pending: true, held: true }
 function show(server: ReturnType<typeof routed>, id = 'session/1') {
-  return render(<SessionMenu id={id} lifecycle="active" canPark onDeleted={() => {}} />, { wrapper: server.wrapper })
+  return render(<SessionMenu id={id} lifecycle="active" canPark supportsIdleHold hostConnected onDeleted={() => {}} />, { wrapper: server.wrapper })
 }
 
 describe('operator idle pin', () => {
   it.each([
-    [false, true, 'The pin is saved, but automatic parking holds require an updated host.'],
-    [true, false, 'Parking preferences apply after the host reconnects.'],
-    [undefined, true, 'Host support for automatic parking holds is unknown.'],
-    [true, undefined, 'Host connection is unknown; parking enforcement is not confirmed.'],
+    [false, true, 'Parking hold saved; update the host to enforce it.'],
+    [true, false, 'Parking hold saved; it applies after the host reconnects.'],
+    [undefined, true, 'Host enforcement of parking holds is unconfirmed.'],
+    [true, undefined, 'Host enforcement of parking holds is unconfirmed.'],
   ] as const)('explains saved intent when host support=%s and connected=%s', async (supportsIdleHold, hostConnected, explanation) => {
     const server = routed(call => json({ ...initial, pinned: call.method === 'PATCH' }))
     const props = { supportsIdleHold, hostConnected }
@@ -25,9 +25,7 @@ describe('operator idle pin', () => {
     await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'true'))
     const status = screen.getByRole('status')
     expect(status).toHaveTextContent(explanation)
-    expect(status).toHaveTextContent('Pinned by you.')
-    expect(status).toHaveTextContent('Family work requests a parking hold.')
-    expect(status).toHaveTextContent('Pending updates request a parking hold.')
+    expect(control).toHaveTextContent('✓ On')
     expect(status).not.toHaveTextContent('Kept awake')
   })
 
@@ -40,12 +38,13 @@ describe('operator idle pin', () => {
     const control = await screen.findByRole('switch', { name: 'Do not park' })
     await waitFor(() => expect(control).toBeEnabled())
     expect(control).toHaveAttribute('aria-checked', 'false')
-    expect(screen.getByRole('status')).toHaveTextContent('Family work requests a parking hold. Pending updates request a parking hold.')
+    expect(screen.getByRole('status')).toHaveTextContent('Family work requests a parking hold.')
+    expect(control).toHaveTextContent('Off')
     fireEvent.click(control)
     await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'true'))
     expect(server.calls.map(c => [c.method, c.path])).toEqual([['GET', '/api/sessions/session%2F1/idle-hold'], ['PATCH', '/api/sessions/session%2F1/idle-hold']])
     expect(JSON.parse(String(server.fetch.mock.calls[1][1]?.body))).toEqual({ pinned: true })
-    expect(screen.getByRole('status')).toHaveTextContent('Pinned by you.')
+    expect(screen.getByRole('status')).toHaveTextContent('You requested a parking hold.')
   })
 
   it('keeps the saved pin on refusal and never claims that family work ended when the operator unpins', async () => {

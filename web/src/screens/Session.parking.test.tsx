@@ -5,9 +5,9 @@ import { parent } from '../test-family'
 import SessionView from './Session'
 
 it.each([
-  [[], true, 'automatic parking holds require an updated host.'],
-  [['idle_hold'], false, 'Parking preferences apply after the host reconnects.'],
-  [['idle_hold'], true, 'Parking hold requested from the host.'],
+  [[], true, 'Parking hold saved; update the host to enforce it.'],
+  [['idle_hold'], false, 'Parking hold saved; it applies after the host reconnects.'],
+  [['idle_hold'], true, 'You requested a parking hold.'],
 ] as const)('uses the session host metadata for parking support=%s connected=%s', async (capabilities, connected, explanation) => {
   const server = routed(call => {
     const path = new URL(call.path, 'http://h').pathname

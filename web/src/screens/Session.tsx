@@ -1,4 +1,5 @@
 import SessionName from '../components/SessionNames'
+import { useTurnEnds } from '../hooks/useTurnEnds'
 import '../styles/session.css'
 // One session (frontend spec §6): its header, its transcript, whose question
 // cards answer, and its composer.
@@ -263,6 +264,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   const family = familyRead?.id === id && (!summary || (summary.hat_id === familyRead.page.summary.hat_id && summary.family?.revision === familyRead.page.summary.family?.revision)) ? familyRead.page : null
   const info = useHeaderInfo(id, summary ?? family?.summary, awaitSummary, mcp.detail)
   const { search } = useLocation()
+  useEffect(() => { if (new URLSearchParams(search).get('family') === '1') openFamily() }, [search, openFamily])
   const requested = new URLSearchParams(search).get('pending')
   const legacy = mcp.detail?.pending?.find(p => p.state === 'open' && !p.answered)?.pending_id
   const targetQuestion = requested || legacy
@@ -282,6 +284,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
     }
   }, [id, targetQuestion, s.items, s.pinned])
   const win = useTailWindow(s.items, s.loads, tail, targetQuestion)
+  const turnEnds = useTurnEnds(id, win.visible, info?.activity, s.loads)
   const openPending = legacy ?? selectedQuestion ?? [...s.pinned, ...s.items].filter(item => item.kind === 'question').find(item => item.state === 'open' && !item.answered)?.pending_id
   useLayoutEffect(() => {
     if (!jumpPending) return
@@ -503,7 +506,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
       >
         {s.loading ? <p className="transcript-empty">Loading…</p> : <>
           {s.pinned.length > 0 && <div className="pinned-questions" aria-label="Earlier questions"><Transcript items={s.pinned} env={env} /></div>}
-          <Transcript items={win.visible} env={env} />
+          <Transcript items={win.visible} env={env} turnEnds={turnEnds} waiting={info?.lifecycle === 'active' && info.activity === 'idle' && !info.question_waits && !info.family?.child_counts.active} />
         </>}
       </Scroller>
       {startNotice && (

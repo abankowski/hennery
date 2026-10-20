@@ -1,6 +1,6 @@
 import { useSessionName } from './SessionNames'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { attentionPage, type OperatorAttention } from '../api/attention'
+import { acknowledgeAttention, attentionPage, type OperatorAttention } from '../api/attention'
 import { messageOf } from '../api/errors'
 import { questionCard, sessionDetail } from '../api/view'
 import { useClient } from '../app-client'
@@ -10,36 +10,31 @@ import { Link } from '../router'
 import { sessionPath } from './SessionRow'
 import { attentionReason } from '../lib/attentionReason'
 import { AnswerBook, useAnswerState } from '../store/useAnswer'
-import QuestionCard from './items/QuestionCard'
-import { agentLabel } from '../lib/agent'
 import { useSessionScope } from './SessionScope'
 import { deliveryOf } from '../lib/delivery'
+import { dismissAttention, restoreAttention } from '../lib/dismissedAttention'
 
-function QuickChoices({ question, book }: { question: Extract<Item, { kind: 'question' }>; book: AnswerBook }) {
+function PermissionChoices({ question, book }: { question: Extract<Item, { kind: 'question' }>; book: AnswerBook }) {
   const { local, hostAway } = useAnswerState(book, question.id)
   const delivery = deliveryOf(question, local, hostAway)
   const request = question.request
-  if (request.type !== 'elicitation') return null
-  const field = request.fields[0]
-  if (field.field_kind !== 'single') return null
-  return <div className="preview-choices"><p className="preview-question"><bdi>{request.message}</bdi></p>
-    {delivery.controls && <div className="q-opts">{(field.options ?? []).map(option => <button key={option.value} type="button" className="btn btn-secondary btn-sm" disabled={delivery.busy} onClick={() => void book.answer(question, { action: 'accept', content: { [field.key]: option.value } })}>{option.label || option.value}</button>)}</div>}
+  if (request.type !== 'permission') return null
+  return <div className="preview-choices"><p className="preview-question preview-permission"><bdi>{request.title || 'Permission request'}</bdi></p>
+    {delivery.controls && <div className="q-opts">{request.options.map(option => <button key={option.option_id} type="button" className={'btn btn-sm ' + (option.option_kind === 'allow_once' ? 'btn-primary' : 'btn-secondary')} disabled={delivery.busy} onClick={() => void book.answer(question, { option_id: option.option_id })}>{option.name}</button>)}</div>}
     {!delivery.controls && <p role="status">{delivery.text}</p>}
     {delivery.error && <p role="alert" className="form-error"><bdi>{delivery.error}</bdi></p>}
     {local?.phase === 'uncertain' && <button className="btn btn-ghost" type="button" onClick={() => void book.checkAnswer(question)}>Refresh question</button>}
   </div>
 }
 
-function InlineQuestion({ question, session }: { question: Extract<Item, { kind: 'question' }>; session: SessionSummary }) {
+function InlinePermission({ question, session }: { question: Extract<Item, { kind: 'question' }>; session: SessionSummary }) {
   const client = useClient(), scope = useSessionScope()
   const [current, setCurrent] = useState(question)
   const book = useMemo(() => new AnswerBook(client, session.session_id, item => { if (item.kind === 'question') setCurrent(item) }), [client, session.session_id])
   useEffect(() => { setCurrent(question); book.observe([question], 1) }, [book, question])
   const connected = scope?.hosts?.find(h => h.host_id === session.host_id)?.connected
   useEffect(() => { book.setHostAway(session.presumed_parked || connected === false) }, [book, connected, session.presumed_parked])
-  const request = current.request
-  if (request.type === 'elicitation' && request.form_supported && request.fields.length === 1 && request.fields[0].field_kind === 'single' && (request.required ?? []).every(key => key === request.fields[0].key)) return <QuickChoices question={current} book={book} />
-  return <QuestionCard item={current} env={{ sessionId: session.session_id, agent: agentLabel(session.agent), answers: book }} />
+  return <PermissionChoices question={current} book={book} />
 }
 
 type Preview = { question?: Extract<Item, { kind: 'question' }>; attention?: OperatorAttention; partial?: boolean }
@@ -105,6 +100,12 @@ export function AttentionPreviews({ children }: { children: ReactNode }) {
   return <Context.Provider value={reader}>{children}</Context.Provider>
 }
 export default function AttentionPreview({ session }: { session: SessionSummary }) {
+  const scope = useSessionScope(), client = useClient()
+  const dismissed = scope?.isAttentionDismissed(session.session_id) ?? false
+  const [dismissing, setDismissing] = useState(false)
+  const [dismissError, setDismissError] = useState<string | null>(null)
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const name = useSessionName(session, session.session_id)
   const reader = useContext(Context), box = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined')
@@ -116,22 +117,38 @@ export default function AttentionPreview({ session }: { session: SessionSummary 
     return () => observer.disconnect()
   }, [])
   useEffect(() => {
-    if (!reader || !visible) return
+    if (!reader || (!visible && !dismissed)) return
     let live = true
     reader.read(session).then(value => { if (live) setState({ reader, session, value }) }, error => { if (live) setState({ reader, session, error: messageOf(error) }) })
     return () => { live = false }
-  }, [reader, visible, session])
-  const held = state?.reader === reader && state?.session === session ? state : null
+  }, [reader, visible, dismissed, session])
+  const held = state?.reader === reader && state?.session.session_id === session.session_id ? state : null
   const question = held?.value?.question
   const request = question?.request
   const title = request?.type === 'permission' ? request.title || 'Permission request' : request?.type === 'elicitation' ? request.message : undefined
+  const attention = held?.value?.attention
+  const key = question ? `pending:${question.pending_id}:${session.operator_attention}` : attention ? `attention:${attention.id}:${attention.reason}:${session.operator_attention}` : held ? `session:${session.last_event_at}:${session.operator_attention}` : undefined
+  const reportKey = scope?.reportAttentionKey
+  useEffect(() => { if (key) reportKey?.(session.session_id, key) }, [reportKey, session.session_id, key])
+  async function dismiss() {
+    if (!key) return
+    if (dismissed) { restoreAttention(session.session_id); return }
+    setDismissing(true); setDismissError(null)
+    try {
+      if (attention) await acknowledgeAttention(client, attention.id)
+      if (alive.current) dismissAttention(session.session_id, key)
+    } catch (error) { setDismissError(messageOf(error)) }
+    finally { if (alive.current) setDismissing(false) }
+  }
   const target = question ? `${sessionPath(session.session_id)}?pending=${encodeURIComponent(question.pending_id)}` : sessionPath(session.session_id)
   return <div ref={box} className="attention-preview">
-    {question ? <InlineQuestion key={question.pending_id} question={question} session={session} /> : title && <p className="preview-question"><bdi>{title}</bdi></p>}
+    <button type="button" className="attention-dismiss" aria-label={dismissed ? 'Restore' : 'Dismiss'} title={attention ? 'Acknowledge this attention' : 'Dismiss in this browser'} disabled={!key || dismissing} onClick={() => void dismiss()}>{dismissed ? '↶' : '×'}</button>
+    {question && request?.type === 'permission' ? <InlinePermission key={question.pending_id} question={question} session={session} /> : title && <p className="preview-question preview-elicitation"><bdi>{title}</bdi></p>}
     {held?.value?.attention && <p><bdi>{attentionReason(held.value.attention.reason)}</bdi></p>}
     {held?.value?.partial && !held.value.attention && <p>More attention records are available in the session.</p>}
     {held?.error && <p className="preview-error">Preview unavailable: <bdi>{held.error}</bdi></p>}
     {!held && <p className="preview-note">Open the session to review the current request.</p>}
-    <Link data-session-link to={target} className="btn btn-ghost" aria-label={`Open ${name.text}`}>{question ? request?.type === 'permission' ? 'Open request' : 'Open question' : 'Open session'}</Link>
+    {dismissError && <p role="alert" className="form-error">{dismissError}</p>}
+    <div className="preview-actions"><Link data-session-link to={target} className="btn btn-ghost" aria-label={`Open ${name.text}`}>Open</Link>{attention && !dismissed && <button className="btn btn-ghost" type="button" disabled={dismissing} onClick={() => void dismiss()}>Acknowledge</button>}</div>
   </div>
 }

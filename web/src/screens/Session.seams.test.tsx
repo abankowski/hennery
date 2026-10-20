@@ -85,6 +85,7 @@ describe('SessionView: the seams of the question cards', () => {
     render(<SessionView id="s1" timing={FAST} />, { wrapper: s.wrapper })
     await screen.findByText('m1')
     await screen.findByText('build-box', {}, WAIT)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session settings' }, WAIT))
     await screen.findByRole('combobox', { name: 'Model' }, WAIT)
     const before = lastEnv()
     const renders = seen.envs.length

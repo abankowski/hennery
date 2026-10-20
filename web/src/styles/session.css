@@ -341,6 +341,9 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
 .session-menu-btn { width:28px; height:28px; border:0; background:transparent; }
 .session-menu-list { box-shadow:var(--hn-pop-shadow); border-color:var(--hn-control-strong); max-width:min(300px,90vw); }
 .session-menu-list [role=switch][aria-checked=true] { color:var(--hn-accent-fg); background:var(--hn-accent-wash); }
+.session-menu-list [role=switch] { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.idle-hold-state { font-size:11px; color:var(--hn-fg-3); }.session-menu-list [aria-checked=true] .idle-hold-state { color:var(--hn-accent-fg); }
+.session-menu-list hr { border:0; border-top:1px solid var(--hn-line); margin:6px 0; }
 .idle-hold-note { margin:4px 12px 8px; color:var(--hn-fg-3); font-size:12px; line-height:1.5; }
 .waiting-navigation { display:flex; align-items:center; gap:4px; font-size:11px; color:var(--hn-fg-3); white-space:nowrap; }
 .waiting-navigation a,.waiting-navigation button { width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:1px solid var(--hn-control-strong); border-radius:6px; color:var(--hn-fg-2); }
@@ -506,3 +509,43 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
   .session-head .session-details-toggle .badge { display:inline-flex; position:absolute; top:0; right:0; margin:0; padding:1px 4px; background:var(--st-wait-bg); font-size:9px; }
 }
 @media (max-width:767px) { .session-head .session-details-toggle .session-wait-count { display:inline-flex; position:absolute; top:0; right:0; padding:1px 4px; border-radius:10px; background:var(--st-wait-bg); color:var(--st-wait-fg); font-size:9px; } }
+
+/* Operator review: use the conversation width and clearly bounded messages. */
+.session .transcript-inner,.composer-inner { max-width:none; width:100%; margin:0; }
+.session .transcript { padding:18px 16px 10px; }
+.bubble { background:var(--hn-surface); border:1px solid var(--hn-line); border-radius:10px; padding:12px 16px; }
+.bubble.user { background:color-mix(in srgb,var(--hn-accent-wash) 50%,var(--hn-sunken)); border-color:var(--hn-control-strong); }
+.avatar-user { background:var(--hn-accent-wash); color:var(--hn-accent-fg); border:1px solid var(--hn-line); }
+.bubble > p,.bubble > ul,.bubble > ol { max-width:85ch; }
+.bubble pre,.bubble table { max-width:100%; }
+.bubble .md-table-scroll { width:100%; overflow-x:auto; margin:10px 0; }
+.bubble .md-table-scroll table { display:table; width:100%; max-width:none; margin:0; }
+.turn-complete { color:var(--hn-fg-3); font:400 11px var(--font-body); margin:12px 0 20px; }.turn-complete::before,.turn-complete::after { background:var(--hn-line); }
+.tool-line { min-height:36px; padding:7px 10px; background:var(--hn-sunken); }
+.tool-name { min-width:0; flex:0 1 auto; max-width:35%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.composer { padding:8px 16px max(8px,env(safe-area-inset-bottom)); }
+.composer-inner { padding:4px; }
+.composer-box { gap:6px; align-items:flex-end; }
+.composer-box textarea { min-height:32px; max-height:min(160px,28dvh); padding:6px 0; line-height:20px; }
+.composer-settings-trigger { display:flex; align-items:center; gap:5px; align-self:center; max-width:40%; min-height:30px; border:1px solid var(--hn-line); border-radius:6px; padding:4px 7px; color:var(--hn-fg-3); background:var(--hn-sunken); font:400 11px var(--font-body); white-space:nowrap; }
+.composer-settings-trigger bdi { overflow:hidden; text-overflow:ellipsis; }
+.config-chip-badge { flex:none; font-size:10px; color:var(--hn-accent-fg); }
+.config-chip-warning { color:var(--st-wait-fg); }
+.composer-settings-layer { position:fixed; inset:0; z-index:65; }
+.composer-settings-panel { position:fixed; width:360px; max-height:70dvh; overflow:auto; border:1px solid var(--hn-control-strong); border-radius:12px; padding:16px; background:var(--hn-panel); color:var(--hn-fg-1); box-shadow:var(--hn-pop-shadow); }
+.composer-settings-panel header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.composer-settings-panel h2 { margin:0; font:500 15px var(--font-display); }
+.composer-settings-panel .composer-controls { display:flex; flex-direction:column; align-items:stretch; gap:12px; max-height:none; margin:0; overflow:visible; }
+.composer-settings-panel .switcher { justify-content:space-between; }.composer-settings-panel .switcher select { max-width:65%; }
+.composer-settings-panel .session-effort { flex-wrap:wrap; }
+.config-readback { margin:14px 0 0; color:var(--hn-fg-3); font:400 12px/1.5 var(--font-body); }
+@media(max-width:767px) {
+  .session .transcript { padding:12px 10px 8px; }.bubble,.bubble.user { padding:10px 12px; }
+  .msg { gap:8px; }.tool-line { min-height:44px; }.tool-name { max-width:42%; }
+  .composer { padding:6px 8px max(6px,env(safe-area-inset-bottom)); }.composer-inner { padding:2px; }
+  .composer-box textarea { min-height:40px; padding:10px 0; }
+  .composer-settings-trigger { max-width:110px; min-height:44px; padding:4px; gap:3px; }.composer-settings-trigger:has(.config-chip-badge) bdi { display:none; }
+  .composer-settings-layer { background:var(--hn-scrim); }
+  .composer-settings-panel { left:0; right:0; bottom:0; width:100%; max-height:80dvh; border-radius:18px 18px 0 0; padding:16px 16px max(20px,env(safe-area-inset-bottom)); }
+  .composer-settings-panel .switcher select { max-width:70%; }.composer-settings-panel header button { min-height:44px; min-width:44px; }
+}

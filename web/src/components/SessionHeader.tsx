@@ -11,7 +11,6 @@ import { basename } from '../lib/time'
 import { Icon } from '../lib/ui'
 import { Link } from '../router'
 import { useSessionScope, WaitingBadge } from './SessionScope'
-import { needsOperator } from '../lib/status'
 import { Icon as Glyph } from './ui'
 import { sessionPath } from './SessionRow'
 import { reasonWords } from './items/Marker'
@@ -45,7 +44,7 @@ interface Props {
 export default function SessionHeader({ id, info, hostName, menu, detailsOpen, toggleDetails, openFamily, detailsTrigger, hatName, hostConnected, delivery, narrow }: Props) {
   const scope = useSessionScope()
   // Share the queue's recent-first summary order, never its overview filters.
-  const waiting = [...(scope?.list.all.values() ?? [])].filter(needsOperator).sort((a, b) => b.last_event_at.localeCompare(a.last_event_at) || a.session_id.localeCompare(b.session_id))
+  const waiting = (scope?.attentionRows ?? []).filter(s => !scope?.isAttentionDismissed(s.session_id))
   const position = waiting.findIndex(s => s.session_id === id)
   const complete = scope !== null && !scope.list.loading && !scope.list.hasMore && !scope.list.error && !scope.query && !scope.lifecycle && !scope.hideClosed
   const previous = position > 0 ? waiting[position - 1] : undefined

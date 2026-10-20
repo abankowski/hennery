@@ -28,6 +28,11 @@ beforeEach(() => {
 afterEach(() => quiet.mockRestore())
 
 describe('Transcript', () => {
+  it('adds a thin completed-turn divider only when the event supplies its timestamp', () => {
+    const { container } = render(<Transcript items={[message('reply', 'Finished')]} env={env} turnEnds={new Map([['t1', TS]])} waiting />)
+    expect(screen.getByText(/Turn complete — waiting for input/)).toBeInTheDocument()
+    expect(container.querySelector('.turn-complete time')).toHaveAttribute('datetime', TS)
+  })
   it('says when there is nothing yet', () => {
     render(<Transcript items={[]} env={env} />)
     expect(screen.getByText('Nothing in this session yet.')).toBeInTheDocument()
@@ -97,7 +102,7 @@ describe('Transcript', () => {
     const { container, rerender } = render(<Transcript items={[tool(1, 'in_progress')]} env={env} />)
     fireEvent.click(screen.getByRole('button'))
     rerender(<Transcript items={[tool(2, 'completed')]} env={env} />)
-    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.getByText('Completed')).toBeInTheDocument()
     expect(container.querySelector('.tool-output')).not.toBeNull()
   })
 
