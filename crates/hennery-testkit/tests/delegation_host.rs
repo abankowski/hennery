@@ -215,6 +215,53 @@ async fn cold_catalog_uses_selected_adapter_without_prompt_or_mcp() {
     assert_eq!(first["params"]["mcpServers"], json!([]));
     assert_eq!(requests.lines().count(), 1);
 }
+
+#[tokio::test]
+async fn operator_catalog_probe_does_not_consume_the_following_sessions_mcp_delivery() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().canonicalize().unwrap();
+    let log = cwd.join("sessions");
+    let mut script = script();
+    script.session_log = Some(log.display().to_string());
+    let probes = CatalogProbes::default();
+    probes
+        .operator_catalog("chosen", fake(script.clone(), &cwd), Profile::Generic, cwd.clone())
+        .await
+        .unwrap();
+    let mut servers = vec![
+        json!({"type":"http","name":"hennery-docs","url":"https://example.com/mcp/docs","headers":[]}),
+        json!({"type":"stdio","name":"hennery-local","command":"tool","args":[],"env":[]}),
+    ];
+    let mut start = launch(&cwd, script, Attach::New);
+    start.mcp_servers = serde_json::from_value(json!(servers)).unwrap();
+    let (up, _) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = session::launch(up.clone(), start, SessionOptions::default());
+    until(&up, |frames| {
+        frames.iter().any(|frame| {
+            matches!(
+                frame,
+                HostFrame::Session {
+                    body: SessionBody::SessionStarted { .. },
+                    ..
+                }
+            )
+        })
+    })
+    .await;
+    stop(handle).await;
+    let receipts: Vec<serde_json::Value> = std::fs::read_to_string(log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(receipts.len(), 2);
+    assert_eq!(receipts[0]["method"], "session/new");
+    assert_eq!(receipts[0]["params"]["mcpServers"], json!([]));
+    assert_eq!(receipts[1]["method"], "session/new");
+    // ACP stdio entries are untagged; the host frame is explicitly tagged.
+    servers[1].as_object_mut().unwrap().remove("type");
+    assert_eq!(receipts[1]["params"]["mcpServers"], json!(servers));
+}
 #[tokio::test]
 async fn catalog_timeout_releases_permit_and_leaves_no_adapter() {
     let root = tempfile::tempdir().unwrap();
