@@ -1,4 +1,10 @@
 import '../styles/launch.css'
+import LaunchConfig, { requestFor } from '../components/LaunchConfig'
+import { useLaunchContext } from '../components/CatalogContext'
+import { useAccentStyle } from '../lib/theme'
+import { useRegisterContext } from '../app-actions'
+import { confirmStart, rememberConfigurationReview } from '../lib/start'
+import type { Picks } from '../lib/defaults'
 import McpPrediction from '../components/McpPrediction'
 import { predictionHat } from '../lib/mcpDelivery'
 // New session (frontend spec §7): a host, an agent, a project, the hat the
@@ -60,7 +66,8 @@ export default function NewSession() {
   const client = useClient()
   const { search } = useLocation()
   // Read once: the form owns its fields after that.
-  const [prefill] = useState(() => readNewSessionPrefill(search))
+  const [draft] = useState(() => { const saved = readLauncherDraft(), requested = readNewSessionPrefill(search); return requested.host && (requested.host !== saved?.host || requested.cwd !== saved?.cwd) ? null : saved })
+  const [prefill] = useState(() => { const requested = readNewSessionPrefill(search); return requested.host ? requested : { host: draft?.host, cwd: draft?.cwd } })
   const ids = { host: useId(), agent: useId(), project: useId(), prompt: useId() }
 
   const [hosts, setHosts] = useState<HostItem[] | null>(null)
@@ -69,8 +76,8 @@ export default function NewSession() {
   const [notice, setNotice] = useState<string | null>(null)
 
   const [choices, setChoices] = useState<HostAgentChoices | null>(null)
-  const [agent, setAgent] = useState('')
-  const [otherName, setOtherName] = useState('')
+  const [agent, setAgent] = useState(draft?.agent ?? '')
+  const [otherName, setOtherName] = useState(draft?.otherName ?? '')
 
   const [projects, setProjects] = useState<HostProjects | null>(null)
   const [projectsError, setProjectsError] = useState<string | null>(null)
@@ -83,9 +90,16 @@ export default function NewSession() {
   const [hats, setHats] = useState<HatItem[]>([])
   const [resolved, setResolved] = useState<Resolved>({ state: 'idle' })
 
-  const [prompt, setPrompt] = useState('')
+  const [prompt, setPrompt] = useState(draft?.prompt ?? '')
+  const [picks, setPicks] = useState<Picks>(draft?.picks ?? {})
+  const [optOut, setOptOut] = useState(false)
+  const [generation, setGeneration] = useState(0)
+  const [expanded, setExpanded] = useState(false)
   const [busy, setBusy] = useState(false)
-  const busyRef = useRef(false)
+  const busyRef = useRef(false), liveRef = useRef(true)
+  const [draftOwner] = useState(() => crypto.randomUUID())
+  const [sameLogin] = useState(() => launcherLogin(() => liveRef.current))
+  useEffect(() => { liveRef.current = true; return () => { liveRef.current = false } }, [])
   const [error, setError] = useState<string | null>(null)
 
   // The hosts, once, and the prefilled (or first connected) host.
@@ -149,16 +163,18 @@ export default function NewSession() {
     agentsFor(client, hostId).then(
       (got) => {
         if (!live) return
-        setChoices(got)
-        const usable = agentOptions(got.agents).filter((o) => o.disabled === undefined)
-        setAgent((current) => (current !== '' ? current : (usable[0]?.agent ?? (got.other ? OTHER : ''))))
+        const ids = Object.keys(hosts?.find(h => h.host_id === hostId)?.mcp_delivery ?? {})
+        const actual = { ...got, agents: ids.map(id => got.agents.find(a => a.agent === id) ?? { agent: id, available: true, auth: 'unknown' as const, cli: 'given' as const }) }
+        setChoices(actual)
+        const usable = agentOptions(actual.agents).filter((o) => o.disabled === undefined)
+        setAgent(current => usable.some(o => o.agent === current) || (current === OTHER && got.other) ? current : (usable[0]?.agent ?? (got.other ? OTHER : '')))
       },
       (err) => live && setError(messageOf(err)),
     )
     return () => {
       live = false
     }
-  }, [client, hostId])
+  }, [client, hostId, hosts])
 
   // The host's projects: the recents of the hat the chosen path resolves to
   // (the host's default hat until one is resolved), and its repositories.
@@ -223,33 +239,74 @@ export default function NewSession() {
     setInitialText('')
     setProjects(null)
     setRecentsFor(null)
-    setNotice(null)
+    setNotice('Host changed. Choose the agent and project again; their previous choices were reset.')
+    setPicks({})
+    setOptOut(false)
     setError(null)
   }
 
   const agentName = agent === OTHER ? otherName.trim() : agent
-  const canStart = !busy && host?.connected === true && agentName !== '' && cwd.trim() !== ''
+  const current = resolved.state === 'ok' && resolved.hostId === hostId && resolved.path === cwd ? resolved.resolution : null
+  const context = useLaunchContext(hostId, agentName, current?.canonical ?? '', current?.hat_id ?? '', generation)
+  const config = requestFor(context, picks, optOut)
+  const accent = useAccentStyle(hats.find(h => h.id === current?.hat_id)?.colour)
+  useRegisterContext({ hostId, cwd: current?.canonical, hatId: current?.hat_id })
+  useEffect(() => {
+    if (!hostId || !sameLogin()) return
+    try { sessionStorage.setItem(LAUNCH_DRAFT, JSON.stringify({ owner: draftOwner, host: hostId, cwd, prompt, agent, otherName, picks })) } catch { /* Current form remains usable. */ }
+  }, [hostId, cwd, prompt, agent, otherName, picks, draftOwner, sameLogin])
+  useEffect(() => { setOptOut(false) }, [context.key])
+  function chooseAgent(next: string) { if (next !== agent) { setAgent(next); setPicks({}); setNotice('Agent changed. Session setting choices were reset.') } }
+  const canStart = !busy && host?.connected === true && agentName !== '' && current?.exists === true && current.is_dir && config !== null
+  function retainClosedStart(sessionId: string) {
+    if (!sameLogin()) return
+    keepDraft(sessionId, prompt)
+    clearLauncherDraft(draftOwner)
+  }
+  function openSession(href: string) { if (sameLogin() && liveRef.current) navigate(href) }
 
   async function start(e: FormEvent) {
     e.preventDefault()
-    if (!canStart || busyRef.current) return
+    if (!canStart || busyRef.current || !sameLogin()) return
     busyRef.current = true
     setBusy(true)
+    e.currentTarget.closest<HTMLElement>('[role="dialog"]')?.focus()
     setError(null)
-    const request: StartSessionRequest = { host_id: hostId, agent: agentName, cwd: cwd.trim() }
+    const request: StartSessionRequest = { host_id: hostId, agent: agentName, cwd: current!.canonical, ...config }
     let sessionId: string
     try {
       sessionId = (await client.request<StartSessionResponse>('POST', '/api/sessions', request)).session_id
     } catch (err) {
+      if (!sameLogin()) return
       if (err instanceof ApiFailure && err.code === 'delivery_unknown' && err.sessionId) {
-        navigate(sessionHref(err.sessionId, { kind: 'start_unknown', kept: keepDraft(err.sessionId, prompt) }))
+        clearLauncherDraft(draftOwner)
+        openSession(sessionHref(err.sessionId, { kind: 'start_unknown', kept: keepDraft(err.sessionId, prompt) }))
         return
       }
+      if (!liveRef.current) return
       busyRef.current = false
       setBusy(false)
       setError(startRefusal(err))
       return
     }
+    if (!sameLogin()) return
+    if (!liveRef.current) { retainClosedStart(sessionId); return }
+    // A start acknowledgement alone cannot authorize the first prompt.
+    {
+      // The opt-out skips configuration evidence, never the actual-hat check.
+      const confirmation = await confirmStart(client, sessionId, current!.hat_id, config!, 30_000, !optOut)
+      if (!sameLogin()) return
+      if (!liveRef.current) { retainClosedStart(sessionId); return }
+      if (confirmation !== 'confirmed') {
+        const code = optOut && confirmation === 'config_unconfirmed' ? 'start_unconfirmed' : confirmation
+        keepDraft(sessionId, prompt)
+        if (code === 'config_unconfirmed') rememberConfigurationReview(sessionId, context.catalog, config!)
+        clearLauncherDraft(draftOwner)
+        openSession(sessionHref(sessionId, { kind: 'prompt_failed', code }))
+        return
+      }
+    }
+    clearLauncherDraft(draftOwner)
     // Images are not part of the first prompt yet: the composer's image
     // rules (Task 6) take them once it is shared with this form.
     if (prompt.trim() !== '') {
@@ -258,36 +315,53 @@ export default function NewSession() {
           content: [{ type: 'text', text: prompt }],
         })
       } catch (err) {
+        if (!sameLogin()) return
         keepDraft(sessionId, prompt)
         const code = err instanceof ApiFailure ? err.code : 'unknown'
-        navigate(sessionHref(sessionId, { kind: 'prompt_failed', code }))
+        openSession(sessionHref(sessionId, { kind: 'prompt_failed', code }))
         return
       }
     }
-    navigate(sessionHref(sessionId))
+    openSession(sessionHref(sessionId))
   }
 
   const options = choices ? agentOptions(choices.agents) : []
 
   return (
-    <form className="new-session" onSubmit={start} aria-labelledby="new-session-title">
+    <form className="new-session hn-accent-scope" style={accent} onSubmit={start} aria-busy={busy} aria-labelledby="new-session-title" onKeyDown={e => { if (!e.defaultPrevented && !e.repeat && !e.altKey && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (canStart) e.currentTarget.requestSubmit() } }}>
       <div className="modal-head">
         <div className="modal-eyebrow">Start a session</div>
         <h1 className="modal-title" id="new-session-title">
           New session
         </h1>
       </div>
-      <div className="modal-body">
+      <div className="modal-body"><fieldset className="launch-fields" aria-label="Session details" disabled={busy} inert={busy}>
         {notice !== null && (
           <p className="hint" role="status">
             <bdi>{notice}</bdi>
           </p>
         )}
 
-        <div className="field" role="group" aria-labelledby={ids.host}>
-          <div className="field-label" id={ids.host}>
+        {hostId !== '' && (
+            <div className="field first-prompt">
+              <label className="field-label" htmlFor={ids.prompt}>
+                <Icon.Sparkle size={16} /> First prompt <span className="hint">optional</span>
+              </label>
+              <div className="prompt-box">
+                <textarea
+                  disabled={busy}
+                  id={ids.prompt}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder={`What should ${agentName && agent !== OTHER ? agentLabel(agentName) : 'the agent'} work on?`}
+                />
+              </div>
+            </div>
+        )}
+        <fieldset className="field launch-choice" disabled={busy}>
+          <legend className="field-label" id={ids.host}>
             <Icon.Terminal size={16} /> Host <span className="hint">where the agent runs</span>
-          </div>
+          </legend>
           {hostsError !== null ? (
             <p className="form-error" role="alert">
               <bdi>{hostsError}</bdi>
@@ -301,15 +375,12 @@ export default function NewSession() {
           ) : (
             <div className="seg">
               {hosts.map((h) => (
-                <button
+                <label
                   key={h.host_id}
-                  type="button"
                   className={'seg-item' + (hostId === h.host_id ? ' sel' : '')}
-                  aria-pressed={hostId === h.host_id}
-                  disabled={!h.connected}
                   title={h.connected ? undefined : 'Offline'}
-                  onClick={() => chooseHost(h.host_id)}
                 >
+                  <input type="radio" name={ids.host} value={h.host_id} checked={hostId === h.host_id} disabled={!h.connected} onChange={() => chooseHost(h.host_id)} />
                   <span className={'seg-led ' + (h.connected ? 'led-run' : 'led-idle')} />
                   <span>
                     <span className="seg-name">
@@ -317,32 +388,29 @@ export default function NewSession() {
                     </span>
                     {!h.connected && <span className="seg-host"> offline</span>}
                   </span>
-                </button>
+                </label>
               ))}
             </div>
           )}
-        </div>
+        </fieldset>
 
         {hostId !== '' && (
           <>
-            <div className="field" role="group" aria-labelledby={ids.agent}>
-              <div className="field-label" id={ids.agent}>
+            <fieldset className="field launch-choice" disabled={busy}>
+              <legend className="field-label" id={ids.agent}>
                 <Icon.Cpu size={16} /> Agent
-              </div>
+              </legend>
               {choices === null ? (
                 <p className="hint">Loading…</p>
               ) : (
                 <div className="seg">
                   {options.map((o) => (
-                    <button
+                    <label
                       key={o.agent}
-                      type="button"
                       className={'seg-item' + (agent === o.agent ? ' sel' : '')}
-                      aria-pressed={agent === o.agent}
-                      disabled={o.disabled !== undefined}
                       title={o.disabled}
-                      onClick={() => setAgent(o.agent)}
                     >
+                      <input type="radio" name={ids.agent} value={o.agent} checked={agent === o.agent} disabled={o.disabled !== undefined} onChange={() => chooseAgent(o.agent)} />
                       <span className="seg-name">
                         <bdi>{o.label}</bdi>
                       </span>
@@ -351,17 +419,15 @@ export default function NewSession() {
                           <bdi>{o.disabled}</bdi>
                         </span>
                       )}
-                    </button>
+                    </label>
                   ))}
                   {choices.other && (
-                    <button
-                      type="button"
+                    <label
                       className={'seg-item' + (agent === OTHER ? ' sel' : '')}
-                      aria-pressed={agent === OTHER}
-                      onClick={() => setAgent(OTHER)}
                     >
+                      <input type="radio" name={ids.agent} value={OTHER} checked={agent === OTHER} onChange={() => chooseAgent(OTHER)} />
                       <span className="seg-name">Other…</span>
-                    </button>
+                    </label>
                   )}
                 </div>
               )}
@@ -376,7 +442,7 @@ export default function NewSession() {
                   />
                 </div>
               )}
-            </div>
+            </fieldset>
 
             <div className="field">
               <div className="field-label" id={ids.project}>
@@ -409,22 +475,12 @@ export default function NewSession() {
               )} />
             </div>
 
-            <div className="field">
-              <label className="field-label" htmlFor={ids.prompt}>
-                <Icon.Sparkle size={16} /> First prompt <span className="hint">optional</span>
-              </label>
-              <div className="prompt-box">
-                <textarea
-                  id={ids.prompt}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder={`What should ${agentName && agent !== OTHER ? agentLabel(agentName) : 'the agent'} work on?`}
-                />
-              </div>
-            </div>
+            {current && <><LaunchConfig context={context} picks={picks} onPicks={setPicks} optOut={optOut} onOptOut={setOptOut} retry={() => setGeneration(g => g + 1)} expanded={expanded} onExpanded={setExpanded} />
+              <Link aria-disabled={busy} tabIndex={busy ? -1 : undefined} onClick={event => { if (busy) event.preventDefault() }} to={`/defaults?${new URLSearchParams({ host: hostId, cwd: current.canonical, agent: agentName, hat: current.hat_id, return: 'new' })}`}>Edit defaults</Link></>}
+
           </>
         )}
-      </div>
+      </fieldset></div>
       <div className="modal-foot">
         {error !== null && (
           <p className="form-error" role="alert">
@@ -473,4 +529,38 @@ function keepDraft(sessionId: string, prompt: string): boolean {
   if (prompt.trim() === '') return false
   saveDraft(sessionId, prompt)
   return true
+}
+
+const LAUNCH_DRAFT = 'hennery.draft.__launcher__'
+const LAUNCH_LOGIN = 'hennery.draft.__launcher_login__'
+/** Existing logout cleanup removes this marker along with every draft.
+ * Reopening a launcher shares it; signing in again creates a new lifetime.
+ * No shared auth/logout helper or other screen needs a new callback. */
+function launcherLogin(live: () => boolean): () => boolean {
+  try {
+    const token = sessionStorage.getItem(LAUNCH_LOGIN) ?? crypto.randomUUID()
+    sessionStorage.setItem(LAUNCH_LOGIN, token)
+    return () => { try { return sessionStorage.getItem(LAUNCH_LOGIN) === token } catch { return false } }
+  } catch {
+    // Storage cannot retain text either. Keep the mounted form usable,
+    // while a closed launcher or auth-page navigation cannot finish it.
+    return () => live() && location.pathname !== '/login' && location.pathname !== '/setup'
+  }
+}
+interface LauncherDraft { host: string; cwd: string; agent: string; otherName: string; prompt: string; picks: Picks }
+function readLauncherDraft(): LauncherDraft | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(LAUNCH_DRAFT) ?? 'null') as unknown
+    if (!value || typeof value !== 'object') return null
+    const v = value as Record<string, unknown>
+    if (!['host', 'cwd', 'agent', 'otherName', 'prompt'].every(key => typeof v[key] === 'string')) return null
+    if (!v.picks || typeof v.picks !== 'object' || Array.isArray(v.picks) || !Object.values(v.picks).every(p => p === null || typeof p === 'boolean' || typeof p === 'string')) return null
+    return v as unknown as LauncherDraft
+  } catch { return null }
+}
+function clearLauncherDraft(owner: string) {
+  try {
+    const current = JSON.parse(sessionStorage.getItem(LAUNCH_DRAFT) ?? 'null') as { owner?: unknown } | null
+    if (current?.owner === owner) sessionStorage.removeItem(LAUNCH_DRAFT)
+  } catch { /* Current session draft still remains. */ }
 }

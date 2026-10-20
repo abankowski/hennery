@@ -48,8 +48,14 @@ import { Composer, type ComposerHandle } from '../components/Composer'
 import { ANSWER_LABEL, answerAsMessage } from '../components/composerWords'
 import SessionFooter from '../components/SessionFooter'
 import SessionHeader, { type HeaderInfo } from '../components/SessionHeader'
-import McpDelivery from '../components/McpDelivery'
 import FamilyPanel from '../components/FamilyPanel'
+import SessionDetails, { type SessionDetailsTab } from '../components/SessionDetails'
+import { useSessionScope } from '../components/SessionScope'
+import { useRegisterAction, useRegisterContext } from '../app-actions'
+import { saveTheme, useAccentStyle } from '../lib/theme'
+import { themeOf } from '../lib/hats'
+import { takeOver } from '../api/view'
+import { QuestionPresentationContext } from '../components/QuestionActions'
 import { Text } from '../lib/text'
 import { useMcpDelivery } from '../hooks/useMcpDelivery'
 import SessionMenu from '../components/SessionMenu'
@@ -229,8 +235,24 @@ function useTailWindow(items: Item[], loads: number, size: number, pending?: str
   return { visible, held: start, reveal }
 }
 
-export default function SessionView({ id, summary, awaitSummary = false, tail = TAIL, timing, onRemoved }: Props) {
+export default function SessionView(props: Props) {
+  return <SelectedSession key={props.id} {...props} />
+}
+
+function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timing, onRemoved }: Props) {
   const client = useClient()
+  const scope = useSessionScope()
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [detailsTab, setDetailsTab] = useState<SessionDetailsTab>('Family')
+  const detailsTrigger = useRef<HTMLButtonElement>(null)
+  const toggleDetails = useCallback(() => setDetailsOpen(open => !open), [])
+  const openFamily = useCallback(() => { setDetailsTab('Family'); setDetailsOpen(true) }, [])
+  const closeDetails = useCallback(() => { setDetailsOpen(false); detailsTrigger.current?.focus() }, [])
+  const [familyRefresh, setFamilyRefresh] = useState(0)
+  const [taking, setTaking] = useState(false)
+  const [takeError, setTakeError] = useState<string | null>(null)
+  const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null)
+  const [answerNotice, setAnswerNotice] = useState<string | null>(null)
   const s = useSessionItems(id, timing)
   const mcp = useMcpDelivery(id, summary?.lifecycle, Math.max(0, s.loads - 1))
   const [familyRead, setFamilyRead] = useState<{ id: string; page: FamilyPage } | null>(null)
@@ -258,11 +280,36 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   }, [id, targetQuestion, s.items, s.pinned])
   const win = useTailWindow(s.items, s.loads, tail, targetQuestion)
   const narrow = useMediaQuery('(max-width: 767px)')
+  useLayoutEffect(() => {
+    if (!selectedQuestion) return
+    // A resync or removal may unmount the selected card without its live →
+    // stale effect. Reconcile against both rendered transcript regions, using
+    // the card's canonical actionable state (including local answer outcomes).
+    const cards = questionRegion.current?.querySelectorAll<HTMLElement>('.ask:not(.stale)') ?? []
+    if (![...cards].some(card => card.dataset.pendingId === selectedQuestion)) setSelectedQuestion(null)
+  }, [selectedQuestion, win.visible, s.pinned, s.loading])
+  useLayoutEffect(() => {
+    if (!narrow || !selectedQuestion) return
+    // Run after the transcript's tail pin and browser focus scrolling settle.
+    // Measure the card itself: its bottom action region sits outside the card.
+    const frame = requestAnimationFrame(() => {
+      const card = [...(questionRegion.current?.querySelectorAll<HTMLElement>('[data-pending-id]') ?? [])].find(el => el.dataset.pendingId === selectedQuestion)
+      const scroll = card?.closest<HTMLElement>('.transcript')
+      if (card && scroll) scroll.scrollTop += card.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 16
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [narrow, selectedQuestion, s.loads])
   const hostItems = useList('hosts', true)
   const hosts = useMemo(() => namesOf(hostItems, 'host_id'), [hostItems])
-  const wantsHats = useMemo(() => s.items.some((i) => i.kind === 'marker' && i.marker === 'hat_reassigned'), [s.items])
-  const hatItems = useList('hats', wantsHats)
-  const hats = useMemo(() => namesOf(hatItems, 'id'), [hatItems])
+  const hatItems = useList('hats', scope === null)
+  const hats = useMemo(() => scope?.hats ? new Map(scope.hats.map(h => [h.id, h.name])) : namesOf(hatItems, 'id'), [scope?.hats, hatItems])
+  const actualHat = (scope?.hats ?? (Array.isArray(hatItems) ? hatItems as { id: string; colour: string; name: string }[] : [])).find(h => h.id === info?.hat_id)
+  const accent = useAccentStyle(actualHat?.colour)
+  useEffect(() => {
+    if (!actualHat) return
+    saveTheme(themeOf(actualHat.colour))
+    return () => { if (scope?.hats) saveTheme(themeOf(scope.hats.find(h => h.id === scope.hat)?.colour)) }
+  }, [actualHat?.id, actualHat?.colour, scope?.hats, scope?.hat])
   const plan = useMemo(() => latestPlan(s.items), [s.items])
   const startNotice = useStartNotice(id)
   const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion, s.pinned)
@@ -272,12 +319,33 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   // The composer's handle: the item seams reach the draft through it, and
   // stay the same functions for as long as the view is shown.
   const composer = useRef<ComposerHandle>(null)
-  const onSendAgain = useCallback((item: Extract<Item, { kind: 'marker' }>) => {
-    if (item.about_turn) void composer.current?.refill(item.about_turn)
+  const focusComposer = useCallback(() => {
+    setSelectedQuestion(null)
+    setTimeout(() => composer.current?.focus(), 0)
   }, [])
+  const openProject = useCallback(() => {
+    if (info) navigate(`/new?host=${encodeURIComponent(info.host_id)}&cwd=${encodeURIComponent(info.cwd)}`)
+  }, [info])
+  useRegisterAction('toggle-details', { label: 'Toggle session details', enabled: !s.removed, run: toggleDetails })
+  useRegisterAction('focus-composer', { label: 'Focus composer', enabled: !s.removed, run: focusComposer })
+  useRegisterAction('new-session', { label: 'New session in this project', enabled: !s.removed && !!info, run: openProject })
+  useRegisterContext({ sessionId: s.removed ? undefined : id, hostId: s.removed ? undefined : info?.host_id, cwd: s.removed ? undefined : info?.cwd, hatId: s.removed ? undefined : info?.hat_id })
+  const takeover = async () => {
+    if (taking) return
+    setTaking(true); setTakeError(null)
+    try { await takeOver(client, id); setFamilyRefresh(n => n + 1) }
+    catch { setTakeError('This session could not be taken over. Try again.') }
+    finally { setTaking(false) }
+  }
+  const onSendAgain = useCallback((item: Extract<Item, { kind: 'marker' }>) => {
+    if (item.about_turn) {
+      focusComposer()
+      void composer.current?.refill(item.about_turn)
+    }
+  }, [focusComposer])
   const onAnswerAsMessage = useCallback(
-    (question: string) => composer.current?.prefill(answerAsMessage(question), ANSWER_LABEL),
-    [],
+    (question: string) => { focusComposer(); composer.current?.prefill(answerAsMessage(question), ANSWER_LABEL) },
+    [focusComposer],
   )
   const composerEmpty = useCallback(() => composer.current?.isEmpty() ?? true, [])
   // The view's one resume: the footer's Resume and the composer's "Resume
@@ -301,6 +369,13 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   )
   const back = useRef<HTMLAnchorElement>(null)
   const capabilities = capabilitiesOf(hostItems, info?.host_id)
+  const nextQuestion = useCallback(() => {
+    const cards = [...(questionRegion.current?.querySelectorAll<HTMLElement>('.ask:not(.stale)') ?? [])]
+    const at = cards.findIndex(card => card.dataset.pendingId === selectedQuestion)
+    const next = cards[at + 1] ?? cards[0]
+    next?.scrollIntoView?.({ block: 'center' }); next?.focus({ preventScroll: true })
+  }, [selectedQuestion])
+  const presentation = useMemo(() => narrow ? { selected: selectedQuestion, select: setSelectedQuestion, acknowledge: setAnswerNotice, next: nextQuestion, writePrompt: focusComposer } : null, [narrow, selectedQuestion, nextQuestion, focusComposer])
 
   const env: ItemEnv = useMemo(
     () => ({
@@ -358,26 +433,38 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   }
 
   return (
-    <div className="session" ref={questionRegion}>
+    <QuestionPresentationContext.Provider value={presentation}>
+    <div className={'session hn-accent-scope' + (narrow && selectedQuestion ? ' has-question-actions' : '')} style={accent} ref={questionRegion}>
       <SessionHeader
         id={id}
         info={info}
         hostName={info ? hosts.get(info.host_id) : undefined}
         plan={plan}
         narrow={narrow}
+        hatName={actualHat?.name}
+        hostConnected={connectedOf(hostItems, info?.host_id)}
+        delivery={mcp.detail?.mcp_delivery}
+        detailsOpen={detailsOpen}
+        toggleDetails={toggleDetails}
+        openFamily={openFamily}
+        detailsTrigger={detailsTrigger}
         menu={
           <SessionMenu
             id={id}
             lifecycle={info?.lifecycle}
             family={info?.family}
             canPark={capabilities?.includes('park') ?? false}
+            supportsIdleHold={capabilities?.includes('idle_hold')}
+            hostConnected={connectedOf(hostItems, info?.host_id)}
             onDeleted={onDeleted}
             focusAfterDelete={() => back.current}
           />
         }
       />
-      <FamilyPanel key={id} id={id} summary={summary} hosts={hosts} resync={Math.max(0, s.loads - 1)} onPage={onFamilyPage} />
-      <McpDelivery agent={info?.agent ?? mcp.detail?.agent} delivery={mcp.detail?.mcp_delivery} />
+      {info?.family?.parent && family?.routing === 'active' && <div className="parent-banner" role="region" aria-label="Parent-driven session"><p>Driven by <Link to={`/sessions/${encodeURIComponent(info.family.parent.session_id)}`}><bdi>{info.family.parent.title || 'parent session'}</bdi></Link>. Answers go to this child. A prompt from you takes over this session.</p><button type="button" className="btn btn-ghost btn-sm" disabled={taking} onClick={() => void takeover()}>{taking ? 'Taking over…' : 'Take over'}</button>{takeError && <p role="alert">{takeError}</p>}</div>}
+      <div className="session-workspace">
+      <div className="session-conversation">
+      {answerNotice && <p className="answer-acknowledgement" role="status">{answerNotice}<button type="button" aria-label="Dismiss answer notice" onClick={() => setAnswerNotice(null)}>×</button></p>}
       {mcp.error && <p className="form-error"><Text>{mcp.error}</Text></p>}
       <div className="stream-state" role="status">
         {s.stream === 'reconnecting' ? 'Reconnecting…' : s.resynced ? 'Resynced' : ''}
@@ -430,7 +517,13 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
           onResume={onResume}
         />
       )}
+      </div>
+      <SessionDetails open={detailsOpen} tab={detailsTab} onTab={setDetailsTab} onClose={closeDetails} trigger={detailsTrigger} info={info} hostName={info ? hosts.get(info.host_id) : undefined} hatName={actualHat?.name} plan={plan} delivery={mcp.detail?.mcp_delivery}>
+        <FamilyPanel key={id} id={id} summary={summary} hosts={hosts} resync={Math.max(0, s.loads - 1) + familyRefresh} onPage={onFamilyPage} />
+      </SessionDetails>
+      </div>
     </div>
+    </QuestionPresentationContext.Provider>
   )
 }
 

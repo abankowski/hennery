@@ -14,5 +14,5 @@ it('warns about retained family copies before deleting, with authorized encoded 
   expect(within(dialog).getByText('Copies already delivered to related sessions remain in their transcripts. Those sessions are kept.', { exact: true })).toBeInTheDocument()
   expect(within(dialog).getByRole('link', { name: '<b>Worker</b>' })).toHaveAttribute('href', '/sessions/child%2F1')
   expect(dialog.querySelector('b')).toBeNull()
-  expect(s.calls).toHaveLength(0)
+  expect(s.calls).toEqual([expect.objectContaining({ method: 'GET', path: '/api/sessions/parent/idle-hold' })])
 })

@@ -9,8 +9,9 @@ import { messageOf } from '../api/errors'
 import { useClient } from '../app-client'
 import type { DirectoryListing } from '../generated/protocol'
 import { childPath, filterProjects, isLiteralPath, type ProjectEntry } from '../lib/projects'
-import { basename } from '../lib/time'
+import { basename, relTime } from '../lib/time'
 import { Icon } from '../lib/ui'
+import { Icon as Glyph } from './ui'
 
 interface Props {
   hostId: string
@@ -151,7 +152,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
                   }}
                 >
                   <bdi>{m.name}</bdi>
-                  {m.lastUsed !== undefined && <span className="hint"> recent</span>}
+                  {m.lastUsed !== undefined && <span className="picker-time hint"><Glyph name="clock" size={14} /><time dateTime={m.lastUsed} title={m.lastUsed}>recent · {relTime(m.lastUsed) || 'time unavailable'}</time></span>}
                 </li>
               ))}
             </ul>

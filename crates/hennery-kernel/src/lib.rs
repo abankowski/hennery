@@ -29,3 +29,5 @@ pub mod redact;
 mod schema;
 pub mod secret;
 pub mod web;
+
+pub mod session_defaults;

@@ -11,10 +11,11 @@ import { DESKTOP } from '../components/Shell'
 import type { HatItem, HostItem, HostProjects } from '../generated/protocol'
 import type { SessionSummary } from '../generated/view'
 import type { HostAgentChoices } from '../lib/agents'
-import { newSessionHref } from '../lib/start'
+import { newSessionHref, readStartNotice } from '../lib/start'
 import { navigate } from '../router'
 import { json, stubServer, type Answer } from '../test-server'
 import { liveStream } from '../test-stream'
+import { completeLogout } from '../pwa/logout'
 import NewSession, { RESOLVE_DEBOUNCE_MS } from './NewSession'
 
 // The agents a test wants `agentsFor` to answer, or `null` for its own.
@@ -38,6 +39,7 @@ function host(id: string, name: string, patch: Partial<HostItem> = {}): HostItem
     default_hat_id: 'hat-a',
     workspace_roots: ['/srv/work'],
     connected: true,
+    mcp_delivery: { claude: 'isolated', codex: 'default_hat_only' },
     created_at: '2026-10-01T00:00:00Z',
     ...patch,
   }
@@ -79,7 +81,18 @@ const PROJECTS: HostProjects = {
 const RESOLVED = { canonical: '/srv/work/cat', exists: true, is_dir: true, hat_id: 'hat-a' }
 
 function base(): Record<string, Answer | Answer[]> {
+  const config_options = [{ id: 'model', name: 'Model', type: 'select', currentValue: 'a', options: [{ value: 'a', name: 'A' }] }]
+  const catalog = { agent: 'claude', adapter_revision: 'test', freshness: 'fresh', config_options, defaults: {}, security: { known: true, axes: {} } }
+  const settings: Record<string, Answer> = {}
+  for (const hostId of ['h1', 'h4']) for (const agent of ['claude', 'codex', 'my-agent']) settings[`GET /api/hosts/${hostId}/runtime-catalog?agent=${agent}&cwd=%2Fsrv%2Fwork%2Fcat`] = json(200, { ...catalog, agent })
+  for (const agent of ['claude', 'codex', 'my-agent']) for (const hatId of ['hat-a','hat-b']) settings[`GET /api/hats/${hatId}/session-defaults?agent=${agent}`] = json(200, { hat_id: hatId, agent, revision: 0, config: {} })
   return {
+    ...settings,
+    'GET /api/hats/hat-a/delegation-policy': json(200, { revision: 0, allowed: {} }),
+    'GET /api/hats/hat-b/delegation-policy': json(200, { revision: 0, allowed: {} }),
+    'GET /api/view/sessions/s-1?limit=1': json(200, { items: [] }),
+    'GET /api/sessions/s-1': json(200, { session_id: 's-1', hat_id: 'hat-a', lifecycle: 'active' }),
+    'GET /api/sessions/s-1/catalog': json(200, { session_id: 's-1', config_options, commands: [] }),
     'GET /api/hosts': json(200, HOSTS),
     'GET /api/hats': json(200, HATS),
     'GET /api/hosts/h1/projects': json(200, PROJECTS),
@@ -99,12 +112,12 @@ function mount(routes: Record<string, Answer | Answer[]> = {}, path = '/new') {
     here: () => ({ pathname: location.pathname, search: location.search }),
     stepUp: async () => {},
   })
-  render(
+  const view = render(
     <ClientContext.Provider value={client}>
       <NewSession />
     </ClientContext.Provider>,
   )
-  return server
+  return { ...server, client, unmount: view.unmount }
 }
 
 it('predicts delivery for the resolved hat and chosen agent', async () => {
@@ -115,12 +128,12 @@ it('predicts delivery for the resolved hat and chosen agent', async () => {
   const field = await screen.findByRole('combobox', { name: /^Project/ })
   await userEvent.type(field, '/srv/work/cat')
   await waitFor(() => expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent("This agent was given only this hat's MCP servers."))
-  await userEvent.click(screen.getByRole('button', { name: 'Codex' }))
+  await userEvent.click(screen.getByRole('radio', { name: 'Codex' }))
   expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('not isolated per hat')
   expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('~/.codex')
 })
 
-const hostButton = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`) })
+const hostButton = (name: string) => screen.getByRole('radio', { name: new RegExp(`^${name}`) })
 const projectField = () => screen.findByRole('combobox', { name: /^Project/ })
 const startButton = () => screen.getByRole('button', { name: /Start session/ })
 const posts = (sent: { method: string; path: string }[]) => sent.filter((s) => s.method === 'POST').map((s) => s.path)
@@ -128,8 +141,8 @@ const posts = (sent: { method: string; path: string }[]) => sent.filter((s) => s
 /** Host laptop, Claude, `path` typed as a path, `prompt` typed. */
 async function fill(path = '/srv/work/cat', prompt = '') {
   const user = userEvent.setup()
-  await screen.findByRole('button', { name: 'Claude' })
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Claude' })).toHaveAttribute('aria-pressed', 'true'))
+  await screen.findByRole('radio', { name: 'Claude' })
+  await waitFor(() => expect(screen.getByRole('radio', { name: 'Claude' })).toBeChecked())
   await user.type(await projectField(), path)
   if (prompt) await user.type(screen.getByLabelText(/^First prompt/), prompt)
   return user
@@ -149,27 +162,27 @@ afterEach(() => {
 describe('hosts', () => {
   it('lists connected hosts first and offline ones disabled, never a revoked one', async () => {
     mount()
-    await screen.findByRole('button', { name: /^laptop/ })
+    await screen.findByRole('radio', { name: /^laptop/ })
     const group = screen.getByRole('group', { name: /Host/ })
     const names = within(group)
-      .getAllByRole('button')
-      .map((b) => b.querySelector('.seg-name')?.textContent)
+      .getAllByRole('radio')
+      .map((b) => b.closest('label')?.querySelector('.seg-name')?.textContent)
     expect(names).toEqual(['laptop', 'desk', 'server'])
     expect(hostButton('server')).toBeDisabled()
-    expect(hostButton('server')).toHaveTextContent('offline')
+    expect(hostButton('server').closest('label')).toHaveTextContent('offline')
     expect(hostButton('laptop')).toBeEnabled()
     expect(screen.queryByRole('button', { name: /retired/ })).toBeNull()
   })
 
   it('picks the first connected host', async () => {
     mount({ 'GET /api/hosts': json(200, [host('h2', 'server', { connected: false }), host('h4', 'desk')]) })
-    await waitFor(() => expect(hostButton('desk')).toHaveAttribute('aria-pressed', 'true'))
+    await waitFor(() => expect(hostButton('desk')).toBeChecked())
   })
 
   it('prefills a link’s text that is not a path as a search: no path until a project is picked', async () => {
     const server = mount({}, '/new?host=h1&cwd=cat')
-    await waitFor(() => expect(hostButton('laptop')).toHaveAttribute('aria-pressed', 'true'))
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Claude' })).toHaveAttribute('aria-pressed', 'true'))
+    await waitFor(() => expect(hostButton('laptop')).toBeChecked())
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Claude' })).toBeChecked())
     expect(await projectField()).toHaveValue('cat')
     expect(startButton()).toBeDisabled()
     await new Promise((r) => setTimeout(r, RESOLVE_DEBOUNCE_MS + 50))
@@ -178,20 +191,20 @@ describe('hosts', () => {
 
   it('prefills the host and the path from a link', async () => {
     mount({}, '/new?host=h4&cwd=%2Fsrv%2Fwork%2Fapp')
-    await waitFor(() => expect(hostButton('desk')).toHaveAttribute('aria-pressed', 'true'))
+    await waitFor(() => expect(hostButton('desk')).toBeChecked())
     expect(await projectField()).toHaveValue('/srv/work/app')
   })
 
   it('prefills from the link a failed session offers, whatever its path holds', async () => {
     mount({}, newSessionHref('h4', '/srv/work/a b&c=d#e?f+g%h'))
-    await waitFor(() => expect(hostButton('desk')).toHaveAttribute('aria-pressed', 'true'))
+    await waitFor(() => expect(hostButton('desk')).toBeChecked())
     expect(await projectField()).toHaveValue('/srv/work/a b&c=d#e?f+g%h')
   })
 
   it('says why a prefilled offline host is not chosen, and chooses none', async () => {
     mount({}, '/new?host=h2&cwd=%2Fsrv%2Fwork%2Fapp')
     expect(await screen.findByText(/server is offline, so the session cannot start there/)).toBeInTheDocument()
-    expect(hostButton('laptop')).toHaveAttribute('aria-pressed', 'false')
+    expect(hostButton('laptop')).not.toBeChecked()
     expect(screen.queryByRole('combobox', { name: /^Project/ })).toBeNull()
   })
 })
@@ -200,9 +213,10 @@ describe('agents', () => {
   it('offers the fallback agents and Other, and starts one named by hand', async () => {
     const server = mount()
     const user = await fill()
-    expect(screen.getByRole('button', { name: 'Codex' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: 'Other…' }))
+    expect(screen.getByRole('radio', { name: 'Codex' })).toBeEnabled()
+    await user.click(screen.getByRole('radio', { name: 'Other…' }))
     await user.type(screen.getByRole('textbox', { name: 'Agent name' }), 'my-agent')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(server.sent.find((s) => s.path === '/api/sessions')?.body).toEqual({
@@ -224,12 +238,12 @@ describe('agents', () => {
       other: false,
     }
     mount()
-    const codex = await screen.findByRole('button', { name: /^Codex/ })
+    const codex = await screen.findByRole('radio', { name: /^Codex/ })
     expect(codex).toBeDisabled()
-    expect(codex).toHaveTextContent('Run the login on the host.')
-    expect(screen.getByRole('button', { name: 'Claude' })).toBeEnabled()
+    expect(codex.closest('label')).toHaveTextContent('Run the login on the host.')
+    expect(screen.getByRole('radio', { name: 'Claude' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: /gemini/i })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Other…' })).toBeNull()
+    expect(screen.queryByRole('radio', { name: 'Other…' })).toBeNull()
   })
 })
 
@@ -291,6 +305,7 @@ describe('project picker', () => {
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/^Projects could not be listed: .+ You can still type a path\.$/)
     const user = await fill('/srv/work/cat')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(server.sent.find((s) => s.path === '/api/sessions')?.body).toMatchObject({ cwd: '/srv/work/cat' })
@@ -343,9 +358,10 @@ describe('project picker', () => {
     const server = mount()
     const user = await fill('~/work/cat')
     expect(screen.queryByRole('listbox')).toBeNull()
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
-    expect(server.sent.find((s) => s.path === '/api/sessions')?.body).toMatchObject({ cwd: '~/work/cat' })
+    expect(server.sent.find((s) => s.path === '/api/sessions')?.body).toMatchObject({ cwd: '/srv/work/cat' })
   })
 
   it('a search is no path until a project is picked', async () => {
@@ -361,6 +377,8 @@ describe('project picker', () => {
 
   it('browses the host directories and uses the one chosen', async () => {
     const server = mount({
+      'POST /api/hats/resolve': json(200, { ...RESOLVED, canonical: '/srv/work/atlas' }),
+      'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fatlas': base()['GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat'],
       'GET /api/hosts/h1/browse?path=%2Fsrv%2Fwork': json(200, {
         path: '/srv/work',
         parent: '/srv',
@@ -383,6 +401,7 @@ describe('project picker', () => {
     await user.click(within(panel).getByRole('button', { name: 'Use this directory' }))
     expect(screen.queryByRole('group', { name: 'Browse directories' })).toBeNull()
     expect(await projectField()).toHaveValue('atlas')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(server.sent.find((s) => s.path === '/api/sessions')?.body).toMatchObject({ cwd: '/srv/work/atlas' })
@@ -393,7 +412,7 @@ describe('hat preview', () => {
   it('resolves the hat only once the path has rested', async () => {
     const server = mount()
     const field = await projectField()
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Claude' })).toHaveAttribute('aria-pressed', 'true'))
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Claude' })).toBeChecked())
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const resolves = () => server.sent.filter((s) => s.path === '/api/hats/resolve')
     for (const text of ['/s', '/srv/wo', '/srv/work/cat']) {
@@ -443,6 +462,7 @@ describe('start', () => {
   it('starts the session, then sends the first prompt, then opens the session', async () => {
     const server = mount()
     const user = await fill('/srv/work/cat', 'Fix the tests')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(location.search).toBe('')
@@ -458,6 +478,7 @@ describe('start', () => {
   it('sends no prompt when the first prompt is empty', async () => {
     const server = mount()
     const user = await fill('/srv/work/cat', '   ')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
@@ -472,6 +493,7 @@ describe('start', () => {
   ])('says why a start was refused: %s', async (code, status, message, shown) => {
     const server = mount({ 'POST /api/sessions': json(status, { code, message }) })
     const user = await fill('/srv/work/cat', 'Fix the tests')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     const alert = await screen.findByText(shown)
     expect(alert.closest('[role="alert"]')).not.toBeNull()
@@ -491,6 +513,7 @@ describe('start', () => {
       }),
     })
     const user = await fill('/srv/work/cat', 'Fix the tests')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-9'))
     expect(location.search).toBe('?notice=start_unknown_draft')
@@ -501,6 +524,7 @@ describe('start', () => {
   it('a start whose delivery is unknown, with no first prompt, says nothing of a draft', async () => {
     mount({ 'POST /api/sessions': json(503, { code: 'delivery_unknown', message: 'gone', session_id: 's-9' }) })
     const user = await fill('/srv/work/cat')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-9'))
     expect(location.search).toBe('?notice=start_unknown')
@@ -510,6 +534,7 @@ describe('start', () => {
   it('a delivery unknown that names no session stays on the form', async () => {
     mount({ 'POST /api/sessions': json(503, { code: 'delivery_unknown', message: 'gone' }) })
     const user = await fill('/srv/work/cat', 'Fix the tests')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     expect(await screen.findByText(/its outcome is not known/)).toBeInTheDocument()
     expect(location.pathname).toBe('/new')
@@ -518,6 +543,7 @@ describe('start', () => {
   it('a refused first prompt opens the session with a notice and keeps the prompt as its draft', async () => {
     mount({ 'POST /api/sessions/s-1/prompt': json(409, { code: 'host_offline', message: 'the host is not connected' }) })
     const user = await fill('/srv/work/cat', 'Fix the tests')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(location.search).toBe('?notice=prompt_failed&code=host_offline')
@@ -535,14 +561,14 @@ describe('changing the host', () => {
       }),
     })
     const user = await fill('/srv/work/cat')
-    await user.click(screen.getByRole('button', { name: 'Codex' }))
+    await user.click(screen.getByRole('radio', { name: 'Codex' }))
     await user.click(screen.getByRole('button', { name: 'Browse' }))
     await screen.findByRole('group', { name: 'Browse directories' })
     await screen.findByText(/^Starts in the hat/, undefined, { timeout: 3000 })
 
     await user.click(hostButton('desk'))
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Claude' })).toHaveAttribute('aria-pressed', 'true'))
-    expect(screen.getByRole('button', { name: 'Codex' })).toHaveAttribute('aria-pressed', 'false')
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Claude' })).toBeChecked())
+    expect(screen.getByRole('radio', { name: 'Codex' })).not.toBeChecked()
     expect(await projectField()).toHaveValue('')
     expect(screen.queryByRole('group', { name: 'Browse directories' })).toBeNull()
     expect(screen.queryByText(/^Starts in the hat/)).toBeNull()
@@ -590,6 +616,12 @@ describe('in the app', () => {
           return json(200, HOSTS)
         case 'GET /api/hosts/h1/projects':
           return json(200, PROJECTS)
+        case 'GET /api/hosts/h1/runtime-catalog':
+          return base()['GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat'] as Response
+        case 'GET /api/hats/hat-b/session-defaults':
+          return json(200, { hat_id: 'hat-b', agent: 'claude', revision: 0, config: {} })
+        case 'GET /api/hats/hat-b/delegation-policy':
+          return json(200, { revision: 0, allowed: {} })
         case 'POST /api/hats/resolve':
           return json(200, { ...RESOLVED, hat_id: 'hat-b' })
         case 'POST /api/sessions':
@@ -609,6 +641,7 @@ describe('in the app', () => {
     render(<App fetchImpl={fetch as unknown as typeof globalThis.fetch} />)
     expect(await screen.findByRole('heading', { name: 'New session' })).toBeInTheDocument()
     const user = await fill('/srv/work/cat')
+    await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-new'))
     // The list stream opened, and its known rows did not replace the explicit route.
@@ -617,5 +650,156 @@ describe('in the app', () => {
     expect(location.pathname).toBe('/sessions/s-new')
     // @ts-expect-error jsdom has none; each test sets its own
     delete window.matchMedia
+  })
+})
+
+describe('reviewed configuration', () => {
+  const options = [
+    { id: 'model', name: 'Model', type: 'select', currentValue: 'opus', options: [{ value: 'opus', name: 'Opus' }, { value: 'sonnet', name: 'Sonnet' }] },
+    { id: 'mode', name: 'Permission', type: 'select', currentValue: 'default', options: [{ value: 'default', name: 'Default' }, { value: 'bypass', name: 'Bypass' }] },
+    { id: 'fast', name: 'Fast', type: 'boolean', currentValue: false },
+  ]
+  const runtime = '/api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat'
+  const catalog = { agent: 'claude', adapter_revision: 'pin-1', freshness: 'fresh', config_options: options, defaults: { model: 'opus', mode: 'default', axes: { fast: false } }, security: { known: true, axes: { mode: ['default'] } } }
+  it('applies a saved Sonnet model, prunes inherited fast and confirms actual settings before the first prompt', async () => {
+    const server = mount({
+      [`GET ${runtime}`]: json(200, catalog),
+      'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 1, config: { model: 'sonnet' } }),
+      'GET /api/sessions/s-1/catalog': json(200, { session_id: 's-1', config_options: options.slice(0, 2).map(option => ({ ...option, currentValue: option.id === 'model' ? 'sonnet' : 'default' })), commands: [], model: 'sonnet', mode: 'default' }),
+    })
+    const user = await fill('/srv/work/cat', 'Keep this prompt')
+    await waitFor(() => expect(startButton()).toBeEnabled())
+    await user.click(startButton())
+    await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+    expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat', model: 'sonnet', mode: 'default' })
+    const read = server.sent.findIndex(s => s.path === '/api/sessions/s-1/catalog')
+    const prompt = server.sent.findIndex(s => s.path === '/api/sessions/s-1/prompt')
+    expect(prompt).toBeGreaterThan(read)
+  })
+  it('retains unsupported deliberate fast=false and holds the prompt when read-back omits it', async () => {
+    const server = mount({
+      [`GET ${runtime}`]: json(200, catalog),
+      'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 1, config: { model: 'sonnet', axes: { fast: false } } }),
+      'GET /api/sessions/s-1/catalog': json(200, { session_id: 's-1', config_options: options.slice(0, 2).map(option => ({ ...option, currentValue: option.id === 'model' ? 'sonnet' : 'default' })), commands: [], model: 'sonnet', mode: 'default' }),
+    })
+    const user = await fill('/srv/work/cat', 'Keep this prompt')
+    await waitFor(() => expect(startButton()).toBeEnabled())
+    await user.click(startButton())
+    await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+    expect(server.sent.find(s => s.path === '/api/sessions')?.body).toMatchObject({ axes: { fast: false } })
+    expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+    expect(location.search).toContain('config_unconfirmed')
+    expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep this prompt')
+    expect(readStartNotice(location.search, 's-1')).toMatchObject({ message: expect.stringContaining('Fast: Off') })
+  })
+  it('requires explicit opt-out when no catalog is available, then sends no unverified config', async () => {
+    const server = mount({ [`GET ${runtime}`]: json(409, { code: 'catalog_unavailable', message: 'Offline catalog' }) })
+    const user = await fill('/srv/work/cat', 'Start deliberately')
+    const optOut = await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' })
+    expect(startButton()).toBeDisabled()
+    await user.click(optOut)
+    expect(startButton()).toBeEnabled()
+    await user.click(startButton())
+    await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+    expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat' })
+    expect(posts(server.sent)).toContain('/api/sessions/s-1/prompt')
+    expect(server.sent.some(sent => sent.path === '/api/sessions/s-1/catalog')).toBe(false)
+  })
+})
+
+it('keeps the first prompt as a session draft when the launcher closes during Start', async () => {
+  let finish!: (response: Response) => void
+  const start = new Promise<Response>(resolve => { finish = resolve })
+  const server = mount({ 'POST /api/sessions': () => start })
+  const user = await fill('/srv/work/cat', 'Keep after closing')
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  await user.click(startButton())
+  await waitFor(() => expect(posts(server.sent)).toContain('/api/sessions'))
+  server.unmount()
+  await act(async () => { finish(json(202, { session_id: 's-1' })); await start })
+  expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+  expect(server.sent.some(sent => sent.path === '/api/sessions/s-1')).toBe(false)
+  expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep after closing')
+})
+it('does not release a held first prompt after closing during configuration read-back', async () => {
+  let finish!: (response: Response) => void
+  const catalogRead = new Promise<Response>(resolve => { finish = resolve })
+  const server = mount({ 'GET /api/sessions/s-1/catalog': () => catalogRead })
+  const user = await fill('/srv/work/cat', 'Keep during review')
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  await user.click(startButton())
+  await waitFor(() => expect(server.sent.some(sent => sent.path === '/api/sessions/s-1/catalog')).toBe(true))
+  server.unmount()
+  await act(async () => { finish(json(200, { session_id: 's-1', commands: [], config_options: [{ id: 'model', type: 'select', currentValue: 'a', options: [{ value: 'a' }] }] })); await catalogRead })
+  expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+  expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep during review')
+})
+it('retains the prompt on a hat mismatch even after explicitly opting out of catalog verification', async () => {
+  const server = mount({
+    'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat': json(409, { code: 'catalog_unavailable', message: 'No settings preview' }),
+    'GET /api/sessions/s-1': json(200, { session_id: 's-1', hat_id: 'hat-b', lifecycle: 'active' }),
+  })
+  const user = await fill('/srv/work/cat', 'Check the hat first')
+  await user.click(await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' }))
+  await user.click(startButton())
+  await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+  expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+  expect(location.search).toContain('hat_changed')
+  expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Check the hat first')
+})
+it('starts only on a deliberate local Mod+Enter, ignoring repeat, IME and extra modifiers', async () => {
+  const server = mount()
+  await fill('/srv/work/cat', 'Keyboard launch')
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  const prompt = screen.getByRole('textbox', { name: 'First prompt optional' })
+  for (const ignored of [{ altKey: true }, { shiftKey: true }, { repeat: true }, { isComposing: true }]) {
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true, ...ignored })
+  }
+  const prevented = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true })
+  prevented.preventDefault()
+  fireEvent(prompt, prevented)
+  expect(posts(server.sent)).not.toContain('/api/sessions')
+  fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
+  await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+  expect(posts(server.sent).filter(path => path === '/api/sessions')).toHaveLength(1)
+})
+
+describe('pending launch persistence ownership', () => {
+  type Phase = 'start' | 'confirmation' | 'ambiguous' | 'prompt-failure'
+  async function pendingLaunch(phase: Phase) {
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>(resolve => { finish = resolve })
+    const path = phase === 'confirmation' ? 'GET /api/sessions/s-1' : phase === 'prompt-failure' ? 'POST /api/sessions/s-1/prompt' : 'POST /api/sessions'
+    const view = mount({ [path]: () => pending })
+    const user = await fill('/srv/work/cat', 'Synthetic private prompt')
+    await waitFor(() => expect(startButton()).toBeEnabled())
+    await user.click(startButton())
+    await waitFor(() => expect(view.sent.some(sent => `${sent.method} ${sent.path}` === path)).toBe(true))
+    const answer = phase === 'confirmation' ? json(200, { session_id: 's-1', hat_id: 'hat-a', lifecycle: 'active' })
+      : phase === 'ambiguous' ? json(502, { code: 'delivery_unknown', session_id: 's-1' })
+      : phase === 'prompt-failure' ? json(409, { code: 'host_offline' }) : json(202, { session_id: 's-1' })
+    return { ...view, settle: async () => { finish(answer); await pending } }
+  }
+  it.each(['start', 'confirmation', 'ambiguous', 'prompt-failure'] as const)('never restores text or navigates after logout during %s', async phase => {
+    const view = await pendingLaunch(phase)
+    await act(async () => { await completeLogout(view.client, false) })
+    view.unmount()
+    expect(sessionStorage.getItem('hennery.draft.__launcher__')).toBeNull()
+    await act(view.settle)
+    expect(Object.keys(sessionStorage).filter(key => key.startsWith('hennery.draft.'))).toEqual([])
+    expect(location.pathname).toBe('/login')
+    if (phase !== 'prompt-failure') expect(posts(view.sent)).not.toContain('/api/sessions/s-1/prompt')
+  })
+  it.each(['start', 'confirmation', 'ambiguous', 'prompt-failure'] as const)('retains a newer real launcher after the closed %s completes', async phase => {
+    const view = await pendingLaunch(phase)
+    view.unmount()
+    mount()
+    fireEvent.change(await screen.findByRole('textbox', { name: 'First prompt optional' }), { target: { value: 'A newer unsent prompt' } })
+    await waitFor(() => expect(sessionStorage.getItem('hennery.draft.__launcher__')).toContain('A newer unsent prompt'))
+    const newer = sessionStorage.getItem('hennery.draft.__launcher__')
+    await act(view.settle)
+    expect(sessionStorage.getItem('hennery.draft.__launcher__')).toBe(newer)
+    expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Synthetic private prompt')
+    expect(location.pathname).toBe('/new')
   })
 })

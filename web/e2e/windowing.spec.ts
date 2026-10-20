@@ -117,6 +117,7 @@ async function serve(page: Page, items: Raw[]): Promise<Served> {
       if (pathname === '/api/view/sessions') return json(route, list)
       if (pathname === `/api/sessions/${ID}`) return json(route, detail)
       if (pathname === `/api/sessions/${ID}/catalog`) return json(route, { session_id: ID, config_options: [], commands: [] })
+      if (pathname === `/api/view/sessions/${ID}/family`) return json(route, { summary: list.sessions[0], children: [], questions: [] })
       if (pathname === '/api/hosts') return json(route, [{ host_id: 'h1', name: 'build-box' }])
       if (pathname === '/api/hats') return json(route, [])
       // A prompt's image: one pixel, whatever its hash.
