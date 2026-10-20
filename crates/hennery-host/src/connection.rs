@@ -21,7 +21,7 @@ use hennery_proto::frames::{
     AgentIsolation, AttachedSession, Capabilities, Capability, CollectorFrame, ForgetReason, HostFrame, McpDelivery,
     SessionConfig,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -138,6 +138,10 @@ impl HostConfig {
 #[derive(Default)]
 struct SessionMap {
     handles: HashMap<String, SessionHandle>,
+    /// Effective true states outlive connections and actors. A hold may
+    /// arrive before attachment; false removes it rather than accumulating
+    /// entries for every unheld session this host has ever seen.
+    idle_holds: HashSet<String>,
     /// Set by host shutdown when it takes `handles`: from then on no actor
     /// is spawned. A start or resume that was waiting behind an ending actor
     /// would otherwise attach an adapter that shutdown never sees, and that
@@ -374,6 +378,7 @@ async fn handshake(
             // (plan 8c).
             capabilities: Capabilities(vec![
                 Capability::Park,
+                Capability::IdleHold,
                 Capability::Images,
                 Capability::Projects,
                 Capability::ResolvePath,
@@ -661,7 +666,7 @@ fn spawn_or_restart(
     req: AttachRequest,
     command: AgentCommand,
     profile: Profile,
-    options: SessionOptions,
+    mut options: SessionOptions,
 ) {
     let mut map = sessions.lock().expect("sessions lock");
     if map.closing {
@@ -721,6 +726,9 @@ fn spawn_or_restart(
     {
         return;
     }
+    // Read at the actual launch under the same lock as hold updates: an
+    // attach waiting for an old actor's teardown must take the latest state.
+    options.idle_held = map.idle_holds.contains(&req.session_id);
     let launch = Launch {
         request_id: req.request_id,
         session_id: req.session_id.clone(),
@@ -747,6 +755,19 @@ fn handle(
     frame: CollectorFrame,
 ) -> Result<()> {
     match frame {
+        CollectorFrame::SetIdleHold { session_id, held } => {
+            let mut map = sessions.lock().expect("sessions lock");
+            if held {
+                map.idle_holds.insert(session_id.clone());
+            } else {
+                map.idle_holds.remove(&session_id);
+            }
+            if let Some(handle) = map.handles.get(&session_id) {
+                // A hold is state, not a request. Retaining it above is
+                // sufficient if this actor is ending or already detached.
+                handle.send(SessionCmd::SetIdleHold { held });
+            }
+        }
         CollectorFrame::ProbeCatalog { request_id, agent, cwd } => {
             let Some(command) = cfg.agents.get(&agent).cloned() else {
                 uplink.reply(HostFrame::Error {
