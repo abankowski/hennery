@@ -187,7 +187,7 @@ test('same-size retained crate tampering stops before credentials',async()=>{
 });
 test('OIDC acquisition follows shared verifier and explicit bootstrap mode',()=>{
  const yaml=fs.readFileSync('.github/workflows/release.yml','utf8');
- const preflight=yaml.indexOf('id: crates-verify'),auth=yaml.indexOf('uses: rust-lang/crates-io-auth-action@');
+ const preflight=yaml.indexOf('id: verified'),auth=yaml.indexOf('uses: rust-lang/crates-io-auth-action@');
  assert.ok(preflight>=0 && auth>preflight);
  assert.match(yaml,/CARGO_REGISTRY_TOKEN: \$\{\{ steps\.cratesio\.outputs\.token \}\}/);
  assert.match(yaml,/RELEASE_CRATES_BOOTSTRAP_ENABLED/);
