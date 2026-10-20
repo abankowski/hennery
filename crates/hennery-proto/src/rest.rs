@@ -309,6 +309,10 @@ pub struct SessionPage {
 pub struct SessionDetail {
     #[serde(flatten)]
     pub session: SessionItem,
+    /// A bounded, readable requested-versus-actual configuration failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub configuration_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(type = "OpenTurn | undefined", optional)]
     pub open_turn: Option<OpenTurn>,

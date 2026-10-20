@@ -233,6 +233,7 @@ fn bare_item() -> hennery_proto::rest::SessionItem {
 fn session_detail_leaves_out_absent_optionals() {
     use hennery_proto::rest::{OpenTurn, SessionDetail};
     let detail = SessionDetail {
+        configuration_error: None,
         session: bare_item(),
         open_turn: Some(OpenTurn {
             turn_id: "t".into(),

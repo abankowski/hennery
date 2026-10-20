@@ -188,7 +188,7 @@ export type SessionSummary = SessionItem & {
  * whether or not an answer is queued (a question outside a turn sets
  * no `blocked` activity).
  */
-question_waits: boolean, operator_attention: number, parent_handled_questions: number, family?: FamilySummary, };
+question_waits: boolean, operator_attention: number, parent_handled_questions: number, family?: FamilySummary, configuration_error?: string, };
 ";
 
 /// `SESSION_SUMMARY_TS` names every field of the summary: one more and
@@ -201,6 +201,7 @@ fn session_summary_ts_is_whole(summary: SessionSummary) {
         operator_attention: _,
         parent_handled_questions: _,
         family: _,
+        configuration_error: _,
     } = summary;
 }
 

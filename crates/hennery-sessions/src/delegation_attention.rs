@@ -25,6 +25,7 @@ impl Store {
     pub(crate) fn refresh_attention_after(&self, hub: &Hub, now: i64, after: &str) -> Result<String> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.expire_configuration_waits_in(&tx, now)?;
         self.settle_notices_in(&tx)?;
         let rows = {
             let mut statement = tx.prepare(

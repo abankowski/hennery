@@ -48,6 +48,9 @@ pub struct ItemPage {
 pub struct SessionSummary {
     #[serde(flatten)]
     pub session: SessionItem,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub configuration_error: Option<String>,
     /// An open question: the agent waits on it, in a turn or outside one,
     /// whether or not an answer is queued (a question outside a turn sets
     /// no `blocked` activity).
@@ -267,6 +270,7 @@ mod tests {
             last_event_at: "2026-10-02T08:00:00.000Z".into(),
         };
         let summary = SessionSummary {
+            configuration_error: None,
             session: session.clone(),
             question_waits: true,
             operator_attention: 1,

@@ -147,6 +147,11 @@ fn summary_in(conn: &Connection, owner: &str, s: SessionItem) -> Result<SessionS
         attention: family_attention,
     });
     Ok(SessionSummary {
+        configuration_error: conn.query_row(
+            "SELECT configuration_error FROM sessions WHERE owner_id = ?1 AND id=?2",
+            params![owner, s.session_id],
+            |r| r.get(0),
+        )?,
         session: s,
         question_waits,
         operator_attention,

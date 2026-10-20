@@ -13,6 +13,136 @@ use hennery_proto::{
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 
+pub const CONFIG_CONFIRMATION_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn configuration_mismatch(wanted: &SessionConfig, actual: &SessionConfig) -> Option<String> {
+    let mut differences = Vec::new();
+    for (axis, requested, reported) in [
+        ("model", wanted.model.as_deref(), actual.model.as_deref()),
+        ("mode", wanted.mode.as_deref(), actual.mode.as_deref()),
+    ] {
+        if let Some(requested) = requested
+            && Some(requested) != reported
+        {
+            differences.push(format!(
+                "{axis}: requested {requested}, agent reports {}",
+                reported.unwrap_or("unknown")
+            ));
+        }
+    }
+    for (axis, requested) in &wanted.axes {
+        if actual.axes.get(axis) != Some(requested) {
+            differences.push(format!(
+                "{axis}: requested {}, agent reports {}",
+                serde_json::to_string(requested).ok()?,
+                actual
+                    .axes
+                    .get(axis)
+                    .and_then(|v| serde_json::to_string(v).ok())
+                    .unwrap_or_else(|| "unknown".into())
+            ));
+        }
+    }
+    if differences.is_empty() {
+        return None;
+    }
+    let text = format!(
+        "Configuration not confirmed: {} (requested mode {}; actual mode {})",
+        differences.join("; "),
+        wanted.mode.as_deref().unwrap_or("default"),
+        actual.mode.as_deref().unwrap_or("unknown")
+    );
+    crate::store::one_line(&crate::redact::shown(&text), 240, 512)
+}
+
+impl Store {
+    pub fn expect_initial_configuration(&self, session: &str, config: &SessionConfig) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO session_attach_evidence(owner_id,session_id,attach_generation,requested_config,launch_sent,config_updated_at)
+             SELECT ?1,?2,0,?3,1,?4 WHERE EXISTS(SELECT 1 FROM sessions WHERE owner_id = ?1 AND id=?2 AND lifecycle<>'deleted')
+             ON CONFLICT(owner_id,session_id) DO UPDATE SET requested_config=excluded.requested_config,
+               evidence=NULL,config_revision=0,config_checked=0,config_updated_at=excluded.config_updated_at WHERE session_attach_evidence.owner_id = ?1",
+            params![self.owner_id(),session,serde_json::to_string(config)?,hennery_kernel::secret::unix_now()],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn expire_configuration_waits_in(&self, tx: &Transaction<'_>, now: i64) -> Result<()> {
+        let candidates = {
+            let mut statement = tx.prepare(
+                "SELECT s.id,s.hat_id,e.requested_config,e.evidence,e.config_revision FROM sessions s
+                 JOIN session_attach_evidence e ON e.owner_id = ?1 AND e.session_id=s.id
+                 WHERE s.owner_id = ?1 AND s.lifecycle='active' AND s.close_requested=0
+                 AND s.configuration_error IS NULL AND e.evidence IS NOT NULL AND e.config_updated_at<=?2 AND e.config_checked=0
+                 AND (EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=s.id
+                     AND q.state IN ('queued','waiting_config'))
+                   OR (s.delegated_child=0 AND NOT EXISTS(SELECT 1 FROM events v WHERE v.owner_id = ?1
+                     AND v.session_id=s.id AND v.kind='user_turn' AND v.applied=1)))
+                 AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id=s.hat_id)
+                 ORDER BY s.id LIMIT 128",
+            )?;
+            statement
+                .query_map(
+                    params![self.owner_id(), now - CONFIG_CONFIRMATION_WAIT.as_secs() as i64],
+                    |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, String>(3)?,
+                            r.get::<_, i64>(4)?,
+                        ))
+                    },
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut failed = false;
+        for (session, hat, requested, evidence, revision) in candidates {
+            tx.execute(
+                "UPDATE session_attach_evidence SET config_checked=1 WHERE owner_id = ?1 AND session_id=?2",
+                params![self.owner_id(), session],
+            )?;
+            let requested: SessionConfig = serde_json::from_str(&requested)?;
+            let evidence: ConfigEvidence = serde_json::from_str(&evidence)?;
+            if evidence.completeness != hennery_proto::delegation_host::ConfigCompleteness::Complete {
+                continue;
+            }
+            let Some(message) = configuration_mismatch(&requested, &evidence.actual) else {
+                continue;
+            };
+            failed = true;
+            tx.execute(
+                "UPDATE sessions SET configuration_error=?3,failure_reason='configuration_mismatch',family_dirty=1
+                WHERE owner_id = ?1 AND id=?2",
+                params![self.owner_id(), session, message],
+            )?;
+            tx.execute(
+                "UPDATE session_operations SET state='failed',code='configuration_mismatch'
+                WHERE owner_id = ?1 AND child_id=?2 AND state IN ('queued','waiting_config')",
+                params![self.owner_id(), session],
+            )?;
+            crate::store::collector_event(
+                tx,
+                self.owner_id(),
+                &session,
+                "start_failed",
+                serde_json::json!({"code":"configuration_mismatch","message":message,"error":message}),
+                &crate::store::now(),
+            )?;
+            let incident = format!("configuration:{session}:{revision}");
+            tx.execute(
+                "INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,state,incident)
+                VALUES (?1,?2,?3,?4,'configuration_mismatch','open',?2) ON CONFLICT DO NOTHING",
+                params![self.owner_id(), incident, session, hat],
+            )?;
+        }
+        if failed {
+            self.settle_delegation_in(tx)?;
+        }
+        Ok(())
+    }
+}
+
 const TRANSFER: &str = "SELECT EXISTS(SELECT 1 FROM session_families f
     JOIN sessions p ON p.owner_id = ?1 AND p.id = f.parent_id
     JOIN sessions c ON c.owner_id = ?1 AND c.id = f.child_id
@@ -289,11 +419,24 @@ impl Store {
             if matches!(body, SessionBody::SessionStarted { .. }) && evidence.attach_generation == 0 {
                 tx.execute("INSERT INTO session_attach_evidence(owner_id,session_id,attach_generation,requested_config,launch_sent)
                     VALUES (?1,?2,0,?3,1) ON CONFLICT(owner_id,session_id) DO UPDATE SET attach_generation = 0,
-                    config_revision = 0,evidence = NULL,requested_config = excluded.requested_config,launch_sent = 1
+                    config_revision = 0,evidence = NULL,launch_sent = 1
                     WHERE session_attach_evidence.owner_id = ?1",params![self.owner_id(),session,serde_json::to_string(&evidence.actual)?])?;
             }
-            tx.execute("UPDATE session_attach_evidence SET config_revision = ?4,evidence = ?5 WHERE owner_id = ?1 AND session_id = ?2 AND attach_generation = ?3 AND config_revision < ?4
-                AND EXISTS (SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = ?2 AND lifecycle = 'active' AND close_requested = 0 AND presumed_parked = 0)",params![self.owner_id(),session,i64::try_from(evidence.attach_generation)?,i64::try_from(evidence.config_revision)?,serde_json::to_string(evidence)?])?;
+            let changed=tx.execute("UPDATE session_attach_evidence SET config_revision = ?4,evidence = ?5,config_updated_at=?6,config_checked=0 WHERE owner_id = ?1 AND session_id = ?2 AND attach_generation = ?3 AND config_revision < ?4
+                AND EXISTS (SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = ?2 AND lifecycle = 'active' AND close_requested = 0 AND presumed_parked = 0)",params![self.owner_id(),session,i64::try_from(evidence.attach_generation)?,i64::try_from(evidence.config_revision)?,serde_json::to_string(evidence)?,hennery_kernel::secret::unix_now()])?;
+            if changed > 0 {
+                let wanted: String = tx.query_row(
+                    "SELECT requested_config FROM session_attach_evidence WHERE owner_id = ?1 AND session_id=?2",
+                    params![self.owner_id(), session],
+                    |r| r.get(0),
+                )?;
+                if evidence.completeness == hennery_proto::delegation_host::ConfigCompleteness::Complete
+                    && configuration_mismatch(&serde_json::from_str(&wanted)?, &evidence.actual).is_none()
+                {
+                    tx.execute("UPDATE sessions SET configuration_error=NULL,failure_reason=CASE WHEN failure_reason='configuration_mismatch' THEN NULL ELSE failure_reason END WHERE owner_id = ?1 AND id=?2",params![self.owner_id(),session])?;
+                    tx.execute("UPDATE delegation_attention SET state='resolved' WHERE owner_id = ?1 AND child_id=?2 AND reason='configuration_mismatch'",params![self.owner_id(),session])?;
+                }
+            }
         }
         self.settle_delegation_in(tx)
     }

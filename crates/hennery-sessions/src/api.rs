@@ -359,6 +359,9 @@ async fn start_session(State(state): State<AppState>, ApiJson(req): ApiJson<Star
         Err(err) => return internal(err),
     };
     let request_id = uuid::Uuid::now_v7().to_string();
+    if let Err(err) = state.store.expect_initial_configuration(&session_id, &req.config) {
+        return internal(err);
+    }
     let frame = CollectorFrame::StartSession {
         request_id: request_id.clone(),
         session_id: session_id.clone(),
@@ -604,6 +607,7 @@ async fn session_detail(State(state): State<AppState>, Path(id): Path<String>) -
         Err(err) => return internal(err),
     };
     Json(SessionDetail {
+        configuration_error: session.configuration_error,
         session: item,
         open_turn,
         pending,
@@ -860,6 +864,9 @@ async fn prompt(
     };
     if session.lifecycle != "active" {
         return error(StatusCode::CONFLICT, "not_attached", "resume the session first");
+    }
+    if let Some(reason) = session.configuration_error {
+        return error(StatusCode::CONFLICT, "configuration_mismatch", reason);
     }
     if !checked.images.is_empty() {
         // A host that is gone has no capabilities: it is offline, not one

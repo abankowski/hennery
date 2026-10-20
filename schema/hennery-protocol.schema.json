@@ -5414,6 +5414,13 @@
         "agent": {
           "type": "string"
         },
+        "configuration_error": {
+          "description": "A bounded, readable requested-versus-actual configuration failure.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "created_at": {
           "description": "RFC 3339, UTC.",
           "type": "string"

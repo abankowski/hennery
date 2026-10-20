@@ -750,7 +750,11 @@ next_cursor?: string | undefined, };
  * `GET /api/sessions/{id}` (ACP core §9): the list item, as stored, the
  * open turn and the pending requests still open.
  */
-export type SessionDetail = { open_turn?: OpenTurn | undefined,
+export type SessionDetail = {
+/**
+ * A bounded, readable requested-versus-actual configuration failure.
+ */
+configuration_error?: string, open_turn?: OpenTurn | undefined,
 /**
  * Open pending requests, oldest first: what the operator can answer.
  */

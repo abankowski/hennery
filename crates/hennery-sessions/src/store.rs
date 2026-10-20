@@ -388,6 +388,11 @@ const MIGRATIONS: &[&str] = &[
        AND (id=NEW.id OR id IN (SELECT parent_id FROM session_families WHERE owner_id=NEW.owner_id AND child_id=NEW.id)
          OR id IN (SELECT child_id FROM session_families WHERE owner_id=NEW.owner_id AND parent_id=NEW.id));
      END;",
+    // Configuration confirmation (24): a quiet, definite mismatch has a deadline.
+    "ALTER TABLE session_attach_evidence ADD COLUMN config_updated_at INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE session_attach_evidence ADD COLUMN config_checked INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE sessions ADD COLUMN configuration_error TEXT;
+     UPDATE session_attach_evidence SET config_updated_at=unixepoch();",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -630,6 +635,7 @@ pub struct SessionRow {
     pub title: Option<String>,
     /// Source of the effective title; prompt-derived names stay out of push.
     pub title_source: Option<String>,
+    pub configuration_error: Option<String>,
     /// Whether `cwd` was in a linked work tree, as the host last reported.
     pub git_worktree: Option<bool>,
     /// The commit a new session started from, recorded once (ACP core §7).
@@ -2240,7 +2246,7 @@ impl Store {
             .query_row(
                 "SELECT id, host_id, agent, cwd, lifecycle, activity, open_turn_id, failure_reason, close_requested,
                         presumed_parked, model, mode, config_axes, last_event_at, last_event_id, title,
-                        git_worktree, base_commit, hat_id, agent_session_id, title_source
+                        git_worktree, base_commit, hat_id, agent_session_id, title_source, configuration_error
                  FROM sessions WHERE id = ?1 AND lifecycle <> 'deleted' AND owner_id = ?2",
                 [id, &self.owner],
                 |r| {
@@ -2263,6 +2269,7 @@ impl Store {
                         last_event_id: r.get(14)?,
                         title: r.get(15)?,
                         title_source: r.get(20)?,
+                        configuration_error: r.get(21)?,
                         git_worktree: r.get(16)?,
                         base_commit: r.get(17)?,
                     };
@@ -3127,7 +3134,7 @@ impl Store {
         let event = collector_event(&tx, &self.owner, session_id, "session_deleted", json!({}), &now())?;
         let scrubbed = tx.execute(
             "UPDATE sessions SET lifecycle = 'deleted', cwd = '', agent = '', title = NULL,
-             agent_title = NULL, prompt_title = NULL, title_source = NULL, git_branch = NULL,
+             agent_title = NULL, prompt_title = NULL, title_source = NULL, configuration_error = NULL, git_branch = NULL,
                  git_dirty = NULL, git_worktree = NULL, base_commit = NULL, model = NULL, mode = NULL,
                  config_axes = NULL, agent_session_id = NULL, failure_reason = NULL, hat_rule_id = NULL,
                  open_turn_id = NULL, activity = NULL, presumed_parked = 0, close_requested = 0, agent_home = NULL,

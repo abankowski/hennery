@@ -219,7 +219,7 @@ export type SessionSummary = SessionItem & {
  * whether or not an answer is queued (a question outside a turn sets
  * no `blocked` activity).
  */
-question_waits: boolean, operator_attention: number, parent_handled_questions: number, family?: FamilySummary, };
+question_waits: boolean, operator_attention: number, parent_handled_questions: number, family?: FamilySummary, configuration_error?: string, };
 
 export type SummaryPage = { sessions: Array<SessionSummary>, 
 /**

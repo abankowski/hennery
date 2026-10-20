@@ -1148,6 +1148,12 @@
         "agent": {
           "type": "string"
         },
+        "configuration_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "created_at": {
           "description": "RFC 3339, UTC.",
           "type": "string"

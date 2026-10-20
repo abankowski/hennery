@@ -2443,6 +2443,85 @@ fn required_model_mode_and_axes_hold_mismatch_then_current_repair_releases() {
         take_prompt(&mut rx);
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn configuration_mismatch_expires_visibly_after_a_bounded_wait() {
+    let (w, p) = pair();
+    let required = SessionConfig {
+        model: Some("wanted".into()),
+        mode: Some("plan".into()),
+        axes: BTreeMap::new(),
+    };
+    seed(&w, "child", &required, 5);
+    let mut wrong = required.clone();
+    wrong.model = Some("other".into());
+    proof(&w, "child", 2, 5, 10, ConfigCompleteness::Complete, wrong);
+    queue(&w, &p, "brief");
+    let (hub, mut rx) = connected();
+    assert!(!w.store.dispatch_delegated("child", &catalog(), &hub).unwrap());
+    let now = unix_now();
+    let started = tokio::time::Instant::now();
+    tokio::time::advance(std::time::Duration::from_secs(29)).await;
+    w.store
+        .refresh_delegation_attention(&hub, now + started.elapsed().as_secs() as i64)
+        .unwrap();
+    assert_eq!(receipt(&w, &p, "brief").state, OperationState::WaitingConfig);
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    w.store
+        .refresh_delegation_attention(&hub, now + started.elapsed().as_secs() as i64)
+        .unwrap();
+    assert_eq!(
+        receipt(&w, &p, "brief").state,
+        OperationState::Failed {
+            code: "configuration_mismatch".into()
+        }
+    );
+    assert!(rx.try_recv().is_err(), "a mismatched brief must never reach the child");
+    assert!(
+        w.store
+            .notice_parents_after("")
+            .unwrap()
+            .contains(&"parent".to_string())
+    );
+    seed(&w, "parent", &SessionConfig::default(), 1);
+    proof(
+        &w,
+        "parent",
+        2,
+        1,
+        1,
+        ConfigCompleteness::Complete,
+        SessionConfig::default(),
+    );
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+    let CollectorFrame::DelegatedPrompt { content, .. } = rx.try_recv().unwrap() else {
+        panic!("expected child failure report");
+    };
+    let report = serde_json::to_string(&content).unwrap();
+    assert!(report.contains("wanted") && report.contains("other") && report.contains("plan"));
+    assert_eq!(
+        w.store
+            .find_session("child")
+            .unwrap()
+            .unwrap()
+            .failure_reason
+            .as_deref(),
+        Some("configuration_mismatch")
+    );
+    assert!(w.store.events("child", 0, 100).unwrap().iter().any(|event| {
+        event.kind == "start_failed"
+            && event.body["message"]
+                .as_str()
+                .is_some_and(|s| s.contains("wanted") && s.contains("other") && s.contains("plan"))
+    }));
+    assert!(
+        w.store
+            .operator_attention(None, "")
+            .unwrap()
+            .iter()
+            .any(|a| a.child_id == "child")
+    );
+}
 #[test]
 fn stale_config_evidence_cannot_overwrite_current_proof_and_config_changes_clear_it() {
     let (w, p) = pair();
@@ -2463,6 +2542,34 @@ fn stale_config_evidence_cannot_overwrite_current_proof_and_config_changes_clear
     proof(&w, "child", 5, 5, 11, ConfigCompleteness::Complete, config("wanted"));
     assert!(w.store.dispatch_delegated("child", &catalog(), &h).unwrap());
     take_prompt(&mut rx);
+}
+
+#[tokio::test(start_paused = true)]
+async fn configuration_wait_renews_on_new_proof_and_unknown_values_do_not_fail() {
+    let (w, p) = pair();
+    ready(&w);
+    queue(&w, &p, "brief");
+    let (hub, _rx) = connected();
+    raw(&w)
+        .execute(
+            "UPDATE session_attach_evidence SET config_updated_at=?1 WHERE session_id='child'",
+            [unix_now() - 29],
+        )
+        .unwrap();
+    proof(&w, "child", 3, 5, 11, ConfigCompleteness::Complete, config("wrong"));
+    let at = unix_now();
+    let started = tokio::time::Instant::now();
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    w.store
+        .refresh_delegation_attention(&hub, at + started.elapsed().as_secs() as i64)
+        .unwrap();
+    assert!(!matches!(receipt(&w, &p, "brief").state, OperationState::Failed { .. }));
+    proof(&w, "child", 4, 5, 12, ConfigCompleteness::Unknown, config("wrong"));
+    tokio::time::advance(std::time::Duration::from_secs(60)).await;
+    w.store
+        .refresh_delegation_attention(&hub, at + started.elapsed().as_secs() as i64)
+        .unwrap();
+    assert!(!matches!(receipt(&w, &p, "brief").state, OperationState::Failed { .. }));
 }
 #[test]
 fn execution_policy_is_rechecked_and_current_revision_is_bound_to_dispatch() {

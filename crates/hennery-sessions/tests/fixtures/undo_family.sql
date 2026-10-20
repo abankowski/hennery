@@ -1,3 +1,7 @@
+-- Test-only rollback of sessions migration 24 before historical fixtures.
+ALTER TABLE sessions DROP COLUMN configuration_error;
+ALTER TABLE session_attach_evidence DROP COLUMN config_updated_at;
+ALTER TABLE session_attach_evidence DROP COLUMN config_checked;
 -- Test-only rollback of sessions migration 23 before historical fixtures.
 DROP TRIGGER family_view_title;
 ALTER TABLE sessions DROP COLUMN agent_title;
