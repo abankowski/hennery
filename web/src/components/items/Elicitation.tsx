@@ -13,6 +13,7 @@ import { useId } from 'react'
 import type { ElicitationAction } from '../../generated/protocol'
 import type { Field, FieldOption } from '../../generated/view'
 import { canSend, choose, contentOf, elicitationBody, hasDuplicateKeys, toggle, typeText, type Draft } from '../../lib/elicitation'
+import QuestionActions from '../QuestionActions'
 
 type Request = { fields: Field[]; required?: string[]; form_supported: boolean }
 type Body = ReturnType<typeof elicitationBody>
@@ -178,6 +179,7 @@ function FieldInput({ field, draft, disabled, prefix, onDraft, fields }: FieldIn
 }
 
 interface Props {
+  pendingId?: string
   request: Request
   /** The card can answer it now. */
   live: boolean
@@ -190,7 +192,7 @@ interface Props {
   onAnswer: (body: Body) => void
 }
 
-export default function Elicitation({ request, live, busy, draft, onDraft, onAnswer }: Props) {
+export default function Elicitation({ request, live, busy, draft, onDraft, onAnswer, pendingId = '' }: Props) {
   const prefix = useId()
   const { fields, required, form_supported: supported } = request
   const twice = hasDuplicateKeys(fields)
@@ -209,7 +211,7 @@ export default function Elicitation({ request, live, busy, draft, onDraft, onAns
         ) : (
           twice && <p className="item-note">This form names one field twice, so it cannot be filled in here: it can only be declined or cancelled.</p>
         )}
-        {live && <Actions busy={busy} send={false} onAction={(action) => onAnswer(elicitationBody(action))} />}
+        {live && <QuestionActions pendingId={pendingId}><Actions busy={busy} send={false} onAction={(action) => onAnswer(elicitationBody(action))} /></QuestionActions>}
       </>
     )
   }
@@ -223,11 +225,11 @@ export default function Elicitation({ request, live, busy, draft, onDraft, onAns
           ))}
         </div>
       )}
-      <Actions
+      <QuestionActions pendingId={pendingId}><Actions
         busy={busy}
         send={sendable}
         onAction={(action) => onAnswer(action === 'accept' ? elicitationBody('accept', contentOf(fields, draft)) : elicitationBody(action))}
-      />
+      /></QuestionActions>
     </>
   )
 }

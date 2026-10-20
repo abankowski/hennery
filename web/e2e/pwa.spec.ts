@@ -231,6 +231,7 @@ for (const width of [1280, 390]) test(`notification click reaches the live card 
       await expect(returned).toHaveURL(collector.origin + target)
       await expect(returned.getByRole('region', { name: 'Question from Claude', exact: true })).toHaveAttribute('data-pending-id', pending)
     } finally { await signedOut.close() }
+    if (width === 390) await card.getByRole('button', { name: 'Write a prompt', exact: true }).click()
     const draft = page.getByLabel('Prompt', { exact: true })
     await draft.fill('Keep this unsent text')
     await page.evaluate(() => { (window as unknown as { __documentSentinel: string }).__documentSentinel = 'same-document' })
