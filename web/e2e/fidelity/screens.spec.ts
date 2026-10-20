@@ -72,6 +72,7 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
    await expect(dialog.getByRole('region', { name: 'Session settings', exact: true })).toBeVisible()
    await expect(dialog.locator('.config-summary')).toHaveText('Model: Sonnet · Permission mode: Default · Reasoning effort: Medium')
   }
+  if (screen === 'defaults') await expect(app.getByRole('group', { name: 'Model for Studio', exact: true }).getByRole('combobox')).toBeEnabled()
   if ((screen === 'overview' && width === 1280) || screen === 'needs-you') await expect(app.getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
   if (screen === 'session') await expect(app.locator('.transcript').getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
   if (screen === 'elicitation') {
@@ -100,7 +101,9 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
    await phone.screenshot({ path: join(output, `${name}-prototype.png`) })
   } else await reference.screenshot({ path: join(output, `${name}-prototype.png`) })
   await app.screenshot({ path: join(output, `${name}-app.png`) })
-  expect(await app.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  const fits = await app.evaluate(() => document.documentElement.scrollWidth <= innerWidth)
+  if (!fits) console.log(await app.locator('.application-root,.app,.shell,.main,.defaults-screen,.defaults-screen > header,.defaults-matrix-scroll').evaluateAll(elements => elements.map(element => ({ class: element.className, width: element.getBoundingClientRect().width, right: element.getBoundingClientRect().right, scroll: element.scrollWidth }))))
+  expect(fits).toBe(true)
   writeFileSync(join(output, `${name}.html`), `<!doctype html><meta charset="utf-8"><title>${name}</title><style>body{margin:0;display:flex;gap:12px;background:#888}figure{margin:0}figcaption{font:16px sans-serif;padding:8px}img{max-width:none}</style><figure><figcaption>Prototype · ${width}px · ${theme}</figcaption><img src="${name}-prototype.png"></figure><figure><figcaption>Application · ${width}px · ${theme}</figcaption><img src="${name}-app.png"></figure>`)
   if (screen === 'overview' && width === 1280) {
    const choice = app.getByRole('article', { name: 'Choose provider fallback', exact: true })

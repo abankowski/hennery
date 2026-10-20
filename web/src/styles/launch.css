@@ -178,3 +178,40 @@
 @media(max-width:767px) { .launch-subtitle { display:none; } }
 .launcher-frame .launch-config:has(.config-fields) .config-summary { display:none; }
 .launcher-frame .launch-config .config-fields { margin:10px 0 0; }
+/* Fidelity: Defaults opens on the matrix, with a live preview for every hat. */
+.defaults-screen { padding:0 24px 24px; max-width:none; }
+.defaults-screen > header { min-height:68px; align-items:center; border-bottom:1px solid var(--hn-line); margin:0 -24px 16px; padding:12px 24px; }
+.defaults-screen > header > div { display:flex; align-items:baseline; gap:14px; }.defaults-screen > header p { margin:0; color:var(--hn-fg-3); }
+.defaults-order { margin:20px 0; font-size:12px; color:var(--hn-fg-2); }
+.defaults-order > span { display:inline-block; padding:5px 10px; margin:0 6px 6px 0; border:1px solid var(--hn-line); border-radius:6px; background:var(--hn-panel); }
+.defaults-order p { margin:4px 0 0; color:var(--hn-fg-3); }
+.catalog-options,.defaults-screen > .runtime-id,.defaults-context-note { font-size:11px; color:var(--hn-fg-3); margin:8px 0; }
+.catalog-options summary,.defaults-advanced summary { cursor:pointer; padding:6px 0; }
+.catalog-options .catalog-context { margin:10px 0; }
+.defaults-matrix-scroll { overflow-x:auto; border:1px solid var(--hn-line); border-radius:8px; margin:18px 0; }
+.defaults-matrix { table-layout:auto; margin:0; background:var(--hn-surface); }
+.defaults-matrix caption { padding:10px 12px; background:var(--hn-bg); }
+.defaults-matrix th,.defaults-matrix td { border:0; border-right:1px solid var(--hn-line); border-bottom:1px solid var(--hn-line); padding:12px 16px; min-width:150px; }
+.defaults-matrix th:last-child,.defaults-matrix td:last-child { border-right:0; }.defaults-matrix tr:last-child td,.defaults-matrix tr:last-child th { border-bottom:0; }
+.defaults-matrix .config-select > label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.defaults-matrix .config-select select { background:transparent; border:0; padding:0 18px 0 0; min-height:24px; font:400 13px var(--font-body); cursor:pointer; }
+.defaults-matrix .config-source { margin-top:4px; font-size:10px; color:var(--hn-fg-3); }
+.defaults-matrix .matrix-override { background:var(--hn-accent-wash); }.defaults-matrix .matrix-override select { color:var(--hn-accent-fg); }
+.matrix-reset { padding:0; margin-top:4px; border:0; background:none; color:var(--hn-accent-fg); font-size:10px; }
+.defaults-previews { padding:16px; border:1px solid var(--hn-line); border-radius:8px; background:var(--hn-surface); }
+.defaults-previews h2 { margin:0 0 12px; font:500 13px var(--font-display); }.defaults-previews > div { display:flex; flex-wrap:wrap; gap:24px; }
+.defaults-previews article { flex:1; min-width:160px; }.defaults-previews h3 { margin:0 0 8px; font:500 13px var(--font-display); }
+.defaults-previews p { margin:4px 0; font-size:12px; }.defaults-previews p span { color:var(--hn-fg-3); }
+.defaults-advanced { margin-top:20px; }
+@media(max-width:767px) {
+ .defaults-screen { padding:0 16px 20px; }.defaults-screen > header { margin:0 -16px 12px; padding:12px 16px; }
+ .defaults-screen > header > div { display:block; }.defaults-screen h1 { font-size:18px; }
+ .defaults-matrix { display:table; min-width:560px; }.defaults-matrix th,.defaults-matrix td { min-width:140px; padding:10px; }
+ .defaults-matrix .config-select select { min-height:44px; font-size:14px; }.matrix-reset { min-height:44px; }
+ .defaults-previews > div { flex-direction:column; gap:16px; }
+}
+.defaults-matrix-scroll,.defaults-matrix .config-select { position:relative; }
+.matrix-pin { display:block; margin-top:4px; padding:0; border:0; border-bottom:1px dashed var(--hn-control-strong); background:none; color:var(--hn-fg-3); font-size:10px; cursor:pointer; }
+.shell:has(.defaults-screen) > .mtopbar { display:none; }
+@media(max-width:767px) { .defaults-screen > header { align-items:flex-start; }.matrix-pin { min-height:32px; } }
+@media(max-width:767px) { .defaults-matrix .config-select select { font-size:16px; } }
