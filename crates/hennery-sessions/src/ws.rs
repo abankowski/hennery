@@ -526,6 +526,7 @@ pub(crate) fn ready(
     // delete committed between the two is closed by neither side, and no
     // test would notice (plan 9a's whole-branch review).
     state.hub.mark_ready(host_id, conn_id);
+    state.store.resend_idle_holds(host_id, &state.hub)?;
     // A delete that judged a listed session unattached (this host not ready
     // yet) and committed after the reconciliation: nothing above closed its
     // adapter. Read after `mark_ready`, so a delete committed before this
@@ -715,6 +716,136 @@ fn undo_rejected(store: &Store, undo: &Undo, code: &str) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use hennery_proto::frames::{AgentIsolation, Capabilities, Capability};
+
+    #[test]
+    fn park_hold_app_state_binds_immediate_pin_publication_without_a_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = AppState::new(
+            crate::store::Store::open(&db).unwrap(),
+            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        state
+            .store
+            .create_session("s", "host", "fake", "/project", "hat", None)
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let registration = state
+            .hub
+            .register(
+                "host",
+                tx,
+                Capabilities(vec![Capability::IdleHold]),
+                AgentIsolation::default(),
+            )
+            .unwrap();
+        state.hub.mark_ready("host", registration.conn_id);
+        state.store.set_idle_pin("s", true).unwrap();
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            CollectorFrame::SetIdleHold {
+                session_id: "s".into(),
+                held: true
+            }
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn park_hold_ready_restores_pins_changed_while_disconnected_including_release() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = AppState::new(
+            crate::store::Store::open(&db).unwrap(),
+            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        state
+            .store
+            .create_session("s", "host", "fake", "/project", "hat", None)
+            .unwrap();
+        for pinned in [true, false] {
+            // No routable connection can see this mutation. Its ordinary
+            // dirty flush is consumed; ready must restore a fresh snapshot.
+            state.store.set_idle_pin("s", pinned).unwrap();
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let registration = state
+                .hub
+                .register(
+                    "host",
+                    tx.clone(),
+                    Capabilities(vec![Capability::IdleHold]),
+                    AgentIsolation::default(),
+                )
+                .unwrap();
+            ready(
+                &state,
+                "host",
+                registration.conn_id,
+                &[],
+                &HashSet::new(),
+                &tx,
+                &mut HashMap::new(),
+            )
+            .unwrap();
+            assert_eq!(
+                rx.try_recv().unwrap(),
+                CollectorFrame::SetIdleHold {
+                    session_id: "s".into(),
+                    held: pinned
+                }
+            );
+            assert!(rx.try_recv().is_err());
+            state.hub.unregister("host", registration.conn_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn park_hold_worker_recovers_external_committed_invalidations() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = AppState::new(
+            crate::store::Store::open(&db).unwrap(),
+            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        state
+            .store
+            .create_session("s", "host", "fake", "/project", "hat", None)
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let registration = state
+            .hub
+            .register(
+                "host",
+                tx,
+                Capabilities(vec![Capability::IdleHold]),
+                AgentIsolation::default(),
+            )
+            .unwrap();
+        state.hub.mark_ready("host", registration.conn_id);
+        // An external component committed through its own coordinated writer.
+        // No Store guard exists to publish this transition at that boundary.
+        hennery_kernel::db::open(&db)
+            .unwrap()
+            .execute(
+                "UPDATE sessions SET idle_pinned=1 WHERE owner_id=?1 AND id='s'",
+                [state.store.owner_id()],
+            )
+            .unwrap();
+        crate::delegation_worker::after_startup(&state);
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
+        state.shutdown.cancel();
+        assert_eq!(
+            frame.unwrap().unwrap(),
+            CollectorFrame::SetIdleHold {
+                session_id: "s".into(),
+                held: true
+            }
+        );
+    }
     use super::*;
     use crate::store::EdgeSession;
     use hennery_proto::frames::TurnOutcome;

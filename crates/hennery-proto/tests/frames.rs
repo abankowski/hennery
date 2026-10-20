@@ -830,6 +830,24 @@ fn forget_hat_uses_the_spec_field_names_and_is_no_probe() {
     assert!(frame.probe_capability().is_err());
 }
 
+#[test]
+fn idle_hold_is_a_capability_gated_state_update_without_a_request_id() {
+    use hennery_proto::frames::{Capabilities, Capability};
+    let capabilities: Capabilities = serde_json::from_value(json!(["idle_hold"])).unwrap();
+    assert!(capabilities.has(Capability::IdleHold));
+    for held in [true, false] {
+        let frame = CollectorFrame::SetIdleHold {
+            session_id: "s1".into(),
+            held,
+        };
+        let wire = json!({"type": "set_idle_hold", "session_id": "s1", "held": held});
+        assert_eq!(serde_json::to_value(&frame).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<CollectorFrame>(wire).unwrap(), frame);
+        assert!(frame.probe_capability().is_err());
+        assert!(frame.mcp_delivery().is_none());
+    }
+}
+
 // Plan 9d: the agent's own transcript on its host.
 
 #[test]

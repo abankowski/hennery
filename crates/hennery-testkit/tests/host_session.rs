@@ -862,6 +862,125 @@ async fn a_disabled_reaper_leaves_an_idle_session_attached() {
     assert!(!handle.is_ended());
 }
 
+fn idle_held_session(uplink: &Uplink, held: bool) -> SessionHandle {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
+    session::spawn(
+        uplink.clone(),
+        "r0".into(),
+        "s1".into(),
+        fake_with(&FakeScript::default()),
+        std::env::temp_dir(),
+        SessionOptions {
+            idle_timeout: Some(IDLE_WINDOW),
+            idle_held: held,
+            ..SessionOptions::default()
+        },
+    )
+}
+
+/// Restart is an ordered command barrier; its announcement proves every
+/// preceding hold command was consumed, without changing the idle clock.
+async fn idle_hold_barrier(uplink: &Uplink, handle: &SessionHandle, request: &str) {
+    assert!(handle.send(SessionCmd::Restart {
+        request_id: request.into(),
+    }));
+    wait_until(uplink, |frames| {
+        frames.iter().any(|frame| {
+            matches!(frame, HostFrame::Session { body: SessionBody::SessionStarted { request_id, .. }, .. } if request_id == request)
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_idle_hold_blocks_reaping_and_release_starts_a_fresh_window() {
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = idle_held_session(&uplink, true);
+    wait_until(&uplink, has("session_started")).await;
+    tokio::time::sleep(IDLE_WINDOW * 2).await;
+    assert!(!handle.is_ending(), "a held session was reaped");
+    assert!(handle.send(SessionCmd::SetIdleHold { held: false }));
+    idle_hold_barrier(&uplink, &handle, "released").await;
+    tokio::time::sleep(IDLE_WINDOW / 2).await;
+    assert!(!handle.is_ending(), "release reused the expired idle clock");
+    wait_until(&uplink, has("session_parked:idle")).await;
+    wait_ended(&handle).await;
+}
+
+#[tokio::test]
+async fn an_idle_hold_received_after_attachment_blocks_reaping() {
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = idle_held_session(&uplink, false);
+    wait_until(&uplink, has("session_started")).await;
+    assert!(handle.send(SessionCmd::SetIdleHold { held: true }));
+    idle_hold_barrier(&uplink, &handle, "held").await;
+    tokio::time::sleep(IDLE_WINDOW * 2).await;
+    assert!(!handle.is_ending(), "an attached hold was ignored");
+    assert!(handle.send(SessionCmd::SetIdleHold { held: false }));
+    wait_until(&uplink, has("session_parked:idle")).await;
+    wait_ended(&handle).await;
+}
+
+#[tokio::test]
+async fn duplicate_idle_hold_releases_do_not_extend_the_idle_window() {
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = idle_held_session(&uplink, true);
+    wait_until(&uplink, has("session_started")).await;
+    tokio::time::sleep(IDLE_WINDOW * 2).await;
+    assert!(!handle.is_ending(), "a held session was reaped");
+    assert!(handle.send(SessionCmd::SetIdleHold { held: false }));
+    idle_hold_barrier(&uplink, &handle, "released").await;
+    for _ in 0..15 {
+        tokio::time::sleep(IDLE_WINDOW / 5).await;
+        if handle.is_ended() {
+            assert!(has("session_parked:idle")(&uplink.pending().unwrap()));
+            return;
+        }
+        handle.send(SessionCmd::SetIdleHold { held: false });
+    }
+    panic!("duplicate releases kept renewing the idle window");
+}
+
+async fn explicit_stop_overrides_idle_hold(close: bool) {
+    let (uplink, mut replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = idle_held_session(&uplink, true);
+    wait_until(&uplink, has("session_started")).await;
+    tokio::time::sleep(IDLE_WINDOW * 2).await;
+    assert!(!handle.is_ending(), "a held session was reaped");
+    let (command, fact) = if close {
+        (
+            SessionCmd::Close {
+                request_id: "stop".into(),
+            },
+            "session_closed",
+        )
+    } else {
+        (
+            SessionCmd::Park {
+                request_id: "stop".into(),
+            },
+            "session_parked:operator",
+        )
+    };
+    assert!(handle.send(command));
+    // This update can arrive while teardown is in progress. It has no
+    // request id and must not manufacture an error during the final drain.
+    handle.send(SessionCmd::SetIdleHold { held: true });
+    wait_until(&uplink, has(fact)).await;
+    wait_ended(&handle).await;
+    assert!(replies.try_recv().is_err(), "a hold generated a reply");
+}
+
+#[tokio::test]
+async fn explicit_park_overrides_idle_hold() {
+    explicit_stop_overrides_idle_hold(false).await;
+}
+
+#[tokio::test]
+async fn explicit_close_overrides_idle_hold() {
+    explicit_stop_overrides_idle_hold(true).await;
+}
+
 /// Every replayed kind the fake can send: six history kinds, two state
 /// kinds and one this build does not know.
 fn replay_script() -> FakeScript {

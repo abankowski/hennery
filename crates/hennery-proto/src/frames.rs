@@ -28,6 +28,8 @@ pub enum Capability {
     Images,
     /// Explicit park (`park_session`).
     Park,
+    /// Collector-controlled suppression of automatic idle parking.
+    IdleHold,
     /// Resolving typed paths (`resolve_path`, kernel spec §5.4).
     ResolvePath,
     /// Removing a deleted session's transcript from the agent's own data
@@ -924,6 +926,7 @@ impl CollectorFrame {
             | Self::DelegatedPrompt { .. }
             | Self::CancelTurn { .. }
             | Self::SetConfig { .. }
+            | Self::SetIdleHold { .. }
             | Self::AnswerPermission { .. }
             | Self::AnswerElicitation { .. }
             | Self::Ack { .. }
@@ -949,6 +952,7 @@ impl CollectorFrame {
             | Self::ProbeCatalog { .. }
             | Self::CancelTurn { .. }
             | Self::SetConfig { .. }
+            | Self::SetIdleHold { .. }
             | Self::AnswerPermission { .. }
             | Self::AnswerElicitation { .. }
             | Self::Ack { .. }
@@ -1142,6 +1146,13 @@ pub enum CollectorFrame {
     ResolvePath {
         request_id: String,
         path: String,
+    },
+    /// Effective family/operator idle hold. Sent only to hosts announcing
+    /// `idle_hold`, before attachment and after reconciliation as needed.
+    /// No reply; explicit park and close still take effect while held.
+    SetIdleHold {
+        session_id: String,
+        held: bool,
     },
     /// Completed by `session_parked{operator}` (ACP core §4.8).
     ParkSession {

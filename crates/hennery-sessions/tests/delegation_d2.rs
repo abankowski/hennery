@@ -157,6 +157,402 @@ fn pair() -> (World, SessionIdentity) {
     (w, parent)
 }
 
+fn idle_connected(w: &World) -> (Arc<Hub>, tokio::sync::mpsc::UnboundedReceiver<CollectorFrame>) {
+    let hub = Arc::new(Hub::new());
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let registration = hub
+        .register(
+            "host",
+            tx,
+            Capabilities(vec![
+                Capability::IdleHold,
+                Capability::DelegationConfig,
+                Capability::McpServers,
+            ]),
+            AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect()),
+        )
+        .unwrap();
+    hub.mark_ready("host", registration.conn_id);
+    w.store.set_idle_hub(&hub);
+    w.store.resend_idle_holds("host", &hub).unwrap();
+    // Clear dirtiness inherited from fixture creation before the Hub existed,
+    // so each later transition must provide its own invalidation.
+    w.store.flush_idle_holds(&hub).unwrap();
+    (hub, rx)
+}
+
+fn received_hold(rx: &mut tokio::sync::mpsc::UnboundedReceiver<CollectorFrame>, id: &str) -> Option<bool> {
+    let mut held = None;
+    while let Ok(frame) = rx.try_recv() {
+        if let CollectorFrame::SetIdleHold {
+            session_id,
+            held: value,
+        } = frame
+            && session_id == id
+        {
+            held = Some(value);
+        }
+    }
+    held
+}
+
+#[test]
+fn park_hold_counts_idle_attached_children_and_detached_work_until_terminal() {
+    for terminal in ["parked", "closed", "failed", "deleted"] {
+        let (w, _) = pair();
+        let (hub, mut rx) = idle_connected(&w);
+        assert_eq!(received_hold(&mut rx, "parent"), Some(true));
+        assert!(w.store.idle_hold("parent").unwrap().unwrap().family_active);
+        w.store.take_over_child("child", &hub).unwrap();
+        assert!(
+            w.store.idle_hold("parent").unwrap().unwrap().family_active,
+            "takeover does not stop its adapter"
+        );
+        match terminal {
+            "parked" => {
+                w.store
+                    .ingest(
+                        "child",
+                        2,
+                        &SessionBody::SessionParked {
+                            reason: ParkReason::Idle,
+                        },
+                    )
+                    .unwrap();
+            }
+            "closed" => {
+                w.store.ingest("child", 2, &SessionBody::SessionClosed).unwrap();
+            }
+            "failed" => {
+                w.store.mark_failed("child", "fixture").unwrap();
+            }
+            "deleted" => {
+                assert!(matches!(
+                    w.store
+                        .delete_session(
+                            "child",
+                            Some(&hennery_sessions::store::Unattached {
+                                lifecycle: "active".into(),
+                                presumed_parked: false
+                            })
+                        )
+                        .unwrap(),
+                    hennery_sessions::store::Deletion::Done { .. }
+                ));
+            }
+            _ => unreachable!(),
+        }
+        let state = w.store.idle_hold("parent").unwrap().unwrap();
+        assert!(!state.family_active, "{terminal}");
+        assert!(!state.held, "detached notices cannot retain a hold: {terminal}");
+        assert_eq!(received_hold(&mut rx, "parent"), Some(false), "{terminal}");
+    }
+}
+
+#[test]
+fn park_hold_pin_is_persisted_and_independent_of_family_release() {
+    let (w, _) = pair();
+    let (_hub, mut rx) = idle_connected(&w);
+    received_hold(&mut rx, "parent");
+    assert!(w.store.set_idle_pin("parent", true).unwrap().unwrap().pinned);
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    let state = w.store.idle_hold("parent").unwrap().unwrap();
+    assert!(state.pinned && state.held && !state.family_active && !state.notices_pending);
+    assert_eq!(received_hold(&mut rx, "parent"), Some(true));
+    let reopened = Store::open(&w.db).unwrap();
+    assert!(reopened.idle_hold("parent").unwrap().unwrap().pinned);
+    assert!(!w.store.set_idle_pin("parent", false).unwrap().unwrap().held);
+    assert_eq!(received_hold(&mut rx, "parent"), Some(false));
+    assert!(w.store.set_idle_pin("missing", true).unwrap().is_none());
+}
+
+#[test]
+fn park_hold_pending_report_outlives_child_park_until_factual_delivery() {
+    let (w, _) = pair();
+    ready_parent(&w);
+    let (hub, mut rx) = idle_connected(&w);
+    received_hold(&mut rx, "parent");
+    w.store
+        .open_turn("child", "work", &[json!({"type":"text","text":"work"})])
+        .unwrap();
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "work".into(),
+                turn_id: "work".into(),
+            },
+        )
+        .unwrap();
+    ended(&w, "child", 3, "work");
+    w.store
+        .ingest(
+            "child",
+            4,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    let state = w.store.idle_hold("parent").unwrap().unwrap();
+    assert!(state.held && state.notices_pending && !state.family_active);
+    received_hold(&mut rx, "parent");
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+    let (request_id, turn_id) = loop {
+        match rx.try_recv().unwrap() {
+            CollectorFrame::DelegatedPrompt {
+                request_id, turn_id, ..
+            } => break (request_id, turn_id),
+            CollectorFrame::SetIdleHold { held: true, .. } => {}
+            other => panic!("unexpected report handoff frame: {other:?}"),
+        }
+    };
+    assert!(
+        w.store.idle_hold("parent").unwrap().unwrap().notices_pending,
+        "socket handoff is not delivery"
+    );
+    w.store
+        .ingest("parent", 20, &SessionBody::TurnStarted { request_id, turn_id })
+        .unwrap();
+    assert!(!w.store.idle_hold("parent").unwrap().unwrap().held);
+    assert_eq!(received_hold(&mut rx, "parent"), Some(false));
+}
+
+#[test]
+fn park_hold_reconnect_sends_current_true_and_false_and_gates_old_hosts() {
+    let (w, _) = pair();
+    let (hub, mut rx) = idle_connected(&w);
+    assert_eq!(received_hold(&mut rx, "parent"), Some(true));
+    w.store.resend_idle_holds("host", &hub).unwrap();
+    assert_eq!(received_hold(&mut rx, "parent"), Some(true));
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    assert_eq!(received_hold(&mut rx, "parent"), Some(false));
+    w.store.resend_idle_holds("host", &hub).unwrap();
+    assert_eq!(received_hold(&mut rx, "parent"), Some(false));
+    hub.unregister("host", hub.routable_conn("host").unwrap());
+    let (tx, mut old) = tokio::sync::mpsc::unbounded_channel();
+    let registration = hub
+        .register("host", tx, Capabilities::default(), AgentIsolation::default())
+        .unwrap();
+    hub.mark_ready("host", registration.conn_id);
+    w.store.set_idle_pin("parent", true).unwrap();
+    w.store.resend_idle_holds("host", &hub).unwrap();
+    assert!(old.try_recv().is_err(), "old host must not receive the unknown frame");
+}
+
+#[test]
+fn park_hold_allocation_publishes_before_receipt_and_resume_before_attach() {
+    let (w, p) = pair();
+    let (hub, mut rx) = idle_connected(&w);
+    received_hold(&mut rx, "parent");
+    ready(&w);
+    w.store
+        .ingest(
+            "child",
+            10,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    assert_eq!(received_hold(&mut rx, "parent"), Some(false));
+    queue(&w, &p, "resume-work");
+    assert!(
+        w.store
+            .attach_delegated("child", McpContext::NONE, &catalog(), &hub)
+            .unwrap()
+    );
+    let mut parent_held = false;
+    loop {
+        match rx.try_recv().unwrap() {
+            CollectorFrame::SetIdleHold { session_id, held } if session_id == "parent" => parent_held = held,
+            CollectorFrame::DelegatedAttach { .. } => {
+                assert!(parent_held, "parent hold must be handed off before child attach");
+                break;
+            }
+            _ => {}
+        }
+    }
+    w.store.mark_failed("child", "fixture").unwrap();
+    // Detach/fallback the failed child's report so a fresh spawn is the only hold.
+    w.store.take_over_child("child", &hub).unwrap();
+    received_hold(&mut rx, "parent");
+    let receipt = spawn(&w, &p, "new-work").unwrap();
+    assert!(receipt.child_id.is_some());
+    assert_eq!(
+        received_hold(&mut rx, "parent"),
+        Some(true),
+        "allocation sends the hold before returning its receipt"
+    );
+}
+
+#[test]
+fn park_hold_notice_insert_update_delete_and_family_delete_invalidate_the_parent() {
+    let (w, _) = pair();
+    let (hub, mut rx) = idle_connected(&w);
+    w.store
+        .open_turn("child", "work", &[json!({"type":"text","text":"work"})])
+        .unwrap();
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "work".into(),
+                turn_id: "work".into(),
+            },
+        )
+        .unwrap();
+    ended(&w, "child", 3, "work");
+    w.store
+        .ingest(
+            "child",
+            4,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    received_hold(&mut rx, "parent");
+    let conn = raw(&w);
+    // Preserve the real producer's complete notice, including its provenance,
+    // to exercise each SQL invalidation independently of lifecycle triggers.
+    conn.execute_batch("CREATE TEMP TABLE original_notice AS SELECT * FROM delegation_notices")
+        .unwrap();
+    for state in ["waiting_config", "awaiting_reconciliation", "parent_queued"] {
+        conn.execute(
+            "UPDATE delegation_notices SET state=?2 WHERE owner_id=?1",
+            params![w.store.owner_id(), state],
+        )
+        .unwrap();
+        w.store.flush_idle_holds(&hub).unwrap();
+        assert_eq!(received_hold(&mut rx, "parent"), Some(true), "queued state {state}");
+    }
+    conn.execute(
+        "UPDATE delegation_notices SET state='parent_delivered' WHERE owner_id=?1",
+        [w.store.owner_id()],
+    )
+    .unwrap();
+    w.store.flush_idle_holds(&hub).unwrap();
+    assert_eq!(received_hold(&mut rx, "parent"), Some(false));
+    conn.execute("DELETE FROM delegation_notices WHERE owner_id=?1", [w.store.owner_id()])
+        .unwrap();
+    w.store.flush_idle_holds(&hub).unwrap();
+    received_hold(&mut rx, "parent");
+    conn.execute(
+        "INSERT INTO delegation_notices SELECT * FROM original_notice WHERE owner_id=?1",
+        [w.store.owner_id()],
+    )
+    .unwrap();
+    w.store.flush_idle_holds(&hub).unwrap();
+    assert_eq!(received_hold(&mut rx, "parent"), Some(true));
+    conn.execute("DELETE FROM delegation_notices WHERE owner_id=?1", [w.store.owner_id()])
+        .unwrap();
+    w.store.flush_idle_holds(&hub).unwrap();
+    assert_eq!(received_hold(&mut rx, "parent"), Some(false));
+    drop(conn);
+    // A separate live family, so removing its edge is the only invalidation.
+    let (w, _) = pair();
+    let (hub, mut rx) = idle_connected(&w);
+    received_hold(&mut rx, "parent");
+    raw(&w)
+        .execute(
+            "DELETE FROM session_families WHERE owner_id=?1 AND child_id='child'",
+            [w.store.owner_id()],
+        )
+        .unwrap();
+    w.store.flush_idle_holds(&hub).unwrap();
+    assert_eq!(received_hold(&mut rx, "parent"), Some(false));
+}
+
+#[test]
+fn park_hold_deleted_and_frozen_sessions_are_not_pin_targets() {
+    let (w, _) = pair();
+    w.store.ingest("child", 2, &SessionBody::SessionClosed).unwrap();
+    w.store.delete_session("child", None).unwrap();
+    assert!(w.store.idle_hold("child").unwrap().is_none());
+    assert!(w.store.set_idle_pin("child", true).unwrap().is_none());
+    raw(&w)
+        .execute(
+            "INSERT INTO purged_hats(owner_id,hat_id,purged_at) VALUES (?1,?2,0)",
+            params![w.store.owner_id(), w.hat],
+        )
+        .unwrap();
+    assert!(w.store.idle_hold("parent").unwrap().is_none());
+    assert!(w.store.set_idle_pin("parent", true).unwrap().is_none());
+}
+
+#[test]
+fn park_hold_failed_flush_compensates_child_resume_before_any_handoff() {
+    let (w, p) = pair();
+    let (hub, mut rx) = idle_connected(&w);
+    ready(&w);
+    w.store
+        .ingest(
+            "child",
+            10,
+            &SessionBody::SessionParked {
+                reason: ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    queue(&w, &p, "retry-resume");
+    received_hold(&mut rx, "parent");
+    raw(&w).execute_batch("CREATE TRIGGER fail_idle_clear BEFORE UPDATE OF idle_hold_dirty ON sessions WHEN NEW.idle_hold_dirty=0 BEGIN SELECT RAISE(ABORT,'fixture hold clear failed'); END;").unwrap();
+    assert!(
+        !w.store
+            .attach_delegated("child", McpContext::NONE, &catalog(), &hub)
+            .unwrap()
+    );
+    assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "parked");
+    while let Ok(frame) = rx.try_recv() {
+        assert!(
+            !matches!(frame, CollectorFrame::DelegatedAttach { .. }),
+            "no child handoff after a failed parent-hold flush"
+        );
+    }
+    raw(&w).execute_batch("DROP TRIGGER fail_idle_clear").unwrap();
+    w.store.flush_idle_holds(&hub).unwrap();
+    received_hold(&mut rx, "parent");
+    assert!(
+        w.store
+            .attach_delegated("child", McpContext::NONE, &catalog(), &hub)
+            .unwrap(),
+        "compensated launch remains retryable"
+    );
+    let mut held = false;
+    loop {
+        match rx.try_recv().unwrap() {
+            CollectorFrame::SetIdleHold {
+                session_id,
+                held: value,
+            } if session_id == "parent" => held = value,
+            CollectorFrame::DelegatedAttach { .. } => {
+                assert!(held);
+                break;
+            }
+            _ => {}
+        }
+    }
+}
+
 #[test]
 fn d4_counts_parent_handled_questions_and_takeover_are_factual_and_atomic() {
     let (w, p) = pair();
