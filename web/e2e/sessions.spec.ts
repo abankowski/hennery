@@ -127,7 +127,7 @@ for (const width of [1280, 390]) {
     test('New Session starts a session with its first prompt, and opens it', async () => {
       // The rail's link on a desktop, the tab bar's on a phone.
       if (narrow) {
-        await page.getByRole('navigation', { name: 'Tabs', exact: true }).getByRole('link', { name: 'New', exact: true }).click()
+        await page.getByRole('navigation', { name: 'Primary navigation', exact: true }).getByRole('link', { name: 'New', exact: true }).click()
       } else {
         await page.getByRole('link', { name: 'New session', exact: true }).click()
       }
@@ -190,7 +190,7 @@ for (const width of [1280, 390]) {
         await expect(back).toBeVisible()
         await expect(back).toBeInViewport()
         expect((await back.boundingBox())!.height).toBeGreaterThanOrEqual(44)
-        await expect(page.getByRole('navigation', { name: 'Tabs', exact: true })).toBeVisible()
+        await expect(page.locator('.tabbar')).toBeHidden()
       } else {
         // Not shown, so out of the accessibility tree: found by its class.
         await expect(back).toHaveCount(0)

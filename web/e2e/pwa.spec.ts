@@ -5,6 +5,7 @@ import type { HostItem, SessionDetail, StartSessionResponse } from '../src/gener
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { deployProxy } from './pwa-proxy'
+import { producerNotice } from './producer'
 import { fakeAgent, testHost, type TestHost } from './host'
 
 const PASSWORD = 'correct horse battery staple'
@@ -182,15 +183,54 @@ for (const width of [1280, 390]) test(`notification click reaches the live card 
     const detail = async () => (await (await context.request.get(`${collector.origin}/api/sessions/${id}`)).json()) as SessionDetail
     await expect.poll(async () => (await detail()).pending.length).toBe(1)
     const pending = (await detail()).pending[0].pending_id
-    const target = `/sessions/${id}?pending=${encodeURIComponent(pending)}`
+    const payload = await producerNotice(id, pending)
+    const target = payload.url
+    const filteredHat = await context.request.post(collector.origin + '/api/hats', { headers, data: { name: `Notification scope ${width}`, colour: '#336699' } })
+    expect(filteredHat.ok()).toBe(true)
+    const selectedHat = (await filteredHat.json() as { id: string }).id
+    await page.evaluate(hat => localStorage.setItem('hennery.hat', hat), selectedHat)
+    await page.goto(collector.origin + '/needs-you')
+    await expect(page.getByText('Nothing needs you', { exact: true })).toBeVisible()
+    let olderQuestionReads = 0
+    await page.route(collector.origin + '/api/view/sessions/' + id, async route => {
+      // Exercise a first-page window excluding this live card; its bounded
+      // question route and all answers still use the actual collector.
+      const response = await route.fetch()
+      const body = await response.json() as { items: { kind: string; pending_id?: string }[]; older: boolean }
+      body.items = body.items.filter(item => item.pending_id !== pending)
+      body.older = true
+      await route.fulfill({ response, json: body })
+    })
+    page.on('request', request => { if (new URL(request.url()).pathname.endsWith('/questions/' + pending)) olderQuestionReads++ })
     const code = await (await context.request.get(`${collector.origin}/sw.js`)).text()
     const harness = workerHarness(code, undefined, { origin: collector.origin, clients: browserWindows(context, collector.origin) })
-    await harness.push(JSON.stringify({ title: 'Needs your answer', body: 'Open current state', tag: id, url: target }))
+    await harness.push(JSON.stringify(payload))
     expect(harness.notifications).toHaveLength(1)
-    await harness.click(target)
+    const options = harness.notifications[0].options as { data: { url: string }; actions?: unknown[] }
+    expect(options.data.url).toBe(target)
+    expect(options.actions).toBeUndefined()
+    await harness.click(options.data.url)
     await expect(page).toHaveURL(collector.origin + target)
     const card = page.getByRole('region', { name: 'Question from Claude', exact: true })
     await expect(card.getByText('Write notes.txt', { exact: true })).toBeVisible()
+    await expect(card).toHaveAttribute('data-pending-id', pending)
+    await expect(card).toBeFocused()
+    expect(olderQuestionReads).toBeGreaterThan(0)
+    expect(await page.evaluate(() => localStorage.getItem('hennery.hat'))).toBe(selectedHat)
+    // The same worker-emitted destination survives a signed-out return.
+    const signedOut = await browser.newContext({ viewport: { width, height: 844 }, serviceWorkers: 'allow' })
+    try {
+      const authHarness = workerHarness(code, undefined, { origin: collector.origin, clients: browserWindows(signedOut, collector.origin) })
+      await authHarness.push(JSON.stringify(payload))
+      const emitted = authHarness.notifications[0].options as { data: { url: string } }
+      await authHarness.click(emitted.data.url)
+      const returned = signedOut.pages()[0]
+      await expect(returned).toHaveURL(collector.origin + '/login?next=' + encodeURIComponent(target))
+      await returned.getByLabel('Password', { exact: true }).fill(PASSWORD)
+      await returned.getByRole('button', { name: 'Sign in', exact: true }).click()
+      await expect(returned).toHaveURL(collector.origin + target)
+      await expect(returned.getByRole('region', { name: 'Question from Claude', exact: true })).toHaveAttribute('data-pending-id', pending)
+    } finally { await signedOut.close() }
     const draft = page.getByLabel('Prompt', { exact: true })
     await draft.fill('Keep this unsent text')
     await page.evaluate(() => { (window as unknown as { __documentSentinel: string }).__documentSentinel = 'same-document' })

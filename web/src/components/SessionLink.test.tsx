@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import { navigate } from '../router'
 import type { HatItem, SessionDetail } from '../generated/protocol'
 import type { Item, SessionSummary, SummaryPage } from '../generated/view'
 import { json, liveStream, type LiveStream } from '../test-stream'
@@ -170,13 +171,15 @@ describe('the session’s header, from the list (F-4)', () => {
     render(<App fetchImpl={s.fetch} />)
     await titled('Task a')
     const list = await screen.findByRole('complementary', { name: 'Views' })
-    expect(within(list).getByText('Task a', { exact: true })).toBeInTheDocument()
+    expect(within(list).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 3 loaded · 0 need you')
     await waitFor(() => expect(s.itemStreams).toHaveLength(1))
     // The item stream says so; the list stream has not yet.
     act(() => s.itemStreams[0].event('session_removed', { session_id: 'a' }))
     expect(await within(main()).findByRole('heading', { name: 'This session was deleted' })).toBeInTheDocument()
-    await waitFor(() => expect(within(list).queryByText('Task a', { exact: true })).toBeNull())
-    expect(within(list).getByText('Task a-old', { exact: true })).toBeInTheDocument()
+    act(() => navigate('/sessions'))
+    const overview = await screen.findByRole('region', { name: 'Session list' })
+    expect(within(overview).queryByText('Task a', { exact: true })).toBeNull()
+    expect(within(overview).getByText('Task a-old', { exact: true })).toBeInTheDocument()
   })
 
   it('uses the same detail for the header when the list does not hold the session', async () => {
@@ -189,16 +192,17 @@ describe('the session’s header, from the list (F-4)', () => {
     expect(s.of('/api/sessions/a')).toHaveLength(0)
   })
 
-  it('keeps the header while the list starts over for a search', async () => {
-    at('/sessions/a')
+  it('retains the known header while an overview search page is still pending', async () => {
+    at('/sessions')
     // The search's page never comes.
     const s = server({ list: (params) => (params.get('q') ? new Promise<Response>(() => {}) : json(listPage(ROWS))) })
     render(<App fetchImpl={s.fetch} />)
-    await titled('Task a')
-    const views = await rail()
-    await userEvent.type(within(views).getByRole('searchbox', { name: 'Search sessions' }), 'zzz')
+    const overview = await screen.findByRole('region', { name: 'Session list' })
+    await within(overview).findByText('Task a', { exact: true })
+    await userEvent.type(within(overview).getByRole('searchbox', { name: 'Search sessions' }), 'zzz')
     await waitFor(() => expect(s.of(LIST).some((u) => u.searchParams.get('q') === 'zzz')).toBe(true), { timeout: 3000 })
-    expect(title()).toHaveTextContent('Task a')
+    act(() => navigate('/sessions/a'))
+    await titled('Task a')
     expect(s.of('/api/sessions/a')).toHaveLength(1)
   })
 
@@ -222,7 +226,8 @@ describe('a session’s link (F-11, F-19)', () => {
     await titled('Detail b')
     expect(await within(main()).findByText('b says hello')).toBeInTheDocument()
     const views = await rail()
-    await waitFor(() => expect(within(views).queryAllByRole('link').filter((l) => l.classList.contains('sess'))).toHaveLength(2))
+    expect(screen.queryByRole('region', { name: 'Session list' })).toBeNull()
+    expect(localStorage.getItem('hennery.hat')).toBe('hat-a')
     expect(within(views).queryByText('Task b')).toBeNull()
     expect(location.pathname).toBe('/sessions/b')
     expect(s.of('/api/sessions/b')).toHaveLength(1)
@@ -247,16 +252,16 @@ describe('a session’s link (F-11, F-19)', () => {
     await waitFor(() => expect(s.listStreams).toHaveLength(1))
     act(() => s.listStreams[0].event('session_upsert', summary('newest', { last_event_at: '2026-10-02T12:00:00.000Z' }), 'e1:2'))
     const views = await rail()
-    await within(views).findByText('Task newest')
+    await waitFor(() => expect(within(views).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 4 loaded · 0 need you'))
     expect(location.pathname).toBe('/sessions/a-old')
     expect(title()).toHaveTextContent('Task a-old')
   })
 
   it('is restored by a reload', async () => {
-    at('/sessions/a')
+    at('/sessions')
     const s = server()
     const first = render(<App fetchImpl={s.fetch} />)
-    await userEvent.click(await within(await rail()).findByText('Task a-old'))
+    await userEvent.click(await within(await screen.findByRole('region', { name: 'Session list' })).findByText('Task a-old', { exact: true }))
     await within(main()).findByText('a-old says hello')
     first.unmount()
     // A reload: a new app at the same address.
@@ -266,11 +271,12 @@ describe('a session’s link (F-11, F-19)', () => {
     expect(location.pathname).toBe('/sessions/a-old')
   })
 
-  it('shows the list in the rail and the session beside it on a desktop', async () => {
+  it('shows navigation and the selected session without an overview side list on desktop', async () => {
     at('/sessions/a')
     const s = server()
     render(<App fetchImpl={s.fetch} />)
-    expect(await within(await rail()).findByRole('region', { name: 'Session list' })).toBeInTheDocument()
+    expect(within(await rail()).getByRole('navigation', { name: 'Main navigation' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Session list' })).toBeNull()
     expect(await within(main()).findByText('a says hello')).toBeInTheDocument()
     expect(within(main()).queryByRole('region', { name: 'Session list' })).toBeNull()
   })
@@ -297,7 +303,7 @@ describe('a session’s link (F-11, F-19)', () => {
   // jsdom applies no media query: the rules themselves. The way back is
   // hidden by default and shown under 768 px by a later rule.
   it('has its way back shown under 768 px', () => {
-    const css = readFileSync(join(process.cwd(), 'src/index.css'), 'utf8').replace(/\s+/g, ' ')
+    const css = readFileSync(join(process.cwd(), 'src/styles/session.css'), 'utf8').replace(/\s+/g, ' ')
     const hidden = css.indexOf('.back-btn { display:none; }')
     expect(hidden).toBeGreaterThan(-1)
     const mobile = /@media \(max-width:767px\) \{((?:[^{}]*\{[^}]*\})*)[^{}]*\}/g

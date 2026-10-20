@@ -63,3 +63,21 @@ describe('statusOf', () => {
     expect(of({ lifecycle: '', activity: undefined }).label).toBe('Unknown')
   })
 })
+
+it('filters only actual operator work and keeps lifecycle/status predicates separate', async () => {
+  const { needsOperator, matchesStatus } = await import('./status')
+  const base = { lifecycle: 'closed', question_waits: true, presumed_parked: false, operator_attention: 0, parent_handled_questions: 1 }
+  expect(needsOperator(base)).toBe(false)
+  expect(needsOperator({ ...base, operator_attention: 1 })).toBe(true)
+  expect(needsOperator({ ...base, operator_attention: undefined })).toBe(false)
+  expect(matchesStatus(base, 'all')).toBe(true)
+  expect(matchesStatus({ ...base, operator_attention: 1 }, 'attention')).toBe(true)
+  expect(matchesStatus({ ...base, lifecycle: 'active', activity: 'running' }, 'running')).toBe(true)
+  expect(matchesStatus(base, 'running')).toBe(false)
+  expect(matchesStatus({ ...base, lifecycle: 'active', activity: 'idle' }, 'idle')).toBe(true)
+  expect(matchesStatus(base, 'idle')).toBe(false)
+  expect(matchesStatus({ ...base, lifecycle: 'parked' }, 'parked')).toBe(true)
+  expect(matchesStatus(base, 'parked')).toBe(false)
+  expect(matchesStatus({ ...base, lifecycle: 'failed' }, 'failed')).toBe(true)
+  expect(matchesStatus(base, 'failed')).toBe(false)
+})

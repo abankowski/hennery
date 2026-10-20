@@ -21,6 +21,8 @@ import type { SessionSummary, SummaryPage } from '../generated/view'
 export const LIFECYCLES = ['starting', 'active', 'parked', 'closed', 'failed'] as const
 
 export interface ListFilters {
+  /** Distinct page baselines even when the wire query happens to match. */
+  pageScope?: 'overview' | 'attention'
   /** A hat's id, or none for every hat. */
   hat?: string | null
   /** Only these lifecycles. When set, it alone decides: Hide closed applies

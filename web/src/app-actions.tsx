@@ -6,30 +6,30 @@ export type AppActionId = 'new-session' | 'search-sessions' | 'toggle-rail' | 't
 export interface AppAction { label: string; enabled: boolean; run: () => void }
 export interface AppContext { sessionId?: string; hostId?: string; cwd?: string; hatId?: string }
 export class AppActions {
-  private entries = new Map<AppActionId, { token: symbol; action: AppAction }[]>()
-  private contexts: { token: symbol; context: AppContext }[] = []
+  private entries = new Map<AppActionId, { token: symbol; action: AppAction; priority: number }[]>()
+  private contexts: { token: symbol; context: AppContext; priority: number }[] = []
   private listeners = new Set<() => void>()
   private revision = 0
   subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn) } }
   snapshot = () => this.revision
   private changed() { this.revision++; this.listeners.forEach(fn => fn()) }
-  register(id: AppActionId, action: AppAction) {
+  register(id: AppActionId, action: AppAction, priority = 0) {
     const token = Symbol(id)
-    this.entries.set(id, [...(this.entries.get(id) ?? []), { token, action }]); this.changed()
+    this.entries.set(id, [...(this.entries.get(id) ?? []), { token, action, priority }]); this.changed()
     return () => {
       const entries = (this.entries.get(id) ?? []).filter(entry => entry.token !== token)
       if (entries.length) this.entries.set(id, entries); else this.entries.delete(id)
       this.changed()
     }
   }
-  get(id: AppActionId) { return this.entries.get(id)?.at(-1)?.action }
+  get(id: AppActionId) { return this.entries.get(id)?.reduce((chosen, entry) => entry.priority >= chosen.priority ? entry : chosen).action }
   available() { return [...this.entries.keys()].flatMap(id => { const action = this.get(id); return action?.enabled ? [{ id, ...action }] : [] }) }
   dispatch(id: AppActionId): boolean { const action = this.get(id); if (!action?.enabled) return false; action.run(); return true }
-  registerContext(context: AppContext) {
-    const token = Symbol('context'); this.contexts.push({ token, context }); this.changed()
+  registerContext(context: AppContext, priority = 0) {
+    const token = Symbol('context'); this.contexts.push({ token, context, priority }); this.changed()
     return () => { this.contexts = this.contexts.filter(entry => entry.token !== token); this.changed() }
   }
-  context(): AppContext { return Object.assign({}, ...this.contexts.map(entry => entry.context)) }
+  context(): AppContext { return Object.assign({}, ...[...this.contexts].sort((a, b) => a.priority - b.priority).map(entry => entry.context)) }
 }
 const Context = createContext<AppActions | null>(null)
 export function AppActionsProvider({ children }: { children: ReactNode }) {
@@ -45,11 +45,11 @@ export function useActionSnapshot() {
 }
 const noSubscribe = () => () => {}
 const zero = () => 0
-export function useRegisterAction(id: AppActionId, action: AppAction) {
+export function useRegisterAction(id: AppActionId, action: AppAction, priority = 0) {
   const actions = useAppActions()
-  useEffect(() => actions?.register(id, action), [actions, id, action.enabled, action.label, action.run])
+  useEffect(() => actions?.register(id, action, priority), [actions, id, action.enabled, action.label, action.run, priority])
 }
-export function useRegisterContext(context: AppContext) {
+export function useRegisterContext(context: AppContext, priority = 0) {
   const actions = useAppActions()
-  useEffect(() => actions?.registerContext(context), [actions, context.sessionId, context.hostId, context.cwd, context.hatId])
+  useEffect(() => actions?.registerContext(context, priority), [actions, context.sessionId, context.hostId, context.cwd, context.hatId, priority])
 }

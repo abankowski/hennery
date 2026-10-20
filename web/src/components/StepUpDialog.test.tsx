@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -54,7 +54,7 @@ describe('the step-up dialog', () => {
     expect(screen.getByLabelText('Your password')).toHaveFocus()
     await userEvent.type(screen.getByLabelText('Your password'), 'correct horse battery')
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('done'))
+    await waitFor(() => expect(within(screen.getByRole('main')).getByRole('status')).toHaveTextContent('done'))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.getByLabelText('Name')).toHaveValue('laptop')
     const paths = server.sent.map((s) => `${s.method} ${s.path}`)
@@ -83,7 +83,7 @@ describe('the step-up dialog', () => {
     })
     await open(server)
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('StepUpCancelled'))
+    await waitFor(() => expect(within(screen.getByRole('main')).getByRole('status')).toHaveTextContent('StepUpCancelled'))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.getByLabelText('Name')).toHaveValue('laptop')
     expect(server.sent.filter((s) => s.path === '/api/hosts/pairing-codes')).toHaveLength(1)
@@ -112,7 +112,7 @@ describe('the step-up dialog', () => {
     })
     await open(server)
     await userEvent.keyboard('{Escape}')
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('StepUpCancelled'))
+    await waitFor(() => expect(within(screen.getByRole('main')).getByRole('status')).toHaveTextContent('StepUpCancelled'))
   })
 
   it('offers the passkey first when there is one, and confirms with it', async () => {
@@ -130,7 +130,7 @@ describe('the step-up dialog', () => {
     })
     await open(server)
     await userEvent.click(await screen.findByRole('button', { name: 'Confirm with passkey' }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('done'))
+    await waitFor(() => expect(within(screen.getByRole('main')).getByRole('status')).toHaveTextContent('done'))
     expect(server.sent.find((s) => s.path === '/api/auth/step-up/passkey/finish')?.body).toEqual({
       ceremony_id: 's-1',
       credential: { id: 'cred' },
