@@ -31,18 +31,21 @@ interface Props {
   hostName?: string
   /** The list's clock (`useNow`): the relative time moves with it. */
   now: number
+  table?: boolean
+  indent?: boolean
 }
 
-export default function SessionRow({ session, selected, hostName, now }: Props) {
+export default function SessionRow({ session, selected, hostName, now, table, indent }: Props) {
   const [why, setWhy] = useState(false)
   const status = statusOf(session)
   const { title, where } = rowText(session)
   const reason = status.tone === 'fail' ? session.failure_reason : undefined
   const markerTitle = reason ? `${status.label}: ${reason}` : status.label
-  return (
-    <div className="sess-item">
+  const content = (
+    <div className={'sess-item' + (indent ? ' sess-child' : '')}>
       <Link
         to={sessionPath(session.session_id)}
+        data-session-link
         className={'sess' + (selected ? ' active' : '')}
         aria-current={selected ? 'page' : undefined}
       >
@@ -90,4 +93,5 @@ export default function SessionRow({ session, selected, hostName, now }: Props) 
       )}
     </div>
   )
+  return table ? <tr><td data-label="Session">{content}</td><td data-label="Doing"><span className={'row-status row-status-' + status.tone}>{status.label}</span></td><td data-label="Host"><bdi>{hostName || 'Unknown host'}</bdi></td><td data-label="Agent / model"><bdi>{agentLabel(session.agent)}{session.model ? ` · ${session.model}` : ''}</bdi></td><td data-label="Last">{relTime(session.last_event_at, now)}</td></tr> : content
 }

@@ -1,3 +1,4 @@
+import '../styles/launch.css'
 import McpPrediction from '../components/McpPrediction'
 import { predictionHat } from '../lib/mcpDelivery'
 // New session (frontend spec §7): a host, an agent, a project, the hat the

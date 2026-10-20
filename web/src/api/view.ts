@@ -8,8 +8,8 @@ import type { SessionCatalog, SessionDetail } from '../generated/protocol'
 
 const enc = encodeURIComponent
 
-export function questionCard(client: Client, id: string, pending: string): Promise<Item> {
-  return client.request<Item>('GET', `/api/view/sessions/${enc(id)}/questions/${enc(pending)}`)
+export function questionCard(client: Client, id: string, pending: string, signal?: AbortSignal): Promise<Item> {
+  return client.request<Item>('GET', `/api/view/sessions/${enc(id)}/questions/${enc(pending)}`, undefined, { signal })
 }
 
 /** `?a=1&b=2` of the params that are set, or nothing. */
@@ -49,7 +49,7 @@ export interface SummaryQuery {
 }
 
 /** `GET /api/view/sessions`: one page of summaries, newest first. */
-export function summaries(client: Client, q: SummaryQuery = {}): Promise<SummaryPage> {
+export function summaries(client: Client, q: SummaryQuery = {}, signal?: AbortSignal): Promise<SummaryPage> {
   return client.request<SummaryPage>(
     'GET',
     `/api/view/sessions${query({
@@ -59,6 +59,7 @@ export function summaries(client: Client, q: SummaryQuery = {}): Promise<Summary
       hat: q.hat || undefined,
       lifecycle: q.lifecycle && q.lifecycle.length > 0 ? q.lifecycle.join(',') : undefined,
     })}`,
+    undefined, { signal },
   )
 }
 
@@ -76,7 +77,8 @@ export function catalog(client: Client, id: string): Promise<SessionCatalog> {
 /** `GET /api/sessions/{id}`: the session, its open turn and pending requests. */
 const detailReads = new WeakMap<Client, Map<string, Promise<SessionDetail>>>()
 
-export function sessionDetail(client: Client, id: string): Promise<SessionDetail> {
+export function sessionDetail(client: Client, id: string, signal?: AbortSignal): Promise<SessionDetail> {
+  if (signal) return client.request<SessionDetail>('GET', `/api/sessions/${enc(id)}`, undefined, { signal })
   let reads = detailReads.get(client)
   if (!reads) { reads = new Map(); detailReads.set(client, reads) }
   const held = reads.get(id)

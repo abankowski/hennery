@@ -1,6 +1,6 @@
 // The app: the route decides between setup, login and the signed-in shell;
 // the step-up dialog opens over any of them when a request needs it.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { StepUpCancelled } from './api/errors'
 import { ClientContext, browserClient } from './app-client'
 import Shell from './components/Shell'
@@ -11,6 +11,8 @@ import Setup from './screens/Setup'
 import PwaStatus from './components/PwaStatus'
 import { completeLogout } from './pwa/logout'
 import NotificationNavigation from './components/NotificationNavigation'
+import { AppActionsProvider } from './app-actions'
+const CommandHost = lazy(() => import('./components/CommandHost'))
 
 interface Waiting {
   resolve: () => void
@@ -52,6 +54,7 @@ export default function App({ fetchImpl }: { fetchImpl?: typeof fetch }) {
 
   return (
     <ClientContext.Provider value={client}>
+      <AppActionsProvider>
       <div className="application-root">
       <PwaStatus />
       <NotificationNavigation />
@@ -61,7 +64,9 @@ export default function App({ fetchImpl }: { fetchImpl?: typeof fetch }) {
         {route.name === 'setup' ? <Setup /> : route.name === 'login' ? <Login /> : <Shell route={route} />}
       </div>
       {waiting && <StepUpDialog returnTo={focusBeforeStepUp.current} onDone={() => close('done')} onCancel={() => close('cancelled')} />}
+      <Suspense fallback={null}><CommandHost /></Suspense>
       </div>
+      </AppActionsProvider>
     </ClientContext.Provider>
   )
 }

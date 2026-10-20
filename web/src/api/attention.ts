@@ -10,10 +10,10 @@ export interface OperatorAttention {
   pending_id: string | null
 }
 
-export async function attentionPage(client: Client, hat: string, after?: string): Promise<OperatorAttention[]> {
+export async function attentionPage(client: Client, hat: string, after?: string, signal?: AbortSignal): Promise<OperatorAttention[]> {
   const query = new URLSearchParams({ hat_id: hat })
   if (after !== undefined) query.set('after', after)
-  const value = await client.request<unknown>('GET', `/api/delegation/attention?${query}`)
+  const value = await client.request<unknown>('GET', `/api/delegation/attention?${query}`, undefined, { signal })
   if (!Array.isArray(value) || value.length > 100 || !value.every(isAttention)) throw new Error('Invalid delegation attention response.')
   return value
 }

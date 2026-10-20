@@ -58,3 +58,19 @@ export function statusOf(s: StatusInput): Marker {
       return { tone: 'idle', label: s.lifecycle || 'Unknown', resume: false }
   }
 }
+
+export const STATUS_FILTERS = ['all', 'attention', 'running', 'idle', 'parked', 'failed'] as const
+export type StatusFilter = typeof STATUS_FILTERS[number]
+export const STATUS_LABEL: Record<StatusFilter, string> = { all: 'All', attention: 'Needs you', running: 'Running', idle: 'Idle', parked: 'Parked / offline', failed: 'Failed' }
+/** Modern operator counts are authoritative, including closed status-only work. */
+export function needsOperator(s: StatusInput): boolean { return (s.operator_attention ?? 0) > 0 }
+export function matchesStatus(s: StatusInput, filter: StatusFilter): boolean {
+  switch (filter) {
+    case 'all': return true
+    case 'attention': return needsOperator(s)
+    case 'running': return s.lifecycle === 'active' && s.activity === 'running'
+    case 'idle': return s.lifecycle === 'active' && s.activity === 'idle'
+    case 'parked': return s.lifecycle === 'parked' || s.presumed_parked
+    case 'failed': return s.lifecycle === 'failed'
+  }
+}

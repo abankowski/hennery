@@ -42,7 +42,7 @@ export async function selectShell(storage: CacheStorage, build: string): Promise
 }
 
 export function appRoute(path: string): boolean {
-  return ['/sessions', '/new', '/hosts', '/hats', '/settings', '/mcp'].includes(path)
+  return ['/sessions', '/needs-you', '/more', '/defaults', '/new', '/hosts', '/hats', '/settings', '/mcp'].includes(path)
     || /^\/sessions\/[A-Za-z0-9_-]{1,128}$/.test(path)
 }
 

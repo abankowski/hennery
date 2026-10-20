@@ -85,8 +85,12 @@ export class SessionListController {
   private retryTimer: ReturnType<typeof setTimeout> | undefined
   private resyncedTimer: ReturnType<typeof setTimeout> | undefined
   private readonly client: Client
-  private readonly query: SummaryQuery
-  private readonly search: boolean
+  private query: SummaryQuery
+  private search: boolean
+  private abort = new AbortController()
+  private known = new Map<string, SessionSummary>()
+  queryKey = ''
+  knownSummaries = () => this.known
   private readonly timing: Timing
   private readonly backoff: ResyncBackoff
 
@@ -105,8 +109,12 @@ export class SessionListController {
 
   getSnapshot = (): SessionListSnapshot => this.snapshot
 
-  start(): void {
+  start(query: SummaryQuery = this.query, key = JSON.stringify(query)): void {
     this.stop()
+    this.query = query
+    this.queryKey = key
+    this.search = !!query.q
+    this.abort = new AbortController()
     this.snapshot = INITIAL
     this.attempt = 0
     this.backoff.reset()
@@ -116,6 +124,7 @@ export class SessionListController {
 
   stop(): void {
     this.run++
+    this.abort.abort()
     this.closeStream()
     clearTimeout(this.retryTimer)
     clearTimeout(this.resyncedTimer)
@@ -130,9 +139,9 @@ export class SessionListController {
     if (cursor === undefined || this.snapshot.loadingMore) return
     const run = this.run
     const generation = this.generation
-    this.update({ loadingMore: true })
+    this.update({ loadingMore: true, error: null })
     try {
-      const page = await summaries(this.client, { ...this.query, cursor })
+      const page = await summaries(this.client, { ...this.query, cursor }, this.abort.signal)
       if (run !== this.run || generation !== this.generation) return
       this.apply({ type: 'more', page })
     } catch (err) {
@@ -154,6 +163,10 @@ export class SessionListController {
 
   private apply(action: ListAction): void {
     const store = listReducer(this.snapshot.store, action)
+    const known = new Map(this.known)
+    for (const [id, summary] of store.all) known.set(id, summary)
+    if (action.type === 'removed') known.delete(action.id)
+    this.known = known
     if (store !== this.snapshot.store) this.update({ store })
   }
 
@@ -164,13 +177,17 @@ export class SessionListController {
 
   private async load(run: number, resync: boolean): Promise<void> {
     try {
-      const page = await summaries(this.client, this.query)
+      const page = await summaries(this.client, this.query, this.abort.signal)
       if (run !== this.run) return
       if (!isFirstPage(page)) throw new Error('The session list could not be read.')
       this.generation++
+      // Summaries from the previous query bridge only the in-flight read.
+      // Its new anchor skips changes excluded from this baseline, so retained
+      // rows must not outrank fresh per-session detail after acceptance.
+      this.known = new Map()
       this.attempt = 0
+      this.apply({ type: 'first', page, search: this.search })
       this.update({
-        store: listReducer(this.snapshot.store, { type: 'first', page, search: this.search }),
         loading: false,
         error: null,
         resynced: resync || this.snapshot.resynced,
@@ -234,6 +251,8 @@ export class SessionListController {
    *  waits as `ResyncBackoff` says. */
   private resync(): void {
     this.run++
+    this.abort.abort()
+    this.abort = new AbortController()
     this.closeStream()
     clearTimeout(this.retryTimer)
     this.update({ stream: 'reconnecting', loadingMore: false })
@@ -246,7 +265,7 @@ export class SessionListController {
 }
 
 export interface SessionList extends Omit<SessionListSnapshot, 'store'> {
-  /** Every summary received, by id (the header reads it). */
+  /** Current baseline/upserts by id; prior rows survive only while loading. */
   all: ReadonlyMap<string, SessionSummary>
   /** What the list shows, in order. */
   shown: SessionSummary[]
@@ -267,15 +286,16 @@ export interface SessionList extends Omit<SessionListSnapshot, 'store'> {
 export function useSessionList(filters: ListFilters, timing?: Partial<Timing>): SessionList {
   const client = useClient()
   const query = serverQuery(filters)
-  const key = JSON.stringify(query)
+  const key = JSON.stringify({ scope: filters.pageScope ?? 'overview', query })
   const timingRef = useRef(timing)
   // A new query starts over; a new object with the same query does not.
-  const controller = useMemo(() => new SessionListController(client, query, timingRef.current), [client, key])
+  const controller = useMemo(() => new SessionListController(client, query, timingRef.current), [client])
   useEffect(() => {
-    controller.start()
+    controller.start(query, key)
     return () => controller.stop()
-  }, [controller])
-  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  }, [controller, key])
+  const currentSnapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  const snapshot = controller.queryKey === key ? currentSnapshot : INITIAL
   const { store, ...rest } = snapshot
   const { hat, lifecycle, hideClosed, q } = filters
   const shown = useMemo(
@@ -316,7 +336,7 @@ export function useSessionList(filters: ListFilters, timing?: Partial<Timing>): 
   const counts = useMemo(() => ({ waiting }), [waiting])
   return {
     ...rest,
-    all: store.all,
+    all: controller.knownSummaries(),
     shown,
     counts,
     hasMore: store.nextCursor !== undefined,

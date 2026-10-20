@@ -127,8 +127,8 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('day headings', () => {
-  it('are headings, in order, from calendar-local midnights', async () => {
+describe('group headings and clock', () => {
+  it('groups dates under the actual hat instead of day headings', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 9, 2, 12, 0))
     const local = (d: number, h = 10) => new Date(2026, 9, d, h, 0).toISOString()
@@ -150,10 +150,10 @@ describe('day headings', () => {
     const headings = within(region)
       .getAllByRole('heading', { level: 2 })
       .map((h) => h.querySelector('.grp-title')?.textContent)
-    expect(headings).toEqual(['Today', 'Yesterday', 'This week', 'This month', 'Earlier'])
+    expect(headings).toEqual(['Work'])
   })
 
-  it('move on with the clock on an idle list: across midnight Today becomes Yesterday, and 29m ago 31m ago', async () => {
+  it('retains the hat group across midnight while relative time advances without refetch', async () => {
     // No list event and no fetch after the first page: only the clock moves.
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
     vi.setSystemTime(new Date(2026, 9, 2, 23, 59))
@@ -167,10 +167,10 @@ describe('day headings', () => {
         .getAllByRole('heading', { level: 2 })
         .map((h) => h.querySelector('.grp-title')?.textContent)
     const time = () => region.querySelector('.sess-time')?.textContent
-    expect(headings()).toEqual(['Today'])
+    expect(headings()).toEqual(['Work'])
     expect(time()).toBe('29m ago')
     act(() => vi.advanceTimersByTime(2 * 60_000))
-    expect(headings()).toEqual(['Yesterday'])
+    expect(headings()).toEqual(['Work'])
     expect(time()).toBe('31m ago')
     expect(s.of(LIST)).toHaveLength(1)
   })
@@ -303,7 +303,7 @@ describe('rows', () => {
     const s = server({ list: () => page([summary('a')]) })
     render(<App fetchImpl={s.fetch} />)
     const region = await list()
-    expect(await within(region).findByText('laptop')).toBeInTheDocument()
+    expect(await within(region).findByRole('cell', { name: 'laptop' })).toBeInTheDocument()
     await waitFor(() => expect(s.streams).toHaveLength(1))
     act(() => s.streams[0].event('session_upsert', summary('b', { last_event_at: '2026-10-02T11:00:00.000Z' }), 'e1:2'))
     await waitFor(() => expect(names(region)).toEqual(['b', 'a']))
@@ -322,12 +322,12 @@ describe('rows', () => {
 })
 
 describe('the waiting count', () => {
-  it('shows on a phone in the top bar', async () => {
+  it('shows on a phone in primary navigation', async () => {
     at('/sessions')
     const s = server({ list: () => page([summary('asks', { question_waits: true }), summary('calm')]) })
     const { container } = render(<App fetchImpl={s.fetch} />)
     await waitFor(() => expect(document.title).toBe('(1) hennery'))
-    const bar = container.querySelector('.mtopbar') as HTMLElement
+    const bar = container.querySelector('.tabbar') as HTMLElement
     expect(within(bar).getByRole('status', { name: '1 waiting on you' })).toHaveTextContent('1')
   })
 
@@ -370,7 +370,7 @@ describe('the waiting count', () => {
     const s = server({ list: hatsList })
     const { container } = render(<App fetchImpl={s.fetch} />)
     const region = await list()
-    const bar = container.querySelector('.mtopbar') as HTMLElement
+    const bar = container.querySelector('.tabbar') as HTMLElement
     const counted = () => {
       expect(document.title).toBe('(1) hennery')
       expect(within(bar).getByRole('status', { name: '1 waiting on you' })).toHaveTextContent('1')
@@ -422,7 +422,7 @@ describe('the waiting count', () => {
     const s = server({ list: countedList })
     const { container } = render(<App fetchImpl={s.fetch} />)
     const region = await list()
-    const bar = container.querySelector('.mtopbar') as HTMLElement
+    const bar = container.querySelector('.tabbar') as HTMLElement
     const counted = () => {
       expect(document.title).toBe('(3) hennery')
       expect(within(bar).getByRole('status', { name: '3 waiting on you' })).toHaveTextContent('3')
@@ -453,7 +453,7 @@ describe('the waiting count', () => {
     })
     const { container } = render(<App fetchImpl={s.fetch} />)
     const region = await list()
-    const bar = container.querySelector('.mtopbar') as HTMLElement
+    const bar = container.querySelector('.tabbar') as HTMLElement
     await waitFor(() => expect(names(region)).toEqual(['calm', 'asks']))
     expect(document.title).toBe('(3) hennery')
     await userEvent.click(within(region).getByRole('searchbox', { name: 'Search sessions' }))
@@ -508,147 +508,41 @@ describe('the waiting count', () => {
   })
 })
 
-describe('selection (F-11)', () => {
-  const rows = () =>
-    page([
-      summary('closed-newest', { lifecycle: 'closed', activity: undefined, last_event_at: '2026-10-02T12:00:00.000Z' }),
-      summary('a', { last_event_at: '2026-10-02T11:00:00.000Z' }),
-      summary('b', { hat_id: 'hat-b', last_event_at: '2026-10-02T10:00:00.000Z' }),
-      summary('a-old', { last_event_at: '2026-10-02T09:00:00.000Z' }),
-    ])
-
-  it('on a desktop, /sessions opens the newest visible row, never a hidden one', async () => {
-    width(true)
-    at('/sessions')
-    const s = server({ list: rows })
-    render(<App fetchImpl={s.fetch} />)
-    await waitFor(() => expect(location.pathname).toBe('/sessions/a'))
-    const rail = await screen.findByRole('complementary', { name: 'Views' })
-    await waitFor(() => expect(names(rail)).toContain('a'))
-    const current = within(rail)
-      .getAllByRole('link', { current: 'page' })
-      .filter((l) => l.classList.contains('sess'))
-    expect(current.map((l) => l.querySelector('.sess-name')?.textContent)).toEqual(['a'])
-  })
-
-  it('on a desktop, /sessions with no row to open says to pick one, not that the screen comes later', async () => {
-    width(true)
-    at('/sessions')
-    const s = server()
-    render(<App fetchImpl={s.fetch} />)
-    expect(await screen.findByText('Pick a session from the list, or start a new one.')).toBeInTheDocument()
-    expect(screen.queryByText('This screen arrives in a later part of the web UI.')).toBeNull()
+describe('route selection and overview', () => {
+  const rows = () => page([summary('a'), summary('b', { hat_id: 'hat-b' }), summary('a-old', { last_event_at: '2026-10-01T00:00:00Z' }), summary('closed', { lifecycle: 'closed' })])
+  it.each([false, true])('keeps /sessions as an overview at desktop=%s', async desktop => {
+    width(desktop); at('/sessions'); const s = server({ list: rows }); render(<App fetchImpl={s.fetch} />)
+    const region = await list(); await waitFor(() => expect(names(region)).toEqual(['b', 'a', 'a-old']))
     expect(location.pathname).toBe('/sessions')
+    expect(s.calls.filter(u => u.pathname.startsWith('/api/stream/view/'))).toHaveLength(0)
   })
-
-  it('on a phone, /sessions stays the list', async () => {
-    at('/sessions')
-    const s = server({ list: rows })
-    render(<App fetchImpl={s.fetch} />)
-    const region = await list()
-    await waitFor(() => expect(names(region)).toEqual(['a', 'b', 'a-old']))
-    expect(location.pathname).toBe('/sessions')
+  it('shows an empty overview with a new-session link', async () => {
+    at('/sessions'); render(<App fetchImpl={server().fetch} />)
+    const region = await list(); expect(await within(region).findByText('No sessions', { exact: true })).toBeInTheDocument()
+    expect(within(region).getByRole('link', { name: 'New session' })).toHaveAttribute('href', '/new')
   })
-
-  it('honours a session outside the hat that the address names', async () => {
-    localStorage.setItem('hennery.hat', 'hat-a')
-    width(true)
-    at('/sessions/b')
-    const s = server({ list: rows })
-    render(<App fetchImpl={s.fetch} />)
-    const region = await list()
-    await waitFor(() => expect(names(region)).toEqual(['a', 'a-old']))
-    expect(location.pathname).toBe('/sessions/b')
-  })
-
-  it('a click opens the session', async () => {
-    at('/sessions')
-    const s = server({ list: rows })
-    render(<App fetchImpl={s.fetch} />)
-    const region = await list()
-    await waitFor(() => expect(names(region)).toEqual(['a', 'b', 'a-old']))
-    await userEvent.click(within(region).getAllByRole('link')[1])
-    expect(location.pathname).toBe('/sessions/b')
-  })
-
-  /** The app on a desktop at `start`, with `hatBefore` chosen. */
-  function openAt(start: string, hatBefore = '') {
-    width(true)
-    localStorage.setItem('hennery.hat', hatBefore)
-    at(start)
-    const s = server({ list: rows })
-    render(<App fetchImpl={s.fetch} />)
-    return s
-  }
-
-  it('switching hats clears a selection outside the new hat', async () => {
-    openAt('/sessions/a')
-    const rail = await screen.findByRole('complementary', { name: 'Views' })
-    await waitFor(() => expect(names(rail)).toContain('a'))
-    await userEvent.click(await within(rail).findByRole('button', { name: 'Home' }))
-    // Cleared, then the newest visible row of the new hat is opened.
-    await waitFor(() => expect(location.pathname).toBe('/sessions/b'))
-    expect(localStorage.getItem('hennery.hat')).toBe('hat-b')
-  })
-
-  it('switching hats clears a selection inside the new hat too', async () => {
-    // Not the hat's newest: kept, it would stay on a-old.
-    const s = openAt('/sessions/a-old')
-    const rail = await screen.findByRole('complementary', { name: 'Views' })
-    await waitFor(() => expect(names(rail)).toContain('a-old'))
-    const before = s.of(LIST).length
-    await userEvent.click(await within(rail).findByRole('button', { name: 'Work' }))
-    await waitFor(() => expect(s.of(LIST).length).toBeGreaterThan(before))
-    await waitFor(() => expect(names(rail)).toEqual(['a', 'a-old']))
-    await waitFor(() => expect(location.pathname).toBe('/sessions/a'))
-  })
-
-  it('switching to every hat clears the selection', async () => {
-    const s = openAt('/sessions/a-old', 'hat-a')
-    const rail = await screen.findByRole('complementary', { name: 'Views' })
-    await waitFor(() => expect(names(rail)).toEqual(['a', 'a-old']))
-    await userEvent.click(within(rail).getByRole('button', { name: 'All hats' }))
-    await waitFor(() => expect(names(rail)).toEqual(['a', 'b', 'a-old']))
-    await waitFor(() => expect(location.pathname).toBe('/sessions/a'))
-    expect(s.of(LIST).at(-1)!.searchParams.get('hat')).toBeNull()
-  })
-
-  it('switching hats clears a session the list does not hold', async () => {
-    openAt('/sessions/unknown')
-    const rail = await screen.findByRole('complementary', { name: 'Views' })
-    await waitFor(() => expect(names(rail)).toContain('a'))
-    await userEvent.click(await within(rail).findByRole('button', { name: 'Work' }))
-    await waitFor(() => expect(location.pathname).toBe('/sessions/a'))
-  })
-
-  it('selects a session whose id needs encoding, through the address, and a hat switch clears it', async () => {
-    width(true)
-    localStorage.setItem('hennery.hat', '')
-    at('/sessions/x%2Fy%20z')
-    const odd = summary('x/y z', { title: 'Odd id', last_event_at: '2026-10-02T11:30:00.000Z' })
-    const s = server({ list: () => page([odd, ...rows().sessions]) })
-    render(<App fetchImpl={s.fetch} />)
-    const rail = await screen.findByRole('complementary', { name: 'Views' })
-    await waitFor(() => expect(names(rail)).toContain('Odd id'))
-    const current = within(rail)
-      .getAllByRole('link', { current: 'page' })
-      .filter((l) => l.classList.contains('sess'))
-    expect(current.map((l) => l.querySelector('.sess-name')?.textContent)).toEqual(['Odd id'])
-    expect(current[0]).toHaveAttribute('href', '/sessions/x%2Fy%20z')
+  it('opens the selected row through its encoded native link', async () => {
+    at('/sessions'); render(<App fetchImpl={server({ list: () => page([summary('x/y z', { title: 'Odd id' })]) }).fetch} />)
+    const region = await list(); const link = await within(region).findByRole('link', { name: /Odd id/ })
+    expect(link).toHaveAttribute('href', '/sessions/x%2Fy%20z'); await userEvent.click(link)
     expect(location.pathname).toBe('/sessions/x%2Fy%20z')
-    await userEvent.click(within(rail).getByRole('button', { name: 'Home' }))
-    // Cleared, then the new hat's newest row is opened.
-    await waitFor(() => expect(location.pathname).toBe('/sessions/b'))
-    expect(s.of(LIST).at(-1)!.searchParams.get('hat')).toBe('hat-b')
   })
-
-  it('choosing the hat already chosen keeps the selection', async () => {
-    const s = openAt('/sessions/a-old', 'hat-a')
-    const rail = await screen.findByRole('complementary', { name: 'Views' })
-    await waitFor(() => expect(names(rail)).toEqual(['a', 'a-old']))
-    await userEvent.click(within(rail).getByRole('button', { name: 'Work' }))
-    expect(location.pathname).toBe('/sessions/a-old')
-    expect(s.of(LIST)).toHaveLength(1)
+  it.each(['/sessions/b', '/sessions/unknown', '/sessions/x%2Fy%20z'])('honours %s outside the selected hat without a side list', async path => {
+    localStorage.setItem('hennery.hat', 'hat-a'); at(path); const s = server({ list: rows }); render(<App fetchImpl={s.fetch} />)
+    const rail = await screen.findByRole('complementary', { name: 'Views' }); await within(rail).findByRole('link', { name: 'Work' })
+    await waitFor(() => expect(s.of(LIST)).toHaveLength(1)); expect(location.pathname).toBe(path)
+    expect(screen.queryByRole('region', { name: 'Session list' })).toBeNull()
+  })
+  it.each([['', 'Home', 'hat-b'], ['', 'Work', 'hat-a'], ['hat-a', 'All hats', '']])('hat switch %s → %s clears selection and returns to overview', async (before, name, next) => {
+    localStorage.setItem('hennery.hat', before); at('/sessions/a-old'); render(<App fetchImpl={server({ list: rows }).fetch} />)
+    const rail = await screen.findByRole('complementary', { name: 'Views' }); await userEvent.click(await within(rail).findByRole('link', { name }))
+    await waitFor(() => expect(location.pathname).toBe('/sessions')); expect(localStorage.getItem('hennery.hat')).toBe(next)
+    await list()
+  })
+  it('the current rail hat opens its scoped overview without auto-selecting a session', async () => {
+    localStorage.setItem('hennery.hat', 'hat-a'); at('/sessions/a-old?pending=older'); const s = server({ list: rows }); render(<App fetchImpl={s.fetch} />)
+    const rail = await screen.findByRole('complementary', { name: 'Views' }); await userEvent.click(await within(rail).findByRole('link', { name: 'Work' }))
+    expect(location.pathname + location.search).toBe('/sessions?hat=hat-a'); expect(localStorage.getItem('hennery.hat')).toBe('hat-a')
   })
 })
 
@@ -706,8 +600,7 @@ describe('hats and hosts, changed on their screens', () => {
   /** The rail, once the session list's own hats and host names are read. */
   async function railRead() {
     const rail = await screen.findByRole('complementary', { name: 'Views' })
-    await within(rail).findByRole('button', { name: 'Work' })
-    await within(rail).findByText('laptop')
+    await within(rail).findByRole('link', { name: 'Work' })
     return rail
   }
 
@@ -724,8 +617,9 @@ describe('hats and hosts, changed on their screens', () => {
     const rail = await railRead()
     change()
     act(() => navigate(to))
-    expect(await within(rail).findByRole('button', { name: 'Clients' })).toBeInTheDocument()
-    expect(await within(rail).findByText('build box')).toBeInTheDocument()
+    expect(await within(rail).findByRole('link', { name: 'Clients' })).toBeInTheDocument()
+    act(() => navigate('/sessions'))
+    expect(await within(await list()).findByRole('cell', { name: 'build box' })).toBeInTheDocument()
     expect(s.of(LIST)).toHaveLength(1)
   })
 
@@ -739,10 +633,11 @@ describe('hats and hosts, changed on their screens', () => {
     await screen.findByRole('heading', { name: 'laptop' })
     change()
     await new Promise((r) => setTimeout(r, 100))
-    expect(within(rail).getByText('laptop')).toBeInTheDocument()
+    expect(s.of('/api/hosts')).toHaveLength(3)
     act(() => navigate('/sessions/a'))
-    expect(await within(rail).findByText('build box')).toBeInTheDocument()
-    expect(within(rail).getByRole('button', { name: 'Clients' })).toBeInTheDocument()
+    act(() => navigate('/sessions'))
+    expect(await within(await list()).findByRole('cell', { name: 'build box' })).toBeInTheDocument()
+    expect(within(rail).getByRole('link', { name: 'Clients' })).toBeInTheDocument()
   })
 
   it('are not read again between the session list and a session', async () => {
@@ -753,13 +648,14 @@ describe('hats and hosts, changed on their screens', () => {
     const rail = await railRead()
     change()
     act(() => navigate('/sessions'))
-    await waitFor(() => expect(location.pathname).toBe('/sessions/a'))
+    await waitFor(() => expect(location.pathname).toBe('/sessions'))
     act(() => navigate('/sessions/b'))
     // The session view reads the hats for itself: the rail shows the
     // session list's own.
     await new Promise((r) => setTimeout(r, 100))
-    expect(within(rail).queryByRole('button', { name: 'Clients' })).toBeNull()
-    expect(within(rail).getByText('laptop')).toBeInTheDocument()
+    expect(within(rail).queryByRole('link', { name: 'Clients' })).toBeNull()
+    act(() => navigate('/sessions'))
+    expect(await within(await list()).findByRole('cell', { name: 'laptop' })).toBeInTheDocument()
   })
 })
 
@@ -924,6 +820,19 @@ it('counts status-only operator attention while excluding parent-handled questio
   ]) })
   const { container } = render(<App fetchImpl={s.fetch} />)
   await waitFor(() => expect(document.title).toBe('(1) hennery'))
-  const bar = container.querySelector('.mtopbar') as HTMLElement
+  const bar = container.querySelector('.tabbar') as HTMLElement
   expect(within(bar).getByRole('status', { name: '1 waiting on you' })).toHaveTextContent('1')
+})
+
+it('keeps the shared attention count reachable on a phone session while its tab bar is hidden', async () => {
+  at('/sessions/failed')
+  const s = server({ list: () => page([summary('failed', { lifecycle: 'failed', operator_attention: 1 })], undefined, 1) })
+  const { container } = render(<App fetchImpl={s.fetch} />)
+  await waitFor(() => expect(document.title).toBe('(1) hennery'))
+  const bar = container.querySelector('.session-scope-status') as HTMLElement
+  expect(within(bar).getByRole('status', { name: '1 waiting on you' })).toHaveTextContent('1')
+  expect(within(bar).getByRole('link')).toHaveAttribute('href', '/needs-you')
+  await waitFor(() => expect(s.streams).toHaveLength(1))
+  act(() => s.streams[0].event('waiting_changed', { count: 0 }))
+  await waitFor(() => expect(container.querySelector('.session-scope-status')).toBeNull())
 })

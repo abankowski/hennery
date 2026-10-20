@@ -1,6 +1,7 @@
 // The hat selector (frontend spec §5): every hat, or one. The hats are the
 // server's; the app never computes a session's hat.
 import type { HatItem } from '../generated/protocol'
+import { HatChip } from './ui'
 
 interface Props {
   hats: readonly HatItem[] | null
@@ -10,7 +11,7 @@ interface Props {
 }
 
 export default function HatSwitch({ hats, hat, onHat }: Props) {
-  const choices = [{ id: '', name: 'All hats' }, ...(hats ?? []).map((h) => ({ id: h.id, name: h.name }))]
+  const choices = [{ id: '', name: 'All hats', colour: undefined }, ...(hats ?? []).map((h) => ({ id: h.id, name: h.name, colour: h.colour }))]
   return (
     <div className="hat-switch list-hats" role="group" aria-label="Hat">
       {choices.map((c) => (
@@ -19,9 +20,10 @@ export default function HatSwitch({ hats, hat, onHat }: Props) {
           type="button"
           className={'chip' + (hat === c.id ? ' on' : '')}
           aria-pressed={hat === c.id}
+          aria-label={c.name}
           onClick={() => onHat(c.id)}
         >
-          <bdi>{c.name}</bdi>
+          {c.id ? <HatChip colour={c.colour}><bdi>{c.name}</bdi></HatChip> : <bdi>{c.name}</bdi>}
         </button>
       ))}
     </div>

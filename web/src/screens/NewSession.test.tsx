@@ -611,8 +611,8 @@ describe('in the app', () => {
     const user = await fill('/srv/work/cat')
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-new'))
-    // The list has loaded, and its newest visible row did not take over.
-    await screen.findByText('old')
+    // The list stream opened, and its known rows did not replace the explicit route.
+    await waitFor(() => expect(fetch.mock.calls.filter(([input]) => new URL(String(input), 'http://h').pathname === '/api/stream/sessions')).toHaveLength(1))
     await new Promise((r) => setTimeout(r, 50))
     expect(location.pathname).toBe('/sessions/s-new')
     // @ts-expect-error jsdom has none; each test sets its own

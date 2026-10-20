@@ -549,3 +549,36 @@ describe('useSessionList', () => {
     expect(result.current.counts.waiting).toBe(1)
   })
 })
+
+it('fences an overview response arriving after the attention query and keeps one store/stream', async () => {
+  let release!: (response: Response) => void
+  const streams: LiveStream[] = []
+  const t = routed(call => {
+    if (call.path.startsWith(STREAM)) { const stream = liveStream(); streams.push(stream); return stream.response }
+    if (call.path.includes('q=overview')) return new Promise<Response>(resolve => { release = resolve })
+    return json(page([summary('closed-attention', { lifecycle: 'closed', operator_attention: 1 })], 20, undefined, 1))
+  })
+  const { result, rerender } = renderHook((filters: ListFilters) => useSessionList(filters, FAST), { wrapper: t.wrapper, initialProps: { hat: 'hat-a', hideClosed: true, q: 'overview' } as ListFilters })
+  await waitFor(() => expect(release).toBeDefined())
+  rerender({ hat: 'hat-a', hideClosed: false })
+  await waitFor(() => expect(ids(result.current.shown)).toEqual(['closed-attention']))
+  await act(async () => release(json(page([summary('old-overview')], 1, 'old-cursor', 0))))
+  expect(ids(result.current.shown)).toEqual(['closed-attention'])
+  expect(result.current.hasMore).toBe(false)
+  expect(result.current.counts.waiting).toBe(1)
+  expect(streams.filter(stream => !stream.cancelled)).toHaveLength(1)
+})
+
+it('starts a distinct attention baseline even when overview has the same hat-only wire query', async () => {
+  const t = server([page([summary('overview-only')], 1, 'overview-cursor'), page([summary('attention-only', { lifecycle: 'closed', operator_attention: 1 })], 2)])
+  const initial: ListFilters = { hat: 'hat-a', hideClosed: false, pageScope: 'overview' }
+  const { result, rerender } = renderHook((filters: ListFilters) => useSessionList(filters, FAST), { wrapper: t.wrapper, initialProps: initial })
+  await waitFor(() => expect(ids(result.current.shown)).toEqual(['overview-only']))
+  const before = result.current.queryKey
+  rerender({ ...initial, pageScope: 'attention' })
+  await waitFor(() => expect(ids(result.current.shown)).toEqual(['attention-only']))
+  expect(result.current.queryKey).not.toBe(before)
+  expect(t.of(LIST)).toHaveLength(2)
+  expect(result.current.hasMore).toBe(false)
+  expect(t.streams.filter(stream => !stream.cancelled)).toHaveLength(1)
+})

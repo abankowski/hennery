@@ -1,10 +1,16 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { heldFor, hold } from './lib/attachments'
 import { sendingFor, track } from './lib/sending'
 import { FULL, GATEWAY, json, stubServer } from './test-server'
+import { useActionSnapshot } from './app-actions'
+vi.mock('./screens/Defaults', () => ({ default: () => <h1>Defaults entry point</h1> }))
+vi.mock('./components/CommandHost', () => ({ default: () => {
+  const actions = useActionSnapshot()
+  return <output aria-label="Defaults action availability">{String(actions?.get('open-defaults')?.enabled ?? false)}</output>
+} }))
 
 function at(path: string) {
   history.replaceState(null, '', path)
@@ -18,16 +24,17 @@ afterEach(() => {
 describe('the shell', () => {
   it('shows every view of the whole cockpit, the current one marked', async () => {
     at('/hosts')
-    const server = stubServer({ 'GET /api/capabilities': json(200, FULL) })
+    const server = stubServer({ 'GET /api/capabilities': json(200, { ...FULL, features: ['session_defaults'] }) })
     render(<App fetchImpl={server.fetch} />)
     const rail = await screen.findByRole('complementary', { name: 'Views' })
     const names = within(rail)
       .getAllByRole('link')
+      .filter(a => a.classList.contains('nav-item'))
       .map((a) => a.textContent?.trim())
-    expect(names).toEqual(['New session', 'Sessions', 'Hosts', 'MCP', 'Hats', 'Settings'])
+    expect(names).toEqual(['Needs you', 'All sessions', 'New session', 'Defaults', 'Hosts', 'MCP', 'Hats', 'Settings'])
     expect(within(rail).getByRole('link', { name: 'Hosts' })).toHaveAttribute('aria-current', 'page')
-    const tabs = screen.getByRole('navigation', { name: 'Tabs' })
-    expect(within(tabs).getAllByRole('link').map((a) => a.textContent)).toEqual(['Sessions', 'New', 'Hosts', 'Settings'])
+    const tabs = screen.getByRole('navigation', { name: 'Primary navigation' })
+    expect(within(tabs).getAllByRole('link').map((a) => a.textContent)).toEqual(['Needs you', 'Sessions', 'New', 'Hosts', 'More'])
   })
 
   it('shows only MCP and Settings in gateway mode, and no other view', async () => {
@@ -36,8 +43,8 @@ describe('the shell', () => {
     render(<App fetchImpl={server.fetch} />)
     const rail = await screen.findByRole('complementary', { name: 'Views' })
     expect(within(rail).getAllByRole('link').map((a) => a.textContent?.trim())).toEqual(['MCP', 'Settings'])
-    const tabs = screen.getByRole('navigation', { name: 'Tabs' })
-    expect(within(tabs).getAllByRole('link').map((a) => a.textContent)).toEqual(['MCP', 'Settings'])
+    const tabs = screen.getByRole('navigation', { name: 'Primary navigation' })
+    expect(within(tabs).getAllByRole('link').map((a) => a.textContent)).toEqual(['MCP', 'More'])
     expect(screen.getByText('This view is not part of this deployment.')).toBeInTheDocument()
   })
 
@@ -55,7 +62,7 @@ describe('the shell', () => {
     const rail = await screen.findByRole('complementary', { name: 'Views' })
     await userEvent.click(within(rail).getByRole('link', { name: 'Hats' }))
     expect(location.pathname).toBe('/hats')
-    expect(screen.getByRole('heading', { name: 'Hats' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Hats' })).toBeInTheDocument()
     act(() => {
       history.back()
     })
@@ -148,4 +155,38 @@ describe('the shell', () => {
     expect(sessionStorage.getItem('hennery.draft.s2')).toBeNull()
     expect(sessionStorage.getItem('hennery.hideClosed')).toBe('1')
   })
+})
+
+it.each(['/needs-you', '/defaults', '/new', '/hats', '/sessions/one'])('gateway refuses %s without session/default/delegation reads', async path => {
+  at(path)
+  const server = stubServer({ 'GET /api/capabilities': json(200, GATEWAY) })
+  render(<App fetchImpl={server.fetch} />)
+  await screen.findByText('This view is not part of this deployment.', { exact: true })
+  expect(server.sent.map(request => request.path)).toEqual(['/api/capabilities'])
+})
+it('More contains every configured destination and sign out', async () => {
+  at('/more')
+  const server = stubServer({ 'GET /api/capabilities': json(200, { ...FULL, features: ['session_defaults'] }) })
+  render(<App fetchImpl={server.fetch} />)
+  const nav = await screen.findByRole('navigation', { name: 'More navigation' })
+  expect(within(nav).getAllByRole('link').map(link => link.getAttribute('href'))).toEqual(['/mcp', '/hats', '/defaults', '/settings'])
+  expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+})
+
+it('disables the command entry until this deployment has an enabled provider', async () => {
+  at('/more')
+  render(<App fetchImpl={stubServer({ 'GET /api/capabilities': json(200, GATEWAY) }).fetch} />)
+  const rail = await screen.findByRole('complementary', { name: 'Views' })
+  expect(within(rail).getByRole('button', { name: 'Jump to' })).toBeDisabled()
+})
+
+it.each([false, true])('mounts the Defaults entry point only with its backend capability: %s', async enabled => {
+  at('/defaults')
+  render(<App fetchImpl={stubServer({ 'GET /api/capabilities': json(200, { ...FULL, features: enabled ? ['session_defaults'] : [] }), 'GET /api/hats': json(200, []), 'GET /api/hosts': json(200, []) }).fetch} />)
+  if (enabled) expect(await screen.findByRole('heading', { name: 'Defaults entry point' })).toBeInTheDocument()
+  else {
+    expect(await screen.findByRole('heading', { name: 'Defaults' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Defaults entry point' })).toBeNull()
+  }
+  await waitFor(() => expect(screen.getByRole('status', { name: 'Defaults action availability' })).toHaveTextContent(String(enabled)))
 })

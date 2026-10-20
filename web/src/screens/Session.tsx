@@ -1,3 +1,4 @@
+import '../styles/session.css'
 // One session (frontend spec §6): its header, its transcript, whose question
 // cards answer, and its composer.
 //

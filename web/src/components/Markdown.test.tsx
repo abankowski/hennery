@@ -150,7 +150,7 @@ describe('Markdown', () => {
   // rules themselves: Tailwind's preflight sets lists to no markers, and the
   // two places Markdown renders into must put them back (client view §5.3).
   it('has its containers restore list markers over the reset', () => {
-    const css = readFileSync(join(process.cwd(), 'src/index.css'), 'utf8').replace(/\s+/g, ' ')
+    const css = readFileSync(join(process.cwd(), 'src/styles/session.css'), 'utf8').replace(/\s+/g, ' ')
     for (const scope of ['.bubble', '.think-body']) {
       expect(css).toMatch(new RegExp(`${scope.replace('.', '\\.')} ul[^{]*\\{[^}]*list-style:disc`))
       expect(css).toMatch(new RegExp(`${scope.replace('.', '\\.')} ol[^{]*\\{[^}]*list-style:decimal`))
