@@ -1,141 +1,120 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { Client } from '../api/client'
 import { ClientContext } from '../app-client'
 import { StepUpCancelled } from '../api/errors'
 import { json, stubServer, type Answer } from '../test-server'
-import type { HostCatalog } from '../generated/protocol'
+import type { HatItem, HostCatalog } from '../generated/protocol'
+import { host } from '../test-fixtures'
 import DelegationSettings from './DelegationSettings'
 
-const HAT = { id: 'hat', name: 'Personal', colour: '#64748b', default_for_new_hosts: true, created_at: '2026-10-20T09:00:00Z', purging: false }
-const catalog: HostCatalog = { agent: 'claude', adapter_revision: 'pin1', freshness: 'fresh', security: { known: true, axes: { mode: ['default', 'plan'] } }, defaults: { mode: 'default' }, config_options: [
+const HAT: HatItem = { id: 'hat', name: 'Personal', colour: '#64748b', default_for_new_hosts: true, created_at: '2026-10-20T09:00:00Z', purging: false }
+const catalog: HostCatalog = { agent: 'claude', adapter_revision: 'pin1', freshness: 'fresh', security: { known: true, axes: { mode: ['default', 'plan'], audit: [false] } }, defaults: { mode: 'default' }, config_options: [
   { id: 'permission', category: 'mode', name: 'Permissions', type: 'select', currentValue: 'default', options: [{ value: 'default', name: 'Default' }, { value: 'plan', name: 'Plan' }, { value: 'bypass', name: 'Bypass permissions' }] },
   { id: 'effort', name: 'Effort', type: 'select', currentValue: 'low', options: [{ value: 'low', name: 'Low' }] },
 ] }
-const BASE = { revision: 1, allowed: { other: { sandbox: ['strict'], audit: [false] } } }
-function open(routes: Record<string, Answer | Answer[]> = {}, stepUp = vi.fn(async () => {})) {
+const allowed = { claude: { mode: ['default', 'plan', 'bypass'], audit: [false] } }
+function open(routes: Record<string, Answer | Answer[]> = {}, stepUp = vi.fn(async () => {}), hat = HAT) {
   const server = stubServer({
     'GET /api/hats/hat/session-tools': json(200, { delegation_enabled: false, revision: 1 }),
-    'GET /api/hats/hat/delegation-policy': json(200, BASE),
-    'GET /api/hosts': json(200, [{ host_id: 'host', name: 'Workstation', connected: true }]),
+    'GET /api/hats/hat/delegation-policy': json(200, { revision: 1, allowed: {} }),
+    'GET /api/hosts': json(200, [host({ host_id: 'host', connected: true, mcp_delivery: { claude: 'isolated' } })]),
+    'GET /api/hosts/host/projects': json(200, { home: '/project', recents: [], items: [], partial: false }),
     'GET /api/hosts/host/runtime-catalog?agent=claude&cwd=%2Fproject': json(200, catalog),
     'PATCH /api/hats/hat/session-tools': json(200, { delegation_enabled: true, revision: 2 }),
-    'PATCH /api/hats/hat/delegation-policy': json(200, { revision: 2, allowed: { ...BASE.allowed, claude: { mode: ['default', 'plan', 'bypass'] } } }),
+    'PATCH /api/hats/hat/delegation-policy': json(200, { revision: 2, allowed }),
     ...routes,
   })
   const client = new Client({ fetch: server.fetch, here: () => ({ pathname: '/settings', search: '' }), navigate: vi.fn(), stepUp })
-  render(<ClientContext.Provider value={client}><DelegationSettings hats={[HAT]} /></ClientContext.Provider>)
+  render(<ClientContext.Provider value={client}><DelegationSettings hats={[hat]} /></ClientContext.Provider>)
   return { server, stepUp }
 }
-async function context() {
-  await screen.findByRole('option', { name: 'Workstation' })
-  await userEvent.selectOptions(screen.getByLabelText('Grant host', { exact: true }), 'host')
-  await waitFor(() => expect(screen.getByLabelText('Grant agent', { exact: true })).toBeEnabled())
-  await userEvent.type(screen.getByLabelText('Grant agent', { exact: true }), 'claude')
-  await userEvent.type(screen.getByLabelText('Grant project path', { exact: true }), '/project')
-  await userEvent.click(screen.getByRole('button', { name: 'Load grant choices' }))
-  return screen.findByRole('group', { name: 'Permissions' })
-}
-async function edit() {
-  const group = await context()
-  await userEvent.click(within(group).getByLabelText('Override Permissions', { exact: true }))
-  await userEvent.click(within(group).getByLabelText('Bypass permissions', { exact: true }))
-  return group
-}
-describe('delegation Settings', () => {
-  it('locks a pending toggle and displays the returned flag rather than an optimistic guess', async () => {
+const writes = (server: ReturnType<typeof stubServer>) => server.sent.filter(r => r.method === 'PATCH').map(r => [r.path, r.body])
+const toggle = () => screen.findByRole('switch', { name: 'Delegation' })
+describe('the plain per-hat Delegation switch', () => {
+  it('uses one prompt for the catalog-wide grant and tools, with no grant editor', async () => {
+    const { server, stepUp } = open()
+    await userEvent.click(await toggle())
+    await waitFor(() => expect(screen.getByRole('switch')).toBeChecked())
+    expect(stepUp).toHaveBeenCalledTimes(1)
+    expect(writes(server)).toEqual([
+      ['/api/hats/hat/delegation-policy', { allowed }],
+      ['/api/hats/hat/session-tools', { delegation_enabled: true }],
+    ])
+    expect(screen.getByText('Sessions in this hat can start child sessions with any model and mode. Children cannot start their own children. Permission requests always come to you.', { exact: true })).toBeVisible()
+    expect(screen.getByText('Takes effect at the next start or resume.', { exact: true })).toBeVisible()
+    expect(screen.queryByText('Execution grants', { exact: true })).toBeNull()
+    expect(screen.queryByLabelText('Grant agent', { exact: true })).toBeNull()
+  })
+  it('disables tools before clearing the complete grant, without requiring a host', async () => {
+    const { server, stepUp } = open({
+      'GET /api/hats/hat/session-tools': json(200, { delegation_enabled: true, revision: 1 }),
+      'GET /api/hats/hat/delegation-policy': json(200, { revision: 1, allowed }),
+      'PATCH /api/hats/hat/session-tools': json(200, { delegation_enabled: false, revision: 2 }),
+      'PATCH /api/hats/hat/delegation-policy': json(200, { revision: 2, allowed: {} }),
+    })
+    await userEvent.click(await toggle())
+    await waitFor(() => expect(screen.getByRole('switch')).not.toBeChecked())
+    expect(stepUp).toHaveBeenCalledTimes(1)
+    expect(writes(server)).toEqual([['/api/hats/hat/session-tools', { delegation_enabled: false }], ['/api/hats/hat/delegation-policy', { allowed: {} }]])
+    expect(server.sent.some(r => r.path === '/api/hosts')).toBe(false)
+  })
+  it('unions choices from every reported runtime and connected host', async () => {
+    const { server } = open({
+      'GET /api/hosts': json(200, [host({ host_id: 'host', connected: true, mcp_delivery: { claude: 'isolated', custom: 'default_hat_only' } }), host({ host_id: 'second', connected: true, mcp_delivery: { claude: 'isolated' } })]),
+      'GET /api/hosts/host/runtime-catalog?agent=custom&cwd=%2Fproject': json(200, { ...catalog, agent: 'custom', security: { known: false, axes: {} } }),
+      'GET /api/hosts/second/projects': json(200, { home: '/other' }),
+      'GET /api/hosts/second/runtime-catalog?agent=claude&cwd=%2Fother': json(200, { ...catalog, security: { known: true, axes: { mode: ['other-mode'] } }, config_options: [] }),
+    })
+    await userEvent.click(await toggle())
+    await waitFor(() => expect(screen.getByRole('switch')).toBeChecked())
+    expect(writes(server)[0]).toEqual(['/api/hats/hat/delegation-policy', { allowed: { claude: { mode: ['default', 'plan', 'bypass', 'other-mode'], audit: [false] }, custom: { effort: ['low'], mode: ['default', 'plan', 'bypass'] } } }])
+  })
+  it('cancelling confirmation sends neither write', async () => {
+    const { server, stepUp } = open({}, vi.fn(async () => { throw new StepUpCancelled() }))
+    await userEvent.click(await toggle())
+    expect(await screen.findByRole('alert')).toHaveTextContent('Change cancelled')
+    expect(screen.getByRole('switch')).not.toBeChecked()
+    expect(stepUp).toHaveBeenCalledTimes(1)
+    expect(writes(server)).toEqual([])
+  })
+  it('locks the switch and hat selector until both writes answer, and trusts readback', async () => {
     let finish!: (response: Response) => void
     open({ 'PATCH /api/hats/hat/session-tools': () => new Promise<Response>(resolve => { finish = resolve }) })
-    const toggle = await screen.findByLabelText('Enable delegation session tools', { exact: true })
-    await userEvent.click(toggle)
-    expect(toggle).toBeDisabled()
-    expect(toggle).not.toBeChecked()
+    const control = await toggle(); await userEvent.click(control)
+    await waitFor(() => expect(finish).toBeTypeOf('function'))
+    expect(control).toBeDisabled(); expect(control).not.toBeChecked()
+    expect(screen.getByLabelText('Delegation hat', { exact: true })).toBeDisabled()
     await act(async () => finish(json(200, { delegation_enabled: false, revision: 7 })))
-    expect(toggle).not.toBeChecked()
-    expect(toggle).toBeEnabled()
+    await waitFor(() => expect(control).toBeEnabled())
+    expect(control).not.toBeChecked()
+    expect(screen.getByRole('alert')).toHaveTextContent('could not be fully saved')
   })
-  it('changes only session tools, waits for saved state and explains activation and disable behavior', async () => {
-    const { server } = open()
-    await userEvent.click(await screen.findByLabelText('Enable delegation session tools', { exact: true }))
-    await waitFor(() => expect(screen.getByLabelText('Enable delegation session tools', { exact: true })).toBeChecked())
-    expect(server.sent.filter(r => r.method === 'PATCH').map(r => [r.path, r.body])).toEqual([['/api/hats/hat/session-tools', { delegation_enabled: true }]])
-    expect(screen.getByText('Disabling immediately denies built-in calls, cancels work not yet dispatched and routes outstanding attention to you. Already delivered work keeps running. Re-enabling does not replay cancelled work.', { exact: true })).toBeVisible()
+  it.each(['stale', 'unavailable'])('does not write or prompt with a %s catalog', async freshness => {
+    const { server, stepUp } = open({ 'GET /api/hosts/host/runtime-catalog?agent=claude&cwd=%2Fproject': freshness === 'stale' ? json(200, { ...catalog, freshness }) : json(503, { message: 'Catalog unavailable' }) })
+    await userEvent.click(await toggle())
+    expect(await screen.findByRole('alert')).toBeVisible()
+    expect(screen.getByRole('switch')).not.toBeChecked()
+    expect(stepUp).not.toHaveBeenCalled(); expect(writes(server)).toEqual([])
   })
-  it('restores the saved toggle on step-up cancel without a retry', async () => {
-    const stepUp = vi.fn(async () => { throw new StepUpCancelled() })
-    const { server } = open({ 'PATCH /api/hats/hat/session-tools': json(403, { code: 'step_up_required' }) }, stepUp)
-    await userEvent.click(await screen.findByLabelText('Enable delegation session tools', { exact: true }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Change cancelled')
-    expect(screen.getByLabelText('Enable delegation session tools', { exact: true })).not.toBeChecked()
+  it('refuses a second step-up instead of opening a second prompt or enabling tools', async () => {
+    const { server, stepUp } = open({ 'PATCH /api/hats/hat/delegation-policy': json(403, { code: 'step_up_required' }) })
+    await userEvent.click(await toggle())
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be fully saved')
     expect(stepUp).toHaveBeenCalledTimes(1)
-    expect(server.sent.filter(r => r.method === 'PATCH')).toHaveLength(1)
+    expect(writes(server)).toHaveLength(1)
+    expect(screen.getByRole('switch')).not.toBeChecked()
   })
-  it('uses trusted security ids, preserves unrelated grants and saves only after review with step-up', async () => {
-    const { server, stepUp } = open({ 'PATCH /api/hats/hat/delegation-policy': [json(403, { code: 'step_up_required' }), json(200, { revision: 9, allowed: { ...BASE.allowed, claude: { mode: ['default', 'plan', 'bypass'] } } })] })
-    await edit()
-    expect(screen.queryByRole('group', { name: 'Effort' })).toBeNull()
-    expect(server.sent.some(r => r.method === 'PATCH')).toBe(false)
-    await userEvent.click(screen.getByRole('button', { name: 'Review execution grants' }))
-    const review = screen.getByRole('dialog', { name: 'Save execution grants?' })
-    expect(review).toHaveTextContent('other · sandbox: strict')
-    expect(review).toHaveTextContent('Claude · Permissions: Default, Plan, Bypass permissions')
-    await userEvent.click(within(review).getByRole('button', { name: 'Save execution grants' }))
-    await waitFor(() => expect(review).not.toBeInTheDocument())
-    expect(stepUp).toHaveBeenCalledTimes(1)
-    const writes = server.sent.filter(r => r.method === 'PATCH')
-    expect(writes.map(r => r.body)).toEqual(Array(2).fill({ allowed: { ...BASE.allowed, claude: { mode: ['default', 'plan', 'bypass'] } } }))
-    expect(await screen.findByText(/^Saved version 9\..*$/)).toBeVisible()
-  })
-  it('keeps policy input on cancellation/refusal and never expands tools or grants automatically', async () => {
-    const { server } = open({ 'PATCH /api/hats/hat/delegation-policy': json(403, { code: 'step_up_required' }) }, vi.fn(async () => { throw new StepUpCancelled() }))
-    await edit()
-    await userEvent.click(screen.getByRole('button', { name: 'Review execution grants' }))
-    const review = screen.getByRole('dialog', { name: 'Save execution grants?' })
-    await userEvent.click(within(review).getByRole('button', { name: 'Save execution grants' }))
-    expect(await within(review).findByRole('alert')).toHaveTextContent('Not confirmed.')
-    await userEvent.click(within(review).getByRole('button', { name: 'Cancel' }))
-    expect(screen.getByLabelText('Bypass permissions', { exact: true })).toBeChecked()
-    expect(server.sent.filter(r => r.method === 'PATCH')).toHaveLength(1)
-  })
-  it('requires explicit axis selection for unknown profiles', async () => {
-    open({ 'GET /api/hosts/host/runtime-catalog?agent=claude&cwd=%2Fproject': json(200, { ...catalog, security: { known: false, axes: {} } }) })
-    const group = await context()
-    expect(within(group).getByLabelText('Bypass permissions', { exact: true })).toBeDisabled()
-    await userEvent.click(within(group).getByLabelText('Use as policy setting Permissions', { exact: true }))
-    expect(within(group).getByLabelText('Default', { exact: true })).not.toBeChecked()
-    expect(within(group).getByLabelText('Bypass permissions', { exact: true })).toBeEnabled()
-    expect(screen.getByRole('group', { name: 'Effort' })).toBeVisible()
-  })
-  it('stale catalogs cannot add choices but existing unavailable grants can be removed deliberately', async () => {
-    open({ 'GET /api/hosts/host/runtime-catalog?agent=claude&cwd=%2Fproject': json(200, { ...catalog, freshness: 'stale' }),
-      'GET /api/hats/hat/delegation-policy': json(200, { revision: 1, allowed: { claude: { mode: ['retired'] }, other: BASE.allowed.other } }),
-    })
-    const group = await context()
-    expect(within(group).getByLabelText('Override Permissions', { exact: true })).toBeDisabled()
-    expect(within(group).getByLabelText('Bypass permissions', { exact: true })).toBeDisabled()
-    expect(screen.getByText('Some saved values are unavailable in this context. They stay granted until you remove them below.', { exact: true })).toBeVisible()
-    await userEvent.click(screen.getByRole('button', { name: 'Remove override: Claude / Permissions' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Review execution grants' }))
-    expect(screen.getByRole('dialog')).toHaveTextContent('other · sandbox: strict')
-  })
-  it('fences a catalog that returns after the context changes', async () => {
-    let finish!: (r: Response) => void
-    open({ 'GET /api/hosts/host/runtime-catalog?agent=claude&cwd=%2Fproject': () => new Promise<Response>(resolve => { finish = resolve }) })
-    await screen.findByRole('option', { name: 'Workstation' })
-  await userEvent.selectOptions(screen.getByLabelText('Grant host', { exact: true }), 'host')
-    await waitFor(() => expect(screen.getByLabelText('Grant agent', { exact: true })).toBeEnabled())
-    await userEvent.type(screen.getByLabelText('Grant agent', { exact: true }), 'claude')
-    await userEvent.type(screen.getByLabelText('Grant project path', { exact: true }), '/project')
-    await userEvent.click(screen.getByRole('button', { name: 'Load grant choices' }))
-    await userEvent.type(screen.getByLabelText('Grant project path', { exact: true }), '/changed')
-    await act(async () => finish(json(200, catalog)))
-    expect(screen.queryByRole('group', { name: 'Permissions' })).toBeNull()
-  })
-  it('independently displays tools and policy failures with retry, and never labels failure as disabled', async () => {
+  it('does not label a read failure as OFF and offers retry', async () => {
     open({ 'GET /api/hats/hat/session-tools': json(500, { message: 'Temporarily unavailable' }) })
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load session tools')
-    expect(screen.queryByLabelText('Enable delegation session tools', { exact: true })).toBeNull()
-    expect(await screen.findByText('strict', { exact: true })).toBeVisible()
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Retry session tools' })).toBeVisible()
+  })
+  it('keeps a purging hat read-only', async () => {
+    const { server } = open({}, undefined, { ...HAT, purging: true })
+    expect(await toggle()).toBeDisabled()
+    expect(writes(server)).toEqual([])
   })
 })
