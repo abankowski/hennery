@@ -115,6 +115,9 @@ impl HostConn {
     /// lock, against the very connection the frame goes out on, so a host
     /// that reconnects on an older build cannot slip in between.
     fn takes(&self, frame: &CollectorFrame) -> bool {
+        if matches!(frame, CollectorFrame::SetIdleHold { .. }) && !self.capabilities.has(Capability::IdleHold) {
+            return false;
+        }
         if matches!(
             frame,
             CollectorFrame::DelegatedAttach { .. } | CollectorFrame::DelegatedPrompt { .. }

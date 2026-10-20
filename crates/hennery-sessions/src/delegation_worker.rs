@@ -47,6 +47,7 @@ pub async fn drain(state: &AppState) -> anyhow::Result<()> {
     drain_page(state, &mut Cursors::default()).await
 }
 fn reconcile_page(state: &AppState, cursors: &mut Reconciliation) -> anyhow::Result<()> {
+    state.store.flush_idle_holds(&state.hub)?;
     let now = hennery_kernel::secret::unix_now();
     cursors.attention = state
         .store

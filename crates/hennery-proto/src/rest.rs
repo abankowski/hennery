@@ -7,6 +7,22 @@ use crate::frames::{
     ConfigValue, ElicitationAction, ForgetKind, ForgetReason, PendingKind, PendingReason, SessionConfig,
 };
 
+/// Operator preference for automatic idle parking; explicit Park/Close still work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct SetIdlePinRequest {
+    pub pinned: bool,
+}
+
+/// Collector-derived reasons for retaining a session's adapter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct IdleHoldState {
+    pub pinned: bool,
+    pub family_active: bool,
+    pub notices_pending: bool,
+    pub held: bool,
+}
+
 /// `POST /api/sessions` (ACP core §9): `{host_id, agent, cwd, model?, mode?, axes?}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct StartSessionRequest {

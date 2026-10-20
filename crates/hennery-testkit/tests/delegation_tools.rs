@@ -204,6 +204,193 @@ fn script() -> FakeScript {
         ..Default::default()
     }
 }
+
+#[tokio::test]
+async fn park_hold_pin_api_requires_cookie_origin_and_scopes_sessions_without_step_up() {
+    let h = Harness::new(script()).await;
+    let endpoint = format!("{}/api/sessions/{}/idle-hold", h.url, h.parent);
+    let r = h.raw.get(&endpoint).send().await.unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let phc = h
+        .state
+        .operator
+        .verify_password(hennery_testkit::OWNER_PASSWORD)
+        .unwrap()
+        .unwrap();
+    let cookie = h
+        .state
+        .operator
+        .open_session("idle-pin-stale", &phc, hennery_kernel::secret::unix_now() - 600)
+        .unwrap()
+        .unwrap();
+    for origin in [None, Some("https://foreign.example")] {
+        let mut request = h
+            .raw
+            .patch(&endpoint)
+            .header("cookie", format!("hennery_session={cookie}"))
+            .json(&json!({"pinned":true}));
+        if let Some(origin) = origin {
+            request = request.header("origin", origin);
+        }
+        assert_eq!(request.send().await.unwrap().status(), reqwest::StatusCode::FORBIDDEN);
+    }
+    let r = h
+        .raw
+        .patch(&endpoint)
+        .header("cookie", format!("hennery_session={cookie}"))
+        .header("origin", &h.url)
+        .json(&json!({"pinned":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status(),
+        reqwest::StatusCode::OK,
+        "a resource preference requires no step-up"
+    );
+    assert_eq!(
+        r.json::<Value>().await.unwrap(),
+        json!({"pinned":true,"family_active":false,"notices_pending":false,"held":true})
+    );
+    assert!(
+        h.client
+            .get(&endpoint)
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()["pinned"]
+            .as_bool()
+            .unwrap()
+    );
+    for body in [
+        json!({"pinned":"true"}),
+        json!({"pinned":true,"owner_id":"foreign"}),
+        json!({}),
+    ] {
+        let r = h.client.patch(&endpoint).json(&body).send().await.unwrap();
+        assert_eq!(r.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    let row = h.state.store.find_session(&h.parent).unwrap().unwrap();
+    assert!(
+        h.state
+            .store
+            .create_session(
+                "foreign-pin",
+                HOST,
+                "worker",
+                h.cwd.to_str().unwrap(),
+                &row.hat_id,
+                None
+            )
+            .unwrap()
+    );
+    let conn = hennery_kernel::db::open(&h._dir.path().join("hennery.db")).unwrap();
+    conn.execute("UPDATE sessions SET owner_id='foreign' WHERE id='foreign-pin'", [])
+        .unwrap();
+    for id in ["missing", "foreign-pin"] {
+        let endpoint = format!("{}/api/sessions/{id}/idle-hold", h.url);
+        assert_eq!(
+            h.client.get(&endpoint).send().await.unwrap().status(),
+            reqwest::StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            h.client
+                .patch(&endpoint)
+                .json(&json!({"pinned":true}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::NOT_FOUND
+        );
+    }
+    let r = h
+        .client
+        .patch(&endpoint)
+        .json(&json!({"pinned":false}))
+        .send()
+        .await
+        .unwrap();
+    assert!(!r.json::<Value>().await.unwrap()["held"].as_bool().unwrap());
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn park_hold_real_child_keeps_parent_attached_then_releases_it() {
+    let h = Harness::with_worker_idle(
+        FakeScript {
+            chunk_delay_ms: 6_000,
+            ..script()
+        },
+        None,
+        true,
+        Duration::from_secs(2),
+    )
+    .await;
+    let endpoint = format!("{}/api/sessions/{}/idle-hold", h.url, h.parent);
+    assert_eq!(
+        h.client
+            .patch(&endpoint)
+            .json(&json!({"pinned":true}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::OK
+    );
+    let spawn = h.spawn("idle-hold-work", json!({})).await;
+    let child = spawn["child_id"].as_str().unwrap();
+    eventually("child running", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.activity.as_deref() == Some("running"))
+            .map(|_| ())
+    })
+    .await;
+    let state = h
+        .client
+        .patch(&endpoint)
+        .json(&json!({"pinned":false}))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(state["family_active"], true);
+    assert_eq!(state["held"], true);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        h.state.store.find_session(&h.parent).unwrap().unwrap().lifecycle,
+        "active",
+        "idle parent survives the window while its child works"
+    );
+    h.done(child, "idle-hold-work").await;
+    eventually("child idle parked", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.lifecycle == "parked")
+            .map(|_| ())
+    })
+    .await;
+    eventually("parent idle parked after family release", async || {
+        h.state
+            .store
+            .find_session(&h.parent)
+            .unwrap()
+            .filter(|s| s.lifecycle == "parked")
+            .map(|_| ())
+    })
+    .await;
+    assert!(!h.state.store.idle_hold(&h.parent).unwrap().unwrap().held);
+    h.finish().await;
+}
 fn fake(root: &Path, runtime: &str, mut script: FakeScript) -> AgentCommand {
     let home = root.join(format!("{runtime}-home"));
     std::fs::create_dir_all(&home).unwrap();
@@ -240,7 +427,15 @@ impl Harness {
     async fn new(worker: FakeScript) -> Self {
         Self::with_worker(worker, None, true).await
     }
-    async fn with_worker(worker: FakeScript, mut pinned: Option<(AgentCommand, Profile)>, dispatch: bool) -> Self {
+    async fn with_worker(worker: FakeScript, pinned: Option<(AgentCommand, Profile)>, dispatch: bool) -> Self {
+        Self::with_worker_idle(worker, pinned, dispatch, hennery_host::session::IDLE_TIMEOUT).await
+    }
+    async fn with_worker_idle(
+        worker: FakeScript,
+        mut pinned: Option<(AgentCommand, Profile)>,
+        dispatch: bool,
+        idle: Duration,
+    ) -> Self {
         hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().canonicalize().unwrap();
@@ -345,6 +540,7 @@ impl Harness {
             hennery_sessions::delegation_worker::after_startup(&state);
         }
         let mut cfg = HostConfig::new(format!("ws://{addr}/api/hosts/ws"), HOST, key, cwd.join("host-data"));
+        cfg.idle_timeout = idle;
         cfg.workspace_roots = vec![cwd.clone()];
         cfg.git = None;
         for (runtime, s) in [("claude", script()), ("worker", worker)] {

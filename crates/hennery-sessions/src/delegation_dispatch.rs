@@ -353,6 +353,13 @@ impl Store {
         frame: CollectorFrame,
         hub: &Hub,
     ) -> Result<bool> {
+        // A parked child became starting in the committed attach transaction.
+        // Its parent's hold must precede child handoff, while this gate is held.
+        // Refuse through the caller's existing compensation on a failed flush.
+        if let Err(error) = self.flush_idle_holds_in(conn, hub) {
+            tracing::warn!(%error, "delegated handoff deferred by idle hold flush");
+            return Ok(false);
+        }
         let (agent, isolated): (String, bool) = conn.query_row(
             "SELECT agent,mcp_delivery_mode = 'isolated' FROM sessions WHERE owner_id = ?1 AND id = ?2",
             params![self.owner_id(), source],

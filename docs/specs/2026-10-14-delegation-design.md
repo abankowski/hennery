@@ -424,6 +424,29 @@ Closed, deleted, failed-to-resume or hat-mismatched destinations stop dispatch
 and cause the visible fallback below. Pending questions in the destination
 prevent report prompts, even when asked outside a turn.
 
+**Idle parking amendment (operator decision, 2026-10-20):** a parent's idle
+reaper is held while any direct child's lifecycle is not `parked`, `closed`,
+`failed` or `deleted`, including an attached child between turns, or a notice
+for that parent is still `parent_queued`, `waiting_config` or
+`awaiting_reconciliation`. `parent_delivered`, `operator_required`, resolved
+and obsolete notices are not undelivered automatic work. Routing detach and
+close intent do not stop a running child; the lifecycle condition therefore
+does not depend on routing eligibility or host equality. Notice creation and
+delivery/obsolescence invalidate the parent's hold in their own transactions.
+On release the host starts a full idle window, without extending it again for
+duplicate releases. Explicit Park and Close remain available.
+
+Designer’s recommendation: combine this with a persisted operator pin in one
+effective hold, computed by the collector and sent as capability-gated
+`set_idle_hold { session_id, held }` to `idle_hold` hosts. Retain the owner gate
+through snapshot and handoff; send before a child's start/resume handoff and
+restore all current states after reconciled `resend_complete`. Retained host
+state covers updates arriving before attachment and survives reconnect. Hosts
+without the capability keep the existing reaper and durable automatic-resume
+fallback. The pin API, Origin/auth rules and observed limits of adapter
+background-job detection are specified in ACP core §4.7. No new ACP job parser
+or UI toggle belongs to this amendment.
+
 ### 5.2 Source events and delivery identities
 
 On applied child turn, pending, failure and availability transitions, record a

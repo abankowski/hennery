@@ -88,6 +88,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/sessions/{id}/cancel", post(cancel))
         .route("/api/sessions/{id}/park", post(park))
+        .route("/api/sessions/{id}/idle-hold", get(idle_hold).patch(set_idle_pin))
         .route("/api/sessions/{id}/close", post(close))
         .route("/api/sessions/{id}/catalog", get(catalog))
         .route("/api/sessions/{id}/config", post(set_config))
@@ -104,6 +105,33 @@ pub fn router(state: AppState) -> Router {
             ),
         );
     hennery_kernel::auth::operator_only(routes, state.operator.clone()).with_state(state)
+}
+
+async fn idle_hold(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    idle_hold_response(state.store.idle_hold(&id))
+}
+
+async fn set_idle_pin(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(request): ApiJson<hennery_proto::rest::SetIdlePinRequest>,
+) -> Response {
+    idle_hold_response(state.store.set_idle_pin(&id, request.pinned))
+}
+
+fn idle_hold_response(result: anyhow::Result<Option<hennery_proto::rest::IdleHoldState>>) -> Response {
+    match result {
+        Ok(Some(state)) => Json(state).into_response(),
+        Ok(None) => error(StatusCode::NOT_FOUND, "not_found", "session not found"),
+        Err(error) => {
+            tracing::error!(%error, "idle hold failed");
+            self::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "idle hold unavailable",
+            )
+        }
+    }
 }
 
 pub(crate) fn error(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
