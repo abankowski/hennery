@@ -5,9 +5,41 @@
 - **Contract:** [UI redesign](../specs/2026-10-20-ui-redesign-design.md) §§3, 5.1, 5.6, 9, 10; O6/O8 and confirmed D2–D12.
 - **Method:** implementation built first, exact source patches embedded below, one fresh sequential replay at the end. Code wins over task prose.
 
-## Execution status
+## Execution status (2026-10-20)
 
-Built on the stated base. Baseline: 1,862 tests / 111 files. Independent reviews belong to the parent; this document does not claim a self-review is independent approval. Final execution evidence is recorded here after replay. Logs, captures, extraction and probe scripts live in the gitignored `.superpowers/sdd/ui-r1/` ledger.
+**Executed** on `plan/ui-r1`, built from `339498c5`. Implementation commits: `36f7c43a` (Task 1), `e5f9f726` (Task 2), `3f86b8a9` (Task 3), each pushed to the named branch. Task 4 records this evidence. All authors in the implementation range use `marcin.wadon@gmail.com`. No files from the local design bundle, no Rust/CSP changes and no lockfile changes. No GitHub action or deployment.
+
+Independent task/whole-branch reviews are **requested through the parent**, not claimed completed. The parent owns the PR, full PR status, integration/index entry and release authorization.
+
+| Final command (under the dev shell unless noted) | Exit | Evidence |
+|---|---:|---|
+| `pnpm --dir web install --frozen-lockfile` | 0 | 235 packages; lock unchanged |
+| `pnpm --dir web typecheck` | 0 | app and Node/e2e TypeScript |
+| `pnpm --dir web test` | 0 | **2,092 tests / 113 files**, up from **1,862 / 111** |
+| `pnpm --dir web build` | 0 | 3 Node CSS regressions pass; 1 emitted CSS asset checked; JS initial gzip 241.50 kB, CSS 13.85 kB, bootstrap 2.60 kB |
+| `cargo build -p hennery -p hennery-testkit --bins --locked` | 0 | real collector and scripted agent, UI embedded |
+| `CI=1 pnpm --dir web e2e` | 0 | **103 passed / 11 existing skipped** |
+| `pnpm --dir web exec playwright test appearance.spec.ts --project=chromium` | 0 | **5 passed**; both widths/themes, real embedded assets/CSP, variable weights/italic, Polish sample, composited status/button contrast, stacked focus/return and offline font cache |
+| `pnpm --dir web exec playwright test pwa.spec.ts --project=pwa -g 'notification click reaches'` | 0 | **2 passed**; unchanged 44px regression assertions |
+| `node --test packaging/crate-release.test.mjs` | 0 | **49 passed** |
+| `python3 -m unittest discover -s packaging/release -p test_supply.py` (one-off Nix Python shell) | 0 | **11 passed** |
+| `python3 web/scripts/check-fonts.py` (one-off FontTools/Brotli shell below) | 0 | **6 WOFF2 faces**: actual cmap Polish coverage, 400–700 variable weights and italic metadata |
+
+**Replay:** one fresh source replay in `.superpowers/sdd/ui-r1/replay-3`. It extracted and applied three task patches with **12 / 29 / 6 files**, then independently regenerated six WOFF2s from the pinned upstream TTF bytes using the recorded commands. **All 53 implementation files matched byte for byte**, including bootstrap and fonts. Task 1/2 checks ran after their patches. The complete replay ran typecheck, all 2,092 tests, build and embedded-binary build. Its browser run exposed the same inline notification button regression; the final one-line shared-button display fix and fixed-clock capture amendment were reapplied in that copy, all 53 files matched again, and final typecheck/build/embed/**103 browser tests** passed (11 unchanged skips). No second full fresh replay or full Rust test run.
+
+Replay harness preflight mistakes were corrected before the matching tree was accepted: archive stdout buffer size, GNU cp versus macOS `/bin/cp -c -R`, initializing the replay repository before applying patches (to avoid the enclosing git root), and creating the font output directory. The abandoned `replay-1` (empty) and `replay-2` (base only), `replay-3` and `probes-1` remain in the ignored ledger for parent cleanup. Targets were APFS clones, never shared via CARGO_TARGET_DIR.
+
+**Removal probes:** **21 caught**, in the copied tree only: five accent guards (rounded contrast search, label polarity, neutral handling, source validation and gamut reduction); five theme guards (source migration, bootstrap System selection, apply selection, live media and storage); Step-up Tab trap and modal inert; CSS origin detection, recursive traversal and empty-output refusal; Polish glyph removal independently from Inter and Roboto; distribution asset notices; scoped appearance; emitted-bootstrap migration; crate asset notices. A source migration probe initially passed because the VM bootstrap had its own generated copy: its test now checks the parser directly too, and both source and emitted migration probes fail when removed. All copies were restored after each probe; staged bytes contain no mutations.
+
+**Regression fixes during verification:** field helpers associate hints/errors without adding them to the accessible label; modal cleanup preserves App-owned inert state; shared buttons own display/alignment/border and retain existing 44px notification/device controls. The existing OAuth attention assertion now expects the contrast-safe warning foreground, keeping its exact color assertion. Neither its behavioral assertions nor any PWA sizing/delivery assertion was weakened.
+
+**Visual evidence:** 64 Playwright captures, 16 states × 390×844 / 1280×900 × light/dark, under `.superpowers/sdd/ui-r1/screenshots/`; `screenshots.md` maps every filename to its Design System section. Both font families are loaded before capture; synthetic timestamps are fixed at 2026-10-20T12:00:00Z and animation is reduced. Four contact sheets were visually inspected. States: Login (setup-required error), Setup form/missing link, Sessions, permission session, New session, Hosts, Hats, MCP, Settings, Not found, confirmation, stacked Step-up, gateway MCP, existing gateway redirect from Sessions, and Polish typography sample.
+
+Intentional visual differences: hat-derived yellow acceptance accent with measured dark button labels instead of fixed blue; stronger interactive boundaries; opaque contrast-tested focus halos. Existing shell/session/launcher/management geometry stays for R2–R5. Shared helpers are ready for the actual route/server hat scope wiring in those lanes. Gateway currently redirects Sessions to MCP; R2 owns new unavailable pages. Needs you, Defaults, More and palette do not yet exist in R1. No prototype gallery/device framing.
+
+**Assets:** self-hosted Inter **4.1** and official Roboto successor **3.015**; six final WOFF2s total **272,156 bytes**. Source URLs, source/archive SHA256s, each final filename/size/SHA256 and complete OFL/MIT texts are committed in [font/icon notices](../../web/THIRD_PARTY_NOTICES.txt). Normal builds perform no asset network fetch. Both web output and distribution notices retain those texts.
+
+**Skipped intentionally:** Rust tests/clippy/generators (no crates changed, as the brief permits); 4×3 load repetition (no timing/concurrency implementation); Nix dependency hash update (lockfile unchanged); docs index update (parent-owned); installed-iOS/native push acceptance and independent review (parent-owned). The 11 existing browser skips were retained unchanged.
 
 ## Scope
 
@@ -48,7 +80,7 @@ Rounded contrast across both themes; stable hue/gamut/neutral handling; persiste
 
 ## Task 1: Hat palettes and appearance
 
-- [ ] **Step 1: Apply the exact implementation patch**
+- [x] **Step 1: Apply the exact implementation patch**
 
 Save this block verbatim as `.superpowers/sdd/ui-r1/task-1.patch`, then run `git apply --check` and `git apply` on it from the base/replay tree. New files and replacements are encoded together; the replay must extract a nonzero file count before claiming success.
 
@@ -812,17 +844,17 @@ index f7f82cc7..c79e59e2 100644
  }
 ```
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 Run `nix develop -c pnpm --dir web exec vite build --config theme.config.ts`, then `nix develop -c pnpm --dir web test src/lib/accent.test.ts src/lib/theme.test.ts src/lib/hats.test.ts src/components/SessionList.test.tsx`. Regenerate bootstrap and check the committed bytes match. Removal probes independently break contrast search, label polarity, neutral/gamut/input handling, migration, initial System selection, live media and storage reconciliation; tests must fail with each removed guard.
 
-- [ ] **Step 3: Commit/push**
+- [x] **Step 3: Commit/push**
 
 Stage only this task and this plan, inspect `git diff --cached --stat` and `git diff --cached`, check author identities, commit `feat(ui): derive readable hat palettes and browser appearance`, push `git push origin plan/ui-r1`. Review request goes through the parent.
 
 ## Task 2: Tokens, local assets and shared controls
 
-- [ ] **Step 1: Apply the exact implementation patch**
+- [x] **Step 1: Apply the exact implementation patch**
 
 Save this block verbatim as `.superpowers/sdd/ui-r1/task-2.patch`, then run `git apply --check` and `git apply` on it from the base/replay tree. New files and replacements are encoded together; the replay must extract a nonzero file count before claiming success.
 
@@ -2788,7 +2820,7 @@ index 441d7fea..ea809629 100644
    )
 ```
 
-- [ ] **Step 2: Acquire/reproduce the six font assets**
+- [x] **Step 2: Acquire/reproduce the six font assets**
 
 Normal builds use committed WOFF2s and never execute these network commands. Run these once to reproduce assets (source SHA256s and final output sizes/hashes in `web/THIRD_PARTY_NOTICES.txt`). Upstream Inter variable normal/italic, Roboto split upright variable; only 400–700 weights are used. FontTools 4.61.1 was used. Nix's standalone FontTools wrapper needs Brotli on PYTHONPATH, so compose those site-package paths explicitly. No global Python installation.
 
@@ -2822,17 +2854,17 @@ Run the exact subset tool command:
 nix shell nixpkgs#python3Packages.fonttools nixpkgs#python3Packages.brotli -c bash -c 'brotli_store=$(nix eval --raw nixpkgs#python3Packages.brotli.outPath); export PYTHONPATH=$(printf "%s\n" "$brotli_store"/lib/python*/site-packages); exec bash .superpowers/sdd/ui-r1/subset-fonts.sh'
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run targeted UI/Login/Setup/Confirm/Step-up suites, `nix develop -c pnpm --dir web typecheck`, and `nix develop -c node --test packaging/crate-release.test.mjs`. Run `nix shell nixpkgs#python3 -c python3 -m unittest discover -s packaging/release -p test_supply.py`. The later Task 3 font check must inspect the real six emitted font tables; removal probes strip Polish glyphs independently from both families. Remove each modal trap/inert guard in the probe copy and observe failure.
 
-- [ ] **Step 4: Commit/push**
+- [x] **Step 4: Commit/push**
 
 Stage this task and the six WOFF2s; inspect staged bytes and author identities. Commit `feat(ui): adopt design tokens and self-hosted shared controls`; push `git push origin plan/ui-r1`. Parent reviews asset/licence and focus risks.
 
 ## Task 3: Build guards and embedded-browser acceptance
 
-- [ ] **Step 1: Apply the exact implementation patch**
+- [x] **Step 1: Apply the exact implementation patch**
 
 Save this block verbatim as `.superpowers/sdd/ui-r1/task-3.patch`, then run `git apply --check` and `git apply` on it from the base/replay tree. New files and replacements are encoded together; the replay must extract a nonzero file count before claiming success.
 
@@ -3141,7 +3173,7 @@ index d83aeec1..5a69d138 100644
      "e2e": "sh ../packaging/pwa-test-builds.sh && playwright test"
 ```
 
-- [ ] **Step 2: Verify the final build and browser**
+- [x] **Step 2: Verify the final build and browser**
 
 Run, in order, from the worktree root (all exit 0 required):
 
@@ -3161,13 +3193,13 @@ For the standalone glyph check, run inside a Nix shell containing Python, FontTo
 nix shell nixpkgs#python3 nixpkgs#python3Packages.fonttools nixpkgs#python3Packages.brotli -c bash -c 'brotli_store=$(nix eval --raw nixpkgs#python3Packages.brotli.outPath); fonttools_store=$(nix eval --raw nixpkgs#python3Packages.fonttools.outPath); export PYTHONPATH=$(printf "%s\n" "$brotli_store"/lib/python*/site-packages):$(printf "%s\n" "$fonttools_store"/lib/python*/site-packages); exec python3 web/scripts/check-fonts.py'
 ```
 
-- [ ] **Step 3: Removal probes and one fresh replay**
+- [x] **Step 3: Removal probes and one fresh replay**
 
 In a copy with cloned target, remove CSS origin detection, recursion and empty-output refusal independently; the real Node regression suite must fail each time. Strip Polish glyphs from each family's latin-ext asset using pyftsubset; the FontTools check must fail for that family. Probe palette and theme guards listed in Task 1, and modal/notice wiring in Task 2. Restore each copy before the next probe. All source bytes in the real worktree remain intact.
 
 Fresh replay: archive `339498c5` to a new copy, APFS-clone this worktree's target, extract and apply the three diff blocks sequentially, reproduce fonts from the pinned releases, and compare every changed file byte-for-byte, including generated bootstrap and WOFF2s. Require >0 extracted files for every patch and exact trees before running final gates in the replay. One full final replay only; subsequent review amendments use targeted tests and new guard probes.
 
-- [ ] **Step 4: Commit/push**
+- [x] **Step 4: Commit/push**
 
 Stage this task, inspect staged bytes, check `git log --format='%ae' 339498c5..HEAD` contains only `marcin.wadon@gmail.com`, commit `test(ui): verify emitted assets and embedded appearance`, push `git push origin plan/ui-r1`.
 
