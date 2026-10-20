@@ -42,15 +42,17 @@ import {
   withoutMarker,
   type Attachment,
 } from '../lib/attachments'
-import { commands, configOptions, matchCommands, type Choice, type Command, type ConfigOption } from '../lib/catalog'
+import { commands, configOptions, matchCommands, type Command, type ConfigOption } from '../lib/catalog'
 import { loadDraft, saveDraft } from '../lib/drafts'
 import { sendingFor, track } from '../lib/sending'
 import { undeliveredDraft, type DraftPart } from '../lib/sendAgain'
 import { Icon } from '../lib/ui'
+import SessionConfig from './SessionConfig'
 import { CANCEL_OUTCOME, SEND_AGAIN_LABEL, cancelRefusal, configRefusal, promptRefusal } from './composerWords'
 
 /** What the session screen may ask of its composer. */
 export interface ComposerHandle {
+  focus(): void
   /** Put `text` in the draft, after what is there (an empty draft is
    *  replaced), with `label` shown above it until it is sent; the cursor
    *  goes to its end. Sends nothing. */
@@ -136,6 +138,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   // until the next such action or the next send, never cleared by a send's
   // answer (a refusal made while it was in flight would vanish with it).
   const [draftError, setDraftError] = useState<string | null>(null)
+  const configNow = useRef(false)
   const [pendingConfig, setPendingConfig] = useState<Record<string, ConfigValue>>({})
   const [configError, setConfigError] = useState<string | null>(null)
   const [sel, setSel] = useState(0)
@@ -165,7 +168,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   const canResume = session?.lifecycle !== 'starting'
   // Nothing to send: Send and "Resume and send" both wait for words.
   const blank = text.trim() === ''
-  const canSend = !sending && !inFlight && !blank
+  const canSend = !sending && !inFlight && !blank && Object.keys(pendingConfig).length === 0
 
   // The draft as last rendered, for the handle and for a refill that
   // answers later.
@@ -258,6 +261,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   }
 
   useImperativeHandle(handle, () => ({
+    focus: () => taRef.current?.focus(),
     // Words an agent wrote never link a held image. A turn put back is the
     // operator's own, and goes back as it was sent.
     prefill: (words: string, why?: string) => addToDraft([{ type: 'text', text: inertMarkers(words) }], why ?? null),
@@ -348,7 +352,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   }
 
   function send() {
-    if (canSend) begin(deliver)
+    if (canSend && !configNow.current) begin(deliver)
   }
 
   /** Resume, then send; tracked as one send, so a composer mounted again
@@ -384,12 +388,16 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   /** Show the pick at once; the agent's answer replaces it, a refusal
    *  takes it back. */
   async function switchConfig(option: ConfigOption, value: ConfigValue) {
-    const settle = () =>
+    if (configNow.current) return
+    configNow.current = true
+    const settle = () => {
+      configNow.current = false
       setPendingConfig((p) => {
         const rest = { ...p }
         delete rest[option.id]
         return rest
       })
+    }
     setPendingConfig((p) => ({ ...p, [option.id]: value }))
     setConfigError(null)
     let answer: SessionCatalog
@@ -403,6 +411,8 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
     }
     // Replaced by what the agent now reports, which may differ from the pick.
     onCatalog(answer)
+    const actual = configOptions(answer).find(candidate => candidate.id === option.id)
+    if (!actual || actual.current !== value) setConfigError(actual ? `${option.name}: the agent kept ${String(actual.current)} instead of ${String(value)}. Review its current setting before sending.` : `${option.name}: the agent did not confirm this setting. Review the current settings before sending.`)
     settle()
   }
 
@@ -456,16 +466,17 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
         {options.length > 0 && (
           <div className="composer-controls" role="group" aria-label="Session settings">
             {options.map((option) => (
-              <Switcher
+              <SessionConfig
                 key={option.id}
                 option={option}
                 value={Object.hasOwn(pendingConfig, option.id) ? pendingConfig[option.id] : option.current}
-                busy={Object.hasOwn(pendingConfig, option.id)}
+                busy={Object.keys(pendingConfig).length > 0}
                 onPick={(value) => void switchConfig(option, value)}
               />
             ))}
           </div>
         )}
+        {Object.keys(pendingConfig).length > 0 && <p className="config-pending" role="status">Applying session settings…</p>}
         {configError && (
           <p className="form-error" role="alert">
             <bdi>{configError}</bdi>
@@ -628,58 +639,4 @@ function Thumb({ file, n }: { file: File; n: number }) {
     return () => URL.revokeObjectURL(made)
   }, [file])
   return url ? <img src={url} alt={`Image #${n}`} /> : null
-}
-
-/** One config option: a select of its values, or an on/off box. */
-function Switcher({
-  option,
-  value,
-  busy,
-  onPick,
-}: {
-  option: ConfigOption
-  value: ConfigValue
-  busy: boolean
-  onPick: (value: ConfigValue) => void
-}) {
-  if (option.kind === 'boolean') {
-    return (
-      <label className="switcher">
-        <input type="checkbox" checked={value === true} disabled={busy} onChange={(e) => onPick(e.target.checked)} />
-        <bdi>{option.name}</bdi>
-      </label>
-    )
-  }
-  const current = String(value)
-  // A value the adapter reports but does not list is still shown as held.
-  const listed: Choice[] = option.choices.some((c) => c.value === current)
-    ? option.choices
-    : [{ value: current, name: current }, ...option.choices]
-  const groups: { name?: string; choices: Choice[] }[] = []
-  for (const c of listed) {
-    const last = groups[groups.length - 1]
-    if (last && last.name === c.group) last.choices.push(c)
-    else groups.push({ name: c.group, choices: [c] })
-  }
-  const render = (c: Choice) => (
-    <option key={c.value} value={c.value} title={c.description}>
-      {c.name}
-    </option>
-  )
-  return (
-    <label className="switcher">
-      <bdi>{option.name}</bdi>
-      <select aria-label={option.name} value={current} disabled={busy} onChange={(e) => onPick(e.target.value)}>
-        {groups.map((g, i) =>
-          g.name === undefined ? (
-            g.choices.map(render)
-          ) : (
-            <optgroup key={`${i}-${g.name}`} label={g.name}>
-              {g.choices.map(render)}
-            </optgroup>
-          ),
-        )}
-      </select>
-    </label>
-  )
 }

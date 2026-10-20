@@ -8,6 +8,7 @@ import { useClient } from '../app-client'
 import type { SessionSummary } from '../generated/view'
 import { Link } from '../router'
 import { sessionPath } from './SessionRow'
+import { attentionReason } from '../lib/attentionReason'
 
 interface Props {
   session: SessionSummary
@@ -84,9 +85,9 @@ export default function StatusAttention({ session, children, enabled, refreshKey
     {visible.map(row => {
       const title = sessions.get(row.child_id)?.title || row.child_id
       return <p key={row.id}>
-        <Link to={sessionPath(row.child_id)}><bdi>{title}</bdi></Link>{' · '}<bdi>{row.reason}</bdi>{' '}
+        <Link to={sessionPath(row.child_id)}><bdi>{title}</bdi></Link>{' · '}<bdi>{attentionReason(row.reason)}</bdi>{' '}
         {row.pending_id === null
-          ? <button type="button" className="btn btn-ghost btn-sm" aria-label={`Acknowledge ${row.reason} for ${title}`} disabled={ackId !== null} onClick={() => void acknowledge(row)}>{ackId === row.id ? 'Acknowledging…' : 'Acknowledge'}</button>
+          ? <button type="button" className="btn btn-ghost btn-sm" aria-label={`Acknowledge ${attentionReason(row.reason)} for ${title}`} disabled={ackId !== null} onClick={() => void acknowledge(row)}>{ackId === row.id ? 'Acknowledging…' : 'Acknowledge'}</button>
           : <Link to={`${sessionPath(row.child_id)}?pending=${encodeURIComponent(row.pending_id)}`}>Open question</Link>}
       </p>
     })}

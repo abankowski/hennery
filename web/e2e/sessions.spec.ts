@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { startCollector, type Collector } from './collector'
 import { FAKE_ACP, fakeAgent, testHost, type TestHost } from './host'
 import { scratchEnv } from './spawn'
+import type { Item, SessionSummary } from '../src/generated/view'
 
 const PASSWORD = 'correct horse battery staple'
 const PROMPT = 'Write the notes, please.'
@@ -194,10 +195,9 @@ for (const width of [1280, 390]) {
         expect((await back.boundingBox())!.height).toBeGreaterThanOrEqual(44)
         await expect(page.locator('.tabbar')).toBeHidden()
       } else {
-        // Not shown, so out of the accessibility tree: found by its class.
-        await expect(back).toHaveCount(0)
-        const hidden = page.locator('.session-head .back-btn')
-        expect(await hidden.evaluate((el) => getComputedStyle(el).display)).toBe('none')
+        await expect(back).toBeVisible()
+        await expect(back).toBeInViewport()
+        expect((await back.boundingBox())!.height).toBeGreaterThanOrEqual(28)
       }
     })
 
@@ -262,3 +262,145 @@ for (const width of [1280, 390]) {
     })
   })
 }
+
+// R3 acceptance uses synthetic, typed view items served over the embedded UI.
+// It covers layout/focus and mutation bodies; the real-host cases above keep
+// the collector → adapter → delivered-answer proof.
+test.describe('redesigned session', () => {
+  let app: Collector
+  test.beforeAll(async () => { app = await startCollector() })
+  test.afterAll(async () => { await app?.stop() })
+  for (const width of [1280, 390]) for (const appearance of ['light', 'dark'] as const) {
+    test(`details, answers and read-back at ${width}px in ${appearance}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: appearance, reducedMotion: 'reduce', timezoneId: 'UTC' })
+      const held: import('@playwright/test').Route[] = []
+      const mutations: { path: string; body: unknown }[] = []
+      const now = '2026-10-20T10:00:00Z'
+      const info: SessionSummary = { session_id: 'worker', host_id: 'host1', hat_id: 'hat1', title: 'Review the parser', cwd: '/srv/synthetic/parser', agent: 'codex', model: 'model-a', mode: 'review', git_branch: 'parser-checks', git_dirty: true, created_at: now, last_event_at: now, lifecycle: 'active', activity: 'blocked', presumed_parked: false, question_waits: true, operator_attention: 2, parent_handled_questions: 0,
+        family: { revision: 1, parent: { session_id: 'coordinator', title: 'Coordinator', agent: 'claude' }, children: [], child_counts: { total: 0, active: 0, waiting: 0 }, attention: 0 } }
+      const question: Extract<Item, { kind: 'question' }> = { id: 'question:permission', version: 1, kind: 'question', ts: now, pending_id: 'permission', question_kind: 'permission', request: { type: 'permission', title: 'Run the project checks?', options: [{ option_id: 'allow/once', name: 'Allow once', option_kind: 'allow_once' }, { option_id: 'allow/always', name: 'Always allow', option_kind: 'allow_always' }, { option_id: 'reject/once', name: 'Reject', option_kind: 'reject_once' }] }, state: 'open', answered: false, answerable: true }
+      const form: Extract<Item, { kind: 'question' }> = { ...question, id: 'question:question', pending_id: 'question', question_kind: 'elicitation', request: { type: 'elicitation', message: 'Which parser should be checked?', form_supported: true, required: ['parser'], fields: [{ key: 'parser', label: 'Parser', field_kind: 'single', options: [{ value: 'strict', label: 'Strict parser', description: 'Check every input' }, { value: 'compatible', label: 'Compatible parser', description: 'Keep the existing input rules' }] }, { key: 'notes', label: 'Notes', field_kind: 'text' }] } }
+      const plan: Extract<Item, { kind: 'plan' }> = { id: 'plan', kind: 'plan', version: 1, ts: now, entries: [{ content: 'Read the parser', status: 'completed' }, { content: 'Check the input rules', status: 'in_progress' }, { content: 'Report the findings', status: 'pending' }] }
+      let pinned = false, taken = false
+      const catalog = () => ({ session_id: 'worker', commands: [], config_options: [
+        { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'model-a', options: [{ value: 'model-a', name: 'Model A' }, { value: 'model-b', name: 'Model B' }] },
+        { id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: 'review', options: [{ value: 'review', name: 'Review' }, { value: 'edit', name: 'Edit' }] },
+        { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'medium', options: ['low', 'medium', 'high'].map(value => ({ value, name: value })) },
+      ] })
+      const items: Item[] = [
+        { id: 'prompt', kind: 'user_turn', version: 1, ts: now, origin: { kind: 'parent', session_id: 'coordinator', operation_id: 'parent-instruction' }, content: [{ type: 'text', text: 'Review the parser and report what needs changing.' }] },
+        { id: 'message', kind: 'message', version: 1, ts: now, text: 'I checked the parser.\n\n- Input types are preserved.\n- The remaining checks need permission.' },
+        { id: 'thinking', kind: 'thinking', version: 1, ts: now, text: 'Consider the boundary cases before changing the parser.' },
+        { id: 'tool', kind: 'tool_call', tool_call_id: 'read-parser', version: 1, ts: now, title: 'Read', status: 'completed', input: { path: 'src/parser.ts' }, output: 'Parser input rules inspected.', content: [{ type: 'diff', path: 'src/parser.ts', old_text: 'return input;', new_text: 'return parse(input);' }] }, plan, question, form,
+      ]
+      await context.route('**/api/**', async route => {
+        const path = new URL(route.request().url()).pathname
+        const json = (value: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) })
+        if (path === '/api/capabilities') return json({ mode: 'full', features: [] })
+        if (path === '/api/hats') return json([{ id: 'hat1', name: 'Synthetic project', colour: '#8a3cbd' }])
+        if (path === '/api/hosts') return json([{ host_id: 'host1', name: 'Test workstation', connected: true, capabilities: ['images', 'park', 'idle_hold'] }])
+        if (path === '/api/view/sessions') return json({ sessions: [info], epoch: 'list', revision: 1, waiting: 1 })
+        if (path.startsWith('/api/stream/')) { held.push(route); return }
+        if (path === '/api/view/sessions/worker') return json({ items, epoch: 'items', revision: 1, older: false })
+        if (path === '/api/sessions/worker') return json({ ...info, pending: [], mcp_delivery: { mode: 'unisolated', servers: 2, at: now } })
+        if (path.endsWith('/catalog')) return json(catalog())
+        if (path.endsWith('/family')) return json({ summary: info, children: [], questions: [], routing: taken ? 'detached' : 'active' })
+        if (path.includes('/questions/')) return json(path.endsWith('/permission') ? question : form)
+        if (route.request().method() !== 'GET') mutations.push({ path, body: route.request().postDataJSON() })
+        if (path.endsWith('/takeover')) { taken = true; return route.fulfill({ status: 204 }) }
+        if (path.endsWith('/idle-hold')) { if (route.request().method() === 'PATCH') pinned = route.request().postDataJSON().pinned; return json({ pinned, family_active: true, notices_pending: false, held: true }) }
+        if (path.endsWith('/config')) return json(catalog(), 202)
+        if (path.endsWith('/answer')) return json({ pending_id: path.includes('/permission/') ? 'permission' : 'question', request_id: 'answer' }, 202)
+        if (path === '/api/delegation/attention') return json([])
+        throw new Error(`Unmatched session acceptance route: ${path}`)
+      })
+      const page = await context.newPage()
+      const shot = async (state: string) => {
+        if (!process.env.HENNERY_R3_SCREENSHOTS) return
+        mkdirSync(process.env.HENNERY_R3_SCREENSHOTS, { recursive: true })
+        await page.evaluate(async () => { await Promise.all([document.fonts.load('400 14px Inter'), document.fonts.load('italic 400 14px Inter'), document.fonts.load('500 18px Roboto')]); await document.fonts.ready })
+        await page.screenshot({ path: join(process.env.HENNERY_R3_SCREENSHOTS, `${state}-${width}-${appearance}.png`) })
+      }
+      try {
+        await page.goto(`${app.origin}/sessions/worker?pending=permission`)
+        await expect(page.getByRole('heading', { name: 'Review the parser', exact: true })).toBeVisible()
+        await expect(page.getByRole('region', { name: 'Parent-driven session', exact: true })).toContainText('A prompt from you takes over this session.')
+        await expect(page.locator('html')).toHaveAttribute('data-theme', appearance)
+        const permission = page.locator('[data-pending-id="permission"]')
+        await permission.focus()
+        await expect(permission.getByText('Run the project checks?', { exact: true })).toBeInViewport()
+        await expect(permission.getByRole('button', { name: 'Allow once', exact: true })).toBeInViewport()
+        if (width === 390) expect((await permission.getByRole('button', { name: 'Allow once', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(48)
+        await shot('permission')
+        await page.getByRole('button', { name: 'Session details', exact: true }).click()
+        const panel = width === 390 ? page.getByRole('dialog', { name: 'Session details', exact: true }) : page.getByRole('complementary', { name: 'Session details', exact: true })
+        await expect(panel.getByRole('link', { name: 'Coordinator', exact: true })).toBeVisible()
+        await shot('family')
+        await panel.getByRole('tab', { name: 'Plan', exact: true }).click()
+        await expect(panel.getByRole('listitem')).toHaveText(['Read the parser', 'Check the input rules', 'Report the findings'])
+        await shot('plan')
+        await panel.getByRole('tab', { name: 'Details', exact: true }).click()
+        await expect(panel.getByRole('region', { name: 'MCP delivery', exact: true })).toContainText('2 MCP servers.')
+        await shot('details')
+        await panel.getByRole('button', { name: 'Close session details', exact: true }).click()
+        await expect(page.getByRole('button', { name: 'Session details', exact: true })).toBeFocused()
+        if (width === 390) await permission.getByRole('button', { name: 'Write a prompt', exact: true }).click()
+        // A direct inline click must not move its button between down and up.
+        await permission.getByRole('button', { name: 'Allow once', exact: true }).click()
+        await expect(permission.getByText('Sent', { exact: true })).toBeVisible()
+        expect(mutations).toContainEqual({ path: '/api/sessions/worker/pending/permission/answer', body: { option_id: 'allow/once' } })
+        const elicitation = page.locator('[data-pending-id="question"]')
+        await elicitation.focus()
+        await elicitation.getByRole('radio', { name: 'Strict parser', exact: true }).check()
+        await elicitation.getByRole('textbox', { name: 'Notes', exact: true }).fill('Preserve unknown input types')
+        await expect(elicitation.getByRole('button', { name: 'Send', exact: true })).toBeInViewport()
+        await shot('elicitation')
+        await elicitation.getByRole('button', { name: 'Send', exact: true }).click()
+        await expect(elicitation.getByText('Sent', { exact: true })).toBeVisible()
+        expect(mutations).toContainEqual({ path: '/api/sessions/worker/pending/question/answer', body: { action: 'accept', content: { parser: 'strict', notes: 'Preserve unknown input types' } } })
+        const prompt = page.getByRole('textbox', { name: 'Prompt', exact: true })
+        await expect(prompt).toBeInViewport()
+        await prompt.fill('Keep this draft')
+        await page.getByRole('combobox', { name: 'Model', exact: true }).selectOption('model-b')
+        await expect(page.getByRole('alert')).toContainText('the agent kept model-a instead of model-b')
+        await expect(page.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('model-a')
+        await expect(prompt).toHaveValue('Keep this draft')
+        await shot('composer')
+        await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+        const pin = page.getByRole('switch', { name: 'Do not park', exact: true })
+        await expect(pin).toBeEnabled()
+        await expect(pin).not.toBeChecked()
+        await expect(page.getByRole('status').filter({ hasText: 'Family work requests a parking hold.' })).toBeVisible()
+        await expect(page.getByRole('status').filter({ hasText: 'Parking hold requested from the host.' })).toBeVisible()
+        await pin.click(); await expect(pin).toBeChecked()
+        await shot('parking-menu')
+        await page.keyboard.press('Escape')
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+        expect(mutations.filter(m => m.path.endsWith('/prompt'))).toHaveLength(0)
+        // The same view with a running child and a retained parked draft.
+        question.answerable = false; question.answered = true; question.state = 'delivered'
+        form.answerable = false; form.answered = true; form.state = 'delivered'
+        info.operator_attention = 0; info.question_waits = false; info.activity = 'running'
+        await page.reload()
+        await expect(page.locator('.session-head .badge')).toHaveText('Running')
+        await page.locator('.transcript').evaluate(el => { el.scrollTop = 0 })
+        await shot('running')
+        await page.getByRole('button', { name: 'Read Done', exact: true }).click()
+        await expect(page.locator('.tool-diff')).toContainText('return parse(input);')
+        await shot('tool-expanded')
+        info.lifecycle = 'parked'; info.activity = 'idle'
+        await page.reload()
+        await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible()
+        await expect(page.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveValue('Keep this draft')
+        await shot('parked')
+        await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+        await page.getByRole('button', { name: 'Delete session', exact: true }).click()
+        const confirmation = page.getByRole('dialog', { name: 'Delete this session?', exact: true })
+        await expect(confirmation).toContainText('Copies already delivered to related sessions remain')
+        await shot('delete-confirmation')
+        await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+        await expect(page.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveValue('Keep this draft')
+      } finally { for (const route of held) await route.abort().catch(() => {}); await context.close() }
+    })
+  }
+})
