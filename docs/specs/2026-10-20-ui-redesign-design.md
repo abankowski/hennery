@@ -1,0 +1,1013 @@
+# hennery — UI redesign
+
+- **Date:** 2026-10-20
+- **Status:** Proposed implementation contract; independent design/security review
+  and scoped confirmation belong to the fleet parent. Recommendations below
+  are not recorded as operator approvals.
+- **Base:** `b641f40f`, the `redesign` integration branch.
+- **Amends:** [frontend](2026-09-26-frontend-design.md) §§2, 5–8, 10 and
+  [client view](2026-10-02-client-view-design.md) §5's visual reuse decision.
+  The collector fold, ownership, authentication and delivery contracts remain
+  authoritative. The [umbrella](2026-09-25-hennery-architecture-design.md)
+  wins on architecture; [kernel](2026-09-26-kernel-design.md),
+  [phone](2026-10-14-phone-design.md) and
+  [delegation](2026-10-14-delegation-design.md) supply the security boundaries.
+- **Design evidence:** the operator's local Claude Design bundle, especially
+  `Hennery Mobile.dc.html`, then `Hennery Desktop.dc.html`,
+  `Hennery Design System.dc.html`, `hennery-tokens.css`, `hicon.js` and the
+  design system's `colors_and_type.css`. `Current UI (before).dc.html` is
+  comparison evidence. The bundle stays outside version control; no prototype
+  HTML, harness, fixture content or private example data is shipped.
+
+This is an element-by-element contract for one redesigned release, plus
+persisted per-hat session defaults. R1–R6 below are implementation boundaries,
+not executable plans. Each receives its own reviewed plan after this spec is
+approved. No application code or plan files are part of this change.
+
+## 1. Decisions and authority
+
+| Id | Decision | Authority / reason |
+|---|---|---|
+| O1 | Build Defaults with persisted per-hat model, permission mode and all supported catalog axes. Resolve agent default → hat override → New session choice. | Operator, 2026-10-20. |
+| O2 | Notification policy remains per hat: `muted`, `details`, `generic_title`. | Operator, 2026-10-20. Drop global per-event switches. |
+| O3 | No lock-screen answer actions. Notification taps must reach the specific session and, when supplied, its pending card. | Operator, 2026-10-20. |
+| O4 | Delegation authorization lives in Settings, using existing GET/PATCH session-tools, step-up and truthful activation/disable copy. | Operator, 2026-10-20. |
+| O5 | Retain the hat-logo backend and wire field; render no hat logos or logo editor in this UI. | Operator, 2026-10-20. |
+| O6 | Accent comes from the hat. Implement both light and dark; use design surfaces, text and status colors. | Operator, 2026-10-20. Fixed prototype blue is not the application accent. |
+| O7 | Stack all redesign work into `redesign`; release through one final integration PR to `main`. | Operator, 2026-10-20. No partial redesign release. |
+| D1 | Retain the system sans/mono stacks; reproduce the design's sizes, weights and spacing. | **designer's recommendation**: no font downloads, extra binary payload or new font licensing work; platform metrics are an explicit visual deviation. |
+| D2 | Keep CSS variables and existing class-based CSS with Tailwind 4. Add semantic tokens and temporary aliases, rather than migrate components to another styling system. | **designer's recommendation**: fits `index.css`/`manage.css` and protects the Markdown scope. |
+| D3 | Use system/light/dark appearance, browser-persisted, through the blocking external `/theme.js`; derive contrast-checked palettes per theme. | **designer's recommendation**; CSP/no-inline behavior is settled by the implementation. |
+| D4 | Use `/needs-you`, `/sessions`, `/new`, `/more`, `/defaults` and existing management/session routes; desktop Sessions becomes an overview without automatic session selection. | **designer's recommendation**: follows the new overview and mobile tabs, superseding the old list/detail rail layout. |
+| D5 | Count actual operator attention, never infer a question from assistant prose. Queue previews are read-only and open the canonical session card for answering. | **designer's recommendation**: current summaries cannot authorize a quick answer; avoids a second answer-book/stream implementation. |
+| D6 | Show supported data only; omit invented progress, diagnostics, version/auth claims and password-change metadata. | **designer's recommendation**: this release adds defaults, not a diagnostics or account API. |
+| D7 | Agent baseline is read-only and comes from the selected host/cwd catalog. Persist sparse overrides by owner × hat × agent, not host or display name. | **designer's recommendation**: the same hat spans different adapter pins; no new global agent-preference layer. |
+| D8 | Kernel owns defaults storage; sessions owns its operator HTTP facade. Require step-up on every PUT, including resets. | **designer's recommendation**: hat lifetime belongs to the kernel; all-write step-up covers permissive and unknown security modes without trusting labels. |
+| D9 | The launcher resolves and sends explicit config using existing start/config APIs. Defaults do not implicitly change resume, delegated spawn, or delegation execution policy. | **designer's recommendation**: keeps operator preferences separate from agent authorization. |
+| D10 | Unsupported stored values are omitted with a visible, field-specific notice; unavailable explicit picks block Start until corrected. Hold a first prompt when requested config is not confirmed. | **designer's recommendation**: no silent alternate model or weaker permission setting. |
+| D11 | Use bundled Heroicons SVG paths, native controls where practical, and no new runtime dependency. | **designer's recommendation**: matches the design within current CSP and bundle limits. |
+| D12 | Use the responsive geometry, focus/shortcut contract, honest paging and exclusive file ownership in §§3–10. | **designer's recommendation**: resolves prototype-only and parallel-lane gaps. |
+
+## 2. Existing implementation boundaries
+
+The current app is React 19/strict TypeScript/Vite/pnpm, with Tailwind 4
+imported into `web/src/index.css`, hand-written CSS classes, and a small
+History API router. Keep those choices. `web/src/deps.test.ts` forbids
+`rehype-raw` and `hast-util-raw`; that guard and the sanitized Markdown
+pipeline remain unchanged. Do not port `support.js`, `_ds_bundle.js`, custom
+design-tool elements, inline event handlers or CDN-fetching `hicon.js`.
+
+Use generated `protocol.ts`/`view.ts`, the shared `Client` (401 return path,
+step-up and one retry), keyed summary/item stores and AnswerBook. Read
+display items, never refold raw ACP in the browser. Preserve resync/version
+fences, bounded history, error boundaries, attachment limits, per-session
+drafts, secret handling, popup/OAuth behavior and capability gating.
+
+There remains at most one list SSE and one selected-session item SSE per tab.
+Changing layout, opening More or using the palette must not create another
+store or EventSource. Loading a preview never subscribes to its transcript.
+No list refetch on each token or invalidation hint.
+
+Important source anchors at this base:
+
+| Concern | Existing source / contract |
+|---|---|
+| Shell, routing, hat scope | `components/Shell.tsx`, `components/SessionScope.tsx`, `router.tsx`, `lib/views.ts`, `lib/hats.ts` |
+| Appearance | `lib/theme.ts`, `web/public/theme.js`, `index.css`, `manage.css`; `/theme.js` already runs before React |
+| Launcher catalog | `GET /api/hosts/{id}/runtime-catalog?agent=…&cwd=…`; `HostCatalog {agent, adapter_revision, config_options, defaults, security, freshness}` |
+| Session configuration | `StartSessionRequest {host_id, agent, cwd, model?, mode?, axes?}`; `POST /api/sessions/{id}/config`; returned `SessionCatalog` is actual adapter state |
+| Attention | `SessionSummary.operator_attention`, `parent_handled_questions`, `question_waits`, `family`; `api/attention.ts` for real delegation fallback records |
+| Hat authorization | GET/PATCH `/api/hats/{id}/session-tools`; separate `/api/hats/{id}/delegation-policy` execution grant |
+| Push | `crates/hennery-sessions/src/notify.rs`, `web/worker.js`, `pwa/notification.ts`, `pwa/navigation.ts`, `components/NotificationNavigation.tsx` |
+| HTTP security | `crates/hennery-kernel/src/csp.rs`: scripts, connections, workers and manifest same-origin; default-src also restricts fonts |
+
+## 3. Tokens, assets and responsive geometry
+
+### 3.1 CSS mapping
+
+R1 adds `web/src/styles/tokens.css`, imported after Tailwind. Light tokens
+live on `:root`; dark overrides on `:root[data-theme="dark"]`. The theme
+attribute always contains the resolved theme, not `system`. Do not import
+the prototype's stylesheet, its Google Fonts import or global element rules.
+
+| Design group | Production semantic variables | Mapping / values |
+|---|---|---|
+| Surfaces | `--hn-bg`, `--hn-panel`, `--hn-surface`, `--hn-sunken`, `--hn-hover`, `--hn-selected` | Light: `#f8f9fb`, white, white, `#f1f2f5`, `#f1f3f7`, derived accent wash. Dark: `#141517`, `#1a1c1e`, `#202223`, `#17191b`, `#26292b`, derived selected tint. |
+| Dividers/controls | `--hn-line`, `--hn-control`, `--hn-control-strong` | Light: `#e9e9eb`, `#d8d8da`, `#c3c3c5`; dark: `#2a2d2f`, `#383b3e`, `#49494a`. Strengthen an interactive outline when needed for §3.3. |
+| Text/icons | `--hn-fg-1/2/3`, `--hn-icon` | Light: `#202020`, `#49494a`, `#686869`, `#89898a`; dark: `#f2f2f3`, `#c3c3c5`, `#a8a8aa`, `#89898a`. Decorative icon color is not sufficient for an essential icon-only control. |
+| Hat accent | `--hn-accent`, `--hn-accent-hover`, `--hn-accent-fg`, `--hn-on-accent`, `--hn-accent-wash`, `--hn-accent-soft`, `--hn-focus` | Derived by §3.3, including focus halo. All prototype fixed-blue selected, link, radio and button treatments use these. |
+| Code/terminal | `--hn-code-bg/fg`, `--hn-term-bg/fg` | Light code `#f4f5f7`/`#202020`; dark code `#17191b`/`#e6e6e7`. Terminal light `#16181a`/`#e6e6e7`, dark `#0f1012`/`#e6e6e7`. |
+| Diffs | `--hn-add-bg/fg`, `--hn-del-bg/fg` | Light `#e6f5e9`/`#0f741f`, `#fce8e9`/`#9f2626`; dark green/red 14% tints with `#8bd999`/`#f99c9e`. Keep +/− text and plain output fallback. |
+| Status | `--st-{wait,run,start,idle,park,fail,warn}-{fg,bg,solid}`, plus `--st-wait-line` | Preserve design status families and paired themes. Wait orange, run green, start blue, idle/park neutral, fail red, warn yellow. These never inherit the hat hue. Contrast-correct the supplied shade where necessary. |
+| Radius | `--radius-xs/sm/md/lg/xl/full` | 4/6/8/12/16/9999 px. Mobile cards 14 px and sheets 20 px are explicit frame variants. |
+| Spacing | `--space-1/2/3/4/5/6/8/10/12/16/20/24` | 4/8/12/16/20/24/32/40/48/64/80/100 px, matching the source scale's actual final value. |
+| Shadow/motion | `--shadow-xs`, `--hn-pop-shadow`, `--hn-scrim`, durations/easings | Design's subtle xs shadow, paired light/dark popover shadows, 50% dark-text or 60% black scrim; 120/180/240 ms, standard/out easing. Disable animation and smooth scrolling under reduced motion. |
+| Typography | `--font-display`, `--font-body`, `--font-mono` plus size classes | Existing system stacks. Desktop heading 18/1.2 medium, row title 13/1.3 medium, prose 14/1.55–1.6, mono 12–13/1.5; mobile heading 20, title 16, prose/input 15–16, labels 12–13. Section labels 11 bold uppercase; tab labels 10. |
+
+The source color scales are local numeric inputs, not application branding:
+neutral 050–1000, primary/orange/success/error 050–800 and warning 500.
+Keep only needed scale entries in the token file. For example, source
+`success-700` is `#128c25`; if it misses 4.5:1 on a rendered light tint,
+use `success-800` (`#0f741f`) there. A prototype comment claiming contrast
+is not evidence of it.
+
+Status role inputs (foreground / tint / solid; derive the final
+contrast-valid foreground rather than treating these as exceptions):
+
+| Status | Light | Dark |
+|---|---|---|
+| Wait | `#a44d0f` / `#fde6d7` / `#ff7918`; border `#fdbb8d` | `#fdbb8d` / orange solid at 15% / same solid; border orange at 45% |
+| Run | `#0f741f` / `#f1f9f4` / `#17b530` | `#8bd999` / green solid at 13% / same solid |
+| Start | `#2257be` / `#f5f8ff` / `#2c71f6` | `#95b7fa` / blue solid at 16% / same solid |
+| Idle | `#49494a` / `#f0f1f3` / `#a8a8aa` | `#c3c3c5` / `#2a2d2f` / `#89898a` |
+| Park/offline | `#686869` / `#f0f1f3` / `#c3c3c5` | `#a8a8aa` / `#2a2d2f` / `#686869` |
+| Fail | `#bf2e2e` / `#fcf6f8` / `#f73b3b` | `#f99c9e` / red solid at 14% / same solid |
+| Warn | `#7a5300` / `#fff4d6` / `#ffbe18` | `#ffd666` / yellow solid at 13% / same solid |
+
+Composite translucent tints over their actual surface for contrast tests;
+status solids are decorative bars/dots unless they also pass the essential
+indicator threshold. An icon-only status uses its foreground role.
+
+During migration alias existing `--bg/rail/surface/border/fg-*/accent` and
+status variables to the corresponding semantic tokens. Remove gradient,
+glowing-button and fixed light-only management colors. `--accent-2` may
+remain a compatibility alias to the derived hover value; new buttons are
+solid. Keep scoped Markdown lists/code and the media-query visibility
+guards. No wholesale utility-class conversion is required.
+
+### 3.2 Theme selection and bootstrap
+
+Appearance is a browser preference with three radio values: System (default),
+Light, Dark. Follow `prefers-color-scheme` live only in System. Persist the
+preference and a versioned pair of derived light/dark accent palettes under
+`hennery.theme`; keep the existing selected-hat key. Migrate the old two-color
+record once by deriving from its validated `--accent`, preserving hat choice.
+Invalid/missing storage uses System and the neutral fallback palette.
+
+Extend the existing blocking `web/public/theme.js`, referenced by external
+`src` before the module entry, to set `data-theme`, `color-scheme`, the
+allowlisted per-theme accent variables and the theme-color meta value before
+paint. The saved record contains version, preference, source `#rrggbb`, and
+two palettes of opaque hex colors. Check its shape and every property;
+never assign arbitrary CSS properties or CSS strings from storage. Derive
+new palettes in `lib/accent.ts` and save/apply through `lib/theme.ts`.
+The bootstrap selects already-derived palettes and has a built-in safe
+fallback, so it needs no asynchronous module import or network read.
+
+React reconciles with server hats after loading without first clearing the
+persisted accent. A deleted hat falls back to All. All uses the existing
+neutral default hat-color input (`#64748b`), passed through the same derivation.
+An explicitly opened session uses its actual server hat for the session
+surface/composer; this must not change the overview filter. New session uses
+the resolved hat. Other views use the selected hat. Cache the effective
+accent for the next load, then correct it when route/server data is known.
+Dark/light changes update both document and any locally scoped session palette.
+
+The rail's theme button cycles System → Light → Dark → System and announces
+the selected preference; Settings exposes all three directly. A keyboard
+theme toggle uses the same cycle. Storage denial still permits changes for
+the current document. Storage events reconcile other windows without
+changing their current session or drafts. Login and Setup use the same
+bootstrap and neutral tokens.
+
+### 3.3 Any hat color must remain readable
+
+Accept exactly `#rrggbb`, case-insensitive, otherwise fall back to `#64748b`.
+Use a deterministic dependency-free sRGB ↔ OKLCH conversion. Preserve hue;
+near-achromatic colors (`C < .02`) stay neutral. As a starting range clamp
+chroma to .08–.18/light or .06–.16/dark and lightness to .42–.56/light or
+.65–.80/dark. Reduce chroma to bring each result into sRGB gamut, rather
+than clip RGB channels and shift hue. These ranges are starting points;
+the contrast constraints below decide the final values.
+
+Derive link/text, solid button, hover, wash, soft, selected, focus-ring and
+on-button roles independently. Search lightness deterministically until the
+roles meet their targets, reducing chroma as needed; if no colored result
+works, use a contrast-valid neutral for that role. Light washes start near
+L=.96/C≤.03, dark washes near L=.28/C≤.05. Serialize final opaque sRGB hex
+values; test final rounded values and composited halos, not just OKLCH inputs.
+Choose dark or white `--hn-on-accent` by measured contrast, never assume white.
+
+- Normal text, links, selected labels and button labels: at least **4.5:1**
+  against every surface/tint on which that role is used.
+- Essential glyphs, selection indicators, interactive boundaries and the
+  solid focus ring: at least **3:1** against adjacent surfaces. Supplement
+  the faint design control border with a stronger outline where necessary.
+- Distinguish status by icon and words as well as color. Do not recolor
+  warning/error status to match the hat. Decorative separators may stay faint.
+- Hover and selected states must preserve text contrast. Focus remains a
+  visible 2 px ring plus 3 px halo, including around warning/destructive
+  controls. Reduced motion does not remove focus.
+
+Unit-test both themes over near-white, near-black, white, black, pure yellow,
+pure blue, red/green/cyan/magenta and a deterministic grid of RGB colors.
+Assert valid hex, all assigned role contrasts, stable output, invalid input
+fallback and neutral handling. Theme/bootstrap tests cover malformed/legacy
+storage, System changes and per-theme palettes. Browser computed-style tests
+verify the actual cascade, including on-accent and status tints.
+
+### 3.4 Fonts, icons and CSP
+
+Keep the system fonts (D1); no external or self-hosted font assets are added.
+The deliberate difference from Roboto/Inter must be mentioned beside visual
+comparisons; typography hierarchy and line lengths still follow the frames.
+Bundle the used Heroicons v2 SVG paths as React components in
+`web/src/components/ui/Icon.tsx`, using currentColor and the source's
+24 outline/24 solid/20 solid/16 solid variants. Do not fetch icons, inject
+SVG markup with `innerHTML`, or depend on the prototype custom element.
+Preserve Heroicons' MIT copyright/license in a shipped
+`web/THIRD_PARTY_NOTICES.txt` and include it in distribution notices.
+Do not replace the repository's own AGPL license.
+
+No new runtime dependency is proposed. Existing React/native controls cover
+dialogs, radios, search and the palette; pure math covers color derivation.
+Any implementation proposal adding a library must state its purpose,
+bundle/license impact and why the existing stack is insufficient. Keep
+`deps.test.ts` and the <350 KiB initial gzip budget. No inline theme script,
+CDN, remote font, new network origin or CSP relaxation is authorized.
+
+### 3.5 Layout and density
+
+Under 768 px use one column and the five-item bottom navigation; session
+pages use their own back/header and bottom answer/composer region, with
+the global tab bar hidden to give that region space. At 768–1023 px use
+a 56 px rail and one content column. At 1024 px and above use the 240 px
+expanded rail (user-collapsible to 56 px); the session details panel is
+300 px when open. At 1280 px this leaves a usable transcript; cap its
+content at 760 px. Collapse the details panel into a sheet below 1024 px.
+
+Desktop chrome header is 52 px; outer content padding 24 px, mobile 16 px.
+Desktop controls are normally 28–32 px, rows at least 44 px. Every mobile
+interactive hit area is at least 44×44 px, even when a chip's visible face
+is 32 px; answer buttons are 48–52 px and option rows at least 56 px.
+Management tables become labeled stacked cards on mobile, not horizontally
+compressed desktop grids. Defaults becomes hat sections with Setting/value
+rows and a host-context picker. Code blocks may scroll horizontally;
+page, navigation, forms and composer must not.
+
+Use `100dvh`, `min-height:0`/`min-width:0`, actual scroll containers,
+`viewport-fit=cover` and safe-area padding. The device border, fake clock,
+signal/Wi-Fi/battery and home indicator are prototype framing, not app UI.
+Bottom answer/composer controls remain reachable with the onscreen keyboard.
+Sheets scroll within the available viewport; they do not assume the
+prototype's fixed height or top offset. One responsive component tree owns
+each header/control, preventing duplicate hidden keyboard targets.
+
+## 4. Routes, overview and navigation
+
+### 4.1 Routes and capability behavior
+
+| URL | Full mode | Gateway mode |
+|---|---|---|
+| `/`, `/sessions` | Sessions overview; `/` replaces to `/sessions` | Redirect landing to `/mcp`, as today |
+| `/needs-you` | Operator attention queue | Unavailable view, no session fetch |
+| `/sessions/:id` with existing query parameters | Specific session, regardless of current filters | Unavailable view |
+| `/new?host=…&cwd=…` | New session; preserve existing prefill semantics | Unavailable view |
+| `/hosts`, `/hats`, `/defaults` | Management / per-hat defaults | Unavailable view |
+| `/more` | Links to MCP, Hats, Defaults, Settings, plus sign-out | Links only to supported MCP/Settings and sign-out |
+| `/mcp`, `/settings` | Existing capability-gated features | Existing gateway features only |
+| `/setup`, `/login`, unknown paths | Restyled existing auth / Not found | Same |
+
+Keep path/query through login via `safeNext`, including `pending`, and
+retain modified-click/new-tab behavior. Do not turn session URLs into
+hash routes. Direct loads, reloads and Back/Forward reproduce the route.
+Unavailable views and unknown paths have different copy, both tokenized.
+
+New session is a route-backed dialog/sheet when opened over a known app
+route. Retain that route as its return destination. Direct `/new` opens
+the same form with a safe Sessions background; Close replaces to Sessions
+instead of calling Back into an unrelated site. Preserve its draft when
+opening Change or returning from Edit defaults within this flow. Never
+close an unsent form or overwrite it merely because attention changed.
+
+### 4.2 Sessions and Needs you
+
+Sessions becomes the overview rather than auto-selecting the first row.
+Group by Hat (default) or Host; retain the stable newest-first ordering
+within each group using `last_event_at`, id as deterministic tie-breaker.
+Persist grouping. The design's grouped view replaces day headers; old DST
+helpers may remain for other displays. Parent/child identity uses actual
+family metadata. Indent children only when parent and child are both held
+in the same group, preserving each child's link and displayed recency.
+Never load an entire family merely to decorate a list row.
+
+Status chips: All, Needs you, Running, Idle, Parked / offline, Failed.
+Keep Hide closed and lifecycle controls in the filter panel. Status and host
+filters operate on loaded summaries; label their counts as loaded counts
+until paging is complete. Search still runs on the server over title,
+path, branch and id across all lifecycles; while searching, set aside
+volume/status/lifecycle/host filters and state that only the hat scope
+applies. A scoped search must not make a push-selected session disappear.
+
+Only the server's waiting count is a complete attention total before all
+pages load; never display prototype fixture totals as real counts.
+Needs you selects summaries with `operator_attention > 0`. Preserve
+`parent_handled_questions` and answer-pending-delivery distinctions; neither
+becomes operator work. Do not regex assistant prose for a final question
+or create a read/unread state. A factual `question_waits` alone does not
+override modern operator-attention routing.
+
+Use existing paged summaries and list SSE. A queue visit may scan at most
+three pages sequentially, then offers Load more; show “X loaded · N need
+you” while incomplete, and distinguish “none loaded yet” from “nothing
+needs you”. The budget is per deliberate visit/Load more, not every render
+or token. Abort/fence reads when scope changes. Keep an explicit way to
+load further pages until the queue is complete; do not claim the first
+page contains every waiting session. The same honesty applies to host,
+hat and status counts in the overview and rail.
+
+Queue previews read only visible cards, with at most two concurrent
+requests. Use session detail to locate pending ids, then the existing
+bounded Question Item route; never parse `PendingItem.payload` into a new
+browser renderer. Cache by session/pending/item version for the visit,
+invalidate on relevant attention changes or focus, and fence late results.
+No background polling per card, no extra item stream. Preview errors retain
+the session link. A status-only delegation fallback uses its real attention
+record and reason, with Open; its acknowledgement remains in the canonical
+session view. Every queue action opens the session/card, where AnswerBook
+checks current state. This deliberately replaces prototype inline approvals.
+
+The “Doing” cell shows authoritative status, family counts and known
+branch/path data. Current `SessionSummary` has no running-tool snippet,
+plan count or arbitrary last-message excerpt. Do not fetch every transcript
+or fabricate those fields. Progress bars and plan fractions render only
+where actual plan entries are already available, principally the selected
+session. Use accessible empty/unknown text for absent facts.
+
+### 4.3 Push must reach the selected session
+
+`crates/hennery-sessions/src/notify.rs` already produces these values in
+the encrypted `PushPayload.url`:
+
+- question: `/sessions/<encoded-session-id>?pending=<encoded-pending-id>`;
+- completed/failed turn and legacy link: `/sessions/<encoded-session-id>`;
+- status-only delegation attention: the affected session URL;
+- gateway: `/mcp`.
+
+IDs are encoded by the backend's `encoded_id`, never by agent-supplied URL
+text. `web/worker.js` validates the payload and passes that path unchanged
+into notification `data.url`; `notificationclick` closes the notification
+and calls `clickNotification(data.url, clients, origin)`. Preserve the
+current receipt/click allowlist and its canonical encoding checks. Invalid
+or cross-origin targets fall back to `/sessions`; do not expand this
+allowlist to arbitrary navigation when adding the new routes.
+
+Retain the existing ready/dirty-client handshake: exact-target focus does
+not reload; another window is navigated only when ready; dirty composer,
+question draft, attachments or mutations remain untouched. A separate
+window or the existing explicit Open notification hint handles dirty
+installed-app contexts. A push never answers a card or changes a hat filter.
+
+The session honors `pending` outside the newest page through
+`GET /api/view/sessions/{id}/questions/{pending_id}`, deduplicates by item
+id/version and focuses without choosing an option. A legacy session-only
+link reaches its oldest live pending card, otherwise its current tail.
+404, deleted session, withdrawn and already-answered questions retain their
+actual state. Keep the coherent snapshot and removal/version fences from
+the phone implementation.
+
+R2 must retain a producer-to-click test: take the URL emitted by the real
+notification producer/fixture, feed the emitted worker handler, click,
+and assert the actual router displays that session/card at both widths.
+Hand-writing a matching URL in the router test alone is insufficient.
+Include signed-out return with query, current filter excluding the target,
+an older card, exact-target no reload, and dirty-window preservation.
+No `actions` array or lock-screen submission endpoint is added.
+
+## 5. Prototype element inventory
+
+Every visible production element in both prototypes is assigned below;
+repeated instances use the same row. **Build** means new frontend behavior,
+**Restyle** preserves an existing contract, **Drop** removes prototype-only
+behavior, and **Needs backend** is the new defaults feature. Paths are
+relative to `web/src` unless stated; unqualified component filenames mean
+`components/`, and `items/` means `components/items/`. “New” marks proposed
+components; screen filenames are qualified with `screens/` on first use.
+Where the prototype claims data the current API lacks, the row specifies
+the honest replacement instead of quietly adding another backend feature.
+
+### 5.1 Shared design system and desktop navigation
+
+| Element / variant | Disposition and behavior | Target |
+|---|---|---|
+| Six surfaces, text hierarchy, dividers, control borders, scrim/popover shadow | Restyle; paired tokens and measured contrast (§3) | `styles/tokens.css` (new), `index.css`, `manage.css` |
+| Primary, secondary, ghost, reject, icon-only, small, focused, disabled buttons | Restyle; native disabled state, accent/on-accent roles; 44 px mobile targets | `components/ui/*` (new), existing `.btn` |
+| Path/search/text/textarea inputs, focused/error state and hint | Restyle; real labels, error association, 16 px mobile input | `components/ui/*`, `ProjectPicker.tsx`, `Composer.tsx` |
+| Model/mode menus, effort radios, booleans, inherits/override chips | Restyle/build from catalogs; no hard-coded choice lists | `components/ui/*`, `lib/catalog.ts`, `LaunchConfig.tsx` (new) |
+| Status badges/glyphs: permission, question, running, starting, idle, parked, offline, failed, warning | Restyle; icon + text + semantic color | `lib/status.ts`, `SessionRow.tsx`, `SessionHeader.tsx` |
+| “Your turn” inferred from a message | Drop; ordinary idle session remains idle; real status-only delegation attention stays | `lib/status.ts`, `screens/NeedsYou.tsx` (new) |
+| Hat square/chip, host online/offline chip, count pill, selected row, keycaps | Restyle; escaped labels; derived swatches; counts distinguish loaded/complete | `HatSwitch.tsx`, `SessionRow.tsx`, `components/ui/*` |
+| Typography, spacing, radii samples and component gallery | Build shared production primitives; drop the handoff/gallery page itself | `styles/tokens.css`, `components/ui/*` |
+| Wordmark, online-host fraction and explanatory tooltip | Restyle/build; fraction from owned non-revoked hosts, unknown shown while loading | `components/NavigationRail.tsx` (new), `Shell.tsx` |
+| Theme icon and collapse/expand rail control | Build; preference cycle and persisted expanded/collapsed state | `NavigationRail.tsx`, `lib/theme.ts` |
+| Jump to field and compact-rail search icon | Build; real palette trigger, initially a functional search/navigation entry before R6 | `CommandEntry.tsx` (new), `CommandPalette.tsx` (new) |
+| Needs you, All sessions, New session rail links and count/hint | Build/restyle; real links/current state; no automatic session selection | `NavigationRail.tsx`, `SessionScope.tsx`, `lib/views.ts` |
+| Hat section, each swatch/name/waiting/total, compact attention dot | Build; scoped overview links, loaded counts and accessible names | `NavigationRail.tsx`, `HatSwitch.tsx` |
+| Configure links: Defaults, Hosts, MCP, Hats, Settings, associated notes | Restyle/build; capability gated; show only actual counts/offline/auth state | `NavigationRail.tsx`, `lib/views.ts` |
+| Owner/avatar and Push on rail footer | Restyle; neutral Owner mark, no fixed initials; push status only from verified browser registration, link to Settings | `NavigationRail.tsx`, `PwaStatus.tsx` |
+| Compact rail icons, separators, labels/tooltips, badges | Build; every icon link has full accessible name, same destinations | `NavigationRail.tsx` |
+
+### 5.2 Overview and Mobile frames 1 / 1b
+
+| Element / variant | Disposition and behavior | Target |
+|---|---|---|
+| Desktop overview title/count, Group by Hat/Host, New session | Build/restyle; native radio group, persistent grouping | `screens/Sessions.tsx` (new), `components/SessionList.tsx` |
+| All/Needs you/Running/Idle/Parked-offline/Failed chips | Build; status predicates in one pure helper, loaded-count qualification | `components/SessionFilters.tsx` (new), `lib/status.ts` |
+| All hosts selector, title/path/branch search, slash hint | Build/restyle; host filters loaded data, search uses existing server q contract | `SessionFilters.tsx`, `SessionScope.tsx` |
+| Needs you section title, descriptive subtitle, total badge, recent-first text | Build; only actual operator attention and honest partial state | `screens/NeedsYou.tsx`, `components/NeedsYouQueue.tsx` (new) |
+| Queue command/edit/question/status previews, age, title, hat/host/agent | Build; bounded typed reads, read-only previews (§4.2) | `NeedsYouQueue.tsx`, `components/AttentionPreview.tsx` (new) |
+| Queue Allow/Always/Reject and quick answer options | Drop inline mutations; replace by Open request / Open question | `AttentionPreview.tsx` |
+| Reply input, Reply, Mark as seen on inferred prose | Drop; no reply inference/read-state API | `AttentionPreview.tsx` |
+| Queue keyboard instruction strip, focused-card outline | Build navigation/focus only; do not advertise global digit answers | `NeedsYouQueue.tsx`, `hooks/useShortcuts.ts` (new) |
+| Queue-empty success line and push promise | Restyle; “Nothing needs you” only when complete; explain notification state conditionally | `NeedsYouQueue.tsx` |
+| Desktop column headers: Session, Doing, Host, Agent/model, Last | Build responsive semantic list/table; Doing follows available data | `SessionList.tsx`, `SessionRow.tsx` |
+| Hat/host group header, summary count, host note | Build; no invented full totals or cross-hat grouping | `SessionList.tsx` |
+| Parent row, child indentation/arrow, child-count badge, selected/wait/fail row | Restyle; actual family links, stable row keys and preserved separate actions | `SessionRow.tsx` |
+| Row progress bar / plan fraction | Drop when unavailable; actual selected-session plan only, no transcript fan-out | `SessionRow.tsx`, `StepList.tsx` |
+| Status glyph, Doing subtitle, host, agent/model, last-event age | Restyle; unknown fields omitted; failure explanation remains keyboard/touch reachable | `SessionRow.tsx` |
+| Mobile 1 header: Needs you, host fraction, Search | Build; Search opens session search; R6 upgrades Jump to integration | `screens/NeedsYou.tsx`, `CommandEntry.tsx` |
+| Mobile 1 horizontal All/hat chips and counts | Restyle; scrolling chip faces inside ≥44 px targets | `HatSwitch.tsx` |
+| Mobile 1 “N waiting · most recent first”, stacked previews | Build; same queue and pagination as desktop | `NeedsYouQueue.tsx` |
+| Mobile 1 running/idle/parked summary button | Build; opens Sessions, counts qualified while partial | `NeedsYouQueue.tsx` |
+| Mobile 1b Sessions header, Search and Filter buttons | Build/restyle; filter sheet preserves current choices | `screens/Sessions.tsx`, `SessionFilters.tsx` |
+| Mobile 1b By hat / By host segmented choice | Build; same state as desktop group radios | `SessionFilters.tsx` |
+| Mobile 1b grouped cards, two-line rows, family label/indent, age | Restyle; no dropped host/model facts, available in row details on narrow screens | `SessionList.tsx`, `SessionRow.tsx` |
+| Five bottom items: Needs you, Sessions, New, Hosts, More; attention badge | Build; route links under navigation landmark, More owns management destinations | `components/BottomNavigation.tsx` (new), `lib/views.ts` |
+| Mobile device bezel/status bar/home indicator and canvas captions | Drop from application; retain frame names only for acceptance references | None |
+
+### 5.3 Session, Desktop and Mobile frames 1c / 3 / 4
+
+| Element / variant | Disposition and behavior | Target |
+|---|---|---|
+| Back button, hat breadcrumb/swatch, session title | Restyle; route-aware back fallback; actual agent title, no new title-edit API | `SessionHeader.tsx`, `SessionMenu.tsx` |
+| Status pill; waiting position; previous/next waiting session | Build/restyle; use shared queue order; qualify partial position, disable absent neighbor | `SessionHeader.tsx`, `SessionScope.tsx` |
+| Details button/pressed state, Park, ellipsis menu | Restyle/build; panel toggle and existing capability/lifecycle-gated Park/Close/Delete | `SessionHeader.tsx`, `SessionMenu.tsx` |
+| Meta host dot/name, cwd, branch/changed, agent/model, MCP count, family link | Restyle; actual fields only; dirty boolean says “changed”, not an invented file count; MCP from delivered snapshot | `SessionHeader.tsx`, `McpDelivery.tsx` |
+| Parent-driven banner and Take over | Restyle/build; current routing state and existing takeover API | `screens/Session.tsx`, `FamilyPanel.tsx` |
+| “Prompts pause delegation” and Hand back toggle | Drop inaccurate promise/toggle; say operator prompts take over under current backend semantics, no hand-back API | `Session.tsx`, `FamilyPanel.tsx` |
+| Parent-origin prompt, source link, speaker mark/name/time | Restyle; preserve typed provenance for parent/child/plugin/operator turns | `items/UserTurn.tsx`, `items/PluginContext.tsx`, `items/AgentMessage.tsx` |
+| Assistant prose/Markdown, inline code, lists | Restyle; sanitized pipeline, safe external links, explicit list markers | `Markdown.tsx`, `items/AgentMessage.tsx` |
+| Thinking disclosure and duration | Restyle; collapsed by default; show duration only if supplied, otherwise “Thinking” | `items/Thinking.tsx` |
+| Collapsed Glob/Read/Edit/Bash tools, icons, summary/status | Restyle; `aria-expanded`, real input/output and fabrication warning | `items/ToolCall.tsx` |
+| Expanded edit, +/- totals, line numbers and diff rows | Restyle existing typed tool content; no fabricated diff, retain plain-text fallback | `items/ToolCall.tsx`, `lib/highlight.ts` |
+| Plan updated line, actual completed/total steps | Restyle; derive only from actual plan entries | `items/PlanItem.tsx`, `StepList.tsx` |
+| Desktop permission card: header/type/age, command, cwd/host, options | Restyle; current Question Item and adapter option ids/order | `items/QuestionCard.tsx` |
+| Always-allow command wildcard and reject-with-note hint | Drop fabricated pattern/note workflow; use adapter-provided option names and only supported request fields | `items/QuestionCard.tsx` |
+| Sent/answered/stale/conflict state, host-offline note, Reset demo | Restyle delivery states; drop Reset demo and invented device attribution | `items/QuestionCard.tsx`, `lib/delivery.ts`, `store/useAnswer.ts` |
+| Mobile 3 earlier-step disclosure, prose, highlighted permission card | Restyle; existing paged/grouped transcript, not invented summary text | `Transcript.tsx`, `screens/Session.tsx` |
+| Mobile 3 bottom Allow once/Always/Reject and Next link | Restyle/build adaptive action region; supplied options only, same AnswerBook, Next never auto-answers/navigates | `QuestionCard.tsx`, `components/QuestionActions.tsx` (new) |
+| Mobile 4 previous-answer success banner | Build transient local acknowledgement with real delivery wording; not “Allowed” on mere 202 | `Session.tsx`, `lib/delivery.ts` |
+| Mobile 4 question header/age/body, choice labels/descriptions/radios | Restyle; real supported elicitation schema, semantic fields | `items/Elicitation.tsx`, `QuestionCard.tsx` |
+| Mobile 4 own-words input and Decline/Answer bottom actions | Restyle; actual custom-field support/exclusivity; unsupported schemas decline/cancel only | `items/Elicitation.tsx`, `QuestionActions.tsx` |
+| Mobile 1c scrim, sheet handle, Family title/progress, Close | Build responsive details sheet with Family/Plan/Details tabs; handle decorative | `components/SessionDetails.tsx` (new), `FamilyPanel.tsx` |
+| Parent/current/sibling cards, connection line, selected border, Open/Take over | Restyle; own session links, current routing, bounded family paging | `FamilyPanel.tsx` |
+| Family plan fractions and progress bars | Show only actual known plan; omit unsupported sibling/parent progress | `FamilyPanel.tsx` |
+| Right panel Plan list: done/current/todo icons and strike-through | Restyle actual latest plan; show truncation/empty state | `SessionDetails.tsx`, `StepList.tsx` |
+| Right panel Details: host, project, hat/rule, agent, model, MCP, started | Restyle; omit unknown rule/version/config-source claims; actual delivered MCP snapshot | `SessionDetails.tsx`, `McpDelivery.tsx` |
+| Family status-only attention, fallback reason, acknowledgement/rearm | Restyle existing real controls; preserve prerequisites and pending links | `StatusAttention.tsx`, `FamilyPanel.tsx` |
+| Composer textarea, attachment button, Model, mode, effort radios, Send hint/button | Restyle all actual catalog options; local send shortcut, preserve cancel/resume/draft behavior | `Composer.tsx`, `components/SessionConfig.tsx` (new) |
+| Composer slash-command menu and “@ for files” placeholder | Restyle real slash commands; drop unsupported @-file promise | `Composer.tsx`, `lib/catalog.ts` |
+| Attachment thumbnails/remove, drag/paste, unsupported/error states | Restyle existing capability/size/marker rules | `Composer.tsx` |
+| Parked/closed/failed/starting/offline footer, Resume/send-again/new-project flow | Restyle existing behavior; still reachable without the panel | `SessionFooter.tsx`, `items/Marker.tsx`, `Composer.tsx` |
+| Unsupported update, plugin context, boundaries, reconnect/load-earlier controls | Restyle; retain content, provenance, truncation and visible failures | `items/Unrecognised.tsx`, `ItemBoundary.tsx`, `Transcript.tsx` |
+
+The mobile bottom action region is a presentation of the focused live
+question's existing controls, not a second independent form. Mount one
+interactive action set, associate it with that card, and return to the
+normal composer when no card is selected. Preserve drafts by pending id.
+Multiple open questions remain individually reachable. Stream arrival
+never replaces a form while typing or moves focus to another request.
+
+### 5.4 Defaults and New session, including Mobile frame 5
+
+| Element / variant | Disposition and behavior | Target |
+|---|---|---|
+| Defaults title/subtitle; agent tabs | Needs backend/build; configured agent ids, not a fixed two-agent list | `screens/Defaults.tsx` (new), `api/defaults.ts` (new) |
+| Agent default → Hat override → Your pick explanation | Build; baseline is read-only selected-host catalog, no saved global base | `Defaults.tsx` |
+| Host/cwd context absent from prototype | Build; explicit catalog preview context, current resolved hat and freshness | `components/CatalogContext.tsx` (new) |
+| Desktop table: Setting, agent base, each hat; model/mode/effort rows | Needs backend; other supported axes join; unsupported cells explain absence | `Defaults.tsx`, `components/DefaultsEditor.tsx` (new) |
+| Base cell, dashed Inherits, accent Override, reset marker/legend | Needs backend; edit through actual select/checkbox plus explicit Reset to inherited and Save | `DefaultsEditor.tsx` |
+| Preview for each hat with value/source | Build; distinguish stored override from value usable on preview host; warnings stay visible | `DefaultsEditor.tsx`, `lib/defaults.ts` (new) |
+| Defaults Save/Cancel, conflicts, step-up and permissive warning | Needs backend; no single-click cycling or reset-on-cell-click | `DefaultsEditor.tsx`, `api/defaults.ts`, `StepUpDialog.tsx` |
+| New session desktop dialog/mobile sheet: scrim, handle, title/subtitle, Close | Restyle route-backed form; safe return and retained draft | `screens/NewSession.tsx`, `components/NewSessionFrame.tsx` (new) |
+| Optional first prompt/caret/focus treatment | Restyle real textarea; preserve prompt and existing attachment rules if shared | `NewSession.tsx` |
+| Host choices with online dot/offline disabled; Agent segmented choices/Other | Restyle; actual availability/auth and configured runtime ids | `NewSession.tsx`, `lib/agents.ts` |
+| Project input/folder/Browse, Recent projects list/check/clock, hat/time metadata | Restyle; host-scoped recents/browser and resolved hat, no copied paths | `ProjectPicker.tsx`, `NewSession.tsx` |
+| Hat preview/rule and MCP delivery note | Restyle; server resolution, not editable hat id; retain actual isolation/fallback prediction | `NewSession.tsx`, `McpPrediction.tsx` |
+| Session settings Model/Permission/Effort cards, chevrons, provenance dots | Build; effective host catalog + stored defaults + explicit picks; support all other axes | `LaunchConfig.tsx`, `lib/defaults.ts` |
+| Mobile defaults summary / Change | Build; opens accessible config section/sheet, includes host and agent selection | `LaunchConfig.tsx`, `NewSession.tsx` |
+| Edit defaults link | Build; opens Defaults for current hat/agent, preserving launcher draft on return | `NewSession.tsx`, `Defaults.tsx` |
+| Summary, Cancel, Start session / Start on host, local send hint | Restyle; disabled until prerequisites valid; actual config checked before first prompt | `NewSession.tsx`, `lib/start.ts` |
+
+### 5.5 Management, settings and palette
+
+| Element / variant | Disposition and behavior | Target |
+|---|---|---|
+| Hosts heading, online/offline count, Add host | Restyle; actual owned/non-revoked connectivity | `screens/Hosts.tsx` |
+| Pair panel: single-use code, countdown/waiting, numbered instructions, command Copy, Close | Restyle; real server expiry and current public URL/command; no prototype tunnel recipe | `components/Pairing.tsx` |
+| Host table/card: name/platform, status, host version, default hat, paired/last-seen | Restyle; current `HostItem` fields | `Hosts.tsx` |
+| Agent version/login, host update, doctor/transport labels, session totals | Drop unsupported claims; available agent choices may be shown from existing agents API on demand, no new diagnostics backend | `Hosts.tsx` |
+| Host actions Rename, Default hat select, Revoke | Restyle; confirmation/step-up and offline/revocation warnings unchanged | `Hosts.tsx`, `ConfirmDialog.tsx` |
+| MCP heading/subtitle/Add connection | Restyle | `screens/Mcp.tsx` |
+| Gateway rows: name/URL, auth kind, status/account, hat, action menu | Restyle; preserve actual health vs sign-in-required distinction | `Mcp.tsx`, `ConnectionForm.tsx`, `TokenForm.tsx`, `OauthClientForm.tsx` |
+| Host mount checkbox chips for each connection, all hosts, fallback notes | Restyle; full-set save with step-up, no immediate fake toggle success | `Mounts.tsx`, `McpScope.tsx` |
+| OAuth Connect/Reconnect, probe, blocked popup link, resource acceptance/errors | Restyle; preserve blank-popup gesture and write-only secrets | `OauthConnect.tsx`, `McpStatus.tsx`, `hooks/useMcpOauth.ts` |
+| Local stdio host/hat selectors, name/command/args/env indicators, Edit/Add | Restyle; actual whole-set editor and secrets stay write-only | `StdioServers.tsx`, `StdioServerForm.tsx` |
+| Local Review & save, next-start/resume notice, delivery/fallback warning | Restyle existing confirmation; no immediate running-session reconfiguration claim | `StdioServers.tsx`, `McpDelivery.tsx` |
+| Hats heading, New hat, swatch/name/session-count/Edit cards | Restyle; counts only if loaded/qualified; retain create/rename/recolor | `screens/Hats.tsx` |
+| Path rules with host scope and tester | Restyle actual canonical prefix rules; do not render prototype glob/“any host” as a supported rule language | `PathRules.tsx`, `Hats.tsx` |
+| Hat MCP summary, “Default on” host list | Build read-only derived summary from mounts/owned hosts; empty/unknown states | `Hats.tsx` |
+| Hat defaults summary/chevron link | Build; consume R4 API when available, otherwise functional Defaults link | `Hats.tsx`, `api/defaults.ts` |
+| Default for new hosts, Purge/Resume purge, preview/result/transcript cleanup | Restyle existing controls and freeze/default protections | `Hats.tsx`, `ConfirmDialog.tsx` |
+| Hat logo/display/upload | Drop frontend; retain `HatItem.logo` and backend routes/storage | `Hats.tsx`, `HatSwitch.tsx`, `SessionHeader.tsx` |
+| Settings Sign-in panel and password Change/changed date | Restyle sign-in explanation; drop unsupported Change button/date, provide existing local-admin reset guidance | `screens/Settings.tsx` |
+| Passkey rows: label, created, last used, Remove/Add | Build frontend using existing auth API; no new credential backend | `components/AccountSettings.tsx` (new), `api/auth.ts` |
+| Global permission/question/failure/finished/hidden-tab switches | Drop; replace with per-hat privacy section below | `Settings.tsx` |
+| Browser notification state, prepare/enable/disable/renew, install/denied hints | Restyle existing phone lifecycle; retain two gestures/step-up and honest partial failures | `components/NotificationSettings.tsx` (new), existing PWA modules |
+| Push devices, labels, last acceptance/error, remove | Restyle; registrations are not physical device identities or delivery guarantees | `NotificationSettings.tsx` |
+| Per-hat mute/details/generic title and preview/Save | Restyle existing `PushPolicyItem`; explain details can expose agent text/secrets | `NotificationSettings.tsx`, `api/device.ts` |
+| Per-hat delegation switches, loading/error, activation/disable notices | Build frontend on GET/PATCH session-tools; Settings only, stepped up | `components/DelegationSettings.tsx` (new) |
+| Signed-in devices/Revoke, current login/Sign out | Restyle existing behavior and cleanup | `AccountSettings.tsx`, `SignOut.tsx` |
+| Collector Public URL, default hat, Theme | Build/restyle read-only collector info; default-for-new-hosts from hats, per-host defaults stay in Hosts; appearance radios in Settings | `components/CollectorSettings.tsx` (new), `Settings.tsx` |
+| Push contact, attachment usage/cleanup status and deployment explanation omitted by prototype | Restyle/add reads from existing routes; display only reported values and existing isolation guidance | `CollectorSettings.tsx`, `Settings.tsx` |
+| Public URL editor absent from current screen | Keep read-only URL in this redesign; no new URL-edit flow. Existing backend/admin reset remains | `CollectorSettings.tsx` |
+| Palette overlay/scrim, Search input, Escape hint, grouped results/metadata/key hints | Build real dialog/combobox with Needs you, Actions, Recent sessions | `components/CommandPalette.tsx` (new) |
+| Palette New session in project/defaults, New session, Add host, Edit defaults | Build navigation/prefill actions; quick start opens reviewable launcher, never starts a permissive session directly | `CommandPalette.tsx`, `lib/commands.ts` (new) |
+| Palette recent session links and selected result | Build; owned loaded summaries, server session search on query, explicit partial/loading state | `CommandPalette.tsx` |
+| Prototype ⌘⇧N immediate contextual launch | Drop reserved global binding; contextual launcher remains a palette action | `lib/commands.ts` |
+| Mobile 2 lock-screen shell, grouped native notification, app icon/time | Native OS presentation only; keep generic bundled PWA icon and existing private push policy | `web/worker.js`, existing icons |
+| Mobile 2 Allow once/Reject/Open card action list and long-press instruction | Drop all lock-screen action buttons; normal notification tap opens current card | `web/worker.js` |
+
+### 5.6 Existing screens and states missing from the prototypes
+
+| Existing element | Disposition | Target |
+|---|---|---|
+| Setup token removal, password/confirmation, public URL, default hat name, optional passkey | Restyle using tokens; preserve one-time secret removal and flow | `screens/Setup.tsx` |
+| Login passkey/password, unavailable-passkey state, rate-limit/error, return target | Restyle; keep `safeNext` and explicit passkey gesture | `screens/Login.tsx`, `api/next.ts` |
+| Step-up passkey/password/cancel, confirmation dialog, pending retry | Restyle; focus return and original form state survive | `StepUpDialog.tsx`, `ConfirmDialog.tsx`, `App.tsx` |
+| Gateway-only shell and feature-unavailable pages | Restyle; no session/delegation/default calls or navigation in gateway mode | `Shell.tsx`, `lib/views.ts`, `screens/Placeholder.tsx` |
+| Not found, deleted session, unknown/foreign session, empty/loading/error/retry states | Restyle; distinguish unavailable and deleted without exposing foreign data | `Placeholder.tsx`, `Session.tsx`, screen owners |
+| PWA offline/reconnecting/update-required banner, dirty-window Open notification hint | Restyle; preserve build/cache/readiness lifecycle | `PwaStatus.tsx`, `NotificationNavigation.tsx` |
+| Host default-hat editing and hat “Default on” / “Default for new hosts” | Restyle/build; keep three concepts distinct | `Hosts.tsx`, `Hats.tsx`, `CollectorSettings.tsx` |
+| Session deletion confirmations, hat-mismatch recovery links and retained drafts after failure | Restyle existing behavior; no control lost behind a closed panel; no new session-rename API | `SessionMenu.tsx`, `ConfirmDialog.tsx`, `SessionFooter.tsx` |
+| MCP shared polling/attention badges and OAuth callback/failure pages | Restyle app components; preserve callback's separate security/CSP contract | `McpScope.tsx`, `McpStatus.tsx`, existing gateway callback |
+
+## 6. Per-hat defaults: storage, API and resolution
+
+### 6.1 Ownership and wire shapes
+
+Add the next **kernel component** migration in
+`crates/hennery-kernel/src/schema.rs`; do not change an old migration or
+choose a number from another component. Add
+`crates/hennery-kernel/src/session_defaults.rs` for `hat_session_defaults`,
+containing:
+
+| Column | Contract |
+|---|---|
+| `owner_id` | Required on every row and in every lookup/write predicate |
+| `hat_id` | Composite foreign key `(hat_id, owner_id)` → `hats(id, owner_id)`, ON DELETE CASCADE |
+| `agent` | Configured runtime id, not friendly label; part of primary key `(owner_id, hat_id, agent)` |
+| `config_json` | Sparse, validated `SessionConfig`: model/mode ids and boolean/string axes; no arbitrary JSON |
+| `revision` | Positive integer, incremented transactionally on successful replacement; absent row reads revision 0 |
+
+An empty config resets all fields to inheritance but keeps its row/revision,
+so stale editors cannot reset another editor's later changes through an
+absent-row ABA. New hats inherit entirely; no migration copies active
+session configuration or permissive modes. Hat purge removes the rows with
+the hat; frozen hats reject writes. Host revocation does not delete a
+cross-host preference. No model credentials, cwd, host command/environment,
+notification policy or delegation authorization is stored in this table.
+
+Use Rust DTOs in `hennery-proto`, generated into TypeScript and JSON Schema:
+`HatSessionDefaults {hat_id, agent, revision, config: SessionConfig}` and
+`PutHatSessionDefaults {revision, config: SessionConfig}`. Reuse
+`ConfigValue` (string or boolean). Register both in codegen; do not hand-edit
+generated files. API handlers live in
+`crates/hennery-sessions/src/session_defaults_api.rs`, using the kernel
+store just as the sessions HTTP facade uses owned hats.
+No kernel import of sessions/gateway is introduced.
+
+| Endpoint | Result / authorization |
+|---|---|
+| `GET /api/hats/{id}/session-defaults?agent=<id>` | 200 typed owned record, sparse empty/revision 0 when unset; cookie/operator-only, no step-up |
+| `PUT /api/hats/{id}/session-defaults?agent=<id>` | Replace this agent's sparse config atomically using supplied revision; 200 stored record; cookie, Origin and fresh step-up on **every** write |
+
+No collection-wide PUT or new DELETE endpoint. UI saves a deliberately
+edited hat/agent record; unrelated agent/hat defaults cannot be overwritten.
+Read multiple hat columns with bounded concurrent GETs, not a new owner-wide
+aggregation service. Full deployments advertise `session_defaults` only
+when these routes exist; gateway-only deployments do not offer the screen.
+
+Validation: 16 KiB maximum body; agent 1–128 UTF-8 bytes, no controls;
+model/mode/axis ids and string values 1–256 bytes, no controls; at most
+64 axes; no reserved model/mode entries in axes. Reject
+unknown DTO fields and non-boolean/non-string values. Omitted/null
+model/mode normalize to inheritance; removing an axes key inherits;
+`false` is an explicit override. Use the existing `ApiJson` extractor and
+typed validation once; no additional JSON parser/policy layer. Validate
+revision as a nonnegative bounded integer. Respect existing configured
+runtime/catalog limits; an unavailable runtime's stored record remains
+resettable instead of forcing a host online for removal.
+
+Return existing JSON error envelope: 401 unauthenticated; 403
+`step_up_required` or normal Origin/auth refusal; 404 for unknown/foreign
+hat; 409 `hat_purging` or `defaults_changed`; 400/422 for invalid shape/value
+and 413 for body size. Responses are private/no-store. Re-check ownership,
+hat freeze, current revision and fresh authorization at the transaction's
+write boundary; no async probe while holding a DB guard. Add all new
+statements/access paths to `crates/hennery-testkit/tests/owner_filter.rs`.
+
+The storage API accepts well-formed opaque values without pretending one
+host's catalog describes every host. The UI chooses values from an explicit
+catalog context, and launch validation below decides applicability. Thus
+stored records can survive a temporary adapter change and still be reset
+offline; saving does not claim universal host support.
+
+### 6.2 Permission defaults are a security boundary
+
+Persisting a permissive mode such as bypass/full access changes what later
+sessions may do without asking. Require fresh step-up to save it. Requiring
+step-up for all PUTs is intentional: unknown custom axes may also control
+sandbox/approval policy, and labels are untrusted. This is a preference
+write, not the creation of a new source of agent authority.
+
+The editor and New session show a persistent warning on a mode/security
+axis outside the profile-owned `HostCatalog.security` baseline, or when
+`security.known` is false. Use profile metadata, never a regex over display
+names. The Save confirmation names the hat, agent and effective changes,
+and explains reduced prompting. Loading or applying a previously saved
+default does not ask for a second step-up: the deliberate persisted choice
+is the authorization to prefill subsequent operator launches.
+
+Saving defaults must never enable delegation, mutate
+`delegation_execution_policy`, broaden its allowed values or modify a
+running/parked session. The existing stepped-up delegation-policy endpoint
+remains separate; delegated configuration continues through its existing
+explicit config, execution policy and read-back gates. The parent cannot
+acquire a permissive mode because the operator changed a launcher preference.
+
+### 6.3 Deterministic inheritance and heterogeneous catalogs
+
+For a selected online host, agent and validated cwd, fetch the existing
+runtime-catalog endpoint. The backend resolves the cwd/hat; the launcher
+also uses its existing hat-resolution preview. Fence responses by the
+whole context (host, agent, canonical cwd/resolved hat and request generation)
+and the catalog's `adapter_revision`. Never use the last session of another
+hat, a display model name or another host's probe as the baseline.
+
+Resolve each field independently:
+
+1. The chosen catalog's `defaults` supplies the read-only agent baseline.
+2. A stored field/key for this hat and agent replaces that baseline only
+   when the exact id and value are supported by this catalog.
+3. An explicit New session choice replaces the inherited value while the
+   context supports it. Show its source as “Your choice”.
+
+Missing keys inherit; do not use truthiness, since a boolean false is real.
+Use `lib/catalog.ts`'s category/id rules to identify model/mode and stable
+remaining axes. Reasoning effort is one catalog axis, not a special
+three-value hard-coded field. Render other select/boolean axes; unsupported
+shapes display unavailable and are never sent.
+
+Example without private fixtures: a hat stores model A and effort High;
+the selected host offers only model B and Low/Medium. The launcher uses
+that host's baseline for both, lists “Saved model A is unavailable on this
+host; using B” and the effort equivalent, and omits the unavailable
+overrides from the request. The stored record is not erased. Keep the
+notice visible through Start, not only as a fleeting toast. If the
+operator explicitly picked A and it later disappears, disable Start and
+ask for a new choice rather than treating that explicit choice as implicit.
+
+Do not map friendly labels or approximate model ids across pins. When a
+model choice changes which axes apply, recompute applicability, preserve
+still-valid explicit choices, and explain every discarded value. Offline,
+stale/unknown/unavailable catalog contexts never promise supported config:
+show the problem, retry, and offer an explicit “Use agent defaults for
+this start” choice that sends no unverified overrides. Do not silently
+switch into that path. Store editors may reset values without a catalog,
+but choosing a replacement requires a fresh usable context.
+
+Changing host resets agent/path/browser as the existing launcher does;
+show reset notices and recompute inherited config. Changing agent resets
+its explicit config. A path/hat change recomputes hat defaults; retain only
+valid explicit picks and show their source so a new hat's defaults are not
+mistaken for the operator's choice. Manual hat selection is not supported:
+the server resolves host/path and stores the actual hat at start.
+
+The Defaults matrix is a view of these records. The baseline column is
+read-only for the selected host/cwd, explicitly labeled as such. A hat
+column whose values are not offered there shows stored/unavailable and its
+fallback preview, not fake editable choices. A preview is catalog context,
+not permission to start a session in a hat selected by the browser.
+On mobile, use one hat section at a time with the same provenance and Reset
+controls. Save is explicit; 409 keeps edits and offers Reload/review.
+No automatic last-writer-wins merge after step-up or catalog refresh.
+
+### 6.4 Starting and changing a session
+
+Defaults resolve in the launcher; it sends only the reviewed effective
+`model`, `mode`, `axes` through existing `StartSessionRequest`. No implicit
+server merge is added to POST sessions, so existing clients and delegated
+spawn/resume retain their semantics. Other clients may read these defaults
+explicitly. Reset-to-agent in New session omits that field's override;
+there is no second hidden merge that reintroduces it.
+
+Start still resolves cwd/hat server-side. If the returned session's actual
+hat differs from the preview, retain the first prompt as a draft and show
+the mismatch before prompting; do not use the preview as ownership proof.
+Start is followed by configuration confirmation, then a separate first
+prompt POST. A 202 start alone proves neither applied config nor a
+successful first prompt. Read the newly created session and its actual
+post-start `SessionCatalog`; compare every requested field, including
+security axes, after it becomes active. An empty/missing catalog is not
+confirmation. If the actual config is absent/partial, a value is clamped,
+or a configuration failure is shown, open the visible session with
+the first prompt kept as its draft and a configuration-review notice.
+Never release it automatically when a later update happens to match.
+
+Bound the post-start confirmation wait to 30 seconds and retain the draft
+on timeout. A newly created session has no earlier attachment to confuse
+with this read-back. Do not add automatic resume/repair or a new public
+config-evidence API for this launcher; existing delegated resume/evidence
+gates remain authoritative. The explicit unknown-catalog opt-out in §6.3
+uses the ordinary agent-default start without requesting overrides; explain
+that its config was not verified. Ambiguous delivery keeps the existing
+session id and draft and never retries Start automatically. Tests must
+exercise a real clamped/failed adapter config before the first prompt,
+not just mock a successful POST response.
+
+The session composer's config bar remains on
+`POST /api/sessions/{id}/config` and its returned `SessionCatalog`.
+Show optimistic pending state then actual adapter state; rollback and
+explain refusal. It never writes hat defaults. No “save as default” gesture
+is implied by changing the session's mode or effort.
+
+## 7. Settings and retained operational behavior
+
+Settings is sectioned into Appearance, Sign-in/passkeys, This browser's
+notifications, Push devices, Notification privacy by hat, Delegation by hat,
+Signed-in devices, Collector and This login. Use existing APIs for all
+except §6's defaults screen. Loading failures in one section do not make
+the others appear successfully loaded or erase dirty input.
+
+For each hat, `DelegationSettings` reads
+`GET /api/hats/{id}/session-tools`, shows the returned flag/revision, and
+PATCHes `{delegation_enabled}` through normal step-up. Controls are disabled
+while a change is pending; cancellation/refusal restores the saved value.
+Show “Enabling takes effect at the next start or resume.” Explain that
+disabling immediately denies built-in calls, cancels undispatched work and
+routes outstanding attention to the operator; already delivered work keeps
+running as ordinary sessions. Re-enabling does not replay cancelled work.
+Do not say disabling stops all child processes, removes unrelated MCP
+mounts, or that enabling broadens the execution policy. No hat-card toggle.
+
+Keep per-hat `PushPolicyItem` settings and their current unmuted/no-details/
+session-title defaults. No per-event global switch or “only when hidden”
+suppression is built. Always show a valid received push once; SSE supplies
+badges without another native-notification path. “Push on” requires verified
+browser/collector registration, not just permission or another device's row.
+Preserve prepare/enable gestures, renewal, removal/sign-out cleanup, offline
+shell behavior, no API caching and waiting-worker lifecycle from phone.
+
+Collector information uses actual `GET /api/settings` public URL/contact;
+the default for newly paired hosts comes from `HatItem.default_for_new_hosts`,
+not a nonexistent global default in `SettingsResponse`. “Default on” on a
+hat card is the list of hosts whose `default_hat_id` matches it; each host's
+default remains editable in Hosts. Show attachment usage and host-transcript
+cleanup only through their existing APIs. Do not invent a collector version,
+OS, password change date, doctor result, agent update/login result or cleanup
+receipt. Public URL remains read-only in this scope; retain the existing
+admin reset instructions and reset consequences where relevant.
+
+MCP keeps actual delivery/health distinctions and current mount/stdio
+whole-set save semantics, write-only credentials, step-up and next-start/
+resume notices. Path rules remain host-specific canonical prefixes, not
+glob patterns. Hat purge remains preview → confirmation/step-up → frozen
+retryable purge with actual cleanup outcome. Theme and layout changes must
+not weaken these contracts.
+
+## 8. Keyboard and accessibility
+
+### 8.1 Exact key contract
+
+`Mod` means Meta on macOS, Ctrl elsewhere. Register global shortcuts once.
+Ignore prevented events, repeats, composition/IME and Alt-modified keys;
+also ignore every global shortcut when the event's composed path contains
+an input, textarea, select, contenteditable, textbox/combobox/searchbox or
+an editable descendant. That includes Mod+K and theme shortcuts. Never
+capture a digit typed into a composer or question field.
+
+| Key | Scope and action |
+|---|---|
+| `Mod+K` | Non-editing app focus: open/focus Command palette; if it is already open, retain it rather than close a query |
+| `N` | Non-editing app focus: open New session; never submit it |
+| `[` | Desktop non-editing focus: collapse/expand rail |
+| `]` | Session with non-editing focus: toggle details panel/sheet |
+| `/` | Sessions/Needs you, non-editing focus: reveal/focus Search sessions |
+| `J` / `K` | Focus inside overview/queue list: move to next/previous visible session/card; no page navigation or answering |
+| `Enter` | Native focused link/button activation; palette input selects its active result through its local handler |
+| `R` | Session, non-editing focus: focus composer; no send, approve or takeover |
+| `Mod+Shift+L` | Non-editing app focus: cycle System/Light/Dark, with announcement |
+| `?` | Non-editing app focus: show shortcut help dialog |
+| `1`–`9` | Existing desktop/fine-pointer permission card handler only while that card itself has focus; options in adapter order; no global queue handler |
+| `Mod+Enter` | Local composer or New session form handler only: Send/Start if enabled; never handled by the global dispatcher |
+| `Escape` | Local active overlay/menu: dismiss only the topmost dismissible layer; preserve its draft, restore trigger focus; no global draft clearing |
+
+The prototype's global answer digits, E/Mark-as-seen and Mod+Shift+N quick
+launch are not implemented. Elicitation radio/checkbox controls use native
+arrow/Space behavior. Palette arrows/Home/End/Enter/Escape are local to its
+combobox, so the global typing guard does not disable search interaction.
+Displayed key hints must match active bindings; hide desktop hints on touch.
+
+### 8.2 Semantics and focus
+
+Rail: navigation landmark “Main navigation”; mobile bar: “Primary
+navigation”; More list: “More navigation”. Use real anchors for routes and
+`aria-current="page"`; do not use tab roles for cross-page navigation.
+Session child/parent links remain independent links, with no button nested
+inside an anchor. Status icons have words/accessible names; decorative
+SVGs are aria-hidden. Every icon-only action has a name and visible focus.
+
+Use native fieldset/legend/radio for Group by, Host, Agent, Appearance and
+small effort choices, or a complete equivalent roving-tabindex radio
+pattern. Agent tabs in Defaults and Family/Plan/Details tabs use tablist,
+tab, tabpanel, ids/controls, selected state and arrow/Home/End behavior.
+Table headers/cells use actual table semantics on desktop; mobile cards
+retain explicit labels without duplicating the interactive form.
+
+New session, mobile details/filters, palette, help and confirmations are
+named modal dialogs with `aria-modal`, inert background, focus containment,
+Escape, and return-to-trigger (or safe heading when it is gone). Step-up
+stacks above the originating dialog and returns to it with edits intact.
+Focus the first useful input/heading deliberately; do not trap focus under
+the bottom bar or leave hidden desktop controls tabbable.
+
+The palette contains an accessible search combobox, results listbox,
+active-descendant and option selection; no result is executed merely by
+focus/hover. Search stays scoped to authorized loaded summaries plus the
+existing server search, debounced and fenced; do not scan transcripts or
+claim complete results before paging. Navigation actions and contextual
+New session use the same capability/current-state checks as visible UI.
+
+Keep the existing card focus policy: a newly live question may focus only
+when composer empty and focus free; it never steals typing or takes focus
+from another live card/dialog. Explicit deep links focus the requested card
+without activation. After an answer, announce queued/delivered state
+accurately; Next requires an explicit click. Use polite status regions for
+loads/save state, alerts for actionable failures, field-associated errors
+and bidi-isolated untrusted names/text. Respect zoom, reduced motion,
+safe areas and screen-reader order at both widths.
+
+## 9. Verification and visual acceptance
+
+This spec-only change needs document/link/scope checks, not application
+builds. The following are requirements for the implementation plans.
+
+### 9.1 Automated behavioral gates
+
+| Area | Required evidence / affected tests |
+|---|---|
+| Theme/accent | Extend `lib/theme.test.ts`, `lib/hats.test.ts`; new `lib/accent.test.ts`; bootstrap VM/DOM tests. Hostile colors and final CSS contrast in both themes, storage migration/denial, system/explicit mode and initial paint. |
+| Shell/router | `router.test.tsx`, `App.test.tsx`, Shell/view tests and `web/e2e/shell.spec.ts`: new URLs, More destinations, collapse, capabilities/gateway, auth return, direct reload and no desktop auto-selection. |
+| Overview/queue | `SessionList.test.tsx`, `SessionRow.test.tsx`, scope/store tests and new NeedsYou tests: grouping, counts/paging/partial states, zero vs parent-handled attention, real status-only fallback, no transcript fan-out or extra SSE. |
+| Push navigation | `pwa/notification.test.ts`, `pwa/navigation.test.ts`, `pwa/worker.test.ts`, `web/e2e/pwa.spec.ts`, existing producer tests: real URL → worker data.url → click → exact session/card, auth return, older question, dirty/exact window, gateway and invalid URL cases. |
+| Session | Existing `screens/Session*.test.tsx`, Composer/Transcript/item/AnswerBook/FamilyPanel suites; `web/e2e/sessions.spec.ts`, `family.spec.ts`: panel/sheet, parent banner/takeover, actual option ids, multi-question input, queued/uncertain/conflict/withdrawn/delivered, cancel/resume/draft preservation. |
+| Defaults backend | New kernel storage/migration tests and sessions HTTP integration tests: upgrade/reopen, owner/foreign hat, atomic revision race, empty reset/false, purge freeze/cascade, all PUT step-up/expiry/Origin/body bounds/invalid fields; add owner-audit cases and generator checks. |
+| Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, missing stored ids visibly omitted, explicit invalid pick blocked, unknown catalog explicit opt-out, stale responses, config clamp/failure prevents first prompt. Assert actual start frame and no prompt before confirmation. |
+| Settings/management | Existing settings/manage/API tests, `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts`: new layout, default-hat controls, delegation enable/disable/step-up/cancel, per-hat privacy, secrets and device lifecycle intact. |
+| Keyboard | New command/shortcut and palette tests plus browser checks: every key, editable/composed-path/select/IME guards, card-focus digits, dialog focus/return, typing never mutates an answer or starts a session. |
+| Rendering/CSP | Existing `security.test.ts`, `deps.test.ts`, browser CSP collectors and Markdown computed-style checks; no external assets, inline script, lost list markers or mobile controls. |
+
+All new/changed Playwright/Testing Library text locators use
+`{ exact: true }` or roles with precise accessible names, never short
+substrings. Changes under `web/e2e/**` run locally before commit. Preserve
+meaningful assertions when selectors change; do not weaken a failing test
+to fit the new layout. Regression guards are observed RED and removal-probed
+under fleet rules; timing/concurrency tests alone get the required 4×3 load
+runs. CI cost and replay frequency follow the worktree's verification budget.
+
+Run inside `nix develop -c`: targeted suites during work; final web
+typecheck/test/build and `cargo build -p hennery -p hennery-testkit --bins
+--locked` then `CI=1 pnpm --dir web e2e` against the embedded UI. Backend
+R4 additionally runs fmt, both clippy commands, both generators and the
+workspace test gate once for its plan. Each executable plan specifies its
+exact checks/replay/probes; documentation does not claim them pre-run.
+If a lockfile changes, update the Nix web dependency hash as required.
+
+### 9.2 Screenshot and installed-device acceptance
+
+Every R1–R6 report includes Playwright screenshots of **every screen and
+overlay it touched**, at **390 px and 1280 px**, in **light and dark**.
+Use deterministic synthetic data, stable timestamps, reduced animation and
+the actual embedded application. Record viewport height (390×844 and
+1280×900 recommended), theme, route/state, reference frame and intentional
+deviations. Put captures/diff notes in that lane's gitignored ledger/artifact
+directory, not the repository design bundle. Do not export private sample
+content into fixtures/screenshots.
+
+| Production capture | Prototype reference |
+|---|---|
+| Needs you, empty and populated; mobile navigation | Mobile `1 · Needs you tab`; Desktop `overview`, Needs you filter |
+| Sessions, grouped by hat/host, filters and collapsed rail | Mobile `1b · Sessions tab`; Desktop `overview` |
+| Running child with Family sheet / panel | Mobile `1c · Running session · family sheet`; Desktop `session`, panel open/closed |
+| Permission card and bottom answer actions | Mobile `3 · Deep link → permission card`; Desktop `session`, permission live/done |
+| Elicitation form and acknowledgement | Mobile `4 · Answer a question`; Design System `Question card` |
+| New session and config Change | Mobile `5 · New session sheet`; Desktop `newOpen` |
+| Defaults, including mobile adaptation | Desktop `defaults`; Design System inherits/override/config controls |
+| Hosts/pairing, MCP/stdio, Hats, Settings | Desktop `hosts`, `mcp`, `hats`, `settings`; mobile adaptations of those screens |
+| Palette/help | Desktop `paletteOpen`; Design System input/keycap primitives |
+| Login, Setup, More, Not found, gateway, errors/offline | Design System light/dark primitives; explicitly state “no prototype frame” |
+
+Mobile `2 · Push on the lock screen` is a native notification reference,
+not an app screenshot target or promise of lock-screen buttons. Demonstrate
+the tap-to-session flow instead. Compare geometry, density, hierarchy,
+surfaces and responsive behavior; document the deliberate system-font,
+hat-accent, read-only queue and unsupported-data deviations. A screenshot
+alone cannot prove contrast, focus or delivery semantics; pair it with the
+behavior/computed-style checks above.
+
+Final integration acceptance includes installed-iOS safe-area/keyboard and
+push tap → specific child/session → live answer, in both appearances,
+without lock-screen actions. Keep the existing phone acceptance limitations:
+Playwright cannot prove actual OS push display. Use synthetic projects on
+real pinned adapters for model/mode/effort read-back and a heterogeneous-host
+defaults case. Parent owns release authorization and final platform evidence.
+
+## 10. Ordered sub-plans and exclusive file ownership
+
+Use **UI R1–R6** in titles to distinguish these from existing release and
+memory plans with R identifiers. All branches target `redesign`; branch
+from the reviewed shared foundation and integrate through the parent.
+R1 → R2 is sequential. R3–R6 can start after R2. R5's defaults summary can
+initially link to Defaults and consume R4's API after integration; its
+acceptance of saved summaries waits for R4. R6's context actions similarly
+wait for the corresponding provider for final integration, without editing
+another lane's files.
+
+| Plan | Scope and dependency | Owned files / verification focus |
+|---|---|---|
+| R1 — tokens, appearance, assets | Foundation; no dependency | `styles/tokens.css`, `lib/accent.ts`, `lib/theme.ts`, hat palette helpers, `web/public/theme.js`, `components/ui/**`, notices and appearance tests. Own `index.css`/`manage.css` only for token aliases/base cleanup in this step. Capture all existing screens after token adoption, both themes; prove contrast/bootstrap/CSP. |
+| R2 — shell, overview, queue, router, push | After R1; establishes all parallel seams | `components/Shell.tsx`, `SessionScope.tsx`, `NavigationRail.tsx`, `BottomNavigation.tsx`, `SessionList.tsx`, `SessionRow.tsx`, `HatSwitch.tsx`, `SessionFilters.tsx`, `NeedsYouQueue.tsx`, `AttentionPreview.tsx`, `CommandEntry.tsx`; `screens/Sessions.tsx`, `NeedsYou.tsx`, `More.tsx`, `Placeholder.tsx`; `router.tsx`, `lib/views.ts`, status/group helpers, `styles/shell.css`; shell/list/router/push tests, `web/e2e/shell.spec.ts`, `pwa.spec.ts`. Own worker/app-route allowlist integration and deep-link preservation. |
+| R3 — session | After R2 | `screens/Session.tsx`, session header/footer/menu, Transcript/Composer/FamilyPanel/StepList/McpDelivery/StatusAttention, `components/items/**`, new SessionDetails/QuestionActions/SessionConfig, `styles/session.css`; corresponding tests; `web/e2e/sessions.spec.ts`, `family.spec.ts`. Own session action-provider registration, read-back display and mobile forms; do not edit launcher or shared catalog parser. |
+| R4 — launcher and defaults | After R2 | `screens/NewSession.tsx`, `Defaults.tsx`, ProjectPicker/NewSessionFrame/LaunchConfig/CatalogContext/DefaultsEditor, `api/defaults.ts`, `lib/defaults.ts`, `lib/start.ts`, `lib/catalog.ts`, `styles/launch.css`; new defaults backend/store/proto/schema/owner-audit changes; launcher/defaults tests and `web/e2e/new-session.spec.ts`. Own protocol generation and defaults capability; verify persistence/security/catalog divergence/first-prompt gate. |
+| R5 — management and Settings | After R2; final defaults summaries after R4 | `screens/Hosts.tsx`, `Mcp.tsx`, `Hats.tsx`, `Settings.tsx`; Pairing/PathRules/Mounts/MCP/stdio/OAuth forms, new Account/Notification/Delegation/CollectorSettings, management API helpers, `manage.css`; related tests; `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts`. Preserve current backend authorization and write-only secrets. |
+| R6 — commands and shortcuts | After R2; contextual acceptance with R3–R5 | `components/CommandPalette.tsx`, `ShortcutHelp.tsx`, `CommandHost.tsx`, `hooks/useShortcuts.ts`, `lib/commands.ts`, `styles/commands.css`; command tests and new `web/e2e/commands.spec.ts`. Consume registered actions, never copy another screen's mutation logic. |
+
+R2 must finish these integration seams before parallel branches start:
+
+1. Register the final URLs, capability checks and lazy entry points for
+   Defaults, the palette and launcher overlays. R2 may supply neutral
+   placeholders at those entry points; file ownership transfers to R4/R6
+   after R2. No lane needs to edit `Shell.tsx`, `router.tsx` or `lib/views.ts`
+   merely to insert its screen later.
+2. Establish an application action/context registry with stable actions for
+   opening New session, focusing overview search, toggling rail/details,
+   focusing composer and opening configured management destinations.
+   Screen owners register enabled handlers in their own files; R6 only
+   dispatches. Unavailable actions are disabled/omitted, never guessed.
+3. Extract shared shell CSS and existing session-specific CSS from
+   `index.css` before ownership transfers, maintaining current behavior.
+   Subsequent lane CSS imports live in each owned screen/module. R5 owns
+   `manage.css`; R3/R4/R6 never append to it or shared `index.css`.
+4. Keep accessible names for existing canonical card/composer/API controls
+   stable where they are already meaningful. Assign each e2e file once
+   as above; R4 adds launcher cases in its new file rather than editing
+   R3's session suite. Integration selector conflicts go through the parent.
+5. Document exports of common UI primitives and the action registry.
+   R3 consumes `lib/catalog.ts` read-only; R4 owns additive parser changes
+   and preserves existing exports/semantics. Session and launch config
+   presentations have separate owned modules using the same primitives.
+
+Generated protocol/schema files and the owner-audit suite are shared
+hotspots owned only by R4 for this redesign; parent integrates any outside
+lane changes and resolves migration numbers. Each implementation plan,
+execution record and its `docs/README.md` entry is integrated serially by
+the parent to avoid all six lanes editing the document index at once.
+
+No lane pushes to `main`, opens a GitHub PR through the child account or
+deploys. Reports carry commit ranges, command exit statuses/counts, screenshot
+paths/reference frames, intentional deviations and review requests.
+The parent performs independent reviews, checks full PR status (checks,
+review decision, merge state and unresolved threads), merges the stack
+into `redesign` and runs final integrated acceptance before its single
+release PR to `main`.
+
+## 11. Deferred and review request
+
+Deferred: lock-screen mutations; global per-event push preferences; logo UI;
+new diagnostics/update/doctor telemetry; inferred “your turn”/read state;
+global editable agent defaults; automatic direct-start palette presets;
+file-mention completion; new provider/model aliases; remote font/icon loads;
+public-URL editing and a password-change API; new memory/board/workflow pages.
+The existing backends for logos, public URL, delegation policy and optional
+plug-ins remain available under their established contracts.
+
+The parent should request stronger-model design/security review of D1–D12,
+especially sparse defaults storage and all-write step-up, catalog fallback
+and first-prompt read-back, separation from delegation authority, partial
+queue coverage, the read-only queue deviation, accent contrast and the
+parallel ownership seams. Record approval/amendments and scoped
+re-confirmation before writing R1's executable plan. No unresolved
+operator-level product question is introduced by this specification.
+
+Generated with Claude AI — please review before distribution.
