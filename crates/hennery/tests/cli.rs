@@ -2604,7 +2604,7 @@ fn config_toml_yields_to_the_environment_and_the_environment_to_flags() {
 
 #[test]
 fn collector_startup_explains_config_path_and_loopback_listeners() {
-    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery"));
+    hennery_testkit::first_exec(&hennery().get_program().to_string_lossy());
     for (name, config, listens, loopback) in [
         ("missing", false, vec!["127.0.0.1:0"], true),
         ("loaded", true, vec!["127.0.0.1:0", "[::1]:0"], true),
