@@ -15,7 +15,7 @@ export async function captureManagement(page: Page, state: string, reference: st
     await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await page.evaluate(() => document.fonts.ready)
-    const controls = await page.locator('.manage .input, .manage .text-input, .manage select, .manage textarea').evaluateAll(elements => elements.filter(element => element.getClientRects().length > 0).map(element => {
+    const controls = await page.locator('.manage input:not([type=checkbox]):not([type=radio]):not([type=color]), .manage select, .manage textarea').evaluateAll(elements => elements.filter(element => element.getClientRects().length > 0).map(element => {
       const style = getComputedStyle(element)
       return { boundary: style.borderTopColor, background: style.backgroundColor }
     }))

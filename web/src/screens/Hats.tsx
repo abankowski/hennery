@@ -9,6 +9,7 @@ import { createHat, hats as listHats, hosts as listHosts, purgeHat, purgePreview
 import { useClient } from '../app-client'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PathRules from '../components/PathRules'
+import HatDefaultsSummary, { defaultsAgents } from '../components/HatDefaultsSummary'
 import { connections } from '../api/mcp'
 import { useMcpScope } from '../components/McpScope'
 import type { HatItem, HostItem, PurgePreview, PurgeResult } from '../generated/protocol'
@@ -90,6 +91,7 @@ export default function Hats() {
             isDefault={isDefault(hat, hosts.data ?? [])}
             defaultOn={hosts.data ? hosts.data.filter(h => !h.revoked_at && h.default_hat_id === hat.id).map(h => h.name) : null}
             servers={serverSummary(hat.id)}
+            agents={defaultsAgents(hosts.data)}
             onChanged={replace}
             onPurge={() => askPurge(hat)}
           />
@@ -134,6 +136,7 @@ function HatCard({
   isDefault,
   defaultOn,
   servers,
+  agents,
   onChanged,
   onPurge,
 }: {
@@ -141,6 +144,7 @@ function HatCard({
   isDefault: boolean
   defaultOn: string[] | null
   servers: string[] | null
+  agents: string[]
   onChanged: (hat: HatItem) => void
   onPurge: () => void
 }) {
@@ -205,7 +209,7 @@ function HatCard({
         <dt>Default on</dt><dd>{defaultOn === null ? 'Not loaded' : defaultOn.length ? <Text>{defaultOn.join(', ')}</Text> : 'No hosts'}</dd>
         <dt>Gateway servers</dt><dd>{servers === null ? 'Not loaded' : servers.length ? <Text>{servers.join(', ')}</Text> : 'None'}</dd>
       </dl>
-      <Link className="defaults-link" to={`/defaults?hat=${encodeURIComponent(hat.id)}`}>Session defaults <span aria-hidden="true">→</span></Link>
+      <HatDefaultsSummary hatId={hat.id} agents={agents} />
       <p className="hint">Local servers are configured per host and hat in <Link to="/mcp">MCP</Link>. Edit host defaults in <Link to="/hosts">Hosts</Link>.</p>
       {editing ? (
         <form className="inline-form" onSubmit={save}>

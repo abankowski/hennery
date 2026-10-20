@@ -125,6 +125,31 @@ for (const width of [1280, 390]) {
       await expect(resolution).toContainText('does not exist')
     })
 
+    test('Hats and Settings read saved defaults without changing them', async () => {
+      const allHats = await (await page.request.get('/api/hats')).json() as { id: string; name: string }[]
+      const work = allHats.find(hat => hat.name === 'Work')!
+      const path = `/api/hats/${work.id}/session-defaults?agent=custom-agent`
+      const policyPath = `/api/hats/${work.id}/delegation-policy`
+      const policyBefore = await (await page.request.get(policyPath)).json()
+      const saved = await page.request.put(path, { headers: { Origin: collector.origin }, data: { revision: 0, config: { model: 'saved-custom-model', axes: { fast: false } } } })
+      expect(saved.status()).toBe(200)
+      const record = await saved.json()
+      for (const route of ['/hats', '/settings']) {
+        await page.goto(route)
+        const summary = route === '/hats' ? page.getByRole('listitem', { name: 'Work', exact: true }) : page.getByRole('region', { name: 'Session defaults', exact: true })
+        if (route === '/settings') await summary.getByRole('combobox', { name: 'Defaults hat', exact: true }).selectOption(work.id)
+        await summary.getByText('Other configured agent', { exact: true }).click()
+        await summary.getByRole('textbox', { name: 'Configured agent name', exact: true }).fill('custom-agent')
+        await summary.getByRole('button', { name: 'Load saved defaults', exact: true }).click()
+        await expect(summary.getByText('saved-custom-model', { exact: true })).toBeVisible()
+        await expect(summary.getByText('Off', { exact: true })).toBeVisible()
+        await expect(summary.getByRole('link', { name: 'Session defaults', exact: true })).toHaveAttribute('href', `/defaults?hat=${work.id}&agent=custom-agent`)
+        await captureManagement(page, route === '/hats' ? 'hats-defaults-integrated' : 'settings-defaults-integrated', 'R4 integration / saved overrides')
+      }
+      expect(await (await page.request.get(path)).json()).toEqual(record)
+      expect(await (await page.request.get(policyPath)).json()).toEqual(policyBefore)
+    })
+
     test('Settings adds and removes a real passkey and keeps per-hat notification privacy', async () => {
       const cdp = await page.context().newCDPSession(page)
       await cdp.send('WebAuthn.enable')

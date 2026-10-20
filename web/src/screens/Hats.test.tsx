@@ -37,6 +37,19 @@ const sent = (server: ReturnType<typeof stubServer>, method: string, path: strin
   server.sent.filter((s) => s.method === method && s.path === path)
 
 describe('the hats', () => {
+  it('shows saved overrides from the defaults API for configured agents on active hosts', async () => {
+    const server = open({
+      'GET /api/hosts': json(200, [host({ mcp_delivery: { custom: 'isolated' } }), host({ host_id: 'revoked', revoked_at: 'today', mcp_delivery: { removed: 'isolated' } })]),
+      'GET /api/hats/hat-a/session-defaults?agent=custom': json(200, { hat_id: 'hat-a', agent: 'custom', revision: 1, config: {} }),
+      'GET /api/hats/hat-b/session-defaults?agent=custom': json(200, { hat_id: 'hat-b', agent: 'custom', revision: 2, config: { model: 'stored-model', axes: { fast: false } } }),
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    expect(await within(work).findByText('stored-model', { exact: true })).toBeVisible()
+    expect(within(work).getByText('Off', { exact: true })).toBeVisible()
+    expect(within(work).queryByRole('option', { name: 'removed' })).toBeNull()
+    expect(within(work).getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat-b&agent=custom')
+    expect(server.sent.filter(row => row.path.includes('session-defaults')).every(row => row.method === 'GET')).toBe(true)
+  })
   it('qualifies gateway connections by actual mounts on non-revoked hosts', async () => {
     open({
       'GET /api/hosts': json(200, [host(), host({ host_id: 'gone', name: 'Revoked machine', revoked_at: '2026-10-20' })]),

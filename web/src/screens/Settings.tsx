@@ -4,6 +4,7 @@ import AccountSettings from '../components/AccountSettings'
 import CollectorSettings from '../components/CollectorSettings'
 import NotificationSettings from '../components/NotificationSettings'
 import DelegationSettings from '../components/DelegationSettings'
+import { DefaultsSettings } from '../components/HatDefaultsSummary'
 import { AppearanceOptions } from '../components/ui'
 import { useResource } from '../hooks/useResource'
 import '../manage.css'
@@ -19,6 +20,7 @@ export default function Settings({ push, sessions }: { push: boolean; sessions: 
     {push && <NotificationSettings push={push} sessions={sessions} />}
     {hats.error && <p role="alert">Unable to load hats. <button className="btn btn-ghost" onClick={hats.reload}>Retry hats</button></p>}
     {sessions && <DelegationSettings hats={hats.data} />}
+    {sessions && <DefaultsSettings hats={hats.data} />}
     <CollectorSettings push={push} sessions={sessions} hats={hats.data} />
   </div>
 }

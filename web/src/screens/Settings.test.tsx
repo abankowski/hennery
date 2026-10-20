@@ -49,6 +49,17 @@ function page(push = true, routes: Record<string, Answer | Answer[]> = {}) {
   return { server, confirm }
 }
 describe('minimum device Settings', () => {
+  it('loads a read-only Defaults summary and leaves editing on the Defaults screen', async () => {
+    const { server } = page(true, {
+      'GET /api/hosts': json(200, [{ host_id: 'host', name: 'Host', mcp_delivery: { custom: 'isolated' } }]),
+      'GET /api/hats/hat/session-defaults?agent=custom': json(200, { hat_id: 'hat', agent: 'custom', revision: 1, config: { model: 'stored-model', axes: { fast: false } } }),
+    })
+    const section = await screen.findByRole('region', { name: 'Session defaults' })
+    expect(await within(section).findByText('stored-model', { exact: true })).toBeVisible()
+    expect(within(section).getByText('Off', { exact: true })).toBeVisible()
+    expect(within(section).getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat&agent=custom')
+    expect(server.sent.filter(row => row.path.includes('session-defaults')).map(row => row.method)).toEqual(['GET'])
+  })
   it('registers a passkey through the ceremony and displays the returned credential label', async () => {
     vi.stubGlobal('PublicKeyCredential', class {})
     const original = Object.getOwnPropertyDescriptor(navigator, 'credentials')
