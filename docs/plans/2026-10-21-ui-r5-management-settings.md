@@ -10,6 +10,8 @@
 
 ## Execution status
 
+**Latest integration:** merged `7adea628` into this branch as `6ea6e026`, without conflicts. Integration source commit: `dd7e52cef0a95653991aa94ce7cb8c7b88f20c20`; source tree `d5075bf48d8b3f8a4482d0b1a50e0aaeaced8b0b`. Task 4 completes the read-only Hats/Settings Defaults summaries and folds in the two presentation nits relayed with the original range's APPROVE review. Its web checks, single full browser run, targeted recovery, removal probes and refreshed captures are recorded under Task 4; the original execution evidence below remains historical.
+
 **Implemented and verified** on `plan/ui-r5` from `fbe7d974`. Source commits: Task 1 `f4401e03`, Task 2 `447221ba`, Task 3 `65eb04d04905aefffe37d907ab680b9a71911a83`. Source-only tree: `7512318c8cf6ec7471cc05bf094208bb2a113fd0`. These commits are pushed. Independent whole-branch/security review, PR creation/status, integration into redesign and release remain parent-owned. No GitHub action or review-approval claim was made by this lane.
 
 | Command / proof | Observed result |
@@ -43,7 +45,7 @@ The workspace doctest failure was caused by this lane rebuilding dist while that
 
 Intentional prototype adaptations: hat-derived accent; native description-list cards and visible operational actions; no invented diagnostics, agent login/version totals, password-change metadata, logo UI or global notification switches; canonical host-specific path prefixes; the existing whole-set stdio editor and secret/OAuth workflows; per-hat privacy and explicit execution grants. The grant runtime id is verified on the selected host rather than using a nonexistent discovery endpoint. Catalog-backed reviews use human-readable setting/value labels; unavailable stored identities remain inspectable. No lock-screen action is added.
 
-**Deferred / parent-owned:** R4's saved-default summaries and Defaults-write/non-broadening integration case await that API; Hats currently has functional scoped Defaults links, as the brief permits. No ownership exception, README-index edit, dependency/hash change, Rust production/protocol/schema change, rebase, deployment, design-bundle copy or shared-home memory write. Existing 11 browser skips and 8 ignored Rust cases remain. Linux CI, installed-iOS/native push acceptance and independent review belong to the parent.
+**Integration amendment:** R4's saved-default summaries and Defaults-write/non-broadening acceptance are completed in Task 4 below, after merging redesign at 7adea628. Independent review and CI remain parent-owned. No ownership exception, README-index edit, dependency/hash change, Rust production/protocol/schema change, rebase, deployment, design-bundle copy or shared-home memory write. Existing 11 browser skips and 8 ignored Rust cases remain. Linux CI, installed-iOS/native push acceptance and independent review belong to the parent.
 
 **Review request:** `fbe7d974..65eb04d04905aefffe37d907ab680b9a71911a83`, plus this execution record. Focus on tools/grant separation, complete-map preservation, trusted/unknown catalog classification, step-up/cancel/read-back, passkey/privacy/device behavior and the native fixture's Linux artifact/linking path. The parent should create the redesign PR, inspect checks/reviewDecision/mergeStateStatus/unresolved threads, and integrate the other lanes serially. No review status was queried or inferred here.
 
@@ -54,7 +56,7 @@ Intentional prototype adaptations: hat-derived accent; native description-list c
 3. Delegation tools and separately reviewed execution grants, with live collector/host acceptance.
 4. Exact-file replay, removal probes, complete behavioral gates and screenshots.
 
-Out: R4 defaults storage/API and summaries (Hats links to Defaults until integration); password/public-URL editors; inferred diagnostics/version/account claims; logo UI; global per-event notification settings; any backend authorization change; GitHub actions or release.
+Out: R4 defaults storage/API and editing (read-only summaries completed at integration); password/public-URL editors; inferred diagnostics/version/account claims; logo UI; global per-event notification settings; any backend authorization change; GitHub actions or release.
 
 ## Decisions this plan makes where the spec is silent
 
@@ -6401,9 +6403,2003 @@ Expected: 2,178 frontend tests pass; typecheck and build exit 0. Browser and Rus
 5. Optional HENNERY_UI_R5_CAPTURE_DIR points the R5-owned browser suites at a ledger directory. Capture 390×844 and 1280-wide desktop states in both appearances after fonts load, including pairing, Hats/path rules, MCP create/token/mount/OAuth/stdio, account/passkey confirmation and delegation review. The helper captures sections of the shell's internal scroller and asserts actual control boundaries meet 3:1 contrast. Record file/theme/viewport/state/reference in captures.tsv. No screenshots are committed.
 6. Before push: git diff --check; staged diff equals tested files; author range from origin/redesign and origin/main uses only marcin.wadon@gmail.com; no design bundle, client sample data, lockfile or generated protocol changes. List retained scratch copies for parent cleanup.
 
+## Task 4 — integrate R4 saved Defaults summaries
+
+Parent authorization: merge origin/redesign into plan/ui-r5, consume R4 Defaults API read-only, preserve all lanes' assertions and run web gates plus one complete browser suite.
+
+Merge: 6ea6e026 (parents 7c9bf0bb and 7adea628). No conflicts. The automatic merge of web/e2e/mcp-delivery.spec.ts keeps R3 Details navigation, R4 launcher radio/explicit fallback consent, and all R5 secret, count, resume and capture assertions. No rebase or other-lane source edits.
+
+Saved values are explicitly labeled stored overrides. Model/mode/unknown axis IDs and false survive; no host support or inherited baseline is inferred. Suggested agent IDs come only from non-revoked host delivery reports. Explicit ID entry covers custom/unreported agents without a fabricated enumeration endpoint. GET failures have retry and do not imply empty preferences. Context changes fence old responses and abort old reads. Settings stays gated by sessions. Editing and host-specific resolution belong to R4 Defaults.
+
+**Integration verification:** typecheck 0; complete web suite 2324 passed / 138 files, exit 0 (before this integration the standalone R5 tree had 2178 / 122; merged lanes contribute the other changes); build 0, three CSS-checker tests and three same-origin CSS assets. New summary/screen targeted tests 55/55, exit 0; final three component tests 0 after strengthening the late-response assertion. Initial missing-component run was RED; removal probes below exercise actual implemented guards in a scratch copy.
+
+**Single full merged-tree browser run:** CI=1 pnpm --dir web e2e exited 1: 115 passed, 11 unchanged skips, 2 new Defaults locator failures and 8 serial dependents not run (7.5m). Both failures were in exact getByLabel on the wrapping Defaults-hat select label, whose text includes its options. A real production diagnostic confirmed the region's accessible name and all heading ID references; the exact combobox-role locator works. All saved-value and API assertions remain. This is the one full run requested by the parent; it is not claimed green. **Final targeted recovery:** after the exact-role locator and the two P3 fixes, final typecheck exited 0; all 2324 web tests / 138 files passed again; production build exited 0 (3 CSS tests, 3 same-origin CSS assets); embedded hennery/testkit build exited 0. CI=1 pnpm --dir web exec playwright test e2e/manage.spec.ts e2e/mcp-delivery.spec.ts passed all 22 cases, exit 0 (56.4s). This covers both original failures and every serial dependent not run by the full command, plus actual field contrast at both widths/themes. No assertion or timeout was weakened, and there was no second full browser run.
+
+**Review amendment:** parent relayed APPROVE for fbe7d974..7c9bf0bb (security core passed), plus two P3 presentation fixes to fold in. Desktop host facts now retain the ordinary two-column term/value list for every pair. Bare text-like management inputs receive the same field styling, with checkbox/radio/color kept separate; the capture contrast selector includes them. The strengthened browser selector against the old embedded UI observed RED at both widths: contrast 1.2889, below 3 (2 failed / 2 passed / 4 serial not run, exit 1). Final rebuilt UI and refreshed captures are covered by the targeted recovery.
+
+**Guard probes:** all 8 removals caught with expected exit 1, driver exit 0: Defaults GET, false preservation, late-response fence, failed-vs-empty, agent-scoped link, revoked-host filtering, Hats integration and Settings integration. Scratch defaults-probes-1 retained. Final source equality includes the merged MCP delivery fixture alongside the amended sources. Artifacts: integration-probes.json, integration-source-equality.json, integration-full-e2e.log and integration-recovery-e2e.log in the ledger. **Integration visuals:** 180 PNGs / 45 states, all four width/theme variants, indexed in integration-screenshots.md and integration-visual-result.json. Refreshed final Hosts, stdio, Hats and Settings saved-default captures at 390 and 1280 px in light/dark; representative desktop Hosts/stdio and mobile Settings/defaults plus desktop Hats/dark inspected. Controls meet the existing ≥3 boundary-contrast check; no horizontal overflow. Intentional deviations are recorded with the prototype references. Exact embedded source equality: 44 Write blocks / 27 effective paths, zero mismatches. No second fresh replay for this amendment.
+
+Amendment budget: no second fresh replay or workspace Rust test run. The original plan had its full fresh replay and Rust checks; this amendment changes only R5 web source/tests, and the one requested full browser command builds the merged Rust binaries. No new production timing/concurrency/process behavior; the existing fence test is targeted, no additional 4×3 run. CI remains the Linux/macOS check of record.
+
+### Final amendment bytes
+
+These replace earlier Write blocks for the same files. Apply after the merge; the last block per path is authoritative. The MCP delivery fixture records the automatic merge result (no source edits in this amendment).
+
+Write `web/src/components/HatDefaultsSummary.tsx`:
+
+````tsx
+import { Fragment, useEffect, useId, useMemo, useState } from 'react'
+import { sessionDefaults } from '../api/defaults'
+import { messageOf } from '../api/errors'
+import { hosts as listHosts } from '../api/manage'
+import { useClient } from '../app-client'
+import type { HatItem, HatSessionDefaults, HostItem } from '../generated/protocol'
+import { useResource } from '../hooks/useResource'
+import { agentLabel } from '../lib/agent'
+import { flatConfig, valueLabel } from '../lib/defaults'
+import { Text, visible } from '../lib/text'
+import { Link } from '../router'
+
+export function defaultsAgents(hosts: HostItem[] | null): string[] {
+  return [...new Set((hosts ?? []).filter(host => host.revoked_at == null).flatMap(host => Object.keys(host.mcp_delivery ?? {})))]
+}
+
+/** Stored overrides, without implying that a host supports them or probing one. */
+export default function HatDefaultsSummary({ hatId, agents }: { hatId: string; agents: string[] }) {
+  const client = useClient(), id = useId()
+  const [selected, setSelected] = useState<string | null>(null), [other, setOther] = useState(''), [refresh, setRefresh] = useState(0)
+  const agent = selected ?? agents[0] ?? ''
+  const request = useMemo(() => ({}), [client, hatId, agent, refresh])
+  const [result, setResult] = useState<{ request: object; record?: HatSessionDefaults; error?: string } | null>(null)
+  useEffect(() => {
+    if (!agent) return
+    let live = true
+    const abort = new AbortController()
+    sessionDefaults(client, hatId, agent, abort.signal).then(
+      record => { if (live) setResult({ request, record }) },
+      err => { if (live) setResult({ request, error: messageOf(err) }) },
+    )
+    return () => { live = false; abort.abort() }
+  }, [client, hatId, agent, request])
+  const current = result?.request === request ? result : null
+  const entries = current?.record ? Object.entries(flatConfig(current.record.config)) : null
+  const options = [...new Set([...agents, ...(agent ? [agent] : [])])]
+  return <div className="hat-defaults-summary">
+    <label className="field"><span className="field-label">Defaults agent</span><select value={agent} onChange={event => setSelected(event.target.value)}>
+      {!agent && <option value="">Choose an agent</option>}{options.map(value => <option key={value} value={value}>{visible(agentLabel(value))}</option>)}
+    </select></label>
+    <details><summary>Other configured agent</summary><form className="inline-form" onSubmit={event => { event.preventDefault(); if (other.trim()) setSelected(other.trim()) }}>
+      <label className="field" htmlFor={id}>Configured agent name<input id={id} className="text-input" value={other} onChange={event => setOther(event.target.value)} /></label>
+      <button className="btn btn-secondary btn-sm" disabled={!other.trim()}>Load saved defaults</button>
+    </form></details>
+    {!agent && <p className="hint">Choose a configured agent to inspect its saved overrides.</p>}
+    {agent && !current && <p role="status">Loading saved defaults…</p>}
+    {current?.error && <p role="alert">Unable to load saved defaults. <Text>{current.error}</Text> <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRefresh(value => value + 1)}>Retry saved defaults</button></p>}
+    {entries && (entries.length ? <dl className="facts">{entries.map(([key, value]) => <Fragment key={key}><dt><Text>{key === 'model' ? 'Model' : key === 'mode' ? 'Permission mode' : key}</Text></dt><dd><Text>{valueLabel(null, key, value)}</Text></dd></Fragment>)}</dl> : <p>No saved overrides for this agent.</p>)}
+    <p className="hint">Saved overrides only. Availability and inherited values depend on the host; preview them in Defaults.</p>
+    <Link className="defaults-link" to={`/defaults?hat=${encodeURIComponent(hatId)}${agent ? `&agent=${encodeURIComponent(agent)}` : ''}`}>Session defaults <span aria-hidden="true">→</span></Link>
+  </div>
+}
+
+export function DefaultsSettings({ hats }: { hats: HatItem[] | null }) {
+  const client = useClient(), hosts = useResource(() => listHosts(client), [client])
+  const [selected, setSelected] = useState('')
+  const hat = hats?.find(item => item.id === selected) ?? hats?.[0]
+  return <section className="card" aria-labelledby="defaults-settings-heading">
+    <h2 id="defaults-settings-heading">Session defaults</h2>
+    {!hats && <p role="status">Loading hats…</p>}
+    {hats?.length === 0 && <p>No hats available.</p>}
+    {hosts.error && <p role="alert">Unable to load configured agents. <button className="btn btn-ghost" onClick={hosts.reload}>Retry configured agents</button></p>}
+    {hat && <><label className="field"><span className="field-label">Defaults hat</span><select value={hat.id} onChange={event => setSelected(event.target.value)}>{hats?.map(item => <option key={item.id} value={item.id}>{visible(item.name)}</option>)}</select></label>
+      <HatDefaultsSummary key={hat.id} hatId={hat.id} agents={defaultsAgents(hosts.data)} /></>}
+  </section>
+}
+````
+
+Write `web/src/components/HatDefaultsSummary.test.tsx`:
+
+````tsx
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import { Client } from '../api/client'
+import { ClientContext } from '../app-client'
+import { json, stubServer } from '../test-server'
+import HatDefaultsSummary from './HatDefaultsSummary'
+
+describe('read-only hat defaults', () => {
+  it('reads the selected configured agent, preserves false and unknown axes, and links to the scoped editor', async () => {
+    const server = stubServer({ 'GET /api/hats/hat%2Fone/session-defaults?agent=custom%2Fagent': json(200, { hat_id: 'hat/one', agent: 'custom/agent', revision: 2, config: { model: 'stored-model', mode: 'stored-mode', axes: { fast: false, future: 'stored-value' } } }) })
+    const client = new Client({ fetch: server.fetch, stepUp: vi.fn(), navigate: vi.fn(), here: () => ({ pathname: "/hats", search: "" }) })
+    render(<ClientContext.Provider value={client}><HatDefaultsSummary hatId="hat/one" agents={['custom/agent']} /></ClientContext.Provider>)
+    expect(await screen.findByText('stored-model', { exact: true })).toBeVisible()
+    expect(screen.getByText('Off', { exact: true })).toBeVisible()
+    expect(screen.getByText('stored-value', { exact: true })).toBeVisible()
+    expect(screen.getByText('stored-mode', { exact: true })).toBeVisible()
+    expect(screen.getByText(/Saved overrides only/)).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat%2Fone&agent=custom%2Fagent')
+    expect(server.sent.map(row => row.method)).toEqual(['GET'])
+  })
+  it('clears prior values during a context change and ignores a late previous response', async () => {
+    let finish!: (response: Response) => void
+    const server = stubServer({
+      'GET /api/hats/one/session-defaults?agent=claude': () => new Promise(resolve => { finish = resolve }),
+      'GET /api/hats/two/session-defaults?agent=claude': json(200, { hat_id: 'two', agent: 'claude', revision: 0, config: {} }),
+    })
+    const client = new Client({ fetch: server.fetch, stepUp: vi.fn(), navigate: vi.fn(), here: () => ({ pathname: "/hats", search: "" }) })
+    const page = (hatId: string) => <ClientContext.Provider value={client}><HatDefaultsSummary hatId={hatId} agents={['claude']} /></ClientContext.Provider>
+    const view = render(page('one'))
+    await waitFor(() => expect(server.sent).toHaveLength(1))
+    view.rerender(page('two'))
+    expect(await screen.findByText('No saved overrides for this agent.', { exact: true })).toBeVisible()
+    await act(async () => finish(json(200, { hat_id: 'one', agent: 'claude', revision: 1, config: { model: 'OLD' } })))
+    expect(screen.queryByText('OLD', { exact: true })).toBeNull()
+    expect(screen.getByText('No saved overrides for this agent.', { exact: true })).toBeVisible()
+  })
+  it('reports failure as unavailable, retries, and never presents it as empty defaults', async () => {
+    const server = stubServer({ 'GET /api/hats/hat/session-defaults?agent=claude': [json(500, { message: 'Service unavailable' }), json(200, { hat_id: 'hat', agent: 'claude', revision: 1, config: { axes: { fast: false } } })] })
+    const client = new Client({ fetch: server.fetch, stepUp: vi.fn(), navigate: vi.fn(), here: () => ({ pathname: "/hats", search: "" }) })
+    render(<ClientContext.Provider value={client}><HatDefaultsSummary hatId="hat" agents={['claude']} /></ClientContext.Provider>)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load saved defaults')
+    expect(screen.queryByText('No saved overrides for this agent.', { exact: true })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Retry saved defaults' }))
+    expect(await screen.findByText('Off', { exact: true })).toBeVisible()
+  })
+})
+````
+
+Write `web/src/screens/Hats.tsx`:
+
+````tsx
+// Hats (frontend spec §8, kernel spec §5): create, rename and recolour hats,
+// pick the default for new hosts, edit each host's path rules with a live
+// "this path resolves to" tester, and purge a hat after seeing what goes.
+// Every change but creating needs a fresh step-up, which the client asks
+// for when the server refuses.
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { messageOf } from '../api/errors'
+import { createHat, hats as listHats, hosts as listHosts, purgeHat, purgePreview, updateHat } from '../api/manage'
+import { useClient } from '../app-client'
+import ConfirmDialog from '../components/ConfirmDialog'
+import PathRules from '../components/PathRules'
+import HatDefaultsSummary, { defaultsAgents } from '../components/HatDefaultsSummary'
+import { connections } from '../api/mcp'
+import { useMcpScope } from '../components/McpScope'
+import type { HatItem, HostItem, PurgePreview, PurgeResult } from '../generated/protocol'
+import { useResource } from '../hooks/useResource'
+import { count, isDefault, purgeState, safeColour } from '../lib/manage'
+import { Text } from '../lib/text'
+import { Link } from '../router'
+import '../manage.css'
+
+/** The colour a new hat starts with, as the server's own default. */
+const NEW_COLOUR = '#64748b'
+
+export default function Hats() {
+  const client = useClient()
+  const hats = useResource(() => listHats(client))
+  const hosts = useResource(() => listHosts(client))
+  const scope = useMcpScope()
+  const localMcp = useResource(() => scope ? Promise.resolve([]) : connections(client), [!!scope])
+  const mcp = scope ?? localMcp
+  const [purge, setPurge] = useState<{ hat: HatItem; preview: PurgePreview } | null>(null)
+  const [purged, setPurged] = useState<{ name: string; result: PurgeResult } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  // A purge deletes the hat's path rules on the server: every purge tried,
+  // whether it finished or not, has the rules read again.
+  const [purges, setPurges] = useState(0)
+  const purgeTried = useRef(false)
+
+  // As functions of the list held, so two changes landing together both
+  // stay.
+  const replace = (hat: HatItem) =>
+    hats.set((prev) =>
+      (prev ?? []).map((h) => {
+        if (h.id === hat.id) return hat
+        // Only one hat is the default for new hosts.
+        return hat.default_for_new_hosts ? { ...h, default_for_new_hosts: false } : h
+      }),
+    )
+
+  const askPurge = async (hat: HatItem) => {
+    setError(null)
+    try {
+      setPurge({ hat, preview: await purgePreview(client, hat.id) })
+    } catch (err) {
+      setError(messageOf(err))
+    }
+  }
+
+  const serverSummary = (hatId: string) => {
+    const hostRows = hosts.data, connectionRows = mcp.data
+    if (!hostRows || !connectionRows) return null
+    return connectionRows.filter(c => c.hat_id === hatId).map(c => {
+      const mounted = hostRows.filter(h => !h.revoked_at && c.mounts.includes(h.host_id)).map(h => h.name)
+      return `${c.label} — ${mounted.length ? `on ${mounted.join(', ')}` : 'not mounted on a paired host'}`
+    })
+  }
+
+  return (
+    <div className="manage">
+      <header className="manage-head">
+        <h1>Hats</h1>
+      </header>
+      <p className="manage-subtitle">Path rules choose a hat. Each hat has its own servers, session defaults and notification privacy.</p>
+      {[hats.error, hosts.error, mcp.error, error].map(
+        (shown, i) =>
+          shown && (
+            <p key={i} className="form-error" role="alert">
+              <Text>{shown}</Text>
+            </p>
+          ),
+      )}
+      {purged && (
+        <PurgeOutcome name={purged.name} result={purged.result} onClose={() => setPurged(null)} />
+      )}
+      <ul className="cards hat-grid" aria-label="Hats">
+        {(hats.data ?? []).map((hat) => (
+          <HatCard
+            key={hat.id}
+            hat={hat}
+            isDefault={isDefault(hat, hosts.data ?? [])}
+            defaultOn={hosts.data ? hosts.data.filter(h => !h.revoked_at && h.default_hat_id === hat.id).map(h => h.name) : null}
+            servers={serverSummary(hat.id)}
+            agents={defaultsAgents(hosts.data)}
+            onChanged={replace}
+            onPurge={() => askPurge(hat)}
+          />
+        ))}
+      </ul>
+      <NewHat onCreated={(hat) => hats.set((prev) => [...(prev ?? []), hat])} />
+      <PathRules
+        hosts={(hosts.data ?? []).filter((h) => h.revoked_at === undefined)}
+        hats={hats.data ?? []}
+        purges={purges}
+      />
+      {purge && (
+        <PurgeDialog
+          hat={purge.hat}
+          preview={purge.preview}
+          hosts={hosts.data ?? []}
+          onTried={() => (purgeTried.current = true)}
+          onPurged={(result) => setPurged({ name: purge.hat.name, result })}
+          onClose={() => {
+            setPurge(null)
+            // A purge that failed may have frozen the hat ("Resume purge")
+            // and deleted its rules already: both are read again.
+            if (purgeTried.current) {
+              purgeTried.current = false
+              hats.reload()
+              setPurges((n) => n + 1)
+            }
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function Swatch({ colour }: { colour: string }) {
+  const safe = safeColour(colour)
+  return <span className="swatch" aria-hidden="true" style={safe ? { background: safe } : undefined} />
+}
+
+function HatCard({
+  hat,
+  isDefault,
+  defaultOn,
+  servers,
+  agents,
+  onChanged,
+  onPurge,
+}: {
+  hat: HatItem
+  isDefault: boolean
+  defaultOn: string[] | null
+  servers: string[] | null
+  agents: string[]
+  onChanged: (hat: HatItem) => void
+  onPurge: () => void
+}) {
+  const client = useClient()
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(hat.name)
+  const [colour, setColour] = useState(safeColour(hat.colour) ?? NEW_COLOUR)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const titleId = `hat-${hat.id}`
+  // A closed form or a done "Make default for new hosts" takes the focused
+  // control away: focus goes to "Edit", or to the card's title.
+  const title = useRef<HTMLHeadingElement>(null)
+  const editButton = useRef<HTMLButtonElement>(null)
+  const refocus = useRef<'edit' | 'title' | null>(null)
+  useEffect(() => {
+    if (refocus.current === null) return
+    const to = refocus.current === 'edit' ? editButton.current : title.current
+    refocus.current = null
+    to?.focus()
+  })
+
+  const closeForm = () => {
+    refocus.current = 'edit'
+    setEditing(false)
+  }
+
+  const change = async (body: Parameters<typeof updateHat>[2], then: 'edit' | 'title') => {
+    setBusy(true)
+    setError(null)
+    try {
+      onChanged(await updateHat(client, hat.id, body))
+      refocus.current = then
+      setEditing(false)
+    } catch (err) {
+      setError(messageOf(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const save = (e: FormEvent) => {
+    e.preventDefault()
+    const body: Parameters<typeof updateHat>[2] = {}
+    if (name.trim() !== hat.name) body.name = name.trim()
+    if (colour !== hat.colour) body.colour = colour
+    if (Object.keys(body).length === 0) closeForm()
+    else change(body, 'edit')
+  }
+
+  return (
+    <li className="card hat" aria-labelledby={titleId}>
+      <div className="card-head">
+        <Swatch colour={hat.colour} />
+        <h2 className="card-title" id={titleId} ref={title} tabIndex={-1}>
+          <Text>{hat.name}</Text>
+        </h2>
+        {hat.default_for_new_hosts && <span className="tag">Default for new hosts</span>}
+        {hat.purging && <span className="tag tag-warn">Being purged</span>}
+      </div>
+      <dl className="facts hat-summary">
+        <dt>Default on</dt><dd>{defaultOn === null ? 'Not loaded' : defaultOn.length ? <Text>{defaultOn.join(', ')}</Text> : 'No hosts'}</dd>
+        <dt>Gateway servers</dt><dd>{servers === null ? 'Not loaded' : servers.length ? <Text>{servers.join(', ')}</Text> : 'None'}</dd>
+      </dl>
+      <HatDefaultsSummary hatId={hat.id} agents={agents} />
+      <p className="hint">Local servers are configured per host and hat in <Link to="/mcp">MCP</Link>. Edit host defaults in <Link to="/hosts">Hosts</Link>.</p>
+      {editing ? (
+        <form className="inline-form" onSubmit={save}>
+          <label className="field">
+            <span className="field-label">Name</span>
+            <input className="text-input" value={name} maxLength={64} required onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">Colour</span>
+            <input type="color" className="colour-input" value={colour} onChange={(e) => setColour(e.target.value.toLowerCase())} />
+          </label>
+          <button type="submit" className="btn btn-primary btn-sm" disabled={busy || name.trim() === ''}>
+            Save
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={closeForm} disabled={busy}>
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <div className="card-actions">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            ref={editButton}
+            onClick={() => {
+              setName(hat.name)
+              setColour(safeColour(hat.colour) ?? NEW_COLOUR)
+              setEditing(true)
+            }}
+            disabled={hat.purging}
+          >
+            Edit
+          </button>
+          {!hat.default_for_new_hosts && !hat.purging && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => change({ default_for_new_hosts: true }, 'title')}
+              disabled={busy}
+            >
+              Make default for new hosts
+            </button>
+          )}
+          <span className="spacer" />
+          <button type="button" className="btn btn-danger btn-sm" onClick={onPurge} disabled={isDefault && !hat.purging}>
+            {hat.purging ? 'Resume purge' : 'Purge'}
+          </button>
+        </div>
+      )}
+      {isDefault && !hat.purging && (
+        <p className="hint">A default hat cannot be purged: make another hat the default first.</p>
+      )}
+      {error && (
+        <p className="form-error" role="alert">
+          <Text>{error}</Text>
+        </p>
+      )}
+    </li>
+  )
+}
+
+function NewHat({ onCreated }: { onCreated: (hat: HatItem) => void }) {
+  const client = useClient()
+  const [name, setName] = useState('')
+  const [colour, setColour] = useState(NEW_COLOUR)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const nameInput = useRef<HTMLInputElement>(null)
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      onCreated(await createHat(client, { name: name.trim(), colour }))
+      setName('')
+      // "Create" is disabled with the name empty: focus goes to the name,
+      // ready for the next hat.
+      nameInput.current?.focus()
+    } catch (err) {
+      setError(messageOf(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="card" aria-labelledby="new-hat-title">
+      <h2 className="card-title" id="new-hat-title">
+        New hat
+      </h2>
+      <form className="inline-form" onSubmit={submit}>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <input
+            ref={nameInput}
+            className="text-input"
+            value={name}
+            maxLength={64}
+            required
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Colour</span>
+          <input type="color" className="colour-input" value={colour} onChange={(e) => setColour(e.target.value.toLowerCase())} />
+        </label>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={busy || name.trim() === ''}>
+          Create
+        </button>
+      </form>
+      {error && (
+        <p className="form-error" role="alert">
+          <Text>{error}</Text>
+        </p>
+      )}
+    </section>
+  )
+}
+
+function PurgeDialog({
+  hat,
+  preview,
+  hosts,
+  onTried,
+  onPurged,
+  onClose,
+}: {
+  hat: HatItem
+  preview: PurgePreview
+  hosts: HostItem[]
+  onTried: () => void
+  onPurged: (result: PurgeResult) => void
+  onClose: () => void
+}) {
+  const client = useClient()
+  const state = purgeState(hat, hosts, preview)
+  const blocked = state === 'default' || state === 'running'
+  return (
+    <ConfirmDialog
+      title={state === 'resume' ? 'Resume this hat’s purge?' : 'Purge this hat?'}
+      confirm={state === 'resume' ? 'Resume purge' : 'Purge'}
+      danger
+      disabled={blocked}
+      action={async () => {
+        onTried()
+        onPurged(await purgeHat(client, hat.id))
+      }}
+      onClose={onClose}
+    >
+      <p>
+        Purging <Text>{hat.name}</Text> deletes, for good:
+      </p>
+      <ul className="purge-list">
+        <li>{count(preview.sessions, 'session')} of the hat, on every host, with their transcripts</li>
+        <li>{count(preview.rules, 'path rule')}</li>
+        <li>{count(preview.recents, 'recent project')}</li>
+        <li>the hat itself, with its push policy</li>
+      </ul>
+      {state === 'default' && (
+        <p className="form-error">
+          This hat is the default for new hosts, or a host’s default hat. Make another hat that default first.
+        </p>
+      )}
+      {state === 'running' && (
+        <>
+          <p className="form-error">Close these sessions first: they are running on a host hennery reaches.</p>
+          <SessionIds ids={preview.running} link />
+        </>
+      )}
+      {state === 'resume' && <p>A purge of this hat began and did not finish; this finishes it.</p>}
+      {preview.unassigned_count > 0 && (
+        <>
+          <p>
+            {count(preview.unassigned_count, 'session')} belong to no hat. No purge deletes them; re-assign or delete
+            them one by one:
+          </p>
+          <ul className="purge-list">
+            {preview.unassigned.map((s) => (
+              <li key={s.session_id}>
+                <Link to={`/sessions/${encodeURIComponent(s.session_id)}`}>
+                  <Text>{s.title ?? s.cwd}</Text>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </ConfirmDialog>
+  )
+}
+
+/** Session ids, as links to the sessions when they still exist. */
+function SessionIds({ ids, link }: { ids: string[]; link?: boolean }) {
+  return (
+    <ul className="purge-list mono">
+      {ids.map((id) => (
+        <li key={id}>
+          {link ? (
+            <Link to={`/sessions/${encodeURIComponent(id)}`}>
+              <Text>{id}</Text>
+            </Link>
+          ) : (
+            <Text>{id}</Text>
+          )}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function PurgeOutcome({ name, result, onClose }: { name: string; result: PurgeResult; onClose: () => void }) {
+  const t = result.host_transcripts
+  // The purged hat's card, and the button that opened the dialog, are
+  // gone: focus comes here.
+  const title = useRef<HTMLHeadingElement>(null)
+  useEffect(() => title.current?.focus(), [])
+  return (
+    <section className="card notice" aria-labelledby="purged-title" role="status">
+      <h2 className="card-title" id="purged-title" ref={title} tabIndex={-1}>
+        Purged <Text>{name}</Text>
+      </h2>
+      <p>
+        Deleted {count(result.sessions, 'session')} and {count(result.rules, 'path rule')}.
+      </p>
+      {result.unconfirmed.length > 0 && (
+        <>
+          <p>
+            {count(result.unconfirmed.length, 'session')} were deleted while their host was away; the host closes them
+            when it is back:
+          </p>
+          <SessionIds ids={result.unconfirmed} />
+        </>
+      )}
+      <p>
+        The agents’ own transcripts on the hosts: {t.removed} removed, {t.partial} removed in part, {t.pending} still to
+        remove when their host is back.
+      </p>
+      <div className="card-actions">
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </section>
+  )
+}
+````
+
+Write `web/src/screens/Hats.test.tsx`:
+
+````tsx
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it } from 'vitest'
+import App from '../App'
+import { connection, hat, host, preview } from '../test-fixtures'
+import { FULL, json, stubServer, type Answer } from '../test-server'
+import { loadManageCss, shortTargets } from '../test-targets'
+
+const STEP_UP = json(403, { code: 'step_up_required', message: 'm' })
+const PERSONAL = hat({ id: 'hat-a', name: 'Personal', colour: '#4c5fd5', default_for_new_hosts: true })
+const WORK = hat()
+
+afterEach(() => history.replaceState(null, '', '/'))
+
+function open(routes: Record<string, Answer | Answer[]> = {}) {
+  history.replaceState(null, '', '/hats')
+  const server = stubServer({
+    'GET /api/capabilities': json(200, FULL),
+    'GET /api/hats': json(200, [PERSONAL, WORK]),
+    'GET /api/hosts': json(200, [host()]),
+    'GET /api/mcp/connections': json(200, []),
+    'GET /api/hosts/host-1/path-rules': json(200, []),
+    'POST /api/auth/step-up/password': new Response(null, { status: 204 }),
+    ...routes,
+  })
+  render(<App fetchImpl={server.fetch} />)
+  return server
+}
+
+async function stepUp() {
+  const dialog = await screen.findByRole('dialog', { name: 'This needs a fresh confirmation' })
+  await userEvent.type(within(dialog).getByLabelText('Your password'), 'correct horse battery')
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }))
+}
+
+const sent = (server: ReturnType<typeof stubServer>, method: string, path: string) =>
+  server.sent.filter((s) => s.method === method && s.path === path)
+
+describe('the hats', () => {
+  it('shows saved overrides from the defaults API for configured agents on active hosts', async () => {
+    const server = open({
+      'GET /api/hosts': json(200, [host({ mcp_delivery: { custom: 'isolated' } }), host({ host_id: 'revoked', revoked_at: 'today', mcp_delivery: { removed: 'isolated' } })]),
+      'GET /api/hats/hat-a/session-defaults?agent=custom': json(200, { hat_id: 'hat-a', agent: 'custom', revision: 1, config: {} }),
+      'GET /api/hats/hat-b/session-defaults?agent=custom': json(200, { hat_id: 'hat-b', agent: 'custom', revision: 2, config: { model: 'stored-model', axes: { fast: false } } }),
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    expect(await within(work).findByText('stored-model', { exact: true })).toBeVisible()
+    expect(within(work).getByText('Off', { exact: true })).toBeVisible()
+    expect(within(work).queryByRole('option', { name: 'removed' })).toBeNull()
+    expect(within(work).getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat-b&agent=custom')
+    expect(server.sent.filter(row => row.path.includes('session-defaults')).every(row => row.method === 'GET')).toBe(true)
+  })
+  it('qualifies gateway connections by actual mounts on non-revoked hosts', async () => {
+    open({
+      'GET /api/hosts': json(200, [host(), host({ host_id: 'gone', name: 'Revoked machine', revoked_at: '2026-10-20' })]),
+      'GET /api/mcp/connections': json(200, [connection({ label: 'Project docs', hat_id: 'hat-b', mounts: ['host-1'] }), connection({ id: 'other', label: 'Archive docs', hat_id: 'hat-b', mounts: ['gone'] })]),
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await waitFor(() => expect(within(work).getByText('Project docs — on laptop, Archive docs — not mounted on a paired host', { exact: true })).toBeVisible())
+    expect(work).not.toHaveTextContent('Revoked machine')
+  })
+  it('derives Default on from live owned hosts and links each hat to Defaults without rendering its logo', async () => {
+    open({
+      'GET /api/hats': json(200, [hat({ ...PERSONAL, logo: 'private-logo' }), WORK]),
+      'GET /api/hosts': json(200, [host(), host({ host_id: 'gone', name: 'Revoked machine', revoked_at: '2026-10-20' })]),
+    })
+    const personal = await screen.findByRole('listitem', { name: 'Personal' })
+    await waitFor(() => expect(within(personal).getByText('laptop', { exact: true })).toBeVisible())
+    expect(within(personal).queryByText('Revoked machine', { exact: true })).toBeNull()
+    expect(within(personal).getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat-a')
+    expect(personal.querySelector('img')).toBeNull()
+    expect(within(screen.getByRole('listitem', { name: 'Work' })).getByText('No hosts', { exact: true })).toBeVisible()
+  })
+  it('lists each hat with its colour, the default for new hosts marked', async () => {
+    open()
+    const personal = await screen.findByRole('listitem', { name: 'Personal' })
+    expect(within(personal).getByText('Default for new hosts')).toBeInTheDocument()
+    expect(personal.querySelector<HTMLElement>('.swatch')!.style.background).toBe('rgb(76, 95, 213)')
+  })
+
+  it('applies no colour the server did not give as #rrggbb', async () => {
+    open({ 'GET /api/hats': json(200, [hat({ name: 'Odd', colour: 'red;background:url(x)' })]) })
+    const odd = await screen.findByRole('listitem', { name: 'Odd' })
+    expect(odd.querySelector<HTMLElement>('.swatch')!.getAttribute('style')).toBeNull()
+  })
+
+  it('creates a hat with no step-up', async () => {
+    const created = hat({ id: 'hat-c', name: 'Clients', colour: '#64748b' })
+    const server = open({ 'POST /api/hats': json(201, created) })
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByRole('listitem', { name: 'Clients' })).toBeInTheDocument()
+    expect(sent(server, 'POST', '/api/hats')[0].body).toEqual({ name: 'Clients', colour: '#64748b' })
+  })
+
+  it('asks for another name when it is taken', async () => {
+    open({ 'POST /api/hats': json(409, { code: 'name_taken', message: 'm' }) })
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'work')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Another hat has this name.')
+  })
+
+  it('renames and recolours a hat after a step-up, sending the same change again', async () => {
+    const server = open({
+      'PATCH /api/hats/hat-b': [STEP_UP, json(200, hat({ name: 'Day job', colour: '#112233' }))],
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await userEvent.click(within(work).getByRole('button', { name: 'Edit' }))
+    const name = within(work).getByRole('textbox', { name: 'Name' })
+    await userEvent.clear(name)
+    await userEvent.type(name, 'Day job')
+    await userEvent.click(within(work).getByRole('button', { name: 'Save' }))
+    await stepUp()
+    expect(await screen.findByRole('listitem', { name: 'Day job' })).toBeInTheDocument()
+    expect(sent(server, 'PATCH', '/api/hats/hat-b').map((p) => p.body)).toEqual([{ name: 'Day job' }, { name: 'Day job' }])
+  })
+
+  it('makes a hat the default for new hosts, and the other one no longer', async () => {
+    const server = open({
+      'PATCH /api/hats/hat-b': [STEP_UP, json(200, hat({ default_for_new_hosts: true }))],
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await userEvent.click(within(work).getByRole('button', { name: 'Make default for new hosts' }))
+    await stepUp()
+    await waitFor(() => expect(within(screen.getByRole('listitem', { name: 'Work' })).getByText('Default for new hosts')).toBeInTheDocument())
+    expect(within(screen.getByRole('listitem', { name: 'Personal' })).queryByText('Default for new hosts')).toBeNull()
+    expect(sent(server, 'PATCH', '/api/hats/hat-b').map((p) => p.body)).toEqual([
+      { default_for_new_hosts: true },
+      { default_for_new_hosts: true },
+    ])
+  })
+
+  it('keeps both of two changes that land together', async () => {
+    let answerPatch: (r: Response) => void = () => {}
+    open({
+      'PATCH /api/hats/hat-b': () => new Promise<Response>((resolve) => (answerPatch = resolve)),
+      'POST /api/hats': json(201, hat({ id: 'hat-c', name: 'Clients' })),
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await userEvent.click(within(work).getByRole('button', { name: 'Make default for new hosts' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Clients')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByRole('listitem', { name: 'Clients' })).toBeInTheDocument()
+    answerPatch(json(200, hat({ default_for_new_hosts: true })))
+    await waitFor(() => expect(within(screen.getByRole('listitem', { name: 'Work' })).getByText('Default for new hosts')).toBeInTheDocument())
+    expect(screen.getByRole('listitem', { name: 'Clients' })).toBeInTheDocument()
+    expect(within(screen.getByRole('listitem', { name: 'Personal' })).queryByText('Default for new hosts')).toBeNull()
+  })
+
+  it('keeps a change that lands while a new hat is being created', async () => {
+    let answerCreate: (r: Response) => void = () => {}
+    open({
+      'PATCH /api/hats/hat-b': json(200, hat({ default_for_new_hosts: true })),
+      'POST /api/hats': () => new Promise<Response>((resolve) => (answerCreate = resolve)),
+    })
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await userEvent.click(within(screen.getByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Make default for new hosts' }))
+    await waitFor(() => expect(within(screen.getByRole('listitem', { name: 'Work' })).getByText('Default for new hosts')).toBeInTheDocument())
+    answerCreate(json(201, hat({ id: 'hat-c', name: 'Clients' })))
+    expect(await screen.findByRole('listitem', { name: 'Clients' })).toBeInTheDocument()
+    expect(within(screen.getByRole('listitem', { name: 'Work' })).getByText('Default for new hosts')).toBeInTheDocument()
+  })
+
+  it('returns focus to Edit after an edit is saved', async () => {
+    open({ 'PATCH /api/hats/hat-b': json(200, hat({ name: 'Day job' })) })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await userEvent.click(within(work).getByRole('button', { name: 'Edit' }))
+    await userEvent.type(within(work).getByRole('textbox', { name: 'Name' }), ' 2')
+    await userEvent.click(within(work).getByRole('button', { name: 'Save' }))
+    const dayJob = await screen.findByRole('listitem', { name: 'Day job' })
+    await waitFor(() => expect(within(dayJob).getByRole('button', { name: 'Edit' })).toHaveFocus())
+  })
+
+  it('cannot save a name of spaces only', async () => {
+    const server = open({})
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await userEvent.click(within(work).getByRole('button', { name: 'Edit' }))
+    await userEvent.clear(within(work).getByRole('textbox', { name: 'Name' }))
+    await userEvent.type(within(work).getByRole('textbox', { name: 'Name' }), '   ')
+    expect(within(work).getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(sent(server, 'PATCH', '/api/hats/hat-b')).toHaveLength(0)
+  })
+
+  it('puts focus on the card’s title once “Make default for new hosts” is gone', async () => {
+    open({ 'PATCH /api/hats/hat-b': json(200, hat({ default_for_new_hosts: true })) })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await userEvent.click(within(work).getByRole('button', { name: 'Make default for new hosts' }))
+    await waitFor(() => expect(within(work).queryByRole('button', { name: 'Make default for new hosts' })).toBeNull())
+    expect(within(work).getByRole('heading', { name: 'Work' })).toHaveFocus()
+  })
+
+  it('puts focus back in the name after a hat is created', async () => {
+    open({ 'POST /api/hats': json(201, hat({ id: 'hat-c', name: 'Clients' })) })
+    const name = await screen.findByRole('textbox', { name: 'Name' })
+    await userEvent.type(name, 'Clients')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByRole('listitem', { name: 'Clients' })).toBeInTheDocument()
+    expect(name).toHaveFocus()
+  })
+
+  it('says so when the hosts cannot be read', async () => {
+    open({ 'GET /api/hosts': json(500, { code: 'internal', message: 'the hosts are away' }) })
+    expect(await screen.findByRole('alert')).toHaveTextContent('the hosts are away')
+  })
+
+  it('has every button, picker and colour at least 44 px tall under 768 px', async () => {
+    const unload = loadManageCss()
+    try {
+      open({ 'GET /api/hosts/host-1/path-rules': json(200, [{ id: 'r-1', prefix: '/home/me/work', hat_id: 'hat-b', verified: true }]) })
+      await screen.findByDisplayValue('/home/me/work')
+      const work = screen.getByRole('listitem', { name: 'Work' })
+      await userEvent.click(within(work).getByRole('button', { name: 'Edit' }))
+      expect(shortTargets(document.querySelector('.manage')!)).toEqual([])
+    } finally {
+      unload()
+    }
+  })
+})
+
+describe('purging a hat', () => {
+  const result = { sessions: 3, rules: 2, unconfirmed: ['s-9'], host_transcripts: { removed: 2, partial: 0, pending: 1, pending_sessions: ['s-9'] } }
+
+  it('shows what goes, then purges after a confirmation and a step-up', async () => {
+    const server = open({
+      'GET /api/hats/hat-b/purge': json(200, preview()),
+      'POST /api/hats/hat-b/purge': [STEP_UP, json(200, result)],
+    })
+    await userEvent.click(within(await screen.findByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Purge' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Purge this hat?' })
+    expect(dialog).toHaveTextContent('3 sessions of the hat')
+    expect(dialog).toHaveTextContent('2 path rules')
+    expect(dialog).toHaveTextContent('1 recent project')
+    expect(sent(server, 'POST', '/api/hats/hat-b/purge')).toHaveLength(0)
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Purge' }))
+    await stepUp()
+    const outcome = await screen.findByRole('status', { name: 'Purged Work' })
+    expect(outcome).toHaveTextContent('Deleted 3 sessions and 2 path rules.')
+    expect(outcome).toHaveTextContent('s-9')
+    expect(outcome).toHaveTextContent('2 removed, 0 removed in part, 1 still to remove')
+    expect(sent(server, 'POST', '/api/hats/hat-b/purge')).toHaveLength(2)
+  })
+
+  it('puts focus on what the purge deleted, once the dialog has gone', async () => {
+    open({
+      'GET /api/hats/hat-b/purge': json(200, preview()),
+      'POST /api/hats/hat-b/purge': json(200, result),
+    })
+    await userEvent.click(within(await screen.findByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Purge' }))
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Purge this hat?' })).getByRole('button', { name: 'Purge' }))
+    const outcome = await screen.findByRole('status', { name: 'Purged Work' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(within(outcome).getByRole('heading', { name: 'Purged Work' })).toHaveFocus())
+  })
+
+  it('cannot purge while a session runs, and names it', async () => {
+    open({ 'GET /api/hats/hat-b/purge': json(200, preview({ running: ['s-1'] })) })
+    await userEvent.click(within(await screen.findByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Purge' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Purge this hat?' })
+    expect(dialog).toHaveTextContent('Close these sessions first')
+    expect(within(dialog).getByRole('link', { name: 's-1' })).toHaveAttribute('href', '/sessions/s-1')
+    expect(within(dialog).getByRole('button', { name: 'Purge' })).toBeDisabled()
+  })
+
+  it('cannot purge a default hat', async () => {
+    open({ 'GET /api/hosts': json(200, [host({ default_hat_id: 'hat-b' })]) })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await waitFor(() => expect(within(work).getByRole('button', { name: 'Purge' })).toBeDisabled())
+    expect(work).toHaveTextContent('A default hat cannot be purged')
+  })
+
+  it('resumes a purge that began', async () => {
+    const server = open({
+      'GET /api/hats': json(200, [PERSONAL, hat({ purging: true })]),
+      'GET /api/hats/hat-b/purge': json(200, preview({ purging: true })),
+      'POST /api/hats/hat-b/purge': json(200, result),
+    })
+    await userEvent.click(within(await screen.findByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Resume purge' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Resume this hat’s purge?' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Resume purge' }))
+    expect(await screen.findByRole('status', { name: 'Purged Work' })).toBeInTheDocument()
+    expect(sent(server, 'POST', '/api/hats/hat-b/purge')).toHaveLength(1)
+  })
+
+  it('reads the hats again when a purge fails, so a hat it froze offers “Resume purge”', async () => {
+    open({
+      'GET /api/hats': [json(200, [PERSONAL, WORK]), json(200, [PERSONAL, hat({ purging: true })])],
+      'GET /api/hats/hat-b/purge': json(200, preview()),
+      'POST /api/hats/hat-b/purge': json(500, { code: 'internal', message: 'stopped half way' }),
+    })
+    await userEvent.click(within(await screen.findByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Purge' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Purge this hat?' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Purge' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('stopped half way')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(await within(screen.getByRole('listitem', { name: 'Work' })).findByRole('button', { name: 'Resume purge' })).toBeInTheDocument()
+  })
+
+  it('reads the rules again after a purge, which deleted the hat’s, and asks the tester again', async () => {
+    const server = open({
+      'GET /api/hosts/host-1/path-rules': [json(200, [{ id: 'r-1', prefix: '/home/me/work', hat_id: 'hat-b', verified: true }]), json(200, [])],
+      'GET /api/hats/hat-b/purge': json(200, preview()),
+      'POST /api/hats/hat-b/purge': json(200, result),
+      'POST /api/hats/resolve': [
+        json(200, { canonical: '/home/me/work/app', exists: true, is_dir: true, hat_id: 'hat-b', rule_id: 'r-1' }),
+        json(200, { canonical: '/home/me/work/app', exists: true, is_dir: true, hat_id: 'hat-a' }),
+      ],
+    })
+    await screen.findByDisplayValue('/home/me/work')
+    await userEvent.type(screen.getByLabelText('Test a path'), '/home/me/work/app')
+    expect(await screen.findByLabelText('Resolution', {}, { timeout: 2000 })).toHaveTextContent('a path rule')
+    await userEvent.click(within(screen.getByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Purge' }))
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Purge this hat?' })).getByRole('button', { name: 'Purge' }))
+    expect(await screen.findByText('No rules: every session on this host gets its default hat.')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('/home/me/work')).toBeNull()
+    await waitFor(() => expect(screen.getByLabelText('Resolution')).toHaveTextContent('the host’s default hat'), { timeout: 2000 })
+    expect(sent(server, 'POST', '/api/hats/resolve')).toHaveLength(2)
+  })
+
+  it('lists the sessions of no hat, which no purge deletes', async () => {
+    const lost = { session_id: 's-0', host_id: 'host-1', agent: 'claude', cwd: '/srv/old', hat_id: '', lifecycle: 'closed', presumed_parked: false, created_at: '2026-10-01T10:00:00Z', last_event_at: '2026-10-01T10:00:00Z' }
+    open({ 'GET /api/hats/hat-b/purge': json(200, preview({ unassigned: [lost], unassigned_count: 1 })) })
+    await userEvent.click(within(await screen.findByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Purge' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Purge this hat?' })
+    expect(dialog).toHaveTextContent('1 session belong to no hat')
+    expect(within(dialog).getByRole('link', { name: '/srv/old' })).toHaveAttribute('href', '/sessions/s-0')
+  })
+})
+
+describe('path rules', () => {
+  const RULES = [{ id: 'r-1', prefix: '/home/me/work', hat_id: 'hat-b', verified: true }]
+
+  it('shows a host’s rules, unverified ones marked', async () => {
+    open({
+      'GET /api/hosts/host-1/path-rules': json(200, [...RULES, { id: 'r-2', prefix: '/home/me/later', hat_id: 'hat-b', verified: false }]),
+    })
+    expect(await screen.findByDisplayValue('/home/me/work')).toBeInTheDocument()
+    expect(screen.getAllByText('Unverified')).toHaveLength(1)
+  })
+
+  it('sends the whole set after a step-up, and shows the set as the host stored it', async () => {
+    const server = open({
+      'GET /api/hosts/host-1/path-rules': json(200, RULES),
+      'PUT /api/hosts/host-1/path-rules': [
+        STEP_UP,
+        json(200, [...RULES, { id: 'r-3', prefix: '/private/tmp/x', hat_id: 'hat-a', verified: true }]),
+      ],
+    })
+    await screen.findByDisplayValue('/home/me/work')
+    await userEvent.click(screen.getByRole('button', { name: 'Add rule' }))
+    await userEvent.type(screen.getByLabelText('Path 2'), '/tmp/x')
+    await userEvent.selectOptions(screen.getByLabelText('Hat 2'), 'hat-a')
+    await userEvent.click(screen.getByRole('button', { name: 'Save rules' }))
+    await stepUp()
+    expect(await screen.findByDisplayValue('/private/tmp/x')).toBeInTheDocument()
+    const puts = sent(server, 'PUT', '/api/hosts/host-1/path-rules')
+    expect(puts).toHaveLength(2)
+    expect(puts[0].body).toEqual(puts[1].body)
+    expect(puts[1].body).toEqual({
+      rules: [
+        { prefix: '/home/me/work', hat_id: 'hat-b' },
+        { prefix: '/tmp/x', hat_id: 'hat-a' },
+      ],
+    })
+  })
+
+  it('shows a rule’s hat that is being purged, rather than another', async () => {
+    open({
+      'GET /api/hats': json(200, [PERSONAL, hat({ purging: true })]),
+      'GET /api/hosts/host-1/path-rules': json(200, RULES),
+    })
+    await screen.findByDisplayValue('/home/me/work')
+    const picker = screen.getByLabelText('Hat 1') as HTMLSelectElement
+    expect(picker.value).toBe('hat-b')
+    expect(within(picker).getByRole('option', { name: 'Work' })).toBeDisabled()
+  })
+
+  it('cannot save a rule with no path, and says why', async () => {
+    open({ 'GET /api/hosts/host-1/path-rules': json(200, RULES) })
+    await screen.findByDisplayValue('/home/me/work')
+    expect(screen.getByRole('button', { name: 'Save rules' })).toBeEnabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Add rule' }))
+    await userEvent.type(screen.getByLabelText('Path 2'), '   ')
+    expect(screen.getByRole('button', { name: 'Save rules' })).toBeDisabled()
+    expect(screen.getByText('Every rule needs a path.')).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('Path 2'), '/srv')
+    expect(screen.getByRole('button', { name: 'Save rules' })).toBeEnabled()
+  })
+
+  it('moves focus to the next rule when one is removed, and to “Add rule” after the last', async () => {
+    open({
+      'GET /api/hosts/host-1/path-rules': json(200, [...RULES, { id: 'r-2', prefix: '/srv', hat_id: 'hat-a', verified: true }]),
+    })
+    await screen.findByDisplayValue('/home/me/work')
+    await userEvent.click(screen.getByRole('button', { name: 'Remove rule 1' }))
+    expect(screen.getByLabelText('Path 1')).toHaveValue('/srv')
+    expect(screen.getByLabelText('Path 1')).toHaveFocus()
+    await userEvent.click(screen.getByRole('button', { name: 'Remove rule 1' }))
+    expect(screen.getByRole('button', { name: 'Add rule' })).toHaveFocus()
+  })
+
+  it('says why a set was refused', async () => {
+    open({
+      'GET /api/hosts/host-1/path-rules': json(200, RULES),
+      'PUT /api/hosts/host-1/path-rules': json(409, { code: 'host_offline', message: 'm' }),
+    })
+    await screen.findByDisplayValue('/home/me/work')
+    await userEvent.click(screen.getByRole('button', { name: 'Save rules' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('The host is offline.')
+  })
+})
+
+describe('the path tester', () => {
+  it('asks the host which hat a typed path resolves to, and says which rule decided', async () => {
+    const server = open({
+      'POST /api/hats/resolve': json(200, { canonical: '/home/me/work/app', exists: true, is_dir: true, hat_id: 'hat-b', rule_id: 'r-1' }),
+    })
+    await userEvent.type(await screen.findByLabelText('Test a path'), '~/work/app')
+    const resolution = await screen.findByLabelText('Resolution', {}, { timeout: 2000 })
+    expect(resolution).toHaveTextContent('/home/me/work/app')
+    expect(resolution).toHaveTextContent('Work')
+    expect(resolution).toHaveTextContent('a path rule')
+    const asked = sent(server, 'POST', '/api/hats/resolve')
+    expect(asked.at(-1)?.body).toEqual({ host_id: 'host-1', path: '~/work/app' })
+    // Typing paused once: one question, not one per key.
+    expect(asked).toHaveLength(1)
+  })
+
+  it('names the host’s default hat when no rule decided, and a path that is missing', async () => {
+    open({ 'POST /api/hats/resolve': json(200, { canonical: '/srv/x', exists: false, is_dir: false, hat_id: 'hat-a' }) })
+    await userEvent.type(await screen.findByLabelText('Test a path'), '/srv/x')
+    const resolution = await screen.findByLabelText('Resolution', {}, { timeout: 2000 })
+    expect(resolution).toHaveTextContent('the host’s default hat')
+    expect(resolution).toHaveTextContent('This path does not exist on the host.')
+  })
+
+  it('shows the answer for the path typed last, never an older one', async () => {
+    let answerFirst: (r: Response) => void = () => {}
+    open({
+      'POST /api/hats/resolve': [
+        () => new Promise<Response>((resolve) => (answerFirst = resolve)),
+        json(200, { canonical: '/srv/b', exists: true, is_dir: true, hat_id: 'hat-a' }),
+      ],
+    })
+    const tester = await screen.findByLabelText('Test a path')
+    await userEvent.type(tester, '/srv/a')
+    await screen.findByText('Asking the host…', {}, { timeout: 2000 })
+    await userEvent.clear(tester)
+    await userEvent.type(tester, '/srv/b')
+    const resolution = await screen.findByLabelText('Resolution', {}, { timeout: 2000 })
+    expect(resolution).toHaveTextContent('/srv/b')
+    // The first question's answer arrives late, and is not shown.
+    answerFirst(json(200, { canonical: '/srv/a', exists: true, is_dir: true, hat_id: 'hat-b' }))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.getByLabelText('Resolution')).toHaveTextContent('/srv/b')
+  })
+
+  it('asks again after the rules are saved, since it answers under the rules as saved', async () => {
+    open({
+      'GET /api/hosts/host-1/path-rules': json(200, []),
+      'PUT /api/hosts/host-1/path-rules': json(200, [{ id: 'r-1', prefix: '/srv', hat_id: 'hat-b', verified: true }]),
+      'POST /api/hats/resolve': [
+        json(200, { canonical: '/srv/x', exists: true, is_dir: true, hat_id: 'hat-a' }),
+        json(200, { canonical: '/srv/x', exists: true, is_dir: true, hat_id: 'hat-b', rule_id: 'r-1' }),
+      ],
+    })
+    await userEvent.type(await screen.findByLabelText('Test a path'), '/srv/x')
+    expect(await screen.findByLabelText('Resolution', {}, { timeout: 2000 })).toHaveTextContent('the host’s default hat')
+    await userEvent.click(screen.getByRole('button', { name: 'Add rule' }))
+    await userEvent.type(screen.getByLabelText('Path 1'), '/srv')
+    await userEvent.click(screen.getByRole('button', { name: 'Save rules' }))
+    await waitFor(() => expect(screen.getByLabelText('Resolution')).toHaveTextContent('a path rule'), { timeout: 2000 })
+    expect(screen.getByLabelText('Test a path')).toHaveValue('/srv/x')
+  })
+
+  it('shows no answer for a path typed after it', async () => {
+    open({ 'POST /api/hats/resolve': json(200, { canonical: '/srv/x', exists: true, is_dir: true, hat_id: 'hat-a' }) })
+    const tester = await screen.findByLabelText('Test a path')
+    await userEvent.type(tester, '/srv/x')
+    expect(await screen.findByLabelText('Resolution', {}, { timeout: 2000 })).toBeInTheDocument()
+    await userEvent.type(tester, 'y')
+    expect(screen.queryByLabelText('Resolution')).toBeNull()
+  })
+
+  it('announces each answer once: in one live region, nested in none', async () => {
+    open({
+      'POST /api/hats/resolve': [
+        json(409, { code: 'host_offline', message: 'm' }),
+        json(200, { canonical: '/srv/xy', exists: true, is_dir: true, hat_id: 'hat-a' }),
+      ],
+    })
+    const LIVE = '[role="status"], [role="alert"], [aria-live]:not([aria-live="off"])'
+    const nested = () => [...document.querySelectorAll(LIVE)].filter((r) => r.parentElement?.closest(LIVE))
+    const tester = await screen.findByLabelText('Test a path')
+    await userEvent.type(tester, '/srv/x')
+    await screen.findByText('The host is offline: it resolves the path.', {}, { timeout: 2000 })
+    expect(nested()).toEqual([])
+    await userEvent.type(tester, 'y')
+    const resolution = await screen.findByLabelText('Resolution', {}, { timeout: 2000 })
+    expect(resolution.closest(LIVE)).not.toBeNull()
+    expect(nested()).toEqual([])
+  })
+
+  it.each([
+    ['host_offline', 'The host is offline: it resolves the path.'],
+    ['resolve_unsupported', 'This host cannot resolve paths yet: update hennery on it.'],
+    ['hat_ambiguous', 'This path matches more than one hat'],
+  ])('says why it could not tell (%s)', async (code, message) => {
+    open({ 'POST /api/hats/resolve': json(409, { code, message: 'm' }) })
+    await userEvent.type(await screen.findByLabelText('Test a path'), '/srv/x')
+    expect(await screen.findByRole('alert', {}, { timeout: 2000 })).toHaveTextContent(message)
+  })
+
+  it('shows a host’s own refusal as escaped text', async () => {
+    open({ 'POST /api/hats/resolve': json(502, { code: 'host_refused', message: '<b>no</b>\u202E' }) })
+    await userEvent.type(await screen.findByLabelText('Test a path'), '/srv/x')
+    const alert = await screen.findByRole('alert', {}, { timeout: 2000 })
+    expect(alert.textContent).toBe('<b>no</b><U+202E>')
+    expect(alert.querySelector('b')).toBeNull()
+  })
+})
+````
+
+Write `web/src/screens/Settings.tsx`:
+
+````tsx
+import { hats as listHats } from '../api/manage'
+import { useClient } from '../app-client'
+import AccountSettings from '../components/AccountSettings'
+import CollectorSettings from '../components/CollectorSettings'
+import NotificationSettings from '../components/NotificationSettings'
+import DelegationSettings from '../components/DelegationSettings'
+import { DefaultsSettings } from '../components/HatDefaultsSummary'
+import { AppearanceOptions } from '../components/ui'
+import { useResource } from '../hooks/useResource'
+import '../manage.css'
+
+export default function Settings({ push, sessions }: { push: boolean; sessions: boolean }) {
+  const client = useClient()
+  const hats = useResource(() => sessions ? listHats(client) : Promise.resolve([]), [client, sessions])
+  return <div className="manage device-settings">
+    <header className="manage-head"><h1>Settings</h1></header>
+    <p className="manage-subtitle">Your account, browser and collector preferences.</p>
+    <section className="card"><h2>Appearance</h2><p className="hint">System follows this device. The selected hat supplies the accent.</p><AppearanceOptions /></section>
+    <AccountSettings />
+    {push && <NotificationSettings push={push} sessions={sessions} />}
+    {hats.error && <p role="alert">Unable to load hats. <button className="btn btn-ghost" onClick={hats.reload}>Retry hats</button></p>}
+    {sessions && <DelegationSettings hats={hats.data} />}
+    {sessions && <DefaultsSettings hats={hats.data} />}
+    <CollectorSettings push={push} sessions={sessions} hats={hats.data} />
+  </div>
+}
+````
+
+Write `web/src/screens/Settings.test.tsx`:
+
+````tsx
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import Settings from './Settings'
+import { Client } from '../api/client'
+import { ClientContext } from '../app-client'
+import { json, stubServer, type Answer } from '../test-server'
+const mocked = vi.hoisted(() => ({ permission: vi.fn(), enable: vi.fn(), disable: vi.fn(), reg: {} }))
+vi.mock('../pwa/lifecycle', () => ({ usePwa: () => ({ registration: mocked.reg, error: null }), registerWorker: vi.fn() }))
+vi.mock('../pwa/device', async (original) => {
+  const actual = await original<typeof import('../pwa/device')>()
+  return { ...actual, BrowserPush: class {
+    enable = mocked.enable; disable = mocked.disable
+    reconcile = async () => ({ subscription: null, record: { generation: 0, enabled: false }, matches: true })
+  } }
+})
+vi.mock('../pwa/journal', () => ({ pushJournal: () => ({ read: async () => ({ generation: 0, enabled: false }) }) }))
+beforeEach(() => {
+  vi.stubGlobal('Notification', { permission: 'default', requestPermission: mocked.permission.mockReset().mockResolvedValue('granted') })
+  vi.stubGlobal('PushManager', class {})
+  vi.stubGlobal('isSecureContext', true)
+  Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: {} })
+  Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn() } })
+  mocked.enable.mockReset(); mocked.disable.mockReset()
+})
+afterEach(() => vi.unstubAllGlobals())
+function page(push = true, routes: Record<string, Answer | Answer[]> = {}) {
+  const server = stubServer({
+    'GET /api/push/vapid': json(200, { public_key: btoa(String.fromCharCode(4, ...Array(64).fill(1))) }),
+    'GET /api/push/subscriptions': json(200, []),
+    'GET /api/auth/sessions': json(200, [{ id: 'login', user_agent: '<script>bad</script>', current: true, created_at: 'today', last_seen_at: 'today', expires_at: 'tomorrow' }]),
+    'GET /api/settings': json(200, { public_url: 'https://app.example', contact: 'mailto:test@example.invalid' }),
+    'GET /api/auth/passkeys': json(200, [{ id: 'key/one', label: 'Personal key', created_at: '2026-10-20T09:00:00Z' }]),
+    'DELETE /api/auth/passkeys/key%2Fone': new Response(null, { status: 204 }),
+    'GET /api/settings/attachments': json(200, { count: 2, bytes: 42 }),
+    'GET /api/settings/host-removals': json(200, []),
+    'GET /api/hats': json(200, [{ id: 'hat', name: 'Personal', colour: '#000', default_for_new_hosts: true }]),
+    'GET /api/hosts': json(200, []),
+    'GET /api/hats/hat/session-tools': json(200, { delegation_enabled: false, revision: 1 }),
+    'GET /api/hats/hat/delegation-policy': json(200, { allowed: {}, revision: 1 }),
+    'GET /api/push/policies': json(200, [{ hat_id: 'hat', muted: false, details: false, generic_title: false }]),
+    'PATCH /api/settings': json(200, { public_url: 'https://app.example', contact: 'mailto:new@example.invalid' }),
+    'PUT /api/push/policies/hat': json(200, { hat_id: 'hat', muted: false, details: true, generic_title: true }),
+    ...routes,
+  })
+  const confirm = vi.fn(async () => {})
+  const client = new Client({ fetch: server.fetch, here: () => ({ pathname: '/settings', search: '' }), navigate: vi.fn(), stepUp: confirm })
+  render(<ClientContext.Provider value={client}><Settings push={push} sessions={push} /></ClientContext.Provider>)
+  return { server, confirm }
+}
+describe('minimum device Settings', () => {
+  it('loads a read-only Defaults summary and leaves editing on the Defaults screen', async () => {
+    const { server } = page(true, {
+      'GET /api/hosts': json(200, [{ host_id: 'host', name: 'Host', mcp_delivery: { custom: 'isolated' } }]),
+      'GET /api/hats/hat/session-defaults?agent=custom': json(200, { hat_id: 'hat', agent: 'custom', revision: 1, config: { model: 'stored-model', axes: { fast: false } } }),
+    })
+    const section = await screen.findByRole('region', { name: 'Session defaults' })
+    expect(await within(section).findByText('stored-model', { exact: true })).toBeVisible()
+    expect(within(section).getByText('Off', { exact: true })).toBeVisible()
+    expect(within(section).getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat&agent=custom')
+    expect(server.sent.filter(row => row.path.includes('session-defaults')).map(row => row.method)).toEqual(['GET'])
+  })
+  it('registers a passkey through the ceremony and displays the returned credential label', async () => {
+    vi.stubGlobal('PublicKeyCredential', class {})
+    const original = Object.getOwnPropertyDescriptor(navigator, 'credentials')
+    const credential = { id: 'credential', type: 'public-key' }
+    const create = vi.fn(async () => ({ toJSON: () => credential }))
+    Object.defineProperty(navigator, 'credentials', { configurable: true, value: { create } })
+    try {
+      const { server } = page(true, {
+        'POST /api/auth/passkeys/register/start': json(200, { ceremony_id: 'ceremony', options: { publicKey: { challenge: 'AQ', user: { id: 'Ag' } } } }),
+        'POST /api/auth/passkeys/register/finish': json(200, { id: 'new-key', label: 'Returned label', created_at: '2026-10-20T12:00:00Z' }),
+      })
+      await userEvent.type(await screen.findByLabelText('Passkey label', { exact: true }), 'New key')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Add passkey' })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: 'Add passkey' }))
+      expect(await screen.findByRole('heading', { name: 'Returned label' })).toBeVisible()
+      expect(create).toHaveBeenCalledTimes(1)
+      expect(server.sent.find(row => row.path.endsWith('/register/start'))?.body).toEqual({ label: 'New key' })
+      expect(server.sent.find(row => row.path.endsWith('/register/finish'))?.body).toEqual({ ceremony_id: 'ceremony', credential })
+    } finally {
+      if (original) Object.defineProperty(navigator, 'credentials', original)
+      else Reflect.deleteProperty(navigator, 'credentials')
+    }
+  })
+  it('describes cleanup from actual receipts without claiming unreported removal or copies', async () => {
+    page(true, { 'GET /api/settings/host-removals': json(200, [
+      { id: 'pending', agent: 'Pending agent', state: 'pending', attempts: 0 },
+      { id: 'missing', agent: 'Unknown agent', state: 'final', attempts: 1 },
+      ...(['removed', 'partial', 'none', 'pending'] as const).map((state, index) => ({ id: String(index), agent: `Agent ${index}`, state: 'final', attempts: 1, last_result: { state, remaining: [], notes: [] } })),
+    ]) })
+    for (const text of ['Pending agent: Waiting for the host to retry', 'Unknown agent: No cleanup result reported', 'Agent 0: Transcript removed', 'Agent 1: Transcript removed in part', 'Agent 2: No agent transcript record', 'Agent 3: Transcript removal unconfirmed']) {
+      expect(await screen.findByText((_, element) => element?.tagName === 'P' && element.textContent === text)).toBeVisible()
+    }
+  })
+  it('isolates failed notification checks from passkeys, privacy and collector reads', async () => {
+    page(true, { 'GET /api/push/vapid': json(500, { message: 'Notification service unavailable' }) })
+    expect(await screen.findByRole('button', { name: 'Remove Personal key' })).toBeVisible()
+    expect(await screen.findByText('https://app.example', { exact: true })).toBeVisible()
+    expect(await screen.findByRole('group', { name: 'Personal' })).toBeVisible()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Notification service unavailable')
+    expect(screen.queryByText('Notifications are off on this browser.', { exact: true })).toBeNull()
+  })
+  it('keeps a passkey when removal confirmation is cancelled', async () => {
+    const { server } = page()
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove Personal key' }))
+    const dialog = screen.getByRole('dialog', { name: 'Remove this passkey?' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('button', { name: 'Remove Personal key' })).toBeVisible()
+    expect(server.sent.filter(row => row.method === 'DELETE')).toEqual([])
+  })
+  it('shows appearance, real collector information and removable passkeys', async () => {
+    const { server } = page()
+    expect(await screen.findByRole('group', { name: 'Appearance' })).toBeVisible()
+    expect(await screen.findByText('https://app.example', { exact: true })).toBeVisible()
+    expect(await screen.findByText('2 images · 42 bytes', { exact: true })).toBeVisible()
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove Personal key' }))
+    const dialog = screen.getByRole('dialog', { name: 'Remove this passkey?' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Remove passkey' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove Personal key' })).toBeNull())
+    expect(server.sent.find(row => row.method === 'DELETE')?.path).toBe('/api/auth/passkeys/key%2Fone')
+  })
+  it('without origin locks omits notification enable and preserves mobile sign-out', async () => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
+    page()
+    await screen.findByRole('heading', { name: 'Push devices' })
+    expect(screen.queryByRole('button', { name: 'Prepare notifications' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeVisible()
+    expect(mocked.permission).not.toHaveBeenCalled()
+  })
+  it('never prompts on mount; preparation completes step-up, then a fresh enable tap prompts first', async () => {
+    const { confirm } = page()
+    await userEvent.click(await screen.findByRole('button', { name: 'Prepare notifications' }))
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(mocked.permission).not.toHaveBeenCalled()
+    mocked.enable.mockImplementation(() => { expect(mocked.permission).toHaveBeenCalledTimes(1); return Promise.resolve() })
+    await userEvent.click(screen.getByRole('button', { name: 'Enable notifications' }))
+    await waitFor(() => expect(mocked.enable).toHaveBeenCalledTimes(1))
+    expect(mocked.permission).toHaveBeenCalledTimes(1)
+    expect(mocked.permission.mock.invocationCallOrder[0]).toBeLessThan(mocked.enable.mock.invocationCallOrder[0])
+  })
+  it('gateway without web_push omits absent APIs and exposes mobile sign-out', async () => {
+    const { server } = page(false)
+    await screen.findByRole('heading', { name: 'Signed-in devices' })
+    expect(screen.queryByRole('heading', { name: 'Push devices' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Notification privacy by hat' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeVisible()
+    expect(server.sent.some((c) => c.path.includes('/api/push'))).toBe(false)
+    expect(server.sent.some(c => /^\/api\/(?:hats|hosts|settings\/(?:attachments|host-removals))/.test(c.path))).toBe(false)
+    expect(screen.queryByRole('heading', { name: 'Delegation by hat' })).toBeNull()
+  })
+  it('sends only contact and uses read-back, with no public_url field', async () => {
+    const { server } = page()
+    const contact = await screen.findByLabelText('Push contact', { exact: true })
+    await userEvent.clear(contact); await userEvent.type(contact, 'mailto:new@example.invalid')
+    await userEvent.click(screen.getByRole('button', { name: 'Save contact' }))
+    await waitFor(() => expect(server.sent.filter((c) => c.method === 'PATCH')).toHaveLength(1))
+    expect(server.sent.find((c) => c.method === 'PATCH')?.body).toEqual({ contact: 'mailto:new@example.invalid' })
+  })
+  it('keeps three independent hat controls, renders User-Agent as isolated text', async () => {
+    const { server } = page()
+    const card = await screen.findByRole('group', { name: 'Personal' })
+    await userEvent.click(within(card).getByLabelText('Mute', { exact: true }))
+    await userEvent.click(within(card).getByLabelText('Include question details', { exact: true }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Save policy' }))
+    await waitFor(() => expect(within(card).getByLabelText('Mute', { exact: true })).not.toBeChecked())
+    expect(within(card).getByLabelText('Use a generic title', { exact: true })).toBeChecked()
+    expect(server.sent.find((r) => r.method === 'PUT')?.body).toEqual({ muted: true, details: true, generic_title: false })
+    const agent = screen.getByText('<script>bad</script>', { exact: true })
+    expect(agent.tagName).toBe('BDI')
+    expect(document.querySelector('script')).toBeNull()
+  })
+})
+````
+
+Write `web/src/manage.css`:
+
+````css
+/* The management screens (plan 4d): Hosts, Hats and Settings. Their own
+   file, so the shell's index.css stays the shell's. Mobile-first: one
+   column, every target at least 44 px under 768 px. */
+
+.manage { width:100%; max-width:860px; margin:0 auto; padding:24px 20px calc(32px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:16px; }
+.manage-head { display:flex; align-items:center; gap:12px; }
+.manage-head h1 { font-family:var(--font-display); font-weight:500; font-size:26px; letter-spacing:-.01em; margin:0; flex:1; }
+.cards { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); box-shadow:var(--sh-sm); padding:16px 18px; min-width:0; }
+.card-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.card-title { font-family:var(--font-display); font-weight:700; font-size:16px; margin:0; min-width:0; overflow-wrap:anywhere; flex:1; }
+.card-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:12px; }
+.card-actions .spacer { flex:1; }
+.card p { margin:0 0 10px; overflow-wrap:anywhere; }
+.notice { border-color:var(--accent); }
+
+.facts { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:4px 14px; margin:0; font-size:14px; }
+.facts dt { color:var(--fg-muted); }
+.facts dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+
+.state, .tag { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; border-radius:var(--r-full); padding:3px 9px; white-space:nowrap; }
+.state-online { background:var(--st-run-bg); color:var(--st-run-fg); }
+.state-offline { background:var(--surface-3); color:var(--fg-muted); }
+.state-revoked { background:var(--st-fail-bg); color:var(--st-attn); }
+.host-revoked .card-title { color:var(--fg-muted); }
+.tag { background:var(--accent-wash); color:var(--accent); }
+.tag-warn { background:var(--st-warn-bg); color:var(--st-warn-fg); }
+
+.swatch { width:18px; height:18px; border-radius:6px; flex:none; background:var(--fg-quiet); border:1px solid var(--border-strong); }
+.colour-input { width:52px; height:40px; padding:2px; border:1.5px solid var(--border-strong); border-radius:var(--r-sm); background:var(--surface-2); }
+
+.inline-form { display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; margin-top:8px; }
+.inline-form .field { margin:0; flex:1; min-width:180px; }
+.select-field { display:inline-flex; flex-direction:column; gap:4px; }
+.select-field .field-label { margin:0; font-size:12px; }
+.select-field select { min-height:36px; border:1.5px solid var(--border-strong); border-radius:var(--r-sm); background:var(--surface-2); color:var(--fg-1); padding:6px 8px; font:inherit; max-width:100%; }
+
+.command { background:var(--hn-term-bg); color:var(--hn-term-fg); border-radius:var(--r-sm); padding:12px 14px; margin:0 0 10px; overflow-x:auto; font-family:var(--font-mono); font-size:13px; }
+.pairing-code code { font-family:var(--font-mono); font-weight:700; }
+.hint { color:var(--fg-muted); font-size:13px; }
+.empty { color:var(--fg-muted); }
+.pwa-banner { margin:0; padding:10px 16px; background:var(--surface-2); color:var(--fg-1); border-bottom:1px solid var(--border); }
+.policy-control { display:flex; gap:10px; align-items:center; min-height:44px; }
+.device-settings .btn { min-height:44px; }
+.device-settings input.input { width:100%; min-height:44px; }
+.sign-out-error { margin-top:8px; font-size:13px; }
+
+.rules { margin-top:12px; }
+.rule-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.rule { display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; }
+.rule .field { margin:0; }
+.rule-prefix { flex:1; min-width:200px; }
+.tester { margin-top:16px; border-top:1px solid var(--border); padding-top:14px; }
+.tester .field { margin:0 0 6px; }
+.purge-list { margin:0 0 12px; padding-left:20px; overflow-wrap:anywhere; }
+
+@media (max-width:767px) {
+  .manage { padding:16px 14px calc(24px + env(safe-area-inset-bottom)); }
+  .manage-head h1 { font-size:22px; }
+  .manage-head .btn, .card-actions .btn, .inline-form .btn, .rule .btn { min-height:44px; }
+  .select-field select, .colour-input { min-height:44px; }
+}
+
+/* MCP (plan 4e): the connection form, the token and the mounts. */
+.connection .card-actions .btn[aria-disabled="true"] { opacity:.45; box-shadow:none; transform:none; cursor:not-allowed; }
+.connection-form { display:flex; flex-direction:column; gap:10px; margin-top:8px; }
+.connection-form .field, .connection-form .hint { margin:0; }
+.field-row { display:flex; gap:10px; flex-wrap:wrap; }
+.field-row .field { flex:1; min-width:160px; }
+.check { display:flex; align-items:center; gap:8px; min-height:36px; cursor:pointer; }
+.check input { width:18px; height:18px; margin:0; flex:none; }
+.hint.warn { color:var(--st-warn-fg); }
+.token-form { border-top:1px solid var(--border); padding-top:12px; margin-top:12px; }
+.mounts { border:0; border-top:1px solid var(--border); margin:12px 0 0; padding:12px 0 0; min-width:0; }
+.mounts legend { font-weight:700; font-size:13px; padding:0; margin-bottom:6px; }
+.mcp-ok { background:var(--st-run-bg); color:var(--st-run-fg); }
+.mcp-not_connected { background:var(--surface-3); color:var(--fg-muted); }
+.mcp-needs_auth { background:var(--st-warn-bg); color:var(--st-warn-fg); }
+.mcp-error { background:var(--st-fail-bg); color:var(--st-attn); }
+
+@media (max-width:767px) {
+  .check { min-height:44px; }
+}
+.mcp-prediction { font-size:13px; color:var(--fg-muted); margin:4px 0 10px; }
+.stdio-servers { margin-top: 2rem; }
+.stdio-servers label { display: grid; gap: .35rem; margin: .75rem 0; }
+.stdio-servers .checkbox { display: flex; align-items: center; min-height: 44px; }
+.stdio-servers .checkbox input { width: 18px; min-height: 18px; flex: none; }
+.stdio-servers select, .stdio-servers input, .stdio-servers textarea { max-width: 100%; min-height: 44px; }
+.stdio-servers button { min-height: 44px; }
+.stdio-server { margin: 1rem 0; min-width: 0; }
+.stdio-env, .stdio-row { padding: .5rem 0; }
+.stdio-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.stdio-servers [aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
+
+.oauth-client { margin-top:16px; padding-top:12px; border-top:1px solid var(--border); }
+.oauth-client p { overflow-wrap:anywhere; }
+.oauth-client form { display:grid; gap:12px; }
+.oauth-client select { min-height:44px; max-width:100%; }
+.oauth-connect, .mcp-report { margin-top:16px; padding-top:12px; border-top:1px solid var(--border); overflow-wrap:anywhere; }
+.oauth-connect .notice { margin-top:12px; }
+.oauth-connect a { display:inline-block; min-height:44px; padding:12px 0; }
+.mcp-attention { display:inline-block; font-size:10px; line-height:1.2; white-space:normal; }
+.mcp-auth-count { color:var(--st-warn-fg); }
+.mcp-error-count { color:var(--fg-2); }
+.oauth-connect .btn, .oauth-client .btn, .mcp-report .btn { min-height:44px; }
+.mcp-attention-link { display:inline-flex; align-items:center; max-width:80px; min-height:44px; }
+
+/* UI R5: management surfaces follow the shared paired tokens. */
+.manage { max-width:1100px; padding:24px; gap:20px; color:var(--hn-fg-1); font-size:13px; }
+.manage-head { min-height:32px; }
+.manage-head h1 { font-size:18px; line-height:1.2; }
+.manage-subtitle { margin:-10px 0 0; color:var(--hn-fg-3); line-height:1.55; }
+.manage .card { background:var(--hn-panel); border-color:var(--hn-line); border-radius:12px; box-shadow:none; padding:16px; }
+.manage .card-title, .manage h2 { font:500 15px/1.4 var(--font-display); }
+.manage h3 { font:500 13px/1.4 var(--font-display); }
+.manage .facts { font-size:13px; line-height:1.6; }
+.manage .btn { font-size:12px; min-height:32px; }
+.manage input:not([type=checkbox]):not([type=radio]):not([type=color]), .manage select, .manage textarea { min-width:0; max-width:100%; border:1px solid var(--hn-boundary); border-radius:6px; background:var(--hn-surface); color:var(--hn-fg-1); padding:7px 10px; font:inherit; }
+.manage input:not([type=checkbox]):not([type=radio]):not([type=color]), .manage textarea { width:100%; }
+.manage .inline-form .field, .manage .field-row .field, .manage .rule-prefix { min-width:min(180px, 100%); }
+.manage .field-label { color:var(--hn-fg-2); font:500 12px/1.4 var(--font-display); }
+.manage input[type=checkbox], .manage input[type=radio] { accent-color:var(--hn-accent); }
+.manage .hint { color:var(--hn-fg-3); font-size:12px; line-height:1.6; }
+.manage .tag { color:var(--hn-accent-fg); background:var(--hn-accent-wash); text-transform:none; letter-spacing:0; }
+.manage .state { text-transform:none; font-weight:500; letter-spacing:0; }
+.manage .state-revoked, .manage .mcp-error { color:var(--st-fail-fg); }
+.manage .section-heading { margin:0; }
+.hat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr)); align-items:start; }
+.hat-summary { padding-block:12px; border-top:1px solid var(--hn-line); }
+.hat-defaults-summary { display:grid; gap:10px; margin-block:12px; min-width:0; }
+.hat-defaults-summary .facts dt { overflow-wrap:anywhere; max-width:14ch; }
+.defaults-link { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:44px; padding:8px 12px; margin-bottom:10px; background:var(--hn-sunken); border:1px solid var(--hn-line); border-radius:6px; color:var(--hn-accent-fg); }
+.pairing { border:1px solid var(--hn-accent) !important; }
+.pair-steps { padding-left:20px; line-height:1.7; }
+.manage .stdio-servers { margin:0; padding:16px; border:1px solid var(--hn-line); border-radius:12px; background:var(--hn-panel); }
+.manage .stdio-servers select, .manage .stdio-servers textarea, .manage .stdio-servers input { font:inherit; }
+.manage .stdio-server { padding:12px; border:1px solid var(--hn-line); border-radius:8px; }
+.manage :is(pre,code) { max-width:100%; overflow-wrap:anywhere; }
+.device-settings { max-width:860px; }
+.device-settings .card > h2:first-child { margin:0 0 16px; padding-bottom:12px; border-bottom:1px solid var(--hn-line); }
+.device-settings > .card > .cards > .card { background:var(--hn-surface); border-radius:8px; }
+.settings-context { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.settings-context .field { margin:0; }
+.settings-context .context-path { grid-column:1/-1; }
+.policy-values { display:flex; flex-wrap:wrap; gap:8px 16px; }
+.grant-axis { margin:12px 0; min-width:0; padding:12px; border:1px solid var(--hn-line); border-radius:8px; }
+.grant-axis legend { font-weight:500; padding-inline:4px; }
+.grant-review { margin:12px 0; padding:12px; background:var(--hn-sunken); border-radius:8px; }
+@media (max-width:767px) {
+  .manage { padding:16px; gap:16px; }
+  .manage-head h1 { font-size:20px; }
+  .manage .card { border-radius:14px; padding:14px; }
+  .manage .btn, .manage select, .manage input:not([type=checkbox]):not([type=radio]), .manage .input { min-height:44px; }
+  .manage :is(input:not([type=checkbox]):not([type=radio]),select,textarea) { font-size:16px; }
+  .manage .facts { grid-template-columns:minmax(90px,auto) minmax(0,1fr); }
+  .manage .inline-form, .manage .field-row { align-items:stretch; }
+  .manage .inline-form .field, .manage .field-row .field { flex-basis:100%; }
+  .manage .check, .manage .policy-control { min-height:44px; }
+  .settings-context { grid-template-columns:minmax(0,1fr); }
+}
+.manage a { min-height:32px; display:inline-flex; align-items:center; }
+@media (max-width:767px) { .manage a { min-height:44px; } }
+.pair-steps { list-style:decimal; }
+.pairing-live { display:grid; grid-template-columns:240px minmax(0,1fr); gap:20px; margin-top:12px; }
+.pairing-summary { padding:16px; border-radius:8px; background:var(--hn-accent-wash); }
+.pairing-summary .pairing-code { font-size:26px; color:var(--hn-fg-1); letter-spacing:.04em; }
+.manage .defaults-link { display:flex; }
+@media (max-width:767px) { .pairing-live { grid-template-columns:minmax(0,1fr); gap:12px; } }
+.device-settings .field { display:flex; flex-direction:column; gap:6px; }
+````
+
+Write `web/e2e/manage.spec.ts`:
+
+````tsx
+import { captureManagement } from './management-captures'
+// Hosts and hats in a real browser, against the real binary (plan 4d): a
+// host paired with the command the page shows, a revoke that steps up and
+// goes through, and the path tester asking that host, at 1280 px and at
+// 390 px, each width with a collector and a host of its own.
+import { expect, test, type Page } from '@playwright/test'
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { startCollector, type Collector } from './collector'
+import { scratchEnv } from './spawn'
+import { testHost, type TestHost } from './host'
+
+const PASSWORD = 'correct horse battery staple'
+
+for (const width of [1280, 390]) {
+  test.describe(`at ${width} px`, () => {
+    test.describe.configure({ mode: 'serial' })
+
+    let collector: Collector
+    let host: TestHost
+    let page: Page
+    const violations: string[] = []
+    // A log directory in the runner's own environment, as a developer's
+    // shell may have: no binary started here may write to it.
+    let sentinel: string
+    let runnerLogDir: string | undefined
+
+    test.beforeAll(async ({ browser }) => {
+      sentinel = mkdtempSync(join(tmpdir(), 'hennery-e2e-sentinel-'))
+      runnerLogDir = process.env.HENNERY_LOG_DIR
+      process.env.HENNERY_LOG_DIR = sentinel
+      expect(scratchEnv(sentinel).HENNERY_LOG_DIR).toBeUndefined()
+      collector = await startCollector()
+      host = testHost()
+      const context = await browser.newContext({ baseURL: collector.origin, viewport: { width, height: 844 } })
+      page = await context.newPage()
+      // Every CSP violation the page sees, whatever its source.
+      await page.addInitScript(() => {
+        document.addEventListener('securitypolicyviolation', (e) => {
+          const seen = ((window as unknown as { __csp?: string[] }).__csp ??= [])
+          seen.push(`${e.violatedDirective} ${e.blockedURI}`)
+        })
+      })
+      page.on('console', (m) => {
+        if (m.text().includes('Content Security Policy')) violations.push(m.text())
+      })
+      // Set up through the API, with the token from the setup link: the
+      // session it opens is stepped up for five minutes.
+      const token = new URL(collector.setupLink).hash.slice(1)
+      const setup = await page.request.post('/api/setup', {
+        headers: { Origin: collector.origin },
+        data: { token, password: PASSWORD, public_url: collector.origin },
+      })
+      expect(setup.status()).toBe(201)
+    })
+
+    test.afterAll(async () => {
+      try {
+        await page?.context().close()
+      } finally {
+        try {
+          await host?.stop()
+        } finally {
+          try {
+            await collector?.stop()
+          } finally {
+            if (runnerLogDir === undefined) delete process.env.HENNERY_LOG_DIR
+            else process.env.HENNERY_LOG_DIR = runnerLogDir
+            if (sentinel) rmSync(sentinel, { recursive: true, force: true })
+          }
+        }
+      }
+    })
+
+    test('a host pairs with the command the page shows, and the code goes', async () => {
+      await page.goto('/hosts')
+      await page.getByRole('button', { name: 'Add host' }).click()
+      await captureManagement(page, 'hosts-pairing', 'Desktop hosts / pairing')
+      const command = (await page.getByLabel('Pairing command', { exact: true }).textContent())!
+      expect(command).toMatch(new RegExp(`^hennery host join ${collector.origin} [0-9A-Z]{4}-[0-9A-Z]{4}$`))
+      const code = command.split(' ').at(-1)!
+      expect(await host.join(command, ['--name', 'e2e host', '--no-runtime'])).toBe(0)
+      await expect(page.getByText('Paired: e2e host', { exact: true })).toBeVisible({ timeout: 15_000 })
+      const card = page.getByRole('listitem', { name: 'e2e host' })
+      await expect(card.getByText('Offline', { exact: true })).toBeVisible()
+      // The code is spent, and gone from the page, its storage and its URL.
+      expect(await page.content()).not.toContain(code)
+      expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain(code)
+      expect(page.url()).not.toContain(code)
+      host.run()
+      await expect(async () => {
+        await page.reload()
+        await expect(page.getByRole('listitem', { name: 'e2e host' }).getByText('Online', { exact: true })).toBeVisible({ timeout: 1000 })
+      }).toPass({ timeout: 20_000 })
+    })
+
+    test('the path tester asks the host, and a saved rule changes its answer', async () => {
+      const project = realpathSync(host.dir)
+      mkdirSync(join(project, 'work'), { recursive: true })
+      await page.goto('/hats')
+      await page.getByRole('textbox', { name: 'Name' }).fill('Work')
+      await page.getByRole('button', { name: 'Create' }).click()
+      await expect(page.getByRole('listitem', { name: 'Work' })).toBeVisible()
+      const tester = page.getByLabel('Test a path', { exact: true })
+      await tester.fill(join(project, 'work'))
+      const resolution = page.getByLabel('Resolution', { exact: true })
+      await expect(resolution).toContainText(join(project, 'work'))
+      await expect(resolution).toContainText('Personal')
+      await expect(resolution).toContainText('the host’s default hat')
+      await captureManagement(page, 'hats', 'Desktop hats; mobile adaptation')
+      await page.getByRole('button', { name: 'Add rule' }).click()
+      await page.getByLabel('Path 1', { exact: true }).fill(join(project, 'work'))
+      // The label holds the select, so its name is "Hat 1" and the options'
+      // names: anchored, and never "Hat 10".
+      await page.getByLabel(/^Hat 1(?!\d)/).selectOption({ label: 'Work' })
+      await page.getByRole('button', { name: 'Save rules' }).click()
+      // By role and exact text: the resolution hint ("…under the rules as
+      // saved.") also contains "saved.", and getByText matches substrings.
+      await expect(page.getByRole('status').filter({ hasText: /^Saved\.$/ })).toBeVisible()
+      await tester.fill(join(project, 'work', 'app'))
+      await expect(resolution).toContainText(join(project, 'work', 'app'))
+      await expect(resolution).toContainText('Work')
+      await expect(resolution).toContainText('a path rule')
+      await expect(resolution).toContainText('does not exist')
+    })
+
+    test('Hats and Settings read saved defaults without changing them', async () => {
+      const allHats = await (await page.request.get('/api/hats')).json() as { id: string; name: string }[]
+      const work = allHats.find(hat => hat.name === 'Work')!
+      const path = `/api/hats/${work.id}/session-defaults?agent=custom-agent`
+      const policyPath = `/api/hats/${work.id}/delegation-policy`
+      const policyBefore = await (await page.request.get(policyPath)).json()
+      const saved = await page.request.put(path, { headers: { Origin: collector.origin }, data: { revision: 0, config: { model: 'saved-custom-model', axes: { fast: false } } } })
+      expect(saved.status()).toBe(200)
+      const record = await saved.json()
+      for (const route of ['/hats', '/settings']) {
+        await page.goto(route)
+        const summary = route === '/hats' ? page.getByRole('listitem', { name: 'Work', exact: true }) : page.getByRole('region', { name: 'Session defaults', exact: true })
+        if (route === '/settings') await summary.getByRole('combobox', { name: 'Defaults hat', exact: true }).selectOption(work.id)
+        await summary.getByText('Other configured agent', { exact: true }).click()
+        await summary.getByRole('textbox', { name: 'Configured agent name', exact: true }).fill('custom-agent')
+        await summary.getByRole('button', { name: 'Load saved defaults', exact: true }).click()
+        await expect(summary.getByText('saved-custom-model', { exact: true })).toBeVisible()
+        await expect(summary.getByText('Off', { exact: true })).toBeVisible()
+        await expect(summary.getByRole('link', { name: 'Session defaults', exact: true })).toHaveAttribute('href', `/defaults?hat=${work.id}&agent=custom-agent`)
+        await captureManagement(page, route === '/hats' ? 'hats-defaults-integrated' : 'settings-defaults-integrated', 'R4 integration / saved overrides')
+      }
+      expect(await (await page.request.get(path)).json()).toEqual(record)
+      expect(await (await page.request.get(policyPath)).json()).toEqual(policyBefore)
+    })
+
+    test('Settings adds and removes a real passkey and keeps per-hat notification privacy', async () => {
+      const cdp = await page.context().newCDPSession(page)
+      await cdp.send('WebAuthn.enable')
+      await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } })
+      await page.goto('/settings')
+      await page.getByLabel('Passkey label', { exact: true }).fill('Test passkey')
+      await page.getByRole('button', { name: 'Add passkey', exact: true }).click()
+      const keys = page.getByRole('list', { name: 'Passkeys', exact: true })
+      await expect(keys.getByRole('heading', { name: 'Test passkey', exact: true })).toBeVisible()
+      await captureManagement(page, 'settings-passkeys', 'Desktop settings / sign-in; mobile adaptation')
+      const privacy = page.getByRole('group', { name: 'Work', exact: true })
+      await privacy.getByLabel('Use a generic title', { exact: true }).check()
+      await privacy.getByRole('button', { name: 'Save policy', exact: true }).click()
+      await page.reload()
+      await expect(privacy.getByLabel('Use a generic title', { exact: true })).toBeChecked()
+      await keys.getByRole('button', { name: 'Remove Test passkey', exact: true }).click()
+      const removal = page.getByRole('dialog', { name: 'Remove this passkey?', exact: true })
+      await captureManagement(page, 'settings-passkey-remove', 'Design System confirmation; no prototype frame')
+      await removal.getByRole('button', { name: 'Remove passkey', exact: true }).click()
+      await expect(keys.getByRole('heading', { name: 'Test passkey', exact: true })).toHaveCount(0)
+      const listed = await page.request.get('/api/auth/passkeys')
+      expect(await listed.json()).toEqual([])
+      await cdp.detach()
+    })
+
+    test('a revoke asks for a fresh confirmation, then goes through', async () => {
+      await page.goto('/hosts')
+      // The session is still stepped up from setup; the server's refusal is
+      // what the browser would get five minutes on. The first DELETE is
+      // answered so, and the retry reaches the server. That the server
+      // refuses without a step-up is the Rust tests'.
+      let refused = 0
+      await page.route('**/api/hosts/*', async (route) => {
+        if (route.request().method() === 'DELETE' && refused === 0) {
+          refused++
+          await route.fulfill({
+            status: 403,
+            contentType: 'application/json',
+            body: JSON.stringify({ code: 'step_up_required', message: 'confirm it is you' }),
+          })
+        } else {
+          await route.continue()
+        }
+      })
+      const card = page.getByRole('listitem', { name: 'e2e host' })
+      await captureManagement(page, 'hosts', 'Desktop hosts; mobile adaptation')
+      await card.getByRole('button', { name: 'Revoke' }).click()
+      await captureManagement(page, 'hosts-revoke', 'Design System confirmation; no prototype frame')
+      const confirm = page.getByRole('dialog', { name: 'Revoke this host?' })
+      await expect(confirm).toContainText('stop only when it next connects')
+      await confirm.getByRole('button', { name: 'Revoke' }).click()
+      const stepUp = page.getByRole('dialog', { name: 'This needs a fresh confirmation' })
+      await expect(stepUp).toBeVisible()
+      // The page under it is inert while it is open: the confirmation
+      // beneath can take no focus, by script or by keyboard.
+      expect(await page.locator('.page').getAttribute('inert')).not.toBeNull()
+      await expect(stepUp.getByLabel('Your password', { exact: true })).toBeFocused()
+      // The confirmation itself, not its buttons: they are disabled while
+      // its action waits, and a disabled button takes no focus anyway.
+      await confirm.evaluate((d: HTMLElement) => d.focus())
+      await expect(stepUp.getByLabel('Your password', { exact: true })).toBeFocused()
+      // Shift+Tab from the dialog's first field would land on the page
+      // before it, were the page not inert. The password is its first
+      // field only while no passkey is offered.
+      await expect(stepUp.getByRole('button', { name: 'Confirm with passkey' })).toHaveCount(0)
+      await page.keyboard.press('Shift+Tab')
+      expect(await page.evaluate(() => !!document.activeElement?.closest('.page'))).toBe(false)
+      await stepUp.getByLabel('Your password', { exact: true }).focus()
+      await stepUp.getByLabel('Your password', { exact: true }).fill(PASSWORD)
+      await stepUp.getByRole('button', { name: 'Confirm', exact: true }).click()
+      await expect(card.getByText('Revoked', { exact: true })).toBeVisible()
+      expect(refused).toBe(1)
+      expect(await page.locator('.page').getAttribute('inert')).toBeNull()
+      await page.unroute('**/api/hosts/*')
+    })
+
+    test('broke no Content-Security-Policy rule', async () => {
+      expect(violations).toEqual([])
+      const seen = await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? [])
+      expect(seen).toEqual([])
+    })
+
+    test('wrote nothing where the runner’s own environment pointed', async () => {
+      expect(readdirSync(sentinel)).toEqual([])
+    })
+  })
+}
+````
+
+Write `web/e2e/management-captures.ts`:
+
+````tsx
+import { expect, type Page } from '@playwright/test'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { contrast } from '../src/lib/accent'
+/** Optional visual ledger; checks always run against the embedded UI. */
+export async function captureManagement(page: Page, state: string, reference: string) {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  const directory = process.env.HENNERY_UI_R5_CAPTURE_DIR
+  if (directory) mkdirSync(directory, { recursive: true })
+  const viewport = page.viewportSize()!
+  const main = page.locator('.main')
+  const scrollTop = await main.evaluate(element => element.scrollTop)
+  for (const theme of ['light', 'dark'] as const) {
+    await main.evaluate((element, top) => { element.scrollTop = top }, scrollTop)
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await page.evaluate(() => document.fonts.ready)
+    const controls = await page.locator('.manage input:not([type=checkbox]):not([type=radio]):not([type=color]), .manage select, .manage textarea').evaluateAll(elements => elements.filter(element => element.getClientRects().length > 0).map(element => {
+      const style = getComputedStyle(element)
+      return { boundary: style.borderTopColor, background: style.backgroundColor }
+    }))
+    const hex = (rgb: string) => '#' + (rgb.match(/\d+/g) ?? []).slice(0, 3).map(value => Number(value).toString(16).padStart(2, '0')).join('')
+    for (const control of controls) expect(contrast(hex(control.boundary), hex(control.background))).toBeGreaterThanOrEqual(3)
+    if (!directory) continue
+    const file = `${state}-${viewport.width}-${theme}.png`
+    await page.screenshot({ path: join(directory, file), fullPage: true })
+    appendFileSync(join(directory, 'captures.tsv'), `${file}\t${viewport.width}x${viewport.height}\t${page.url().replace(new URL(page.url()).origin, '')}\t${reference}\n`)
+    // Management scrolls inside the shell. Record the top and each section,
+    // rather than mistaking a fullPage image of a scrolled shell for all UI.
+    if (await page.locator('.overlay').count() === 0 && ['settings', 'settings-passkeys', 'hats', 'hosts'].includes(state)) {
+      const headings = page.locator('.manage > header, .manage > section > h2, .manage > .cards > li > .card-head > h2')
+      for (let index = 0; index < await headings.count(); index++) {
+        await headings.nth(index).scrollIntoViewIfNeeded()
+        const section = `${state}-section-${index}-${viewport.width}-${theme}.png`
+        await page.screenshot({ path: join(directory, section) })
+        appendFileSync(join(directory, 'captures.tsv'), `${section}\t${viewport.width}x${viewport.height}\t${page.url().replace(new URL(page.url()).origin, '')}\t${reference}\n`)
+      }
+    }
+  }
+  await main.evaluate((element, top) => { element.scrollTop = top }, scrollTop)
+  await page.emulateMedia({ colorScheme: 'light' })
+}
+````
+
+Write `web/e2e/mcp-delivery.spec.ts`:
+
+````tsx
+import { captureManagement } from './management-captures'
+// Real dispatch receipts, not MCP tool execution: the Codex-named fake
+// records session/new and session/load under its own scratch directory.
+import { expect, test, type Page } from '@playwright/test'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { startCollector, type Collector } from './collector'
+import { fakeAgent, testHost, type TestHost } from './host'
+import { scratchEnv } from './spawn'
+
+const PASSWORD = 'correct horse battery staple'
+const ENV_VALUE = 'e2e-environment-value-0123456789'
+async function stepUp(page: Page) {
+  const dialog = page.getByRole('dialog', { name: 'This needs a fresh confirmation', exact: true })
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel('Your password', { exact: true }).fill(PASSWORD)
+  await dialog.getByRole('button', { name: 'Confirm', exact: true }).click()
+  await expect(dialog).toBeHidden()
+}
+
+for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, () => {
+  test.describe.configure({ mode: 'serial' })
+  let collector: Collector, host: TestHost, page: Page
+  let project: string, receipt: string, sessionUrl: string, hostId: string, hatId: string, sentinel: string
+  let runnerLog: string | undefined
+  const violations: string[] = []
+  const records = () => existsSync(receipt) ? readFileSync(receipt, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : []
+  const local = () => page.getByRole('region', { name: 'Local MCP servers', exact: true })
+  const report = () => page.getByRole('region', { name: 'MCP delivery', exact: true })
+  // R3 moves the last-start snapshot into the session's Details tab.
+  const openReport = async () => {
+    await page.getByRole('button', { name: 'Session details', exact: true }).click()
+    await page.getByRole('tab', { name: 'Details', exact: true }).click()
+  }
+  const closeReportOnPhone = async () => {
+    if (width === 390) await page.getByRole('button', { name: 'Close session details', exact: true }).click()
+  }
+  test.beforeAll(async ({ browser }) => {
+    sentinel = mkdtempSync(join(tmpdir(), 'hennery-e2e-sentinel-'))
+    runnerLog = process.env.HENNERY_LOG_DIR; process.env.HENNERY_LOG_DIR = sentinel
+    expect(scratchEnv(sentinel).HENNERY_LOG_DIR).toBeUndefined()
+    collector = await startCollector()
+    // The log is scratch too, and never printed: it can contain env values.
+    const agentScratch = mkdtempSync(join(tmpdir(), 'hennery-e2e-receipts-'))
+    receipt = join(agentScratch, 'session.jsonl')
+    host = testHost(fakeAgent('codex', { chunks: ['Done.'], session_log: receipt }))
+    project = join(realpathSync(host.dir), 'notes'); mkdirSync(project)
+    const context = await browser.newContext({ baseURL: collector.origin, viewport: { width, height: 844 } })
+    page = await context.newPage()
+    await page.addInitScript(() => document.addEventListener('securitypolicyviolation', e => {
+      const seen = ((window as unknown as { __csp?: string[] }).__csp ??= [])
+      seen.push(`${e.violatedDirective} ${e.blockedURI}`)
+    }))
+    page.on('console', m => { if (m.text().includes('Content Security Policy')) violations.push(m.text()) })
+    const setup = await page.request.post('/api/setup', { headers: { Origin: collector.origin }, data: { token: new URL(collector.setupLink).hash.slice(1), password: PASSWORD, public_url: collector.origin } })
+    expect(setup.status()).toBe(201)
+  })
+  test.afterAll(async () => {
+    try { await page?.context().close() } finally {
+      try { await host?.stop() } finally {
+        try { await collector?.stop() } finally {
+          if (runnerLog === undefined) delete process.env.HENNERY_LOG_DIR; else process.env.HENNERY_LOG_DIR = runnerLog
+          if (receipt) rmSync(join(receipt, '..'), { recursive: true, force: true })
+          if (sentinel) rmSync(sentinel, { recursive: true, force: true })
+        }
+      }
+    }
+  })
+  test('pairs a real host running a Codex-named fake', async () => {
+    await page.goto('/hosts'); await page.getByRole('button', { name: 'Add host', exact: true }).click()
+    const command = (await page.getByLabel('Pairing command', { exact: true }).textContent())!
+    expect(await host.join(command, ['--name', 'e2e host', '--no-runtime'])).toBe(0)
+    await expect(page.getByText('Paired: e2e host', { exact: true })).toBeVisible({ timeout: 15_000 })
+    host.run()
+    await expect(async () => {
+      const response = await page.request.get('/api/hosts'); expect(response.status()).toBe(200)
+      const hosts = await response.json(); expect(hosts[0].connected).toBe(true)
+      hostId = hosts[0].host_id; hatId = hosts[0].default_hat_id
+    }).toPass({ timeout: 20_000 })
+  })
+  test('saves a full local set through step-up, reads no values back and starts with its actual delivery', async () => {
+    await page.goto('/mcp'); await expect(local()).toBeVisible()
+    // The existing connection form creates and mounts the HTTP entry.
+    await page.getByRole('button', { name: 'Add connection', exact: true }).click()
+    const connection = page.getByRole('region', { name: 'Add a connection', exact: true })
+    await connection.getByRole('textbox', { name: 'Name', exact: true }).fill('Docs')
+    await connection.getByRole('textbox', { name: 'Slug', exact: true }).fill('docs')
+    await connection.getByRole('textbox', { name: 'Server URL', exact: true }).fill('https://mcp.example.com/mcp')
+    await connection.getByRole('combobox', { name: 'Authentication', exact: true }).selectOption('none')
+    await connection.getByRole('button', { name: 'Create', exact: true }).click()
+    const tick = page.getByRole('listitem', { name: 'Docs', exact: true }).getByRole('checkbox', { name: 'e2e host', exact: true })
+    await tick.click(); await expect(tick).toBeChecked()
+    await local().getByRole('button', { name: 'Add local server', exact: true }).click()
+    await local().getByRole('textbox', { name: 'Server name', exact: true }).fill('local')
+    await local().getByRole('textbox', { name: 'Command', exact: true }).fill('tool')
+    await local().getByRole('button', { name: 'Add environment variable', exact: true }).click()
+    await local().getByRole('textbox', { name: 'Environment name', exact: true }).fill('TOKEN')
+    await local().getByRole('textbox', { name: 'Value for TOKEN', exact: true }).fill(ENV_VALUE)
+    await captureManagement(page, 'mcp-stdio', 'Desktop mcp / local stdio')
+    await local().getByRole('button', { name: 'Review local servers', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(local().getByRole('textbox', { name: 'Value for TOKEN', exact: true })).toHaveValue('')
+    await local().getByRole('textbox', { name: 'Value for TOKEN', exact: true }).fill(ENV_VALUE)
+    let refused = 0
+    await page.route('**/api/mcp/stdio-servers?*', async route => {
+      if (route.request().method() === 'PUT' && refused === 0) { refused++; await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: 'step_up_required' }) }) }
+      else await route.continue()
+    })
+    await local().getByRole('button', { name: 'Review local servers', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Save local servers', exact: true }).click()
+    await expect(local().getByRole('textbox', { name: 'Value for TOKEN', exact: true })).toHaveValue('')
+    await stepUp(page)
+    await expect(local().getByRole('checkbox', { name: 'Keep stored value for TOKEN', exact: true })).toBeChecked()
+    expect(refused).toBe(1); await page.unroute('**/api/mcp/stdio-servers?*')
+    const listed = await page.request.get(`/api/mcp/stdio-servers?host_id=${hostId}&hat_id=${hatId}`)
+    expect(listed.status()).toBe(200)
+    const body = await listed.text(); expect(body.includes(ENV_VALUE)).toBe(false)
+    expect(JSON.parse(body).servers[0].env).toEqual([{ name: 'TOKEN', has_value: true }])
+    expect(await page.locator('textarea').evaluateAll((fields, value) => fields.some(field => field instanceof HTMLTextAreaElement && field.value.includes(value)), ENV_VALUE)).toBe(false); expect(page.url().includes(ENV_VALUE)).toBe(false)
+    expect(await page.evaluate(value => document.body.innerText.includes(value), ENV_VALUE)).toBe(false)
+    expect(await page.evaluate(value => JSON.stringify({ ...localStorage, ...sessionStorage }).includes(value), ENV_VALUE)).toBe(false)
+    if (width === 390) expect((await local().getByRole('button', { name: 'Review local servers', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await page.goto('/new')
+    const form = page.getByRole('form', { name: 'New session', exact: true }); await form.getByRole('radio', { name: 'Codex', exact: true }).check()
+    await form.getByRole('combobox').fill(project)
+    await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toContainText('not isolated per hat')
+    await form.getByRole('textbox', { name: 'First prompt optional', exact: true }).fill('Show delivery.')
+    // This delivery/session fixture reports no settings catalog.
+    await form.getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+    await form.getByRole('button', { name: 'Start session', exact: true }).click()
+    await expect(page).toHaveURL(/\/sessions\/[^/?#]+$/, { timeout: 45_000 }); sessionUrl = page.url()
+    await openReport()
+    await expect(report()).toContainText('At the last start/resume:')
+    await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
+    await expect(report()).toContainText('Codex also loads your own ~/.codex MCP servers.')
+    expect(records()[0].method).toBe('session/new')
+    expect(records()[0].params.mcpServers.map((s: { name: string }) => s.name).sort()).toEqual(['hennery-docs', 'hennery-local'])
+    expect(JSON.stringify(records()[0].params.mcpServers).includes(ENV_VALUE)).toBe(true)
+    await closeReportOnPhone()
+    await page.reload(); await openReport(); await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
+  })
+  test('keeps the last-start snapshot until resume, and delivers none for a different hat', async () => {
+    await page.goto('/mcp'); await local().getByRole('button', { name: 'Add local server', exact: true }).click()
+    await local().getByRole('textbox', { name: 'Server name', exact: true }).nth(1).fill('second')
+    await local().getByRole('textbox', { name: 'Command', exact: true }).nth(1).fill('runner')
+    await local().getByRole('button', { name: 'Review local servers', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Save local servers', exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await page.goto(sessionUrl); await openReport(); await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
+    await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+    await host.crash(); host.run()
+    await expect(page.locator('.session-head .badge')).toHaveText('Parked', { timeout: 20_000 })
+    await closeReportOnPhone()
+    await page.getByRole('button', { name: 'Resume', exact: true }).click()
+    if (width === 390) await openReport()
+    await expect(report()).toContainText('3 MCP servers.', { timeout: 20_000 })
+    expect(records().at(-1).method).toBe('session/load'); expect(records().at(-1).params.mcpServers.length).toBe(3)
+    const made = await page.request.post('/api/hats', { headers: { Origin: collector.origin }, data: { name: 'Other hat' } }); expect(made.status()).toBe(201)
+    const other = await made.json()
+    const path = join(project, 'other'); mkdirSync(path)
+    const rules = await page.request.put(`/api/hosts/${hostId}/path-rules`, { headers: { Origin: collector.origin }, data: { rules: [{ prefix: path, hat_id: other.id }] } }); expect(rules.status()).toBe(200)
+    await page.goto('/new')
+    const form = page.getByRole('form', { name: 'New session', exact: true }); await form.getByRole('radio', { name: 'Codex', exact: true }).check(); await form.getByRole('combobox').fill(path)
+    await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toContainText('this hat is not the host’s default')
+    // This delivery/session fixture reports no settings catalog.
+    await form.getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+    await form.getByRole('button', { name: 'Start session', exact: true }).click()
+    await expect(page).toHaveURL(/\/sessions\/[^/?#]+$/, { timeout: 45_000 })
+    await openReport()
+    await expect(report()).toContainText('this hat is not the host’s default', { timeout: 45_000 })
+    await expect(report()).toContainText('0 MCP servers.')
+    expect(records().at(-1).params.mcpServers).toEqual([])
+  })
+  test('obeys CSP and leaves the runner’s log directory untouched', async () => {
+    expect(violations).toEqual([])
+    expect(await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? [])).toEqual([])
+    expect(readdirSync(sentinel)).toEqual([])
+  })
+})
+````
+
 ## After this plan
 
-R4 integration supplies saved per-hat defaults summaries; until then Hats provides a functional scoped Defaults link. R6 consumes shell management navigation actions; Settings mutations stay in their owning components. No second session store or SSE is created by these screens. Runtime discovery, execution authorization, descriptor delivery and first-prompt confirmation remain backend contracts.
+Hats and Settings now consume R4 sessionDefaults GET for read-only, per-agent saved overrides. They distinguish stored values from host-specific effective defaults, preserve false and unknown IDs, offer configured-agent suggestions plus explicit IDs, and link to R4 Defaults for editing and host previews. No defaults PUT or runtime-catalog probe originates in these summaries. R6 consumes shell management navigation actions; Settings mutations stay in their owning components. No second session store or SSE is created by these screens. Runtime discovery, execution authorization, descriptor delivery and first-prompt confirmation remain backend contracts.
 
 Parent owns independent whole-branch/security review, current PR status (checks, review decision, merge state and unresolved threads), integration into redesign, any shared API/index amendment, installed-device acceptance and final release. No GitHub action was taken by this lane.
 
