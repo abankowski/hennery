@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Client } from './client'
 import { openStream, type StreamEvent, type StreamState } from './sse'
+import { liveStream, routed, type LiveStream } from '../test-stream'
 
 /** A body that sends `chunks`, then ends (or stays open with `hold`). */
 function body(chunks: string[], hold = false): ReadableStream<Uint8Array> {
@@ -52,6 +53,174 @@ function setup(answers: (() => Response)[]) {
 }
 
 describe('openStream', () => {
+  it('aborts and resumes a silent open stream after 45 seconds with its last event id', async () => {
+    vi.useFakeTimers()
+    const silent = liveStream()
+    const t = setup([() => silent.response, () => sse([], true)])
+    const stream = t.open('e1:7')
+    try {
+      await vi.advanceTimersByTimeAsync(44_999)
+      expect(t.sent).toHaveLength(1)
+      expect(silent.cancelled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(silent.cancelled).toBe(true)
+      expect(t.sent).toHaveLength(2)
+      expect(t.sent[1]['Last-Event-ID']).toBe('e1:7')
+      expect(t.states).toEqual(['connecting', 'open', 'reconnecting', 'open'])
+    } finally {
+      stream.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('resumes from the last handled event after a live connection becomes silent', async () => {
+    vi.useFakeTimers()
+    const live = liveStream()
+    const t = setup([() => live.response, () => sse([], true)])
+    const stream = t.open('e1:7')
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      live.event('item', { text: 'received' }, 'e1:8')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(stream.lastEventId()).toBe('e1:8')
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(t.sent[1]['Last-Event-ID']).toBe('e1:8')
+      expect(live.cancelled).toBe(true)
+    } finally {
+      stream.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('any received bytes reset the idle deadline, even partial keepalive comments', async () => {
+    vi.useFakeTimers()
+    const live = liveStream()
+    const t = setup([() => live.response, () => sse([], true)])
+    const stream = t.open()
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(15_000)
+        live.send(i === 0 ? ': keep' : 'alive')
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      expect(t.events).toEqual([])
+      await vi.advanceTimersByTimeAsync(44_999)
+      expect(t.sent).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(t.sent).toHaveLength(2)
+      expect(live.cancelled).toBe(true)
+    } finally {
+      stream.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps exponential backoff across buffered responses and wake hints during retry waits', async () => {
+    vi.useFakeTimers()
+    const streams: LiveStream[] = []
+    const t = routed(() => {
+      expect(streams.every(s => s.cancelled)).toBe(true)
+      const live = liveStream()
+      streams.push(live)
+      return live.response
+    })
+    const stream = openStream(t.client, '/stream', { onEvent: () => {}, lastEventId: 'e1:7' })
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      for (const delay of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+        const attempts = t.calls.length
+        await vi.advanceTimersByTimeAsync(45_000)
+        expect(streams.at(-1)?.cancelled).toBe(true)
+        // Browser notifications cannot turn a buffered proxy into a retry loop.
+        window.dispatchEvent(new Event('online'))
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.advanceTimersByTimeAsync(delay - 1)
+        expect(t.calls).toHaveLength(attempts)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(t.calls).toHaveLength(attempts + 1)
+      }
+      expect(t.calls.every(c => c.headers['Last-Event-ID'] === 'e1:7')).toBe(true)
+    } finally {
+      stream.close()
+      expect(vi.getTimerCount()).toBe(0)
+      vi.useRealTimers()
+    }
+  })
+
+  it('times out a fetch whose headers never arrive, then waits before retrying', async () => {
+    vi.useFakeTimers()
+    const signals: AbortSignal[] = []
+    const client = new Client({
+      fetch: (_input, init) => new Promise<Response>((_resolve, reject) => {
+        const signal = init!.signal!
+        signals.push(signal)
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+      }),
+      navigate: vi.fn(), here: () => ({ pathname: '/', search: '' }), stepUp: async () => {},
+    })
+    const stream = openStream(client, '/stream', { onEvent: () => {} })
+    try {
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(signals).toHaveLength(1)
+      expect(signals[0].aborted).toBe(true)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(signals).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signals).toHaveLength(2)
+      stream.close()
+      expect(signals[1].aborted).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      stream.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['online', 'visible'])('reopens a stale active connection immediately on %s, once', async hint => {
+    vi.useFakeTimers()
+    const live = liveStream()
+    const t = setup([() => live.response, () => sse([], true)])
+    const stream = t.open('e1:7')
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const wake = () => hint === 'online'
+      ? window.dispatchEvent(new Event('online'))
+      : document.dispatchEvent(new Event('visibilitychange'))
+    try {
+      await vi.advanceTimersByTimeAsync(15_000)
+      wake()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(t.sent).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      if (hint === 'visible') {
+        visibility.mockReturnValue('hidden')
+        wake()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(t.sent).toHaveLength(1)
+        visibility.mockReturnValue('visible')
+      }
+      wake()
+      wake()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(live.cancelled).toBe(true)
+      expect(t.sent).toHaveLength(2)
+      expect(t.sent[1]['Last-Event-ID']).toBe('e1:7')
+      expect(t.sleeps).toEqual([])
+      wake()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(t.sent).toHaveLength(2)
+      stream.close()
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(60_000)
+      wake()
+      expect(t.sent).toHaveLength(2)
+    } finally {
+      stream.close()
+      visibility.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('parses events across chunks, with ids, multi-line data and comments', async () => {
     const t = setup([
       () => sse([': hello\n\nevent: item\nid: 1:5\ndata: {"a"', ':1}\n\n', 'data: one\ndata: two\r\n\r', '\n'], true),
@@ -131,11 +300,11 @@ describe('openStream', () => {
     expect(t.sent).toHaveLength(1)
   })
 
-  it('starts each wait at 1 s again once a connection opens', async () => {
+  it('starts each wait at 1 s again once bytes arrive, including keepalives', async () => {
     const t = setup([
       () => new Response(null, { status: 503 }),
       () => new Response(null, { status: 503 }),
-      () => sse([]),
+      () => sse([': keepalive\n\n']),
       () => new Response(null, { status: 503 }),
     ])
     const stream = t.open()

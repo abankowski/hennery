@@ -40,7 +40,7 @@ use crate::api::{ListFilter, ListParams, changes_catalogue, error, internal, ref
 use crate::store::{Store, stamp_ago};
 use anyhow::Result;
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -502,9 +502,13 @@ fn sse(state: &AppState, operator_session: Authenticated, rx: mpsc::Receiver<Que
             state.operator.clone(),
             operator_session,
         ));
-    Sse::new(stream)
+    let mut response = Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(KEEP_ALIVE))
-        .into_response()
+        .into_response();
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
 }
 
 /// The queue's messages as the response takes them: each gives its room
@@ -1205,6 +1209,58 @@ async fn hold(doorbell: &mut broadcast::Receiver<EventDto>, tx: &Outbox) -> bool
 mod tests {
     use super::*;
     use hennery_view::api::ItemPage;
+
+    fn stream_state() -> (tempfile::TempDir, AppState, Authenticated) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = AppState::new(
+            Store::open(&db).unwrap(),
+            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        state.store.create_session("s", "h", "a", "/p", "hat", None).unwrap();
+        let authenticated = Authenticated {
+            session_id: "test".into(),
+            owner_id: state.store.owner_id().into(),
+            last_step_up_at: None,
+            expires_at: i64::MAX,
+            slid: false,
+        };
+        (dir, state, authenticated)
+    }
+
+    #[tokio::test]
+    async fn item_stream_disables_proxy_buffering() {
+        let (_dir, state, authenticated) = stream_state();
+        let response = item_stream(
+            State(state),
+            Extension(authenticated),
+            Path("s".into()),
+            Query(StreamParams { after: None }),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "text/event-stream");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+        assert_eq!(response.headers().get("x-accel-buffering").unwrap(), "no");
+    }
+
+    #[tokio::test]
+    async fn list_stream_disables_proxy_buffering() {
+        let (_dir, state, authenticated) = stream_state();
+        let response = list_stream(
+            State(state),
+            Extension(authenticated),
+            Query(ListStreamParams { after: None, hat: None }),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "text/event-stream");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+        assert_eq!(response.headers().get("x-accel-buffering").unwrap(), "no");
+    }
 
     /// A store with the owner's session `s`, and a connection to write its
     /// events as ingest would.
