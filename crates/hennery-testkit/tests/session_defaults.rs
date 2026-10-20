@@ -42,12 +42,7 @@ impl Fixture {
         reqwest::Client::new()
             .request(
                 method.parse().unwrap(),
-                format!(
-                    "{}/api/hats/{}/session-defaults?{}",
-                    self.url,
-                    hat,
-                    format!("agent={agent}")
-                ),
+                format!("{}/api/hats/{hat}/session-defaults?agent={agent}", self.url),
             )
             .header("origin", PUBLIC_URL)
             .header("cookie", format!("hennery_session={}", self.token))
@@ -129,6 +124,14 @@ async fn every_put_including_reset_needs_fresh_step_up_and_origin() {
         assert_eq!(response.status(), 403);
         assert_eq!(response.json::<Value>().await.unwrap()["code"], "step_up_required");
     }
+    let response = f
+        .request("PUT", &f.hat, "custom")
+        .header("content-type", "application/json")
+        .body("invalid json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403, "route step-up must precede body extraction");
     f.token = fresh;
     let response = reqwest::Client::new()
         .put(format!("{}/api/hats/{}/session-defaults?agent=custom", f.url, f.hat))
@@ -145,6 +148,23 @@ async fn every_put_including_reset_needs_fresh_step_up_and_origin() {
         .await
         .unwrap();
     assert_eq!(response.status(), 401);
+    let response = reqwest::Client::new()
+        .put(format!("{}/api/hats/{}/session-defaults?agent=custom", f.url, f.hat))
+        .header("cookie", format!("hennery_session={}", f.token))
+        .json(&json!({"revision":0,"config":{}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403);
+    let conn = rusqlite::Connection::open(f._dir.path().join("hennery.db")).unwrap();
+    conn.execute_batch("INSERT INTO owners(id,created_at) VALUES ('foreign-owner',0); INSERT INTO hats(id,owner_id,name,colour,created_at) VALUES ('foreign-hat','foreign-owner','Other','#64748b',0);").unwrap();
+    for method in ["GET", "PUT"] {
+        let mut request = f.request(method, "foreign-hat", "custom");
+        if method == "PUT" {
+            request = request.json(&json!({"revision":0,"config":{}}));
+        }
+        assert_eq!(request.send().await.unwrap().status(), 404);
+    }
     for method in ["GET", "PUT"] {
         let mut request = f.request(method, "missing", "custom");
         if method == "PUT" {
@@ -178,6 +198,16 @@ async fn bounds_strict_fields_and_frozen_hats() {
         .await
         .unwrap();
     assert_eq!(response.status(), 413);
+    for query in ["", "?agent=custom&extra=1", "?agent=custom&agent=other"] {
+        let response = reqwest::Client::new()
+            .get(format!("{}/api/hats/{}/session-defaults{query}", f.url, f.hat))
+            .header("cookie", format!("hennery_session={}", f.token))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+        assert_eq!(response.json::<Value>().await.unwrap()["code"], "invalid_defaults");
+    }
     let response = f.request("GET", &f.hat, "").send().await.unwrap();
     assert_eq!(response.status(), 400);
     let hat = match f.state.hosts.create_hat("Temporary", None, unix_now()).unwrap() {

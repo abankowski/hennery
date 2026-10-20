@@ -42,7 +42,14 @@ pub fn router(state: AppState) -> Router {
 struct AgentQuery {
     agent: String,
 }
-async fn read(State(state): State<AppState>, Path(hat): Path<String>, Query(query): Query<AgentQuery>) -> Response {
+async fn read(
+    State(state): State<AppState>,
+    Path(hat): Path<String>,
+    query: Result<Query<AgentQuery>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return invalid();
+    };
     if !valid_id(&query.agent, 128) {
         return invalid();
     }
@@ -55,10 +62,13 @@ async fn read(State(state): State<AppState>, Path(hat): Path<String>, Query(quer
 async fn write(
     State(state): State<AppState>,
     Path(hat): Path<String>,
-    Query(query): Query<AgentQuery>,
+    query: Result<Query<AgentQuery>, axum::extract::rejection::QueryRejection>,
     Extension(auth): Extension<Authenticated>,
     ApiJson(request): ApiJson<PutHatSessionDefaults>,
 ) -> Response {
+    let Ok(Query(query)) = query else {
+        return invalid();
+    };
     match state.hosts.put_session_defaults(&hat, &query.agent, &request, &auth) {
         Ok(DefaultsChange::Done(value)) => Json(value).into_response(),
         Ok(DefaultsChange::NotFound) => error(StatusCode::NOT_FOUND, "not_found", "not found"),

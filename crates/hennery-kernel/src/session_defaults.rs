@@ -342,6 +342,23 @@ mod tests {
             assert!(!valid_defaults("custom", &request));
         }
         request.config = config();
+        for mode in ["".into(), "m".repeat(257), "bad\n".into()] {
+            let mut bad = request.clone();
+            bad.config.mode = Some(mode);
+            assert!(!valid_defaults("custom", &bad));
+        }
+        for id in ["".into(), "a".repeat(257), "bad\n".into(), "model".into()] {
+            let mut bad = request.clone();
+            bad.config.axes.insert(id, ConfigValue::Bool(false));
+            assert!(!valid_defaults("custom", &bad));
+        }
+        for value in ["".into(), "v".repeat(257), "bad\n".into()] {
+            let mut bad = request.clone();
+            bad.config.axes.insert("custom".into(), ConfigValue::Id(value));
+            assert!(!valid_defaults("custom", &bad));
+        }
+        let f = Fixture::new();
+        assert_eq!(f.put(-1, config()), DefaultsChange::Invalid);
         request.config.axes.insert("mode".into(), ConfigValue::Bool(false));
         assert!(!valid_defaults("custom", &request));
         request.config.axes = (0..65).map(|i| (format!("a{i}"), ConfigValue::Bool(false))).collect();

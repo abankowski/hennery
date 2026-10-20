@@ -3,6 +3,8 @@
 // session view a notice about a start or a first prompt that did not
 // fully go through; and the `/new?host=…&cwd=…` link that opens New Session
 // on a project (a failed session's "Start a new session in this project").
+import { flatConfig, supports } from "./defaults"
+import { catalogFields, configOptions } from "./catalog"
 import { ApiFailure, messageOf } from '../api/errors'
 
 /** A refused `POST /api/sessions`, in words. Nothing was started, except
@@ -59,6 +61,8 @@ export function sessionHref(
 
 /** What a refused first prompt says, by its code. */
 const PROMPT_REFUSED: Record<string, string> = {
+  config_unconfirmed: "The requested session settings could not be confirmed. Review the settings before sending the first prompt.",
+  hat_changed: "The session started in a different hat. Review it before sending the first prompt.",
   host_offline: 'The host went offline before the first prompt reached it; send it again once it is back.',
   not_attached: 'The session was no longer running when the first prompt arrived; resume it and send it again.',
   turn_in_progress: 'A turn was already running; send the first prompt again once it ends.',
@@ -107,4 +111,40 @@ export function newSessionHref(host: string, cwd: string): string {
 export function readNewSessionPrefill(search: string): { host?: string; cwd?: string } {
   const query = new URLSearchParams(search)
   return { host: query.get('host') ?? undefined, cwd: query.get('cwd') ?? undefined }
+}
+
+/** Read-back of a newly created session, bounded independently of API latency.
+ * Missing evidence is never confirmation, even for an empty request. */
+export async function confirmStart(
+  client: import('../api/client').Client,
+  id: string,
+  hat: string,
+  requested: import('../generated/protocol').SessionConfig,
+  timeoutMs = 30_000,
+): Promise<'confirmed' | 'hat_changed' | 'config_unconfirmed'> {
+  const deadline = Date.now() + timeoutMs
+  const path = `/api/sessions/${encodeURIComponent(id)}`
+  const expected = flatConfig(requested)
+  do {
+    const left = deadline - Date.now()
+    if (left <= 0) break
+    try {
+      const detail = await client.request<import('../generated/protocol').SessionDetail>('GET', path, undefined, { timeoutMs: left })
+      if (detail.hat_id !== hat) return 'hat_changed'
+      if (detail.failure_reason || ['failed', 'closed', 'parked'].includes(detail.lifecycle)) return 'config_unconfirmed'
+      if (detail.lifecycle === 'active') {
+        const catalog = await client.request<import('../generated/protocol').SessionCatalog>('GET', `${path}/catalog`, undefined, { timeoutMs: Math.max(1, deadline - Date.now()) })
+        if (catalog.config_options.length > 0) {
+          const actual = flatConfig(catalog)
+          const offered = new Map(catalogFields(configOptions(catalog)).map(field => [field.key, field.option]))
+          if (!Object.entries(expected).every(([key, value]) => { const option = offered.get(key); return Object.hasOwn(actual, key) && actual[key] === value && option !== undefined && supports(option, value) && option.current === value })) return 'config_unconfirmed'
+          const page = await client.request<import('../generated/view').ItemPage>('GET', `/api/view/sessions/${encodeURIComponent(id)}?limit=1`, undefined, { timeoutMs: Math.max(1, deadline - Date.now()) })
+          if (page.items.some(item => item.kind === 'marker' && item.marker === 'host_note' && item.reason === 'config_failed')) return 'config_unconfirmed'
+          return 'confirmed'
+        }
+      }
+    } catch { return 'config_unconfirmed' }
+    await new Promise(resolve => setTimeout(resolve, Math.min(200, Math.max(0, deadline - Date.now()))))
+  } while (Date.now() < deadline)
+  return 'config_unconfirmed'
 }

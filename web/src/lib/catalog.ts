@@ -151,3 +151,9 @@ export function matchCommands(list: Command[], query: string): Command[] {
   const contains = list.filter((c) => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q))
   return [...starts, ...contains]
 }
+
+/** Stable wire destinations, following the same category/id rules as the host. */
+export function catalogFields(options: ConfigOption[]): { key: string; option: ConfigOption }[] {
+  const model = axis(options, 'model'), mode = axis(options, 'mode')
+  return options.map(option => ({ key: option === model ? 'model' : option === mode ? 'mode' : option.id, option }))
+}
