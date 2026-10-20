@@ -105,3 +105,25 @@ it('refreshes a real status-only reason when an immutable attention summary chan
   expect(t.calls.filter(call => call.path.startsWith('/api/delegation/attention'))).toHaveLength(2)
   reader.stop()
 })
+
+it.each([
+  ['child_failed', 'Child session failed'],
+  ['operator_takeover', 'You took over this session'],
+  ['parent_unavailable', 'Parent session is unavailable'],
+  ['parent_deleted', 'Parent session was deleted'],
+  ['unsupported_delivery', 'Parent cannot receive this update'],
+  ['handling_deadline', 'Parent did not respond in time'],
+  ['operator_required', 'Your response is needed'],
+  ['queue_full', 'Parent has too many updates waiting'],
+  ['wake_budget', 'Parent could not be resumed again'],
+  ['not_delivered', 'Update could not reach the parent'],
+  ['config_unverified', 'Parent configuration needs review'],
+  ['grant_changed', 'Delegation settings changed'],
+  ['future_private_reason', 'Session needs your attention'],
+])('shows an operator label for attention reason %s', async (reason, label) => {
+  const t = routed(call => call.path.startsWith('/api/delegation/attention') ? json([{ id: 'attention', child_id: 's', hat_id: 'hat', pending_id: null, reason }]) : json({ pending: [] }))
+  render(<AttentionPreviews><AttentionPreview session={session('s')} /></AttentionPreviews>, { wrapper: t.wrapper })
+  await screen.findByText(label, { exact: true })
+  expect(screen.queryByText(reason, { exact: true })).toBeNull()
+  expect(screen.getByRole('link', { name: 'Open s' })).toHaveAttribute('href', '/sessions/s')
+})

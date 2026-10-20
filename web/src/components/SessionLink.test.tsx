@@ -171,7 +171,7 @@ describe('the session’s header, from the list (F-4)', () => {
     render(<App fetchImpl={s.fetch} />)
     await titled('Task a')
     const list = await screen.findByRole('complementary', { name: 'Views' })
-    expect(within(list).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 3 loaded · 0 need you')
+    expect(within(list).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 3 sessions · 0 need you')
     await waitFor(() => expect(s.itemStreams).toHaveLength(1))
     // The item stream says so; the list stream has not yet.
     act(() => s.itemStreams[0].event('session_removed', { session_id: 'a' }))
@@ -252,7 +252,7 @@ describe('a session’s link (F-11, F-19)', () => {
     await waitFor(() => expect(s.listStreams).toHaveLength(1))
     act(() => s.listStreams[0].event('session_upsert', summary('newest', { last_event_at: '2026-10-02T12:00:00.000Z' }), 'e1:2'))
     const views = await rail()
-    await waitFor(() => expect(within(views).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 4 loaded · 0 need you'))
+    await waitFor(() => expect(within(views).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 4 sessions · 0 need you'))
     expect(location.pathname).toBe('/sessions/a-old')
     expect(title()).toHaveTextContent('Task a-old')
   })
@@ -312,4 +312,34 @@ describe('a session’s link (F-11, F-19)', () => {
     )
     expect(shownAfter).toBe(true)
   })
+})
+
+it('a new query anchor does not make a retained old summary outrank fresh session detail', async () => {
+  at('/sessions')
+  let changed = false, freshDetails = 0
+  const s = server({ list: params => {
+    if (!params.has('q')) return json(listPage([summary('a')]))
+    // The old SSE is closed. A change before this new snapshot's anchor
+    // cannot appear in a stream resumed after that anchor; q excludes a.
+    changed = true
+    return json({ ...listPage([]), revision: 2 })
+  } })
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (changed && new URL(String(input), 'http://h').pathname === '/api/sessions/a') {
+      freshDetails++
+      return json({ ...detailOf('a'), title: 'Renamed during query switch', lifecycle: 'parked', activity: undefined, last_event_at: '2026-10-02T12:00:00.000Z' })
+    }
+    return s.fetch(input, init)
+  }
+  render(<App fetchImpl={fetch} />)
+  const overview = await screen.findByRole('region', { name: 'Session list' })
+  await within(overview).findByText('Task a', { exact: true })
+  await userEvent.type(within(overview).getByRole('searchbox', { name: 'Search sessions' }), 'exclude')
+  await waitFor(() => expect(s.listStreams).toHaveLength(2))
+  expect(s.listStreams[0].cancelled).toBe(true)
+  act(() => navigate('/sessions/a'))
+  await waitFor(() => expect(freshDetails).toBe(1))
+  await within(main()).findByText('a says hello', { exact: true })
+  expect(title()).toHaveTextContent('Renamed during query switch')
+  expect(within(main()).getByText('Parked', { exact: true })).toBeInTheDocument()
 })

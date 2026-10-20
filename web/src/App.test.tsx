@@ -24,7 +24,7 @@ afterEach(() => {
 describe('the shell', () => {
   it('shows every view of the whole cockpit, the current one marked', async () => {
     at('/hosts')
-    const server = stubServer({ 'GET /api/capabilities': json(200, FULL) })
+    const server = stubServer({ 'GET /api/capabilities': json(200, { ...FULL, features: ['session_defaults'] }) })
     render(<App fetchImpl={server.fetch} />)
     const rail = await screen.findByRole('complementary', { name: 'Views' })
     const names = within(rail)
@@ -166,7 +166,7 @@ it.each(['/needs-you', '/defaults', '/new', '/hats', '/sessions/one'])('gateway 
 })
 it('More contains every configured destination and sign out', async () => {
   at('/more')
-  const server = stubServer({ 'GET /api/capabilities': json(200, FULL) })
+  const server = stubServer({ 'GET /api/capabilities': json(200, { ...FULL, features: ['session_defaults'] }) })
   render(<App fetchImpl={server.fetch} />)
   const nav = await screen.findByRole('navigation', { name: 'More navigation' })
   expect(within(nav).getAllByRole('link').map(link => link.getAttribute('href'))).toEqual(['/mcp', '/hats', '/defaults', '/settings'])

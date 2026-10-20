@@ -1,10 +1,17 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
+import type { SessionSummary } from './generated/view'
+
+const EMPTY_LOADED_SESSIONS: ReadonlyMap<string, SessionSummary> = new Map()
+/** Read-only shared summaries for App-mounted consumers; no second controller. */
+export function useLoadedSessions(): ReadonlyMap<string, SessionSummary> {
+  return useActionSnapshot()?.context().loadedSessions ?? EMPTY_LOADED_SESSIONS
+}
 
 /** Stable R2 integration contract. Providers own mutations and capability checks;
  * the command host only discovers and dispatches enabled actions. */
 export type AppActionId = 'new-session' | 'search-sessions' | 'toggle-rail' | 'toggle-details' | 'focus-composer' | 'open-needs-you' | 'open-sessions' | 'open-hosts' | 'open-mcp' | 'open-hats' | 'open-defaults' | 'open-settings' | 'open-commands'
 export interface AppAction { label: string; enabled: boolean; run: () => void }
-export interface AppContext { sessionId?: string; hostId?: string; cwd?: string; hatId?: string }
+export interface AppContext { sessionId?: string; hostId?: string; cwd?: string; hatId?: string; loadedSessions?: ReadonlyMap<string, SessionSummary> }
 export class AppActions {
   private entries = new Map<AppActionId, { token: symbol; action: AppAction; priority: number }[]>()
   private contexts: { token: symbol; context: AppContext; priority: number }[] = []
@@ -51,5 +58,5 @@ export function useRegisterAction(id: AppActionId, action: AppAction, priority =
 }
 export function useRegisterContext(context: AppContext, priority = 0) {
   const actions = useAppActions()
-  useEffect(() => actions?.registerContext(context, priority), [actions, context.sessionId, context.hostId, context.cwd, context.hatId, priority])
+  useEffect(() => actions?.registerContext(context, priority), [actions, context.sessionId, context.hostId, context.cwd, context.hatId, context.loadedSessions, priority])
 }

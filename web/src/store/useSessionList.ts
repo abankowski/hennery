@@ -181,7 +181,10 @@ export class SessionListController {
       if (run !== this.run) return
       if (!isFirstPage(page)) throw new Error('The session list could not be read.')
       this.generation++
-      if (resync) this.known = new Map()
+      // Summaries from the previous query bridge only the in-flight read.
+      // Its new anchor skips changes excluded from this baseline, so retained
+      // rows must not outrank fresh per-session detail after acceptance.
+      this.known = new Map()
       this.attempt = 0
       this.apply({ type: 'first', page, search: this.search })
       this.update({
@@ -262,7 +265,7 @@ export class SessionListController {
 }
 
 export interface SessionList extends Omit<SessionListSnapshot, 'store'> {
-  /** Every summary received, by id (the header reads it). */
+  /** Current baseline/upserts by id; prior rows survive only while loading. */
   all: ReadonlyMap<string, SessionSummary>
   /** What the list shows, in order. */
   shown: SessionSummary[]

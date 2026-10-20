@@ -24,12 +24,12 @@ export default function NeedsYouQueue() {
   const total = list.counts.waiting
   const complete = !list.loading && !list.hasMore && !list.error
   return <section className="needs-queue" aria-label="Attention queue" onKeyDown={moveListFocus}>
-    <div className="queue-heading"><span>{rows.length} loaded · {list.loading ? 'checking attention' : `${total} need you`}</span><span>Most recent first</span></div>
+    <div className="queue-heading"><span>{list.loading ? 'Checking attention…' : complete ? `${total} ${total === 1 ? 'session needs' : 'sessions need'} you` : `${rows.length} of ${total} sessions needing you shown`}</span><span>Most recent first</span></div>
     <p className="queue-help">Permissions, questions and delegation attention. Open a session to respond.</p>
     {list.error && <p role="alert" className="form-error"><bdi>{list.error}</bdi></p>}
     {list.stream === 'reconnecting' && <p role="status">Reconnecting…</p>}
     {list.loading && <p role="status">Loading attention…</p>}
-    {!list.loading && !rows.length && <p className="queue-empty">{complete && total === 0 ? 'Nothing needs you' : 'No attention loaded yet'}</p>}
+    {!list.loading && !rows.length && <p className="queue-empty">{complete && total === 0 ? 'Nothing needs you' : 'No requests to show yet'}</p>}
     <AttentionPreviews>{rows.map(session => {
       const hat = scope.hats?.find(h => h.id === session.hat_id)
       return <article key={session.session_id} className="attention-card" aria-label={session.title || session.session_id}>
@@ -40,7 +40,7 @@ export default function NeedsYouQueue() {
       </article>
     })}</AttentionPreviews>
     {!list.loading && list.hasMore && <button type="button" className="btn btn-ghost" disabled={list.loadingMore} onClick={() => { scan.current.remaining = 2; void list.loadMore() }}>{list.loadingMore ? 'Loading…' : 'Load more'}</button>}
-    <p className="queue-help queue-keys">J / K moves between focused cards. Enter opens the current request.</p>
-    <Link className="queue-summary" to="/sessions">View sessions · {list.shown.filter(s => s.lifecycle === 'active' && s.activity === 'running').length} running · {list.shown.filter(s => s.lifecycle === 'active' && s.activity === 'idle').length} idle · {list.shown.filter(s => s.lifecycle === 'parked').length} parked{list.hasMore ? ' (loaded)' : ''}</Link>
+    {rows.length > 0 && <p className="queue-help queue-keys">J / K moves between focused cards. Enter opens the current request.</p>}
+    <Link className="queue-summary" to="/sessions">View sessions · {list.shown.filter(s => s.lifecycle === 'active' && s.activity === 'running').length} running · {list.shown.filter(s => s.lifecycle === 'active' && s.activity === 'idle').length} idle · {list.shown.filter(s => s.lifecycle === 'parked').length} parked{!complete ? ' (more sessions to check)' : ''}</Link>
   </section>
 }

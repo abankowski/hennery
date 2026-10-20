@@ -38,6 +38,7 @@ function NavigationAction({ view, enabled }: { view: View; enabled: boolean }) {
 function Frame({ caps, route }: { caps: CapabilitiesResponse; route: Route }) {
   const [collapsed, setCollapsed] = usePersistentToggle('hennery.railCollapsed', false)
   const views = viewsOf(caps.mode)
+  const advertised = views.filter(view => view !== 'defaults' || caps.features.includes('session_defaults'))
   const current = viewOf(route.name)
   const shown = current !== null && views.includes(current)
   const scope = useSessionScope()
@@ -51,14 +52,14 @@ function Frame({ caps, route }: { caps: CapabilitiesResponse; route: Route }) {
   return <div className={'app' + (collapsed ? ' app-collapsed' : '') + (route.name === 'session' ? ' app-session' : '')}>
     {(['needs-you', 'sessions', 'new', 'hosts', 'mcp', 'hats', 'defaults', 'settings'] as const).map(view => <NavigationAction key={view} view={view} enabled={views.includes(view) && (view !== 'mcp' || caps.features.includes('mcp_connections')) && (view !== 'defaults' || caps.features.includes('session_defaults'))} />)}
     {caps.features.includes('web_push') && <PushForeground />}
-    <NavigationRail views={views} current={current} collapsed={collapsed} toggle={() => setCollapsed(!collapsed)} />
+    <NavigationRail views={advertised} current={current} collapsed={collapsed} toggle={() => setCollapsed(!collapsed)} />
     <div className="shell">{!['sessions', 'needs-you', 'session', 'more'].includes(route.name) && <header className="mtopbar"><span className="mtb-title">{current ? LABEL[current] : 'hennery'}</span><McpBadge link /></header>}{route.name === 'session' && (scope?.list.counts.waiting ?? 0) > 0 && <div className="session-scope-status"><Link to="/needs-you">Needs you <WaitingBadge /></Link></div>}<main className="main">
       <Suspense fallback={<p role="status">Loading…</p>}>
       {route.name === 'not_found' ? <Placeholder title="Not found" text="No page lives at this address." />
       : !shown ? <Placeholder title={current ? LABEL[current] : 'hennery'} text="This view is not part of this deployment." />
       : route.name === 'sessions' ? <Sessions />
       : route.name === 'needs-you' ? <NeedsYou />
-      : route.name === 'more' ? <More views={views} />
+      : route.name === 'more' ? <More views={advertised} />
       : route.name === 'defaults' ? caps.features.includes('session_defaults') ? <Defaults /> : <Placeholder title="Defaults" text="Per-hat session defaults are not part of this deployment." />
       : route.name === 'hosts' ? <Hosts />
       : route.name === 'hats' ? <Hats />

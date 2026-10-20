@@ -20,7 +20,8 @@ export default function NavigationRail({ views, current, collapsed, toggle }: { 
       {scope && <div className="rail-hats"><div className="nav-label nav-section-label">Hats</div>{hatLinks.map(hat => {
         const loaded = scope.list.shown.filter(s => !hat.id || s.hat_id === hat.id)
         const waiting = loaded.filter(needsOperator).length
-        return <Link key={hat.id} to={`/sessions?hat=${encodeURIComponent(hat.id)}`} className={'rail-hat' + (scope.hat === hat.id ? ' on' : '')} aria-label={hat.name} title={`${hat.name} · ${loaded.length} loaded · ${waiting} need you`}><HatChip colour={hat.colour}><span className="nav-label"><bdi>{hat.name}</bdi></span></HatChip><span className="nav-label hat-loaded">{loaded.length} loaded</span>{waiting > 0 && <span className="hat-attention" aria-label={`${waiting} loaded sessions need you`}>●</span>}</Link>
+        const count = `${loaded.length} ${loaded.length === 1 ? 'session' : 'sessions'}${scope.list.hasMore || scope.list.loading ? ' shown' : ''}`
+        return <Link key={hat.id} to={`/sessions?hat=${encodeURIComponent(hat.id)}`} className={'rail-hat' + (scope.hat === hat.id ? ' on' : '')} aria-label={hat.name} title={`${hat.name} · ${count} · ${waiting} need you`}><HatChip colour={hat.colour}><span className="nav-label"><bdi>{hat.name}</bdi></span></HatChip><span className="nav-label hat-loaded">{count}</span>{waiting > 0 && <span className="hat-attention" aria-label={`${waiting} shown sessions need you`}>●</span>}</Link>
       })}</div>}
       <div><div className="nav-label nav-section-label">Configure</div>{views.filter(view => !['more', 'needs-you', 'sessions', 'new'].includes(view)).map(navigation)}</div>
     </nav>

@@ -7,6 +7,7 @@ import type { Client } from '../api/client'
 import type { Item, SessionSummary } from '../generated/view'
 import { Link } from '../router'
 import { sessionPath } from './SessionRow'
+import { attentionReason } from '../lib/attentionReason'
 
 type Preview = { question?: Extract<Item, { kind: 'question' }>; attention?: OperatorAttention; partial?: boolean }
 /** One scheduler per visit, including detail, question and attention reads. */
@@ -94,7 +95,7 @@ export default function AttentionPreview({ session }: { session: SessionSummary 
   return <div ref={box} className="attention-preview">
     {title && <p className="preview-question"><bdi>{title}</bdi></p>}
     {question && (!question.answerable || question.answered || question.state !== 'open') && <p>The request changed. Open the session for its current state.</p>}
-    {held?.value?.attention && <p><bdi>{held.value.attention.reason}</bdi></p>}
+    {held?.value?.attention && <p><bdi>{attentionReason(held.value.attention.reason)}</bdi></p>}
     {held?.value?.partial && !held.value.attention && <p>More attention records are available in the session.</p>}
     {held?.error && <p className="preview-error">Preview unavailable: <bdi>{held.error}</bdi></p>}
     {!held && <p className="preview-note">Open the session to review the current request.</p>}

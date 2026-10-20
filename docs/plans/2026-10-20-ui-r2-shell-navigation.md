@@ -7,7 +7,7 @@
 
 ## Execution status (2026-10-20)
 
-Implementation complete on `plan/ui-r2`, based on `4d461fb0`. Task 1 is `51fb8a4a`; Task 2 is `3bc3ea4`. Source-only staged tree: `4df9244336f0e41439b7b7e71fca67f1dbd1b86c`. Independent task and whole-branch reviews are **requested, not yet performed**; the parent owns PR creation, checks, reviewDecision, mergeStateStatus, unresolved threads, index integration and release approval. No GitHub action was taken by this lane.
+Implementation complete on `plan/ui-r2`, based on `4d461fb0`. Task 1 is `51fb8a4a`; Task 2 is `3bc3ea4`. Source-only staged tree: `4df9244336f0e41439b7b7e71fca67f1dbd1b86c`. Parent review of this initial head returned **APPROVE AFTER AMENDMENTS** for PR #206. The amendment and its current verification are recorded below. Scoped re-review, checks, reviewDecision, mergeStateStatus, unresolved threads, index integration and release approval remain parent-owned. No GitHub action was taken by this lane.
 
 | Verification | Actual result |
 |---|---|
@@ -4470,6 +4470,623 @@ index 58894adf..69a09108 100644
  }
 ```
 
+### PR #206 review amendment
+
+Parent review of `4d461fb0..3998dbba` returned **APPROVE AFTER AMENDMENTS**. All five findings were accepted. The amendment:
+
+1. Leaves Escape to an expanded inner project combobox before the route frame handles a subsequent Escape. The actual launcher/picker regression preserves the typed first prompt; no picker/shared-modal source change.
+2. Keeps retained summaries only during the next first-page request. Every accepted first page retires the prior map before adding its baseline; skipped changes cannot outrank fresh session detail. Existing one-stream, pending-header and late-response tests remain.
+3. Adds `useLoadedSessions(): ReadonlyMap<string, SessionSummary>` in `app-actions.tsx`. `SessionScope` publishes its existing `list.all` through `useRegisterContext({ loadedSessions: list.all })`; the new field participates in the existing context effect/subscription/identity cleanup. The App-mounted lazy host gets current rows, upserts and removals; logout clears the map and gateway exposes a stable empty map without session reads. No extra controller/SSE, provider move or App edit.
+4. Filters advertised rail/More destinations by `session_defaults`; direct unsupported visits retain their existing route response and disabled action. Both absent and advertised navigation cases are asserted.
+5. Maps 12 known attention reasons to operator language, with a generic safe fallback. Complete coverage uses ordinary session counts; partial coverage says how many are shown. Empty queues omit card-key instructions. R3 may reuse `lib/attentionReason.ts` when restyling its owned session attention controls.
+
+**Amendment evidence:** every finding had an observed RED in the worktree (21 failed / 27 passed, exit 1), then targeted checks passed (158 tests / 8 files, exit 0). Final typecheck, 2,155 tests / 120 files and production build exit 0 (3 CSS tests, 2 same-origin assets). All 26 new removal probes were detected (each mutation exit 1); restored fresh-copy bytes match all 1,031 source paths. Embedded binary/testkit build and affected E2E exit 0: 45 passed / 1 existing desktop touch-target skip, 1.0 minute (shell, PWA, sessions/launcher and appearance); real-producer cases pass at 390 / 1280 px. Refreshed captures retain the existing 104-image inventory. Logs: `amendment-red.log`, `amendment-targeted.log`, `amendment-web-verified.log`, `amendment-probes.log`, `amendment-probe-logs/`, `amendment-browser.log`. The first typecheck rejected Playwright-only `exact` options on Testing Library role queries; these use exact role-name matching by default. The first full test run caught an unanchored text locator; it was replaced with a direct rendered-content assertion. No type/test/rule was weakened.
+
+Only targeted amendment verification was run: no second fresh replay, workspace Rust test run or 4×3 load matrix. The fresh probe copy is `.superpowers/sdd/ui-r2/amendment-probes-1`, with APFS-cloned target/dependencies and a private tool home. It joins the prior copies awaiting parent cleanup; no Cargo safety-tag workaround. Staged implementation bytes are compared with the restored copy and all five plan patches are verified through a private index. PR #206 CI and scoped re-review remain parent gates; this child performs no GitHub operation and stays available for their results.
+
+Apply this fifth patch after the four original patches:
+
+```diff
+diff --git a/web/e2e/shell.spec.ts b/web/e2e/shell.spec.ts
+index 0e1bfb4f..0ea8381d 100644
+--- a/web/e2e/shell.spec.ts
++++ b/web/e2e/shell.spec.ts
+@@ -152,14 +152,15 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
+     { ...base, session_id: 'running', title: 'Implement parser', activity: 'running', agent: 'codex', git_branch: 'parser' },
+     { ...base, session_id: 'idle', title: 'Plan next steps', hat_id: 'fixture-other' },
+   ]
+-  let empty = false, gateway = false, activeLists = 0, maximumLists = 0
++  let empty = false, gateway = false, defaults = false, activeLists = 0, maximumLists = 0
+   const held: (() => Promise<void>)[] = []
+   await context.route('**/api/**', async route => {
+     const url = new URL(route.request().url()), path = url.pathname
+     const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+-    if (path === '/api/capabilities') return json({ mode: gateway ? 'gateway' : 'full', features: ['mcp_connections'] })
++    if (path === '/api/capabilities') return json({ mode: gateway ? 'gateway' : 'full', features: ['mcp_connections', ...(defaults ? ['session_defaults'] : [])] })
+     if (path === '/api/hats') return json([{ id: 'fixture-hat', name: 'Personal', colour: '#8050d0', created_at: ts, default_for_new_hosts: true }, { id: 'fixture-other', name: 'Other', colour: '#087c70', created_at: ts, default_for_new_hosts: false }])
+-    if (path === '/api/hosts') return json([{ host_id: 'fixture-host', name: 'Development host', platform: 'linux', host_version: '0.1.4', capabilities: [], default_hat_id: 'fixture-hat', workspace_roots: [], connected: true, created_at: ts, last_seen_at: ts }])
++    if (path === '/api/hosts') return json([{ host_id: 'fixture-host', name: 'Development host', platform: 'linux', host_version: '0.1.4', capabilities: ['projects', 'resolve_path'], default_hat_id: 'fixture-hat', workspace_roots: [], connected: true, created_at: ts, last_seen_at: ts }])
++    if (path === '/api/hosts/fixture-host/projects') return json({ recents_hat_id: 'fixture-hat', recents: [], items: [{ path: '/srv/project' }], partial: false, home: '/srv' })
+     if (path === '/api/view/sessions') return json({ sessions: empty ? [] : rows.filter(row => (!url.searchParams.has('hat') || row.hat_id === url.searchParams.get('hat')) && (!url.searchParams.has('lifecycle') || url.searchParams.get('lifecycle')!.split(',').includes(row.lifecycle))), epoch: 'fixture', revision: 1, waiting: empty ? 0 : 2 })
+     if (path.startsWith('/api/stream/')) {
+       if (path === '/api/stream/sessions') { activeLists++; maximumLists = Math.max(maximumLists, activeLists) }
+@@ -216,7 +217,8 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
+     await visual.goto(collector.origin + '/needs-you')
+     await expect(visual.getByRole('heading', { name: 'Needs you', exact: true })).toBeVisible()
+     await expect(visual.getByText('Read project files', { exact: true })).toBeVisible()
+-    await expect(visual.getByText('child_failed', { exact: true })).toBeVisible()
++    await expect(visual.getByText('Child session failed', { exact: true })).toBeVisible()
++    await expect(visual.getByText('2 sessions need you', { exact: true })).toBeVisible()
+     await expect(visual.getByRole('button', { name: 'Allow', exact: true })).toHaveCount(0)
+     await capture('needs-you-populated')
+     await visual.getByRole('button', { name: 'Search', exact: true }).click()
+@@ -225,20 +227,38 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
+     empty = true
+     await visual.goto(collector.origin + '/needs-you')
+     await expect(visual.getByText('Nothing needs you', { exact: true })).toBeVisible()
++    await expect(visual.locator('.queue-keys')).toHaveCount(0)
+     await capture('needs-you-empty')
+     await visual.goto(collector.origin + '/more')
+     await expect(visual.locator('.mtopbar')).toHaveCount(0)
+     const more = visual.getByRole('navigation', { name: 'More navigation', exact: true })
+-    await expect(more.getByRole('link')).toHaveCount(4)
++    await expect(more.getByRole('link')).toHaveCount(3)
++    await expect(more.getByRole('link', { name: 'Defaults', exact: true })).toHaveCount(0)
++    if (width === 1280) await expect(visual.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Defaults', exact: true })).toHaveCount(0)
+     await capture('more')
+-    await more.getByRole('link', { name: 'Defaults', exact: true }).click()
++    await visual.goto(collector.origin + '/defaults')
+     await expect(visual.getByRole('heading', { name: 'Defaults', exact: true })).toBeVisible()
+     await capture('defaults-placeholder')
++    defaults = true
++    await visual.goto(collector.origin + '/more')
++    await expect(more.getByRole('link')).toHaveCount(4)
++    await more.getByRole('link', { name: 'Defaults', exact: true }).click()
++    await expect(visual.getByRole('heading', { name: 'Defaults', exact: true })).toBeVisible()
++    defaults = false
+     await visual.goto(collector.origin + '/new')
+     const launcher = visual.getByRole('dialog', { name: 'New session', exact: true })
+     await expect(launcher).toBeVisible()
+     await capture('new-session-frame')
+-    await visual.keyboard.press('Escape')
++    const prompt = launcher.getByRole('textbox', { name: /^First prompt/ })
++    await prompt.fill('Keep the first prompt while dismissing project suggestions')
++    const project = launcher.getByRole('combobox', { name: /^Project/ })
++    await project.fill('project')
++    await expect(launcher.getByRole('listbox')).toBeVisible()
++    await project.press('Escape')
++    await expect(launcher.getByRole('listbox')).toHaveCount(0)
++    await expect(launcher).toBeVisible()
++    await expect(prompt).toHaveValue('Keep the first prompt while dismissing project suggestions')
++    await project.press('Escape')
+     await expect(visual).toHaveURL(collector.origin + '/sessions')
+     await visual.goto(collector.origin + '/missing')
+     await expect(visual.getByRole('heading', { name: 'Not found', exact: true })).toBeVisible()
+diff --git a/web/src/App.test.tsx b/web/src/App.test.tsx
+index 838ced1f..720838e7 100644
+--- a/web/src/App.test.tsx
++++ b/web/src/App.test.tsx
+@@ -24,7 +24,7 @@ afterEach(() => {
+ describe('the shell', () => {
+   it('shows every view of the whole cockpit, the current one marked', async () => {
+     at('/hosts')
+-    const server = stubServer({ 'GET /api/capabilities': json(200, FULL) })
++    const server = stubServer({ 'GET /api/capabilities': json(200, { ...FULL, features: ['session_defaults'] }) })
+     render(<App fetchImpl={server.fetch} />)
+     const rail = await screen.findByRole('complementary', { name: 'Views' })
+     const names = within(rail)
+@@ -166,7 +166,7 @@ it.each(['/needs-you', '/defaults', '/new', '/hats', '/sessions/one'])('gateway
+ })
+ it('More contains every configured destination and sign out', async () => {
+   at('/more')
+-  const server = stubServer({ 'GET /api/capabilities': json(200, FULL) })
++  const server = stubServer({ 'GET /api/capabilities': json(200, { ...FULL, features: ['session_defaults'] }) })
+   render(<App fetchImpl={server.fetch} />)
+   const nav = await screen.findByRole('navigation', { name: 'More navigation' })
+   expect(within(nav).getAllByRole('link').map(link => link.getAttribute('href'))).toEqual(['/mcp', '/hats', '/defaults', '/settings'])
+diff --git a/web/src/app-actions.tsx b/web/src/app-actions.tsx
+index db1894c2..d27b49c2 100644
+--- a/web/src/app-actions.tsx
++++ b/web/src/app-actions.tsx
+@@ -1,10 +1,17 @@
+ import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
++import type { SessionSummary } from './generated/view'
++
++const EMPTY_LOADED_SESSIONS: ReadonlyMap<string, SessionSummary> = new Map()
++/** Read-only shared summaries for App-mounted consumers; no second controller. */
++export function useLoadedSessions(): ReadonlyMap<string, SessionSummary> {
++  return useActionSnapshot()?.context().loadedSessions ?? EMPTY_LOADED_SESSIONS
++}
+
+ /** Stable R2 integration contract. Providers own mutations and capability checks;
+  * the command host only discovers and dispatches enabled actions. */
+ export type AppActionId = 'new-session' | 'search-sessions' | 'toggle-rail' | 'toggle-details' | 'focus-composer' | 'open-needs-you' | 'open-sessions' | 'open-hosts' | 'open-mcp' | 'open-hats' | 'open-defaults' | 'open-settings' | 'open-commands'
+ export interface AppAction { label: string; enabled: boolean; run: () => void }
+-export interface AppContext { sessionId?: string; hostId?: string; cwd?: string; hatId?: string }
++export interface AppContext { sessionId?: string; hostId?: string; cwd?: string; hatId?: string; loadedSessions?: ReadonlyMap<string, SessionSummary> }
+ export class AppActions {
+   private entries = new Map<AppActionId, { token: symbol; action: AppAction; priority: number }[]>()
+   private contexts: { token: symbol; context: AppContext; priority: number }[] = []
+@@ -51,5 +58,5 @@ export function useRegisterAction(id: AppActionId, action: AppAction, priority =
+ }
+ export function useRegisterContext(context: AppContext, priority = 0) {
+   const actions = useAppActions()
+-  useEffect(() => actions?.registerContext(context, priority), [actions, context.sessionId, context.hostId, context.cwd, context.hatId, priority])
++  useEffect(() => actions?.registerContext(context, priority), [actions, context.sessionId, context.hostId, context.cwd, context.hatId, context.loadedSessions, priority])
+ }
+diff --git a/web/src/components/AttentionPreview.test.tsx b/web/src/components/AttentionPreview.test.tsx
+index 8c402735..76ed92a0 100644
+--- a/web/src/components/AttentionPreview.test.tsx
++++ b/web/src/components/AttentionPreview.test.tsx
+@@ -105,3 +105,25 @@ it('refreshes a real status-only reason when an immutable attention summary chan
+   expect(t.calls.filter(call => call.path.startsWith('/api/delegation/attention'))).toHaveLength(2)
+   reader.stop()
+ })
++
++it.each([
++  ['child_failed', 'Child session failed'],
++  ['operator_takeover', 'You took over this session'],
++  ['parent_unavailable', 'Parent session is unavailable'],
++  ['parent_deleted', 'Parent session was deleted'],
++  ['unsupported_delivery', 'Parent cannot receive this update'],
++  ['handling_deadline', 'Parent did not respond in time'],
++  ['operator_required', 'Your response is needed'],
++  ['queue_full', 'Parent has too many updates waiting'],
++  ['wake_budget', 'Parent could not be resumed again'],
++  ['not_delivered', 'Update could not reach the parent'],
++  ['config_unverified', 'Parent configuration needs review'],
++  ['grant_changed', 'Delegation settings changed'],
++  ['future_private_reason', 'Session needs your attention'],
++])('shows an operator label for attention reason %s', async (reason, label) => {
++  const t = routed(call => call.path.startsWith('/api/delegation/attention') ? json([{ id: 'attention', child_id: 's', hat_id: 'hat', pending_id: null, reason }]) : json({ pending: [] }))
++  render(<AttentionPreviews><AttentionPreview session={session('s')} /></AttentionPreviews>, { wrapper: t.wrapper })
++  await screen.findByText(label, { exact: true })
++  expect(screen.queryByText(reason, { exact: true })).toBeNull()
++  expect(screen.getByRole('link', { name: 'Open s' })).toHaveAttribute('href', '/sessions/s')
++})
+diff --git a/web/src/components/AttentionPreview.tsx b/web/src/components/AttentionPreview.tsx
+index 69a09108..c7e22455 100644
+--- a/web/src/components/AttentionPreview.tsx
++++ b/web/src/components/AttentionPreview.tsx
+@@ -7,6 +7,7 @@ import type { Client } from '../api/client'
+ import type { Item, SessionSummary } from '../generated/view'
+ import { Link } from '../router'
+ import { sessionPath } from './SessionRow'
++import { attentionReason } from '../lib/attentionReason'
+
+ type Preview = { question?: Extract<Item, { kind: 'question' }>; attention?: OperatorAttention; partial?: boolean }
+ /** One scheduler per visit, including detail, question and attention reads. */
+@@ -94,7 +95,7 @@ export default function AttentionPreview({ session }: { session: SessionSummary
+   return <div ref={box} className="attention-preview">
+     {title && <p className="preview-question"><bdi>{title}</bdi></p>}
+     {question && (!question.answerable || question.answered || question.state !== 'open') && <p>The request changed. Open the session for its current state.</p>}
+-    {held?.value?.attention && <p><bdi>{held.value.attention.reason}</bdi></p>}
++    {held?.value?.attention && <p><bdi>{attentionReason(held.value.attention.reason)}</bdi></p>}
+     {held?.value?.partial && !held.value.attention && <p>More attention records are available in the session.</p>}
+     {held?.error && <p className="preview-error">Preview unavailable: <bdi>{held.error}</bdi></p>}
+     {!held && <p className="preview-note">Open the session to review the current request.</p>}
+diff --git a/web/src/components/CommandSessions.test.tsx b/web/src/components/CommandSessions.test.tsx
+new file mode 100644
+index 00000000..a77baf1e
+--- /dev/null
++++ b/web/src/components/CommandSessions.test.tsx
+@@ -0,0 +1,68 @@
++import { act, render, screen, waitFor, within } from '@testing-library/react'
++import userEvent from '@testing-library/user-event'
++import { afterEach, expect, it, vi } from 'vitest'
++import App from '../App'
++import { useLoadedSessions } from '../app-actions'
++import { json, liveStream, routed, type LiveStream } from '../test-stream'
++import type { SessionSummary } from '../generated/view'
++
++vi.mock('./CommandHost', () => ({ default: () => {
++  const sessions = useLoadedSessions()
++  return <output aria-label="Command host sessions">{[...sessions.values()].map(s => s.title).join(', ') || 'No shared sessions'}</output>
++} }))
++afterEach(() => { history.replaceState(null, '', '/'); localStorage.clear() })
++const summary: SessionSummary = { session_id: 'one', host_id: 'host', hat_id: 'hat', agent: 'claude', cwd: '/project', title: 'Shared session', lifecycle: 'active', activity: 'idle', presumed_parked: false, question_waits: false, operator_attention: 0, parent_handled_questions: 0, created_at: '', last_event_at: '' }
++
++it('App-mounted command host subscribes to the existing loaded session map and clears on sign out', async () => {
++  history.replaceState(null, '', '/sessions')
++  const streams: LiveStream[] = []
++  const server = routed(({ path }) => {
++    if (path === '/api/capabilities') return json({ mode: 'full', features: [] })
++    if (path === '/api/hats' || path === '/api/hosts') return json([])
++    if (path.startsWith('/api/view/sessions')) return json({ sessions: [summary], waiting: 0, epoch: 'e', revision: 1 })
++    if (path.startsWith('/api/stream/sessions')) { const stream = liveStream(); streams.push(stream); return stream.response }
++    if (path === '/api/auth/logout') return new Response(null, { status: 204 })
++    return json({ code: 'not_found', message: 'fixture' }, 404)
++  })
++  render(<App fetchImpl={server.fetch} />)
++  await screen.findByRole('region', { name: 'Session list' })
++  const output = await screen.findByRole('status', { name: 'Command host sessions' })
++  await waitFor(() => expect(output).toHaveTextContent('Shared session'))
++  expect(streams).toHaveLength(1)
++  expect(server.calls.filter(c => c.path.startsWith('/api/view/sessions'))).toHaveLength(1)
++  act(() => streams[0].event('session_upsert', { ...summary, title: 'Updated shared session' }, 'e:2'))
++  await waitFor(() => expect(output).toHaveTextContent('Updated shared session'))
++  act(() => streams[0].event('session_removed', { session_id: 'one' }, 'e:3'))
++  await waitFor(() => expect(output).toHaveTextContent('No shared sessions'))
++  act(() => streams[0].event('session_upsert', summary, 'e:4'))
++  await waitFor(() => expect(output).toHaveTextContent('Shared session'))
++  await userEvent.click(screen.getByRole('button', { name: 'Sign out' }))
++  await waitFor(() => expect(location.pathname).toBe('/login'))
++  await waitFor(() => expect(output).toHaveTextContent('No shared sessions'))
++  expect(streams[0].cancelled).toBe(true)
++})
++
++it('command host has an empty map in gateway mode without session reads', async () => {
++  history.replaceState(null, '', '/more')
++  const server = routed(({ path }) => path === '/api/capabilities' ? json({ mode: 'gateway', features: [] }) : json({}, 404))
++  render(<App fetchImpl={server.fetch} />)
++  await screen.findByRole('navigation', { name: 'More navigation' })
++  expect(await screen.findByRole('status', { name: 'Command host sessions' })).toHaveTextContent('No shared sessions')
++  expect(server.calls.map(c => c.path)).toEqual(['/api/capabilities'])
++})
++
++it.each([false, true])('Defaults is advertised in rail and More only with its capability: %s', async enabled => {
++  history.replaceState(null, '', '/more')
++  const server = routed(({ path }) => {
++    if (path === '/api/capabilities') return json({ mode: 'full', features: enabled ? ['session_defaults'] : [] })
++    if (path === '/api/hats' || path === '/api/hosts') return json([])
++    if (path.startsWith('/api/view/sessions')) return json({ sessions: [], waiting: 0, epoch: 'e', revision: 1 })
++    if (path.startsWith('/api/stream/sessions')) return liveStream().response
++    return json({}, 404)
++  })
++  render(<App fetchImpl={server.fetch} />)
++  for (const name of ['Main navigation', 'More navigation']) {
++    const nav = await screen.findByRole('navigation', { name })
++    expect(within(nav).queryAllByRole('link', { name: 'Defaults' })).toHaveLength(enabled ? 1 : 0)
++  }
++})
+diff --git a/web/src/components/NavigationRail.tsx b/web/src/components/NavigationRail.tsx
+index bba2b79a..4f905e9e 100644
+--- a/web/src/components/NavigationRail.tsx
++++ b/web/src/components/NavigationRail.tsx
+@@ -20,7 +20,8 @@ export default function NavigationRail({ views, current, collapsed, toggle }: {
+       {scope && <div className="rail-hats"><div className="nav-label nav-section-label">Hats</div>{hatLinks.map(hat => {
+         const loaded = scope.list.shown.filter(s => !hat.id || s.hat_id === hat.id)
+         const waiting = loaded.filter(needsOperator).length
+-        return <Link key={hat.id} to={`/sessions?hat=${encodeURIComponent(hat.id)}`} className={'rail-hat' + (scope.hat === hat.id ? ' on' : '')} aria-label={hat.name} title={`${hat.name} · ${loaded.length} loaded · ${waiting} need you`}><HatChip colour={hat.colour}><span className="nav-label"><bdi>{hat.name}</bdi></span></HatChip><span className="nav-label hat-loaded">{loaded.length} loaded</span>{waiting > 0 && <span className="hat-attention" aria-label={`${waiting} loaded sessions need you`}>●</span>}</Link>
++        const count = `${loaded.length} ${loaded.length === 1 ? 'session' : 'sessions'}${scope.list.hasMore || scope.list.loading ? ' shown' : ''}`
++        return <Link key={hat.id} to={`/sessions?hat=${encodeURIComponent(hat.id)}`} className={'rail-hat' + (scope.hat === hat.id ? ' on' : '')} aria-label={hat.name} title={`${hat.name} · ${count} · ${waiting} need you`}><HatChip colour={hat.colour}><span className="nav-label"><bdi>{hat.name}</bdi></span></HatChip><span className="nav-label hat-loaded">{count}</span>{waiting > 0 && <span className="hat-attention" aria-label={`${waiting} shown sessions need you`}>●</span>}</Link>
+       })}</div>}
+       <div><div className="nav-label nav-section-label">Configure</div>{views.filter(view => !['more', 'needs-you', 'sessions', 'new'].includes(view)).map(navigation)}</div>
+     </nav>
+diff --git a/web/src/components/NeedsYou.test.tsx b/web/src/components/NeedsYou.test.tsx
+index 6707591e..874f472f 100644
+--- a/web/src/components/NeedsYou.test.tsx
++++ b/web/src/components/NeedsYou.test.tsx
+@@ -42,7 +42,7 @@ it('isolates hat-only/all-lifecycle queue pages and restores restrictive overvie
+   expect(within(queue).getByRole('link', { name: 'Open active-request' })).toBeInTheDocument()
+   expect(within(queue).queryByText('parent-handled', { exact: true })).toBeNull()
+   expect(within(queue).queryByText('queued-answer', { exact: true })).toBeNull()
+-  expect(within(queue).getByText('child_failed', { exact: true })).toBeInTheDocument()
++  expect(within(queue).getByText('Child session failed', { exact: true })).toBeInTheDocument()
+   const reads = server.calls.filter(c => c.path.startsWith('/api/view/sessions?')).slice(-2).map(c => new URL(c.path, 'http://fixture').searchParams)
+   expect(reads.map(params => [...params.keys()])).toEqual([['hat'], ['cursor', 'hat']])
+   expect(reads.every(params => params.get('hat') === 'hat-b')).toBe(true)
+@@ -74,11 +74,11 @@ it('scans at most three pages per deliberate visit/load more and never claims an
+   })
+   render(<App fetchImpl={server.fetch as typeof fetch} />)
+   await waitFor(() => expect(pages).toBe(3))
+-  expect(screen.getByText('0 loaded · 2 need you', { exact: true })).toBeInTheDocument()
++  expect(screen.getByText('0 of 2 sessions needing you shown', { exact: true })).toBeInTheDocument()
+   expect(screen.queryByText('Nothing needs you', { exact: true })).toBeNull()
+   await userEvent.click(screen.getByRole('button', { name: 'Load more' }))
+   await waitFor(() => expect(pages).toBe(5))
+-  expect(screen.getByText('0 loaded · 2 need you', { exact: true })).toBeInTheDocument()
++  expect(screen.getByText('2 sessions need you', { exact: true })).toBeInTheDocument()
+   expect(screen.queryByText('Nothing needs you', { exact: true })).toBeNull()
+   expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull()
+ })
+@@ -127,3 +127,23 @@ it('opens a fresh attention baseline when the overview already requests every li
+   expect(reads).toHaveLength(2)
+   expect(reads.every(read => read.search === '')).toBe(true)
+ })
++
++it.each([0, 1])('uses complete session counts and shows card keys only for a nonempty queue: %s', async count => {
++  history.replaceState(null, '', '/needs-you')
++  const server = routed(({ path }) => {
++    if (path === '/api/capabilities') return json({ mode: 'full', features: [] })
++    if (path === '/api/hats' || path === '/api/hosts') return json([])
++    if (path.startsWith('/api/view/sessions')) return json({ sessions: count ? [row('request')] : [], waiting: count, epoch: 'e', revision: 1 })
++    if (path.startsWith('/api/stream/sessions')) return liveStream().response
++    if (path.startsWith('/api/sessions/')) return json({ pending: [] })
++    if (path.startsWith('/api/delegation/attention')) return json([])
++    return json({}, 404)
++  })
++  render(<App fetchImpl={server.fetch} />)
++  const queue = await screen.findByRole('region', { name: 'Attention queue' })
++  await within(queue).findByText(count ? '1 session needs you' : '0 sessions need you', { exact: true })
++  expect(within(queue).queryAllByText('J / K moves between focused cards. Enter opens the current request.', { exact: true })).toHaveLength(count)
++  const rail = await screen.findByRole('complementary', { name: 'Views' })
++  expect(within(rail).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', `All hats · ${count} ${count === 1 ? 'session' : 'sessions'} · ${count} need you`)
++  expect(queue).not.toHaveTextContent(/\bloaded\b/)
++})
+diff --git a/web/src/components/NeedsYouQueue.tsx b/web/src/components/NeedsYouQueue.tsx
+index e62f4773..69fe02fd 100644
+--- a/web/src/components/NeedsYouQueue.tsx
++++ b/web/src/components/NeedsYouQueue.tsx
+@@ -24,12 +24,12 @@ export default function NeedsYouQueue() {
+   const total = list.counts.waiting
+   const complete = !list.loading && !list.hasMore && !list.error
+   return <section className="needs-queue" aria-label="Attention queue" onKeyDown={moveListFocus}>
+-    <div className="queue-heading"><span>{rows.length} loaded · {list.loading ? 'checking attention' : `${total} need you`}</span><span>Most recent first</span></div>
++    <div className="queue-heading"><span>{list.loading ? 'Checking attention…' : complete ? `${total} ${total === 1 ? 'session needs' : 'sessions need'} you` : `${rows.length} of ${total} sessions needing you shown`}</span><span>Most recent first</span></div>
+     <p className="queue-help">Permissions, questions and delegation attention. Open a session to respond.</p>
+     {list.error && <p role="alert" className="form-error"><bdi>{list.error}</bdi></p>}
+     {list.stream === 'reconnecting' && <p role="status">Reconnecting…</p>}
+     {list.loading && <p role="status">Loading attention…</p>}
+-    {!list.loading && !rows.length && <p className="queue-empty">{complete && total === 0 ? 'Nothing needs you' : 'No attention loaded yet'}</p>}
++    {!list.loading && !rows.length && <p className="queue-empty">{complete && total === 0 ? 'Nothing needs you' : 'No requests to show yet'}</p>}
+     <AttentionPreviews>{rows.map(session => {
+       const hat = scope.hats?.find(h => h.id === session.hat_id)
+       return <article key={session.session_id} className="attention-card" aria-label={session.title || session.session_id}>
+@@ -40,7 +40,7 @@ export default function NeedsYouQueue() {
+       </article>
+     })}</AttentionPreviews>
+     {!list.loading && list.hasMore && <button type="button" className="btn btn-ghost" disabled={list.loadingMore} onClick={() => { scan.current.remaining = 2; void list.loadMore() }}>{list.loadingMore ? 'Loading…' : 'Load more'}</button>}
+-    <p className="queue-help queue-keys">J / K moves between focused cards. Enter opens the current request.</p>
+-    <Link className="queue-summary" to="/sessions">View sessions · {list.shown.filter(s => s.lifecycle === 'active' && s.activity === 'running').length} running · {list.shown.filter(s => s.lifecycle === 'active' && s.activity === 'idle').length} idle · {list.shown.filter(s => s.lifecycle === 'parked').length} parked{list.hasMore ? ' (loaded)' : ''}</Link>
++    {rows.length > 0 && <p className="queue-help queue-keys">J / K moves between focused cards. Enter opens the current request.</p>}
++    <Link className="queue-summary" to="/sessions">View sessions · {list.shown.filter(s => s.lifecycle === 'active' && s.activity === 'running').length} running · {list.shown.filter(s => s.lifecycle === 'active' && s.activity === 'idle').length} idle · {list.shown.filter(s => s.lifecycle === 'parked').length} parked{!complete ? ' (more sessions to check)' : ''}</Link>
+   </section>
+ }
+diff --git a/web/src/components/NewSessionFrame.test.tsx b/web/src/components/NewSessionFrame.test.tsx
+index c7277f29..99de50b4 100644
+--- a/web/src/components/NewSessionFrame.test.tsx
++++ b/web/src/components/NewSessionFrame.test.tsx
+@@ -1,8 +1,10 @@
+-import { render, screen, waitFor, within } from '@testing-library/react'
++import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+ import { afterEach, expect, it } from 'vitest'
+ import App from '../App'
+ import { FULL, json, stubServer } from '../test-server'
++import { hat, host } from '../test-fixtures'
++import { json as response, liveStream, routed } from '../test-stream'
+ const server = () => stubServer({ 'GET /api/capabilities': json(200, FULL), 'GET /api/hosts': json(200, []), 'GET /api/hats': json(200, []), 'GET /api/view/sessions?lifecycle=starting%2Cactive%2Cparked%2Cfailed': json(200, { sessions: [], waiting: 0, epoch: 'e', revision: 1 }) })
+ afterEach(() => { history.replaceState(null, '', '/'); localStorage.clear() })
+ it('direct launcher Escape returns to Sessions without Back into unrelated history', async () => {
+@@ -27,3 +29,32 @@ it('Close returns to the known app opener and restores its trigger focus', async
+   await waitFor(() => expect(location.pathname).toBe('/more'))
+   await waitFor(() => expect(within(rail).getByRole('link', { name: 'New session' })).toHaveFocus())
+ })
++
++it('Escape first dismisses project suggestions without losing the unsent launch prompt', async () => {
++  history.replaceState(null, '', '/new')
++  const fixture = routed(({ path }) => {
++    if (path === '/api/capabilities') return response(FULL)
++    if (path === '/api/hats') return response([hat({ id: 'hat-a' })])
++    if (path === '/api/hosts') return response([host({ capabilities: ['projects', 'resolve_path'] })])
++    if (path === '/api/hosts/host-1/projects') return response({ recents_hat_id: 'hat-a', recents: [], items: [{ path: '/srv/project' }], partial: false, home: '/srv' })
++    if (path.startsWith('/api/hosts/host-1/agents')) return response([])
++    if (path.startsWith('/api/view/sessions')) return response({ sessions: [], waiting: 0, epoch: 'e', revision: 1 })
++    if (path.startsWith('/api/stream/sessions')) return liveStream().response
++    return response({ code: 'not_found', message: 'fixture' }, 404)
++  })
++  render(<App fetchImpl={fixture.fetch} />)
++  const dialog = await screen.findByRole('dialog', { name: 'New session' })
++  const prompt = await within(dialog).findByRole('textbox', { name: /^First prompt/ })
++  fireEvent.change(prompt, { target: { value: 'Preserve this unsent launch brief' } })
++  const project = await within(dialog).findByRole('combobox', { name: /^Project/ })
++  fireEvent.change(project, { target: { value: 'project' } })
++  await within(dialog).findByRole('listbox')
++  fireEvent.keyDown(project, { key: 'Escape' })
++  await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
++  expect(location.pathname).toBe('/new')
++  expect(prompt).toHaveValue('Preserve this unsent launch brief')
++  expect(dialog).toBeInTheDocument()
++  fireEvent.keyDown(project, { key: 'Escape' })
++  await waitFor(() => expect(location.pathname).toBe('/sessions'))
++  expect(screen.queryByRole('dialog')).toBeNull()
++})
+diff --git a/web/src/components/NewSessionFrame.tsx b/web/src/components/NewSessionFrame.tsx
+index fa4f288b..d887b7f4 100644
+--- a/web/src/components/NewSessionFrame.tsx
++++ b/web/src/components/NewSessionFrame.tsx
+@@ -24,5 +24,11 @@ export default function NewSessionFrame({ children }: { children: ReactNode }) {
+       })
+     }
+   }, [])
+-  return <><div inert aria-hidden="true"><Sessions /></div><div className="overlay" onMouseDown={holdFocus}><div ref={ref} className="modal launcher-frame" role="dialog" aria-label="New session" aria-modal="true" tabIndex={-1} onKeyDown={event => trap(event, close)}><button type="button" className="modal-x" aria-label="Close new session" onClick={close}><Icon name="x-mark" size={18} /></button>{children}</div></div></>
++  return <><div inert aria-hidden="true"><Sessions /></div><div className="overlay" onMouseDown={holdFocus}><div ref={ref} className="modal launcher-frame" role="dialog" aria-label="New session" aria-modal="true" tabIndex={-1} onKeyDown={event => {
++    if (event.defaultPrevented) return
++    // The inner picker handles this Escape before React updates its expanded
++    // attribute. A second, unhandled Escape still dismisses the route frame.
++    if (event.key === 'Escape' && event.target instanceof HTMLElement && event.target.closest('[role="combobox"][aria-expanded="true"]')) return
++    trap(event, close)
++  }}><button type="button" className="modal-x" aria-label="Close new session" onClick={close}><Icon name="x-mark" size={18} /></button>{children}</div></div></>
+ }
+diff --git a/web/src/components/SessionFilters.tsx b/web/src/components/SessionFilters.tsx
+index 95fb9a66..b781e300 100644
+--- a/web/src/components/SessionFilters.tsx
++++ b/web/src/components/SessionFilters.tsx
+@@ -11,7 +11,7 @@ export default function SessionFilters() {
+   const { list, query, setQuery, hideClosed, setHideClosed, lifecycle, setLifecycle, host, setHost, status, setStatus, group, setGroup, hosts } = scope
+   return <div className="overview-filters">
+     <fieldset className="group-choice"><legend>Group by</legend>{(['hat', 'host'] as const).map(value => <label key={value}><input type="radio" name="group" value={value} checked={group === value} onChange={() => setGroup(value)} />By {value}</label>)}</fieldset>
+-    <div className="status-filters" role="group" aria-label="Status">{STATUS_FILTERS.map(value => <button type="button" key={value} aria-pressed={status === value} disabled={list.searching} className={'chip' + (status === value ? ' on' : '')} onClick={() => setStatus(value)}>{STATUS_LABEL[value]} <span>{list.shown.filter(s => matchesStatus(s, value)).length}{list.hasMore ? ' loaded' : ''}</span></button>)}</div>
++    <div className="status-filters" role="group" aria-label="Status">{STATUS_FILTERS.map(value => <button type="button" key={value} aria-pressed={status === value} disabled={list.searching} className={'chip' + (status === value ? ' on' : '')} onClick={() => setStatus(value)}>{STATUS_LABEL[value]} <span>{list.shown.filter(s => matchesStatus(s, value)).length}{list.hasMore ? ' shown' : ''}</span></button>)}</div>
+     <div className="filter-fields"><label>Search sessions<input ref={searchRef} type="search" aria-label="Search sessions" placeholder="Title, path or branch…" value={query} onChange={e => setQuery(e.target.value)} maxLength={SEARCH_MAX_CHARS} /></label>
+     <label>Host<select aria-label="Host" value={host} onChange={e => setHost(e.target.value)} disabled={list.searching}><option value="">All hosts</option>{hosts?.filter(h => h.revoked_at == null).map(h => <option key={h.host_id} value={h.host_id}>{h.name}</option>)}</select></label>
+     <button type="button" className={'toggle' + (hideClosed ? ' on' : '')} aria-pressed={hideClosed} disabled={list.searching} onClick={() => setHideClosed(!hideClosed)}>Hide closed</button>
+diff --git a/web/src/components/SessionLink.test.tsx b/web/src/components/SessionLink.test.tsx
+index 299b0f3f..664a501f 100644
+--- a/web/src/components/SessionLink.test.tsx
++++ b/web/src/components/SessionLink.test.tsx
+@@ -171,7 +171,7 @@ describe('the session’s header, from the list (F-4)', () => {
+     render(<App fetchImpl={s.fetch} />)
+     await titled('Task a')
+     const list = await screen.findByRole('complementary', { name: 'Views' })
+-    expect(within(list).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 3 loaded · 0 need you')
++    expect(within(list).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 3 sessions · 0 need you')
+     await waitFor(() => expect(s.itemStreams).toHaveLength(1))
+     // The item stream says so; the list stream has not yet.
+     act(() => s.itemStreams[0].event('session_removed', { session_id: 'a' }))
+@@ -252,7 +252,7 @@ describe('a session’s link (F-11, F-19)', () => {
+     await waitFor(() => expect(s.listStreams).toHaveLength(1))
+     act(() => s.listStreams[0].event('session_upsert', summary('newest', { last_event_at: '2026-10-02T12:00:00.000Z' }), 'e1:2'))
+     const views = await rail()
+-    await waitFor(() => expect(within(views).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 4 loaded · 0 need you'))
++    await waitFor(() => expect(within(views).getByRole('link', { name: 'All hats' })).toHaveAttribute('title', 'All hats · 4 sessions · 0 need you'))
+     expect(location.pathname).toBe('/sessions/a-old')
+     expect(title()).toHaveTextContent('Task a-old')
+   })
+@@ -313,3 +313,33 @@ describe('a session’s link (F-11, F-19)', () => {
+     expect(shownAfter).toBe(true)
+   })
+ })
++
++it('a new query anchor does not make a retained old summary outrank fresh session detail', async () => {
++  at('/sessions')
++  let changed = false, freshDetails = 0
++  const s = server({ list: params => {
++    if (!params.has('q')) return json(listPage([summary('a')]))
++    // The old SSE is closed. A change before this new snapshot's anchor
++    // cannot appear in a stream resumed after that anchor; q excludes a.
++    changed = true
++    return json({ ...listPage([]), revision: 2 })
++  } })
++  const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
++    if (changed && new URL(String(input), 'http://h').pathname === '/api/sessions/a') {
++      freshDetails++
++      return json({ ...detailOf('a'), title: 'Renamed during query switch', lifecycle: 'parked', activity: undefined, last_event_at: '2026-10-02T12:00:00.000Z' })
++    }
++    return s.fetch(input, init)
++  }
++  render(<App fetchImpl={fetch} />)
++  const overview = await screen.findByRole('region', { name: 'Session list' })
++  await within(overview).findByText('Task a', { exact: true })
++  await userEvent.type(within(overview).getByRole('searchbox', { name: 'Search sessions' }), 'exclude')
++  await waitFor(() => expect(s.listStreams).toHaveLength(2))
++  expect(s.listStreams[0].cancelled).toBe(true)
++  act(() => navigate('/sessions/a'))
++  await waitFor(() => expect(freshDetails).toBe(1))
++  await within(main()).findByText('a says hello', { exact: true })
++  expect(title()).toHaveTextContent('Renamed during query switch')
++  expect(within(main()).getByText('Parked', { exact: true })).toBeInTheDocument()
++})
+diff --git a/web/src/components/SessionList.tsx b/web/src/components/SessionList.tsx
+index ae59e785..c2c76171 100644
+--- a/web/src/components/SessionList.tsx
++++ b/web/src/components/SessionList.tsx
+@@ -58,12 +58,12 @@ export default function SessionList({ screen = false }: { screen?: boolean }) {
+   const rows = filtered.slice(0, limit)
+   const more = filtered.length > limit || list.hasMore
+   return <section className={'slist overview' + (screen ? ' slist-screen' : '')} aria-label="Session list" onKeyDown={moveListFocus}>
+-    <header className="overview-head"><h1>Sessions</h1><span>{filtered.length}{list.hasMore ? ' loaded' : ' sessions'}</span><button type="button" className="btn btn-ghost filter-trigger" onClick={() => setFilters(!filters)} aria-expanded={filters}>Filters</button><Link to="/new" className="btn btn-primary">New session</Link></header>
++    <header className="overview-head"><h1>Sessions</h1><span>{filtered.length}{list.hasMore ? ' shown' : ' sessions'}</span><button type="button" className="btn btn-ghost filter-trigger" onClick={() => setFilters(!filters)} aria-expanded={filters}>Filters</button><Link to="/new" className="btn btn-primary">New session</Link></header>
+     <HatSwitch hats={hats} hat={hat} onHat={chooseHat} />
+     {!desktop && filters ? <FilterDialog close={() => setFilters(false)}><SessionFilters /></FilterDialog> : <div className="filters-default"><SessionFilters /></div>}
+     {list.error && <p role="alert" className="form-error list-note"><bdi>{list.error}</bdi></p>}
+     {!list.loading && (list.stream === 'reconnecting' || list.resynced) && <p className="list-note" role="status">{list.stream === 'reconnecting' ? 'Reconnecting…' : 'Resynced'}</p>}
+-    {list.loading ? <p className="list-note" role="status">Loading…</p> : !rows.length ? <p className="list-note">{list.searching ? 'No matches' : 'No sessions'}</p> : sessionGroups(rows, group).map(([id, sessions]) => <div className="grp" key={id}><h2 className="grp-head"><span className="grp-title"><bdi>{group === 'hat' ? hats?.find(h => h.id === id)?.name ?? 'Unknown hat' : hostNames.get(id) ?? 'Unknown host'}</bdi></span><span className="grp-count">{sessions.length}{list.hasMore ? ' loaded' : ''}</span></h2><table className="session-table"><thead><tr><th>Session</th><th>Doing</th><th>Host</th><th>Agent / model</th><th>Last</th></tr></thead><tbody>{sessions.map(s => <SessionRow key={s.session_id} session={s} selected={s.session_id === selectedId} hostName={hostNames.get(s.host_id)} now={now} table indent={!!s.family?.parent && sessions.some(p => p.session_id === s.family?.parent?.session_id)} />)}</tbody></table></div>)}
++    {list.loading ? <p className="list-note" role="status">Loading…</p> : !rows.length ? <p className="list-note">{list.searching ? 'No matches' : 'No sessions'}</p> : sessionGroups(rows, group).map(([id, sessions]) => <div className="grp" key={id}><h2 className="grp-head"><span className="grp-title"><bdi>{group === 'hat' ? hats?.find(h => h.id === id)?.name ?? 'Unknown hat' : hostNames.get(id) ?? 'Unknown host'}</bdi></span><span className="grp-count">{sessions.length}{list.hasMore ? ' shown' : ''}</span></h2><table className="session-table"><thead><tr><th>Session</th><th>Doing</th><th>Host</th><th>Agent / model</th><th>Last</th></tr></thead><tbody>{sessions.map(s => <SessionRow key={s.session_id} session={s} selected={s.session_id === selectedId} hostName={hostNames.get(s.host_id)} now={now} table indent={!!s.family?.parent && sessions.some(p => p.session_id === s.family?.parent?.session_id)} />)}</tbody></table></div>)}
+     {!list.loading && more && <button type="button" className="btn btn-ghost list-more" disabled={list.loadingMore} onClick={() => { setShownRows({ query: list.queryKey, n: limit + PAGE_ROWS }); if (filtered.length <= limit) void list.loadMore() }}>{list.loadingMore ? 'Loading…' : 'Load more'}</button>}
+   </section>
+ }
+diff --git a/web/src/components/SessionScope.tsx b/web/src/components/SessionScope.tsx
+index c8d024b5..f5453894 100644
+--- a/web/src/components/SessionScope.tsx
++++ b/web/src/components/SessionScope.tsx
+@@ -16,6 +16,7 @@ import { saveTheme } from '../lib/theme'
+ import { navigate, useLocation, type Route } from '../router'
+ import { useSessionList, type SessionList } from '../store/useSessionList'
+ import type { StatusFilter } from '../lib/status'
++import { useRegisterContext } from '../app-actions'
+
+ export const HIDE_CLOSED_KEY = 'hennery.hideClosed'
+ /** How long typing rests before a search goes to the server. */
+@@ -96,6 +97,7 @@ export default function SessionScope({ route, children }: { route: Route; deskto
+   const q = useDebounced(query, SEARCH_DEBOUNCE_MS)
+   const attention = route.name === 'needs-you'
+   const list = useSessionList({ pageScope: attention ? 'attention' : 'overview', hat: hat || null, hideClosed: attention ? false : hideClosed, lifecycle: !attention && lifecycle ? [lifecycle] : undefined, q: attention ? '' : q })
++  useRegisterContext({ loadedSessions: list.all })
+   const selectedId = route.name === 'session' && route.id !== undefined ? route.id : null
+   useEffect(() => {
+     if (route.name !== 'sessions') return
+diff --git a/web/src/components/Shell.tsx b/web/src/components/Shell.tsx
+index 85c19b06..5df765d1 100644
+--- a/web/src/components/Shell.tsx
++++ b/web/src/components/Shell.tsx
+@@ -38,6 +38,7 @@ function NavigationAction({ view, enabled }: { view: View; enabled: boolean }) {
+ function Frame({ caps, route }: { caps: CapabilitiesResponse; route: Route }) {
+   const [collapsed, setCollapsed] = usePersistentToggle('hennery.railCollapsed', false)
+   const views = viewsOf(caps.mode)
++  const advertised = views.filter(view => view !== 'defaults' || caps.features.includes('session_defaults'))
+   const current = viewOf(route.name)
+   const shown = current !== null && views.includes(current)
+   const scope = useSessionScope()
+@@ -51,14 +52,14 @@ function Frame({ caps, route }: { caps: CapabilitiesResponse; route: Route }) {
+   return <div className={'app' + (collapsed ? ' app-collapsed' : '') + (route.name === 'session' ? ' app-session' : '')}>
+     {(['needs-you', 'sessions', 'new', 'hosts', 'mcp', 'hats', 'defaults', 'settings'] as const).map(view => <NavigationAction key={view} view={view} enabled={views.includes(view) && (view !== 'mcp' || caps.features.includes('mcp_connections')) && (view !== 'defaults' || caps.features.includes('session_defaults'))} />)}
+     {caps.features.includes('web_push') && <PushForeground />}
+-    <NavigationRail views={views} current={current} collapsed={collapsed} toggle={() => setCollapsed(!collapsed)} />
++    <NavigationRail views={advertised} current={current} collapsed={collapsed} toggle={() => setCollapsed(!collapsed)} />
+     <div className="shell">{!['sessions', 'needs-you', 'session', 'more'].includes(route.name) && <header className="mtopbar"><span className="mtb-title">{current ? LABEL[current] : 'hennery'}</span><McpBadge link /></header>}{route.name === 'session' && (scope?.list.counts.waiting ?? 0) > 0 && <div className="session-scope-status"><Link to="/needs-you">Needs you <WaitingBadge /></Link></div>}<main className="main">
+       <Suspense fallback={<p role="status">Loading…</p>}>
+       {route.name === 'not_found' ? <Placeholder title="Not found" text="No page lives at this address." />
+       : !shown ? <Placeholder title={current ? LABEL[current] : 'hennery'} text="This view is not part of this deployment." />
+       : route.name === 'sessions' ? <Sessions />
+       : route.name === 'needs-you' ? <NeedsYou />
+-      : route.name === 'more' ? <More views={views} />
++      : route.name === 'more' ? <More views={advertised} />
+       : route.name === 'defaults' ? caps.features.includes('session_defaults') ? <Defaults /> : <Placeholder title="Defaults" text="Per-hat session defaults are not part of this deployment." />
+       : route.name === 'hosts' ? <Hosts />
+       : route.name === 'hats' ? <Hats />
+diff --git a/web/src/lib/attentionReason.ts b/web/src/lib/attentionReason.ts
+new file mode 100644
+index 00000000..fc2e140d
+--- /dev/null
++++ b/web/src/lib/attentionReason.ts
+@@ -0,0 +1,18 @@
++// Keep server identifiers out of operator copy, including future reason codes.
++const labels = new Map([
++  ['child_failed', 'Child session failed'],
++  ['operator_takeover', 'You took over this session'],
++  ['parent_unavailable', 'Parent session is unavailable'],
++  ['parent_deleted', 'Parent session was deleted'],
++  ['unsupported_delivery', 'Parent cannot receive this update'],
++  ['handling_deadline', 'Parent did not respond in time'],
++  ['operator_required', 'Your response is needed'],
++  ['queue_full', 'Parent has too many updates waiting'],
++  ['wake_budget', 'Parent could not be resumed again'],
++  ['not_delivered', 'Update could not reach the parent'],
++  ['config_unverified', 'Parent configuration needs review'],
++  ['grant_changed', 'Delegation settings changed'],
++])
++export function attentionReason(reason: string): string {
++  return labels.get(reason) ?? 'Session needs your attention'
++}
+diff --git a/web/src/store/useSessionList.ts b/web/src/store/useSessionList.ts
+index 3ff4cc8f..a82f66c7 100644
+--- a/web/src/store/useSessionList.ts
++++ b/web/src/store/useSessionList.ts
+@@ -181,7 +181,10 @@ export class SessionListController {
+       if (run !== this.run) return
+       if (!isFirstPage(page)) throw new Error('The session list could not be read.')
+       this.generation++
+-      if (resync) this.known = new Map()
++      // Summaries from the previous query bridge only the in-flight read.
++      // Its new anchor skips changes excluded from this baseline, so retained
++      // rows must not outrank fresh per-session detail after acceptance.
++      this.known = new Map()
+       this.attempt = 0
+       this.apply({ type: 'first', page, search: this.search })
+       this.update({
+@@ -262,7 +265,7 @@ export class SessionListController {
+ }
+
+ export interface SessionList extends Omit<SessionListSnapshot, 'store'> {
+-  /** Every summary received, by id (the header reads it). */
++  /** Current baseline/upserts by id; prior rows survive only while loading. */
+   all: ReadonlyMap<string, SessionSummary>
+   /** What the list shows, in order. */
+   shown: SessionSummary[]
+```
+
 ### Verification commands
 
 Run from this worktree root inside the dev shell; preserve real exit statuses in the ledger. Full E2E builds its embedded PWA variants and the real notification fixture through the package script.
@@ -4493,7 +5110,7 @@ If the web lock changes, run `sh packaging/update-web-hash.sh` and commit the Ni
 
 ### Fresh replay and removal probes
 
-Extract Task 1 and all three Task 2 `diff` blocks (four patches) into fresh ignored replay storage. Require each to contain more than zero `diff --git` files before applying with `git apply --check` and `git apply`. Archive `4d461fb0`, initialize the copy's own git root, and APFS-clone the completed target and web dependencies. Apply patches in task order, run their targeted checks, then compare every implementation path byte for byte against the tested worktree and run final web checks/build/embed/browser acceptance there. Do not count an empty extraction or only a subset comparison as success.
+Extract Task 1, all three Task 2 blocks and the PR #206 amendment `diff` block (five patches) into fresh ignored replay storage. Require each to contain more than zero `diff --git` files before applying with `git apply --check` and `git apply`. Archive `4d461fb0`, initialize the copy's own git root, and APFS-clone the completed target and web dependencies. Apply patches in task order, run their targeted checks, then compare every implementation path byte for byte against the tested worktree and run final web checks/build/embed/browser acceptance there. Do not count an empty extraction or only a subset comparison as success.
 
 In a separate cloned probe copy, remove one guard at a time, run the named regression and require a nonzero exit, then restore the exact copied bytes. Probe registry availability/cleanup/precedence, API id encoding, queue attention/query isolation and page budget/retry, late-response fences, preview concurrency/typed data/version/link retention, scoped route return, capability gating, grouping/status outcomes and the separate app/notification allowlists. Verify copied files match tested source after all probes. Probes never mutate the real worktree. Record every probe and its exit; unresolved detection gaps block handoff.
 
@@ -4506,7 +5123,7 @@ Complete Execution status with actual command exits/counts, replay extraction/ma
 R3–R6 branch from the reviewed R2 head. The parent serializes integration/index changes and handles shared-contract amendments.
 
 - **Routes/lazy entry points:** `/needs-you`, `/sessions`, `/sessions/:id?pending=…`, `/new?host=…&cwd=…`, `/more`, `/defaults`, `/hosts`, `/mcp`, `/hats`, `/settings`. Full/gateway checks live in R2's Shell/views. R4 replaces `screens/Defaults.tsx`, `screens/NewSession.tsx` and `components/NewSessionFrame.tsx`; R6 replaces the App-mounted lazy `components/CommandHost.tsx`. Neither edits Shell/router/views/App to insert its screen. `router.launcherReturn()` exposes the safe route-frame return; `navigate` retains a known app opener for `/new`. Rail `?hat=` navigation is scope, never a push permission.
-- **Registry:** `AppActionsProvider`, `AppActions`, `AppActionId`, `AppAction`, `AppContext`, `useAppActions`, `useActionSnapshot`, `useRegisterAction(id, action, priority?)`, `useRegisterContext(context, priority?)`. Actions: `new-session`, `search-sessions`, `toggle-rail`, `toggle-details`, `focus-composer`, `open-needs-you`, `open-sessions`, `open-hosts`, `open-mcp`, `open-hats`, `open-defaults`, `open-settings`, `open-commands`. Handlers contain `{label, enabled, run}`; dispatch returns false for missing/disabled handlers. Screen priority is 0; shell fallback is -1. Context fields are `sessionId`, `hostId`, `cwd`, `hatId`. R3 registers actual session context/details/composer/contextual launch; R4/R5 register their enabled actions in owned files; R6 discovers/dispatches rather than copying mutations. Unmount cleanup is by registration identity. R6 owns command definitions, help, palette and global typing/IME/modal guards.
+- **Registry:** `AppActionsProvider`, `AppActions`, `AppActionId`, `AppAction`, `AppContext`, `useAppActions`, `useActionSnapshot`, `useLoadedSessions`, `useRegisterAction(id, action, priority?)`, `useRegisterContext(context, priority?)`. Actions: `new-session`, `search-sessions`, `toggle-rail`, `toggle-details`, `focus-composer`, `open-needs-you`, `open-sessions`, `open-hosts`, `open-mcp`, `open-hats`, `open-defaults`, `open-settings`, `open-commands`. Handlers contain `{label, enabled, run}`; dispatch returns false for missing/disabled handlers. Screen priority is 0; shell fallback is -1. Context fields are `sessionId`, `hostId`, `cwd`, `hatId`, plus the read-only `loadedSessions` map. Only SessionScope publishes that map; R6 reads it with `useLoadedSessions()` from its App-mounted lazy host. The hook subscribes through the existing action registry and returns a stable empty map outside full-mode scope. Rows are retained during an in-flight query only and retired when the next baseline is accepted. R6 can search these rows and use the existing server-summary API without editing App/Shell or starting another controller/SSE. R3 registers actual session context/details/composer/contextual launch; R4/R5 register their enabled actions in owned files; R6 discovers/dispatches rather than copying mutations. Unmount cleanup is by registration identity. R6 owns command definitions, help, palette and global typing/IME/modal guards.
 - **Delegation facade:** `sessionTools(client, hat)`, `setSessionTools(client, hat, SetSessionTools)`, `executionPolicy(client, hat)`, `setExecutionPolicy(client, hat, SetExecutionPolicy)`, `runtimeCatalog(client, host, agent, cwd, signal?)`. Return generated `HatSessionTools`, `ExecutionPolicy`, `HostCatalog`. All use shared Client and exact encoded identifiers. R4 reads policy security-axis identities; R5 consumes reads/writes with existing step-up. No optimistic revision request is invented. Both lanes consume this file read-only.
 - **CSS:** R2 owns `styles/shell.css`; R3 owns `styles/session.css`, imported by its screen; R4 owns `styles/launch.css`, imported by its screen; R5 owns `manage.css`; R6 adds/imports `styles/commands.css` from its owned modules. Shared `index.css` is frozen. The only initial Session/NewSession source change for extraction is the owned CSS import.
 - **UI primitives:** continue using `components/ui/index.ts`: Button/IconButton, Input/Select/Textarea, RadioGroup, StatusBadge, HatChip/CountPill/ConfigChip/Keycap, bundled Icon, AppearanceButton/AppearanceOptions and useModalLayer. ConfirmDialog/StepUpDialog props remain unchanged. R1 owns these components/tests. R3 consumes `lib/catalog.ts` read-only; R4 preserves its existing parser exports/semantics when extending it.
