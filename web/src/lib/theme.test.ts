@@ -78,11 +78,69 @@ describe('live appearance', () => {
     const unsubscribe = t.subscribeTheme(notify)
     localStorage.setItem(THEME_KEY, JSON.stringify(makeTheme('dark', '#0000ff')))
     window.dispatchEvent(new StorageEvent('storage', { key: THEME_KEY }))
-    expect(t.getTheme()).toEqual(makeTheme('dark', '#0000ff'))
+    expect(t.getTheme()).toEqual(makeTheme('dark'))
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(localStorage.getItem('hennery.hat')).toBe('hat-a')
     expect(localStorage.getItem('draft')).toBe('keep')
     expect(notify).toHaveBeenCalled()
     unsubscribe()
+  })
+  it('syncs remote preferences while keeping this document’s hat palette, session and draft', async () => {
+    const t = await import('./theme')
+    const local = deriveAccent('#ff0000')
+    localStorage.setItem('hennery.hat', 'hat-a')
+    localStorage.setItem('session', 'session-a')
+    localStorage.setItem('draft', 'keep')
+    t.saveTheme(local)
+    const write = vi.spyOn(Storage.prototype, 'setItem')
+    try {
+      dark = true
+      for (const preference of ['dark', 'light', 'system'] as const) {
+        const remote = JSON.stringify(makeTheme(preference, '#0000ff'))
+        localStorage.setItem(THEME_KEY, remote)
+        write.mockClear()
+        window.dispatchEvent(new StorageEvent('storage', { key: THEME_KEY }))
+        const appearance = preference === 'light' ? 'light' : 'dark'
+        expect(t.getTheme()).toEqual({ version: 1, preference, ...local })
+        expect(document.documentElement.dataset.theme).toBe(appearance)
+        for (const [role, value] of Object.entries(local[appearance])) {
+          expect(document.documentElement.style.getPropertyValue(`--hn-${role}`)).toBe(value)
+        }
+        expect(localStorage.getItem('hennery.hat')).toBe('hat-a')
+        expect(localStorage.getItem('session')).toBe('session-a')
+        expect(localStorage.getItem('draft')).toBe('keep')
+        expect(localStorage.getItem(THEME_KEY)).toBe(remote)
+        expect(write).not.toHaveBeenCalled()
+      }
+    } finally {
+      write.mockRestore()
+    }
+  })
+  it('keeps the startup palette while hats load, then accepts the local scope', async () => {
+    localStorage.setItem(THEME_KEY, JSON.stringify(makeTheme('dark', '#112233')))
+    const t = await import('./theme')
+    expect(t.getTheme()).toEqual(makeTheme('dark', '#112233'))
+    localStorage.setItem(THEME_KEY, JSON.stringify(makeTheme('light', '#0000ff')))
+    window.dispatchEvent(new StorageEvent('storage', { key: THEME_KEY }))
+    expect(t.getTheme()).toEqual(makeTheme('light', '#112233'))
+    t.saveTheme(deriveAccent('#ff0000'))
+    expect(t.getTheme()).toEqual(makeTheme('light', '#ff0000'))
+  })
+  it('keeps the local palette and follows System when storage is denied', async () => {
+    const t = await import('./theme')
+    const read = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw Error('denied') })
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw Error('denied') })
+    try {
+      expect(() => t.saveTheme(deriveAccent('#ff0000'))).not.toThrow()
+      expect(() => t.setAppearance('dark')).not.toThrow()
+      window.dispatchEvent(new StorageEvent('storage', { key: null }))
+      expect(t.getTheme()).toEqual(makeTheme('system', '#ff0000'))
+      dark = true; change?.()
+      expect(document.documentElement.dataset.theme).toBe('dark')
+      expect(document.documentElement.style.getPropertyValue('--hn-accent')).toBe(deriveAccent('#ff0000').dark.accent)
+    } finally {
+      read.mockRestore()
+      write.mockRestore()
+    }
   })
 })

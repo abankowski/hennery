@@ -20,7 +20,12 @@ function watch() {
   watching = true
   media()?.addEventListener('change', () => { if (getTheme().preference === 'system') apply() })
   window.addEventListener('storage', (e) => {
-    if (e.key === THEME_KEY || e.key === null) { current = read(); apply() }
+    if (e.key === THEME_KEY || e.key === null) {
+      // Keep this document's startup fallback or locally selected hat palette.
+      // Only appearance is shared across tabs; applying it must not echo a write.
+      current = { ...getTheme(), preference: read().preference }
+      apply()
+    }
   })
   apply()
 }

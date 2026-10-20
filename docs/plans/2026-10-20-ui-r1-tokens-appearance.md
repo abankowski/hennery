@@ -9,7 +9,7 @@
 
 **Executed** on `plan/ui-r1`, built from `339498c5`. Implementation commits: `36f7c43a` (Task 1), `e5f9f726` (Task 2), `3f86b8a9` (Task 3), each pushed to the named branch. Task 4 records this evidence. All authors in the implementation range use `marcin.wadon@gmail.com`. No files from the local design bundle, no Rust/CSP changes and no lockfile changes. No GitHub action or deployment.
 
-Independent task/whole-branch reviews are **requested through the parent**, not claimed completed. The parent owns the PR, full PR status, integration/index entry and release authorization.
+The independent review of `339498c5..c7acf751` returned **APPROVE AFTER AMENDMENTS**, delivered through the parent. Review amendment 1 below addresses its blocking finding; scoped confirmation remains requested through the parent. The parent owns PR #203 into `redesign`, full PR status, integration/index entry and release authorization.
 
 | Final command (under the dev shell unless noted) | Exit | Evidence |
 |---|---:|---|
@@ -40,6 +40,16 @@ Intentional visual differences: hat-derived yellow acceptance accent with measur
 **Assets:** self-hosted Inter **4.1** and official Roboto successor **3.015**; six final WOFF2s total **272,156 bytes**. Source URLs, source/archive SHA256s, each final filename/size/SHA256 and complete OFL/MIT texts are committed in [font/icon notices](../../web/THIRD_PARTY_NOTICES.txt). Normal builds perform no asset network fetch. Both web output and distribution notices retain those texts.
 
 **Skipped intentionally:** Rust tests/clippy/generators (no crates changed, as the brief permits); 4×3 load repetition (no timing/concurrency implementation); Nix dependency hash update (lockfile unchanged); docs index update (parent-owned); installed-iOS/native push acceptance and independent review (parent-owned). The 11 existing browser skips were retained unchanged.
+
+### Review amendment 1
+
+**Finding 1 (P2):** storage events now adopt only the remote appearance preference. The document retains its own in-memory hat palette, initially the persisted startup fallback and subsequently the palette supplied by its local SessionScope. Remote colors never replace that palette; the listener applies without writing to storage. Loading and storage-denial fallbacks remain safe. The two-hat regression checks red local source and every applied CSS role against blue remote records for dark/light/System, selected hat, session/draft storage and absence of response writes. The old storage test's foreign-source expectation is corrected; loading and denied-storage cases are explicit.
+
+**Finding 2 (ownership exceptions):** R1 amended two existing assertions in `web/src/components/SessionList.test.tsx` (R2-owned) to inspect the versioned theme's `source`, including the neutral All source instead of null. It also amended the exact warning foreground assertion in `web/e2e/mcp-oauth.spec.ts` (R5-owned), from `rgb(178, 106, 0)` to the new contrast-safe `rgb(122, 83, 0)`. These are foundation compatibility exceptions; subsequent ownership stays with R2/R5. No behavioral assertion was removed or weakened.
+
+**Finding 3 (nonblocking, default skip):** retain the existing CSP test as reviewed. Its window-local violation list is asserted only in the final document after multiple navigations; this does not establish absence of violations in every earlier document. The review found no actual CSP regression. Collecting violations across navigations remains an optional small test amendment, with no new CI job recommended.
+
+**Amendment verification:** RED in this worktree before the runtime fix: theme suite exit **1**, **4 failed / 5 passed**. After the fix, targeted theme/hats/SessionList exit **0**, **63 passed / 3 files**. Fresh copy `.superpowers/sdd/ui-r1/amendment-1/probes-1` has its own APFS-cloned target: all **9 theme tests passed**; removing the preference-only merge made the two-hat regression fail (**1 failed / 8 skipped**, expected exit **1**). Both copied source/test files were restored and match the worktree byte for byte. Final typecheck/test/build chain exit **0**, **2,095 tests / 113 files**, **3 CSS guard tests**, **1 emitted CSS asset checked**. Embedded collector/testkit build exit **0**. Focused appearance e2e exit **0**, **5 passed** against the rebuilt binary. Logs live in `.superpowers/sdd/ui-r1/amendment-1/`. No full replay, Rust test run or timing load run for this amendment, per the authorized budget. Historical task patches and original replay evidence above remain unchanged; Task 5 adds the exact amendment patch.
 
 ## Scope
 
@@ -3206,6 +3216,96 @@ Stage this task, inspect staged bytes, check `git log --format='%ae' 339498c5..H
 ## Task 4: Record execution
 
 Update only this plan's Execution status with real command exits/counts, copied guard probes, fresh replay file count/tree match and screenshot inventory; do not edit the docs index. Commit `docs(plan): record UI R1 verification and handoff` and push. Independent review requests list all three task ranges and whole-branch risks; no review is claimed completed here.
+
+## Task 5: Review amendment — document-local hat colors
+
+Apply this exact patch after Task 4 (`c7acf751`). The zero-context patch uses `git apply --unidiff-zero --check` then `git apply --unidiff-zero`; the original three task patches and replay remain a historical record.
+
+```diff
+diff --git a/web/src/lib/theme.test.ts b/web/src/lib/theme.test.ts
+index 027efcc1..6cd672da 100644
+--- a/web/src/lib/theme.test.ts
++++ b/web/src/lib/theme.test.ts
+@@ -81 +81 @@ describe('live appearance', () => {
+-    expect(t.getTheme()).toEqual(makeTheme('dark', '#0000ff'))
++    expect(t.getTheme()).toEqual(makeTheme('dark'))
+@@ -87,0 +88,58 @@ describe('live appearance', () => {
++  it('syncs remote preferences while keeping this document’s hat palette, session and draft', async () => {
++    const t = await import('./theme')
++    const local = deriveAccent('#ff0000')
++    localStorage.setItem('hennery.hat', 'hat-a')
++    localStorage.setItem('session', 'session-a')
++    localStorage.setItem('draft', 'keep')
++    t.saveTheme(local)
++    const write = vi.spyOn(Storage.prototype, 'setItem')
++    try {
++      dark = true
++      for (const preference of ['dark', 'light', 'system'] as const) {
++        const remote = JSON.stringify(makeTheme(preference, '#0000ff'))
++        localStorage.setItem(THEME_KEY, remote)
++        write.mockClear()
++        window.dispatchEvent(new StorageEvent('storage', { key: THEME_KEY }))
++        const appearance = preference === 'light' ? 'light' : 'dark'
++        expect(t.getTheme()).toEqual({ version: 1, preference, ...local })
++        expect(document.documentElement.dataset.theme).toBe(appearance)
++        for (const [role, value] of Object.entries(local[appearance])) {
++          expect(document.documentElement.style.getPropertyValue(`--hn-${role}`)).toBe(value)
++        }
++        expect(localStorage.getItem('hennery.hat')).toBe('hat-a')
++        expect(localStorage.getItem('session')).toBe('session-a')
++        expect(localStorage.getItem('draft')).toBe('keep')
++        expect(localStorage.getItem(THEME_KEY)).toBe(remote)
++        expect(write).not.toHaveBeenCalled()
++      }
++    } finally {
++      write.mockRestore()
++    }
++  })
++  it('keeps the startup palette while hats load, then accepts the local scope', async () => {
++    localStorage.setItem(THEME_KEY, JSON.stringify(makeTheme('dark', '#112233')))
++    const t = await import('./theme')
++    expect(t.getTheme()).toEqual(makeTheme('dark', '#112233'))
++    localStorage.setItem(THEME_KEY, JSON.stringify(makeTheme('light', '#0000ff')))
++    window.dispatchEvent(new StorageEvent('storage', { key: THEME_KEY }))
++    expect(t.getTheme()).toEqual(makeTheme('light', '#112233'))
++    t.saveTheme(deriveAccent('#ff0000'))
++    expect(t.getTheme()).toEqual(makeTheme('light', '#ff0000'))
++  })
++  it('keeps the local palette and follows System when storage is denied', async () => {
++    const t = await import('./theme')
++    const read = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw Error('denied') })
++    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw Error('denied') })
++    try {
++      expect(() => t.saveTheme(deriveAccent('#ff0000'))).not.toThrow()
++      expect(() => t.setAppearance('dark')).not.toThrow()
++      window.dispatchEvent(new StorageEvent('storage', { key: null }))
++      expect(t.getTheme()).toEqual(makeTheme('system', '#ff0000'))
++      dark = true; change?.()
++      expect(document.documentElement.dataset.theme).toBe('dark')
++      expect(document.documentElement.style.getPropertyValue('--hn-accent')).toBe(deriveAccent('#ff0000').dark.accent)
++    } finally {
++      read.mockRestore()
++      write.mockRestore()
++    }
++  })
+diff --git a/web/src/lib/theme.ts b/web/src/lib/theme.ts
+index 16fde96d..65074c94 100644
+--- a/web/src/lib/theme.ts
++++ b/web/src/lib/theme.ts
+@@ -23 +23,6 @@ function watch() {
+-    if (e.key === THEME_KEY || e.key === null) { current = read(); apply() }
++    if (e.key === THEME_KEY || e.key === null) {
++      // Keep this document's startup fallback or locally selected hat palette.
++      // Only appearance is shared across tabs; applying it must not echo a write.
++      current = { ...getTheme(), preference: read().preference }
++      apply()
++    }
+```
+
+- [x] Add the regression first and observe RED in the worktree; then apply the runtime change.
+- [x] Run targeted theme/hats/SessionList tests, then remove the preference-only guard in a fresh copy with an APFS-cloned target. Require the two-hat regression to fail; restore and compare the copied bytes.
+- [x] Run `pnpm --dir web typecheck && pnpm --dir web test && pnpm --dir web build` in the dev shell, rebuild the embedded collector/testkit, and run `CI=1 pnpm --dir web exec playwright test appearance.spec.ts --project=chromium`.
+- [x] Verify staged bytes match tested files; record execution findings 1–3, commit a new `fix(ui)` commit without rewriting history, then push `plan/ui-r1`. Request scoped independent confirmation through the parent.
 
 ## After this plan
 
