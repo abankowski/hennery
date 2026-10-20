@@ -2469,8 +2469,8 @@ struct Applied {
     hung: Option<Instant>,
 }
 
-/// Apply `wanted` to a new or loaded session (ACP core §4.3): the model
-/// last, after the other axes and mode, each with
+/// Apply `wanted` to a new or loaded session (ACP core §4.3): mode first,
+/// model next, then model-dependent axes, each with
 /// `session/set_config_option`: Claude can reset the model when entering plan
 /// mode. One correction pass repairs explicit values a later switch changed.
 /// A value already current in an authoritative
@@ -2501,7 +2501,6 @@ async fn apply_config(
         hung: None,
     };
     let mut switches: Vec<(String, ConfigValue)> = Vec::new();
-    switches.extend(wanted.axes.iter().map(|(id, value)| (id.clone(), value.clone())));
     // Resolve from the announced catalogue; every response refreshes read-back.
     let mode = wanted.mode.as_ref().map(|mode| {
         (
@@ -2524,6 +2523,7 @@ async fn apply_config(
                 .push(format!("model={model}: the adapter offers no model option")),
         }
     }
+    switches.extend(wanted.axes.iter().map(|(id, value)| (id.clone(), value.clone())));
     // Requested values that already have their own line in `failures`.
     let mut reported: HashSet<String> = HashSet::new();
     let mut unanswered = false;

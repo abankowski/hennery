@@ -1515,7 +1515,7 @@ async fn plan_mode_model_reset_is_repaired_for_operator_and_delegated_starts() {
 }
 
 #[tokio::test]
-async fn a_start_applies_axes_and_mode_before_model_then_corrects_read_back() {
+async fn a_start_applies_mode_model_then_dependent_axes_and_corrects_read_back() {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("config.log");
     let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
@@ -1535,10 +1535,11 @@ async fn a_start_applies_axes_and_mode_before_model_then_corrects_read_back() {
         SessionOptions::default(),
     );
     let frames = wait_until(&uplink, has("session_started")).await;
-    // The model is last; its mode clamp gets exactly one correction.
+    // Mode comes first, then model-dependent axes. A model's mode clamp
+    // gets one correction, with the model and axes checked again afterwards.
     assert_eq!(
         switches(&log),
-        "effort=high\nfast=true\nmode=plan\nmodel=large\nmode=plan\n"
+        "mode=plan\nmodel=large\neffort=high\nfast=true\nmode=plan\n"
     );
     let indexed = started_extracts(&frames);
     assert_eq!(indexed.current_config(), Some(config));
