@@ -65,6 +65,13 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
   const route = screen === 'overview' ? '/sessions' : screen === 'session' ? '/sessions/permission?pending=permission' : screen === 'running-family' ? '/sessions/running' : screen === 'elicitation' ? '/sessions/question?pending=question' : screen === 'new-session' ? '/new' : screen === 'palette' ? '/sessions' : '/' + screen
   await app.goto(collector.origin + route)
   await expect(app.locator('main')).toBeVisible()
+  if (screen === 'new-session') {
+   const dialog = app.getByRole('dialog', { name: 'New session', exact: true })
+   await dialog.getByRole('textbox', { name: /^First prompt/ }).fill('Check why the latency panel has gaps after midnight')
+   await dialog.getByRole('option', { name: /project/ }).click()
+   await expect(dialog.getByRole('region', { name: 'Session settings', exact: true })).toBeVisible()
+   await expect(dialog.locator('.config-summary')).toHaveText('Model: Sonnet · Permission mode: Default · Reasoning effort: Medium')
+  }
   if ((screen === 'overview' && width === 1280) || screen === 'needs-you') await expect(app.getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
   if (screen === 'session') await expect(app.locator('.transcript').getByText('Run pnpm test for the parser', { exact: true })).toBeVisible()
   if (screen === 'elicitation') {

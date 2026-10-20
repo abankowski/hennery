@@ -42,6 +42,7 @@ import { isLiteralPath, projectEntries } from '../lib/projects'
 import { readNewSessionPrefill, sessionHref, startRefusal } from '../lib/start'
 import { Icon } from '../lib/ui'
 import { Link, navigate, useLocation } from '../router'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 
 /** How long the path must stay unchanged before its hat is resolved. */
 export const RESOLVE_DEBOUNCE_MS = 300
@@ -63,6 +64,7 @@ type Resolved =
   | { state: 'failed'; error: string }
 
 export default function NewSession() {
+  const desktop = useMediaQuery('(min-width: 768px)')
   const client = useClient()
   const { search } = useLocation()
   // Read once: the form owns its fields after that.
@@ -94,7 +96,8 @@ export default function NewSession() {
   const [picks, setPicks] = useState<Picks>(draft?.picks ?? {})
   const [optOut, setOptOut] = useState(false)
   const [generation, setGeneration] = useState(0)
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(desktop)
+  const [runtimeExpanded, setRuntimeExpanded] = useState(false)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false), liveRef = useRef(true)
   const [draftOwner] = useState(() => crypto.randomUUID())
@@ -328,12 +331,13 @@ export default function NewSession() {
   const options = choices ? agentOptions(choices.agents) : []
 
   return (
-    <form className="new-session hn-accent-scope" style={accent} onSubmit={start} aria-busy={busy} aria-labelledby="new-session-title" onKeyDown={e => { if (!e.defaultPrevented && !e.repeat && !e.altKey && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (canStart) e.currentTarget.requestSubmit() } }}>
+    <form className="new-session hn-accent-scope" data-runtime-expanded={runtimeExpanded} style={accent} onSubmit={start} aria-busy={busy} aria-labelledby="new-session-title" onKeyDown={e => { if (!e.defaultPrevented && !e.repeat && !e.altKey && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (canStart) e.currentTarget.requestSubmit() } }}>
       <div className="modal-head">
         <div className="modal-eyebrow">Start a session</div>
         <h1 className="modal-title" id="new-session-title">
           New session
         </h1>
+        <span className="launch-subtitle">Prefilled from your defaults</span>
       </div>
       <div className="modal-body"><fieldset className="launch-fields" aria-label="Session details" disabled={busy} inert={busy}>
         {notice !== null && (
@@ -358,6 +362,7 @@ export default function NewSession() {
               </div>
             </div>
         )}
+        <button type="button" className="launch-runtime-toggle btn btn-ghost" aria-label="Host and agent" aria-expanded={runtimeExpanded} onClick={() => setRuntimeExpanded(value => !value)}><bdi>{host?.name || 'Choose host'}</bdi> · {agentLabel(agentName)} <span>Change</span></button>
         <fieldset className="field launch-choice" disabled={busy}>
           <legend className="field-label" id={ids.host}>
             <Icon.Terminal size={16} /> Host <span className="hint">where the agent runs</span>
@@ -449,6 +454,7 @@ export default function NewSession() {
                 <Icon.Folder size={16} /> Project <span className="hint">type a name, or a path</span>
               </div>
               <ProjectPicker
+                inline
                 key={hostId}
                 hostId={hostId}
                 entries={entries}
@@ -488,8 +494,8 @@ export default function NewSession() {
           </p>
         )}
         <div className="spacer" />
-        <button type="submit" className="btn btn-primary" disabled={!canStart}>
-          <Icon.Bolt size={16} /> {busy ? 'Starting…' : 'Start session'}
+        <button type="submit" className="btn btn-primary" aria-label={busy ? 'Starting…' : 'Start session'} disabled={!canStart}>
+          <Icon.Bolt size={16} /> {busy ? 'Starting…' : desktop ? 'Start session' : `Start on ${host?.name || 'host'}`}
         </button>
       </div>
     </form>

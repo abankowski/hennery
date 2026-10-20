@@ -135,6 +135,7 @@ for (const width of [1280, 390]) {
       // The form's own controls: the session list beside it has a search.
       const form = page.getByRole('form', { name: 'New session', exact: true })
       await expect(form).toBeVisible()
+      if (width === 390) await form.getByRole('button', { name: 'Host and agent', exact: true }).click()
       await expect(form.getByRole('radio', { name: 'e2e host', exact: true })).toBeChecked()
       await expect(form.getByRole('radio', { name: 'Claude', exact: true })).toBeChecked()
       await form.getByRole('combobox').fill(project)

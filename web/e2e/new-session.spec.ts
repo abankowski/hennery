@@ -98,7 +98,7 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       await form.getByRole('textbox', { name: /^First prompt/ }).fill('Prepare synthetic notes.')
       await expect(form.getByRole('button', { name: 'Start session', exact: true })).toBeEnabled()
       await capture(page, `launcher-${width}-${appearance}`)
-      await form.getByRole('button', { name: 'Change', exact: true }).click()
+      if (width < 768) await form.getByRole('button', { name: 'Change', exact: true }).click()
       await capture(page, `launcher-config-${width}-${appearance}`)
       await form.getByRole('link', { name: 'Edit defaults', exact: true }).click()
       await page.getByRole('link', { name: 'Back to new session', exact: true }).click()

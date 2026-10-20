@@ -10,5 +10,6 @@ with available server data rather than inferred agent activity.
 | Needs you / Session | Command / file edit preview | Permission question has a title and options, but no structured command, working directory or file diff | Add bounded permission tool preview to the view question | Shows the server question title and real options |
 | Shell / overview | Global per-hat counts and aggregates | List counts cover loaded summaries, subject to paging and current filters | Add owner-scoped aggregate counts by hat, status and host | Labels partial counts as shown and uses available summaries |
 | Session / Family | Child Doing text and plan progress | Family summaries have activity but no current tool text or child plan counts | Add bounded activity text and plan counts to each family child summary | Shows the child's actual activity and question routing; local session plans use real view items |
+| New session | Recent projects across hosts and hats | Project discovery is per host and recents belong to one resolved hat; no global recent-project list includes host and hat identity | Add an owner-scoped recent-project list with host id, hat id, canonical path and last-used time | Shows the chosen host's projects; the phone's Host and agent control changes that context |
 
 Generated with Claude AI — please review before distribution.

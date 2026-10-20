@@ -133,3 +133,48 @@
 .picker-time { margin-left:auto; display:inline-flex; align-items:center; gap:4px; flex:none; font-family:var(--font-body); font-size:11px; }
 @media(max-width:767px) { .picker-item { min-height:44px; } }
 .picker-item bdi { min-width:0; overflow-wrap:anywhere; }
+/* Fidelity: compact desktop rows, an inline project list, and phone defaults. */
+.launcher-frame { width:min(720px,calc(100vw - 48px)); }
+.launcher-frame .modal-title { font-size:20px; margin:0; }
+.launcher-frame .modal-head { padding:20px 24px 16px; }
+.launcher-frame .launch-fields { gap:14px; }
+.launcher-frame .first-prompt .field-label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); }
+.launcher-frame .prompt-box textarea { min-height:112px; border-width:1px; resize:vertical; }
+.launch-runtime-toggle { display:none; }
+.picker-inline .picker-list { position:relative; top:auto; box-shadow:none; margin-top:6px; max-height:180px; border-radius:6px; }
+.picker-inline .picker-item { min-height:32px; padding:7px 10px; }
+.launcher-frame .launch-choice .seg-item { padding:6px 10px; min-height:30px; border-radius:6px; }
+.launcher-frame .seg-name { font-weight:400; }
+.launcher-frame .seg-item input { position:absolute; opacity:0; }
+.launcher-frame .seg-item:focus-within { outline:2px solid var(--hn-focus-ring); }
+.launcher-frame .config-fields { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.launcher-frame .config-field { padding:10px; }
+.launcher-frame .launch-config > .hint { display:none; }
+.launcher-frame .launch-config { border:1px solid var(--hn-line); background:var(--hn-sunken); padding:12px; border-radius:8px; }
+.launcher-frame .launch-config .config-summary { margin:8px 0 0; }
+@media (min-width:768px) {
+  .launcher-frame .launch-choice { display:grid; grid-template-columns:96px minmax(0,1fr); align-items:center; }
+  .launcher-frame .launch-choice legend { float:left; margin:0; font-size:12px; }
+  .launcher-frame .launch-choice .hint { display:none; }
+  .launcher-frame .launch-choice .seg { grid-column:2; }
+  .launcher-frame .field-label { font-size:12px; }
+}
+@media(max-width:767px) {
+  .launcher-frame { width:100%; max-height:calc(100dvh - 32px); border-radius:20px 20px 0 0; }
+  .launcher-frame .modal-head { padding:16px 64px 12px 16px; }
+  .launcher-frame .prompt-box textarea { min-height:96px; font-size:16px; }
+  .launch-runtime-toggle { display:flex; align-items:center; justify-content:space-between; min-height:44px; font-size:12px; padding:4px 0; color:var(--hn-fg-3); }
+  .new-session[data-runtime-expanded="false"] .launch-choice { display:none; }
+  .picker-inline .picker-item { min-height:48px; }
+  .launcher-frame .launch-fields { gap:12px; }
+  .launcher-frame .config-fields { grid-template-columns:1fr; }
+  .launcher-frame .launch-config { padding:12px; }
+  .launcher-frame .launch-section-head h2 { font-size:13px; }
+  .launcher-frame .config-summary { font-size:12px; }
+}
+.launcher-frame .seg-led.led-run { background:var(--st-run-solid); }.launcher-frame .seg-led.led-idle { background:var(--st-idle-solid); }
+.launcher-frame { max-width:720px; }.launcher-frame .modal-head { display:flex; align-items:center; gap:12px; }
+.launch-subtitle { font-size:12px; color:var(--hn-fg-3); }
+@media(max-width:767px) { .launch-subtitle { display:none; } }
+.launcher-frame .launch-config:has(.config-fields) .config-summary { display:none; }
+.launcher-frame .launch-config .config-fields { margin:10px 0 0; }

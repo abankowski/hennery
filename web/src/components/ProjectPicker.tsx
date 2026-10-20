@@ -14,6 +14,7 @@ import { Icon } from '../lib/ui'
 import { Icon as Glyph } from './ui'
 
 interface Props {
+  inline?: boolean
   hostId: string
   /** Recents then repositories, already merged and labelled. */
   entries: ProjectEntry[]
@@ -33,16 +34,16 @@ type Browse =
   | { state: 'shown'; listing: DirectoryListing }
   | { state: 'failed'; path: string; error: string }
 
-export default function ProjectPicker({ hostId, entries, browseRoot, initialText = '', onChange, labelledBy }: Props) {
+export default function ProjectPicker({ hostId, entries, browseRoot, initialText = '', onChange, labelledBy, inline = false }: Props) {
   const client = useClient()
   // From React, never the host's id: an id reference holds no spaces.
   const listId = useId()
   const [query, setQuery] = useState(initialText)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(inline)
   const [active, setActive] = useState(-1)
   const [browse, setBrowse] = useState<Browse>({ state: 'closed' })
 
-  const matches = useMemo(() => (isLiteralPath(query) ? [] : filterProjects(entries, query)), [entries, query])
+  const matches = useMemo(() => (isLiteralPath(query) ? inline ? entries.slice(0, 6) : [] : filterProjects(entries, query)), [entries, query, inline])
 
   // Only a directory being loaded is fetched: a failed one stays failed
   // until another (or the same one, again) is asked for.
@@ -66,7 +67,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
 
   function pick(path: string, label: string) {
     setQuery(label)
-    setOpen(false)
+    setOpen(inline)
     setActive(-1)
     setBrowse({ state: 'closed' })
     onChange(path)
@@ -111,7 +112,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
   const go = (path: string) => setBrowse({ state: 'loading', path })
 
   return (
-    <div className="picker">
+    <div className={'picker' + (inline ? ' picker-inline' : '')}>
       <div className="picker-row">
         <div className="picker-anchor">
           <div className="path-input">

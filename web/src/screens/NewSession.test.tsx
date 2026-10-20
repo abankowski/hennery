@@ -315,7 +315,7 @@ describe('project picker', () => {
     mount()
     await screen.findByText(/Recent projects of the hat/)
     const field = await projectField()
-    expect(field).not.toHaveAttribute('aria-controls')
+    expect(field).toHaveAttribute('aria-controls', screen.getByRole('listbox').id)
     const user = userEvent.setup()
     await user.type(field, 'cat')
     const list = screen.getByRole('listbox')
