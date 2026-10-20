@@ -6,6 +6,7 @@ import { familyPage, takeOver } from '../api/view'
 import { useClient } from '../app-client'
 import type { FamilyChild, FamilyPage, SessionSummary } from '../generated/view'
 import { agentLabel } from '../lib/agent'
+import { attentionReason } from '../lib/attentionReason'
 import { Link } from '../router'
 import { sessionPath } from './SessionRow'
 import StatusAttention from './StatusAttention'
@@ -23,8 +24,19 @@ export function handlingWords(handling: string): string {
     case 'parent_queued': case 'parent_delivered': return 'Parent is handling'
     case 'operator_required': return 'Operator answer required'
     case 'answer_queued': return 'Answer queued'
-    default: return handling
+    default: return 'Question routing is unavailable'
   }
+}
+
+export function routingWords(routing: string): string {
+  return routing === 'active' ? 'Parent-driven' : routing === 'detached' ? 'Operator-driven' : routing === 'suspended' ? 'Delegation paused' : 'Routing unavailable'
+}
+export function operationWords(state: string): string {
+  const labels = new Map([['accepted', 'Accepted'], ['waiting_config', 'Checking configuration'], ['dispatching', 'Sending'], ['delivered', 'Delivered'], ['done', 'Done'], ['failed', 'Failed'], ['cancelled', 'Cancelled']])
+  return labels.get(state) ?? 'Operation status unavailable'
+}
+export function operationName(tool: string): string {
+  return new Map([['spawn', 'Start child'], ['prompt', 'Prompt'], ['resume', 'Resume'], ['cancel', 'Cancel'], ['close', 'Close'], ['answer', 'Answer']]).get(tool) ?? 'Session operation'
 }
 
 export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Props) {
@@ -80,13 +92,13 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
   const family = summary ? summary.family : page?.summary.family
   const selected = summary ?? page?.summary
   const hasAttention = (selected?.operator_attention ?? 0) > 0 || (selected?.family?.attention ?? 0) > 0 || (page?.summary.operator_attention ?? 0) > 0 || (page?.summary.family?.attention ?? 0) > 0
-  if (!family?.parent && !family?.child_counts.total && !error && !hasAttention) return null
+  if (!family?.parent && !family?.child_counts.total && !error && !hasAttention) return <p className="item-note">{busy ? 'Loading family…' : 'No related sessions.'}</p>
   return <section className="family-panel" aria-label="Session family">
-    <details>
+    <details open>
       <summary>{family?.parent || family?.child_counts.total ? 'Family' : 'Attention'}{family?.child_counts.total ? ` · ${family.child_counts.total} children` : ''}</summary>
       {selected && <StatusAttention session={selected} children={page?.children.map(child => child.summary) ?? []} enabled={hasAttention && page !== null} refreshKey={`${familyKey}:${resync}:${refresh}`} onAcknowledged={() => setRefresh(n => n + 1)} />}
       {family?.parent && <p>Parent: <Link to={sessionPath(family.parent.session_id)}><bdi>{family.parent.title || agentLabel(family.parent.agent)}</bdi></Link></p>}
-      {page?.routing && <p>Routing: {page.routing}{page.reason && <> · <bdi>{page.reason}</bdi></>}</p>}
+      {page?.routing && <p>{routingWords(page.routing)}{page.reason && <> · {attentionReason(page.reason)}</>}</p>}
       {family?.parent && page?.routing === 'active' && <button type="button" className="btn btn-ghost btn-sm" disabled={taking !== null} onClick={() => void takeover({ summary: page.summary })}>{taking === id ? 'Taking over…' : 'Take over'}</button>}
       {page?.children.map(child => {
         const s = child.summary
@@ -97,13 +109,13 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
             <span>{agentLabel(s.agent)}</span>{s.model && <bdi>{s.model}</bdi>}
             <bdi>{hosts.get(s.host_id) || s.host_id}</bdi><bdi>{s.cwd}</bdi>
             <span>{s.lifecycle}</span>{s.activity && <span>{s.activity}</span>}
-            <span>Routing: {child.routing}</span>
+            <span>{routingWords(child.routing)}</span>
           </div>
-          {child.reason && <p><bdi>{child.reason}</bdi></p>}
+          {child.reason && <p>{attentionReason(child.reason)}</p>}
           {child.operations.length >= 16 && <p className="item-note">Latest 16 operations</p>}
-          {child.operations.map(op => <p key={op.operation_id} className="family-operation"><bdi>{op.tool}: {op.state}</bdi>{op.code && <> · <bdi>{op.code}</bdi></>}</p>)}
+          {child.operations.map(op => <p key={op.operation_id} className="family-operation">{operationName(op.tool)}: {operationWords(op.state)}{op.code && <> · {attentionReason(op.code)}</>}</p>)}
           {child.questions.map(question => <p key={question.pending_id}>
-            <span>{handlingWords(question.handling)}</span>{question.reason && <> · <bdi>{question.reason}</bdi></>}{' '}
+            <span>{handlingWords(question.handling)}</span>{question.reason && <> · {attentionReason(question.reason)}</>}{' '}
             <Link to={`${sessionPath(s.session_id)}?pending=${encodeURIComponent(question.pending_id)}`}>Open question</Link>
           </p>)}
           {child.routing === 'active' && <button type="button" className="btn btn-ghost btn-sm" aria-label={`Take over ${title}`} disabled={taking !== null} onClick={() => void takeover(child)}>{taking === s.session_id ? 'Taking over…' : 'Take over'}</button>}

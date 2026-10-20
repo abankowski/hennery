@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import { json, liveStream, routed } from '../test-stream'
 import { familyPage } from '../test-family'
@@ -18,6 +18,7 @@ it('loads family state for a notification deep link with no list summary, and in
     return json({ code: 'not_found', message: 'no' }, 404)
   })
   render(<SessionView id="parent" timing={{ retryMs: () => 1 }} />, { wrapper: s.wrapper })
+  fireEvent.click(screen.getByRole('button', { name: 'Session details', exact: true }))
   expect(await screen.findByRole('region', { name: 'Session family' })).toBeInTheDocument()
   expect(screen.getByText('Waiting on children', { exact: true })).toBeInTheDocument()
   await waitFor(() => expect(streams).toHaveLength(1))

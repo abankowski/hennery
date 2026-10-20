@@ -28,6 +28,7 @@ import { useAnswerState, useFormDraft } from '../../store/useAnswer'
 import Elicitation from './Elicitation'
 import { handlingWords } from '../FamilyPanel'
 import type { ItemEnv, ItemOf } from './types'
+import { attentionReason } from '../../lib/attentionReason'
 
 type Question = ItemOf<'question'>
 
@@ -153,7 +154,7 @@ export default function QuestionCard({ item, env }: Props) {
           <Elicitation request={request} live={live} busy={d.busy} draft={draft} onDraft={onDraft} onAnswer={answer} />
         </>
       )}
-      {item.answerable && routing && <p className="q-routing"><span>{handlingWords(routing.handling)}</span>{routing.reason && <> · <bdi>{routing.reason}</bdi></>}</p>}
+      {item.answerable && routing && <p className="q-routing"><span>{handlingWords(routing.handling)}</span>{routing.reason && <> · <bdi>{attentionReason(routing.reason)}</bdi></>}</p>}
       <p className="q-state">
         <span>{stateText}</span>
         {d.note && <span className="q-note">{d.note}</span>}

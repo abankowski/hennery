@@ -51,6 +51,7 @@ import { CANCEL_OUTCOME, SEND_AGAIN_LABEL, cancelRefusal, configRefusal, promptR
 
 /** What the session screen may ask of its composer. */
 export interface ComposerHandle {
+  focus(): void
   /** Put `text` in the draft, after what is there (an empty draft is
    *  replaced), with `label` shown above it until it is sent; the cursor
    *  goes to its end. Sends nothing. */
@@ -258,6 +259,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   }
 
   useImperativeHandle(handle, () => ({
+    focus: () => taRef.current?.focus(),
     // Words an agent wrote never link a held image. A turn put back is the
     // operator's own, and goes back as it was sent.
     prefill: (words: string, why?: string) => addToDraft([{ type: 'text', text: inertMarkers(words) }], why ?? null),

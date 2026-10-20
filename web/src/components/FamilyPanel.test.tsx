@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { json, routed } from '../test-stream'
-import FamilyPanel from './FamilyPanel'
+import FamilyPanel, { operationWords } from './FamilyPanel'
 
 import { parent, familyPage } from '../test-family'
 
@@ -11,7 +11,7 @@ describe('FamilyPanel', () => {
     const s = routed(c => json(familyPage(c.path.includes('after=child') ? 'child2' : 'child')))
     render(<FamilyPanel id="parent" summary={parent} hosts={new Map([['h1', 'worker host']])} resync={0} />, { wrapper: s.wrapper })
     expect(await screen.findByRole('link', { name: 'Review parser' })).toHaveAttribute('href', '/sessions/child')
-    for (const text of ['Codex', 'reasoner', 'worker host', '/srv/worker', 'active', 'blocked', 'spawn: accepted', 'Parent is handling']) {
+    for (const text of ['Codex', 'reasoner', 'worker host', '/srv/worker', 'active', 'blocked', 'Start child: Accepted', 'Parent is handling']) {
       expect(screen.getByText(text, { exact: true })).toBeInTheDocument()
     }
     expect(screen.getByRole('link', { name: 'Open question' })).toHaveAttribute('href', '/sessions/child?pending=q%2F1')
@@ -31,7 +31,7 @@ describe('FamilyPanel', () => {
     })
     render(<FamilyPanel id="parent" summary={parent} hosts={new Map()} resync={0} />, { wrapper: s.wrapper })
     await userEvent.click(await screen.findByRole('button', { name: 'Take over Review parser' }))
-    expect(await screen.findByText('operator_takeover', { exact: true })).toBeInTheDocument()
+    expect(await screen.findByText('You took over this session', { exact: true })).toBeInTheDocument()
     expect(screen.getByText('Operator answer required', { exact: true })).toBeInTheDocument()
     expect(s.calls.filter(c => c.method === 'POST')).toEqual([expect.objectContaining({ path: '/api/view/sessions/child/takeover' })])
     expect(screen.queryByRole('button', { name: 'Take over Review parser' })).not.toBeInTheDocument()
@@ -83,7 +83,7 @@ it('names queued answers and unknown routing states without claiming delivery', 
   const s = routed(() => json(page))
   render(<FamilyPanel id="parent" summary={parent} hosts={new Map()} resync={0} />, { wrapper: s.wrapper })
   expect(await screen.findByText('Answer queued', { exact: true })).toBeInTheDocument()
-  expect(screen.getByText('future_routing_state', { exact: true })).toBeInTheDocument()
+  expect(screen.getByText('Question routing is unavailable', { exact: true })).toBeInTheDocument()
 })
 
 it('labels the saturated receipt history as latest 16 and preserves truthful receipt states', async () => {
@@ -93,5 +93,5 @@ it('labels the saturated receipt history as latest 16 and preserves truthful rec
   const s = routed(() => json(page))
   render(<FamilyPanel id="parent" summary={parent} hosts={new Map()} resync={0} />, { wrapper: s.wrapper })
   expect(await screen.findByText('Latest 16 operations', { exact: true })).toBeInTheDocument()
-  for (let i = 0; i < states.length; i++) expect(screen.getByText(`tool${i}: ${states[i]}`, { exact: true })).toBeInTheDocument()
+  for (let i = 0; i < states.length; i++) expect(screen.getAllByText(`Session operation: ${operationWords(states[i])}`, { exact: true })).toHaveLength(2)
 })

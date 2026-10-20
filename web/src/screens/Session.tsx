@@ -48,8 +48,12 @@ import { Composer, type ComposerHandle } from '../components/Composer'
 import { ANSWER_LABEL, answerAsMessage } from '../components/composerWords'
 import SessionFooter from '../components/SessionFooter'
 import SessionHeader, { type HeaderInfo } from '../components/SessionHeader'
-import McpDelivery from '../components/McpDelivery'
 import FamilyPanel from '../components/FamilyPanel'
+import SessionDetails from '../components/SessionDetails'
+import { useSessionScope } from '../components/SessionScope'
+import { useRegisterAction, useRegisterContext } from '../app-actions'
+import { useAccentStyle } from '../lib/theme'
+import { takeOver } from '../api/view'
 import { Text } from '../lib/text'
 import { useMcpDelivery } from '../hooks/useMcpDelivery'
 import SessionMenu from '../components/SessionMenu'
@@ -231,6 +235,14 @@ function useTailWindow(items: Item[], loads: number, size: number, pending?: str
 
 export default function SessionView({ id, summary, awaitSummary = false, tail = TAIL, timing, onRemoved }: Props) {
   const client = useClient()
+  const scope = useSessionScope()
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const detailsTrigger = useRef<HTMLButtonElement>(null)
+  const toggleDetails = useCallback(() => setDetailsOpen(open => !open), [])
+  const closeDetails = useCallback(() => setDetailsOpen(false), [])
+  const [familyRefresh, setFamilyRefresh] = useState(0)
+  const [taking, setTaking] = useState(false)
+  const [takeError, setTakeError] = useState<string | null>(null)
   const s = useSessionItems(id, timing)
   const mcp = useMcpDelivery(id, summary?.lifecycle, Math.max(0, s.loads - 1))
   const [familyRead, setFamilyRead] = useState<{ id: string; page: FamilyPage } | null>(null)
@@ -260,9 +272,10 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   const narrow = useMediaQuery('(max-width: 767px)')
   const hostItems = useList('hosts', true)
   const hosts = useMemo(() => namesOf(hostItems, 'host_id'), [hostItems])
-  const wantsHats = useMemo(() => s.items.some((i) => i.kind === 'marker' && i.marker === 'hat_reassigned'), [s.items])
-  const hatItems = useList('hats', wantsHats)
-  const hats = useMemo(() => namesOf(hatItems, 'id'), [hatItems])
+  const hatItems = useList('hats', scope === null)
+  const hats = useMemo(() => scope?.hats ? new Map(scope.hats.map(h => [h.id, h.name])) : namesOf(hatItems, 'id'), [scope?.hats, hatItems])
+  const actualHat = (scope?.hats ?? (Array.isArray(hatItems) ? hatItems as { id: string; colour: string; name: string }[] : [])).find(h => h.id === info?.hat_id)
+  const accent = useAccentStyle(actualHat?.colour)
   const plan = useMemo(() => latestPlan(s.items), [s.items])
   const startNotice = useStartNotice(id)
   const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion, s.pinned)
@@ -272,6 +285,21 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   // The composer's handle: the item seams reach the draft through it, and
   // stay the same functions for as long as the view is shown.
   const composer = useRef<ComposerHandle>(null)
+  const focusComposer = useCallback(() => composer.current?.focus(), [])
+  const openProject = useCallback(() => {
+    if (info) navigate(`/new?host=${encodeURIComponent(info.host_id)}&cwd=${encodeURIComponent(info.cwd)}`)
+  }, [info])
+  useRegisterAction('toggle-details', { label: 'Toggle session details', enabled: !s.removed, run: toggleDetails })
+  useRegisterAction('focus-composer', { label: 'Focus composer', enabled: !s.removed, run: focusComposer })
+  useRegisterAction('new-session', { label: 'New session in this project', enabled: !s.removed && !!info, run: openProject })
+  useRegisterContext({ sessionId: s.removed ? undefined : id, hostId: s.removed ? undefined : info?.host_id, cwd: s.removed ? undefined : info?.cwd, hatId: s.removed ? undefined : info?.hat_id })
+  const takeover = async () => {
+    if (taking) return
+    setTaking(true); setTakeError(null)
+    try { await takeOver(client, id); setFamilyRefresh(n => n + 1) }
+    catch { setTakeError('This session could not be taken over. Try again.') }
+    finally { setTaking(false) }
+  }
   const onSendAgain = useCallback((item: Extract<Item, { kind: 'marker' }>) => {
     if (item.about_turn) void composer.current?.refill(item.about_turn)
   }, [])
@@ -358,13 +386,19 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   }
 
   return (
-    <div className="session" ref={questionRegion}>
+    <div className="session hn-accent-scope" style={accent} ref={questionRegion}>
       <SessionHeader
         id={id}
         info={info}
         hostName={info ? hosts.get(info.host_id) : undefined}
         plan={plan}
         narrow={narrow}
+        hatName={actualHat?.name}
+        hostConnected={connectedOf(hostItems, info?.host_id)}
+        delivery={mcp.detail?.mcp_delivery}
+        detailsOpen={detailsOpen}
+        toggleDetails={toggleDetails}
+        detailsTrigger={detailsTrigger}
         menu={
           <SessionMenu
             id={id}
@@ -376,8 +410,9 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
           />
         }
       />
-      <FamilyPanel key={id} id={id} summary={summary} hosts={hosts} resync={Math.max(0, s.loads - 1)} onPage={onFamilyPage} />
-      <McpDelivery agent={info?.agent ?? mcp.detail?.agent} delivery={mcp.detail?.mcp_delivery} />
+      {info?.family?.parent && family?.routing === 'active' && <div className="parent-banner" role="region" aria-label="Parent-driven session"><p>Driven by <Link to={`/sessions/${encodeURIComponent(info.family.parent.session_id)}`}><bdi>{info.family.parent.title || 'parent session'}</bdi></Link>. Answers go to this child. A prompt from you takes over this session.</p><button type="button" className="btn btn-ghost btn-sm" disabled={taking} onClick={() => void takeover()}>{taking ? 'Taking over…' : 'Take over'}</button>{takeError && <p role="alert">{takeError}</p>}</div>}
+      <div className="session-workspace">
+      <div className="session-conversation">
       {mcp.error && <p className="form-error"><Text>{mcp.error}</Text></p>}
       <div className="stream-state" role="status">
         {s.stream === 'reconnecting' ? 'Reconnecting…' : s.resynced ? 'Resynced' : ''}
@@ -430,6 +465,11 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
           onResume={onResume}
         />
       )}
+      </div>
+      <SessionDetails open={detailsOpen} onClose={closeDetails} trigger={detailsTrigger} info={info} hostName={info ? hosts.get(info.host_id) : undefined} hatName={actualHat?.name} plan={plan} delivery={mcp.detail?.mcp_delivery}>
+        <FamilyPanel key={id} id={id} summary={summary} hosts={hosts} resync={Math.max(0, s.loads - 1) + familyRefresh} onPage={onFamilyPage} />
+      </SessionDetails>
+      </div>
     </div>
   )
 }

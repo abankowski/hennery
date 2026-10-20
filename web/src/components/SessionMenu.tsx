@@ -18,7 +18,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { ApiFailure } from '../api/errors'
 import { close, deleteSession, park } from '../api/turns'
 import { useClient } from '../app-client'
-import type { DeleteResult } from '../generated/protocol'
+import type { DeleteResult, IdleHoldState } from '../generated/protocol'
 import type { FamilySummary } from '../generated/view'
 import { Link } from '../router'
 import { agentLabel } from '../lib/agent'
@@ -50,11 +50,37 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [hold, setHold] = useState<IdleHoldState | null>(null)
+  const [pinBusy, setPinBusy] = useState(false)
+  const pinGeneration = useRef(0)
   const trigger = useRef<HTMLButtonElement>(null)
   const box = useRef<HTMLDivElement>(null)
 
   const showPark = lifecycle === 'active' && canPark
   const showClose = lifecycle !== undefined && lifecycle !== 'closed'
+
+  useEffect(() => {
+    const current = ++pinGeneration.current
+    if (!open) return
+    setHold(null); setError(null); setPinBusy(true)
+    client.request<IdleHoldState>('GET', `/api/sessions/${encodeURIComponent(id)}/idle-hold`).then(value => {
+      if (pinGeneration.current === current) setHold(value)
+    }, () => { if (pinGeneration.current === current) setError('Automatic parking settings could not be read. Reopen this menu to retry.') })
+      .finally(() => { if (pinGeneration.current === current) setPinBusy(false) })
+    return () => { pinGeneration.current++ }
+  }, [client, id, open])
+
+  const togglePin = async () => {
+    if (!hold || pinBusy) return
+    const current = pinGeneration.current
+    setPinBusy(true); setError(null)
+    try {
+      const value = await client.request<IdleHoldState>('PATCH', `/api/sessions/${encodeURIComponent(id)}/idle-hold`, { pinned: !hold.pinned })
+      if (pinGeneration.current === current) setHold(value)
+    } catch {
+      if (pinGeneration.current === current) setError('Automatic parking settings could not be saved. Your previous preference is kept.')
+    } finally { if (pinGeneration.current === current) setPinBusy(false) }
+  }
 
   // A click anywhere outside closes the menu.
   useEffect(() => {
@@ -68,7 +94,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
 
   // Opened: focus its first entry.
   useEffect(() => {
-    if (open) box.current?.querySelector<HTMLElement>('.session-menu-list button')?.focus()
+    if (open) box.current?.querySelector<HTMLElement>('.session-menu-list button:not([disabled])')?.focus()
   }, [open])
 
   const dismiss = () => {
@@ -129,6 +155,8 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
       </button>
       {open && (
         <div className="session-menu-list" id={menuId}>
+          <button type="button" role="switch" aria-checked={hold?.pinned ?? false} disabled={busy || pinBusy || hold === null} onClick={() => void togglePin()}>Do not park</button>
+          <p className="idle-hold-note" role="status">{hold ? [hold.pinned && 'Pinned by you.', hold.family_active && 'Kept awake for family work.', hold.notices_pending && 'Kept awake for pending updates.', !hold.held && 'Automatic idle parking is enabled.'].filter(Boolean).join(' ') : 'Reading automatic parking settings…'}</p>
           {showPark && (
             <button type="button" disabled={busy} onClick={() => void act(() => park(client, id), parkRefusal)}>
               Park
