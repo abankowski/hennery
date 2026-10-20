@@ -159,17 +159,50 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
 test('self-hosted font assets survive an offline PWA reload', async ({ browser }) => {
   const context = await browser.newContext({ serviceWorkers: 'allow' })
   try {
+    // Without a session, /sessions redirects to /login?next=... after load.
+    // Login deliberately bypasses the offline shell; wait for the signed-in UI.
+    const setup = await context.request.post(collector.origin + '/api/setup', {
+      headers: { Origin: collector.origin },
+      data: { token: new URL(collector.setupLink).hash.slice(1), password: 'correct horse battery staple', public_url: collector.origin, default_hat_name: 'Personal' },
+    })
+    expect(setup.ok()).toBe(true)
     const page = await context.newPage()
-    await page.goto(collector.origin + '/login')
+    await page.goto(collector.origin + '/sessions')
+    await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
     await page.evaluate(async () => { await navigator.serviceWorker.ready })
-    await page.reload()
+    const controlled = await page.reload()
+    expect(controlled?.fromServiceWorker()).toBe(true)
     await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
     const cached = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async key => (await (await caches.open(key)).keys()).map(request => new URL(request.url).pathname)))).flat())
     for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal']) for (const subset of ['latin', 'latin-ext']) expect(cached).toContain('/fonts/' + face + '-' + subset + '.woff2')
-    await page.goto(collector.origin + '/sessions')
+    await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
+    await expect(page).toHaveURL(collector.origin + '/sessions')
+    // Exclude the HTTP cache as a source of fonts after this document unloads.
+    const cdp = await context.newCDPSession(page)
+    await cdp.send('Network.clearBrowserCache')
+    await cdp.detach()
+    const offlineFonts: { path: string; worker: boolean; status: number }[] = []
+    page.on('response', response => {
+      if (response.url().endsWith('.woff2')) offlineFonts.push({ path: new URL(response.url()).pathname, worker: response.fromServiceWorker(), status: response.status() })
+    })
     await context.setOffline(true)
-    await page.reload()
+    const offline = await page.reload()
+    expect(offline?.fromServiceWorker()).toBe(true)
+    await expect(page).toHaveURL(collector.origin + '/sessions')
+    await expect(page.getByText('Offline — reconnect to load sessions and answer', { exact: true })).toBeVisible()
+    await page.evaluate(() => {
+      for (const family of ['Inter', 'Roboto']) {
+        const sample = document.createElement('p')
+        sample.textContent = 'Zażółć gęślą jaźń'
+        sample.style.fontFamily = family
+        document.body.append(sample)
+      }
+    })
     await readyFonts(page)
+    for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal']) for (const subset of ['latin', 'latin-ext']) {
+      expect(offlineFonts).toContainEqual({ path: '/fonts/' + face + '-' + subset + '.woff2', worker: true, status: 200 })
+    }
+    expect(await page.evaluate(() => [...document.fonts].filter(face => face.status === 'loaded' && ['Inter', 'Roboto'].includes(face.family)).length)).toBe(6)
     expect(await page.evaluate(() => document.fonts.check('400 16px Inter', 'Zażółć gęślą jaźń'))).toBe(true)
     expect(await page.evaluate(() => document.fonts.check('400 16px Roboto', 'Zażółć gęślą jaźń'))).toBe(true)
   } finally { await context.close() }

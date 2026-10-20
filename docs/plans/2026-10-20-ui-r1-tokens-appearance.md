@@ -51,6 +51,14 @@ Intentional visual differences: hat-derived yellow acceptance accent with measur
 
 **Amendment verification:** RED in this worktree before the runtime fix: theme suite exit **1**, **4 failed / 5 passed**. After the fix, targeted theme/hats/SessionList exit **0**, **63 passed / 3 files**. Fresh copy `.superpowers/sdd/ui-r1/amendment-1/probes-1` has its own APFS-cloned target: all **9 theme tests passed**; removing the preference-only merge made the two-hat regression fail (**1 failed / 8 skipped**, expected exit **1**). Both copied source/test files were restored and match the worktree byte for byte. Final typecheck/test/build chain exit **0**, **2,095 tests / 113 files**, **3 CSS guard tests**, **1 emitted CSS asset checked**. Embedded collector/testkit build exit **0**. Focused appearance e2e exit **0**, **5 passed** against the rebuilt binary. Logs live in `.superpowers/sdd/ui-r1/amendment-1/`. No full replay, Rust test run or timing load run for this amendment, per the authorized budget. Historical task patches and original replay evidence above remain unchanged; Task 5 adds the exact amendment patch.
 
+### Offline font CI follow-up
+
+PR #203's Ubuntu web job exposed an auth redirect race in the font acceptance test. Its unauthenticated `/sessions` navigation asynchronously replaced the URL with `/login?next=%2Fsessions`, which intentionally bypasses the worker cache. Waiting for Sign in reproduced `net::ERR_INTERNET_DISCONNECTED` locally with an activated controlling worker and no waiting/installing worker. This is a test setup defect; the worker follows phone spec §4.2.
+
+The test now creates a real authenticated session, waits for the Sessions heading and exact app URL, and requires the navigation response to come from the worker. It clears Chromium's HTTP cache before going offline and requires the offline document and all six font responses to be worker-served. Both font families render the Polish sample, all six FontFaces must load, and the existing font checks remain.
+
+Controlled RED: **1 failed**, exit **1**, at offline reload after the sign-in redirect settled. Corrected focused test: **1 passed**, exit **0**. Full appearance spec with `--repeat-each 10`: **50 passed**, exit **0**, including ten offline reloads. Typecheck exit **0**; web unit tests **2,095 passed / 113 files**, exit **0**. In copied source with a cloned real binary, baseline **1 passed**; expiring auth fails the worker-navigation precondition, and deleting cached WOFF2s fails offline font loading (**1 failed**, exit **1**, each expected). The copied test was restored and matches the tested source. Logs and retained probe copy: `.superpowers/sdd/ui-r1/offline-font-fix/`. Full `CI=1 pnpm --dir web e2e` exit **0**: **103 passed / 11 unchanged skips** (3.9m), including the rebuilt embedded collector/testkit, both update-test binaries and three CSS guard tests. No new replay, Rust suite or additional load matrix for this test-only amendment; the requested ten full-spec repetitions cover the corrected browser setup. Parent owns scoped review and the new Ubuntu/macOS CI run.
+
 ## Scope
 
 Three implementation tasks: (1) readable hat roles and browser appearance; (2) semantic tokens, fonts, bundled icons, shared native controls and auth/dialog presentation; (3) emitted-CSS and embedded-browser verification. A final documentation task records execution. No route/shell redesign, backend/defaults work, new runtime dependency, CSP relaxation or prototype files. Only token/base cleanup touches `index.css`/`manage.css`. The two existing SessionList storage assertions change only to the versioned record/source contract.
@@ -3306,6 +3314,83 @@ index 16fde96d..65074c94 100644
 - [x] Run targeted theme/hats/SessionList tests, then remove the preference-only guard in a fresh copy with an APFS-cloned target. Require the two-hat regression to fail; restore and compare the copied bytes.
 - [x] Run `pnpm --dir web typecheck && pnpm --dir web test && pnpm --dir web build` in the dev shell, rebuild the embedded collector/testkit, and run `CI=1 pnpm --dir web exec playwright test appearance.spec.ts --project=chromium`.
 - [x] Verify staged bytes match tested files; record execution findings 1–3, commit a new `fix(ui)` commit without rewriting history, then push `plan/ui-r1`. Request scoped independent confirmation through the parent.
+
+## Task 6: Offline font CI follow-up
+
+Apply after Task 5. This preserves the worker's explicit auth-route bypass and makes the font test establish a signed-in, controlled app route before going offline. Exact tested patch:
+
+```diff
+diff --git a/web/e2e/appearance.spec.ts b/web/e2e/appearance.spec.ts
+index 363353a9..1a89da41 100644
+--- a/web/e2e/appearance.spec.ts
++++ b/web/e2e/appearance.spec.ts
+@@ -159,17 +159,50 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
+ test('self-hosted font assets survive an offline PWA reload', async ({ browser }) => {
+   const context = await browser.newContext({ serviceWorkers: 'allow' })
+   try {
++    // Without a session, /sessions redirects to /login?next=... after load.
++    // Login deliberately bypasses the offline shell; wait for the signed-in UI.
++    const setup = await context.request.post(collector.origin + '/api/setup', {
++      headers: { Origin: collector.origin },
++      data: { token: new URL(collector.setupLink).hash.slice(1), password: 'correct horse battery staple', public_url: collector.origin, default_hat_name: 'Personal' },
++    })
++    expect(setup.ok()).toBe(true)
+     const page = await context.newPage()
+-    await page.goto(collector.origin + '/login')
++    await page.goto(collector.origin + '/sessions')
++    await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
+     await page.evaluate(async () => { await navigator.serviceWorker.ready })
+-    await page.reload()
++    const controlled = await page.reload()
++    expect(controlled?.fromServiceWorker()).toBe(true)
+     await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
+     const cached = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async key => (await (await caches.open(key)).keys()).map(request => new URL(request.url).pathname)))).flat())
+     for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal']) for (const subset of ['latin', 'latin-ext']) expect(cached).toContain('/fonts/' + face + '-' + subset + '.woff2')
+-    await page.goto(collector.origin + '/sessions')
++    await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
++    await expect(page).toHaveURL(collector.origin + '/sessions')
++    // Exclude the HTTP cache as a source of fonts after this document unloads.
++    const cdp = await context.newCDPSession(page)
++    await cdp.send('Network.clearBrowserCache')
++    await cdp.detach()
++    const offlineFonts: { path: string; worker: boolean; status: number }[] = []
++    page.on('response', response => {
++      if (response.url().endsWith('.woff2')) offlineFonts.push({ path: new URL(response.url()).pathname, worker: response.fromServiceWorker(), status: response.status() })
++    })
+     await context.setOffline(true)
+-    await page.reload()
++    const offline = await page.reload()
++    expect(offline?.fromServiceWorker()).toBe(true)
++    await expect(page).toHaveURL(collector.origin + '/sessions')
++    await expect(page.getByText('Offline — reconnect to load sessions and answer', { exact: true })).toBeVisible()
++    await page.evaluate(() => {
++      for (const family of ['Inter', 'Roboto']) {
++        const sample = document.createElement('p')
++        sample.textContent = 'Zażółć gęślą jaźń'
++        sample.style.fontFamily = family
++        document.body.append(sample)
++      }
++    })
+     await readyFonts(page)
++    for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal']) for (const subset of ['latin', 'latin-ext']) {
++      expect(offlineFonts).toContainEqual({ path: '/fonts/' + face + '-' + subset + '.woff2', worker: true, status: 200 })
++    }
++    expect(await page.evaluate(() => [...document.fonts].filter(face => face.status === 'loaded' && ['Inter', 'Roboto'].includes(face.family)).length)).toBe(6)
+     expect(await page.evaluate(() => document.fonts.check('400 16px Inter', 'Zażółć gęślą jaźń'))).toBe(true)
+     expect(await page.evaluate(() => document.fonts.check('400 16px Roboto', 'Zażółć gęślą jaźń'))).toBe(true)
+   } finally { await context.close() }
+```
+
+Verification (dev shell, worktree root):
+
+```sh
+CI=1 pnpm --dir web exec playwright test appearance.spec.ts --project=chromium --repeat-each 10
+pnpm --dir web typecheck
+pnpm --dir web test
+CI=1 pnpm --dir web e2e
+```
+
+Commit this amendment as a new `fix(ui)` commit and push `plan/ui-r1`. Parent owns the scoped review and current Linux/macOS CI/full PR status.
 
 ## After this plan
 
