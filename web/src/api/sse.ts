@@ -17,6 +17,8 @@
 // - 401: to the login screen (the client's rule), and the stream ends.
 // - Any other 4xx: the stream ends with an error; a 5xx or a network error
 //   is retried, waiting 1 s, then twice as long each time, up to 30 s.
+// - No bytes for three keepalives: abort this attempt and retry with the
+//   same backoff. Headers alone do not reset it (a proxy may buffer SSE).
 import type { Client } from './client'
 
 export type StreamState = 'connecting' | 'open' | 'reconnecting' | 'closed'
@@ -48,6 +50,8 @@ export interface Stream {
 
 const FIRST_DELAY_MS = 1000
 const MAX_DELAY_MS = 30000
+const KEEPALIVE_MS = 15_000
+const IDLE_TIMEOUT_MS = 3 * KEEPALIVE_MS
 
 /** `setTimeout` as a promise that also settles when `signal` aborts, so a
  *  closed stream leaves no timer behind. */
@@ -67,6 +71,17 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 export function openStream(client: Client, path: string, options: StreamOptions): Stream {
   const abort = new AbortController()
   const sleep = options.sleep ?? abortableSleep
+  let resumeActive: (() => void) | undefined
+  const online = () => resumeActive?.()
+  const visible = () => {
+    if (document.visibilityState === 'visible') resumeActive?.()
+  }
+  window.addEventListener('online', online)
+  document.addEventListener('visibilitychange', visible)
+  const cleanup = () => {
+    window.removeEventListener('online', online)
+    document.removeEventListener('visibilitychange', visible)
+  }
   let lastId = options.lastEventId === '' ? undefined : options.lastEventId
   let state: StreamState | undefined
   const set = (next: StreamState) => {
@@ -81,20 +96,43 @@ export function openStream(client: Client, path: string, options: StreamOptions)
     set('connecting')
     while (!abort.signal.aborted) {
       let status = 0
+      // One controller per attempt: an idle abort must not close the stream
+      // for good. Start before fetch, since a proxy may also hold headers.
+      const connection = new AbortController()
+      let lastReceivedAt = Date.now()
+      let resumeImmediately = false
+      let idleTimer: ReturnType<typeof setTimeout>
+      const stop = () => {
+        clearTimeout(idleTimer)
+        abort.signal.removeEventListener('abort', stop)
+        connection.abort()
+      }
+      const received = () => {
+        if (connection.signal.aborted) return
+        lastReceivedAt = Date.now()
+        delay = FIRST_DELAY_MS
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(stop, IDLE_TIMEOUT_MS)
+      }
+      idleTimer = setTimeout(stop, IDLE_TIMEOUT_MS)
+      abort.signal.addEventListener('abort', stop, { once: true })
+      resumeActive = () => {
+        if (!connection.signal.aborted && Date.now() - lastReceivedAt > KEEPALIVE_MS) {
+          resumeImmediately = true
+          stop()
+        }
+      }
       try {
         const headers: Record<string, string> = { Accept: 'text/event-stream' }
         if (lastId !== undefined) headers['Last-Event-ID'] = lastId
-        const response = await client.open(path, headers, abort.signal)
+        const response = await client.open(path, headers, connection.signal)
         status = response.status
         // Closed while connecting: nothing of this answer is reported.
-        if (abort.signal.aborted) {
+        if (connection.signal.aborted) {
           void response.body?.cancel().catch(() => {})
-          break
-        }
-        if (response.ok && response.body) {
+        } else if (response.ok && response.body) {
           set('open')
-          delay = FIRST_DELAY_MS
-          const threw = await read(response.body, abort.signal, (event) => {
+          const threw = await read(response.body, connection.signal, (event) => {
             if (event.event === 'resync_required') {
               options.onResync?.()
               return
@@ -102,7 +140,7 @@ export function openStream(client: Client, path: string, options: StreamOptions)
             if (event.data !== undefined) options.onEvent(event as StreamEvent)
           }, (id) => {
             lastId = id
-          })
+          }, received)
           if (threw && !abort.signal.aborted) options.onResync?.()
         } else {
           // Nobody reads it: give the connection back.
@@ -119,19 +157,26 @@ export function openStream(client: Client, path: string, options: StreamOptions)
           set('closed')
           return
         }
+      } finally {
+        resumeActive = undefined
+        abort.signal.removeEventListener('abort', stop)
+        stop()
       }
       if (abort.signal.aborted) break
       set('reconnecting')
+      // Wake hints only shortcut a stale active attempt, never a retry wait.
+      if (resumeImmediately) continue
       await sleep(delay, abort.signal)
       delay = Math.min(delay * 2, MAX_DELAY_MS)
     }
     set('closed')
   }
-  void run()
+  void run().finally(cleanup)
 
   return {
     close: () => {
       abort.abort()
+      cleanup()
       set('closed')
     },
     lastEventId: () => lastId,
@@ -156,6 +201,7 @@ async function read(
   signal: AbortSignal,
   dispatch: (event: Block) => void,
   commit: (id: string | undefined) => void,
+  received: () => void,
 ): Promise<boolean> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -224,6 +270,7 @@ async function read(
         // An event not ended by an empty line is dropped, as the format says.
         return !lines(true)
       }
+      if (value.byteLength > 0) received()
       buffer += decoder.decode(value, { stream: true })
       if (!lines(false)) {
         cancel()

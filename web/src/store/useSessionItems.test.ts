@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionCatalog } from '../generated/protocol'
 import type { Item, ItemPage } from '../generated/view'
 import { json, liveStream, routed, type Call, type LiveStream } from '../test-stream'
-import { useSessionItems } from './useSessionItems'
+import { SessionItemsController, useSessionItems } from './useSessionItems'
 import { deferred } from '../test-locks'
 
 // A session id that needs encoding in a path.
@@ -57,6 +57,46 @@ afterEach(() => {
 })
 
 describe('useSessionItems', () => {
+  it.each(['permission', 'elicitation'] as const)('recovers a pending %s after a silent gap by replay or resync', async kind => {
+    vi.useFakeTimers()
+    const question: Item = {
+      id: 'question:p', version: 12, ts: '2026-10-02T10:00:01.000Z', turn_id: 't1',
+      kind: 'question', pending_id: 'p', question_kind: kind,
+      request: kind === 'permission'
+        ? { type: 'permission', title: 'Write notes', options: [{ option_id: 'yes', name: 'Allow', option_kind: 'allow_once' }] }
+        : { type: 'elicitation', message: 'Choose a name', fields: [], form_supported: true },
+      answerable: true, state: 'open', answered: false,
+    }
+    try {
+      for (const recovery of ['replay', 'resync']) {
+        const s = server([page([message('a', 't1')], 10), page([question], 12)])
+        const controller = new SessionItemsController(s.client, ID, () => undefined)
+        controller.start()
+        try {
+          await vi.advanceTimersByTimeAsync(0)
+          s.streams[0].event('item', message('a', 't1', 11), 'e1:11')
+          await vi.advanceTimersByTimeAsync(0)
+          await vi.advanceTimersByTimeAsync(45_000)
+          expect(controller.getSnapshot().stream).toBe('reconnecting')
+          expect(s.streams[0].cancelled).toBe(true)
+          await vi.advanceTimersByTimeAsync(1000)
+          expect(s.of(STREAM_PATH).map(c => c.headers['Last-Event-ID'])).toEqual(['e1:10', 'e1:11'])
+          // This question was created during the lost connection.
+          if (recovery === 'replay') s.streams[1].event('item', question, 'e1:12')
+          else s.streams[1].send('event: resync_required\n\n')
+          await vi.advanceTimersByTimeAsync(0)
+          expect(controller.getSnapshot().store.items.find(i => i.id === question.id)).toEqual(question)
+          expect(s.of(PAGE_PATH)).toHaveLength(recovery === 'replay' ? 1 : 2)
+          if (recovery === 'resync') {
+            expect(s.streams[1].cancelled).toBe(true)
+            expect(s.of(STREAM_PATH)[2].headers['Last-Event-ID']).toBe('e1:12')
+          }
+        } finally { controller.stop() }
+      }
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
   it.each(['http-first', 'sse-first', 'removed'])('fences a bounded old-card read against the stream: %s', async order => {
     const response = deferred<Response>()
     const stream = liveStream()

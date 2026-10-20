@@ -193,7 +193,12 @@ describe('the session list’s resyncs', () => {
     await flush()
     rerender({ hat: 'hat-b', hideClosed: false })
     await flush()
-    await advance(60_000)
+    // The new hat's connection is healthy while the old wait expires.
+    for (let i = 0; i < 4; i++) {
+      await advance(15_000)
+      s.streams[2].send(': keepalive\n\n')
+      await flush()
+    }
     expect(s.of(LIST).map((c) => c.path)).toEqual([`${LIST}?hat=hat-a`, `${LIST}?hat=hat-a`, `${LIST}?hat=hat-b`])
     expect(s.of(LIST_STREAM).map((c) => c.path)).toEqual([`${LIST_STREAM}?hat=hat-a`, `${LIST_STREAM}?hat=hat-a`, `${LIST_STREAM}?hat=hat-b`])
     expect(s.streams.slice(0, 2).every((live) => live.cancelled)).toBe(true)

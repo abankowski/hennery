@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { SessionSummary, SummaryPage } from '../generated/view'
 import { json, liveStream, routed, type LiveStream } from '../test-stream'
 import type { ListFilters } from './sessionList'
-import { useSessionList } from './useSessionList'
+import { SessionListController, useSessionList } from './useSessionList'
 
 const LIST = '/api/view/sessions'
 const STREAM = '/api/stream/sessions'
@@ -62,6 +62,40 @@ function render(s: ReturnType<typeof server>, filters: ListFilters) {
 }
 
 describe('useSessionList', () => {
+  it.each(['replay', 'resync'])('recovers waiting questions in the list after a silent gap via %s', async recovery => {
+    vi.useFakeTimers()
+    const waiting = summary('a', { question_waits: true, activity: 'blocked' })
+    const s = server([page([summary('a')], 10, undefined, 0), page([waiting], 12, undefined, 1)])
+    const controller = new SessionListController(s.client, {})
+    controller.start()
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      s.streams[0].event('waiting_changed', { count: 0 }, 'e1:11')
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(controller.getSnapshot().stream).toBe('reconnecting')
+      expect(s.streams[0].cancelled).toBe(true)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(s.of(STREAM).map(c => c.headers['Last-Event-ID'])).toEqual(['e1:10', 'e1:11'])
+      if (recovery === 'replay') {
+        s.streams[1].event('session_upsert', waiting, 'e1:12')
+        s.streams[1].event('waiting_changed', { count: 1 }, 'e1:12')
+      } else s.streams[1].send('event: resync_required\n\n')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(controller.getSnapshot().store.all.get('a')).toEqual(waiting)
+      expect(controller.getSnapshot().store.waiting).toBe(1)
+      expect(s.of(LIST)).toHaveLength(recovery === 'replay' ? 1 : 2)
+      if (recovery === 'resync') {
+        expect(s.streams[1].cancelled).toBe(true)
+        expect(s.of(STREAM)[2].headers['Last-Event-ID']).toBe('e1:12')
+      }
+    } finally {
+      controller.stop()
+      expect(vi.getTimerCount()).toBe(0)
+      vi.useRealTimers()
+    }
+  })
+
   it('opens: the first page for the query, then the stream from its anchor', async () => {
     const s = server([page([summary('a'), summary('b', { lifecycle: 'closed' })], 10, 'c1')])
     const { result } = render(s, { hat: 'hat-a', hideClosed: true })
