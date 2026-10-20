@@ -97,6 +97,8 @@ export default function NewSession() {
   const [expanded, setExpanded] = useState(false)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false), liveRef = useRef(true)
+  const [draftOwner] = useState(() => crypto.randomUUID())
+  const [sameLogin] = useState(() => launcherLogin(() => liveRef.current))
   useEffect(() => { liveRef.current = true; return () => { liveRef.current = false } }, [])
   const [error, setError] = useState<string | null>(null)
 
@@ -250,16 +252,22 @@ export default function NewSession() {
   const accent = useAccentStyle(hats.find(h => h.id === current?.hat_id)?.colour)
   useRegisterContext({ hostId, cwd: current?.canonical, hatId: current?.hat_id })
   useEffect(() => {
-    if (!hostId) return
-    try { sessionStorage.setItem(LAUNCH_DRAFT, JSON.stringify({ host: hostId, cwd, prompt, agent, otherName, picks })) } catch { /* Current form remains usable. */ }
-  }, [hostId, cwd, prompt, agent, otherName, picks])
+    if (!hostId || !sameLogin()) return
+    try { sessionStorage.setItem(LAUNCH_DRAFT, JSON.stringify({ owner: draftOwner, host: hostId, cwd, prompt, agent, otherName, picks })) } catch { /* Current form remains usable. */ }
+  }, [hostId, cwd, prompt, agent, otherName, picks, draftOwner, sameLogin])
   useEffect(() => { setOptOut(false) }, [context.key])
   function chooseAgent(next: string) { if (next !== agent) { setAgent(next); setPicks({}); setNotice('Agent changed. Session setting choices were reset.') } }
   const canStart = !busy && host?.connected === true && agentName !== '' && current?.exists === true && current.is_dir && config !== null
+  function retainClosedStart(sessionId: string) {
+    if (!sameLogin()) return
+    keepDraft(sessionId, prompt)
+    clearLauncherDraft(draftOwner)
+  }
+  function openSession(href: string) { if (sameLogin() && liveRef.current) navigate(href) }
 
   async function start(e: FormEvent) {
     e.preventDefault()
-    if (!canStart || busyRef.current) return
+    if (!canStart || busyRef.current || !sameLogin()) return
     busyRef.current = true
     setBusy(true)
     e.currentTarget.closest<HTMLElement>('[role="dialog"]')?.focus()
@@ -269,32 +277,36 @@ export default function NewSession() {
     try {
       sessionId = (await client.request<StartSessionResponse>('POST', '/api/sessions', request)).session_id
     } catch (err) {
+      if (!sameLogin()) return
       if (err instanceof ApiFailure && err.code === 'delivery_unknown' && err.sessionId) {
-        clearLauncherDraft()
-        navigate(sessionHref(err.sessionId, { kind: 'start_unknown', kept: keepDraft(err.sessionId, prompt) }))
+        clearLauncherDraft(draftOwner)
+        openSession(sessionHref(err.sessionId, { kind: 'start_unknown', kept: keepDraft(err.sessionId, prompt) }))
         return
       }
+      if (!liveRef.current) return
       busyRef.current = false
       setBusy(false)
       setError(startRefusal(err))
       return
     }
-    if (!liveRef.current) { keepDraft(sessionId, prompt); clearLauncherDraft(); return }
+    if (!sameLogin()) return
+    if (!liveRef.current) { retainClosedStart(sessionId); return }
     // A start acknowledgement alone cannot authorize the first prompt.
     {
       // The opt-out skips configuration evidence, never the actual-hat check.
       const confirmation = await confirmStart(client, sessionId, current!.hat_id, config!, 30_000, !optOut)
-      if (!liveRef.current) { keepDraft(sessionId, prompt); clearLauncherDraft(); return }
+      if (!sameLogin()) return
+      if (!liveRef.current) { retainClosedStart(sessionId); return }
       if (confirmation !== 'confirmed') {
         const code = optOut && confirmation === 'config_unconfirmed' ? 'start_unconfirmed' : confirmation
         keepDraft(sessionId, prompt)
         if (code === 'config_unconfirmed') rememberConfigurationReview(sessionId, context.catalog, config!)
-        clearLauncherDraft()
-        navigate(sessionHref(sessionId, { kind: 'prompt_failed', code }))
+        clearLauncherDraft(draftOwner)
+        openSession(sessionHref(sessionId, { kind: 'prompt_failed', code }))
         return
       }
     }
-    clearLauncherDraft()
+    clearLauncherDraft(draftOwner)
     // Images are not part of the first prompt yet: the composer's image
     // rules (Task 6) take them once it is shared with this form.
     if (prompt.trim() !== '') {
@@ -303,13 +315,14 @@ export default function NewSession() {
           content: [{ type: 'text', text: prompt }],
         })
       } catch (err) {
+        if (!sameLogin()) return
         keepDraft(sessionId, prompt)
         const code = err instanceof ApiFailure ? err.code : 'unknown'
-        navigate(sessionHref(sessionId, { kind: 'prompt_failed', code }))
+        openSession(sessionHref(sessionId, { kind: 'prompt_failed', code }))
         return
       }
     }
-    navigate(sessionHref(sessionId))
+    openSession(sessionHref(sessionId))
   }
 
   const options = choices ? agentOptions(choices.agents) : []
@@ -322,7 +335,7 @@ export default function NewSession() {
           New session
         </h1>
       </div>
-      <fieldset className="modal-body launch-fields" aria-label="Session details" disabled={busy} inert={busy}>
+      <div className="modal-body"><fieldset className="launch-fields" aria-label="Session details" disabled={busy} inert={busy}>
         {notice !== null && (
           <p className="hint" role="status">
             <bdi>{notice}</bdi>
@@ -467,7 +480,7 @@ export default function NewSession() {
 
           </>
         )}
-      </fieldset>
+      </fieldset></div>
       <div className="modal-foot">
         {error !== null && (
           <p className="form-error" role="alert">
@@ -519,6 +532,21 @@ function keepDraft(sessionId: string, prompt: string): boolean {
 }
 
 const LAUNCH_DRAFT = 'hennery.draft.__launcher__'
+const LAUNCH_LOGIN = 'hennery.draft.__launcher_login__'
+/** Existing logout cleanup removes this marker along with every draft.
+ * Reopening a launcher shares it; signing in again creates a new lifetime.
+ * No shared auth/logout helper or other screen needs a new callback. */
+function launcherLogin(live: () => boolean): () => boolean {
+  try {
+    const token = sessionStorage.getItem(LAUNCH_LOGIN) ?? crypto.randomUUID()
+    sessionStorage.setItem(LAUNCH_LOGIN, token)
+    return () => { try { return sessionStorage.getItem(LAUNCH_LOGIN) === token } catch { return false } }
+  } catch {
+    // Storage cannot retain text either. Keep the mounted form usable,
+    // while a closed launcher or auth-page navigation cannot finish it.
+    return () => live() && location.pathname !== '/login' && location.pathname !== '/setup'
+  }
+}
 interface LauncherDraft { host: string; cwd: string; agent: string; otherName: string; prompt: string; picks: Picks }
 function readLauncherDraft(): LauncherDraft | null {
   try {
@@ -530,4 +558,9 @@ function readLauncherDraft(): LauncherDraft | null {
     return v as unknown as LauncherDraft
   } catch { return null }
 }
-function clearLauncherDraft() { try { sessionStorage.removeItem(LAUNCH_DRAFT) } catch { /* Current session draft still remains. */ } }
+function clearLauncherDraft(owner: string) {
+  try {
+    const current = JSON.parse(sessionStorage.getItem(LAUNCH_DRAFT) ?? 'null') as { owner?: unknown } | null
+    if (current?.owner === owner) sessionStorage.removeItem(LAUNCH_DRAFT)
+  } catch { /* Current session draft still remains. */ }
+}

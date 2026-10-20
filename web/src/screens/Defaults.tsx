@@ -15,6 +15,7 @@ export default function Defaults() {
   const client = useClient(), { search } = useLocation(), [query] = useState(() => new URLSearchParams(search))
   const [hosts, setHosts] = useState<HostItem[]>([]), [hats, setHats] = useState<HatItem[]>([])
   const [host, setHost] = useState(query.get('host') ?? ''), [cwd, setCwd] = useState(query.get('cwd') ?? ''), [agent, setAgent] = useState(query.get('agent') ?? '')
+  const [manualAgent, setManualAgent] = useState(false)
   const [selectedHat, setSelectedHat] = useState(query.get('hat') ?? ''), [error, setError] = useState('')
   const [preview, setPreview] = useState<{ host: string; cwd: string; hat: string } | null>(null), [probing, setProbing] = useState(false)
   const [records, setRecords] = useState<Record<string, HatSessionDefaults>>({}), [loading, setLoading] = useState(false), [refresh, setRefresh] = useState(0)
@@ -34,7 +35,7 @@ export default function Defaults() {
   }, [client])
   const ids = [...new Set([...Object.keys(hosts.find(h => h.host_id === host)?.mcp_delivery ?? {}), ...(query.get('agent') ? [query.get('agent')!] : [])])]
   const agents = ids.length ? ids : agent ? [agent] : []
-  useEffect(() => { if (agents.length && !agents.includes(agent)) setAgent(agents[0]) }, [agents.join('\0'), agent])
+  useEffect(() => { if (!manualAgent && !agent && agents.length) setAgent(agents[0]) }, [agents.join('\0'), agent, manualAgent])
   useEffect(() => {
     if (!agent || !hats.length) return
     let live = true, index = 0
@@ -59,12 +60,12 @@ export default function Defaults() {
   const hat = hats.find(h => h.id === selectedHat), record = currentRecords[selectedHat]
   const fields = fieldsOf(catalog)
   return <div className="defaults-screen"><header><div><h1>Defaults</h1><p>Agent default → Hat override → Your choice</p></div>{query.get('return') === 'new' && <Link to="/new?restore=1">Back to new session</Link>}</header>
-    {!preview && <CatalogContext hosts={hosts} host={host} cwd={cwd} onHost={value => { generation.current++; setHost(value); setAgent(''); setPreview(null); setCwd(''); setProbing(false) }} onCwd={value => { generation.current++; setCwd(value); setPreview(null); setProbing(false) }} onPreview={() => void loadPreview()} busy={probing} />}
+    {!preview && <CatalogContext hosts={hosts} host={host} cwd={cwd} onHost={value => { generation.current++; setHost(value); setManualAgent(false); setAgent(''); setPreview(null); setCwd(''); setProbing(false) }} onCwd={value => { generation.current++; setCwd(value); setPreview(null); setProbing(false) }} onPreview={() => void loadPreview()} busy={probing} />}
     <div className="agent-tabs" role="tablist" aria-label="Agent defaults">{agents.map((id, index) => <button role="tab" type="button" key={id} id={`${tabBase}-${index}`} aria-selected={agent === id} aria-controls={`${tabBase}-panel`} tabIndex={agent === id ? 0 : -1} onClick={() => setAgent(id)} onKeyDown={event => {
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? agents.length - 1 : event.key === 'ArrowRight' ? (index + 1) % agents.length : event.key === 'ArrowLeft' ? (index + agents.length - 1) % agents.length : -1
       if (next >= 0) { event.preventDefault(); setAgent(agents[next]); document.getElementById(`${tabBase}-${next}`)?.focus() }
     }}>{agentLabel(id)}</button>)}</div>
-    <details className="runtime-id"><summary>Other agent</summary><label>Configured agent name<input value={agent} onChange={event => setAgent(event.target.value)} placeholder="Agent name on the host" /></label></details>
+    <details className="runtime-id"><summary>Other agent</summary><label>Configured agent name<input value={agent} onChange={event => { setManualAgent(true); setAgent(event.target.value) }} placeholder="Agent name on the host" /></label></details>
     {preview && <p role="status">Preview: <bdi>{hosts.find(h => h.host_id === preview.host)?.name}</bdi> · <bdi>{preview.cwd}</bdi> · Resolves to <bdi>{hats.find(h => h.id === preview.hat)?.name}</bdi> · {context.catalog?.freshness === 'fresh' ? 'Up to date' : context.catalog?.freshness === 'stale' ? 'Out of date' : 'Not verified'} <button className="btn btn-ghost" type="button" onClick={() => setPreview(null)}>Change preview</button></p>}
     {preview && context.state === 'unavailable' && <p role="alert">The settings preview is unavailable. <bdi>{context.error}</bdi> Existing overrides can still be inspected and reset. <button className="btn btn-secondary" type="button" onClick={() => void loadPreview()}>Retry preview</button></p>}
     {error && <p role="alert"><bdi>{error}</bdi><button className="btn btn-secondary" type="button" onClick={() => setRefresh(value => value + 1)}>Retry defaults</button></p>}

@@ -15,6 +15,7 @@ import { newSessionHref, readStartNotice } from '../lib/start'
 import { navigate } from '../router'
 import { json, stubServer, type Answer } from '../test-server'
 import { liveStream } from '../test-stream'
+import { completeLogout } from '../pwa/logout'
 import NewSession, { RESOLVE_DEBOUNCE_MS } from './NewSession'
 
 // The agents a test wants `agentsFor` to answer, or `null` for its own.
@@ -116,7 +117,7 @@ function mount(routes: Record<string, Answer | Answer[]> = {}, path = '/new') {
       <NewSession />
     </ClientContext.Provider>,
   )
-  return { ...server, unmount: view.unmount }
+  return { ...server, client, unmount: view.unmount }
 }
 
 it('predicts delivery for the resolved hat and chosen agent', async () => {
@@ -761,4 +762,44 @@ it('starts only on a deliberate local Mod+Enter, ignoring repeat, IME and extra 
   fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
   await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
   expect(posts(server.sent).filter(path => path === '/api/sessions')).toHaveLength(1)
+})
+
+describe('pending launch persistence ownership', () => {
+  type Phase = 'start' | 'confirmation' | 'ambiguous' | 'prompt-failure'
+  async function pendingLaunch(phase: Phase) {
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>(resolve => { finish = resolve })
+    const path = phase === 'confirmation' ? 'GET /api/sessions/s-1' : phase === 'prompt-failure' ? 'POST /api/sessions/s-1/prompt' : 'POST /api/sessions'
+    const view = mount({ [path]: () => pending })
+    const user = await fill('/srv/work/cat', 'Synthetic private prompt')
+    await waitFor(() => expect(startButton()).toBeEnabled())
+    await user.click(startButton())
+    await waitFor(() => expect(view.sent.some(sent => `${sent.method} ${sent.path}` === path)).toBe(true))
+    const answer = phase === 'confirmation' ? json(200, { session_id: 's-1', hat_id: 'hat-a', lifecycle: 'active' })
+      : phase === 'ambiguous' ? json(502, { code: 'delivery_unknown', session_id: 's-1' })
+      : phase === 'prompt-failure' ? json(409, { code: 'host_offline' }) : json(202, { session_id: 's-1' })
+    return { ...view, settle: async () => { finish(answer); await pending } }
+  }
+  it.each(['start', 'confirmation', 'ambiguous', 'prompt-failure'] as const)('never restores text or navigates after logout during %s', async phase => {
+    const view = await pendingLaunch(phase)
+    await act(async () => { await completeLogout(view.client, false) })
+    view.unmount()
+    expect(sessionStorage.getItem('hennery.draft.__launcher__')).toBeNull()
+    await act(view.settle)
+    expect(Object.keys(sessionStorage).filter(key => key.startsWith('hennery.draft.'))).toEqual([])
+    expect(location.pathname).toBe('/login')
+    if (phase !== 'prompt-failure') expect(posts(view.sent)).not.toContain('/api/sessions/s-1/prompt')
+  })
+  it.each(['start', 'confirmation', 'ambiguous', 'prompt-failure'] as const)('retains a newer real launcher after the closed %s completes', async phase => {
+    const view = await pendingLaunch(phase)
+    view.unmount()
+    mount()
+    fireEvent.change(await screen.findByRole('textbox', { name: 'First prompt optional' }), { target: { value: 'A newer unsent prompt' } })
+    await waitFor(() => expect(sessionStorage.getItem('hennery.draft.__launcher__')).toContain('A newer unsent prompt'))
+    const newer = sessionStorage.getItem('hennery.draft.__launcher__')
+    await act(view.settle)
+    expect(sessionStorage.getItem('hennery.draft.__launcher__')).toBe(newer)
+    expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Synthetic private prompt')
+    expect(location.pathname).toBe('/new')
+  })
 })

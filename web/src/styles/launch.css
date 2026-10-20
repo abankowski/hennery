@@ -46,8 +46,9 @@
 /* UI R4: route-backed launcher and per-hat preferences. */
 .launcher-frame { width:min(720px,calc(100vw - 48px)); max-height:calc(100dvh - 64px); border-radius:var(--radius-xl); }
 .launcher-frame .modal-head { padding:20px 56px 12px 24px; }
-.launcher-frame .modal-body { display:flex; flex-direction:column; gap:20px; padding:8px 24px 24px; overflow-y:auto; }
-.launcher-frame .modal-body > .field { margin:0; }
+.launcher-frame .modal-body { padding:8px 24px 24px; overflow-y:auto; }
+.launcher-frame .launch-fields { display:flex; flex-direction:column; gap:20px; }
+.launcher-frame .launch-fields > .field { margin:0; }
 .launcher-frame .first-prompt { order:-1; }
 .launcher-frame .modal-eyebrow { display:none; }
 .launcher-frame .modal-foot { border-top:1px solid var(--hn-line); padding:16px 24px; }
@@ -90,7 +91,8 @@
 @media(max-width:767px) {
   .launcher-frame { width:100%; max-height:calc(100dvh - 24px); border-radius:20px 20px 0 0; margin-top:auto; }
   .launcher-frame .modal-head { padding:20px 64px 12px 16px; }
-  .launcher-frame .modal-body { padding:8px 16px 20px; gap:16px; }
+  .launcher-frame .modal-body { padding:8px 16px 20px; }
+  .launcher-frame .launch-fields { gap:16px; }
   .launcher-frame .modal-foot { padding:12px 16px calc(12px + env(safe-area-inset-bottom)); }
   .launcher-frame .modal-foot .btn-primary { width:100%; min-height:48px; }
   .launcher-frame .seg-item,.config-field .btn,.agent-tabs button { min-height:44px; }
@@ -121,12 +123,12 @@
 .runtime-id summary { cursor:pointer; min-height:32px; padding:8px 0; }
 .runtime-id label { display:block; }
 @media(max-width:767px) { .runtime-id summary { min-height:44px; } }
-.defaults-screen .config-boolean input,.launcher-frame .config-boolean input { width:16px; height:16px; min-height:0; margin:0; flex:none; accent-color:var(--hn-accent); }
+.defaults-screen .config-boolean input,.launcher-frame .config-boolean input,.launcher-frame .opt-out input { width:16px; height:16px; min-height:0; margin:0; flex:none; accent-color:var(--hn-accent); }
 @media(max-width:767px) {
   .defaults-screen button,.config-boolean,.launch-section-head button { min-height:44px; }
-  .launcher-frame .modal-body > a,.defaults-screen > header a { display:inline-flex; align-items:center; min-height:44px; }
+  .launcher-frame .launch-fields > a,.defaults-screen > header a { display:inline-flex; align-items:center; min-height:44px; }
 }
-.launch-fields { border:0; margin:0; min-width:0; }
+.launch-fields { border:0; margin:0; padding:0; min-width:0; }
 .picker-item { display:flex; align-items:center; gap:8px; }
 .picker-time { margin-left:auto; display:inline-flex; align-items:center; gap:4px; flex:none; font-family:var(--font-body); font-size:11px; }
 @media(max-width:767px) { .picker-item { min-height:44px; } }
