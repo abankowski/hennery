@@ -26,6 +26,7 @@ for (const width of [1280, 390]) test.describe(`OAuth at ${width} px`, () => {
     await form.getByRole('checkbox', { name: 'Internal network', exact: true }).check()
     await form.getByRole('button', { name: 'Create', exact: true }).click()
     await expect(card(name)).toBeVisible()
+    await card(name).locator('.connection-settings > summary').click()
   }
   async function popup(name = 'OAuth docs', button = 'Reconnect') {
     const opened = page.context().waitForEvent('page')
@@ -76,6 +77,7 @@ for (const width of [1280, 390]) test.describe(`OAuth at ${width} px`, () => {
     expect(await host.join(command, ['--name', 'OAuth test host', '--no-runtime'])).toBe(0)
     await expect(page.getByText('Paired: OAuth test host', { exact: true })).toBeVisible({ timeout: 15000 })
     await page.goto('/mcp')
+    await card().locator('.connection-settings > summary').click()
     const mounted = card().getByRole('checkbox', { name: 'OAuth test host', exact: true })
     await mounted.click(); await expect(mounted).toBeChecked()
     const mounts = (await listed()).mounts; expect(mounts).toHaveLength(1); mountedHost = mounts[0]
