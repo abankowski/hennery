@@ -1,3 +1,4 @@
+import { captureManagement } from './management-captures'
 // Real dispatch receipts, not MCP tool execution: the Codex-named fake
 // records session/new and session/load under its own scratch directory.
 import { expect, test, type Page } from '@playwright/test'
@@ -96,6 +97,7 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     await local().getByRole('button', { name: 'Add environment variable', exact: true }).click()
     await local().getByRole('textbox', { name: 'Environment name', exact: true }).fill('TOKEN')
     await local().getByRole('textbox', { name: 'Value for TOKEN', exact: true }).fill(ENV_VALUE)
+    await captureManagement(page, 'mcp-stdio', 'Desktop mcp / local stdio')
     await local().getByRole('button', { name: 'Review local servers', exact: true }).click()
     await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(local().getByRole('textbox', { name: 'Value for TOKEN', exact: true })).toHaveValue('')

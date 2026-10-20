@@ -105,3 +105,66 @@
 .mcp-error-count { color:var(--fg-2); }
 .oauth-connect .btn, .oauth-client .btn, .mcp-report .btn { min-height:44px; }
 .mcp-attention-link { display:inline-flex; align-items:center; max-width:80px; min-height:44px; }
+
+/* UI R5: management surfaces follow the shared paired tokens. */
+.manage { max-width:1100px; padding:24px; gap:20px; color:var(--hn-fg-1); font-size:13px; }
+.manage-head { min-height:32px; }
+.manage-head h1 { font-size:18px; line-height:1.2; }
+.manage-subtitle { margin:-10px 0 0; color:var(--hn-fg-3); line-height:1.55; }
+.manage .card { background:var(--hn-panel); border-color:var(--hn-line); border-radius:12px; box-shadow:none; padding:16px; }
+.manage .card-title, .manage h2 { font:500 15px/1.4 var(--font-display); }
+.manage h3 { font:500 13px/1.4 var(--font-display); }
+.manage .facts { font-size:13px; line-height:1.6; }
+.manage .btn { font-size:12px; min-height:32px; }
+.manage input:not([type=checkbox]):not([type=radio]):not([type=color]), .manage select, .manage textarea { min-width:0; max-width:100%; border:1px solid var(--hn-boundary); border-radius:6px; background:var(--hn-surface); color:var(--hn-fg-1); padding:7px 10px; font:inherit; }
+.manage input:not([type=checkbox]):not([type=radio]):not([type=color]), .manage textarea { width:100%; }
+.manage .inline-form .field, .manage .field-row .field, .manage .rule-prefix { min-width:min(180px, 100%); }
+.manage .field-label { color:var(--hn-fg-2); font:500 12px/1.4 var(--font-display); }
+.manage input[type=checkbox], .manage input[type=radio] { accent-color:var(--hn-accent); }
+.manage .hint { color:var(--hn-fg-3); font-size:12px; line-height:1.6; }
+.manage .tag { color:var(--hn-accent-fg); background:var(--hn-accent-wash); text-transform:none; letter-spacing:0; }
+.manage .state { text-transform:none; font-weight:500; letter-spacing:0; }
+.manage .state-revoked, .manage .mcp-error { color:var(--st-fail-fg); }
+.manage .section-heading { margin:0; }
+.hat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr)); align-items:start; }
+.hat-summary { padding-block:12px; border-top:1px solid var(--hn-line); }
+.hat-defaults-summary { display:grid; gap:10px; margin-block:12px; min-width:0; }
+.hat-defaults-summary .facts dt { overflow-wrap:anywhere; max-width:14ch; }
+.defaults-link { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:44px; padding:8px 12px; margin-bottom:10px; background:var(--hn-sunken); border:1px solid var(--hn-line); border-radius:6px; color:var(--hn-accent-fg); }
+.pairing { border:1px solid var(--hn-accent) !important; }
+.pair-steps { padding-left:20px; line-height:1.7; }
+.manage .stdio-servers { margin:0; padding:16px; border:1px solid var(--hn-line); border-radius:12px; background:var(--hn-panel); }
+.manage .stdio-servers select, .manage .stdio-servers textarea, .manage .stdio-servers input { font:inherit; }
+.manage .stdio-server { padding:12px; border:1px solid var(--hn-line); border-radius:8px; }
+.manage :is(pre,code) { max-width:100%; overflow-wrap:anywhere; }
+.device-settings { max-width:860px; }
+.device-settings .card > h2:first-child { margin:0 0 16px; padding-bottom:12px; border-bottom:1px solid var(--hn-line); }
+.device-settings > .card > .cards > .card { background:var(--hn-surface); border-radius:8px; }
+.settings-context { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.settings-context .field { margin:0; }
+.settings-context .context-path { grid-column:1/-1; }
+.policy-values { display:flex; flex-wrap:wrap; gap:8px 16px; }
+.grant-axis { margin:12px 0; min-width:0; padding:12px; border:1px solid var(--hn-line); border-radius:8px; }
+.grant-axis legend { font-weight:500; padding-inline:4px; }
+.grant-review { margin:12px 0; padding:12px; background:var(--hn-sunken); border-radius:8px; }
+@media (max-width:767px) {
+  .manage { padding:16px; gap:16px; }
+  .manage-head h1 { font-size:20px; }
+  .manage .card { border-radius:14px; padding:14px; }
+  .manage .btn, .manage select, .manage input:not([type=checkbox]):not([type=radio]), .manage .input { min-height:44px; }
+  .manage :is(input:not([type=checkbox]):not([type=radio]),select,textarea) { font-size:16px; }
+  .manage .facts { grid-template-columns:minmax(90px,auto) minmax(0,1fr); }
+  .manage .inline-form, .manage .field-row { align-items:stretch; }
+  .manage .inline-form .field, .manage .field-row .field { flex-basis:100%; }
+  .manage .check, .manage .policy-control { min-height:44px; }
+  .settings-context { grid-template-columns:minmax(0,1fr); }
+}
+.manage a { min-height:32px; display:inline-flex; align-items:center; }
+@media (max-width:767px) { .manage a { min-height:44px; } }
+.pair-steps { list-style:decimal; }
+.pairing-live { display:grid; grid-template-columns:240px minmax(0,1fr); gap:20px; margin-top:12px; }
+.pairing-summary { padding:16px; border-radius:8px; background:var(--hn-accent-wash); }
+.pairing-summary .pairing-code { font-size:26px; color:var(--hn-fg-1); letter-spacing:.04em; }
+.manage .defaults-link { display:flex; }
+@media (max-width:767px) { .pairing-live { grid-template-columns:minmax(0,1fr); gap:12px; } }
+.device-settings .field { display:flex; flex-direction:column; gap:6px; }

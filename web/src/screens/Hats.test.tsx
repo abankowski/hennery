@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
 import App from '../App'
-import { hat, host, preview } from '../test-fixtures'
+import { connection, hat, host, preview } from '../test-fixtures'
 import { FULL, json, stubServer, type Answer } from '../test-server'
 import { loadManageCss, shortTargets } from '../test-targets'
 
@@ -18,6 +18,7 @@ function open(routes: Record<string, Answer | Answer[]> = {}) {
     'GET /api/capabilities': json(200, FULL),
     'GET /api/hats': json(200, [PERSONAL, WORK]),
     'GET /api/hosts': json(200, [host()]),
+    'GET /api/mcp/connections': json(200, []),
     'GET /api/hosts/host-1/path-rules': json(200, []),
     'POST /api/auth/step-up/password': new Response(null, { status: 204 }),
     ...routes,
@@ -36,6 +37,40 @@ const sent = (server: ReturnType<typeof stubServer>, method: string, path: strin
   server.sent.filter((s) => s.method === method && s.path === path)
 
 describe('the hats', () => {
+  it('shows saved overrides from the defaults API for configured agents on active hosts', async () => {
+    const server = open({
+      'GET /api/hosts': json(200, [host({ mcp_delivery: { custom: 'isolated' } }), host({ host_id: 'revoked', revoked_at: 'today', mcp_delivery: { removed: 'isolated' } })]),
+      'GET /api/hats/hat-a/session-defaults?agent=custom': json(200, { hat_id: 'hat-a', agent: 'custom', revision: 1, config: {} }),
+      'GET /api/hats/hat-b/session-defaults?agent=custom': json(200, { hat_id: 'hat-b', agent: 'custom', revision: 2, config: { model: 'stored-model', axes: { fast: false } } }),
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    expect(await within(work).findByText('stored-model', { exact: true })).toBeVisible()
+    expect(within(work).getByText('Off', { exact: true })).toBeVisible()
+    expect(within(work).queryByRole('option', { name: 'removed' })).toBeNull()
+    expect(within(work).getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat-b&agent=custom')
+    expect(server.sent.filter(row => row.path.includes('session-defaults')).every(row => row.method === 'GET')).toBe(true)
+  })
+  it('qualifies gateway connections by actual mounts on non-revoked hosts', async () => {
+    open({
+      'GET /api/hosts': json(200, [host(), host({ host_id: 'gone', name: 'Revoked machine', revoked_at: '2026-10-20' })]),
+      'GET /api/mcp/connections': json(200, [connection({ label: 'Project docs', hat_id: 'hat-b', mounts: ['host-1'] }), connection({ id: 'other', label: 'Archive docs', hat_id: 'hat-b', mounts: ['gone'] })]),
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await waitFor(() => expect(within(work).getByText('Project docs — on laptop, Archive docs — not mounted on a paired host', { exact: true })).toBeVisible())
+    expect(work).not.toHaveTextContent('Revoked machine')
+  })
+  it('derives Default on from live owned hosts and links each hat to Defaults without rendering its logo', async () => {
+    open({
+      'GET /api/hats': json(200, [hat({ ...PERSONAL, logo: 'private-logo' }), WORK]),
+      'GET /api/hosts': json(200, [host(), host({ host_id: 'gone', name: 'Revoked machine', revoked_at: '2026-10-20' })]),
+    })
+    const personal = await screen.findByRole('listitem', { name: 'Personal' })
+    await waitFor(() => expect(within(personal).getByText('laptop', { exact: true })).toBeVisible())
+    expect(within(personal).queryByText('Revoked machine', { exact: true })).toBeNull()
+    expect(within(personal).getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat-a')
+    expect(personal.querySelector('img')).toBeNull()
+    expect(within(screen.getByRole('listitem', { name: 'Work' })).getByText('No hosts', { exact: true })).toBeVisible()
+  })
   it('lists each hat with its colour, the default for new hosts marked', async () => {
     open()
     const personal = await screen.findByRole('listitem', { name: 'Personal' })

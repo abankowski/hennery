@@ -49,6 +49,10 @@ export function passkeys(client: Client): Promise<PasskeyItem[]> {
   return client.request('GET', '/api/auth/passkeys')
 }
 
+export function removePasskey(client: Client, id: string): Promise<void> {
+  return client.request('DELETE', `/api/auth/passkeys/${encodeURIComponent(id)}`)
+}
+
 /** Start a passkey login: its options, to hand to `navigator.credentials.get`
  *  in the click that follows (a prompt needs the click's user activation). */
 export function startPasskeyLogin(client: Client): Promise<PasskeyCeremony> {

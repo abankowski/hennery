@@ -48,6 +48,7 @@ export default function Pairing({ minted, onPaired, onSpent, onClose }: Props) {
   // this.
   const [deadline] = useState(() => performance.now() + CODE_LIFETIME_S * 1000)
   const [left, setLeft] = useState(CODE_LIFETIME_S)
+  const [copied, setCopied] = useState<string | null>(null)
   const before = useRef(new Set(minted?.known))
   // The parent's callbacks, current at each tick, without restarting the
   // poll whenever the parent renders.
@@ -110,26 +111,29 @@ export default function Pairing({ minted, onPaired, onSpent, onClose }: Props) {
         Add a host
       </h2>
       {stage.kind === 'live' && minted && (
-        <>
-          <p>On the machine to pair, run:</p>
+        <div className="pairing-live">
+          <div className="pairing-summary">
+            <h3>Pairing code</h3>
+            <p className="pairing-code"><code>{minted.code}</code></p>
+            <p>Valid for <span role="timer" aria-live="off">{formatLeft(left)}</span>, and once only.</p>
+            <p role="status" className="hint">Waiting for the host… Closing this hides the code; it stays valid until it expires.</p>
+          </div>
+          <div className="pairing-instructions">
+          <ol className="pair-steps"><li>Open a terminal on the new machine with hennery installed.</li><li>Run the command below, then start the host service.</li></ol>
           <pre className="command" aria-label="Pairing command">
             <code>{`hennery host join ${minted.publicUrl} ${minted.code}`}</code>
           </pre>
-          <p className="pairing-code">
-            Code <code>{minted.code}</code>, valid for{' '}
-            <span role="timer" aria-live="off">
-              {formatLeft(left)}
-            </span>
-            , and once only.
-          </p>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
+            if (!navigator.clipboard?.writeText) { setCopied('Copy unavailable. Select the command above to copy it.'); return }
+            void navigator.clipboard.writeText(`hennery host join ${minted.publicUrl} ${minted.code}`).then(() => setCopied('Command copied.'), () => setCopied('Copy unavailable. Select the command above to copy it.'))
+          }}>Copy command</button>
+          {copied && <p role="status">{copied}</p>}
           <p className="hint">
             Leave the code out and <code>host join</code> asks for it instead, which keeps it out of your shell
             history.
           </p>
-          <p role="status" className="hint">
-            Waiting for the host… Closing this hides the code; it stays valid until it expires.
-          </p>
-        </>
+          </div>
+        </div>
       )}
       {stage.kind === 'expired' && <p role="status">The code has expired. Add a host again for a new one.</p>}
       {stage.kind === 'paired' && (
