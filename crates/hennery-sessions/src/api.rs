@@ -1604,9 +1604,13 @@ async fn stream_session(
             state.operator.clone(),
             operator_session,
         ));
-    Sse::new(stream)
+    let mut response = Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
-        .into_response()
+        .into_response();
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
 }
 
 /// The event after which a session's stream ends: its tombstone (plan 9a
@@ -1625,6 +1629,36 @@ fn with_end_mark(messages: Vec<Result<Event, Infallible>>, ends: bool) -> Vec<Op
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn session_stream_disables_proxy_buffering() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = AppState::new(
+            Store::open(&db).unwrap(),
+            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        state.store.create_session("s", "h", "a", "/p", "hat", None).unwrap();
+        let authenticated = Authenticated {
+            session_id: "test".into(),
+            owner_id: state.store.owner_id().into(),
+            last_step_up_at: None,
+            expires_at: i64::MAX,
+            slid: false,
+        };
+        let response = stream_session(
+            State(state),
+            Extension(authenticated),
+            Path("s".into()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "text/event-stream");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+        assert_eq!(response.headers().get("x-accel-buffering").unwrap(), "no");
+    }
 
     #[tokio::test]
     async fn review_reopening_event_updates_the_legacy_pending_stream() {

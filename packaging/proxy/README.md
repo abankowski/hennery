@@ -8,6 +8,7 @@ identity nor retry enrollment. No response cache, access/body logging or
 stream compression is enabled. nginx disables request/response buffering;
 Caddy flushes immediately and lets streams survive a reload for five minutes.
 The collector still enforces each route's body limits and 32 MiB WSS messages.
+Hennery sends `X-Accel-Buffering: no` on SSE responses, so nginx needs no buffering tweak for SSE.
 
 Choose [Caddyfile](Caddyfile) or [nginx.conf](nginx.conf). These exact files
 are executed by `hennery-testkit/tests/reverse_proxy.rs` and the CLI deployment
