@@ -7,6 +7,7 @@ import { useClient } from '../app-client'
 import type { FamilyChild, FamilyPage, SessionSummary } from '../generated/view'
 import { agentLabel } from '../lib/agent'
 import { attentionReason } from '../lib/attentionReason'
+import { statusOf } from '../lib/status'
 import { Link } from '../router'
 import { sessionPath } from './SessionRow'
 import StatusAttention from './StatusAttention'
@@ -46,6 +47,8 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
   const [busy, setBusy] = useState(false)
   const [taking, setTaking] = useState<string | null>(null)
   const [refresh, setRefresh] = useState(0)
+  const [siblings, setSiblings] = useState<{ key: string; page: FamilyPage } | null>(null)
+  const [siblingsBusy, setSiblingsBusy] = useState(false)
   const generation = useRef(0)
   const report = useRef(onPage)
   report.current = onPage
@@ -57,6 +60,7 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
     setPage(held => held?.summary.session_id === id ? held : null)
     setError(null)
     setBusy(true)
+    setSiblingsBusy(false)
     familyPage(client, id).then(value => {
       if (generation.current !== current) return
       setPage(value)
@@ -92,11 +96,26 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
   const family = summary ? summary.family : page?.summary.family
   const selected = summary ?? page?.summary
   const hasAttention = (selected?.operator_attention ?? 0) > 0 || (selected?.family?.attention ?? 0) > 0 || (page?.summary.operator_attention ?? 0) > 0 || (page?.summary.family?.attention ?? 0) > 0
+  const siblingKey = JSON.stringify([id, familyKey, resync, refresh])
+  const related = siblings?.key === siblingKey ? siblings.page : null
+  const readSiblings = async () => {
+    if (!family?.parent || siblingsBusy) return
+    const current = generation.current
+    setSiblingsBusy(true); setError(null)
+    try {
+      const next = await familyPage(client, family.parent.session_id, related?.next_cursor)
+      if (generation.current !== current) return
+      if (next.summary.session_id !== family.parent.session_id || next.summary.hat_id !== selected?.hat_id) throw new Error('The parent family changed. Refresh this session before loading it again.')
+      setSiblings(held => ({ key: siblingKey, page: { ...next, children: held?.key === siblingKey ? [...held.page.children, ...next.children.filter(child => !held.page.children.some(old => old.summary.session_id === child.summary.session_id))] : next.children } }))
+    } catch (err) { if (generation.current === current) setError(messageOf(err)) }
+    finally { if (generation.current === current) setSiblingsBusy(false) }
+  }
   if (!family?.parent && !family?.child_counts.total && !error && !hasAttention) return <p className="item-note">{busy ? 'Loading family…' : 'No related sessions.'}</p>
   return <section className="family-panel" aria-label="Session family">
     <details open>
-      <summary>{family?.parent || family?.child_counts.total ? 'Family' : 'Attention'}{family?.child_counts.total ? ` · ${family.child_counts.total} children` : ''}</summary>
+      <summary tabIndex={0}>{family?.parent || family?.child_counts.total ? 'Family' : 'Attention'}{family?.child_counts.total ? ` · ${family.child_counts.total} children` : ''}</summary>
       {selected && <StatusAttention session={selected} children={page?.children.map(child => child.summary) ?? []} enabled={hasAttention && page !== null} refreshKey={`${familyKey}:${resync}:${refresh}`} onAcknowledged={() => setRefresh(n => n + 1)} />}
+      {selected && <article className="family-child family-current" aria-label="Current session"><span className="item-note">Current session</span><h3><bdi>{selected.title || agentLabel(selected.agent)}</bdi></h3><p>{statusOf(selected).label}</p></article>}
       {family?.parent && <p>Parent: <Link to={sessionPath(family.parent.session_id)}><bdi>{family.parent.title || agentLabel(family.parent.agent)}</bdi></Link></p>}
       {page?.routing && <p>{routingWords(page.routing)}{page.reason && <> · {attentionReason(page.reason)}</>}</p>}
       {family?.parent && page?.routing === 'active' && <button type="button" className="btn btn-ghost btn-sm" disabled={taking !== null} onClick={() => void takeover({ summary: page.summary })}>{taking === id ? 'Taking over…' : 'Take over'}</button>}
@@ -122,6 +141,11 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
         </article>
       })}
       {page?.next_cursor && <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void more()}>Load more children</button>}
+      {family?.parent && <>
+        {related?.children.filter(child => child.summary.session_id !== id).map(child => <article className="family-child" key={child.summary.session_id} aria-label={`Sibling ${child.summary.title || agentLabel(child.summary.agent)}`}><Link to={sessionPath(child.summary.session_id)}><bdi>{child.summary.title || agentLabel(child.summary.agent)}</bdi></Link><p>{statusOf(child.summary).label}</p><p><bdi>{hosts.get(child.summary.host_id) || child.summary.host_id}</bdi></p>{child.routing === 'active' && <button type="button" className="btn btn-ghost btn-sm" disabled={taking !== null} onClick={() => void takeover(child)}>Take over</button>}</article>)}
+        {(!related || related.next_cursor) && <button type="button" className="btn btn-ghost btn-sm" disabled={siblingsBusy} onClick={() => void readSiblings()}>{siblingsBusy ? 'Loading related sessions…' : related ? 'Load more siblings' : 'Load parent’s other children'}</button>}
+        {related && related.children.every(child => child.summary.session_id === id) && !related.next_cursor && <p className="item-note">No other children are listed.</p>}
+      </>}
       {busy && <p role="status">Loading family…</p>}
       {error && <p className="form-error" role="alert">{error} <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRefresh(n => n + 1)}>Retry family</button></p>}
     </details>

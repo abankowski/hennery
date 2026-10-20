@@ -52,8 +52,10 @@ import FamilyPanel from '../components/FamilyPanel'
 import SessionDetails from '../components/SessionDetails'
 import { useSessionScope } from '../components/SessionScope'
 import { useRegisterAction, useRegisterContext } from '../app-actions'
-import { useAccentStyle } from '../lib/theme'
+import { saveTheme, useAccentStyle } from '../lib/theme'
+import { themeOf } from '../lib/hats'
 import { takeOver } from '../api/view'
+import { QuestionPresentationContext } from '../components/QuestionActions'
 import { Text } from '../lib/text'
 import { useMcpDelivery } from '../hooks/useMcpDelivery'
 import SessionMenu from '../components/SessionMenu'
@@ -233,16 +235,22 @@ function useTailWindow(items: Item[], loads: number, size: number, pending?: str
   return { visible, held: start, reveal }
 }
 
-export default function SessionView({ id, summary, awaitSummary = false, tail = TAIL, timing, onRemoved }: Props) {
+export default function SessionView(props: Props) {
+  return <SelectedSession key={props.id} {...props} />
+}
+
+function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timing, onRemoved }: Props) {
   const client = useClient()
   const scope = useSessionScope()
   const [detailsOpen, setDetailsOpen] = useState(false)
   const detailsTrigger = useRef<HTMLButtonElement>(null)
   const toggleDetails = useCallback(() => setDetailsOpen(open => !open), [])
-  const closeDetails = useCallback(() => setDetailsOpen(false), [])
+  const closeDetails = useCallback(() => { setDetailsOpen(false); detailsTrigger.current?.focus() }, [])
   const [familyRefresh, setFamilyRefresh] = useState(0)
   const [taking, setTaking] = useState(false)
   const [takeError, setTakeError] = useState<string | null>(null)
+  const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null)
+  const [answerNotice, setAnswerNotice] = useState<string | null>(null)
   const s = useSessionItems(id, timing)
   const mcp = useMcpDelivery(id, summary?.lifecycle, Math.max(0, s.loads - 1))
   const [familyRead, setFamilyRead] = useState<{ id: string; page: FamilyPage } | null>(null)
@@ -270,12 +278,28 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   }, [id, targetQuestion, s.items, s.pinned])
   const win = useTailWindow(s.items, s.loads, tail, targetQuestion)
   const narrow = useMediaQuery('(max-width: 767px)')
+  useLayoutEffect(() => {
+    if (!narrow || !selectedQuestion) return
+    // Run after the transcript's tail pin and browser focus scrolling settle.
+    // Measure the card itself: its bottom action region sits outside the card.
+    const frame = requestAnimationFrame(() => {
+      const card = [...(questionRegion.current?.querySelectorAll<HTMLElement>('[data-pending-id]') ?? [])].find(el => el.dataset.pendingId === selectedQuestion)
+      const scroll = card?.closest<HTMLElement>('.transcript')
+      if (card && scroll) scroll.scrollTop += card.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 16
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [narrow, selectedQuestion, s.loads])
   const hostItems = useList('hosts', true)
   const hosts = useMemo(() => namesOf(hostItems, 'host_id'), [hostItems])
   const hatItems = useList('hats', scope === null)
   const hats = useMemo(() => scope?.hats ? new Map(scope.hats.map(h => [h.id, h.name])) : namesOf(hatItems, 'id'), [scope?.hats, hatItems])
   const actualHat = (scope?.hats ?? (Array.isArray(hatItems) ? hatItems as { id: string; colour: string; name: string }[] : [])).find(h => h.id === info?.hat_id)
   const accent = useAccentStyle(actualHat?.colour)
+  useEffect(() => {
+    if (!actualHat) return
+    saveTheme(themeOf(actualHat.colour))
+    return () => { if (scope?.hats) saveTheme(themeOf(scope.hats.find(h => h.id === scope.hat)?.colour)) }
+  }, [actualHat?.id, actualHat?.colour, scope?.hats, scope?.hat])
   const plan = useMemo(() => latestPlan(s.items), [s.items])
   const startNotice = useStartNotice(id)
   const answers = useAnswering(id, info, s.items, s.loading, s.loads, connectedOf(hostItems, info?.host_id), s.mergeQuestion, s.pinned)
@@ -285,7 +309,10 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   // The composer's handle: the item seams reach the draft through it, and
   // stay the same functions for as long as the view is shown.
   const composer = useRef<ComposerHandle>(null)
-  const focusComposer = useCallback(() => composer.current?.focus(), [])
+  const focusComposer = useCallback(() => {
+    setSelectedQuestion(null)
+    setTimeout(() => composer.current?.focus(), 0)
+  }, [])
   const openProject = useCallback(() => {
     if (info) navigate(`/new?host=${encodeURIComponent(info.host_id)}&cwd=${encodeURIComponent(info.cwd)}`)
   }, [info])
@@ -329,6 +356,13 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   )
   const back = useRef<HTMLAnchorElement>(null)
   const capabilities = capabilitiesOf(hostItems, info?.host_id)
+  const nextQuestion = useCallback(() => {
+    const cards = [...(questionRegion.current?.querySelectorAll<HTMLElement>('.ask:not(.stale)') ?? [])]
+    const at = cards.findIndex(card => card.dataset.pendingId === selectedQuestion)
+    const next = cards[at + 1] ?? cards[0]
+    next?.scrollIntoView?.({ block: 'center' }); next?.focus({ preventScroll: true })
+  }, [selectedQuestion])
+  const presentation = useMemo(() => narrow ? { selected: selectedQuestion, select: setSelectedQuestion, acknowledge: setAnswerNotice, next: nextQuestion, writePrompt: focusComposer } : null, [narrow, selectedQuestion, nextQuestion, focusComposer])
 
   const env: ItemEnv = useMemo(
     () => ({
@@ -386,7 +420,8 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
   }
 
   return (
-    <div className="session hn-accent-scope" style={accent} ref={questionRegion}>
+    <QuestionPresentationContext.Provider value={presentation}>
+    <div className={'session hn-accent-scope' + (narrow && selectedQuestion ? ' has-question-actions' : '')} style={accent} ref={questionRegion}>
       <SessionHeader
         id={id}
         info={info}
@@ -413,6 +448,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
       {info?.family?.parent && family?.routing === 'active' && <div className="parent-banner" role="region" aria-label="Parent-driven session"><p>Driven by <Link to={`/sessions/${encodeURIComponent(info.family.parent.session_id)}`}><bdi>{info.family.parent.title || 'parent session'}</bdi></Link>. Answers go to this child. A prompt from you takes over this session.</p><button type="button" className="btn btn-ghost btn-sm" disabled={taking} onClick={() => void takeover()}>{taking ? 'Taking over…' : 'Take over'}</button>{takeError && <p role="alert">{takeError}</p>}</div>}
       <div className="session-workspace">
       <div className="session-conversation">
+      {answerNotice && <p className="answer-acknowledgement" role="status">{answerNotice}<button type="button" aria-label="Dismiss answer notice" onClick={() => setAnswerNotice(null)}>×</button></p>}
       {mcp.error && <p className="form-error"><Text>{mcp.error}</Text></p>}
       <div className="stream-state" role="status">
         {s.stream === 'reconnecting' ? 'Reconnecting…' : s.resynced ? 'Resynced' : ''}
@@ -471,6 +507,7 @@ export default function SessionView({ id, summary, awaitSummary = false, tail = 
       </SessionDetails>
       </div>
     </div>
+    </QuestionPresentationContext.Provider>
   )
 }
 

@@ -226,19 +226,20 @@ describe('digit shortcuts', () => {
     media([DESKTOP])
     const t = setup({ [`POST ${PATH('p/1')}`]: json(202, { pending_id: 'p/1', request_id: 'r1' }) })
     show(permission(), { sessionId: SESSION, agent: 'Codex', answers: t.book })
+    card().focus()
     expect(card()).toHaveAttribute('tabindex', '0')
     fireEvent.keyDown(card(), { key: '2' })
     await screen.findByText('Sent')
     expect(t.posts().map((p) => p.body)).toEqual([{ option_id: 'b' }])
   })
 
-  it('answer from a button inside the card', async () => {
+  it('ignores digits from a button inside the card', () => {
     media([DESKTOP])
     const t = setup({ [`POST ${PATH('p/1')}`]: json(202, { pending_id: 'p/1', request_id: 'r1' }) })
     show(permission(), { sessionId: SESSION, agent: 'Codex', answers: t.book })
+    card().focus()
     fireEvent.keyDown(screen.getByRole('button', { name: 'Never' }), { key: '1' })
-    await screen.findByText('Sent')
-    expect(t.posts().map((p) => p.body)).toEqual([{ option_id: 'a' }])
+    expect(t.posts()).toHaveLength(0)
   })
 
   it('are never heard from the window or a field outside the card', () => {
@@ -260,6 +261,7 @@ describe('digit shortcuts', () => {
     media([DESKTOP])
     const t = setup()
     show(permission(), { sessionId: SESSION, agent: 'Codex', answers: t.book })
+    card().focus()
     const field = document.createElement('input')
     card().appendChild(field)
     fireEvent.keyDown(field, { key: '1' })
@@ -270,6 +272,7 @@ describe('digit shortcuts', () => {
     media(['(min-width: 768px)', '(pointer: fine)'])
     const t = setup()
     show(permission(), { sessionId: SESSION, agent: 'Codex', answers: t.book })
+    card().focus()
     fireEvent.keyDown(card(), { key: '1' })
     expect(t.posts()).toHaveLength(0)
     expect(document.querySelector('.q-key')).toBeNull()
@@ -279,6 +282,7 @@ describe('digit shortcuts', () => {
     media([DESKTOP])
     const t = setup()
     show(permission(), { sessionId: SESSION, agent: 'Codex', answers: t.book })
+    card().focus()
     // A digit past the options is not an option: nothing is read for it.
     const thrown: unknown[] = []
     const onError = (e: ErrorEvent) => {
@@ -298,10 +302,20 @@ describe('digit shortcuts', () => {
     expect(t.posts()).toHaveLength(0)
   })
 
+  it.each([{ repeat: true }, { isComposing: true }])('ignores a repeated or composed digit (%j)', props => {
+    media([DESKTOP])
+    const t = setup()
+    show(permission(), { sessionId: SESSION, agent: 'Codex', answers: t.book })
+    card().focus()
+    fireEvent.keyDown(card(), { key: '1', ...props })
+    expect(t.posts()).toHaveLength(0)
+  })
+
   it('show each digit beside its option, and keep its bare name as the option’s name', () => {
     media([DESKTOP])
     const t = setup()
     show(permission(), { sessionId: SESSION, agent: 'Codex', answers: t.book })
+    card().focus()
     expect(screen.getByRole('button', { name: 'Allow' })).toHaveTextContent('Allow2')
     expect(Array.from(document.querySelectorAll('.q-key')).map((k) => k.textContent)).toEqual(['1', '2', '3', '4', '5'])
   })

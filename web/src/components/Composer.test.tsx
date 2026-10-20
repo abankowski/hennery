@@ -609,7 +609,7 @@ describe('Composer: config bar', () => {
     await waitFor(() => expect(model).toHaveValue('c'), WAIT)
     expect(model).toBeEnabled()
     expect(screen.getByRole('combobox', { name: 'Mode' })).toHaveValue('edit')
-    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('alert')).toHaveTextContent('the agent kept c instead of b')
   })
 
   it('switches an on/off option', async () => {
@@ -850,4 +850,31 @@ describe('Composer: work added while a prompt is being sent', () => {
     expect(textarea().value).toBe('[Image #1] ')
     expect(screen.queryByRole('alert')).toBeNull()
   })
+})
+
+it('keeps Send disabled while configuration is pending and explains a missing adapter read-back', async () => {
+  let finish!: (response: Response) => void
+  const result = new Promise<Response>(resolve => { finish = resolve })
+  const c = mount(() => result, { initialCatalog: catalogOf() })
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Keep this draft' } })
+  fireEvent.change(screen.getByRole('combobox', { name: 'Model' }), { target: { value: 'b' } })
+  expect(screen.getByText('Applying session settings…', { exact: true })).toBeInTheDocument()
+  expect(screen.getByRole('combobox', { name: 'Mode' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+  fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter', ctrlKey: true })
+  expect(c.prompts()).toHaveLength(0)
+  await act(async () => { finish(json({ session_id: 's1', config_options: [], commands: [] }, 202)); await result })
+  expect(screen.getByRole('alert')).toHaveTextContent('the agent did not confirm this setting')
+  expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this draft')
+})
+
+it('renders every catalog effort choice as a native radio and sends its exact axis/value', async () => {
+  const catalog = catalogOf()
+  catalog.config_options.push({ id: 'reasoning_effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'balanced', options: [{ value: 'tiny', name: 'Brief' }, { value: 'balanced', name: 'Balanced' }, { value: 'deep', name: 'Thorough' }] })
+  const c = mount(() => json(catalog, 202), { initialCatalog: catalog })
+  expect(screen.getByRole('radio', { name: 'Balanced' })).toBeChecked()
+  fireEvent.click(screen.getByRole('radio', { name: 'Thorough' }))
+  await waitFor(() => expect(c.posts).toEqual([{ path: '/api/sessions/s1/config', body: { config_id: 'reasoning_effort', value: 'deep' } }]))
+  await screen.findByRole('alert')
+  expect(screen.getByRole('radio', { name: 'Balanced' })).toBeChecked()
 })

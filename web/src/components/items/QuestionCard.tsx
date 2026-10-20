@@ -20,7 +20,7 @@
 //   view words the composer's draft around it.
 // - A form's draft lives in the answer book, by question: the card can be
 //   mounted again without losing it.
-import { useEffect, useRef, type KeyboardEvent } from 'react'
+import { useContext, useEffect, useRef, type KeyboardEvent } from 'react'
 import type { AnswerRequest } from '../../generated/protocol'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { deliveryOf, digitIndex, isEditable, optionTone, questionText, type OptionTone } from '../../lib/delivery'
@@ -29,6 +29,8 @@ import Elicitation from './Elicitation'
 import { handlingWords } from '../FamilyPanel'
 import type { ItemEnv, ItemOf } from './types'
 import { attentionReason } from '../../lib/attentionReason'
+import QuestionActions, { QuestionPresentationContext } from '../QuestionActions'
+import { clockTime } from '../../lib/time'
 
 type Question = ItemOf<'question'>
 
@@ -71,6 +73,15 @@ export default function QuestionCard({ item, env }: Props) {
   // Live: this card can answer now.
   const live = book !== undefined && d.controls
   const desktop = useMediaQuery(DESKTOP)
+  const presentation = useContext(QuestionPresentationContext)
+  const wasLive = useRef(live)
+  useEffect(() => {
+    if (wasLive.current && !live) {
+      presentation?.acknowledge(stateText)
+      if (presentation?.selected === item.pending_id) presentation.select(null)
+    }
+    wasLive.current = live
+  }, [live, presentation, item.pending_id])
   const ref = useRef<HTMLElement>(null)
   const { composerEmpty, agent } = env
   const kind = request.type
@@ -93,7 +104,7 @@ export default function QuestionCard({ item, env }: Props) {
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (!live || !desktop || d.busy || request.type !== 'permission') return
+    if (!live || !desktop || d.busy || request.type !== 'permission' || e.target !== e.currentTarget || document.activeElement !== e.currentTarget || e.defaultPrevented || e.repeat || e.nativeEvent.isComposing) return
     const at = digitIndex(e)
     if (at === undefined || at >= request.options.length) return
     e.preventDefault()
@@ -108,16 +119,23 @@ export default function QuestionCard({ item, env }: Props) {
       aria-label={`Question from ${agent}`}
       tabIndex={live ? 0 : undefined}
       onKeyDown={live ? onKeyDown : undefined}
+      onFocusCapture={e => {
+        // Do not relocate a button between pointer-down (focus) and pointer-up.
+        // Card/field focus selects the adaptive region; a direct option click
+        // answers through this same control at its existing position.
+        if (live && !e.target.closest('.question-actions')) presentation?.select(item.pending_id)
+      }}
     >
       <div className="ask-eyebrow">
         <span className="e-tag">{request.type === 'permission' ? `${agent} asks for permission` : `${agent} asks`}</span>
+        <time className="q-age" dateTime={item.ts} title={item.ts}>{clockTime(item.ts)}</time>
       </div>
       {request.type === 'permission' ? (
         <>
           <p className="ask-q">{request.title || 'Permission'}</p>
           {request.options.length > 0 &&
             (live ? (
-              <div className="q-opts" role="group" aria-label="Options">
+              <QuestionActions pendingId={item.pending_id}><div className="q-opts" role="group" aria-label="Options">
                 {request.options.map((option, i) => {
                   const tone = optionTone(option.option_kind)
                   return (
@@ -137,7 +155,7 @@ export default function QuestionCard({ item, env }: Props) {
                     </button>
                   )
                 })}
-              </div>
+              </div></QuestionActions>
             ) : (
               <ul className="q-opts">
                 {request.options.map((option) => (
@@ -151,7 +169,7 @@ export default function QuestionCard({ item, env }: Props) {
       ) : (
         <>
           <p className="ask-q">{request.message}</p>
-          <Elicitation request={request} live={live} busy={d.busy} draft={draft} onDraft={onDraft} onAnswer={answer} />
+          <Elicitation request={request} live={live} busy={d.busy} draft={draft} onDraft={onDraft} onAnswer={answer} pendingId={item.pending_id} />
         </>
       )}
       {item.answerable && routing && <p className="q-routing"><span>{handlingWords(routing.handling)}</span>{routing.reason && <> · <bdi>{attentionReason(routing.reason)}</bdi></>}</p>}

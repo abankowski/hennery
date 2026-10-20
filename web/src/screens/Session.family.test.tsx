@@ -18,9 +18,9 @@ it('loads family state for a notification deep link with no list summary, and in
     return json({ code: 'not_found', message: 'no' }, 404)
   })
   render(<SessionView id="parent" timing={{ retryMs: () => 1 }} />, { wrapper: s.wrapper })
-  fireEvent.click(screen.getByRole('button', { name: 'Session details', exact: true }))
+  fireEvent.click(screen.getByRole('button', { name: 'Session details' }))
   expect(await screen.findByRole('region', { name: 'Session family' })).toBeInTheDocument()
-  expect(screen.getByText('Waiting on children', { exact: true })).toBeInTheDocument()
+  expect(document.querySelector('.session-head .badge')).toHaveTextContent('Waiting on children')
   await waitFor(() => expect(streams).toHaveLength(1))
   const reads = () => s.calls.filter(c => c.path.startsWith('/api/view/sessions/parent/family')).length
   const before = reads()

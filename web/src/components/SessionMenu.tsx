@@ -23,7 +23,7 @@ import type { FamilySummary } from '../generated/view'
 import { Link } from '../router'
 import { agentLabel } from '../lib/agent'
 import { sessionPath } from './SessionRow'
-import { Icon } from '../lib/ui'
+import { Icon } from './ui'
 import ConfirmDialog from './ConfirmDialog'
 import { closeRefusal, deleteRefusal, parkRefusal } from './sessionWords'
 
@@ -151,7 +151,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
         aria-controls={open ? menuId : undefined}
         onClick={() => setOpen((o) => !o)}
       >
-        <Icon.Menu size={18} />
+        <Icon name="ellipsis-horizontal" size={18} />
       </button>
       {open && (
         <div className="session-menu-list" id={menuId}>

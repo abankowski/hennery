@@ -5,7 +5,7 @@ import type { OperatorAttention } from '../api/attention'
 import type { FamilyPage } from '../generated/view'
 import { familyPage, parent } from '../test-family'
 import { json, routed } from '../test-stream'
-import FamilyPanel, { operationWords } from './FamilyPanel'
+import FamilyPanel from './FamilyPanel'
 
 const status: OperatorAttention = { id: 'status/1', child_id: 'child', hat_id: 'hat1', reason: 'child_failed', pending_id: null }
 const question: OperatorAttention = { ...status, id: 'question1', reason: 'permission_required', pending_id: 'q/1' }

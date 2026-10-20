@@ -433,8 +433,8 @@ describe('SessionView', () => {
     const s = server({ pages: [() => json(page([plan]))] })
     const { container } = render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
     await screen.findAllByText('a')
-    expect(screen.getByRole('button', { name: 'Session details', exact: true })).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.queryByRole('tab', { name: 'Plan', exact: true })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Session details' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('tab', { name: 'Plan' })).not.toBeInTheDocument()
     expect((container.querySelector('.transcript .steps') as HTMLDetailsElement).open).toBe(true)
   })
 })
@@ -556,6 +556,6 @@ describe('the tail window', () => {
 })
 
 async function showDetailsTab(name: 'Family' | 'Plan' | 'Details') {
-  fireEvent.click(screen.getByRole('button', { name: 'Session details', exact: true }))
-  fireEvent.click(await screen.findByRole('tab', { name, exact: true }))
+  fireEvent.click(screen.getByRole('button', { name: 'Session details' }))
+  fireEvent.click(await screen.findByRole('tab', { name }))
 }
