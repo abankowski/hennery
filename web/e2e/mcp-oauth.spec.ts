@@ -170,7 +170,7 @@ for (const width of [1280, 390]) test.describe(`OAuth at ${width} px`, () => {
     await card().getByRole('button', { name: 'Probe now', exact: true }).click()
     await expect(card().getByText('May need sign-in', { exact: true })).toBeVisible()
     const attention = page.locator(width === 390 ? '.mtopbar' : '.rail-nav').getByText('1 need attention', { exact: true })
-    await expect(attention).toBeVisible(); await expect(attention).toHaveCSS('color', 'rgb(178, 106, 0)')
+    await expect(attention).toBeVisible(); await expect(attention).toHaveCSS('color', 'rgb(122, 83, 0)')
     if (width === 390) expect((await page.locator('.mtopbar .mcp-attention-link').boundingBox())!.height).toBeGreaterThanOrEqual(44)
   })
   test('issuer changes require a deliberate client save and keep the old grant until consent', async () => {
