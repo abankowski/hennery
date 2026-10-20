@@ -393,6 +393,23 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE session_attach_evidence ADD COLUMN config_checked INTEGER NOT NULL DEFAULT 0;
      ALTER TABLE sessions ADD COLUMN configuration_error TEXT;
      UPDATE session_attach_evidence SET config_updated_at=unixepoch();",
+    // Closed sessions (25): terminal attention cannot be reopened by late facts.
+    "CREATE TRIGGER attention_terminal_session AFTER UPDATE OF lifecycle,close_requested ON sessions
+     WHEN NEW.lifecycle IN ('closed','deleted') OR NEW.close_requested=1
+     BEGIN
+       UPDATE delegation_attention SET state='resolved' WHERE owner_id=NEW.owner_id AND child_id=NEW.id;
+     END;
+     CREATE TRIGGER attention_terminal_insert AFTER INSERT ON delegation_attention
+     WHEN NEW.state IN ('open','standby') AND EXISTS(SELECT 1 FROM sessions c
+       WHERE c.owner_id=NEW.owner_id AND c.id=NEW.child_id AND (c.lifecycle IN ('closed','deleted') OR c.close_requested=1))
+     BEGIN UPDATE delegation_attention SET state='resolved' WHERE owner_id=NEW.owner_id AND attention_id=NEW.attention_id; END;
+     CREATE TRIGGER attention_terminal_update AFTER UPDATE OF state ON delegation_attention
+     WHEN NEW.state IN ('open','standby') AND EXISTS(SELECT 1 FROM sessions c
+       WHERE c.owner_id=NEW.owner_id AND c.id=NEW.child_id AND (c.lifecycle IN ('closed','deleted') OR c.close_requested=1))
+     BEGIN UPDATE delegation_attention SET state='resolved' WHERE owner_id=NEW.owner_id AND attention_id=NEW.attention_id; END;
+     UPDATE delegation_attention SET state='resolved' WHERE EXISTS(SELECT 1 FROM sessions c
+       WHERE c.owner_id=delegation_attention.owner_id AND c.id=delegation_attention.child_id
+       AND (c.lifecycle IN ('closed','deleted') OR c.close_requested=1));",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -1165,6 +1182,7 @@ fn close_session_in(tx: &Transaction<'_>, owner: &str, session_id: &str) -> Resu
             [session_id, owner],
         )?;
     }
+    crate::delegation_attention::reconcile_closed_attention(tx, owner)?;
     Ok(events)
 }
 
@@ -3270,6 +3288,7 @@ impl Store {
             [session_id, &self.owner],
         )?;
         let event = collector_event(&tx, &self.owner, session_id, "operator_closed", json!({}), &now())?;
+        crate::delegation_attention::reconcile_closed_attention(&tx, &self.owner)?;
         tx.commit()?;
         Ok(event)
     }

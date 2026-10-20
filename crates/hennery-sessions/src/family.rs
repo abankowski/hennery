@@ -90,6 +90,7 @@ fn attention(conn: &Connection, owner: &str, s: &SessionItem) -> Result<(bool, u
     Ok((pending > 0, operator, parent))
 }
 fn summary_in(conn: &Connection, owner: &str, s: SessionItem) -> Result<SessionSummary> {
+    crate::delegation_attention::reconcile_closed_attention(conn, owner)?;
     let (question_waits, operator_attention, parent_handled_questions) = attention(conn, owner, &s)?;
     let parent: Option<String> = conn
         .query_row(

@@ -442,6 +442,7 @@ impl Store {
     }
     pub(crate) fn settle_delegation_in(&self, tx: &Transaction<'_>) -> Result<()> {
         self.settle_notices_in(tx)?;
+        crate::delegation_attention::reconcile_closed_attention(tx, self.owner_id())?;
         tx.execute("UPDATE session_operations SET state = 'completed' WHERE owner_id = ?1 AND tool = 'session_close' AND state = 'awaiting_reconciliation' AND EXISTS (SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = session_operations.child_id AND lifecycle = 'closed')",[self.owner_id()])?;
         tx.execute("UPDATE session_operations SET state = CASE
             WHEN EXISTS (SELECT 1 FROM turns t WHERE t.owner_id = ?1 AND t.turn_id = session_operations.turn_id AND t.state = 'ended') THEN 'completed'

@@ -1,3 +1,7 @@
+-- Test-only rollback of sessions migration 25 before historical fixtures.
+DROP TRIGGER attention_terminal_session;
+DROP TRIGGER attention_terminal_insert;
+DROP TRIGGER attention_terminal_update;
 -- Test-only rollback of sessions migration 24 before historical fixtures.
 ALTER TABLE sessions DROP COLUMN configuration_error;
 ALTER TABLE session_attach_evidence DROP COLUMN config_updated_at;

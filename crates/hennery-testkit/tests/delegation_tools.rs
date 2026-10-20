@@ -160,22 +160,16 @@ async fn d3b_deadline_worker_exposes_durable_attention_and_opens_the_child_card(
         !(notices.guard())(&notice),
         "operator answers withdraw queued notification attempts"
     );
-    let report = eventually("completed child report falls back after parent close", async || {
+    eventually("answered child finishes after parent close", async || {
         h.state
             .store
-            .operator_attention(None, "")
+            .events(child, 0, 100)
             .unwrap()
-            .into_iter()
-            .find(|a| a.pending_id.is_none())
+            .iter()
+            .any(|event| event.kind == "turn_ended")
+            .then_some(())
     })
     .await;
-    let acknowledged = h
-        .client
-        .post(format!("{}/api/delegation/attention/{}/acknowledge", h.url, report.id))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(acknowledged.status(), reqwest::StatusCode::NO_CONTENT);
     assert!(h.state.store.operator_attention(None, "").unwrap().is_empty());
     h.finish().await;
 }
