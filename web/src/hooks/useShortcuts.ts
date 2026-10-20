@@ -7,7 +7,9 @@ import { cycleAppearance, getTheme } from '../lib/theme'
 export function useShortcuts(actions: AppActions | null, route: string, help: () => void, announce: (text: string) => void) {
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return
+      // Session details keeps its mobile sheet mounted under a hidden wrapper.
+      // Only an open, exposed modal suppresses the global key contract.
+      if ([...document.querySelectorAll('[role="dialog"][aria-modal="true"], dialog[open]')].some(dialog => !dialog.closest('[hidden]'))) return
       const action = shortcutAction(event, route, window.matchMedia?.('(min-width: 768px)').matches ?? false)
       if (!action) return
       if (action === 'help') { event.preventDefault(); help() }
