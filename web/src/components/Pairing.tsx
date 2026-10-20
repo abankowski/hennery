@@ -48,6 +48,7 @@ export default function Pairing({ minted, onPaired, onSpent, onClose }: Props) {
   // this.
   const [deadline] = useState(() => performance.now() + CODE_LIFETIME_S * 1000)
   const [left, setLeft] = useState(CODE_LIFETIME_S)
+  const [copied, setCopied] = useState<string | null>(null)
   const before = useRef(new Set(minted?.known))
   // The parent's callbacks, current at each tick, without restarting the
   // poll whenever the parent renders.
@@ -111,10 +112,14 @@ export default function Pairing({ minted, onPaired, onSpent, onClose }: Props) {
       </h2>
       {stage.kind === 'live' && minted && (
         <>
-          <p>On the machine to pair, run:</p>
+          <ol className="pair-steps"><li>Open a terminal on the new machine with hennery installed.</li><li>Run the command below, then start the host service.</li></ol>
           <pre className="command" aria-label="Pairing command">
             <code>{`hennery host join ${minted.publicUrl} ${minted.code}`}</code>
           </pre>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
+            void navigator.clipboard.writeText(`hennery host join ${minted.publicUrl} ${minted.code}`).then(() => setCopied('Command copied.'), () => setCopied('Copy unavailable. Select the command above to copy it.'))
+          }}>Copy command</button>
+          {copied && <p role="status">{copied}</p>}
           <p className="pairing-code">
             Code <code>{minted.code}</code>, valid for{' '}
             <span role="timer" aria-live="off">

@@ -76,6 +76,7 @@ export default function Hosts() {
           Add host
         </button>
       </header>
+      <p className="manage-subtitle">{list.data ? `${list.data.filter(h => !h.revoked_at && h.connected).length} online · ${list.data.filter(h => !h.revoked_at && !h.connected).length} offline` : 'Loading hosts…'} · Pair machines and choose their fallback hat.</p>
       {addError && (
         <p className="form-error" role="alert">
           <Text>{addError}</Text>

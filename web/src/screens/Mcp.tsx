@@ -159,6 +159,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
           Add connection
         </button>
       </header>
+      <p className="manage-subtitle">Servers your sessions receive, by hat and host.</p>
       <section className="card notice" aria-label="How sessions get these">
         <p>
           A connection reaches the agent sessions in its hat on the hosts ticked below, as an MCP server named{' '}
@@ -194,6 +195,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
         </section>
       )}
       {list.data && list.data.length === 0 && !adding && <p className="empty">No connection yet.</p>}
+      <h2 className="section-heading">Gateway connections</h2>
       <ul className="cards" aria-label="Connections">
         {(list.data ?? []).map((connection) => (
           <ConnectionCard

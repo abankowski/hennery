@@ -9,6 +9,8 @@ import { createHat, hats as listHats, hosts as listHosts, purgeHat, purgePreview
 import { useClient } from '../app-client'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PathRules from '../components/PathRules'
+import { connections } from '../api/mcp'
+import { useMcpScope } from '../components/McpScope'
 import type { HatItem, HostItem, PurgePreview, PurgeResult } from '../generated/protocol'
 import { useResource } from '../hooks/useResource'
 import { count, isDefault, purgeState, safeColour } from '../lib/manage'
@@ -23,6 +25,9 @@ export default function Hats() {
   const client = useClient()
   const hats = useResource(() => listHats(client))
   const hosts = useResource(() => listHosts(client))
+  const scope = useMcpScope()
+  const localMcp = useResource(() => scope ? Promise.resolve([]) : connections(client), [!!scope])
+  const mcp = scope ?? localMcp
   const [purge, setPurge] = useState<{ hat: HatItem; preview: PurgePreview } | null>(null)
   const [purged, setPurged] = useState<{ name: string; result: PurgeResult } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -56,7 +61,8 @@ export default function Hats() {
       <header className="manage-head">
         <h1>Hats</h1>
       </header>
-      {[hats.error, hosts.error, error].map(
+      <p className="manage-subtitle">Path rules choose a hat. Each hat has its own servers, session defaults and notification privacy.</p>
+      {[hats.error, hosts.error, mcp.error, error].map(
         (shown, i) =>
           shown && (
             <p key={i} className="form-error" role="alert">
@@ -67,12 +73,14 @@ export default function Hats() {
       {purged && (
         <PurgeOutcome name={purged.name} result={purged.result} onClose={() => setPurged(null)} />
       )}
-      <ul className="cards" aria-label="Hats">
+      <ul className="cards hat-grid" aria-label="Hats">
         {(hats.data ?? []).map((hat) => (
           <HatCard
             key={hat.id}
             hat={hat}
             isDefault={isDefault(hat, hosts.data ?? [])}
+            defaultOn={hosts.data ? hosts.data.filter(h => !h.revoked_at && h.default_hat_id === hat.id).map(h => h.name) : null}
+            servers={mcp.data ? mcp.data.filter(c => c.hat_id === hat.id).map(c => c.label) : null}
             onChanged={replace}
             onPurge={() => askPurge(hat)}
           />
@@ -115,11 +123,15 @@ function Swatch({ colour }: { colour: string }) {
 function HatCard({
   hat,
   isDefault,
+  defaultOn,
+  servers,
   onChanged,
   onPurge,
 }: {
   hat: HatItem
   isDefault: boolean
+  defaultOn: string[] | null
+  servers: string[] | null
   onChanged: (hat: HatItem) => void
   onPurge: () => void
 }) {
@@ -180,6 +192,12 @@ function HatCard({
         {hat.default_for_new_hosts && <span className="tag">Default for new hosts</span>}
         {hat.purging && <span className="tag tag-warn">Being purged</span>}
       </div>
+      <dl className="facts hat-summary">
+        <dt>Default on</dt><dd>{defaultOn === null ? 'Not loaded' : defaultOn.length ? <Text>{defaultOn.join(', ')}</Text> : 'No hosts'}</dd>
+        <dt>Gateway servers</dt><dd>{servers === null ? 'Not loaded' : servers.length ? <Text>{servers.join(', ')}</Text> : 'None'}</dd>
+      </dl>
+      <Link className="defaults-link" to={`/defaults?hat=${encodeURIComponent(hat.id)}`}>Session defaults <span aria-hidden="true">→</span></Link>
+      <p className="hint">Local servers are configured per host and hat in <Link to="/mcp">MCP</Link>. Edit host defaults in <Link to="/hosts">Hosts</Link>.</p>
       {editing ? (
         <form className="inline-form" onSubmit={save}>
           <label className="field">
