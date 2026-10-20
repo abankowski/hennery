@@ -15,20 +15,23 @@ this document does not claim independent approval.
 
 ### Observed execution
 
-Implementation is built and pushed through `b49d5642`; integration acceptance
-is **blocked**, and this plan is not declared complete. The first two task
-commits are `a824fa6c` and `5050f8f8`. No independent review, PR approval or
-Linux CI result is claimed here. The parent owns GitHub actions and review.
+Implementation and review amendments are built and pushed through
+`a74f2b47`; compatibility commit `5482f3bc` is separate. Local amendment
+checks pass; full integration acceptance awaits current CI and scoped
+re-review. The first two task commits are `a824fa6c` and `5050f8f8`.
+The parent's independent review of `fbe7d974..17db979c` for PR #208 was
+APPROVE AFTER AMENDMENTS: the security core passed, with three P2 findings
+addressed below. No final PR approval or Linux CI result is claimed here.
 
 | Gate (all toolchain commands inside `nix develop -c`) | Observed result |
 |---|---|
 | `pnpm --dir web install --frozen-lockfile` | exit 0; dependency lockfile unchanged |
 | `pnpm --dir web typecheck` | exit 0 |
-| `pnpm --dir web test` | exit 0; 124 files, 2,196 tests |
+| `pnpm --dir web test` | exit 0; 125 files, 2,205 tests after review amendments |
 | `pnpm --dir web build` | exit 0, including build-script tests and emitted-CSS origin checks |
 | `cargo build -p hennery -p hennery-testkit --bins --locked` | exit 0 |
-| `UI_R4_SCREENSHOTS=1 CI=1 pnpm --dir web exec playwright test new-session.spec.ts` | exit 0; 4 passed (390/1280 × light/dark), 45.1 seconds |
-| `CI=1 pnpm --dir web e2e` | exit 1; 88 passed, 4 failed, 10 skipped, 20 serial dependents did not run; 122 total, 6.5 minutes |
+| `UI_R4_SCREENSHOTS=1 CI=1 pnpm --dir web exec playwright test new-session.spec.ts sessions.spec.ts mcp-delivery.spec.ts` | exit 0; 33 passed, 1 desktop-only case skipped (34 total), 1.2 minutes; includes all 4 owned R4 cases after the layout fix |
+| `CI=1 pnpm --dir web e2e` (single authorized compatibility rerun, before the layout fix) | exit 1; 88 passed, 4 failed, 10 skipped, 20 serial dependents did not run; 122 total, 8.4 minutes |
 | `cargo fmt --all --check` | exit 0 |
 | `cargo clippy --workspace --all-targets --locked -- -D warnings` | exit 0 |
 | `cargo clippy -p hennery --locked -- -D warnings` | exit 0 |
@@ -37,32 +40,80 @@ Linux CI result is claimed here. The parent owns GitHub actions and review.
 | `cargo test --workspace --locked` | exit 0; 2,696 passed, 0 failed, 8 ignored across 179 result groups |
 | Revision-race load | exit 0 in all 4 concurrent executions × 3 rounds (12 runs) |
 
-Counts versus the base: Rust adds 7 tests (2,689 → 2,696); web adds 41
-(2,155 → 2,196); browser adds 4 (118 → 122). Base totals are derived from
+Counts versus the base: Rust adds 7 tests (2,689 → 2,696); web adds 50
+(2,155 → 2,205); browser adds 4 (118 → 122). Base totals are derived from
 the unchanged suites and added cases, not a separately executed full base
-run. Final targeted web verification and the replay delta both pass 79
-tests. Targeted backend verification passes 4 storage plus 3 HTTP,
+run. Pre-review targeted web verification and the replay delta passed 79
+tests; the amendment's two targeted screen suites pass 54 tests. Targeted
+backend verification passes 4 storage plus 3 HTTP,
 1 capabilities and 3 owner-audit tests. The full Rust run was serialized
 against web builds; no repeat full workspace run was required by final
 web-only amendments. Timing-independent UI tests use controlled promises
 and fake clocks; they do not add a separate timing-load campaign.
 
-The full browser run preceded the final web-only refinements. Its failures
-are the old Host/Agent **button** selectors at both widths in
-`web/e2e/sessions.spec.ts:127` (R3) and `web/e2e/mcp-delivery.spec.ts:73`
-(R5). Their fake adapters also report no settings catalog, so they need the
-new deliberate agent-default opt-out. The current R4 matrix is green;
-these unowned tests remain unchanged. Spec §10 routes integration selector
-conflicts through the parent. A narrow compatibility patch, preserving
-their delivery assertions, is prepared and `git apply --check` passes, in
-the private ledger. Parent ownership coordination and a green full browser
-rerun are required before completion. No unsupported launcher bypass was
-added to satisfy the old tests.
+The initial full browser run preceded the final web-only refinements and
+failed on old Host/Agent button selectors at both widths in R3's
+`web/e2e/sessions.spec.ts` and R5's `web/e2e/mcp-delivery.spec.ts`. It had
+88 passed, 4 failed, 10 skipped and 20 serial dependents not run.
+
+**Parent-authorized ownership exception (2026-10-20, spec §10):** applied
+the exact prepared compatibility patch to those two files, replacing
+pressed-button selection assertions with checked-native-radio assertions
+and explicitly choosing “Use agent defaults for this start” for their
+catalog-less fake adapters. All delivery, prompt, privacy, CSP and isolation
+assertions are preserved. No `force` click or assertion relaxation is used.
+The parent resolves conflicts with R3's concurrent amendments at integration;
+this branch does not rebase onto `plan/ui-r3`.
+
+Exactly one subsequent full E2E run was authorized and executed under
+shared R3/R5/R6 load. The revised native-radio selectors work. The run
+exposed a different R4 layout failure: the native opt-out checkbox is
+present, enabled and stable, but `.modal-foot` intercepts its pointer
+events repeatedly. Both MCP delivery and session-start widths reach that
+checkbox. The observed browser trace is retained; this is not declared a
+timing flake.
+The single-run allowance is exhausted, so no second full run is made.
+The subsequent amendment moves scrolling to a normal div around the
+disabled/inert fieldset and keeps the checkbox glyph compact within its
+44px label. Targeted real-browser checks of all three affected files pass
+33 cases with one pre-existing desktop-only skip; the previously blocked
+delivery/privacy/isolation and first-prompt assertions execute unchanged.
+The owned four-case matrix also exercises and captures the unavailable
+settings opt-out. A second full run was not made. Full-suite green remains
+an explicit CI obligation, rather than being inferred from the subset.
+
+### Independent review amendments
+
+The three reviewed P2 findings were reproduced in the actual screen suites
+before production fixes: eight parameterized launcher cases failed across
+pending Start, configuration read-back, ambiguous delivery and prompt
+failure; the manual-agent regression failed by reading Claude instead of
+the typed custom agent. RED: 9 failed, 45 passed, exit 1. After the fixes,
+the same suites pass all 54 tests, exit 0.
+
+1. A marker in the existing `hennery.draft.` namespace binds pending work
+   to its login lifetime. Existing confirmed-logout cleanup removes it;
+   every late completion checks that lifetime before retaining text or
+   continuing. Ordinary Close can still retain its session's prompt.
+   No shared draft/logout helper or another lane's auth flow changed.
+2. Each launcher stamps its draft with a distinct owner. Cleanup removes
+   only that owner's record. An earlier closed launch can retain its own
+   session draft while a newer real launcher keeps its unsent text. Late
+   ambiguous/failure completions also cannot navigate the newer launcher.
+3. Defaults distinguishes explicit Other-agent editing from initial runtime
+   selection. A custom or temporarily empty input survives; the regression
+   also loads and resets a removed agent's saved record without a catalog.
+
+The full browser run supplied a separate RED reproduction of inaccessible
+unknown-catalog controls. The scrolling-body correction passes both
+previously failing widths in both affected suites. A preparatory known-
+catalog route test alone did not reproduce that geometry; it is not claimed
+as RED evidence. The actual full-run pointer-interception traces are kept.
 
 ### Removal probes and replay
 
-Forty-five distinct guard removals were caught by actual failing tests or
-the owner audit in one separate APFS-cloned probe copy. The original pass
+Before review, forty-five distinct guard removals were caught by actual
+failing tests or the owner audit in one separate APFS-cloned probe copy. The original pass
 caught 22/24; two tests were strengthened to observe settled stale replies
 and successful view reads, then both missed guards were caught. Subsequent
 guards cover strict records/configs, query errors, unavailable save
@@ -71,6 +122,13 @@ catalog completeness/freshness, opt-out scope, context re-entry, editor
 revision pinning, keyboard modifiers and wire-role collisions. Failure
 logs were checked for the intended semantic assertion, not compile errors.
 Each mutation was restored; no probe mutation entered the execution tree.
+The review amendment used a fresh separate APFS-cloned copy,
+`../redesign-r4-probe-2`: baseline 54/54 passed, then all four new removals
+were caught (login lifetime, draft owner, closed navigation, manual agent).
+Each failure was checked for the intended behavioral assertion, and all six
+amendment files matched the restored baseline before staging. There are 49
+distinct caught probes overall. Staged source bytes matched that tested
+baseline; no full fresh replay was repeated for this amendment.
 
 One fresh replay began at `fbe7d974` in an independent copy with its own
 APFS-cloned target, node_modules and dist. It extracted 29 files, executed
@@ -81,20 +139,27 @@ applied from refreshed plan blocks to that same successful replay copy,
 per the verification budget: 30 blocks checked, 13 final changed files
 applied, typecheck and 79 targeted web tests exit 0, and all 1,049 tracked
 implementation files still match with zero mismatches. No second full
-fresh replay or shared target directory was used.
+fresh replay or shared target directory was used. The review/ownership
+amendment was then materialized from 33 refreshed blocks into that same
+copy: 8 changed paths applied, all 1,050 tracked implementation files match
+with zero mismatches. All 35 implementation/generated paths in the fresh
+probe copy also match the final source, with no live mutations.
 
 Evidence stays in `.superpowers/sdd/ui-r4/`: `rust-status.txt`, individual
-Rust logs, `probes/*results.txt`, `replay/`, `screenshots.md` and the 32 PNGs.
-Scratch copies `../redesign-r4-probe-1` and `../redesign-r4-replay-1` remain
+Rust logs, `probes/*results.txt`, `review-probes/`, `review-red.log`,
+`review-final-web.log`, `full-e2e-authorized.log`, the retained full-run
+failure traces, `replay/`, `screenshots.md` and the 36 PNGs.
+Scratch copies `../redesign-r4-probe-1`, `../redesign-r4-probe-2` and
+`../redesign-r4-replay-1` remain
 for parent cleanup, as required by the worktree instructions.
 
 ### Visual acceptance and handoff
 
 Screenshots cover `defaults-context`, `defaults`, `defaults-confirm`,
-`launcher`, `launcher-config`, `launcher-starting`, `launcher-recents` and
+`launcher`, `launcher-config`, `launcher-unavailable`, `launcher-starting`, `launcher-recents` and
 `launcher-review`, each at 390×844/1280×900 and light/dark. Captures assert
 no page overflow and wait for self-hosted fonts; representative images
-were inspected. The private manifest maps all 32 files to Desktop Defaults,
+were inspected. The private manifest maps all 36 files to Desktop Defaults,
 Desktop `newOpen`, Mobile frame 5 and the Design System controls.
 
 Intentional prototype differences: explicit host/project preview for
@@ -106,13 +171,12 @@ review notice. No device bezel, copied project data or prototype HTML is
 shipped. Installed iOS and final pinned-adapter release acceptance remain
 parent-owned. The shared docs index is deliberately unchanged.
 
-Parent review request: inspect `fbe7d974..b49d5642`, especially transactional
-owner/auth/freeze/CAS checks, strict wire bounds, security-axis preservation,
-unknown catalogs, actual-hat/config confirmation and first-prompt ordering,
-late response/close behavior, and responsive focus/accessibility. Parent
+Parent scoped re-review request: inspect `17db979c..a74f2b47`, especially
+logout invalidation across all late outcomes, draft cleanup ownership,
+closed navigation, Other-agent persistence/offline resets and the scrolling
+body/footer. The previous security-core review passed. Parent
 must report checks, reviewDecision, mergeStateStatus and every unresolved
 review thread, including bots. No self-approval is recorded.
-
 
 ## Scope
 
@@ -126,6 +190,13 @@ review thread, including bots. No self-approval is recorded.
 Out: delegation grants, delegated spawn/resume semantics, running-session
 configuration UI, other lanes' screens and shared CSS, new diagnostics,
 external accounts/dependencies, deployment and GitHub actions.
+
+Ownership exception authorized by the parent under spec §10: update only
+the launcher integration controls in R3's `web/e2e/sessions.spec.ts` and
+R5's `web/e2e/mcp-delivery.spec.ts`. Preserve selection assertions as checked
+native radios and explicitly choose agent defaults for catalog-less fakes.
+The parent resolves conflicts with R3's concurrent changes at integration;
+this lane does not rebase onto `plan/ui-r3`.
 
 ## Decisions
 
@@ -167,6 +238,16 @@ external accounts/dependencies, deployment and GitHub actions.
   with a visible notice; core and security defaults require read-back.
 - Recent project choices display their actual last-use time. Host and
   agent choices retain native radio semantics and keyboard behavior.
+- Pending completion belongs to the login lifetime and originating draft.
+  Logout removes the launcher's marker through existing draft cleanup;
+  ordinary Close can retain its session draft without clearing a newer
+  launcher's state. Late completions never navigate a closed launcher.
+- Other-agent editing is deliberate, including an empty intermediate
+  value. Initial selection may choose a reported runtime; typing is never
+  replaced by the first listed runtime. Offline saved-record resets remain
+  available for an unreported agent.
+- The scrolling modal body is a normal div around the disabled/inert
+  fieldset. This keeps unavailable-settings controls above the footer.
 
 These choices implement the already confirmed redesign contract. The
 parent performs independent security/design review; no self-approval is
@@ -4234,6 +4315,7 @@ export default function Defaults() {
   const client = useClient(), { search } = useLocation(), [query] = useState(() => new URLSearchParams(search))
   const [hosts, setHosts] = useState<HostItem[]>([]), [hats, setHats] = useState<HatItem[]>([])
   const [host, setHost] = useState(query.get('host') ?? ''), [cwd, setCwd] = useState(query.get('cwd') ?? ''), [agent, setAgent] = useState(query.get('agent') ?? '')
+  const [manualAgent, setManualAgent] = useState(false)
   const [selectedHat, setSelectedHat] = useState(query.get('hat') ?? ''), [error, setError] = useState('')
   const [preview, setPreview] = useState<{ host: string; cwd: string; hat: string } | null>(null), [probing, setProbing] = useState(false)
   const [records, setRecords] = useState<Record<string, HatSessionDefaults>>({}), [loading, setLoading] = useState(false), [refresh, setRefresh] = useState(0)
@@ -4253,7 +4335,7 @@ export default function Defaults() {
   }, [client])
   const ids = [...new Set([...Object.keys(hosts.find(h => h.host_id === host)?.mcp_delivery ?? {}), ...(query.get('agent') ? [query.get('agent')!] : [])])]
   const agents = ids.length ? ids : agent ? [agent] : []
-  useEffect(() => { if (agents.length && !agents.includes(agent)) setAgent(agents[0]) }, [agents.join('\0'), agent])
+  useEffect(() => { if (!manualAgent && !agent && agents.length) setAgent(agents[0]) }, [agents.join('\0'), agent, manualAgent])
   useEffect(() => {
     if (!agent || !hats.length) return
     let live = true, index = 0
@@ -4278,12 +4360,12 @@ export default function Defaults() {
   const hat = hats.find(h => h.id === selectedHat), record = currentRecords[selectedHat]
   const fields = fieldsOf(catalog)
   return <div className="defaults-screen"><header><div><h1>Defaults</h1><p>Agent default → Hat override → Your choice</p></div>{query.get('return') === 'new' && <Link to="/new?restore=1">Back to new session</Link>}</header>
-    {!preview && <CatalogContext hosts={hosts} host={host} cwd={cwd} onHost={value => { generation.current++; setHost(value); setAgent(''); setPreview(null); setCwd(''); setProbing(false) }} onCwd={value => { generation.current++; setCwd(value); setPreview(null); setProbing(false) }} onPreview={() => void loadPreview()} busy={probing} />}
+    {!preview && <CatalogContext hosts={hosts} host={host} cwd={cwd} onHost={value => { generation.current++; setHost(value); setManualAgent(false); setAgent(''); setPreview(null); setCwd(''); setProbing(false) }} onCwd={value => { generation.current++; setCwd(value); setPreview(null); setProbing(false) }} onPreview={() => void loadPreview()} busy={probing} />}
     <div className="agent-tabs" role="tablist" aria-label="Agent defaults">{agents.map((id, index) => <button role="tab" type="button" key={id} id={`${tabBase}-${index}`} aria-selected={agent === id} aria-controls={`${tabBase}-panel`} tabIndex={agent === id ? 0 : -1} onClick={() => setAgent(id)} onKeyDown={event => {
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? agents.length - 1 : event.key === 'ArrowRight' ? (index + 1) % agents.length : event.key === 'ArrowLeft' ? (index + agents.length - 1) % agents.length : -1
       if (next >= 0) { event.preventDefault(); setAgent(agents[next]); document.getElementById(`${tabBase}-${next}`)?.focus() }
     }}>{agentLabel(id)}</button>)}</div>
-    <details className="runtime-id"><summary>Other agent</summary><label>Configured agent name<input value={agent} onChange={event => setAgent(event.target.value)} placeholder="Agent name on the host" /></label></details>
+    <details className="runtime-id"><summary>Other agent</summary><label>Configured agent name<input value={agent} onChange={event => { setManualAgent(true); setAgent(event.target.value) }} placeholder="Agent name on the host" /></label></details>
     {preview && <p role="status">Preview: <bdi>{hosts.find(h => h.host_id === preview.host)?.name}</bdi> · <bdi>{preview.cwd}</bdi> · Resolves to <bdi>{hats.find(h => h.id === preview.hat)?.name}</bdi> · {context.catalog?.freshness === 'fresh' ? 'Up to date' : context.catalog?.freshness === 'stale' ? 'Out of date' : 'Not verified'} <button className="btn btn-ghost" type="button" onClick={() => setPreview(null)}>Change preview</button></p>}
     {preview && context.state === 'unavailable' && <p role="alert">The settings preview is unavailable. <bdi>{context.error}</bdi> Existing overrides can still be inspected and reset. <button className="btn btn-secondary" type="button" onClick={() => void loadPreview()}>Retry preview</button></p>}
     {error && <p role="alert"><bdi>{error}</bdi><button className="btn btn-secondary" type="button" onClick={() => setRefresh(value => value + 1)}>Retry defaults</button></p>}
@@ -4399,6 +4481,8 @@ export default function NewSession() {
   const [expanded, setExpanded] = useState(false)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false), liveRef = useRef(true)
+  const [draftOwner] = useState(() => crypto.randomUUID())
+  const [sameLogin] = useState(() => launcherLogin(() => liveRef.current))
   useEffect(() => { liveRef.current = true; return () => { liveRef.current = false } }, [])
   const [error, setError] = useState<string | null>(null)
 
@@ -4552,16 +4636,22 @@ export default function NewSession() {
   const accent = useAccentStyle(hats.find(h => h.id === current?.hat_id)?.colour)
   useRegisterContext({ hostId, cwd: current?.canonical, hatId: current?.hat_id })
   useEffect(() => {
-    if (!hostId) return
-    try { sessionStorage.setItem(LAUNCH_DRAFT, JSON.stringify({ host: hostId, cwd, prompt, agent, otherName, picks })) } catch { /* Current form remains usable. */ }
-  }, [hostId, cwd, prompt, agent, otherName, picks])
+    if (!hostId || !sameLogin()) return
+    try { sessionStorage.setItem(LAUNCH_DRAFT, JSON.stringify({ owner: draftOwner, host: hostId, cwd, prompt, agent, otherName, picks })) } catch { /* Current form remains usable. */ }
+  }, [hostId, cwd, prompt, agent, otherName, picks, draftOwner, sameLogin])
   useEffect(() => { setOptOut(false) }, [context.key])
   function chooseAgent(next: string) { if (next !== agent) { setAgent(next); setPicks({}); setNotice('Agent changed. Session setting choices were reset.') } }
   const canStart = !busy && host?.connected === true && agentName !== '' && current?.exists === true && current.is_dir && config !== null
+  function retainClosedStart(sessionId: string) {
+    if (!sameLogin()) return
+    keepDraft(sessionId, prompt)
+    clearLauncherDraft(draftOwner)
+  }
+  function openSession(href: string) { if (sameLogin() && liveRef.current) navigate(href) }
 
   async function start(e: FormEvent) {
     e.preventDefault()
-    if (!canStart || busyRef.current) return
+    if (!canStart || busyRef.current || !sameLogin()) return
     busyRef.current = true
     setBusy(true)
     e.currentTarget.closest<HTMLElement>('[role="dialog"]')?.focus()
@@ -4571,32 +4661,36 @@ export default function NewSession() {
     try {
       sessionId = (await client.request<StartSessionResponse>('POST', '/api/sessions', request)).session_id
     } catch (err) {
+      if (!sameLogin()) return
       if (err instanceof ApiFailure && err.code === 'delivery_unknown' && err.sessionId) {
-        clearLauncherDraft()
-        navigate(sessionHref(err.sessionId, { kind: 'start_unknown', kept: keepDraft(err.sessionId, prompt) }))
+        clearLauncherDraft(draftOwner)
+        openSession(sessionHref(err.sessionId, { kind: 'start_unknown', kept: keepDraft(err.sessionId, prompt) }))
         return
       }
+      if (!liveRef.current) return
       busyRef.current = false
       setBusy(false)
       setError(startRefusal(err))
       return
     }
-    if (!liveRef.current) { keepDraft(sessionId, prompt); clearLauncherDraft(); return }
+    if (!sameLogin()) return
+    if (!liveRef.current) { retainClosedStart(sessionId); return }
     // A start acknowledgement alone cannot authorize the first prompt.
     {
       // The opt-out skips configuration evidence, never the actual-hat check.
       const confirmation = await confirmStart(client, sessionId, current!.hat_id, config!, 30_000, !optOut)
-      if (!liveRef.current) { keepDraft(sessionId, prompt); clearLauncherDraft(); return }
+      if (!sameLogin()) return
+      if (!liveRef.current) { retainClosedStart(sessionId); return }
       if (confirmation !== 'confirmed') {
         const code = optOut && confirmation === 'config_unconfirmed' ? 'start_unconfirmed' : confirmation
         keepDraft(sessionId, prompt)
         if (code === 'config_unconfirmed') rememberConfigurationReview(sessionId, context.catalog, config!)
-        clearLauncherDraft()
-        navigate(sessionHref(sessionId, { kind: 'prompt_failed', code }))
+        clearLauncherDraft(draftOwner)
+        openSession(sessionHref(sessionId, { kind: 'prompt_failed', code }))
         return
       }
     }
-    clearLauncherDraft()
+    clearLauncherDraft(draftOwner)
     // Images are not part of the first prompt yet: the composer's image
     // rules (Task 6) take them once it is shared with this form.
     if (prompt.trim() !== '') {
@@ -4605,13 +4699,14 @@ export default function NewSession() {
           content: [{ type: 'text', text: prompt }],
         })
       } catch (err) {
+        if (!sameLogin()) return
         keepDraft(sessionId, prompt)
         const code = err instanceof ApiFailure ? err.code : 'unknown'
-        navigate(sessionHref(sessionId, { kind: 'prompt_failed', code }))
+        openSession(sessionHref(sessionId, { kind: 'prompt_failed', code }))
         return
       }
     }
-    navigate(sessionHref(sessionId))
+    openSession(sessionHref(sessionId))
   }
 
   const options = choices ? agentOptions(choices.agents) : []
@@ -4624,7 +4719,7 @@ export default function NewSession() {
           New session
         </h1>
       </div>
-      <fieldset className="modal-body launch-fields" aria-label="Session details" disabled={busy} inert={busy}>
+      <div className="modal-body"><fieldset className="launch-fields" aria-label="Session details" disabled={busy} inert={busy}>
         {notice !== null && (
           <p className="hint" role="status">
             <bdi>{notice}</bdi>
@@ -4769,7 +4864,7 @@ export default function NewSession() {
 
           </>
         )}
-      </fieldset>
+      </fieldset></div>
       <div className="modal-foot">
         {error !== null && (
           <p className="form-error" role="alert">
@@ -4821,6 +4916,21 @@ function keepDraft(sessionId: string, prompt: string): boolean {
 }
 
 const LAUNCH_DRAFT = 'hennery.draft.__launcher__'
+const LAUNCH_LOGIN = 'hennery.draft.__launcher_login__'
+/** Existing logout cleanup removes this marker along with every draft.
+ * Reopening a launcher shares it; signing in again creates a new lifetime.
+ * No shared auth/logout helper or other screen needs a new callback. */
+function launcherLogin(live: () => boolean): () => boolean {
+  try {
+    const token = sessionStorage.getItem(LAUNCH_LOGIN) ?? crypto.randomUUID()
+    sessionStorage.setItem(LAUNCH_LOGIN, token)
+    return () => { try { return sessionStorage.getItem(LAUNCH_LOGIN) === token } catch { return false } }
+  } catch {
+    // Storage cannot retain text either. Keep the mounted form usable,
+    // while a closed launcher or auth-page navigation cannot finish it.
+    return () => live() && location.pathname !== '/login' && location.pathname !== '/setup'
+  }
+}
 interface LauncherDraft { host: string; cwd: string; agent: string; otherName: string; prompt: string; picks: Picks }
 function readLauncherDraft(): LauncherDraft | null {
   try {
@@ -4832,7 +4942,12 @@ function readLauncherDraft(): LauncherDraft | null {
     return v as unknown as LauncherDraft
   } catch { return null }
 }
-function clearLauncherDraft() { try { sessionStorage.removeItem(LAUNCH_DRAFT) } catch { /* Current session draft still remains. */ } }
+function clearLauncherDraft(owner: string) {
+  try {
+    const current = JSON.parse(sessionStorage.getItem(LAUNCH_DRAFT) ?? 'null') as { owner?: unknown } | null
+    if (current?.owner === owner) sessionStorage.removeItem(LAUNCH_DRAFT)
+  } catch { /* Current session draft still remains. */ }
+}
 ```
 
 ### File: `web/src/styles/launch.css`
@@ -4886,8 +5001,9 @@ function clearLauncherDraft() { try { sessionStorage.removeItem(LAUNCH_DRAFT) } 
 /* UI R4: route-backed launcher and per-hat preferences. */
 .launcher-frame { width:min(720px,calc(100vw - 48px)); max-height:calc(100dvh - 64px); border-radius:var(--radius-xl); }
 .launcher-frame .modal-head { padding:20px 56px 12px 24px; }
-.launcher-frame .modal-body { display:flex; flex-direction:column; gap:20px; padding:8px 24px 24px; overflow-y:auto; }
-.launcher-frame .modal-body > .field { margin:0; }
+.launcher-frame .modal-body { padding:8px 24px 24px; overflow-y:auto; }
+.launcher-frame .launch-fields { display:flex; flex-direction:column; gap:20px; }
+.launcher-frame .launch-fields > .field { margin:0; }
 .launcher-frame .first-prompt { order:-1; }
 .launcher-frame .modal-eyebrow { display:none; }
 .launcher-frame .modal-foot { border-top:1px solid var(--hn-line); padding:16px 24px; }
@@ -4930,7 +5046,8 @@ function clearLauncherDraft() { try { sessionStorage.removeItem(LAUNCH_DRAFT) } 
 @media(max-width:767px) {
   .launcher-frame { width:100%; max-height:calc(100dvh - 24px); border-radius:20px 20px 0 0; margin-top:auto; }
   .launcher-frame .modal-head { padding:20px 64px 12px 16px; }
-  .launcher-frame .modal-body { padding:8px 16px 20px; gap:16px; }
+  .launcher-frame .modal-body { padding:8px 16px 20px; }
+  .launcher-frame .launch-fields { gap:16px; }
   .launcher-frame .modal-foot { padding:12px 16px calc(12px + env(safe-area-inset-bottom)); }
   .launcher-frame .modal-foot .btn-primary { width:100%; min-height:48px; }
   .launcher-frame .seg-item,.config-field .btn,.agent-tabs button { min-height:44px; }
@@ -4961,12 +5078,12 @@ function clearLauncherDraft() { try { sessionStorage.removeItem(LAUNCH_DRAFT) } 
 .runtime-id summary { cursor:pointer; min-height:32px; padding:8px 0; }
 .runtime-id label { display:block; }
 @media(max-width:767px) { .runtime-id summary { min-height:44px; } }
-.defaults-screen .config-boolean input,.launcher-frame .config-boolean input { width:16px; height:16px; min-height:0; margin:0; flex:none; accent-color:var(--hn-accent); }
+.defaults-screen .config-boolean input,.launcher-frame .config-boolean input,.launcher-frame .opt-out input { width:16px; height:16px; min-height:0; margin:0; flex:none; accent-color:var(--hn-accent); }
 @media(max-width:767px) {
   .defaults-screen button,.config-boolean,.launch-section-head button { min-height:44px; }
-  .launcher-frame .modal-body > a,.defaults-screen > header a { display:inline-flex; align-items:center; min-height:44px; }
+  .launcher-frame .launch-fields > a,.defaults-screen > header a { display:inline-flex; align-items:center; min-height:44px; }
 }
-.launch-fields { border:0; margin:0; min-width:0; }
+.launch-fields { border:0; margin:0; padding:0; min-width:0; }
 .picker-item { display:flex; align-items:center; gap:8px; }
 .picker-time { margin-left:auto; display:inline-flex; align-items:center; gap:4px; flex:none; font-family:var(--font-body); font-size:11px; }
 @media(max-width:767px) { .picker-item { min-height:44px; } }
@@ -5317,6 +5434,7 @@ import { newSessionHref, readStartNotice } from '../lib/start'
 import { navigate } from '../router'
 import { json, stubServer, type Answer } from '../test-server'
 import { liveStream } from '../test-stream'
+import { completeLogout } from '../pwa/logout'
 import NewSession, { RESOLVE_DEBOUNCE_MS } from './NewSession'
 
 // The agents a test wants `agentsFor` to answer, or `null` for its own.
@@ -5418,7 +5536,7 @@ function mount(routes: Record<string, Answer | Answer[]> = {}, path = '/new') {
       <NewSession />
     </ClientContext.Provider>,
   )
-  return { ...server, unmount: view.unmount }
+  return { ...server, client, unmount: view.unmount }
 }
 
 it('predicts delivery for the resolved hat and chosen agent', async () => {
@@ -6064,6 +6182,83 @@ it('starts only on a deliberate local Mod+Enter, ignoring repeat, IME and extra 
   await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
   expect(posts(server.sent).filter(path => path === '/api/sessions')).toHaveLength(1)
 })
+
+describe('pending launch persistence ownership', () => {
+  type Phase = 'start' | 'confirmation' | 'ambiguous' | 'prompt-failure'
+  async function pendingLaunch(phase: Phase) {
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>(resolve => { finish = resolve })
+    const path = phase === 'confirmation' ? 'GET /api/sessions/s-1' : phase === 'prompt-failure' ? 'POST /api/sessions/s-1/prompt' : 'POST /api/sessions'
+    const view = mount({ [path]: () => pending })
+    const user = await fill('/srv/work/cat', 'Synthetic private prompt')
+    await waitFor(() => expect(startButton()).toBeEnabled())
+    await user.click(startButton())
+    await waitFor(() => expect(view.sent.some(sent => `${sent.method} ${sent.path}` === path)).toBe(true))
+    const answer = phase === 'confirmation' ? json(200, { session_id: 's-1', hat_id: 'hat-a', lifecycle: 'active' })
+      : phase === 'ambiguous' ? json(502, { code: 'delivery_unknown', session_id: 's-1' })
+      : phase === 'prompt-failure' ? json(409, { code: 'host_offline' }) : json(202, { session_id: 's-1' })
+    return { ...view, settle: async () => { finish(answer); await pending } }
+  }
+  it.each(['start', 'confirmation', 'ambiguous', 'prompt-failure'] as const)('never restores text or navigates after logout during %s', async phase => {
+    const view = await pendingLaunch(phase)
+    await act(async () => { await completeLogout(view.client, false) })
+    view.unmount()
+    expect(sessionStorage.getItem('hennery.draft.__launcher__')).toBeNull()
+    await act(view.settle)
+    expect(Object.keys(sessionStorage).filter(key => key.startsWith('hennery.draft.'))).toEqual([])
+    expect(location.pathname).toBe('/login')
+    if (phase !== 'prompt-failure') expect(posts(view.sent)).not.toContain('/api/sessions/s-1/prompt')
+  })
+  it.each(['start', 'confirmation', 'ambiguous', 'prompt-failure'] as const)('retains a newer real launcher after the closed %s completes', async phase => {
+    const view = await pendingLaunch(phase)
+    view.unmount()
+    mount()
+    fireEvent.change(await screen.findByRole('textbox', { name: 'First prompt optional' }), { target: { value: 'A newer unsent prompt' } })
+    await waitFor(() => expect(sessionStorage.getItem('hennery.draft.__launcher__')).toContain('A newer unsent prompt'))
+    const newer = sessionStorage.getItem('hennery.draft.__launcher__')
+    await act(view.settle)
+    expect(sessionStorage.getItem('hennery.draft.__launcher__')).toBe(newer)
+    expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Synthetic private prompt')
+    expect(location.pathname).toBe('/new')
+  })
+})
+```
+
+### File: `web/src/screens/Defaults.test.tsx`
+
+```tsx
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { expect, it, vi } from 'vitest'
+import { Client } from '../api/client'
+import { ClientContext } from '../app-client'
+import { json, stubServer } from '../test-server'
+import Defaults from './Defaults'
+
+it('retains Other agent typing and loads and resets unavailable saved defaults without a catalog', async () => {
+  history.replaceState(null, '', '/defaults?host=h1')
+  const hat = { id: 'hat-a', name: 'Personal', colour: '#64748b', created_at: '', default_for_new_hosts: false, purging: false }
+  const server = stubServer({
+    'GET /api/hosts': json(200, [{ host_id: 'h1', name: 'Synthetic host', mcp_delivery: { claude: 'isolated' }, connected: true }]),
+    'GET /api/hats': json(200, [hat]),
+    'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: hat.id, agent: 'claude', revision: 0, config: {} }),
+    'GET /api/hats/hat-a/session-defaults?agent=custom-agent': json(200, { hat_id: hat.id, agent: 'custom-agent', revision: 7, config: { axes: { retired: false } } }),
+    'PUT /api/hats/hat-a/session-defaults?agent=custom-agent': json(200, { hat_id: hat.id, agent: 'custom-agent', revision: 8, config: {} }),
+  })
+  const client = new Client({ fetch: server.fetch, navigate: vi.fn(), here: () => ({ pathname: location.pathname, search: location.search }), stepUp: vi.fn() })
+  render(<ClientContext.Provider value={client}><Defaults /></ClientContext.Provider>)
+  await screen.findByRole('tab', { name: 'Claude' })
+  fireEvent.click(screen.getByText('Other agent', { exact: true }))
+  const field = screen.getByRole('textbox', { name: 'Configured agent name' })
+  fireEvent.change(field, { target: { value: 'custom-agent' } })
+  await waitFor(() => expect(field).toHaveValue('custom-agent'))
+  await screen.findByRole('button', { name: 'Reset retired to inherited' })
+  fireEvent.click(screen.getByRole('button', { name: 'Reset all to inherited' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save defaults' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm save' }))
+  await waitFor(() => expect(server.sent.find(sent => sent.method === 'PUT')?.body).toEqual({ revision: 7, config: {} }))
+  fireEvent.change(field, { target: { value: '' } })
+  expect(field).toHaveValue('')
+})
 ```
 
 ### Verification commands
@@ -6173,8 +6368,16 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       await page.goto(`/new?${new URLSearchParams({ host: secondId, cwd: secondProject })}`)
       await expect(page.getByRole('status').filter({ hasText: /^Saved Model/ })).toHaveText('Saved Model “sonnet” is unavailable on this host; using other.')
       await expect(page.getByRole('status').filter({ hasText: /^Saved Effort/ })).toHaveText('Saved Effort “high” is unavailable on this host; using low.')
+      const unavailableCatalog = /\/api\/hosts\/[^/]+\/runtime-catalog\?/
+      await page.route(unavailableCatalog, route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ code: 'catalog_unavailable', message: 'The settings preview is unavailable.' }) }))
       await page.goto(`/new?${new URLSearchParams({ host: hostId, cwd: project })}`)
       const form = page.getByRole('form', { name: 'New session', exact: true })
+      const optOut = form.getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true })
+      await optOut.check({ timeout: 3_000 })
+      await expect(optOut).toBeChecked()
+      await capture(page, `launcher-unavailable-${width}-${appearance}`)
+      await page.unroute(unavailableCatalog)
+      await page.reload()
       await form.getByRole('textbox', { name: /^First prompt/ }).fill('Prepare synthetic notes.')
       await expect(form.getByRole('button', { name: 'Start session', exact: true })).toBeEnabled()
       await capture(page, `launcher-${width}-${appearance}`)
@@ -6234,6 +6437,444 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
     } finally { releaseStart(); await context.close(); await host.stop(); await second.stop(); await collector.stop() }
   })
 }
+```
+
+### File: `web/e2e/sessions.spec.ts`
+
+```typescript
+// A session in a real browser, against the real binary (plan 4c, frontend
+// spec §12): set up and sign in, pair a host whose agent is the scripted
+// `hennery-fake-acp`, start a session from New Session, answer the
+// permission it asks for, read its streamed Markdown, then crash the host
+// and see the session parked when it comes back, then resume it from its
+// footer and answer its second prompt's question. At 1280 px and at 390 px,
+// each width with a collector and a host of its own, and not one
+// Content-Security-Policy violation.
+//
+// The fake asks before it streams (its `asks` come first in every prompt),
+// and echoes the answer it got as the start of its message: the transcript
+// shows that the option chosen on the card is the one the agent received.
+import { expect, test, type Page } from '@playwright/test'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { startCollector, type Collector } from './collector'
+import { FAKE_ACP, fakeAgent, testHost, type TestHost } from './host'
+import { scratchEnv } from './spawn'
+
+const PASSWORD = 'correct horse battery staple'
+const PROMPT = 'Write the notes, please.'
+
+// Every prompt: one permission ask, then a short Markdown message after the
+// echo of its answer (`permission:selected:<option>`, no newline of its own).
+const SCRIPT = {
+  asks: ['permission'],
+  chunks: ['\n\nTwo steps:\n\n', '- first step\n', '- second step\n'],
+  chunk_delay_ms: 20,
+}
+
+for (const width of [1280, 390]) {
+  test.describe(`at ${width} px`, () => {
+    test.describe.configure({ mode: 'serial' })
+
+    const narrow = width < 768
+    let collector: Collector
+    let host: TestHost
+    let page: Page
+    let project: string
+    const violations: string[] = []
+    // A log directory in the runner's own environment, as a developer's
+    // shell may have: no process started here may write to it.
+    let sentinel: string
+    let runnerLogDir: string | undefined
+
+    test.beforeAll(async ({ browser }) => {
+      if (!existsSync(FAKE_ACP)) {
+        throw new Error(`no ${FAKE_ACP}: cargo build -p hennery -p hennery-testkit --bins`)
+      }
+      sentinel = mkdtempSync(join(tmpdir(), 'hennery-e2e-sentinel-'))
+      runnerLogDir = process.env.HENNERY_LOG_DIR
+      process.env.HENNERY_LOG_DIR = sentinel
+      expect(scratchEnv(sentinel).HENNERY_LOG_DIR).toBeUndefined()
+      collector = await startCollector()
+      host = testHost(fakeAgent('claude', SCRIPT))
+      project = join(realpathSync(host.dir), 'notes')
+      mkdirSync(project)
+      const context = await browser.newContext({ baseURL: collector.origin, viewport: { width, height: 844 } })
+      page = await context.newPage()
+      // Every CSP violation the page sees, whatever its source.
+      await page.addInitScript(() => {
+        document.addEventListener('securitypolicyviolation', (e) => {
+          const seen = ((window as unknown as { __csp?: string[] }).__csp ??= [])
+          seen.push(`${e.violatedDirective} ${e.blockedURI}`)
+        })
+      })
+      page.on('console', (m) => {
+        if (m.text().includes('Content Security Policy')) violations.push(m.text())
+      })
+    })
+
+    test.afterAll(async () => {
+      try {
+        await page?.context().close()
+      } finally {
+        try {
+          await host?.stop()
+        } finally {
+          try {
+            await collector?.stop()
+          } finally {
+            if (runnerLogDir === undefined) delete process.env.HENNERY_LOG_DIR
+            else process.env.HENNERY_LOG_DIR = runnerLogDir
+            if (sentinel) rmSync(sentinel, { recursive: true, force: true })
+          }
+        }
+      }
+    })
+
+    test('the setup link sets hennery up, and the password signs in', async () => {
+      await page.goto(collector.setupLink)
+      await expect(page).toHaveURL(`${collector.origin}/setup`)
+      await page.getByLabel(/^Password at least/).fill(PASSWORD)
+      await page.getByLabel('Password again', { exact: true }).fill(PASSWORD)
+      await page.getByRole('button', { name: 'Set up', exact: true }).click()
+      await expect(page.getByRole('heading', { name: 'hennery is set up', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Skip', exact: true }).click()
+      await expect(page).toHaveURL(`${collector.origin}/sessions`)
+      // Signed out: the rail's button on a desktop; a phone shows none, so
+      // the browser drops its session there.
+      if (narrow) await page.context().clearCookies()
+      else await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+      await page.goto('/sessions')
+      await expect(page).toHaveURL(`${collector.origin}/login?next=%2Fsessions`)
+      await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+      await expect(page).toHaveURL(`${collector.origin}/sessions`)
+    })
+
+    test('a host pairs with the command the page shows, and comes online', async () => {
+      await page.goto('/hosts')
+      await page.getByRole('button', { name: 'Add host', exact: true }).click()
+      const command = (await page.getByLabel('Pairing command', { exact: true }).textContent())!
+      expect(command).toMatch(new RegExp(`^hennery host join ${collector.origin} [0-9A-Z]{4}-[0-9A-Z]{4}$`))
+      expect(await host.join(command, ['--name', 'e2e host', '--no-runtime'])).toBe(0)
+      await expect(page.getByText('Paired: e2e host', { exact: true })).toBeVisible({ timeout: 15_000 })
+      host.run()
+      await expect(async () => {
+        await page.reload()
+        await expect(
+          page.getByRole('listitem', { name: 'e2e host', exact: true }).getByText('Online', { exact: true }),
+        ).toBeVisible({ timeout: 1000 })
+      }).toPass({ timeout: 20_000 })
+    })
+
+    test('New Session starts a session with its first prompt, and opens it', async () => {
+      // The rail's link on a desktop, the tab bar's on a phone.
+      if (narrow) {
+        await page.getByRole('navigation', { name: 'Primary navigation', exact: true }).getByRole('link', { name: 'New', exact: true }).click()
+      } else {
+        await page.getByRole('link', { name: 'New session', exact: true }).click()
+      }
+      // The form's own controls: the session list beside it has a search.
+      const form = page.getByRole('form', { name: 'New session', exact: true })
+      await expect(form).toBeVisible()
+      await expect(form.getByRole('radio', { name: 'e2e host', exact: true })).toBeChecked()
+      await expect(form.getByRole('radio', { name: 'Claude', exact: true })).toBeChecked()
+      await form.getByRole('combobox').fill(project)
+      // The whole line: the directory as resolved is the project itself,
+      // and it exists (nothing follows it).
+      const at = project.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      await expect(form.getByRole('status').filter({ hasText: /^Starts in the hat / })).toHaveText(new RegExp(`^Starts in the hat .+ at ${at}$`))
+      await form.getByRole('textbox', { name: /^First prompt/ }).fill(PROMPT)
+      // This delivery/session fixture reports no settings catalog.
+      await form.getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+      await form.getByRole('button', { name: 'Start session', exact: true }).click()
+      // The start waits for the host to start the agent: on a loaded runner,
+      // more than the default wait, and on macOS a fresh binary's first exec
+      // waits for its online check (20 s and more has been seen).
+      await expect(page).toHaveURL(new RegExp(`^${collector.origin}/sessions/[^/?#]+$`), { timeout: 45_000 })
+      await expect(page.locator('.bubble.user')).toHaveText(PROMPT)
+    })
+
+    test('the agent’s permission question is answered from its card', async () => {
+      const card = page.getByRole('region', { name: 'Question from Claude', exact: true })
+      await expect(card.getByText('Write notes.txt', { exact: true })).toBeVisible({ timeout: 15_000 })
+      await expect(page.locator('.session-head .badge')).toHaveText('Waiting on you')
+      await card.getByRole('button', { name: 'Allow', exact: true }).click()
+      await expect(card.getByText('Answered', { exact: true })).toBeVisible()
+      await expect(card.getByRole('button')).toHaveCount(0)
+    })
+
+    test('the agent’s message streams in as Markdown, its list markers shown', async () => {
+      // The echo of the answer opens the message: `allow` reached the agent.
+      const message = page.locator('.bubble', { has: page.getByText('permission:selected:allow', { exact: true }) })
+      await expect(message.getByRole('listitem')).toHaveText(['first step', 'second step'])
+      await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+      // Tailwind's preflight strips list markers: the transcript's own rule
+      // must bring them back (client view spec §5.3; jsdom cannot see it).
+      const list = message.getByRole('list')
+      expect(await list.evaluate((el) => getComputedStyle(el).listStyleType)).toBe('disc')
+      const item = message.getByRole('listitem').first()
+      // An item draws its marker only as a list item, of its own (inherited) type.
+      expect(await item.evaluate((el) => getComputedStyle(el).display)).toBe('list-item')
+      expect(await item.evaluate((el) => getComputedStyle(el).listStyleType)).toBe('disc')
+    })
+
+    test('the composer’s Send, and a phone’s way back, are on screen', async () => {
+      const send = page.getByRole('button', { name: 'Send', exact: true })
+      await expect(send).toBeVisible()
+      await expect(send).toBeInViewport()
+      // Nothing covers it (a tab bar, a sheet): the point at its centre is it.
+      const onTop = await send.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+        return hit !== null && el.contains(hit)
+      })
+      expect(onTop).toBe(true)
+      const back = page.getByRole('link', { name: 'Back to sessions', exact: true })
+      if (narrow) {
+        await expect(back).toBeVisible()
+        await expect(back).toBeInViewport()
+        expect((await back.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+        await expect(page.locator('.tabbar')).toBeHidden()
+      } else {
+        // Not shown, so out of the accessibility tree: found by its class.
+        await expect(back).toHaveCount(0)
+        const hidden = page.locator('.session-head .back-btn')
+        expect(await hidden.evaluate((el) => getComputedStyle(el).display)).toBe('none')
+      }
+    })
+
+    test('a host that crashed and came back leaves the session parked', async () => {
+      // Idle first, so no turn is cut short by the crash.
+      await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+      await host.crash()
+      host.run()
+      // The restarted host holds no session: the collector parks it.
+      const marker = page.locator('.marker-host_restarted .divider > span')
+      await expect(marker).toHaveText(/^The host restarted( · .+)?$/, { timeout: 20_000 })
+      await expect(page.locator('.session-head .badge')).toHaveText('Parked')
+    })
+
+    test('the footer’s Resume runs the session again, and it answers a second prompt', async () => {
+      const resume = page.getByRole('button', { name: 'Resume', exact: true })
+      await expect(resume).toBeVisible()
+      if (narrow) expect((await resume.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      await resume.click()
+      await expect(page.locator('.session-head .badge')).toHaveText('Idle', { timeout: 20_000 })
+      await expect(resume).toHaveCount(0)
+      // The fake asks on every prompt: a second card, answered like the first.
+      await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('And the second part.')
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      const cards = page.getByRole('region', { name: 'Question from Claude', exact: true })
+      await expect(cards).toHaveCount(2, { timeout: 15_000 })
+      const second = cards.nth(1)
+      await second.getByRole('button', { name: 'Reject', exact: true }).click()
+      await expect(second.getByText('Answered', { exact: true })).toBeVisible()
+      // The reply opens with what the agent got this time.
+      const reply = page.locator('.bubble', { has: page.getByText('permission:selected:reject', { exact: true }) })
+      await expect(reply.getByRole('listitem')).toHaveText(['first step', 'second step'])
+      await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+    })
+
+    test('the session menu’s controls are big enough to tap on a phone', async () => {
+      test.skip(!narrow, 'the 44 px touch targets are a phone’s')
+      const trigger = page.getByRole('button', { name: 'Session actions', exact: true })
+      expect((await trigger.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      await trigger.click()
+      await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+      // An active session: Close, Delete, and Park if its host can park.
+      const list = page.locator('.session-menu-list')
+      const names = await list.getByRole('button').allTextContents()
+      expect(names.filter((n) => n !== 'Park')).toEqual(['Close', 'Delete session'])
+      for (const name of names) {
+        const box = await list.getByRole('button', { name, exact: true }).boundingBox()
+        expect(box!.height).toBeGreaterThanOrEqual(44)
+      }
+      await page.keyboard.press('Escape')
+      await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    test('broke no Content-Security-Policy rule', async () => {
+      expect(violations).toEqual([])
+      const seen = await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? [])
+      expect(seen).toEqual([])
+    })
+
+    test('wrote nothing where the runner’s own environment pointed', async () => {
+      expect(readdirSync(sentinel)).toEqual([])
+    })
+  })
+}
+```
+
+### File: `web/e2e/mcp-delivery.spec.ts`
+
+```typescript
+// Real dispatch receipts, not MCP tool execution: the Codex-named fake
+// records session/new and session/load under its own scratch directory.
+import { expect, test, type Page } from '@playwright/test'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { startCollector, type Collector } from './collector'
+import { fakeAgent, testHost, type TestHost } from './host'
+import { scratchEnv } from './spawn'
+
+const PASSWORD = 'correct horse battery staple'
+const ENV_VALUE = 'e2e-environment-value-0123456789'
+async function stepUp(page: Page) {
+  const dialog = page.getByRole('dialog', { name: 'This needs a fresh confirmation', exact: true })
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel('Your password', { exact: true }).fill(PASSWORD)
+  await dialog.getByRole('button', { name: 'Confirm', exact: true }).click()
+  await expect(dialog).toBeHidden()
+}
+
+for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, () => {
+  test.describe.configure({ mode: 'serial' })
+  let collector: Collector, host: TestHost, page: Page
+  let project: string, receipt: string, sessionUrl: string, hostId: string, hatId: string, sentinel: string
+  let runnerLog: string | undefined
+  const violations: string[] = []
+  const records = () => existsSync(receipt) ? readFileSync(receipt, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : []
+  const local = () => page.getByRole('region', { name: 'Local MCP servers', exact: true })
+  const report = () => page.getByRole('region', { name: 'MCP delivery', exact: true })
+  test.beforeAll(async ({ browser }) => {
+    sentinel = mkdtempSync(join(tmpdir(), 'hennery-e2e-sentinel-'))
+    runnerLog = process.env.HENNERY_LOG_DIR; process.env.HENNERY_LOG_DIR = sentinel
+    expect(scratchEnv(sentinel).HENNERY_LOG_DIR).toBeUndefined()
+    collector = await startCollector()
+    // The log is scratch too, and never printed: it can contain env values.
+    const agentScratch = mkdtempSync(join(tmpdir(), 'hennery-e2e-receipts-'))
+    receipt = join(agentScratch, 'session.jsonl')
+    host = testHost(fakeAgent('codex', { chunks: ['Done.'], session_log: receipt }))
+    project = join(realpathSync(host.dir), 'notes'); mkdirSync(project)
+    const context = await browser.newContext({ baseURL: collector.origin, viewport: { width, height: 844 } })
+    page = await context.newPage()
+    await page.addInitScript(() => document.addEventListener('securitypolicyviolation', e => {
+      const seen = ((window as unknown as { __csp?: string[] }).__csp ??= [])
+      seen.push(`${e.violatedDirective} ${e.blockedURI}`)
+    }))
+    page.on('console', m => { if (m.text().includes('Content Security Policy')) violations.push(m.text()) })
+    const setup = await page.request.post('/api/setup', { headers: { Origin: collector.origin }, data: { token: new URL(collector.setupLink).hash.slice(1), password: PASSWORD, public_url: collector.origin } })
+    expect(setup.status()).toBe(201)
+  })
+  test.afterAll(async () => {
+    try { await page?.context().close() } finally {
+      try { await host?.stop() } finally {
+        try { await collector?.stop() } finally {
+          if (runnerLog === undefined) delete process.env.HENNERY_LOG_DIR; else process.env.HENNERY_LOG_DIR = runnerLog
+          if (receipt) rmSync(join(receipt, '..'), { recursive: true, force: true })
+          if (sentinel) rmSync(sentinel, { recursive: true, force: true })
+        }
+      }
+    }
+  })
+  test('pairs a real host running a Codex-named fake', async () => {
+    await page.goto('/hosts'); await page.getByRole('button', { name: 'Add host', exact: true }).click()
+    const command = (await page.getByLabel('Pairing command', { exact: true }).textContent())!
+    expect(await host.join(command, ['--name', 'e2e host', '--no-runtime'])).toBe(0)
+    await expect(page.getByText('Paired: e2e host', { exact: true })).toBeVisible({ timeout: 15_000 })
+    host.run()
+    await expect(async () => {
+      const response = await page.request.get('/api/hosts'); expect(response.status()).toBe(200)
+      const hosts = await response.json(); expect(hosts[0].connected).toBe(true)
+      hostId = hosts[0].host_id; hatId = hosts[0].default_hat_id
+    }).toPass({ timeout: 20_000 })
+  })
+  test('saves a full local set through step-up, reads no values back and starts with its actual delivery', async () => {
+    await page.goto('/mcp'); await expect(local()).toBeVisible()
+    // The existing connection form creates and mounts the HTTP entry.
+    await page.getByRole('button', { name: 'Add connection', exact: true }).click()
+    const connection = page.getByRole('region', { name: 'Add a connection', exact: true })
+    await connection.getByRole('textbox', { name: 'Name', exact: true }).fill('Docs')
+    await connection.getByRole('textbox', { name: 'Slug', exact: true }).fill('docs')
+    await connection.getByRole('textbox', { name: 'Server URL', exact: true }).fill('https://mcp.example.com/mcp')
+    await connection.getByRole('combobox', { name: 'Authentication', exact: true }).selectOption('none')
+    await connection.getByRole('button', { name: 'Create', exact: true }).click()
+    const tick = page.getByRole('listitem', { name: 'Docs', exact: true }).getByRole('checkbox', { name: 'e2e host', exact: true })
+    await tick.click(); await expect(tick).toBeChecked()
+    await local().getByRole('button', { name: 'Add local server', exact: true }).click()
+    await local().getByRole('textbox', { name: 'Server name', exact: true }).fill('local')
+    await local().getByRole('textbox', { name: 'Command', exact: true }).fill('tool')
+    await local().getByRole('button', { name: 'Add environment variable', exact: true }).click()
+    await local().getByRole('textbox', { name: 'Environment name', exact: true }).fill('TOKEN')
+    await local().getByRole('textbox', { name: 'Value for TOKEN', exact: true }).fill(ENV_VALUE)
+    await local().getByRole('button', { name: 'Review local servers', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(local().getByRole('textbox', { name: 'Value for TOKEN', exact: true })).toHaveValue('')
+    await local().getByRole('textbox', { name: 'Value for TOKEN', exact: true }).fill(ENV_VALUE)
+    let refused = 0
+    await page.route('**/api/mcp/stdio-servers?*', async route => {
+      if (route.request().method() === 'PUT' && refused === 0) { refused++; await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: 'step_up_required' }) }) }
+      else await route.continue()
+    })
+    await local().getByRole('button', { name: 'Review local servers', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Save local servers', exact: true }).click()
+    await expect(local().getByRole('textbox', { name: 'Value for TOKEN', exact: true })).toHaveValue('')
+    await stepUp(page)
+    await expect(local().getByRole('checkbox', { name: 'Keep stored value for TOKEN', exact: true })).toBeChecked()
+    expect(refused).toBe(1); await page.unroute('**/api/mcp/stdio-servers?*')
+    const listed = await page.request.get(`/api/mcp/stdio-servers?host_id=${hostId}&hat_id=${hatId}`)
+    expect(listed.status()).toBe(200)
+    const body = await listed.text(); expect(body.includes(ENV_VALUE)).toBe(false)
+    expect(JSON.parse(body).servers[0].env).toEqual([{ name: 'TOKEN', has_value: true }])
+    expect(await page.locator('textarea').evaluateAll((fields, value) => fields.some(field => field instanceof HTMLTextAreaElement && field.value.includes(value)), ENV_VALUE)).toBe(false); expect(page.url().includes(ENV_VALUE)).toBe(false)
+    expect(await page.evaluate(value => document.body.innerText.includes(value), ENV_VALUE)).toBe(false)
+    expect(await page.evaluate(value => JSON.stringify({ ...localStorage, ...sessionStorage }).includes(value), ENV_VALUE)).toBe(false)
+    if (width === 390) expect((await local().getByRole('button', { name: 'Review local servers', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await page.goto('/new')
+    const form = page.getByRole('form', { name: 'New session', exact: true }); await form.getByRole('radio', { name: 'Codex', exact: true }).check()
+    await form.getByRole('combobox').fill(project)
+    await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toContainText('not isolated per hat')
+    await form.getByRole('textbox', { name: 'First prompt optional', exact: true }).fill('Show delivery.')
+    // This delivery/session fixture reports no settings catalog.
+    await form.getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+    await form.getByRole('button', { name: 'Start session', exact: true }).click()
+    await expect(page).toHaveURL(/\/sessions\/[^/?#]+$/, { timeout: 45_000 }); sessionUrl = page.url()
+    await expect(report()).toContainText('At the last start/resume:')
+    await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
+    await expect(report()).toContainText('Codex also loads your own ~/.codex MCP servers.')
+    expect(records()[0].method).toBe('session/new')
+    expect(records()[0].params.mcpServers.map((s: { name: string }) => s.name).sort()).toEqual(['hennery-docs', 'hennery-local'])
+    expect(JSON.stringify(records()[0].params.mcpServers).includes(ENV_VALUE)).toBe(true)
+    await page.reload(); await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
+  })
+  test('keeps the last-start snapshot until resume, and delivers none for a different hat', async () => {
+    await page.goto('/mcp'); await local().getByRole('button', { name: 'Add local server', exact: true }).click()
+    await local().getByRole('textbox', { name: 'Server name', exact: true }).nth(1).fill('second')
+    await local().getByRole('textbox', { name: 'Command', exact: true }).nth(1).fill('runner')
+    await local().getByRole('button', { name: 'Review local servers', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Save local servers', exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await page.goto(sessionUrl); await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
+    await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+    await host.crash(); host.run()
+    await expect(page.locator('.session-head .badge')).toHaveText('Parked', { timeout: 20_000 })
+    await page.getByRole('button', { name: 'Resume', exact: true }).click()
+    await expect(report()).toContainText('3 MCP servers.', { timeout: 20_000 })
+    expect(records().at(-1).method).toBe('session/load'); expect(records().at(-1).params.mcpServers.length).toBe(3)
+    const made = await page.request.post('/api/hats', { headers: { Origin: collector.origin }, data: { name: 'Other hat' } }); expect(made.status()).toBe(201)
+    const other = await made.json()
+    const path = join(project, 'other'); mkdirSync(path)
+    const rules = await page.request.put(`/api/hosts/${hostId}/path-rules`, { headers: { Origin: collector.origin }, data: { rules: [{ prefix: path, hat_id: other.id }] } }); expect(rules.status()).toBe(200)
+    await page.goto('/new')
+    const form = page.getByRole('form', { name: 'New session', exact: true }); await form.getByRole('radio', { name: 'Codex', exact: true }).check(); await form.getByRole('combobox').fill(path)
+    await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toContainText('this hat is not the host’s default')
+    // This delivery/session fixture reports no settings catalog.
+    await form.getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+    await form.getByRole('button', { name: 'Start session', exact: true }).click()
+    await expect(report()).toContainText('this hat is not the host’s default', { timeout: 45_000 })
+    await expect(report()).toContainText('0 MCP servers.')
+    expect(records().at(-1).params.mcpServers).toEqual([])
+  })
+  test('obeys CSP and leaves the runner’s log directory untouched', async () => {
+    expect(violations).toEqual([])
+    expect(await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? [])).toEqual([])
+    expect(readdirSync(sentinel)).toEqual([])
+  })
+})
 ```
 
 ### Verification commands
