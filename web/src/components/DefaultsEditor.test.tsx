@@ -50,3 +50,15 @@ it('holds a new replacement when its catalog context is no longer usable', () =>
   expect(screen.getByRole('button', { name: 'Save defaults' })).toBeDisabled()
   expect(screen.getByRole('alert')).toHaveTextContent('A chosen value is unavailable in this preview.')
 })
+it('pins the edited revision when a later record arrives instead of silently rebasing the write', async () => {
+  const server = stubServer({ 'PUT /api/hats/hat-a/session-defaults?agent=claude': json(409, { code: 'defaults_changed', message: 'Defaults changed' }) })
+  const client = new Client({ fetch: server.fetch, navigate: vi.fn(), here: () => ({ pathname: '/defaults', search: '' }), stepUp: vi.fn() })
+  const view = (revision: number) => <ClientContext.Provider value={client}><DefaultsEditor hat={hat} record={{ hat_id: hat.id, agent: 'claude', revision, config: {} }} catalog={catalog} onSaved={vi.fn()} onReload={vi.fn()} /></ClientContext.Provider>
+  const { rerender } = render(view(1))
+  fireEvent.change(screen.getByRole('combobox', { name: 'mode' }), { target: { value: 'bypass' } })
+  rerender(view(2))
+  fireEvent.click(screen.getByRole('button', { name: 'Save defaults' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm save' }))
+  await waitFor(() => expect(server.sent).toHaveLength(1))
+  expect(server.sent[0].body).toEqual({ revision: 1, config: { mode: 'bypass' } })
+})

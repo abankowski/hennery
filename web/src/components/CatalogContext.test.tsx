@@ -29,3 +29,24 @@ it('fences late catalog responses by whole host context and retry generation', a
   rerender(view('new', 1))
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('ready:pin-newer'))
 })
+it('does not reuse an earlier ready result when a context is left and re-entered', async () => {
+  let finishA!: (response: Response) => void, finishB!: (response: Response) => void
+  const lateA = new Promise<Response>(resolve => { finishA = resolve }), lateB = new Promise<Response>(resolve => { finishB = resolve })
+  const server = stubServer({
+    'GET /api/hosts/a/runtime-catalog?agent=claude&cwd=%2Fproject': [json(200, { ...catalog, adapter_revision: 'a-old' }), () => lateA],
+    'GET /api/hosts/b/runtime-catalog?agent=claude&cwd=%2Fproject': () => lateB,
+    'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 0, config: {} }),
+    'GET /api/hats/hat-a/delegation-policy': json(200, { revision: 0, allowed: {} }),
+  })
+  const client = new Client({ fetch: server.fetch, navigate: vi.fn(), here: () => ({ pathname: '/new', search: '' }), stepUp: vi.fn() })
+  const view = (host: string) => <ClientContext.Provider value={client}><Harness host={host} /></ClientContext.Provider>
+  const { rerender } = render(view('a'))
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('ready:a-old'))
+  rerender(view('b'))
+  rerender(view('a'))
+  expect(screen.getByRole('status')).toHaveTextContent('loading:')
+  await act(async () => { finishA(json(200, { ...catalog, adapter_revision: 'a-new' })); await lateA })
+  expect(screen.getByRole('status')).toHaveTextContent('ready:a-new')
+  await act(async () => { finishB(json(200, { ...catalog, adapter_revision: 'b-late' })); await lateB })
+  expect(screen.getByRole('status')).toHaveTextContent('ready:a-new')
+})

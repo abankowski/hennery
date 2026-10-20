@@ -11,15 +11,15 @@ import { ConfigControl } from './LaunchConfig'
 export default function DefaultsEditor({ hat, record, catalog, policy, onSaved, onReload }: {
   hat: HatItem; record: HatSessionDefaults; catalog: HostCatalog | null; policy?: ExecutionPolicy; onSaved: (record: HatSessionDefaults) => void; onReload: () => void
 }) {
-  const client = useClient(), [edits, setEdits] = useState(record.config), [confirm, setConfirm] = useState(false)
+  const client = useClient(), [base, setBase] = useState(record), [edits, setEdits] = useState(record.config), [confirm, setConfirm] = useState(false)
   const [conflict, setConflict] = useState(false), [saved, setSaved] = useState(false)
   const accent = useAccentStyle(hat.colour), flat = flatConfig(edits)
   const fields = fieldsOf(catalog), known = new Map(fields.map(f => [f.key, f.option]))
   const keys = [...new Set([...fields.map(f => f.key), ...Object.keys(flat)])]
   const preview = catalog ? resolveDefaults(catalog, edits, {}, policy) : null
   const effective = flatConfig(preview?.config ?? {})
-  const dirty = JSON.stringify(edits) !== JSON.stringify(record.config)
-  const replacements = Object.keys(flat).filter(key => flatConfig(record.config)[key] !== flat[key])
+  const dirty = JSON.stringify(edits) !== JSON.stringify(base.config)
+  const replacements = Object.keys(flat).filter(key => flatConfig(base.config)[key] !== flat[key])
   const invalidReplacement = replacements.some(key => !usableCatalog(catalog) || !known.has(key) || !supports(known.get(key)!, flat[key]))
   const warnings = catalog ? [...new Set([...securityWarnings(catalog, edits), ...securityWarnings(catalog, preview?.config ?? {})])] : ['Permission settings are not verified without a fresh host settings preview.']
   return <section className="defaults-editor hn-accent-scope" style={accent} aria-label={`Defaults for ${hat.name}`}><h2><bdi>{hat.name}</bdi></h2><p className="hint">{record.agent} · Saved preferences. Reset removes only this hat’s override.</p>
@@ -38,10 +38,10 @@ export default function DefaultsEditor({ hat, record, catalog, policy, onSaved, 
     {hat.purging && <p role="alert">This hat is being purged. Defaults cannot be changed.</p>}
     {conflict && <p role="alert">These defaults changed elsewhere. Your edits are retained. <button className="btn btn-secondary" type="button" onClick={onReload}>Reload and review</button></p>}
     {saved && <p role="status">Defaults saved.</p>}
-    <div className="defaults-actions"><button className="btn btn-ghost" type="button" disabled={!dirty} onClick={() => { setEdits(record.config); setConflict(false) }}>Cancel changes</button><button className="btn btn-ghost" type="button" disabled={hat.purging || Object.keys(flat).length === 0} onClick={() => setEdits({})}>Reset all to inherited</button><button className="btn btn-primary" type="button" disabled={!dirty || hat.purging || conflict || invalidReplacement} onClick={() => setConfirm(true)}>Save defaults</button></div>
+    <div className="defaults-actions"><button className="btn btn-ghost" type="button" disabled={!dirty} onClick={() => { setEdits(base.config); setConflict(false) }}>Cancel changes</button><button className="btn btn-ghost" type="button" disabled={hat.purging || Object.keys(flat).length === 0} onClick={() => setEdits({})}>Reset all to inherited</button><button className="btn btn-primary" type="button" disabled={!dirty || hat.purging || conflict || invalidReplacement} onClick={() => setConfirm(true)}>Save defaults</button></div>
     {confirm && <ConfirmDialog title={`Save defaults for ${hat.name}`} confirm="Confirm save" action={async () => {
-      try { const updated = await putSessionDefaults(client, hat.id, record.agent, { revision: record.revision, config: edits }); onSaved(updated); setSaved(true) }
+      try { const updated = await putSessionDefaults(client, hat.id, base.agent, { revision: base.revision, config: edits }); setBase(updated); setEdits(updated.config); onSaved(updated); setSaved(true) }
       catch (err) { if (err instanceof ApiFailure && err.code === 'defaults_changed') { setConflict(true); setConfirm(false) } throw err }
-    }} onClose={() => setConfirm(false)}><p>Save these launcher preferences for <bdi>{hat.name}</bdi> / <bdi>{record.agent}</bdi>?</p><ul>{[...new Set([...Object.keys(flatConfig(record.config)), ...Object.keys(flat)])].filter(key => flatConfig(record.config)[key] !== flat[key]).map(key => <li key={key}><bdi>{known.get(key)?.name ?? key}: {String(flatConfig(record.config)[key] ?? 'Inherits')} → {String(flat[key] ?? 'Inherits')}</bdi></li>)}</ul>{warnings.map(warning => <p key={warning}>{warning}</p>)}<p>This affects later operator launches. Delegation grants and existing sessions keep their own settings.</p></ConfirmDialog>}
+    }} onClose={() => setConfirm(false)}><p>Save these launcher preferences for <bdi>{hat.name}</bdi> / <bdi>{base.agent}</bdi>?</p><ul>{[...new Set([...Object.keys(flatConfig(base.config)), ...Object.keys(flat)])].filter(key => flatConfig(base.config)[key] !== flat[key]).map(key => <li key={key}><bdi>{known.get(key)?.name ?? key}: {String(flatConfig(base.config)[key] ?? 'Inherits')} → {String(flat[key] ?? 'Inherits')}</bdi></li>)}</ul>{warnings.map(warning => <p key={warning}>{warning}</p>)}<p>This affects later operator launches. Delegation grants and existing sessions keep their own settings.</p></ConfirmDialog>}
   </section>
 }

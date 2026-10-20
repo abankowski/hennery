@@ -24,7 +24,13 @@ export function supports(option: ConfigOption, value: ConfigValue): boolean {
   return option.kind === 'boolean' ? typeof value === 'boolean' : typeof value === 'string' && option.choices.some(choice => choice.value === value)
 }
 export function usableCatalog(catalog: HostCatalog | null): catalog is HostCatalog {
-  return catalog !== null && catalog.freshness === 'fresh' && catalog.adapter_revision !== '' && fieldsOf(catalog).length > 0
+  if (catalog === null || catalog.freshness !== 'fresh' || catalog.adapter_revision === '') return false
+  const fields = fieldsOf(catalog), defaults = flatConfig(catalog.defaults)
+  const required = new Set([...Object.keys(catalog.security.axes), ...['model', 'mode'].filter(key => Object.hasOwn(defaults, key))])
+  return fields.length > 0 && [...required].every(key => {
+    const option = fields.find(field => field.key === key)?.option
+    return Object.hasOwn(defaults, key) && option !== undefined && supports(option, defaults[key]) && option.current === defaults[key]
+  })
 }
 export function securityWarnings(catalog: HostCatalog, config: SessionConfig): string[] {
   if (!catalog.security.known) return ['This agent’s permission baseline is unknown. Review its access before saving or starting.']

@@ -126,3 +126,8 @@
   .defaults-screen button,.config-boolean,.launch-section-head button { min-height:44px; }
   .launcher-frame .modal-body > a,.defaults-screen > header a { display:inline-flex; align-items:center; min-height:44px; }
 }
+.launch-fields { border:0; margin:0; min-width:0; }
+.picker-item { display:flex; align-items:center; gap:8px; }
+.picker-time { margin-left:auto; display:inline-flex; align-items:center; gap:4px; flex:none; font-family:var(--font-body); font-size:11px; }
+@media(max-width:767px) { .picker-item { min-height:44px; } }
+.picker-item bdi { min-width:0; overflow-wrap:anywhere; }

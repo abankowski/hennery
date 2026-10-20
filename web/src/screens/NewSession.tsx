@@ -3,7 +3,7 @@ import LaunchConfig, { requestFor } from '../components/LaunchConfig'
 import { useLaunchContext } from '../components/CatalogContext'
 import { useAccentStyle } from '../lib/theme'
 import { useRegisterContext } from '../app-actions'
-import { confirmStart } from '../lib/start'
+import { confirmStart, rememberConfigurationReview } from '../lib/start'
 import type { Picks } from '../lib/defaults'
 import McpPrediction from '../components/McpPrediction'
 import { predictionHat } from '../lib/mcpDelivery'
@@ -262,6 +262,7 @@ export default function NewSession() {
     if (!canStart || busyRef.current) return
     busyRef.current = true
     setBusy(true)
+    e.currentTarget.closest<HTMLElement>('[role="dialog"]')?.focus()
     setError(null)
     const request: StartSessionRequest = { host_id: hostId, agent: agentName, cwd: current!.canonical, ...config }
     let sessionId: string
@@ -280,13 +281,16 @@ export default function NewSession() {
     }
     if (!liveRef.current) { keepDraft(sessionId, prompt); clearLauncherDraft(); return }
     // A start acknowledgement alone cannot authorize the first prompt.
-    if (!optOut) {
-      const confirmation = await confirmStart(client, sessionId, current!.hat_id, config!)
+    {
+      // The opt-out skips configuration evidence, never the actual-hat check.
+      const confirmation = await confirmStart(client, sessionId, current!.hat_id, config!, 30_000, !optOut)
       if (!liveRef.current) { keepDraft(sessionId, prompt); clearLauncherDraft(); return }
       if (confirmation !== 'confirmed') {
+        const code = optOut && confirmation === 'config_unconfirmed' ? 'start_unconfirmed' : confirmation
         keepDraft(sessionId, prompt)
+        if (code === 'config_unconfirmed') rememberConfigurationReview(sessionId, context.catalog, config!)
         clearLauncherDraft()
-        navigate(sessionHref(sessionId, { kind: 'prompt_failed', code: confirmation }))
+        navigate(sessionHref(sessionId, { kind: 'prompt_failed', code }))
         return
       }
     }
@@ -311,14 +315,14 @@ export default function NewSession() {
   const options = choices ? agentOptions(choices.agents) : []
 
   return (
-    <form className="new-session hn-accent-scope" style={accent} onSubmit={start} aria-labelledby="new-session-title" onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (canStart) e.currentTarget.requestSubmit() } }}>
+    <form className="new-session hn-accent-scope" style={accent} onSubmit={start} aria-busy={busy} aria-labelledby="new-session-title" onKeyDown={e => { if (!e.defaultPrevented && !e.repeat && !e.altKey && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (canStart) e.currentTarget.requestSubmit() } }}>
       <div className="modal-head">
         <div className="modal-eyebrow">Start a session</div>
         <h1 className="modal-title" id="new-session-title">
           New session
         </h1>
       </div>
-      <div className="modal-body">
+      <fieldset className="modal-body launch-fields" aria-label="Session details" disabled={busy} inert={busy}>
         {notice !== null && (
           <p className="hint" role="status">
             <bdi>{notice}</bdi>
@@ -459,11 +463,11 @@ export default function NewSession() {
             </div>
 
             {current && <><LaunchConfig context={context} picks={picks} onPicks={setPicks} optOut={optOut} onOptOut={setOptOut} retry={() => setGeneration(g => g + 1)} expanded={expanded} onExpanded={setExpanded} />
-              <Link to={`/defaults?${new URLSearchParams({ host: hostId, cwd: current.canonical, agent: agentName, hat: current.hat_id, return: 'new' })}`}>Edit defaults</Link></>}
+              <Link aria-disabled={busy} tabIndex={busy ? -1 : undefined} onClick={event => { if (busy) event.preventDefault() }} to={`/defaults?${new URLSearchParams({ host: hostId, cwd: current.canonical, agent: agentName, hat: current.hat_id, return: 'new' })}`}>Edit defaults</Link></>}
 
           </>
         )}
-      </div>
+      </fieldset>
       <div className="modal-foot">
         {error !== null && (
           <p className="form-error" role="alert">

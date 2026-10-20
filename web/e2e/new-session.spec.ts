@@ -35,6 +35,7 @@ async function pair(request: APIRequestContext, collector: Collector, host: Test
   return id
 }
 async function capture(page: Page, name: string) {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   if (process.env.UI_R4_SCREENSHOTS !== '1') return
   mkdirSync(artifact, { recursive: true })
   await page.evaluate(async () => { await document.fonts.ready })
@@ -50,6 +51,7 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
     const context = await browser.newContext({ baseURL: collector.origin, viewport: { width, height: width < 768 ? 844 : 900 }, reducedMotion: 'reduce', colorScheme: appearance })
     const page = await context.newPage()
     const starts: object[] = [], prompts: string[] = [], wire: string[] = []
+    let releaseStart = () => {}
     page.on('request', request => { wire.push(`${request.method()} ${new URL(request.url()).pathname}${new URL(request.url()).search}`); if (request.method() === 'POST' && request.url().endsWith('/api/sessions')) starts.push(request.postDataJSON()); if (/\/prompt$/.test(request.url()) && request.method() === 'POST') prompts.push(request.url()) })
     try {
       await setup(page, collector)
@@ -94,7 +96,16 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       await page.getByRole('link', { name: 'Back to new session', exact: true }).click()
       await expect(form.getByRole('textbox', { name: /^First prompt/ })).toHaveValue('Prepare synthetic notes.')
       await expect(form.getByRole('button', { name: 'Start session', exact: true })).toBeEnabled()
+      const heldStart = new Promise<void>(resolve => { releaseStart = resolve })
+      await page.route('**/api/sessions', async route => { if (route.request().method() === 'POST') await heldStart; await route.continue() })
       await form.getByRole('button', { name: 'Start session', exact: true }).click()
+      const close = page.getByRole('button', { name: 'Close new session', exact: true })
+      await expect(page.getByRole('dialog', { name: 'New session', exact: true })).toBeFocused()
+      await expect(form.locator('.launch-fields')).toHaveAttribute('inert', '')
+      await page.keyboard.press('Tab'); await expect(close).toBeFocused()
+      await page.keyboard.press('Shift+Tab'); await expect(close).toBeFocused()
+      await capture(page, `launcher-starting-${width}-${appearance}`)
+      releaseStart()
       await expect(page).toHaveURL(/\/sessions\/[^/?]+$/, { timeout: 45_000 })
       await expect(page.locator('.bubble.user')).toHaveText('Prepare synthetic notes.')
       expect(starts.at(-1)).toEqual({ host_id: hostId, agent: 'claude', cwd: project, model: 'sonnet', mode: 'default', axes: { effort: 'high' } })
@@ -109,13 +120,21 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       const saved = await (await context.request.get(`/api/hats/${hat.id}/session-defaults?agent=claude`)).json()
       expect((await context.request.put(`/api/hats/${hat.id}/session-defaults?agent=claude`, { headers: { origin: collector.origin }, data: { revision: saved.revision, config: { model: 'sonnet', axes: { fast: false } } } })).ok()).toBe(true)
       await page.goto(`/new?${new URLSearchParams({ host: hostId, cwd: project })}`)
+      const projectField = form.getByRole('combobox', { name: /^Project/ })
+      await projectField.fill('synthetic-project')
+      const recent = form.getByRole('listbox').getByRole('option', { name: /^synthetic-project\b/ })
+      await expect(recent.locator('time')).toHaveAttribute('datetime', /^\d{4}-\d{2}-\d{2}T/)
+      await recent.scrollIntoViewIfNeeded()
+      await capture(page, `launcher-recents-${width}-${appearance}`)
+      await recent.click()
       await form.getByRole('textbox', { name: /^First prompt/ }).fill('Retain this draft.')
       await expect(form.getByRole('button', { name: 'Start session', exact: true })).toBeEnabled()
       await form.getByRole('button', { name: 'Start session', exact: true }).click()
       await expect(page).toHaveURL(/\/sessions\/[^/?]+$/, { timeout: 45_000 })
       expect(starts.at(-1)).toMatchObject({ model: 'sonnet', axes: { fast: false } })
       expect(prompts).toHaveLength(1)
-      await expect(page.getByText('The requested session settings could not be confirmed. Review the settings before sending the first prompt. It waits as this session’s draft.', { exact: true })).toBeVisible()
+      await expect(page.getByText('The requested session settings could not be confirmed. Requested: Fast: Off · Model: sonnet · Permission: default. Review the settings before sending the first prompt. It waits as this session’s draft.', { exact: true })).toBeVisible()
+      await capture(page, `launcher-review-${width}-${appearance}`)
       await expect(page.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveValue('Retain this draft.')
       const sessionId = new URL(page.url()).pathname.split('/').at(-1)!
       expect(await page.evaluate(id => sessionStorage.getItem(`hennery.draft.${id}`), sessionId)).toBe('Retain this draft.')
@@ -124,6 +143,6 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       const current = await (await context.request.get(`/api/hats/${hat.id}/session-defaults?agent=claude`)).json()
       expect((await context.request.put(`/api/hats/${hat.id}/session-defaults?agent=claude`, { headers: { origin: collector.origin }, data: { revision: current.revision, config: {} } })).ok()).toBe(true)
       expect((await (await context.request.get(`/api/hats/${hat.id}/session-defaults?agent=claude`)).json()).config).toEqual({})
-    } finally { await context.close(); await host.stop(); await second.stop(); await collector.stop() }
+    } finally { releaseStart(); await context.close(); await host.stop(); await second.stop(); await collector.stop() }
   })
 }

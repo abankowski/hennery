@@ -65,3 +65,20 @@ it('rejects a stale flattened value when the actual option is no longer present'
   const client = new Client({ fetch: server.fetch, navigate: vi.fn(), here: () => ({ pathname: '/new', search: '' }), stepUp: vi.fn() })
   expect(await confirmStart(client, 's-1', 'hat-a', { model: 'sonnet', axes: { fast: false } })).toBe('config_unconfirmed')
 })
+it('shows the requested unsupported setting on its own session without putting values in the URL', async () => {
+  const { rememberConfigurationReview, readStartNotice, sessionHref, startNoticeText } = await import('./start')
+  const { catalog } = await import('../test-launch-catalog')
+  rememberConfigurationReview('review-a', catalog, { model: 'sonnet', axes: { fast: false } })
+  const url = sessionHref('review-a', { kind: 'prompt_failed', code: 'config_unconfirmed' })
+  expect(url).not.toContain('sonnet')
+  const notice = readStartNotice('?notice=prompt_failed&code=config_unconfirmed', 'review-a')!
+  expect(startNoticeText(notice)).toContain('Fast: Off')
+  expect(startNoticeText(readStartNotice('?notice=prompt_failed&code=config_unconfirmed', 'review-b')!)).not.toContain('Fast: Off')
+})
+it('checks the actual hat even for a deliberate unverified agent-default start', async () => {
+  const f = fixture({ hat_id: 'hat-b', lifecycle: 'active' })
+  expect(await confirmStart(f.client, 's-1', 'hat-a', {}, 30_000, false)).toBe('hat_changed')
+  const sameHat = fixture()
+  expect(await confirmStart(sameHat.client, 's-1', 'hat-a', {}, 30_000, false)).toBe('confirmed')
+  expect(sameHat.sent.map(sent => sent.path)).toEqual(['/api/sessions/s-1'])
+})

@@ -155,5 +155,10 @@ export function matchCommands(list: Command[], query: string): Command[] {
 /** Stable wire destinations, following the same category/id rules as the host. */
 export function catalogFields(options: ConfigOption[]): { key: string; option: ConfigOption }[] {
   const model = axis(options, 'model'), mode = axis(options, 'mode')
-  return options.map(option => ({ key: option === model ? 'model' : option === mode ? 'mode' : option.id, option }))
+  return options.flatMap(option => {
+    const role = option === model ? 'model' : option === mode ? 'mode' : 'axis'
+    if (role !== 'axis' && option.kind !== 'select') return []
+    if (role === 'axis' && (option.id === 'model' || option.id === 'mode')) return []
+    return [{ key: role === 'axis' ? option.id : role, option }]
+  })
 }

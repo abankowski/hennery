@@ -11,7 +11,7 @@ import { DESKTOP } from '../components/Shell'
 import type { HatItem, HostItem, HostProjects } from '../generated/protocol'
 import type { SessionSummary } from '../generated/view'
 import type { HostAgentChoices } from '../lib/agents'
-import { newSessionHref } from '../lib/start'
+import { newSessionHref, readStartNotice } from '../lib/start'
 import { navigate } from '../router'
 import { json, stubServer, type Answer } from '../test-server'
 import { liveStream } from '../test-stream'
@@ -684,10 +684,12 @@ describe('reviewed configuration', () => {
     const user = await fill('/srv/work/cat', 'Keep this prompt')
     await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
-    await waitFor(() => expect(location.search).toContain('config_unconfirmed'))
+    await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(server.sent.find(s => s.path === '/api/sessions')?.body).toMatchObject({ axes: { fast: false } })
     expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+    expect(location.search).toContain('config_unconfirmed')
     expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep this prompt')
+    expect(readStartNotice(location.search, 's-1')).toMatchObject({ message: expect.stringContaining('Fast: Off') })
   })
   it('requires explicit opt-out when no catalog is available, then sends no unverified config', async () => {
     const server = mount({ [`GET ${runtime}`]: json(409, { code: 'catalog_unavailable', message: 'Offline catalog' }) })
@@ -699,6 +701,8 @@ describe('reviewed configuration', () => {
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat' })
+    expect(posts(server.sent)).toContain('/api/sessions/s-1/prompt')
+    expect(server.sent.some(sent => sent.path === '/api/sessions/s-1/catalog')).toBe(false)
   })
 })
 
@@ -728,4 +732,33 @@ it('does not release a held first prompt after closing during configuration read
   await act(async () => { finish(json(200, { session_id: 's-1', commands: [], config_options: [{ id: 'model', type: 'select', currentValue: 'a', options: [{ value: 'a' }] }] })); await catalogRead })
   expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
   expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep during review')
+})
+it('retains the prompt on a hat mismatch even after explicitly opting out of catalog verification', async () => {
+  const server = mount({
+    'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat': json(409, { code: 'catalog_unavailable', message: 'No settings preview' }),
+    'GET /api/sessions/s-1': json(200, { session_id: 's-1', hat_id: 'hat-b', lifecycle: 'active' }),
+  })
+  const user = await fill('/srv/work/cat', 'Check the hat first')
+  await user.click(await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' }))
+  await user.click(startButton())
+  await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+  expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+  expect(location.search).toContain('hat_changed')
+  expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Check the hat first')
+})
+it('starts only on a deliberate local Mod+Enter, ignoring repeat, IME and extra modifiers', async () => {
+  const server = mount()
+  await fill('/srv/work/cat', 'Keyboard launch')
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  const prompt = screen.getByRole('textbox', { name: 'First prompt optional' })
+  for (const ignored of [{ altKey: true }, { shiftKey: true }, { repeat: true }, { isComposing: true }]) {
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true, ...ignored })
+  }
+  const prevented = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true })
+  prevented.preventDefault()
+  fireEvent(prompt, prevented)
+  expect(posts(server.sent)).not.toContain('/api/sessions')
+  fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true })
+  await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+  expect(posts(server.sent).filter(path => path === '/api/sessions')).toHaveLength(1)
 })

@@ -61,3 +61,31 @@ it('preserves boolean false for opaque axis ids, including JavaScript object nam
   expect(Object.hasOwn(result.config.axes!, '__proto__')).toBe(true)
   expect(result.config.axes!['__proto__']).toBe(false)
 })
+it('requires read-back of profile security defaults even when the catalog has other usable settings', async () => {
+  const { usableCatalog } = await import('./defaults')
+  expect(usableCatalog(catalog)).toBe(true)
+  expect(usableCatalog({ ...catalog, defaults: { model: 'opus' } })).toBe(false)
+  expect(usableCatalog({ ...catalog, defaults: { ...catalog.defaults, axes: { sandbox: false } }, security: { known: true, axes: { sandbox: [false] } } })).toBe(false)
+  const off = { ...catalog, config_options: [{ id: 'sandbox', name: 'Sandbox', type: 'boolean', currentValue: false }], defaults: { axes: { sandbox: false } }, security: { known: true, axes: { sandbox: [false] } } }
+  expect(usableCatalog(off)).toBe(true)
+})
+it.each(['stale', 'unknown'] as const)('refuses a %s pre-start catalog instead of promising its choices', async freshness => {
+  const { usableCatalog } = await import('./defaults')
+  expect(usableCatalog({ ...catalog, freshness })).toBe(false)
+})
+it('requires an adapter revision and a nonempty supported settings list', async () => {
+  const { usableCatalog } = await import('./defaults')
+  expect(usableCatalog({ ...catalog, adapter_revision: '' })).toBe(false)
+  expect(usableCatalog({ ...catalog, config_options: [], defaults: {}, security: { known: false, axes: {} } })).toBe(false)
+})
+it('excludes incompatible model shapes and axis ids that collide with a wire role', async () => {
+  const { fieldsOf, usableCatalog } = await import('./defaults')
+  const malformed = { ...catalog, config_options: [
+    { id: 'model', name: 'Model', category: 'model', type: 'boolean', currentValue: false },
+    select('permission', ['default', 'bypass'], 'mode'),
+    select('mode', ['low', 'high'], 'thought_level'),
+  ] }
+  expect(fieldsOf(malformed).map(field => [field.key, field.option.id])).toEqual([['mode', 'permission']])
+  expect(usableCatalog(malformed)).toBe(false)
+  expect(resolveDefaults(malformed, {}, { mode: 'bypass' }).config).toEqual({ mode: 'bypass' })
+})
