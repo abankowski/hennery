@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Settings from './Settings'
 import { Client } from '../api/client'
 import { ClientContext } from '../app-client'
-import { json, stubServer } from '../test-server'
+import { json, stubServer, type Answer } from '../test-server'
 const mocked = vi.hoisted(() => ({ permission: vi.fn(), enable: vi.fn(), disable: vi.fn(), reg: {} }))
 vi.mock('../pwa/lifecycle', () => ({ usePwa: () => ({ registration: mocked.reg, error: null }), registerWorker: vi.fn() }))
 vi.mock('../pwa/device', async (original) => {
@@ -24,16 +24,21 @@ beforeEach(() => {
   mocked.enable.mockReset(); mocked.disable.mockReset()
 })
 afterEach(() => vi.unstubAllGlobals())
-function page(push = true) {
+function page(push = true, routes: Record<string, Answer | Answer[]> = {}) {
   const server = stubServer({
     'GET /api/push/vapid': json(200, { public_key: btoa(String.fromCharCode(4, ...Array(64).fill(1))) }),
     'GET /api/push/subscriptions': json(200, []),
     'GET /api/auth/sessions': json(200, [{ id: 'login', user_agent: '<script>bad</script>', current: true, created_at: 'today', last_seen_at: 'today', expires_at: 'tomorrow' }]),
     'GET /api/settings': json(200, { public_url: 'https://app.example', contact: 'mailto:test@example.invalid' }),
+    'GET /api/auth/passkeys': json(200, [{ id: 'key/one', label: 'Personal key', created_at: '2026-10-20T09:00:00Z' }]),
+    'DELETE /api/auth/passkeys/key%2Fone': new Response(null, { status: 204 }),
+    'GET /api/settings/attachments': json(200, { count: 2, bytes: 42 }),
+    'GET /api/settings/host-removals': json(200, []),
     'GET /api/hats': json(200, [{ id: 'hat', name: 'Personal', colour: '#000', default_for_new_hosts: true }]),
     'GET /api/push/policies': json(200, [{ hat_id: 'hat', muted: false, details: false, generic_title: false }]),
     'PATCH /api/settings': json(200, { public_url: 'https://app.example', contact: 'mailto:new@example.invalid' }),
     'PUT /api/push/policies/hat': json(200, { hat_id: 'hat', muted: false, details: true, generic_title: true }),
+    ...routes,
   })
   const confirm = vi.fn(async () => {})
   const client = new Client({ fetch: server.fetch, here: () => ({ pathname: '/settings', search: '' }), navigate: vi.fn(), stepUp: confirm })
@@ -41,6 +46,32 @@ function page(push = true) {
   return { server, confirm }
 }
 describe('minimum device Settings', () => {
+  it('isolates failed notification checks from passkeys, privacy and collector reads', async () => {
+    page(true, { 'GET /api/push/vapid': json(500, { message: 'Notification service unavailable' }) })
+    expect(await screen.findByRole('button', { name: 'Remove Personal key' })).toBeVisible()
+    expect(await screen.findByText('https://app.example', { exact: true })).toBeVisible()
+    expect(await screen.findByRole('group', { name: 'Personal' })).toBeVisible()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Notification service unavailable')
+  })
+  it('keeps a passkey when removal confirmation is cancelled', async () => {
+    const { server } = page()
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove Personal key' }))
+    const dialog = screen.getByRole('dialog', { name: 'Remove this passkey?' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('button', { name: 'Remove Personal key' })).toBeVisible()
+    expect(server.sent.filter(row => row.method === 'DELETE')).toEqual([])
+  })
+  it('shows appearance, real collector information and removable passkeys', async () => {
+    const { server } = page()
+    expect(await screen.findByRole('group', { name: 'Appearance' })).toBeVisible()
+    expect(await screen.findByText('https://app.example', { exact: true })).toBeVisible()
+    expect(await screen.findByText('2 images · 42 bytes', { exact: true })).toBeVisible()
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove Personal key' }))
+    const dialog = screen.getByRole('dialog', { name: 'Remove this passkey?' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Remove passkey' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove Personal key' })).toBeNull())
+    expect(server.sent.find(row => row.method === 'DELETE')?.path).toBe('/api/auth/passkeys/key%2Fone')
+  })
   it('without origin locks omits notification enable and preserves mobile sign-out', async () => {
     Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
     page()
