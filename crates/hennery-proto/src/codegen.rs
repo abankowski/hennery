@@ -33,6 +33,8 @@ pub fn render_schema() -> String {
         )*};
     }
     add!(
+        crate::session_defaults::HatSessionDefaults,
+        crate::session_defaults::PutHatSessionDefaults,
         rest::SetIdlePinRequest,
         rest::IdleHoldState,
         plugin_management::RegisterPluginRequest,
@@ -228,6 +230,8 @@ pub fn render_ts() -> String {
         )*};
     }
     add!(
+        crate::session_defaults::HatSessionDefaults,
+        crate::session_defaults::PutHatSessionDefaults,
         rest::SetIdlePinRequest,
         rest::IdleHoldState,
         plugin_management::RegisterPluginRequest,

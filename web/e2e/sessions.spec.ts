@@ -135,14 +135,16 @@ for (const width of [1280, 390]) {
       // The form's own controls: the session list beside it has a search.
       const form = page.getByRole('form', { name: 'New session', exact: true })
       await expect(form).toBeVisible()
-      await expect(form.getByRole('button', { name: 'e2e host', exact: true })).toHaveAttribute('aria-pressed', 'true')
-      await expect(form.getByRole('button', { name: 'Claude', exact: true })).toHaveAttribute('aria-pressed', 'true')
+      await expect(form.getByRole('radio', { name: 'e2e host', exact: true })).toBeChecked()
+      await expect(form.getByRole('radio', { name: 'Claude', exact: true })).toBeChecked()
       await form.getByRole('combobox').fill(project)
       // The whole line: the directory as resolved is the project itself,
       // and it exists (nothing follows it).
       const at = project.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       await expect(form.getByRole('status').filter({ hasText: /^Starts in the hat / })).toHaveText(new RegExp(`^Starts in the hat .+ at ${at}$`))
       await form.getByRole('textbox', { name: /^First prompt/ }).fill(PROMPT)
+      // This delivery/session fixture reports no settings catalog.
+      await form.getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
       await form.getByRole('button', { name: 'Start session', exact: true }).click()
       // The start waits for the host to start the agent: on a loaded runner,
       // more than the default wait, and on macOS a fresh binary's first exec

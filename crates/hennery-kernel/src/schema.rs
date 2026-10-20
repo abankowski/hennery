@@ -264,6 +264,17 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (owner_id, hat_id),
         FOREIGN KEY (hat_id, owner_id) REFERENCES hats(id, owner_id) ON DELETE CASCADE);
     ",
+    // UI R4: sparse preferences survive resets with a monotonic revision.
+    "
+    CREATE TABLE hat_session_defaults (
+        owner_id TEXT NOT NULL,
+        hat_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        config_json TEXT NOT NULL,
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        PRIMARY KEY (owner_id, hat_id, agent),
+        FOREIGN KEY (hat_id, owner_id) REFERENCES hats(id, owner_id) ON DELETE CASCADE);
+    ",
 ];
 
 #[cfg(test)]
