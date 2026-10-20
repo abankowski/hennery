@@ -4,7 +4,7 @@
 
 .manage { width:100%; max-width:860px; margin:0 auto; padding:24px 20px calc(32px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:16px; }
 .manage-head { display:flex; align-items:center; gap:12px; }
-.manage-head h1 { font-family:var(--font-display); font-weight:800; font-size:26px; letter-spacing:-.01em; margin:0; flex:1; }
+.manage-head h1 { font-family:var(--font-display); font-weight:500; font-size:26px; letter-spacing:-.01em; margin:0; flex:1; }
 .cards { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
 .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); box-shadow:var(--sh-sm); padding:16px 18px; min-width:0; }
 .card-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
@@ -19,12 +19,12 @@
 .facts dd { margin:0; min-width:0; overflow-wrap:anywhere; }
 
 .state, .tag { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; border-radius:var(--r-full); padding:3px 9px; white-space:nowrap; }
-.state-online { background:rgba(47,158,68,.13); color:#247A33; }
+.state-online { background:var(--st-run-bg); color:var(--st-run-fg); }
 .state-offline { background:var(--surface-3); color:var(--fg-muted); }
-.state-revoked { background:rgba(229,72,77,.12); color:var(--st-attn); }
+.state-revoked { background:var(--st-fail-bg); color:var(--st-attn); }
 .host-revoked .card-title { color:var(--fg-muted); }
 .tag { background:var(--accent-wash); color:var(--accent); }
-.tag-warn { background:rgba(232,145,12,.14); color:#B26A00; }
+.tag-warn { background:var(--st-warn-bg); color:var(--st-warn-fg); }
 
 .swatch { width:18px; height:18px; border-radius:6px; flex:none; background:var(--fg-quiet); border:1px solid var(--border-strong); }
 .colour-input { width:52px; height:40px; padding:2px; border:1.5px solid var(--border-strong); border-radius:var(--r-sm); background:var(--surface-2); }
@@ -35,7 +35,7 @@
 .select-field .field-label { margin:0; font-size:12px; }
 .select-field select { min-height:36px; border:1.5px solid var(--border-strong); border-radius:var(--r-sm); background:var(--surface-2); color:var(--fg-1); padding:6px 8px; font:inherit; max-width:100%; }
 
-.command { background:var(--ink); color:#fff; border-radius:var(--r-sm); padding:12px 14px; margin:0 0 10px; overflow-x:auto; font-family:var(--font-mono); font-size:13px; }
+.command { background:var(--hn-term-bg); color:var(--hn-term-fg); border-radius:var(--r-sm); padding:12px 14px; margin:0 0 10px; overflow-x:auto; font-family:var(--font-mono); font-size:13px; }
 .pairing-code code { font-family:var(--font-mono); font-weight:700; }
 .hint { color:var(--fg-muted); font-size:13px; }
 .empty { color:var(--fg-muted); }
@@ -69,14 +69,14 @@
 .field-row .field { flex:1; min-width:160px; }
 .check { display:flex; align-items:center; gap:8px; min-height:36px; cursor:pointer; }
 .check input { width:18px; height:18px; margin:0; flex:none; }
-.hint.warn { color:#B26A00; }
+.hint.warn { color:var(--st-warn-fg); }
 .token-form { border-top:1px solid var(--border); padding-top:12px; margin-top:12px; }
 .mounts { border:0; border-top:1px solid var(--border); margin:12px 0 0; padding:12px 0 0; min-width:0; }
 .mounts legend { font-weight:700; font-size:13px; padding:0; margin-bottom:6px; }
-.mcp-ok { background:rgba(47,158,68,.13); color:#247A33; }
+.mcp-ok { background:var(--st-run-bg); color:var(--st-run-fg); }
 .mcp-not_connected { background:var(--surface-3); color:var(--fg-muted); }
-.mcp-needs_auth { background:rgba(232,145,12,.14); color:#B26A00; }
-.mcp-error { background:rgba(229,72,77,.12); color:var(--st-attn); }
+.mcp-needs_auth { background:var(--st-warn-bg); color:var(--st-warn-fg); }
+.mcp-error { background:var(--st-fail-bg); color:var(--st-attn); }
 
 @media (max-width:767px) {
   .check { min-height:44px; }
@@ -101,7 +101,7 @@
 .oauth-connect .notice { margin-top:12px; }
 .oauth-connect a { display:inline-block; min-height:44px; padding:12px 0; }
 .mcp-attention { display:inline-block; font-size:10px; line-height:1.2; white-space:normal; }
-.mcp-auth-count { color:#B26A00; }
+.mcp-auth-count { color:var(--st-warn-fg); }
 .mcp-error-count { color:var(--fg-2); }
 .oauth-connect .btn, .oauth-client .btn, .mcp-report .btn { min-height:44px; }
 .mcp-attention-link { display:inline-flex; align-items:center; max-width:80px; min-height:44px; }

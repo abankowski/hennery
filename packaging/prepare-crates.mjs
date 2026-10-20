@@ -32,7 +32,7 @@ export function frontendNotices(web) {
   const config=fs.readFileSync(join(web,'vite.config.ts'),'utf8');
   const tools=[...config.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map(m=>m[1]).filter(name=>!name.startsWith('.')&&!name.startsWith('node:'));
   for(const name of new Set([...Object.keys(manifest.dependencies||{}),...tools,...(manifest.devDependencies?.typescript?['typescript']:[])])) visit(join(web,'node_modules',name));
-  return 'Frontend third-party licence texts (production and configured build-tool closure).\nBuild-tool notices cover emitted helpers and CSS; their binaries are not redistributed.\nNo external fonts; application icons/assets are covered by LICENSE.\n\n'+[...seen].sort(([a],[b])=>a.localeCompare(b)).map(([,text])=>text).join('\n\n'+'='.repeat(72)+'\n\n')+'\n';
+  return 'Frontend third-party licence texts (production and configured build-tool closure).\nBuild-tool notices cover emitted helpers and CSS; their binaries are not redistributed.\nBundled fonts/icons retain their upstream licences below.\n\n'+fs.readFileSync(join(web,'THIRD_PARTY_NOTICES.txt'),'utf8')+'\n\n'+[...seen].sort(([a],[b])=>a.localeCompare(b)).map(([,text])=>text).join('\n\n'+'='.repeat(72)+'\n\n')+'\n';
 }
 export function stageCrates(prepared,destination) {
   const inventory=readJSON(join(prepared,'crates-inventory.json'));verifyCandidate(prepared,inventory);

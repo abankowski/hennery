@@ -1,3 +1,4 @@
+import { useModalLayer } from './ui/useModalLayer'
 // A confirmation before an action that cannot be taken back (frontend spec
 // §8: renaming or revoking a host, purging a hat, removing a passkey or a
 // device). The action runs from here: while it runs the dialog stays open,
@@ -5,7 +6,7 @@
 // text. Focus moves in, stays in (Tab cycles within it, and a click on the
 // backdrop keeps it), and goes back where it was when it closes, or to
 // `returnFocus` when that is gone.
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { messageOf } from '../api/errors'
 import { Text } from '../lib/text'
 
@@ -30,6 +31,7 @@ export default function ConfirmDialog({ title, children, confirm, danger, disabl
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const dialog = useRef<HTMLDivElement>(null)
+  const { trap, holdFocus } = useModalLayer(dialog)
   const live = useRef(true)
   const titleId = useId()
   const fallback = useRef(returnFocus)
@@ -48,14 +50,6 @@ export default function ConfirmDialog({ title, children, confirm, danger, disabl
     }
   }, [])
 
-  // A click on the backdrop would move focus to the body, out of the trap
-  // and out of reach of Escape: it is kept in the dialog.
-  const holdFocus = (e: MouseEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget) return
-    e.preventDefault()
-    dialog.current?.focus()
-  }
-
   const run = async () => {
     // Its buttons are disabled while the action runs: focus is held by the
     // dialog itself, so a step-up opened over it returns focus here.
@@ -72,37 +66,8 @@ export default function ConfirmDialog({ title, children, confirm, danger, disabl
     }
   }
 
-  // Tab and Shift+Tab cycle through the dialog's own controls: nothing
-  // behind the overlay can be reached while it is open.
-  const trap = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Escape' && !busy) {
-      onClose()
-      return
-    }
-    if (e.key !== 'Tab') return
-    const controls = [
-      ...(dialog.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ) ?? []),
-    ]
-    if (controls.length === 0) {
-      e.preventDefault()
-      return
-    }
-    const first = controls[0]
-    const last = controls[controls.length - 1]
-    const at = document.activeElement
-    if (e.shiftKey && (at === first || !controls.includes(at as HTMLElement))) {
-      e.preventDefault()
-      last.focus()
-    } else if (!e.shiftKey && (at === last || !controls.includes(at as HTMLElement))) {
-      e.preventDefault()
-      first.focus()
-    }
-  }
-
   return (
-    <div className="overlay" onKeyDown={trap} onMouseDown={holdFocus}>
+    <div className="overlay" onKeyDown={(e) => trap(e, onClose, !busy)} onMouseDown={holdFocus}>
       <div className="modal dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialog} tabIndex={-1}>
         <div className="modal-head">
           <h2 className="modal-title" id={titleId}>

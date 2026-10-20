@@ -113,7 +113,8 @@ test('frontend notices include build-tool runtime helpers as well as production 
  writeFileSync(join(web,'package.json'),JSON.stringify({dependencies:{react:'1.0.0'},devDependencies:{vite:'1.0.0'}}));
  writeFileSync(join(web,'vite.config.ts'),"import { defineConfig } from 'vite'\n");
  for(const name of ['react','vite']){mkdirSync(join(web,'node_modules',name));writeFileSync(join(web,'node_modules',name,'package.json'),JSON.stringify({name,version:'1.0.0',license:'MIT'}));writeFileSync(join(web,'node_modules',name,'LICENSE'),`MIT License\nCopyright ${name}\nPermission is hereby granted to copy this fixture.`);}
- const text=frontendNotices(web);assert.match(text,/react@1\.0\.0/);assert.match(text,/vite@1\.0\.0/);assert.match(text,/Copyright vite/);
+ writeFileSync(join(web,'THIRD_PARTY_NOTICES.txt'),'Bundled Inter OFL fixture; Heroicons MIT fixture.');
+ const text=frontendNotices(web);assert.match(text,/Bundled Inter OFL fixture; Heroicons MIT fixture/);assert.match(text,/react@1\.0\.0/);assert.match(text,/vite@1\.0\.0/);assert.match(text,/Copyright vite/);
 });
 
 import * as release from './crate-release.mjs';

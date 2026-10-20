@@ -1,0 +1,62 @@
+/* UI R1: semantic roles; fixed status hues never inherit the hat accent. */
+:root {
+  --hn-bg:#f8f9fb; --hn-panel:#fff; --hn-surface:#fff; --hn-sunken:#f1f2f5; --hn-hover:#f1f3f7;
+  --hn-line:#e9e9eb; --hn-control:#d8d8da; --hn-control-strong:#c3c3c5; --hn-boundary:#686869;
+  --hn-fg-1:#202020; --hn-fg-2:#49494a; --hn-fg-3:#686869; --hn-icon:#89898a;
+  --hn-accent:#46576d; --hn-accent-hover:#37475c; --hn-accent-fg:#3c4d63; --hn-on-accent:#fff;
+  --hn-accent-wash:#edf2f9; --hn-accent-soft:#e3e8ef; --hn-selected:#e6ecf3;
+  --hn-focus-ring:#3c4d63; --hn-focus-halo:#cfd5dc;
+  --hn-focus:0 0 0 2px var(--hn-focus-ring),0 0 0 5px var(--hn-focus-halo);
+  --hn-code-bg:#f4f5f7; --hn-code-fg:#202020; --hn-term-bg:#16181a; --hn-term-fg:#e6e6e7;
+  --hn-add-bg:#e6f5e9; --hn-add-fg:#0f741f; --hn-del-bg:#fce8e9; --hn-del-fg:#9f2626;
+  --st-wait-fg:#a44d0f; --st-wait-bg:#fde6d7; --st-wait-solid:#ff7918; --st-wait-line:#fdbb8d;
+  --st-run-fg:#0f741f; --st-run-bg:#f1f9f4; --st-run-solid:#17b530;
+  --st-start-fg:#2257be; --st-start-bg:#f5f8ff; --st-start-solid:#2c71f6;
+  --st-idle-fg:#49494a; --st-idle-bg:#f0f1f3; --st-idle-solid:#a8a8aa;
+  --st-park-fg:#686869; --st-park-bg:#f0f1f3; --st-park-solid:#c3c3c5;
+  --st-fail-fg:#bf2e2e; --st-fail-bg:#fcf6f8; --st-fail-solid:#f73b3b;
+  --st-warn-fg:#7a5300; --st-warn-bg:#fff4d6; --st-warn-solid:#ffbe18;
+  --hn-scrim:rgb(32 32 32 / .5);
+  --hn-pop-shadow:0 10px 15px -3px rgb(16 24 40 / .1),0 4px 6px -4px rgb(16 24 40 / .06);
+  --radius-xs:4px; --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-xl:16px; --radius-full:9999px;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px;
+  --space-8:32px; --space-10:40px; --space-12:48px; --space-16:64px; --space-20:80px; --space-24:100px;
+  --font-display:'Roboto',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-body:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --shadow-xs:0 1px 2px rgb(16 24 40 / .05);
+  --duration-fast:120ms; --duration-normal:180ms; --duration-slow:240ms;
+  --ease-standard:cubic-bezier(.4,0,.2,1); --ease-out:cubic-bezier(0,0,.2,1);
+}
+:root[data-theme="dark"] {
+  --hn-bg:#141517; --hn-panel:#1a1c1e; --hn-surface:#202223; --hn-sunken:#17191b; --hn-hover:#26292b;
+  --hn-line:#2a2d2f; --hn-control:#383b3e; --hn-control-strong:#49494a; --hn-boundary:#a8a8aa;
+  --hn-fg-1:#f2f2f3; --hn-fg-2:#c3c3c5; --hn-fg-3:#a8a8aa; --hn-icon:#89898a;
+  --hn-accent:#8dabc8; --hn-accent-hover:#a5c4e2; --hn-accent-fg:#99b7d5; --hn-on-accent:#141517;
+  --hn-accent-wash:#202b3b; --hn-accent-soft:#293444; --hn-selected:#263141;
+  --hn-focus-ring:#99b7d5; --hn-focus-halo:#3b4350;
+  --hn-code-bg:#17191b; --hn-code-fg:#e6e6e7; --hn-term-bg:#0f1012;
+  --hn-add-bg:rgb(23 181 48 / .14); --hn-add-fg:#8bd999; --hn-del-bg:rgb(247 59 59 / .14); --hn-del-fg:#f99c9e;
+  --st-wait-fg:#fdbb8d; --st-wait-bg:rgb(255 121 24 / .15); --st-wait-line:rgb(255 121 24 / .45);
+  --st-run-fg:#8bd999; --st-run-bg:rgb(23 181 48 / .13);
+  --st-start-fg:#95b7fa; --st-start-bg:rgb(44 113 246 / .16);
+  --st-idle-fg:#c3c3c5; --st-idle-bg:#2a2d2f; --st-idle-solid:#89898a;
+  --st-park-fg:#a8a8aa; --st-park-bg:#2a2d2f; --st-park-solid:#686869;
+  --st-fail-fg:#f99c9e; --st-fail-bg:rgb(247 59 59 / .14);
+  --st-warn-fg:#ffd666; --st-warn-bg:rgb(255 190 24 / .13);
+  --hn-scrim:rgb(0 0 0 / .6); --hn-pop-shadow:0 12px 24px -6px rgb(0 0 0 / .5),0 0 0 1px #2a2d2f;
+}
+/* Temporary aliases. Nested session palettes must rebind the aliases locally:
+   custom-property aliases otherwise resolve at the ancestor where defined. */
+:root, .hn-accent-scope {
+  --bg:var(--hn-bg); --rail:var(--hn-panel); --rail-2:var(--hn-hover);
+  --surface:var(--hn-surface); --surface-2:var(--hn-sunken); --surface-3:var(--hn-hover);
+  --border:var(--hn-line); --border-strong:var(--hn-boundary);
+  --fg-1:var(--hn-fg-1); --fg-2:var(--hn-fg-2); --fg-muted:var(--hn-fg-3); --fg-quiet:var(--hn-fg-3);
+  --accent:var(--hn-accent-fg); --accent-2:var(--hn-accent-hover); --accent-grad:var(--hn-accent);
+  --on-accent:var(--hn-on-accent); --accent-wash:var(--hn-accent-wash); --accent-soft:var(--hn-accent-soft);
+  --ink:var(--hn-term-bg); --st-attn:var(--st-fail-fg); --st-wait:var(--st-wait-fg); --st-run:var(--st-run-fg); --st-idle:var(--st-idle-fg);
+  --r-xs:var(--radius-xs); --r-sm:var(--radius-sm); --r-md:var(--radius-md); --r-lg:var(--radius-lg); --r-full:var(--radius-full);
+  --sh-sm:var(--shadow-xs); --sh-md:var(--hn-pop-shadow); --sh-lg:var(--hn-pop-shadow);
+  --sh-accent:none; --sh-accent-hover:none; --ease:var(--ease-out);
+}

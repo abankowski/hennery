@@ -139,3 +139,25 @@ describe('the step-up dialog', () => {
     Object.defineProperty(navigator, 'credentials', { value: undefined, configurable: true })
   })
 })
+
+describe('step-up focus containment', () => {
+  it('wraps Tab and Shift+Tab and keeps focus on a backdrop click', async () => {
+    const server = stubServer({
+      'GET /api/capabilities': json(200, FULL),
+      'POST /api/hosts/pairing-codes': json(403, STEP_UP),
+    })
+    const dialog = await open(server)
+    const password = screen.getByLabelText('Your password')
+    await userEvent.type(password, 'password')
+    const confirm = screen.getByRole('button', { name: 'Confirm' })
+    confirm.focus()
+    await userEvent.tab()
+    expect(password).toHaveFocus()
+    await userEvent.tab({ shift: true })
+    expect(confirm).toHaveFocus()
+    await userEvent.click(dialog.parentElement!)
+    expect(dialog).toHaveFocus()
+    await userEvent.tab()
+    expect(password).toHaveFocus()
+  })
+})
