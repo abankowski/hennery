@@ -87,7 +87,7 @@ describe('the hats', () => {
   it('creates a hat with no step-up', async () => {
     const created = hat({ id: 'hat-c', name: 'Clients', colour: '#64748b' })
     const server = open({ 'POST /api/hats': json(201, created) })
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' })); await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     expect(await screen.findByRole('listitem', { name: 'Clients' })).toBeInTheDocument()
     expect(sent(server, 'POST', '/api/hats')[0].body).toEqual({ name: 'Clients', colour: '#64748b' })
@@ -95,7 +95,7 @@ describe('the hats', () => {
 
   it('asks for another name when it is taken', async () => {
     open({ 'POST /api/hats': json(409, { code: 'name_taken', message: 'm' }) })
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'work')
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' })); await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'work')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Another hat has this name.')
   })
@@ -138,6 +138,7 @@ describe('the hats', () => {
     })
     const work = await screen.findByRole('listitem', { name: 'Work' })
     await userEvent.click(within(work).getByRole('button', { name: 'Make default for new hosts' }))
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' }))
     await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Clients')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     expect(await screen.findByRole('listitem', { name: 'Clients' })).toBeInTheDocument()
@@ -153,7 +154,7 @@ describe('the hats', () => {
       'PATCH /api/hats/hat-b': json(200, hat({ default_for_new_hosts: true })),
       'POST /api/hats': () => new Promise<Response>((resolve) => (answerCreate = resolve)),
     })
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' })); await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     await userEvent.click(within(screen.getByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Make default for new hosts' }))
     await waitFor(() => expect(within(screen.getByRole('listitem', { name: 'Work' })).getByText('Default for new hosts')).toBeInTheDocument())
@@ -192,6 +193,7 @@ describe('the hats', () => {
 
   it('puts focus back in the name after a hat is created', async () => {
     open({ 'POST /api/hats': json(201, hat({ id: 'hat-c', name: 'Clients' })) })
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' }))
     const name = await screen.findByRole('textbox', { name: 'Name' })
     await userEvent.type(name, 'Clients')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
