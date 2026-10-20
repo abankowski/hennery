@@ -991,7 +991,7 @@ async fn a_start_with_model_mode_and_axes_announces_the_catalogue_after_the_swit
     let session = body["session_id"].as_str().unwrap().to_string();
     assert_eq!(
         std::fs::read_to_string(&log).unwrap(),
-        "model=large\neffort=high\nmode=plan\n"
+        "effort=high\nmode=plan\nmodel=large\nmode=plan\n"
     );
     let catalog = catalog(&c, &collector, &session).await;
     assert_eq!(

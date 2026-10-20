@@ -1467,7 +1467,55 @@ fn switches(log: &Path) -> String {
 }
 
 #[tokio::test]
-async fn a_start_applies_the_model_then_the_axes_then_the_mode_and_announces_the_result() {
+async fn plan_mode_model_reset_is_repaired_for_operator_and_delegated_starts() {
+    for delegated in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().canonicalize().unwrap();
+        let log = cwd.join("config.log");
+        let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+        let script = FakeScript {
+            mode_switch_sets_model: Some("small".into()),
+            model_switch_sets_mode: None,
+            ..config_script(&log)
+        };
+        let config = wanted(
+            Some("large"),
+            Some("plan"),
+            &[
+                ("effort", ConfigValue::Id("low".into())),
+                ("fast", ConfigValue::Bool(false)),
+            ],
+        );
+        let launch = Launch {
+            request_id: "r0".into(),
+            session_id: "s1".into(),
+            attach: Attach::New,
+            config: config.clone(),
+            agent: fake_with(&script),
+            cwd: cwd.clone(),
+            profile: Default::default(),
+            mcp_servers: Vec::new(),
+        };
+        let _handle = if delegated {
+            session::launch_delegated_in(uplink.clone(), launch, SessionOptions::default(), 1, vec![cwd])
+        } else {
+            session::launch(uplink.clone(), launch, SessionOptions::default())
+        };
+        let frames = wait_until(&uplink, |frames| {
+            has("session_started")(frames) || has("start_failed")(frames)
+        })
+        .await;
+        assert_eq!(
+            started_extracts(&frames).current_config(),
+            Some(config),
+            "delegated={delegated}"
+        );
+        assert_eq!(switches(&log), "mode=plan\nmodel=large\n");
+    }
+}
+
+#[tokio::test]
+async fn a_start_applies_axes_and_mode_before_model_then_corrects_read_back() {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("config.log");
     let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
@@ -1487,8 +1535,11 @@ async fn a_start_applies_the_model_then_the_axes_then_the_mode_and_announces_the
         SessionOptions::default(),
     );
     let frames = wait_until(&uplink, has("session_started")).await;
-    // Mode last: the model switch reset it, and it is set again after.
-    assert_eq!(switches(&log), "model=large\neffort=high\nfast=true\nmode=plan\n");
+    // The model is last; its mode clamp gets exactly one correction.
+    assert_eq!(
+        switches(&log),
+        "effort=high\nfast=true\nmode=plan\nmodel=large\nmode=plan\n"
+    );
     let indexed = started_extracts(&frames);
     assert_eq!(indexed.current_config(), Some(config));
     assert_eq!(indexed.config_options.map(|o| o.len()), Some(4));
@@ -1533,7 +1584,7 @@ async fn a_start_whose_switches_fail_still_starts_and_says_why() {
     let frames = wait_until(&uplink, has("host_note:config_failed")).await;
     assert_eq!(kinds(&frames), ["session_started", "host_note:config_failed"]);
     // The adapter refused `huge`; `nope` was never sent.
-    assert_eq!(switches(&log), "model=huge\nmode=plan\n");
+    assert_eq!(switches(&log), "mode=plan\nmodel=huge\n");
     let current = started_extracts(&frames).current_config().unwrap();
     assert_eq!(
         (current.model.as_deref(), current.mode.as_deref()),
@@ -1625,13 +1676,13 @@ async fn a_hung_switch_is_reported_and_the_session_still_starts() {
     assert_eq!(kinds(&frames), ["session_started", "host_note:config_failed"]);
     assert_eq!(started_extracts(&frames), unknown_normal_configuration());
     let text = note_text(&frames, "config_failed");
-    assert!(text.contains("model=large: no answer within"), "{text}");
+    assert!(text.contains("mode=plan: no answer within"), "{text}");
     // Nothing is sent after a switch that did not answer.
     assert!(
-        text.contains("mode=plan: not sent: an earlier switch did not answer"),
+        text.contains("model=large: not sent: an earlier switch did not answer"),
         "{text}"
     );
-    assert_eq!(switches(&log), "model=large\n");
+    assert_eq!(switches(&log), "mode=plan\n");
     assert!(handle.send(prompt("r1", "t1")));
     wait_until(&uplink, has("turn_ended")).await;
 }
@@ -1641,7 +1692,7 @@ async fn a_hung_switch_is_reported_and_the_session_still_starts() {
 /// mode switch sent behind it has answered: model first and mode last would
 /// silently break. So nothing more is sent once a switch has not answered.
 #[tokio::test]
-async fn a_late_model_switch_stops_the_starts_switches_so_its_clamp_cannot_undo_the_mode() {
+async fn a_late_model_switch_stops_the_correction_pass() {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("config.log");
     let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
@@ -1664,8 +1715,8 @@ async fn a_late_model_switch_stops_the_starts_switches_so_its_clamp_cannot_undo_
     tokio::time::sleep(Duration::from_millis(800)).await;
     assert_eq!(
         switches(&log),
-        "model=large\n",
-        "the mode switch went out behind a late model switch"
+        "mode=plan\nmodel=large\n",
+        "no correction may follow an unanswered model switch"
     );
     assert_eq!(
         started_extracts(&frames),
@@ -1673,10 +1724,7 @@ async fn a_late_model_switch_stops_the_starts_switches_so_its_clamp_cannot_undo_
         "the values are unknown"
     );
     let text = note_text(&frames, "config_failed");
-    assert!(
-        text.contains("mode=plan: not sent: an earlier switch did not answer"),
-        "{text}"
-    );
+    assert!(text.contains("model=large: no answer within"), "{text}");
 }
 
 #[tokio::test]
@@ -1703,10 +1751,10 @@ async fn a_switch_cut_off_by_the_start_deadline_says_so() {
     assert_eq!(kinds(&frames), ["session_started", "host_note:config_failed"]);
     let text = note_text(&frames, "config_failed");
     assert!(
-        text.contains("model=large: no answer before the start deadline"),
+        text.contains("mode=plan: no answer before the start deadline"),
         "{text}"
     );
-    assert!(text.contains("mode=plan: not sent"), "{text}");
+    assert!(text.contains("model=large: not sent"), "{text}");
 }
 
 /// An adapter may accept a value and report another. What it reports is
@@ -1728,7 +1776,7 @@ async fn a_value_the_agent_accepts_but_does_not_report_is_noted() {
         SessionOptions::default(),
     );
     let frames = wait_until(&uplink, has("host_note:config_failed")).await;
-    assert_eq!(switches(&log), "effort=high\n");
+    assert_eq!(switches(&log), "effort=high\neffort=high\n");
     let text = note_text(&frames, "config_failed");
     assert!(text.contains("effort: asked high, agent reports low"), "{text}");
     let axes = started_extracts(&frames).current_axes.unwrap();
@@ -1786,12 +1834,9 @@ async fn options_announced_in_an_update_before_the_answer_are_the_ones_switched(
 
 // Fix round 1: a stale or seeded catalogue must never gate a skip decision.
 
-/// The model switch clamps the mode to "plan" (`model_switch_sets_mode`),
-/// but its own read-back is empty, so the host does not know that: the
-/// pre-switch catalogue (still showing mode=default) is now stale. The
-/// mode=default switch must still be sent — skipping it as "already
-/// current" would leave the session in the clamped "plan" mode the operator
-/// never asked for.
+/// The mode switch resets the model to large, but its empty response leaves
+/// the old small-model catalogue stale. The explicit small-model switch must
+/// still be sent even though the last trustworthy catalogue had it current.
 #[tokio::test]
 async fn a_switch_without_a_read_back_does_not_skip_later_values_on_stale_data() {
     let dir = tempfile::tempdir().unwrap();
@@ -1799,17 +1844,19 @@ async fn a_switch_without_a_read_back_does_not_skip_later_values_on_stale_data()
     let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
     let script = FakeScript {
         empty_config_read_back: true,
+        mode_switch_sets_model: Some("large".into()),
+        model_switch_sets_mode: None,
         ..config_script(&log)
     };
     let _handle = launching(
         &uplink,
         &script,
         Attach::New,
-        wanted(Some("large"), Some("default"), &[]),
+        wanted(Some("small"), Some("plan"), &[]),
         SessionOptions::default(),
     );
     let frames = wait_until(&uplink, has("session_started")).await;
-    assert_eq!(switches(&log), "model=large\nmode=default\n");
+    assert_eq!(switches(&log), "mode=plan\nmodel=small\n");
     assert_eq!(started_extracts(&frames), unknown_normal_configuration());
     assert_eq!(kinds(&frames), ["session_started"]);
 }
@@ -2980,13 +3027,13 @@ async fn a_start_switch_that_timed_out_blocks_set_config_until_its_grace_passes(
     let (id, code, message) = full_refusal(&mut replies).await;
     assert_eq!((id.as_str(), code.as_str()), ("rc1", "config_failed"));
     assert_eq!(message, "an earlier switch is still out");
-    assert_eq!(switches(&log), "model=large\n", "rc1 reached the adapter");
+    assert_eq!(switches(&log), "mode=plan\n", "rc1 reached the adapter");
     // The grace (2s from the start's model switch) passes: switches go out
     // again.
     tokio::time::sleep(Duration::from_millis(2000)).await;
     assert!(handle.send(set_config("rc2", "mode", ConfigValue::Id("plan".into()))));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while switches(&log) != "model=large\nmode=plan\n" {
+    while switches(&log) != "mode=plan\nmode=plan\n" {
         assert!(
             tokio::time::Instant::now() < deadline,
             "rc2 was never sent: {:?}",

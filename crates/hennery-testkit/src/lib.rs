@@ -87,6 +87,9 @@ pub struct FakeScript {
     /// (a model that clamps the mode, ACP core §12 scenario 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_switch_sets_mode: Option<String>,
+    /// Claude's plan-mode switch can reset the selected model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode_switch_sets_model: Option<String>,
     /// Every prompt first sets the mode option to this value and announces
     /// it with a `config_option_update` (an agent that leaves plan mode on
     /// its own).
@@ -308,6 +311,7 @@ impl Default for FakeScript {
             cancel_error: None,
             config_options: Vec::new(),
             model_switch_sets_mode: None,
+            mode_switch_sets_model: None,
             prompt_sets_mode: None,
             config_log: None,
             session_log: None,

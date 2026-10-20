@@ -245,7 +245,7 @@ fn command(root: &Path, runtime: &str, native_probe: bool) -> Result<(AgentComma
     let (package, version, profile) = if runtime == "claude" {
         stage_auth("HENNERY_D4_CLAUDE_AUTH", &home.join("claude/.credentials.json"))?;
         std::fs::write(home.join("claude.json"), br#"{"hasCompletedOnboarding":true}"#)?;
-        ("claude-agent-acp", "0.81.0", Profile::Claude)
+        ("claude-agent-acp", "0.93.0", Profile::Claude)
     } else {
         stage_auth("HENNERY_D4_CODEX_AUTH", &home.join("codex/auth.json"))?;
         let arch = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
@@ -310,6 +310,98 @@ struct Harness {
     host: tokio::task::JoinHandle<anyhow::Result<()>>,
     server: tokio::task::JoinHandle<()>,
     approve_builtin: AtomicBool,
+}
+
+#[tokio::test]
+#[ignore = "requires pinned Claude adapter and copied provider credentials"]
+async fn live_claude_haiku_plan_configuration_survives_late_updates() -> Result<()> {
+    use hennery_host::{
+        outbox::Outbox,
+        session::{self, Attach, Launch, SessionCmd, SessionOptions},
+        uplink::Uplink,
+    };
+    use hennery_proto::frames::{HostFrame, SessionBody};
+    let dir = tempfile::tempdir()?;
+    let cwd = dir.path().canonicalize()?;
+    let (agent, profile) = command(&cwd, "claude", false)?;
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory()?);
+    let wanted = SessionConfig {
+        model: Some("haiku".into()),
+        mode: Some("plan".into()),
+        axes: BTreeMap::new(),
+    };
+    let handle = session::launch_delegated_in(
+        uplink.clone(),
+        Launch {
+            request_id: "live-config".into(),
+            session_id: "live-config".into(),
+            attach: Attach::New,
+            config: wanted.clone(),
+            agent,
+            cwd: cwd.clone(),
+            profile,
+            mcp_servers: vec![],
+        },
+        SessionOptions::default(),
+        1,
+        vec![cwd],
+    );
+    let result = tokio::time::timeout(BOUND, async {
+        loop {
+            let frames = uplink.pending()?;
+            if frames.iter().any(|f| {
+                matches!(
+                    f,
+                    HostFrame::Session {
+                        body: SessionBody::SessionStarted { .. },
+                        ..
+                    }
+                )
+            }) {
+                break;
+            }
+            if frames.iter().any(|f| matches!(f, HostFrame::Error { .. })) {
+                bail!(
+                    "Claude configuration start failed: {}",
+                    redact_credentials(&serde_json::to_string(&frames)?)?
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        // Observe post-start notifications too: the reported bug changed the
+        // model in the next update, after a correct first read-back.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let mut count = 0;
+        for frame in uplink.pending()? {
+            if let HostFrame::Session {
+                body:
+                    SessionBody::SessionStarted { indexed, .. }
+                    | SessionBody::AcpUpdate { indexed, .. }
+                    | SessionBody::ConfigApplied { indexed, .. },
+                ..
+            } = frame
+                && let Some(evidence) = indexed.config_evidence
+            {
+                ensure!(
+                    evidence.actual.model == wanted.model && evidence.actual.mode == wanted.mode,
+                    "requested haiku/plan, actual configuration differed: {}",
+                    redact_credentials(&serde_json::to_string(&evidence.actual)?)?
+                );
+                count += 1;
+            }
+        }
+        ensure!(count > 0, "no configuration evidence");
+        println!("Claude 0.93.0: haiku + plan confirmed across {count} configuration updates");
+        Ok::<(), anyhow::Error>(())
+    })
+    .await;
+    handle.send(SessionCmd::Close {
+        request_id: "live-close".into(),
+    });
+    tokio::time::timeout(Duration::from_secs(15), handle.finished()).await?;
+    drop(handle);
+    result??;
+    Ok(())
 }
 impl Drop for Harness {
     fn drop(&mut self) {

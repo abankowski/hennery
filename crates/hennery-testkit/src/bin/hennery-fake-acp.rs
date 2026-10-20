@@ -324,7 +324,14 @@ async fn main() -> agent_client_protocol::Result<()> {
                             script.model_switch_drops_option.as_deref(),
                             &script.sticky_options,
                         )
-                        .map(|()| options.clone())
+                        .map(|()| {
+                            if req.config_id.to_string() == "mode"
+                                && let Some(model) = &script.mode_switch_sets_model
+                            {
+                                set_select(&mut options, &SessionConfigOptionCategory::Model, model);
+                            }
+                            options.clone()
+                        })
                     };
                     match switched {
                         Ok(_) if script.empty_config_read_back => {
