@@ -13,7 +13,43 @@ removal-probe, replay and screenshot evidence is recorded below after it is
 observed. Independent review and current PR status belong to the parent;
 this document does not claim independent approval.
 
-### Observed execution
+### R3 integration — latest local verification
+
+The parent requested a merge of R3's `81ef9236` into the reviewed R4
+branch. `git fetch origin` followed by
+`git -c commit.gpgsign=false merge origin/redesign` produced merge
+`8acc94f6`, with parents `c8933a15` and `81ef9236`. No rebase was performed.
+
+There were no textual conflicts or manual source resolutions. Git
+auto-merged `web/e2e/sessions.spec.ts` and `web/e2e/mcp-delivery.spec.ts`.
+Inspection and the diff against the R3 parent confirm that both files
+retain R3's Details-panel/report open/close and composer navigation, plus
+exactly R4's checked-radio assertions and deliberate agent-defaults opt-out
+for catalog-less fixtures. Delivery, privacy, isolation and prompt
+assertions remain intact. The remerge audit contains no resolution delta.
+
+All commands ran through `nix develop -c` on the merged source:
+
+| Command | Observed result |
+|---|---|
+| `pnpm --dir web typecheck` | exit 0 |
+| `pnpm --dir web test` | exit 0; 2,232 passed across 131 files (2,205 → 2,232 after R3 integration) |
+| `CI=1 pnpm --dir web e2e` | exit 0; 115 passed, 11 expected skips, 0 failed, 126 total, 4.7 minutes |
+
+The full browser suite ran exactly once for this integration. Its
+preparation built the merged production UI and real embedded PWA binaries.
+The passing run includes both formerly blocked integration suites, all four
+owned R4 cases and R3's redesigned session cases. Logs and the merge audit
+are in `.superpowers/sdd/ui-r4/merge-redesign/`. No implementation edit was
+needed after the merge. Parent-owned CI, approval and complete PR status
+remain separate from these observed local results.
+
+The embedded implementation blocks and replay record below are pinned to
+the pre-integration `c8933a15` tree. R3's implementation arrives through its
+own merged plan; the integrated E2E files retain both lanes' changes and
+must not be replaced with the earlier frozen blocks.
+
+### Build and review evidence before R3 integration
 
 Implementation and review amendments are built and pushed through
 `a74f2b47`; compatibility commit `5482f3bc` is separate. Local amendment
