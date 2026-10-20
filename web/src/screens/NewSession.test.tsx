@@ -61,7 +61,7 @@ const HATS = [hat('hat-a', 'Work'), hat('hat-b', 'Home')]
 const PROJECTS: HostProjects = {
   recents_hat_id: 'hat-a',
   // Recents come first, so a recent prefix match (cat-tools) is held before
-  // the exact one (cat): only the ranking puts `cat` first.
+  // the exact repository (cat); the picker keeps recents ahead of it.
   recents: [
     { path: '/srv/work/data-cat', last_used_at: '2026-10-01T10:00:00Z' },
     { path: '/srv/work/cat-tools', last_used_at: '2026-09-30T10:00:00Z' },
@@ -248,7 +248,7 @@ describe('agents', () => {
 })
 
 describe('project picker', () => {
-  it('ranks exact, prefix, substring, subsequence, recents first within a rank', async () => {
+  it('keeps recents first, then ranks repository names by the typed match', async () => {
     mount()
     await screen.findByText(/Recent projects of the hat/)
     const user = userEvent.setup()
@@ -256,7 +256,7 @@ describe('project picker', () => {
     const options = within(screen.getByRole('listbox'))
       .getAllByRole('option')
       .map((o) => o.querySelector('bdi')?.textContent)
-    expect(options).toEqual(['cat', 'cat-tools', 'catalog', 'data-cat', 'concat', 'chart'])
+    expect(options).toEqual(['cat-tools', 'data-cat', 'cat', 'catalog', 'concat', 'chart'])
   })
 
   it('labels colliding names as parent and name', async () => {

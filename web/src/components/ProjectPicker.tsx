@@ -34,6 +34,16 @@ type Browse =
   | { state: 'shown'; listing: DirectoryListing }
   | { state: 'failed'; path: string; error: string }
 
+export const COMPLETION_DELAY_MS = 250
+function completionPath(query: string, home?: string): { parent: string; prefix: string; expanded: string } | null {
+  if (!isLiteralPath(query) || (query.startsWith('~') && query !== '~' && !query.startsWith('~/'))) return null
+  if (query.startsWith('~') && !home) return null
+  const expanded = query.startsWith('~') ? home! + query.slice(1) : query
+  if (query === '~') return { parent: home!, prefix: '', expanded: home! + '/' }
+  const slash = expanded.lastIndexOf('/')
+  return { parent: expanded.slice(0, slash) || '/', prefix: expanded.slice(slash + 1), expanded }
+}
+
 export default function ProjectPicker({ hostId, entries, browseRoot, initialText = '', onChange, labelledBy, inline = false }: Props) {
   const client = useClient()
   // From React, never the host's id: an id reference holds no spaces.
@@ -42,8 +52,30 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
   const [open, setOpen] = useState(inline)
   const [active, setActive] = useState(-1)
   const [browse, setBrowse] = useState<Browse>({ state: 'closed' })
+  const [completion, setCompletion] = useState<{ query: string; listing?: DirectoryListing; error?: string } | null>(null)
+  const browsing = browse.state !== 'closed'
+  useEffect(() => {
+    const path = completionPath(query, browseRoot)
+    if (!path || !open || browsing) return
+    const abort = new AbortController()
+    const timer = setTimeout(() => {
+      void client.request<DirectoryListing>('GET', `/api/hosts/${encodeURIComponent(hostId)}/browse?path=${encodeURIComponent(path.parent)}`, undefined, { signal: abort.signal }).then(
+        listing => { if (!abort.signal.aborted) setCompletion({ query, listing }) },
+        err => { if (!abort.signal.aborted) setCompletion({ query, error: messageOf(err) }) },
+      )
+    }, COMPLETION_DELAY_MS)
+    return () => { clearTimeout(timer); abort.abort() }
+  }, [client, hostId, query, browseRoot, open, browsing])
 
-  const matches = useMemo(() => (isLiteralPath(query) ? inline ? entries.slice(0, 6) : [] : filterProjects(entries, query)), [entries, query, inline])
+  const matches = useMemo<ProjectEntry[]>(() => {
+    const path = completionPath(query, browseRoot)
+    if (!path) return filterProjects(entries, query).sort((a, b) => Number(!!b.lastUsed) - Number(!!a.lastUsed))
+    const known = entries.filter(entry => entry.path.toLocaleLowerCase().startsWith(path.expanded.toLocaleLowerCase()))
+    const listing = completion?.query === query ? completion.listing : undefined
+    const directories = (listing?.entries ?? []).filter(entry => entry.name.toLocaleLowerCase().startsWith(path.prefix.toLocaleLowerCase())).map(entry => ({ name: entry.name, path: childPath(listing!.path, entry.name) }))
+    const seen = new Set(known.map(entry => entry.path))
+    return [...known.filter(entry => entry.lastUsed), ...known.filter(entry => !entry.lastUsed), ...directories.filter(entry => !seen.has(entry.path))]
+  }, [entries, query, completion, browseRoot])
 
   // Only a directory being loaded is fetched: a failed one stays failed
   // until another (or the same one, again) is asked for.
@@ -67,7 +99,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
 
   function pick(path: string, label: string) {
     setQuery(label)
-    setOpen(inline)
+    setOpen(false)
     setActive(-1)
     setBrowse({ state: 'closed' })
     onChange(path)
@@ -76,7 +108,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
   function onInput(next: string) {
     setQuery(next)
     setActive(-1)
-    setOpen(!isLiteralPath(next))
+    setOpen(true)
     // A path needs no picking; a search is no choice until one is picked.
     onChange(isLiteralPath(next) ? next : '')
   }
@@ -100,15 +132,15 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
     }
     if (e.key === 'Enter' && open && active >= 0 && active < matches.length) {
       e.preventDefault()
-      pick(matches[active].path, matches[active].name)
+      pick(matches[active].path, isLiteralPath(query) ? matches[active].path : matches[active].name)
     }
   }
 
-  const browsing = browse.state !== 'closed'
   const showList = open && !browsing && matches.length > 0
   const optionId = (i: number) => `${listId}-o${i}`
   // The option arrow keys moved to, told to a screen reader while it shows.
   const activeId = showList && active >= 0 && active < matches.length ? optionId(active) : undefined
+  useEffect(() => { if (activeId) document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' }) }, [activeId])
   const go = (path: string) => setBrowse({ state: 'loading', path })
 
   return (
@@ -122,7 +154,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
             <input
               value={query}
               onChange={(e) => onInput(e.target.value)}
-              onFocus={() => setOpen(!isLiteralPath(query))}
+              onFocus={() => setOpen(true)}
               onBlur={() => window.setTimeout(() => setOpen(false), 120)}
               onKeyDown={onKeyDown}
               spellCheck={false}
@@ -149,7 +181,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
                   // On mousedown: a click would blur the input, closing the list first.
                   onMouseDown={(e) => {
                     e.preventDefault()
-                    pick(m.path, m.name)
+                    pick(m.path, isLiteralPath(query) ? m.path : m.name)
                   }}
                 >
                   <bdi>{m.name}</bdi>
@@ -158,6 +190,7 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
               ))}
             </ul>
           )}
+          {open && !browsing && completion?.query === query && completion.error && <p className="hint">Directory suggestions unavailable. You can still enter a path.</p>}
           {browsing && (
             <div className="picker-list" role="group" aria-label="Browse directories">
               {browse.state === 'loading' && (

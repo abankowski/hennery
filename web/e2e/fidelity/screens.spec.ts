@@ -6,13 +6,14 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { startCollector } from '../collector'
+import type { HostItem } from '../../src/generated/protocol'
 
 const prototype = process.env.HENNERY_PROTOTYPE_DIR
 const screen = process.env.HENNERY_FIDELITY_SCREEN ?? 'overview'
 const output = resolve('../.superpowers/fidelity')
 const ts = '2026-10-20T10:00:00Z'
 const hats = [ { id: 'work', name: 'Studio', colour: '#a78bfa', default_for_new_hosts: true, created_at: ts }, { id: 'personal', name: 'Personal', colour: '#4dbbb2', default_for_new_hosts: false, created_at: ts } ]
-const hosts = [{ host_id: 'dev', name: 'Development', platform: 'linux', host_version: '0.1.4', capabilities: ['projects', 'resolve_path'], default_hat_id: 'work', workspace_roots: ['/srv'], connected: true, created_at: ts, last_seen_at: ts, mcp_delivery: { claude: 'native', codex: 'native' } }]
+const hosts: HostItem[] = [{ host_id: 'dev', name: 'Development', platform: 'linux', host_version: '0.1.4', capabilities: ['projects', 'resolve_path', 'mcp_servers'], default_hat_id: 'work', workspace_roots: ['/srv'], connected: true, created_at: ts, last_seen_at: ts, mcp_delivery: { claude: 'isolated', codex: 'default_hat_only' } }]
 const base = { host_id: 'dev', hat_id: 'work', agent: 'claude', cwd: '/srv/project', lifecycle: 'active', activity: 'idle', presumed_parked: false, question_waits: false, operator_attention: 0, parent_handled_questions: 0, created_at: ts, last_event_at: ts }
 const rows = [
  { ...base, session_id: 'permission', title: 'Port parser tests', activity: 'blocked', operator_attention: 1, question_waits: true, model: 'Sonnet', family: { revision: 1, parent: { session_id: 'running', title: 'Regenerate protocol', agent: 'codex' }, children: [], child_counts: { total: 0, active: 0, waiting: 0 }, attention: 0 } },
@@ -42,6 +43,7 @@ async function fixtures(context: BrowserContext) {
   if (path.endsWith('/catalog')) return json({ session_id: 'permission', config_options: [], commands: [] })
   if (path.endsWith('/family')) { const row = rows.find(r => path.split('/').at(-2) === r.session_id) ?? rows[0]; return json({ summary: row, routing: row.session_id === 'permission' ? 'active' : undefined, children: row.session_id === 'running' ? [{ summary: rows[0], routing: 'active', operations: [], questions: [{ pending_id: 'permission', kind: 'permission', handling: 'operator_required' }] }] : [], questions: [] }) }
   if (path.endsWith('/projects')) return json({ home: '/srv', recents_hat_id: 'work', recents: [{ path: '/srv/project', last_used_at: ts }], items: [{ path: '/srv/project' }], partial: false })
+  if (path.endsWith('/browse')) return json({ path: '/srv', entries: [{ name: 'project' }, { name: 'project-archive' }], truncated: false })
   if (path === '/api/hats/resolve') return json({ hat_id: 'work', canonical: '/srv/project', exists: true, is_dir: true, matched_rule: null })
   if (path.endsWith('/path-rules')) return json([{ prefix: '/srv/project', hat_id: 'work', verified: true }, { prefix: '/srv/personal', hat_id: 'personal', verified: true }])
   if (path.endsWith('/runtime-catalog')) return json({ agent: url.searchParams.get('agent'), adapter_revision: 'fixture', freshness: 'fresh', config_options: [select('model', 'Model', ['Sonnet', 'Opus']), select('mode', 'Permission mode', ['Default', 'Accept edits', 'Bypass permissions']), select('effort', 'Reasoning effort', ['Medium', 'High'])], defaults: { model: 'Sonnet', mode: 'Default', axes: { effort: 'Medium' } }, security: { known: true, axes: { mode: ['Default'] } } })
@@ -72,13 +74,16 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
  try {
   const app = await context.newPage(), reference = await context.newPage()
   await app.clock.setFixedTime(new Date('2026-10-20T10:05:00Z'))
-  const route = screen === 'overview' ? '/sessions' : ['session', 'busy-turn'].includes(screen) ? '/sessions/permission?pending=permission' : screen === 'running-family' ? '/sessions/running' : screen === 'elicitation' ? '/sessions/question?pending=question' : screen === 'new-session' ? '/new' : screen === 'palette' ? '/sessions' : '/' + screen
+  const route = screen === 'overview' ? '/sessions' : ['session', 'busy-turn'].includes(screen) ? '/sessions/permission?pending=permission' : screen === 'running-family' ? '/sessions/running' : screen === 'elicitation' ? '/sessions/question?pending=question' : ['new-session', 'autocomplete'].includes(screen) ? '/new' : screen === 'palette' ? '/sessions' : '/' + screen
   await app.goto(collector.origin + route)
   await expect(app.locator('main')).toBeVisible()
-  if (screen === 'new-session') {
+  if (screen === 'new-session' || screen === 'autocomplete') {
    const dialog = app.getByRole('dialog', { name: 'New session', exact: true })
    await dialog.getByRole('textbox', { name: /^First prompt/ }).fill('Check why the latency panel has gaps after midnight')
-   await dialog.getByRole('option', { name: /project/ }).click()
+   if (screen === 'autocomplete') {
+    await dialog.getByRole('combobox', { name: /^Project/ }).fill('/srv/project')
+    await expect(dialog.getByRole('option', { name: 'project-archive', exact: true })).toBeVisible()
+   } else await dialog.getByRole('option', { name: /project/ }).click()
    await expect(dialog.getByRole('region', { name: 'Session settings', exact: true })).toBeVisible()
    await expect(dialog.locator('.config-summary')).toHaveText('Model: Sonnet · Permission mode: Default · Reasoning effort: Medium')
   }
@@ -105,7 +110,7 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
   }
   if (screen === 'running-family' && width === 390) await app.getByRole('button', { name: 'Session details', exact: true }).click()
   await app.evaluate(() => document.fonts.ready)
-  const mobileFrames: Record<string, string> = { overview: '1b · Sessions tab', 'needs-you': '1 · Needs you tab', session: '3 · Deep link → permission card', 'busy-turn': '3 · Deep link → permission card', 'running-family': '1c · Running session · family sheet', elicitation: '4 · Answer a question', 'new-session': '5 · New session sheet' }
+  const mobileFrames: Record<string, string> = { overview: '1b · Sessions tab', 'needs-you': '1 · Needs you tab', session: '3 · Deep link → permission card', 'busy-turn': '3 · Deep link → permission card', 'running-family': '1c · Running session · family sheet', elicitation: '4 · Answer a question', 'new-session': '5 · New session sheet', autocomplete: '5 · New session sheet' }
   const mobile = width === 390 && mobileFrames[screen]
   await reference.goto(pathToFileURL(join(prototype!, mobile ? 'Hennery Mobile.dc.html' : 'Hennery Desktop.dc.html')).href)
   await reference.evaluate(({ theme, mobile }) => { (window as unknown as { __dcSetProps: (name: string, props: object) => void }).__dcSetProps(mobile ? 'Hennery Mobile' : 'Hennery Desktop', { theme }) }, { theme, mobile: !!mobile })
@@ -113,7 +118,7 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
   await reference.evaluate(() => document.fonts.ready)
   if (!mobile && !['overview', 'needs-you'].includes(screen)) {
    if (screen === 'session' || screen === 'busy-turn' || screen === 'elicitation' || screen === 'running-family') await reference.getByRole('button', { name: /^Port VAD tests/ }).first().click()
-   else if (screen === 'new-session') await reference.getByRole('button', { name: /^New session/ }).first().click()
+   else if (screen === 'new-session' || screen === 'autocomplete') await reference.getByRole('button', { name: /^New session/ }).first().click()
    else if (screen === 'palette') { await reference.getByRole('button', { name: /^Jump to/ }).click(); await app.keyboard.press('ControlOrMeta+k') }
    else await reference.getByRole('button', { name: new RegExp('^' + screen[0].toUpperCase() + screen.slice(1), 'i') }).first().click()
   }
