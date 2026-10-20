@@ -38,14 +38,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the collector.
+    /// Run only the collector: the server that stores sessions and serves the browser UI.
     Collector(CollectorCli),
     /// Host commands.
     Host {
         #[command(subcommand)]
         command: HostCommand,
     },
-    /// Run a collector and a host together (two processes).
+    /// Run a collector (server and browser UI) and a host (runs agents on this machine), paired as two processes.
     Up(UpArgs),
     /// Recovery commands for a running collector, over its admin socket.
     Admin(admin::AdminArgs),
@@ -60,7 +60,7 @@ enum Command {
 enum HostCommand {
     /// Pair this machine with a collector (kernel spec §4.1).
     Join(JoinArgs),
-    /// Run a host.
+    /// Run a host: the process that runs agents on this machine and connects to a collector.
     Run(HostArgs),
     /// Change this host's collector endpoint without replacing its identity.
     Transport {
@@ -455,6 +455,12 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
     let parent = args.parent_fd.map(inherit::watch_parent).transpose()?;
     warn_if_dev_token();
     let file = config::FileConfig::load(&data_dir)?;
+    let config_path = data_dir.join(config::CONFIG_FILE);
+    if config_path.exists() {
+        tracing::info!(path = %config_path.display(), "collector config loaded");
+    } else {
+        tracing::info!(path = %config_path.display(), "collector config does not exist; using flags, environment and defaults");
+    }
     // Named by its source: an operator cannot otherwise tell whether a flag,
     // `HENNERY_PUBLIC_URL` or the file gave the bad value.
     let public_url_source = if args.public_url.is_some() {
@@ -530,6 +536,11 @@ async fn run_collector(args: CollectorArgs) -> Result<()> {
         let address = listener.local_addr()?;
         tracing::info!(%address, "collector listening");
         addresses.push(address);
+    }
+    if addresses.iter().all(|address| address.ip().is_loopback()) {
+        tracing::info!(
+            "all collector listeners are loopback; to listen elsewhere, use --listen <IP>:7117 or listen in config.toml; set --public-url or public_url to your HTTPS browser origin"
+        );
     }
     // Only once listening: the link names the first listener's port, unless
     // there is a `public_url` to name (kernel spec §3.1).

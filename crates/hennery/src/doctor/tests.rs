@@ -2880,6 +2880,29 @@ fn proxy_attribution_diagnostics_never_claim_health_proves_the_deployment() {
             "{check:?}"
         );
         assert!(check.summary.contains("missing header uses the TCP peer"), "{check:?}");
+        let mut output = Vec::new();
+        render(&dirs, &[Finding::Checked(check)], &mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(
+            output.contains(&collector.join("config.toml").display().to_string()),
+            "{output}"
+        );
+        assert!(
+            output.contains(&format!(
+                "\n        {}: {expected}",
+                if policy.is_empty() { "ok" } else { "warn" }
+            )),
+            "{output}"
+        );
+        assert!(
+            output.contains("\n        ok: missing header uses the TCP peer"),
+            "{output}"
+        );
+        if !policy.is_empty() {
+            for fix in ["proxy_client_ip_peers", "Hennery-Client-IP", "two clients"] {
+                assert!(output.contains(fix), "{output}");
+            }
+        }
     }
     std::fs::write(collector.join("config.toml"), "proxy_client_ip_peers = ['0.0.0.0']").unwrap();
     assert_eq!(line(&checked(&cx, dirs, &nothing, &collector), 16).status, Status::Fail);

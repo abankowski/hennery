@@ -36,8 +36,9 @@ const EXAMPLE_CODE: &str = "ABCD-EFGH";
 const EXAMPLE_PORT: u16 = 7117;
 
 /// Every block name in the README, in order, with what runs it.
-const BLOCKS: [(&str, Runner); 12] = [
+const BLOCKS: [(&str, Runner); 13] = [
     ("release-bootstrap", Runner::Workflow("ci.yml", "checks")),
+    ("collector-public", Runner::Here),
     ("clone", Runner::Workflow("ci.yml", "readme")),
     ("build", Runner::Workflow("ci.yml", "readme")),
     ("nix", Runner::Workflow("nix.yml", "flake")),
@@ -434,6 +435,49 @@ fn the_non_nix_build_runs_on_linux_prs_and_both_weekly_platforms_without_nix() {
 
 // ---------------------------------------------------------------------
 // The blocks run here.
+
+/// The VM recipe runs without a host, both with its flags and with the
+/// example config file. Only the explicitly documented backend port changes.
+#[test]
+fn collector_public_shell_block_and_example_config_start_without_a_host() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery"));
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    assert!(readme.contains("`7117` is a collector-backend placeholder"));
+    let script = block("collector-public");
+    assert_eq!(script.matches("127.0.0.1:7117").count(), 1);
+    let example = readme
+        .split_once("<!-- example: collector-config -->\n```toml\n")
+        .unwrap()
+        .1
+        .split_once("\n```")
+        .unwrap()
+        .0;
+    for from_file in [false, true] {
+        let machine = Machine::new(if from_file { "collector-file" } else { "collector-flags" });
+        let script = if from_file {
+            std::fs::create_dir_all(machine.data()).unwrap();
+            std::fs::write(machine.data().join("config.toml"), example.replace(":7117", ":0")).unwrap();
+            "hennery collector".to_string()
+        } else {
+            script.replace("127.0.0.1:7117", "127.0.0.1:0")
+        };
+        // No shell override may conceal an invalid example config.
+        let script = format!("unset HENNERY_LISTEN; exec {script}");
+        let mut collector = machine.start(&script, "collector.log");
+        let address = collector.listening();
+        let setup = machine.data().join("setup-url");
+        collector.wait_until("the collector-only setup link", || setup.exists());
+        assert!(
+            std::fs::read_to_string(&setup)
+                .unwrap()
+                .starts_with(&format!("{EXAMPLE_URL}/setup#"))
+        );
+        assert_eq!(request(&address, "GET", "/healthz", &[], "").0, 200);
+        assert!(!machine.data().join("host").exists());
+        assert!(!machine.data().join("host.toml").exists());
+        collector.stop();
+    }
+}
 
 /// A scratch machine: a home under `/tmp` (short, for the admin socket's
 /// path), removed on drop.
