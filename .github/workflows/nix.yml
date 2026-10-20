@@ -65,6 +65,8 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: native-debug
+        # Runner image env drifts; the flake pins the toolchain.
+        add-rust-environment-hash-key: false
         cmd-format: nix develop -c {0}
         cache-bin: false
         save-if: false
@@ -118,6 +120,8 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: native-release
+        # Runner image env drifts; the flake pins the toolchain.
+        add-rust-environment-hash-key: false
         cmd-format: nix develop -c {0}
         cache-bin: false
         save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -157,6 +161,8 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: native-release-vendored
+        # Runner image env drifts; the flake pins the toolchain.
+        add-rust-environment-hash-key: false
         cache-bin: false
         save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     - name: Vendored OpenSSL build tools (ubuntu)
@@ -198,6 +204,8 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: crates-acceptance
+        # Runner image env drifts; the flake pins the toolchain.
+        add-rust-environment-hash-key: false
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cmd-format: nix develop -c {0}
         workspaces: . -> target/crates-acceptance
