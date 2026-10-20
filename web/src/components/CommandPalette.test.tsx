@@ -48,9 +48,9 @@ it('has grouped semantic options, omits disabled providers, selects locally with
 it('traps tab, preserves the query on composition, closes with Escape and returns focus', async () => {
   const { user } = setup()
   const trigger = screen.getByRole('button', { name: 'Jump to' }); await user.click(trigger)
-  const input = screen.getByRole('combobox'); await user.type(input, 'review')
+  const input = screen.getByRole('combobox'); await user.type(input, 'project')
   fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
-  expect(input).toHaveValue('review'); expect(screen.getByRole('dialog')).toBeInTheDocument()
+  expect(input).toHaveValue('project'); expect(screen.getByRole('dialog')).toBeInTheDocument()
   const close = screen.getByRole('button', { name: 'Close command palette' })
   close.focus(); fireEvent.keyDown(close, { key: 'Tab' }); expect(input).toHaveFocus()
   fireEvent.keyDown(input, { key: 'Tab', shiftKey: true }); expect(close).toHaveFocus()
@@ -94,6 +94,7 @@ it('fences ignored-abort responses after a changed query and aborts when closed'
   expect(signals[0]?.aborted).toBe(true)
   await act(async () => { resolveOld(page([summary('old', { title: 'new stale' })])) })
   expect(screen.queryByRole('option', { name: 'new stale /srv/demo' })).not.toBeInTheDocument()
+  expect(screen.getByRole('option', { name: 'new answer /srv/demo' })).toBeInTheDocument()
   await user.keyboard('{Escape}'); expect(signals.at(-1)?.aborted).toBe(true)
 })
 it('keeps loaded matches on search error and offers a deliberate retry', async () => {
@@ -113,7 +114,7 @@ it('does not execute a provider that became unavailable after rendering', async 
   await user.keyboard('{Enter}'); expect(run).not.toHaveBeenCalled()
 })
 it('help shows route/provider-appropriate keys and restores the trigger', async () => {
-  vi.stubGlobal('matchMedia', () => ({ matches: true }))
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
   const actions = new AppActions()
   actions.register('focus-composer', { label: 'Focus composer', enabled: true, run() {} })
   function Fixture() { const [open, show] = useState(false); return <><button onClick={() => show(true)}>Help</button>{open && <ShortcutHelp actions={actions} route="session" close={() => show(false)} />}</> }

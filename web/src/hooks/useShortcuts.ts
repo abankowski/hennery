@@ -8,7 +8,7 @@ export function useShortcuts(actions: AppActions | null, route: string, help: ()
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return
-      const action = shortcutAction(event, route, matchMedia('(min-width: 768px)').matches)
+      const action = shortcutAction(event, route, window.matchMedia?.('(min-width: 768px)').matches ?? false)
       if (!action) return
       if (action === 'help') { event.preventDefault(); help() }
       else if (action === 'theme') { event.preventDefault(); cycleAppearance(); announce('Appearance: ' + getTheme().preference.replace(/^./, letter => letter.toUpperCase())) }

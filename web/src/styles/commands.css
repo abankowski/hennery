@@ -32,3 +32,10 @@
   .shortcut-dialog dt { min-width: 100px; }
 }
 @media (pointer: coarse) { .command-footer { display: none; } }
+.command-close > svg { display: none; }
+@media (pointer: coarse) {
+  .command-close > svg { display: inline-block; }
+  .command-close > .ui-keycap { display: none; }
+}
+.command-option > .ui-keycap { margin-left: auto; flex-shrink: 0; }
+@media (pointer: coarse) { .command-option > .ui-keycap { display: none; } }

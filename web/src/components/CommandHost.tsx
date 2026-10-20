@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useActionSnapshot, useLoadedSessions, useRegisterAction } from '../app-actions'
 import { match, useLocation } from '../router'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useShortcuts } from '../hooks/useShortcuts'
 import CommandPalette from './CommandPalette'
 import ShortcutHelp from './ShortcutHelp'
@@ -11,6 +12,7 @@ export default function CommandHost() {
   const { pathname } = useLocation()
   const [overlay, setOverlay] = useState<'palette' | 'help' | null>(null)
   const [announcement, announce] = useState('')
+  const desktop = useMediaQuery('(min-width: 768px)')
   const open = useCallback(() => setOverlay('palette'), [])
   const help = useCallback(() => setOverlay('help'), [])
   const close = useCallback(() => setOverlay(null), [])
@@ -18,7 +20,7 @@ export default function CommandHost() {
   const enabled = !!actions?.get('open-sessions')?.enabled
   useRegisterAction('open-commands', { label: 'Jump to', enabled, run: open })
   useShortcuts(actions, match(pathname).name, help, announce)
-  return <><span className="sr-only" role="status">{announcement}</span>
+  return <><span className="sr-only command-announcement" aria-live="polite">{desktop ? '' : announcement}</span>
     {overlay === 'palette' && actions && <CommandPalette actions={actions} loaded={loaded} close={close} />}
     {overlay === 'help' && <ShortcutHelp actions={actions} route={match(pathname).name} close={close} />}
   </>

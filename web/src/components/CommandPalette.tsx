@@ -4,8 +4,9 @@ import { useClient } from '../app-client'
 import { summaries } from '../api/view'
 import { messageOf } from '../api/errors'
 import type { SessionSummary } from '../generated/view'
-import { recentSessions, registeredCommands } from '../lib/commands'
-import { navigate } from '../router'
+import { commandHint, recentSessions, registeredCommands } from '../lib/commands'
+import { match, navigate, useLocation } from '../router'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import { restoreCommandFocus } from '../hooks/useShortcuts'
 import { Icon, Keycap, useModalLayer } from './ui'
 
@@ -13,6 +14,8 @@ interface SearchState { key: string; rows: SessionSummary[]; cursor?: string; lo
 export default function CommandPalette({ actions, loaded, close }: {
   actions: AppActions; loaded: ReadonlyMap<string, SessionSummary>; close: () => void
 }) {
+  const { pathname } = useLocation()
+  const desktop = useMediaQuery('(min-width: 768px)')
   const client = useClient(), dialog = useRef<HTMLDivElement>(null), input = useRef<HTMLInputElement>(null)
   const { trap, holdFocus } = useModalLayer(dialog)
   const [query, setQuery] = useState(''), [selected, select] = useState(0), [attempt, retry] = useState(0)
@@ -56,12 +59,12 @@ export default function CommandPalette({ actions, loaded, close }: {
   const run = (action: () => void) => { close(); requestAnimationFrame(action) }
   const sessionResult = (row: SessionSummary) => ({
     id: `session:${row.session_id}`, label: row.title || row.session_id,
-    detail: [row.cwd, row.git_branch].filter(Boolean).join(' · '),
+    hint: '', detail: [row.cwd, row.git_branch].filter(Boolean).join(' · '),
     run: () => navigate(`/sessions/${encodeURIComponent(row.session_id)}`),
   })
   const groups = [
     { label: 'Needs you', results: rows.filter(row => row.operator_attention > 0).map(sessionResult) },
-    { label: 'Actions', results: registeredCommands(actions).filter(action => action.label.toLocaleLowerCase().includes(q.toLocaleLowerCase())).map(action => ({ id: `action:${action.id}`, label: action.label, detail: '', run: () => { actions.dispatch(action.id) } })) },
+    { label: 'Actions', results: registeredCommands(actions, desktop).filter(action => action.label.toLocaleLowerCase().includes(q.toLocaleLowerCase())).map(action => ({ id: `action:${action.id}`, label: action.label, hint: commandHint(action.id, match(pathname).name, desktop), detail: '', run: () => { actions.dispatch(action.id) } })) },
     { label: q ? 'Matching sessions' : 'Recent sessions', results: rows.filter(row => row.operator_attention === 0).map(sessionResult) },
   ]
   const results = groups.flatMap(group => group.results)
@@ -83,14 +86,14 @@ export default function CommandPalette({ actions, loaded, close }: {
             else select(Math.max(0, Math.min(results.length - 1, active + (event.key === 'ArrowDown' ? 1 : -1))))
           }
         }} />
-        <button type="button" className="command-close" aria-label="Close command palette" onClick={close}><Keycap>Esc</Keycap></button>
+        <button type="button" className="command-close" aria-label="Close command palette" onClick={close}><Icon name="x-mark" size={18} /><Keycap>Esc</Keycap></button>
       </div>
       <div className="command-results" id={listId} role="listbox" aria-label="Sessions and actions">
         {groups.map(group => {
           const start = offset; offset += group.results.length
           return group.results.length > 0 && <div role="group" aria-label={group.label} key={group.label}><div className="command-group" aria-hidden="true">{group.label}</div>{group.results.map((result, index) => <div role="option" aria-label={[result.label, result.detail].filter(Boolean).join(" ")} id={`${listId}-${start + index}`} aria-selected={active === start + index} className="command-option" key={result.id} onMouseDown={event => event.preventDefault()} onClick={() => choose(start + index)}>
             <Icon name={group.label === 'Actions' ? 'arrow-right' : group.label === 'Needs you' ? 'hand-raised' : 'chat-bubble-left-right'} size={18} />
-            <span><bdi>{result.label}</bdi>{result.detail && <small><bdi>{result.detail}</bdi></small>}</span>
+            <span><bdi>{result.label}</bdi>{result.detail && <small><bdi>{result.detail}</bdi></small>}</span>{result.hint && <Keycap>{result.hint}</Keycap>}
           </div>)}</div>
         })}
       </div>

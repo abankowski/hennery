@@ -40,3 +40,10 @@ it('cycles the shared theme and announces it, opens help, and respects prior pre
   const e = new KeyboardEvent('keydown', { key: 'n', cancelable: true }); e.preventDefault(); window.dispatchEvent(e)
   expect(props.run).not.toHaveBeenCalled()
 })
+it('keeps app typing usable when matchMedia is unavailable', () => {
+  const props = setup(); vi.stubGlobal('matchMedia', undefined)
+  render(<Harness {...props} />)
+  fireEvent.keyDown(window, { key: 'n' }); expect(props.run).toHaveBeenCalledOnce()
+  const rail = vi.fn(); props.actions.register('toggle-rail', { label: 'Navigation', enabled: true, run: rail })
+  fireEvent.keyDown(window, { key: '[' }); expect(rail).not.toHaveBeenCalled()
+})

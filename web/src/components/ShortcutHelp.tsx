@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react'
 import type { AppActionId, AppActions } from '../app-actions'
 import { modLabel } from '../lib/commands'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import { restoreCommandFocus } from '../hooks/useShortcuts'
 import { Keycap, useModalLayer } from './ui'
 
 export default function ShortcutHelp({ actions, route, close }: { actions: AppActions | null; route: string; close: () => void }) {
+  const desktop = useMediaQuery('(min-width: 768px)')
   const ref = useRef<HTMLDivElement>(null), { trap, holdFocus } = useModalLayer(ref)
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null
@@ -15,7 +17,7 @@ export default function ShortcutHelp({ actions, route, close }: { actions: AppAc
   const bindings = [
     ...(enabled('open-commands') ? [[`${modLabel()}+K`, 'Jump to a session or command']] : []),
     ...(enabled('new-session') ? [['N', actions!.get('new-session')!.label]] : []),
-    ...(matchMedia('(min-width: 768px)').matches && enabled('toggle-rail') ? [['[', 'Collapse or expand navigation']] : []),
+    ...(desktop && enabled('toggle-rail') ? [['[', 'Collapse or expand navigation']] : []),
     ...(route === 'session' && enabled('toggle-details') ? [[']', 'Toggle session details']] : []),
     ...(['sessions', 'needs-you'].includes(route) && enabled('search-sessions') ? [['/', 'Focus session search'], ['J / K', 'Move between focused session links'], ['Enter', 'Open the focused link or button']] : []),
     ...(route === 'session' && enabled('focus-composer') ? [['R', 'Focus composer']] : []),

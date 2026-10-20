@@ -6,8 +6,8 @@ export const COMMAND_ACTIONS: readonly AppActionId[] = [
   'open-hosts', 'open-mcp', 'open-hats', 'open-defaults', 'open-settings',
   'toggle-rail', 'toggle-details', 'focus-composer',
 ]
-export function registeredCommands(actions: AppActions) {
-  return COMMAND_ACTIONS.flatMap(id => {
+export function registeredCommands(actions: AppActions, desktop = true) {
+  return COMMAND_ACTIONS.filter(id => desktop || id !== 'toggle-rail').flatMap(id => {
     const action = actions.get(id)
     return action?.enabled ? [{ id, label: action.label }] : []
   })
@@ -41,4 +41,13 @@ export function shortcutAction(event: KeyboardEvent, route: string, desktop: boo
   if (key === 'r' && route === 'session') return 'focus-composer'
   if (key === '/' && ['sessions', 'needs-you'].includes(route)) return 'search-sessions'
   return null
+}
+/** Hints describe the global key only where that binding is active. */
+export function commandHint(id: AppActionId, route: string, desktop: boolean): string {
+  if (id === 'new-session') return 'N'
+  if (id === 'search-sessions' && ['sessions', 'needs-you'].includes(route)) return '/'
+  if (id === 'toggle-rail' && desktop) return '['
+  if (id === 'toggle-details' && route === 'session') return ']'
+  if (id === 'focus-composer' && route === 'session') return 'R'
+  return ''
 }
