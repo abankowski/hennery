@@ -13,6 +13,7 @@ import { statusOf } from '../lib/status'
 import { basename, relTime } from '../lib/time'
 import { Link } from '../router'
 import { Icon } from './ui'
+import SessionName, { useSessionName } from './SessionNames'
 
 export function sessionPath(id: string): string {
   return `/sessions/${encodeURIComponent(id)}`
@@ -39,7 +40,9 @@ interface Props {
 export default function SessionRow({ session, selected, hostName, now, table, indent }: Props) {
   const [why, setWhy] = useState(false)
   const status = statusOf(session)
-  const { title, where } = rowText(session)
+  const name = useSessionName(session)
+  const title = name.text, place = session.git_branch || basename(session.cwd)
+  const where = place === title ? '' : place
   const reason = status.tone === 'fail' ? session.failure_reason : undefined
   const markerTitle = reason ? `${status.label}: ${reason}` : status.label
   const content = (
@@ -54,7 +57,7 @@ export default function SessionRow({ session, selected, hostName, now, table, in
           <span className={'sess-led led-' + status.tone} role="img" aria-label={status.label} title={markerTitle}><Icon name={status.tone === 'attn' ? 'hand-raised' : status.tone === 'run' ? 'play-circle' : status.tone === 'fail' ? 'exclamation-circle' : 'clock'} size={14} /></span>
           <span className="sess-kind sess-agent">{agentLabel(session.agent)}</span>
           <span className="sess-name">
-            <bdi>{title}</bdi>
+            <bdi className={name.provisional ? 'session-name-provisional' : undefined}>{title}</bdi>
           </span>
           <span className="sess-time">{relTime(session.last_event_at, now)}</span>
         </div>
@@ -76,8 +79,8 @@ export default function SessionRow({ session, selected, hostName, now, table, in
         </div>
       </Link>
       {session.family && <div className="sess-family">
-        {session.family.parent && <Link to={sessionPath(session.family.parent.session_id)}>Parent: <bdi>{session.family.parent.title || agentLabel(session.family.parent.agent)}</bdi></Link>}
-        {session.family.children.map(child => <Link key={child.session_id} to={sessionPath(child.session_id)}>Child: <bdi>{child.title || agentLabel(child.agent)}</bdi></Link>)}
+        {session.family.parent && <Link to={sessionPath(session.family.parent.session_id)}>Parent: <SessionName session={session.family.parent} fallback={agentLabel(session.family.parent.agent)} /></Link>}
+        {session.family.children.map(child => <Link key={child.session_id} to={sessionPath(child.session_id)}>Child: <SessionName session={child} fallback={agentLabel(child.agent)} /></Link>)}
         {session.family.child_counts.total > session.family.children.length && <span>{session.family.child_counts.total} children</span>}
       </div>}
       {reason && (

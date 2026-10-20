@@ -127,6 +127,7 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       releaseStart()
       await expect(page).toHaveURL(/\/sessions\/[^/?]+$/, { timeout: 45_000 })
       await expect(page.locator('.bubble.user')).toHaveText('Prepare synthetic notes.')
+      await expect(page.getByRole('heading', { name: 'Prepare synthetic notes.', exact: true, level: 1 }).locator('bdi')).toHaveClass('session-name-provisional')
       expect(starts.at(-1)).toEqual({ host_id: hostId, agent: 'claude', cwd: project, model: 'sonnet', mode: 'default', axes: { effort: 'high' } })
       expect(prompts).toHaveLength(1)
       const firstPrompt = wire.findIndex(path => path.startsWith('POST ') && path.endsWith('/prompt'))

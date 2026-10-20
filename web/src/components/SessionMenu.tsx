@@ -1,3 +1,4 @@
+import SessionName from './SessionNames'
 // The session header's menu (frontend spec §6.6): Park, Close and "Delete
 // session".
 //
@@ -219,7 +220,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, supportsId
           {family && <>
             <p>Copies already delivered to related sessions remain in their transcripts. Those sessions are kept.</p>
             <ul aria-label="Related sessions">
-              {[...(family.parent ? [family.parent] : []), ...family.children].map(related => <li key={related.session_id}><Link to={sessionPath(related.session_id)}><bdi>{related.title || agentLabel(related.agent)}</bdi></Link></li>)}
+              {[...(family.parent ? [family.parent] : []), ...family.children].map(related => <li key={related.session_id}><Link to={sessionPath(related.session_id)}><SessionName session={related} fallback={agentLabel(related.agent)} /></Link></li>)}
             </ul>
           </>}
           <p>The agent’s own transcript on the host is removed too, where the host can.</p>

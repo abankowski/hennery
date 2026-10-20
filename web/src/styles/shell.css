@@ -254,3 +254,5 @@
   .session-table td:nth-child(2) { padding-left:22px; }
   .session-table tr { padding:12px; }.session-table tr:last-child { border-bottom:0; }
 }
+.session-name-provisional { font-style:italic; color:var(--hn-fg-2); }
+.session-name-provisional { overflow-wrap:anywhere; }

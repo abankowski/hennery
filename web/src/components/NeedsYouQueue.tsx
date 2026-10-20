@@ -8,10 +8,12 @@ import { useSessionScope } from './SessionScope'
 import AttentionPreview, { AttentionPreviews } from './AttentionPreview'
 import { moveListFocus } from './SessionList'
 import { HatChip } from './ui'
+import SessionName, { useSessionNames } from './SessionNames'
 export default function NeedsYouQueue({ embedded = false }: { embedded?: boolean }) {
   const scope = useSessionScope(), now = useNow(60_000)
   const scan = useRef({ key: '', remaining: 2 })
   const list = scope?.list
+  const names = useSessionNames((list?.shown ?? []).filter(needsOperator))
   useEffect(() => {
     if (!list) return
     if (scan.current.key !== list.queryKey) scan.current = { key: list.queryKey, remaining: 2 }
@@ -32,9 +34,9 @@ export default function NeedsYouQueue({ embedded = false }: { embedded?: boolean
     {!list.loading && !rows.length && <p className="queue-empty">{complete && total === 0 ? 'Nothing needs you' : 'No requests to show yet'}</p>}
     <div className="attention-grid"><AttentionPreviews>{rows.map(session => {
       const hat = scope.hats?.find(h => h.id === session.hat_id)
-      return <article key={session.session_id} className="attention-card" aria-label={session.title || session.session_id}>
+      return <article key={session.session_id} className="attention-card" aria-label={names(session).text}>
         <div className="attention-card-meta"><span className="attention-status">{statusOf(session).label}</span><span>{relTime(session.last_event_at, now)}</span></div>
-        <h2><bdi>{session.title || session.session_id}</bdi></h2>
+        <h2><SessionName session={session} /></h2>
         <div className="attention-origin"><HatChip colour={hat?.colour}><bdi>{hat?.name || 'Unknown hat'}</bdi></HatChip><bdi>{scope.hostNames.get(session.host_id) || 'Unknown host'}</bdi><bdi>{agentLabel(session.agent)}</bdi></div>
         <AttentionPreview session={session} />
       </article>

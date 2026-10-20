@@ -1,3 +1,4 @@
+import { useSessionName } from './SessionNames'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { attentionPage, type OperatorAttention } from '../api/attention'
 import { messageOf } from '../api/errors'
@@ -104,6 +105,7 @@ export function AttentionPreviews({ children }: { children: ReactNode }) {
   return <Context.Provider value={reader}>{children}</Context.Provider>
 }
 export default function AttentionPreview({ session }: { session: SessionSummary }) {
+  const name = useSessionName(session, session.session_id)
   const reader = useContext(Context), box = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined')
   const [state, setState] = useState<{ reader: PreviewReader; session: SessionSummary; value?: Preview; error?: string } | null>(null)
@@ -130,6 +132,6 @@ export default function AttentionPreview({ session }: { session: SessionSummary 
     {held?.value?.partial && !held.value.attention && <p>More attention records are available in the session.</p>}
     {held?.error && <p className="preview-error">Preview unavailable: <bdi>{held.error}</bdi></p>}
     {!held && <p className="preview-note">Open the session to review the current request.</p>}
-    <Link data-session-link to={target} className="btn btn-ghost" aria-label={`Open ${session.title || session.session_id}`}>{question ? request?.type === 'permission' ? 'Open request' : 'Open question' : 'Open session'}</Link>
+    <Link data-session-link to={target} className="btn btn-ghost" aria-label={`Open ${name.text}`}>{question ? request?.type === 'permission' ? 'Open request' : 'Open question' : 'Open session'}</Link>
   </div>
 }

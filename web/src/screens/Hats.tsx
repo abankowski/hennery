@@ -1,3 +1,4 @@
+import SessionName from '../components/SessionNames'
 // Hats (frontend spec §8, kernel spec §5): create, rename and recolour hats,
 // pick the default for new hosts, edit each host's path rules with a live
 // "this path resolves to" tester, and purge a hat after seeing what goes.
@@ -406,7 +407,7 @@ function PurgeDialog({
             {preview.unassigned.map((s) => (
               <li key={s.session_id}>
                 <Link to={`/sessions/${encodeURIComponent(s.session_id)}`}>
-                  <Text>{s.title ?? s.cwd}</Text>
+                  <SessionName session={s} fallback={s.cwd} />
                 </Link>
               </li>
             ))}

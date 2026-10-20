@@ -1,3 +1,4 @@
+import SessionName from '../components/SessionNames'
 import '../styles/session.css'
 // One session (frontend spec §6): its header, its transcript, whose question
 // cards answer, and its composer.
@@ -472,7 +473,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
           />
         }
       />
-      {info?.family?.parent && family?.routing === 'active' && <div className="parent-banner" role="region" aria-label="Parent-driven session"><p>Driven by <Link to={`/sessions/${encodeURIComponent(info.family.parent.session_id)}`}><bdi>{info.family.parent.title || 'parent session'}</bdi></Link>. Answers go to this child. A prompt from you takes over this session.</p><button type="button" className="btn btn-ghost btn-sm" disabled={taking} onClick={() => void takeover()}>{taking ? 'Taking over…' : 'Take over'}</button>{takeError && <p role="alert">{takeError}</p>}</div>}
+      {info?.family?.parent && family?.routing === 'active' && <div className="parent-banner" role="region" aria-label="Parent-driven session"><p>Driven by <Link to={`/sessions/${encodeURIComponent(info.family.parent.session_id)}`}><SessionName session={info.family.parent} fallback="parent session" /></Link>. Answers go to this child. A prompt from you takes over this session.</p><button type="button" className="btn btn-ghost btn-sm" disabled={taking} onClick={() => void takeover()}>{taking ? 'Taking over…' : 'Take over'}</button>{takeError && <p role="alert">{takeError}</p>}</div>}
       <div className="session-workspace">
       <div className="session-conversation">
       {answerNotice && <p className="answer-acknowledgement" role="status">{answerNotice}<button type="button" aria-label="Dismiss answer notice" onClick={() => setAnswerNotice(null)}>×</button></p>}

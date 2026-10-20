@@ -15,6 +15,7 @@ import { needsOperator } from '../lib/status'
 import { Icon as Glyph } from './ui'
 import { sessionPath } from './SessionRow'
 import { reasonWords } from './items/Marker'
+import SessionName from './SessionNames'
 
 /** What the header reads: a list summary or a session's detail. */
 export type HeaderInfo = SessionItem & { question_waits?: boolean; operator_attention?: number; parent_handled_questions?: number; family?: FamilySummary }
@@ -70,7 +71,7 @@ export default function SessionHeader({ id, info, hostName, menu, detailsOpen, t
           <Icon.Chevron size={18} className="rot-180" />
         </Link>
         {hatName && <span className="session-hat"><span aria-hidden="true" /><bdi>{hatName}</bdi></span>}
-        <h1 className="conv-name"><bdi>{titleOf(info, id)}</bdi></h1>
+        <h1 className="conv-name"><SessionName session={{ ...info, session_id: id }} ready={!!info} /></h1>
         {status && (
           <span className={'badge badge-' + status.tone}>
             <Glyph name={status.tone === 'attn' ? 'hand-raised' : status.tone === 'run' ? 'play-circle' : status.tone === 'fail' ? 'exclamation-circle' : 'clock'} size={14} />
