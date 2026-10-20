@@ -97,7 +97,7 @@ export default function SessionScope({ route, children }: { route: Route; deskto
   const q = useDebounced(query, SEARCH_DEBOUNCE_MS)
   const attention = route.name === 'needs-you'
   const list = useSessionList({ pageScope: attention ? 'attention' : 'overview', hat: hat || null, hideClosed: attention ? false : hideClosed, lifecycle: !attention && lifecycle ? [lifecycle] : undefined, q: attention ? '' : q })
-  useRegisterContext({ loadedSessions: list.all })
+  useRegisterContext({ loadedSessions: list.all, hats: hats ?? undefined, hosts: hosts ?? undefined })
   const selectedId = route.name === 'session' && route.id !== undefined ? route.id : null
   useEffect(() => {
     if (route.name !== 'sessions') return

@@ -75,7 +75,11 @@ for (const width of [1280, 390]) {
 
     test('a host pairs with the command the page shows, and the code goes', async () => {
       await page.goto('/hosts')
-      await page.getByRole('button', { name: 'Add host' }).click()
+      await expect(page.getByRole('button', { name: 'Add host', exact: true })).toBeVisible()
+      await expect(page.locator('.command-entry')).toBeEnabled()
+      const mod = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control')
+      await page.keyboard.press(`${mod}+k`)
+      await page.getByRole('dialog', { name: 'Command palette', exact: true }).getByRole('option', { name: 'Add host', exact: true }).click()
       await captureManagement(page, 'hosts-pairing', 'Desktop hosts / pairing')
       const command = (await page.getByLabel('Pairing command', { exact: true }).textContent())!
       expect(command).toMatch(new RegExp(`^hennery host join ${collector.origin} [0-9A-Z]{4}-[0-9A-Z]{4}$`))

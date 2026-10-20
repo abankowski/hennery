@@ -1,7 +1,7 @@
 // Hosts (frontend spec §8, kernel spec §4): every paired host, revoked ones
 // included, with its online state and versions; pairing a new one; and
 // renaming, re-hatting or revoking one, each confirmed, then stepped up.
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { messageOf } from '../api/errors'
 import { hats as listHats, hosts as listHosts, mintPairingCode, revokeHost, settings, updateHost } from '../api/manage'
 import { useClient } from '../app-client'
@@ -13,6 +13,7 @@ import { HOST_STATE_LABEL, hostState } from '../lib/manage'
 import { Text, visible } from '../lib/text'
 import When from '../components/When'
 import { useSessionScope } from '../components/SessionScope'
+import { navigate, useLocation } from '../router'
 import '../manage.css'
 
 /** Each carries where focus goes when the confirmation closes and what
@@ -31,6 +32,7 @@ interface Panel {
 
 export default function Hosts() {
   const client = useClient()
+  const { search } = useLocation()
   const scope = useSessionScope()
   const list = useResource(() => listHosts(client))
   const hatList = useResource(() => listHats(client))
@@ -43,7 +45,7 @@ export default function Hosts() {
   // The URL and the hosts already paired are read first: a failed read then
   // spends no code, and a host that pairs is told from the ones before it
   // even when the list above never loaded.
-  const add = async () => {
+  const add = useCallback(async () => {
     setAdding(true)
     setAddError(null)
     try {
@@ -56,7 +58,15 @@ export default function Hosts() {
     } finally {
       setAdding(false)
     }
-  }
+  }, [client])
+  const requested = useRef(false)
+  useEffect(() => {
+    if (new URLSearchParams(search).get('add') !== '1') { requested.current = false; return }
+    if (requested.current) return
+    requested.current = true
+    navigate('/hosts', { replace: true })
+    if (!adding && !minted) void add()
+  }, [add, search, adding, minted])
 
   // A page restored from the back-forward cache must not show a code: it
   // is dropped as the page is hidden. Switching tabs to paste it keeps it.

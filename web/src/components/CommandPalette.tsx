@@ -8,7 +8,7 @@ import { commandHint, recentSessions, registeredCommands } from '../lib/commands
 import { match, navigate, useLocation } from '../router'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { restoreCommandFocus } from '../hooks/useShortcuts'
-import { Icon, Keycap, useModalLayer } from './ui'
+import { Icon, Keycap, useModalLayer, type IconName } from './ui'
 
 interface SearchState { key: string; rows: SessionSummary[]; cursor?: string; loading: boolean; error?: string }
 export default function CommandPalette({ actions, loaded, close }: {
@@ -19,7 +19,8 @@ export default function CommandPalette({ actions, loaded, close }: {
   const client = useClient(), dialog = useRef<HTMLDivElement>(null), input = useRef<HTMLInputElement>(null)
   const { trap, holdFocus } = useModalLayer(dialog)
   const [query, setQuery] = useState(''), [selected, select] = useState(0), [attempt, retry] = useState(0)
-  const hat = actions.context().hatId, q = query.trim(), key = JSON.stringify([hat, q])
+  const context = actions.context()
+  const hat = context.hatId, q = query.trim(), key = JSON.stringify([hat, q])
   const generation = useRef(0), controller = useRef<AbortController | null>(null)
   const [search, setSearch] = useState<SearchState>({ key: '', rows: [], loading: false })
   const listId = useId()
@@ -67,11 +68,15 @@ export default function CommandPalette({ actions, loaded, close }: {
   const sessionResult = (row: SessionSummary) => ({
     id: `session:${row.session_id}`, label: row.title || row.session_id,
     hint: '', detail: [row.cwd, row.git_branch].filter(Boolean).join(' · '),
+    meta: [context.hats?.find(hat => hat.id === row.hat_id)?.name, context.hosts?.find(host => host.host_id === row.host_id)?.name].filter(Boolean).join(' · ') || row.cwd,
+    icon: (row.operator_attention > 0 ? 'hand-raised' : row.activity === 'running' ? 'play-circle' : 'clock') as IconName,
     run: () => navigate(`/sessions/${encodeURIComponent(row.session_id)}`),
   })
+  const primary = new Set(['new-session', 'add-host', 'open-defaults'])
+  const commands = registeredCommands(actions, desktop).map(action => ({ ...action, label: action.id === 'open-defaults' ? 'Edit defaults' : action.label })).filter(action => q || primary.has(action.id)).filter(action => action.label.toLocaleLowerCase().includes(q.toLocaleLowerCase()))
   const groups = [
     { label: 'Needs you', results: rows.filter(row => row.operator_attention > 0).map(sessionResult) },
-    { label: 'Actions', results: registeredCommands(actions, desktop).filter(action => action.label.toLocaleLowerCase().includes(q.toLocaleLowerCase())).map(action => ({ id: `action:${action.id}`, label: action.label, hint: commandHint(action.id, match(pathname).name, desktop), detail: '', run: () => { actions.dispatch(action.id) } })) },
+    { label: 'Actions', results: commands.map(action => ({ id: `action:${action.id}`, label: action.id === 'open-defaults' ? 'Edit defaults' : action.label, hint: commandHint(action.id, match(pathname).name, desktop), detail: '', meta: '', icon: (action.id === 'add-host' ? 'server-stack' : action.id === 'new-session' ? 'plus-circle' : action.id === 'open-defaults' ? 'adjustments-horizontal' : 'arrow-right') as IconName, run: () => { actions.dispatch(action.id) } })) },
     { label: q ? 'Matching sessions' : 'Recent sessions', results: rows.filter(row => row.operator_attention === 0).map(sessionResult) },
   ]
   const results = groups.flatMap(group => group.results)
@@ -103,8 +108,8 @@ export default function CommandPalette({ actions, loaded, close }: {
         {groups.map(group => {
           const start = offset; offset += group.results.length
           return group.results.length > 0 && <div role="group" aria-label={group.label} key={group.label}><div className="command-group" aria-hidden="true">{group.label}</div>{group.results.map((result, index) => <div role="option" aria-label={[result.label, result.detail].filter(Boolean).join(" ")} id={`${listId}-${start + index}`} aria-selected={active === start + index} className="command-option" key={result.id} onMouseDown={event => event.preventDefault()} onClick={() => choose(start + index)}>
-            <Icon name={group.label === 'Actions' ? 'arrow-right' : group.label === 'Needs you' ? 'hand-raised' : 'chat-bubble-left-right'} size={18} />
-            <span><bdi>{result.label}</bdi>{result.detail && <small><bdi>{result.detail}</bdi></small>}</span>{result.hint && <Keycap>{result.hint}</Keycap>}
+            <Icon name={result.icon} size={16} />
+            <span className="command-label"><bdi>{result.label}</bdi></span>{result.meta && <small className="command-meta"><bdi>{result.meta}</bdi></small>}{result.hint && <Keycap>{result.hint}</Keycap>}
           </div>)}</div>
         })}
       </div>

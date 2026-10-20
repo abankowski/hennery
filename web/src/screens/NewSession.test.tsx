@@ -794,6 +794,9 @@ describe('pending launch persistence ownership', () => {
     const view = await pendingLaunch(phase)
     view.unmount()
     mount()
+    // Capture the new draft after its own initial agent selection settles.
+    // The old launch must not alter these exact bytes once it finishes.
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Claude' })).toBeChecked())
     fireEvent.change(await screen.findByRole('textbox', { name: 'First prompt optional' }), { target: { value: 'A newer unsent prompt' } })
     await waitFor(() => expect(sessionStorage.getItem('hennery.draft.__launcher__')).toContain('A newer unsent prompt'))
     const newer = sessionStorage.getItem('hennery.draft.__launcher__')
