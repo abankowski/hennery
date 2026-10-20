@@ -21,6 +21,7 @@ let
       ../crates/hennery-sessions/src/delegation_delivery.sql
       ../crates/hennery-sessions/src/delegation_attention.sql
       ../crates/hennery-sessions/src/family.sql
+      ../crates/hennery-sessions/src/idle_hold.sql
       ../crates/hennery-sessions/tests/fixtures/undo_family.sql
       ../crates/hennery-sessions/tests/fixtures/session_tool_contract.json
       ../crates/hennery-memory/src/schema.sql

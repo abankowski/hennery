@@ -1068,6 +1068,48 @@ switch clears and when the adapter withdraws a question; other adapter
 notifications outside a turn do not count as activity. Emits
 `session_parked{reason: idle}` and kills the process group.
 
+**Idle holds (operator decision, 2026-10-20):** the reaper also requires no
+effective collector hold. A hold means an operator pin, at least one direct
+child whose lifecycle is outside `parked`, `closed`, `failed`, `deleted`, or
+an undelivered family notice queued for this parent. An attached child between
+turns still holds its parent. Routing detach or a close request alone does not
+prove that child work stopped. The last hold's release restarts the full idle
+window; repeated identical releases do not restart it again. Explicit operator
+Park and Close retain their existing behavior while held.
+
+Designer’s recommendation, implemented by the park-hold plan: the collector
+computes this state under the owner coordination gate and sends
+`set_idle_hold { session_id, held }` only to a host announcing `idle_hold`.
+Committed transitions send before releasing that gate, and a delegated child
+attach sends the parent hold before its own handoff. After `resend_complete`
+and reconciliation the current state, including false, is resent for each
+session on that host. Hosts retain pre-attachment holds and their last state
+across reconnect. An offline host cannot apply a newly changed pin until
+reconnect. An older host receives no new frame and keeps its existing reaper;
+durable family reporting and automatic resume remain its fallback. A newer
+host with an older collector has ordinary reaping unless it has a retained
+hold; an old collector cannot clear a retained hold from a newer collector.
+
+`GET /api/sessions/{id}/idle-hold` returns
+`IdleHoldState { pinned, family_active, notices_pending, held }`.
+`PATCH` on the same route takes strict `SetIdlePinRequest { pinned: bool }`.
+The pin is persisted and survives park, close and collector restart. These
+operator-only routes use the existing cookie and Origin rules, hide unknown,
+foreign, deleted and frozen-hat sessions, and require no step-up: a reversible
+resource preference changes no credential, grant or execution policy (kernel
+§3.4). The UI control is deferred to the redesign.
+
+**Background-job observation (2026-10-20):** pinned Codex ACP 2.2.2 with native
+Codex 0.160.1 started a 180-second shell job and ended its prompt. Its ACP tool
+call was already marked completed while the raw result named a running exec
+session; there was no authoritative background-task lifecycle notification.
+With a 60-second idle window hennery parked the adapter and the completion
+file never appeared. Claude ACP 0.93.0 refused the scratch credential copy
+with `Authentication required`, so its background behavior was not measured.
+Hennery cannot infer arbitrary adapter-internal work from silence or generic
+tool updates. Use the pin for such work; parsing background jobs is outside
+this change. The live record and its limitations are in the park-hold plan.
+
 ### 4.8 Park and close
 
 **Teardown order** on park, close, idle reap and adapter exit: whatever the

@@ -819,6 +819,7 @@ async fn a_host_announces_that_it_can_park_take_images_and_serve_projects() {
         capabilities,
         Capabilities(vec![
             Capability::Park,
+            Capability::IdleHold,
             Capability::Images,
             Capability::Projects,
             Capability::ResolvePath,
@@ -829,6 +830,95 @@ async fn a_host_announces_that_it_can_park_take_images_and_serve_projects() {
             Capability::PluginContext,
         ])
     );
+}
+
+#[tokio::test]
+async fn idle_hold_survives_preattachment_reconnect_and_explicit_park() {
+    use hennery_proto::frames::{ParkReason, SessionBody};
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fake = hennery_host::AgentCommand::parse(env!("CARGO_BIN_EXE_hennery-fake-acp")).unwrap();
+    let mut cfg = host_with_fake(listener.local_addr().unwrap(), "idle-hold", fake);
+    let window = Duration::from_millis(500);
+    cfg.idle_timeout = window;
+    cfg.git = None;
+    let (stop, stopping) = tokio::sync::oneshot::channel();
+    let host = tokio::spawn(hennery_host::run_until(cfg, async {
+        stopping.await.ok();
+    }));
+    let hold = |session_id: &str, held| CollectorFrame::SetIdleHold {
+        session_id: session_id.into(),
+        held,
+    };
+
+    let (mut sink, mut stream, attached) = accept_host(&listener).await;
+    assert!(attached.is_empty());
+    send_frame(&mut sink, &hold("s1", true)).await;
+    send_frame(&mut sink, &start("start-held", "s1")).await;
+    read_until(&mut stream, body_is("s1", "session_started")).await;
+    tokio::time::sleep(window * 2).await;
+    sink.close().await.unwrap();
+
+    let (mut sink, mut stream, attached) = accept_host(&listener).await;
+    assert!(
+        attached.iter().any(|session| session.session_id == "s1"),
+        "preattachment hold was lost"
+    );
+    // No hold refresh on this connection: both the actor and its retained
+    // state must survive reconnect. Explicit park bypasses that hold.
+    send_frame(
+        &mut sink,
+        &CollectorFrame::ParkSession {
+            request_id: "park-held".into(),
+            session_id: "s1".into(),
+        },
+    )
+    .await;
+    let parked = read_until(&mut stream, body_is("s1", "session_parked")).await;
+    assert!(matches!(
+        parked,
+        HostFrame::Session {
+            body: SessionBody::SessionParked {
+                reason: ParkReason::Operator
+            },
+            ..
+        }
+    ));
+    send_frame(&mut sink, &start("restart-held", "s1")).await;
+    read_until(&mut stream, body_is("s1", "session_started")).await;
+    tokio::time::sleep(window * 2).await;
+    sink.close().await.unwrap();
+
+    let (mut sink, mut stream, attached) = accept_host(&listener).await;
+    assert!(
+        attached.iter().any(|session| session.session_id == "s1"),
+        "retained hold was lost on reattachment"
+    );
+    let released = Instant::now();
+    send_frame(&mut sink, &hold("s1", false)).await;
+    let parked = read_until(&mut stream, body_is("s1", "session_parked")).await;
+    assert!(matches!(
+        parked,
+        HostFrame::Session {
+            body: SessionBody::SessionParked {
+                reason: ParkReason::Idle
+            },
+            ..
+        }
+    ));
+    assert!(
+        released.elapsed() >= window,
+        "hold release reused the expired idle clock"
+    );
+
+    // A false update before attachment removes the retained true state.
+    send_frame(&mut sink, &hold("s2", true)).await;
+    send_frame(&mut sink, &hold("s2", false)).await;
+    send_frame(&mut sink, &start("start-released", "s2")).await;
+    read_until(&mut stream, body_is("s2", "session_started")).await;
+    read_until(&mut stream, body_is("s2", "session_parked")).await;
+    stop.send(()).unwrap();
+    host.await.unwrap().unwrap();
 }
 
 /// ACP core §3.3, §7: the host answers its probes on the connection, from

@@ -101,6 +101,8 @@ const STATE_KINDS: &[&str] = &[
 /// Messages from the connection task to a session actor.
 #[derive(Debug)]
 pub enum SessionCmd {
+    /// Collector's effective family/operator hold; no correlated reply.
+    SetIdleHold { held: bool },
     FencedPrompt {
         request_id: String,
         turn_id: String,
@@ -196,6 +198,8 @@ pub struct SessionOptions {
     /// Park the session after this long with no turn in flight
     /// (`session_parked{idle}`); `None` disables the reaper.
     pub idle_timeout: Option<Duration>,
+    /// Initial effective hold, including one received before attachment.
+    pub idle_held: bool,
     /// How long a cancelled turn may run on before the adapter is stopped.
     pub cancel_grace: Duration,
     /// How long one config switch may take.
@@ -226,6 +230,7 @@ impl Default for SessionOptions {
             start_timeout: START_TIMEOUT,
             kill_grace: KILL_GRACE,
             idle_timeout: Some(IDLE_TIMEOUT),
+            idle_held: false,
             cancel_grace: CANCEL_GRACE,
             config_timeout: CONFIG_TIMEOUT,
             git: None,
@@ -960,6 +965,7 @@ impl Actor {
         commands.close();
         while let Some(cmd) = commands.recv().await {
             match cmd {
+                SessionCmd::SetIdleHold { .. } => {}
                 SessionCmd::Prompt { request_id, .. }
                 | SessionCmd::FencedPrompt { request_id, .. }
                 | SessionCmd::Restart { request_id }
@@ -1222,6 +1228,7 @@ impl Actor {
         // turn ends; it never runs while a turn (or a pending question
         // inside one) is in flight.
         let mut idle_since = Instant::now();
+        let mut idle_held = self.options.idle_held;
         let mut configs = PendingConfigs {
             uplink: self.uplink.clone(),
             queued: VecDeque::new(),
@@ -1270,6 +1277,14 @@ impl Actor {
                     return self.adapter_exited(info, &mut adapter, &mut updates, turn.take(), &mut configs).await;
                 }
                 cmd = commands.recv() => match cmd {
+                    Some(SessionCmd::SetIdleHold { held }) => {
+                        // A release starts a whole idle window. Repeated
+                        // false updates after reconnect are not activity.
+                        if idle_held && !held {
+                            idle_since = Instant::now();
+                        }
+                        idle_held = held;
+                    }
                     // Every handle dropped: the host is shutting down.
                     None => {
                         adapter.terminate(self.options.kill_grace).await;
@@ -1492,7 +1507,7 @@ impl Actor {
                 // Never with a question open, in a turn or not: it has no
                 // timeout (ACP core §4.6).
                 _ = idle_deadline(self.options.idle_timeout, idle_since),
-                    if turn.is_none() && configs.out.is_none() && configs.orphan.is_none() && !self.has_questions() =>
+                    if !idle_held && turn.is_none() && configs.out.is_none() && configs.orphan.is_none() && !self.has_questions() =>
                 {
                     tracing::info!(session_id = %self.session_id, "reaping idle session");
                     self.begin_ending();

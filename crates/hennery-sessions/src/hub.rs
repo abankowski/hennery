@@ -115,6 +115,9 @@ impl HostConn {
     /// lock, against the very connection the frame goes out on, so a host
     /// that reconnects on an older build cannot slip in between.
     fn takes(&self, frame: &CollectorFrame) -> bool {
+        if matches!(frame, CollectorFrame::SetIdleHold { .. }) && !self.capabilities.has(Capability::IdleHold) {
+            return false;
+        }
         if matches!(
             frame,
             CollectorFrame::DelegatedAttach { .. } | CollectorFrame::DelegatedPrompt { .. }
@@ -163,6 +166,10 @@ pub struct Registration {
 
 pub struct Hub {
     next_conn: AtomicU64,
+    // Lock order: last_conn -> Store owner gate/connection -> hosts ->
+    // waiters or probes. Registration skips Store; no hosts holder calls
+    // into Store or acquires last_conn. Offline callbacks may write Store,
+    // whose committed idle-hold publication takes hosts before returning.
     hosts: Mutex<HashMap<String, HostConn>>,
     /// The latest connection each host registered (kept after it ends), so
     /// an offline timer can tell whether the host came back since.
@@ -203,6 +210,7 @@ impl Hub {
         capabilities: Capabilities,
         mcp_isolation: AgentIsolation,
     ) -> Option<Registration> {
+        let mut last = self.last_conn.lock().expect("last_conn lock");
         let mut hosts = self.hosts.lock().expect("hosts lock");
         if hosts.get(host_id).is_some_and(|h| !h.tx.is_closed()) {
             return None;
@@ -224,10 +232,7 @@ impl Hub {
         if let Some(old) = replaced {
             old.ended.cancel();
         }
-        self.last_conn
-            .lock()
-            .expect("last_conn lock")
-            .insert(host_id.to_string(), conn_id);
+        last.insert(host_id.to_string(), conn_id);
         Some(Registration { conn_id, kicked })
     }
 
@@ -812,5 +817,82 @@ async fn expire(
         tracing::warn!(%host_id, %request_id, "request timed out with no handler left; dropping the host connection");
         kicked.cancel();
         let _ = w.tx.send(Err(RequestError::DeliveryUnknown));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Store;
+    use std::sync::{TryLockError, mpsc as sync_mpsc};
+    use std::time::Instant;
+
+    #[test]
+    fn offline_presumption_and_reconnect_must_finish() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .create_session("s", "offline", "fake", "/project", "hat", None)
+            .unwrap();
+        store
+            .ingest("s", 1, &SessionBody::session_started("start", "agent"))
+            .unwrap();
+        let hub = Arc::new(Hub::new());
+        store.set_idle_hub(&hub);
+        store.flush_idle_holds(&hub).unwrap();
+
+        let (entered_tx, entered_rx) = sync_mpsc::channel();
+        let (go_tx, go_rx) = sync_mpsc::channel();
+        let (done_tx, done_rx) = sync_mpsc::channel();
+        let offline_hub = hub.clone();
+        let offline_store = store.clone();
+        let offline = std::thread::spawn(move || {
+            let events = offline_hub.if_offline_since("offline", None, || {
+                entered_tx.send(()).unwrap();
+                go_rx.recv().unwrap();
+                offline_store.presume_parked("offline").unwrap()
+            });
+            done_tx.send(events.unwrap().len()).unwrap();
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let reconnect_hub = hub.clone();
+        let (started_tx, started_rx) = sync_mpsc::channel();
+        let reconnect = std::thread::spawn(move || {
+            let (tx, rx) = mpsc::unbounded_channel();
+            started_tx.send(()).unwrap();
+            let registered = reconnect_hub.register("offline", tx, Capabilities::default(), AgentIsolation::default());
+            (registered.unwrap(), rx)
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Force the old inverse order if it exists: registration takes hosts
+        // and then waits for the offline callback's last_conn lock. With the
+        // correct order it waits for last_conn without retaining hosts. Give
+        // the started thread a bounded scheduling window in that case.
+        let until = Instant::now() + Duration::from_millis(500);
+        loop {
+            match hub.hosts.try_lock() {
+                Err(TryLockError::WouldBlock) => break,
+                Err(TryLockError::Poisoned(_)) => panic!("hosts poisoned"),
+                Ok(guard) => drop(guard),
+            }
+            if Instant::now() >= until {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        go_tx.send(()).unwrap();
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(5)),
+            Ok(1),
+            "offline Store publication deadlocked against reconnect registration"
+        );
+        offline.join().unwrap();
+        let (registration, _rx) = reconnect.join().unwrap();
+        assert!(store.find_session("s").unwrap().unwrap().presumed_parked);
+        assert!(
+            hub.if_offline_since("offline", None, || panic!("stale timer ran after reconnect"))
+                .is_none()
+        );
+        hub.mark_ready("offline", registration.conn_id);
+        assert!(hub.is_ready("offline"));
     }
 }

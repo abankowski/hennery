@@ -33,6 +33,8 @@ pub fn render_schema() -> String {
         )*};
     }
     add!(
+        rest::SetIdlePinRequest,
+        rest::IdleHoldState,
         plugin_management::RegisterPluginRequest,
         plugin_management::PluginRecoveryConfirmation,
         plugin_management::PluginGrantResponse,
@@ -226,6 +228,8 @@ pub fn render_ts() -> String {
         )*};
     }
     add!(
+        rest::SetIdlePinRequest,
+        rest::IdleHoldState,
         plugin_management::RegisterPluginRequest,
         plugin_management::PluginRecoveryConfirmation,
         plugin_management::PluginGrantResponse,

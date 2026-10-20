@@ -375,6 +375,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("delegation_delivery.sql"),
     include_str!("delegation_attention.sql"),
     include_str!("family.sql"),
+    include_str!("idle_hold.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -744,6 +745,7 @@ pub struct Reconciliation {
 }
 
 pub struct Store {
+    pub(crate) idle_hub: RwLock<Option<std::sync::Weak<crate::hub::Hub>>>,
     prompt_admissions: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     plugins: Arc<hennery_gateway::plugin::Control>,
     conn: hennery_kernel::db::CoordinatedConnection,
@@ -1922,6 +1924,7 @@ impl Store {
         }
         Ok(Self {
             conn: hennery_kernel::db::CoordinatedConnection::new(conn),
+            idle_hub: RwLock::new(None),
             plugins,
             owner,
             attachments,
@@ -2005,8 +2008,14 @@ impl Store {
         }
     }
 
-    pub(crate) fn conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
-        self.conn.lock().expect("store lock")
+    pub(crate) fn conn(&self) -> crate::idle_hold::Guard<'_> {
+        let inner = self.conn.lock().expect("store lock");
+        let changes = inner.total_changes();
+        crate::idle_hold::Guard {
+            inner,
+            store: self,
+            changes,
+        }
     }
 
     /// The owner whose sessions these are.
@@ -3077,7 +3086,8 @@ impl Store {
                  git_dirty = NULL, git_worktree = NULL, base_commit = NULL, model = NULL, mode = NULL,
                  config_axes = NULL, agent_session_id = NULL, failure_reason = NULL, hat_rule_id = NULL,
                  open_turn_id = NULL, activity = NULL, presumed_parked = 0, close_requested = 0, agent_home = NULL,
-                 mcp_delivery_mode = NULL, mcp_delivery_servers = NULL, mcp_delivery_at = NULL
+                 mcp_delivery_mode = NULL, mcp_delivery_servers = NULL, mcp_delivery_at = NULL,
+                 idle_pinned = 0, idle_hold_dirty = 0
              WHERE id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
         )?;
@@ -4494,7 +4504,7 @@ impl Store {
     }
 
     /// The connection, for one of the view's reads.
-    fn view_conn(&self) -> hennery_kernel::db::ConnectionGuard<'_> {
+    fn view_conn(&self) -> crate::idle_hold::Guard<'_> {
         self.view_reads.fetch_add(1, Ordering::Relaxed);
         self.conn()
     }

@@ -20,6 +20,7 @@ pub mod forget;
 pub mod hats;
 pub mod hosts;
 pub mod hub;
+pub mod idle_hold;
 pub mod notify;
 pub mod offline;
 pub mod plugin;
@@ -87,6 +88,8 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(store: store::Store, hosts: Hosts, operator: Operator) -> Self {
+        let hub = Arc::new(hub::Hub::new());
+        store.set_idle_hub(&hub);
         Self {
             #[cfg(feature = "test-hooks")]
             startup_dispatch: Arc::default(),
@@ -94,7 +97,7 @@ impl AppState {
             hosts: Arc::new(hosts),
             operator: Arc::new(operator),
             enroll_limiter: Arc::new(Limiter::new(Policy::ENROLL)),
-            hub: Arc::new(hub::Hub::new()),
+            hub,
             shutdown: CancellationToken::new(),
             offline_threshold: offline::OFFLINE_THRESHOLD,
             projects: Arc::new(projects::ProjectsCache::new(projects::CACHE_TTL)),

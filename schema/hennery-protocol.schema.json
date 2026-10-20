@@ -320,6 +320,11 @@
           "type": "string"
         },
         {
+          "const": "idle_hold",
+          "description": "Collector-controlled suppression of automatic idle parking.",
+          "type": "string"
+        },
+        {
           "const": "resolve_path",
           "description": "Resolving typed paths (`resolve_path`, kernel spec §5.4).",
           "type": "string"
@@ -1039,6 +1044,27 @@
             "type",
             "request_id",
             "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Effective family/operator idle hold. Sent only to hosts announcing\n`idle_hold`, before attachment and after reconciliation as needed.\nNo reply; explicit park and close still take effect while held.",
+          "properties": {
+            "held": {
+              "type": "boolean"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "set_idle_hold",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session_id",
+            "held"
           ],
           "type": "object"
         },
@@ -2464,6 +2490,30 @@
         "partial",
         "pending",
         "pending_sessions"
+      ],
+      "type": "object"
+    },
+    "IdleHoldState": {
+      "description": "Collector-derived reasons for retaining a session's adapter.",
+      "properties": {
+        "family_active": {
+          "type": "boolean"
+        },
+        "held": {
+          "type": "boolean"
+        },
+        "notices_pending": {
+          "type": "boolean"
+        },
+        "pinned": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pinned",
+        "family_active",
+        "notices_pending",
+        "held"
       ],
       "type": "object"
     },
@@ -5621,6 +5671,19 @@
       },
       "required": [
         "data"
+      ],
+      "type": "object"
+    },
+    "SetIdlePinRequest": {
+      "additionalProperties": false,
+      "description": "Operator preference for automatic idle parking; explicit Park/Close still work.",
+      "properties": {
+        "pinned": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pinned"
       ],
       "type": "object"
     },

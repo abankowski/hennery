@@ -1,3 +1,13 @@
+-- Test-only rollback of sessions migration 22 before historical fixtures.
+DROP TRIGGER idle_hold_session;
+DROP TRIGGER idle_hold_family_insert;
+DROP TRIGGER idle_hold_family_delete;
+DROP TRIGGER idle_hold_notice_insert;
+DROP TRIGGER idle_hold_notice_update;
+DROP TRIGGER idle_hold_notice_delete;
+DROP INDEX idle_hold_ready;
+ALTER TABLE sessions DROP COLUMN idle_hold_dirty;
+ALTER TABLE sessions DROP COLUMN idle_pinned;
 DROP TRIGGER family_view_hat_frozen;
 DROP TRIGGER family_view_notice_update;
 DROP TABLE view_scope_invalidations;
