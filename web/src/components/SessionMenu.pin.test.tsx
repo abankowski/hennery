@@ -9,6 +9,28 @@ function show(server: ReturnType<typeof routed>, id = 'session/1') {
 }
 
 describe('operator idle pin', () => {
+  it.each([
+    [false, true, 'The pin is saved, but automatic parking holds require an updated host.'],
+    [true, false, 'Parking preferences apply after the host reconnects.'],
+    [undefined, true, 'Host support for automatic parking holds is unknown.'],
+    [true, undefined, 'Host connection is unknown; parking enforcement is not confirmed.'],
+  ] as const)('explains saved intent when host support=%s and connected=%s', async (supportsIdleHold, hostConnected, explanation) => {
+    const server = routed(call => json({ ...initial, pinned: call.method === 'PATCH' }))
+    const props = { supportsIdleHold, hostConnected }
+    render(<SessionMenu id="s1" lifecycle="active" canPark {...props} onDeleted={() => {}} />, { wrapper: server.wrapper })
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    const control = await screen.findByRole('switch', { name: 'Do not park' })
+    await waitFor(() => expect(control).toBeEnabled())
+    fireEvent.click(control)
+    await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'true'))
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent(explanation)
+    expect(status).toHaveTextContent('Pinned by you.')
+    expect(status).toHaveTextContent('Family work requests a parking hold.')
+    expect(status).toHaveTextContent('Pending updates request a parking hold.')
+    expect(status).not.toHaveTextContent('Kept awake')
+  })
+
   it('reads on opening and persists the operator choice with the encoded id, while explaining family holds separately', async () => {
     let pinned = false
     const server = routed(call => { if (call.method === 'PATCH') pinned = true; return json({ ...initial, pinned }) })
@@ -18,7 +40,7 @@ describe('operator idle pin', () => {
     const control = await screen.findByRole('switch', { name: 'Do not park' })
     await waitFor(() => expect(control).toBeEnabled())
     expect(control).toHaveAttribute('aria-checked', 'false')
-    expect(screen.getByRole('status')).toHaveTextContent('Kept awake for family work. Kept awake for pending updates.')
+    expect(screen.getByRole('status')).toHaveTextContent('Family work requests a parking hold. Pending updates request a parking hold.')
     fireEvent.click(control)
     await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'true'))
     expect(server.calls.map(c => [c.method, c.path])).toEqual([['GET', '/api/sessions/session%2F1/idle-hold'], ['PATCH', '/api/sessions/session%2F1/idle-hold']])
@@ -38,7 +60,7 @@ describe('operator idle pin', () => {
     expect(control).toHaveAttribute('aria-checked', 'true')
     fail = false; fireEvent.click(control)
     await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'false'))
-    expect(screen.getByRole('status')).toHaveTextContent('Kept awake for family work.')
+    expect(screen.getByRole('status')).toHaveTextContent('Family work requests a parking hold.')
     expect(screen.getByRole('status')).not.toHaveTextContent('Automatic idle parking is enabled.')
   })
 

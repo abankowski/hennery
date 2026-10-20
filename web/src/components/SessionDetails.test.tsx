@@ -2,12 +2,13 @@ import { useRef, useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import SessionDetails from './SessionDetails'
+import SessionDetails, { type SessionDetailsTab } from './SessionDetails'
 
 function View() {
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState<SessionDetailsTab>('Family')
   const ref = useRef<HTMLButtonElement>(null)
-  return <><button ref={ref} onClick={() => setOpen(true)}>Session details</button><input aria-label="Retained draft" defaultValue="keep this" /><SessionDetails open={open} onClose={() => setOpen(false)} trigger={ref}><a href="/sessions/child">Worker</a></SessionDetails></>
+  return <><button ref={ref} onClick={() => setOpen(true)}>Session details</button><input aria-label="Retained draft" defaultValue="keep this" /><SessionDetails open={open} tab={tab} onTab={setTab} onClose={() => setOpen(false)} trigger={ref}><a href="/sessions/child">Worker</a></SessionDetails></>
 }
 
 describe('SessionDetails', () => {

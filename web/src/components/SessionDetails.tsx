@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, type ReactNode, type RefObject, type KeyboardEvent } from 'react'
 import type { HeaderInfo } from './SessionHeader'
 import type { Item } from '../generated/view'
 import type { McpSessionDelivery } from '../generated/protocol'
@@ -9,10 +9,12 @@ import McpDelivery from './McpDelivery'
 import StepList from './StepList'
 
 const TABS = ['Family', 'Plan', 'Details'] as const
-type Tab = typeof TABS[number]
+export type SessionDetailsTab = typeof TABS[number]
 
 interface Props {
   open: boolean
+  tab: SessionDetailsTab
+  onTab: (tab: SessionDetailsTab) => void
   onClose: () => void
   trigger: RefObject<HTMLButtonElement | null>
   info?: HeaderInfo
@@ -26,9 +28,8 @@ interface Props {
 /** Keep the family reader mounted while tabs are hidden: one bounded reader
  * supplies both canonical routing and the panel, with no transcript stream. */
 export default function SessionDetails(props: Props) {
-  const { open, onClose, trigger } = props
+  const { open, onClose, trigger, tab, onTab: setTab } = props
   const sheet = useMediaQuery('(max-width: 1023px)')
-  const [tab, setTab] = useState<Tab>('Family')
   const prefix = useId()
   const body = <>
     <div className="session-details-heading"><h2>Session details</h2><button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close session details">×</button></div>

@@ -35,6 +35,9 @@ interface Props {
   family?: FamilySummary
   /** The session's host announced the `park` capability. */
   canPark: boolean
+  /** Undefined until host metadata is known; the DTO records intent, not acknowledgement. */
+  supportsIdleHold?: boolean
+  hostConnected?: boolean
   /** The session was deleted (`undefined`: a server that answers 204, or
    *  a session already gone). */
   onDeleted: (result: DeleteResult | undefined) => void
@@ -43,7 +46,7 @@ interface Props {
   focusAfterDelete?: () => HTMLElement | null
 }
 
-export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted, focusAfterDelete }: Props) {
+export default function SessionMenu({ id, lifecycle, family, canPark, supportsIdleHold, hostConnected, onDeleted, focusAfterDelete }: Props) {
   const client = useClient()
   const menuId = useId()
   const [open, setOpen] = useState(false)
@@ -156,7 +159,17 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
       {open && (
         <div className="session-menu-list" id={menuId}>
           <button type="button" role="switch" aria-checked={hold?.pinned ?? false} disabled={busy || pinBusy || hold === null} onClick={() => void togglePin()}>Do not park</button>
-          <p className="idle-hold-note" role="status">{hold ? [hold.pinned && 'Pinned by you.', hold.family_active && 'Kept awake for family work.', hold.notices_pending && 'Kept awake for pending updates.', !hold.held && 'Automatic idle parking is enabled.'].filter(Boolean).join(' ') : 'Reading automatic parking settings…'}</p>
+          <p className="idle-hold-note" role="status">{hold ? [
+            hold.pinned && 'Pinned by you.',
+            hold.family_active && 'Family work requests a parking hold.',
+            hold.notices_pending && 'Pending updates request a parking hold.',
+            !hold.held && 'No automatic parking hold is requested.',
+            supportsIdleHold === false && (hold.pinned ? 'The pin is saved, but automatic parking holds require an updated host.' : 'Automatic parking holds require an updated host.'),
+            supportsIdleHold === undefined && 'Host support for automatic parking holds is unknown.',
+            hostConnected === false && 'Parking preferences apply after the host reconnects.',
+            hostConnected === undefined && 'Host connection is unknown; parking enforcement is not confirmed.',
+            supportsIdleHold === true && hostConnected === true && hold.held && 'Parking hold requested from the host.',
+          ].filter(Boolean).join(' ') : 'Reading automatic parking settings…'}</p>
           {showPark && (
             <button type="button" disabled={busy} onClick={() => void act(() => park(client, id), parkRefusal)}>
               Park

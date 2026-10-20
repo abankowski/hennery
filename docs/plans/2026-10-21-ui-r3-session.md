@@ -10,7 +10,7 @@
 
 **Spec:** [UI redesign](../specs/2026-10-20-ui-redesign-design.md), especially §§3.5, 5.3, 6.4, 8–10; [idle pin](2026-10-20-park-hold.md). O1–O8 and D2–D12 remain settled. Builds on the R1/R2 After this plan contracts.
 
-**Base:** origin/redesign at fbe7d974798217c8dc2632d9b1285ce00ac57867; branch plan/ui-r3. Code was built first; the two exact implementation patches below are its executable record. The Task 1 replay patch includes the test-source type corrections discovered during Task 2 (Testing Library role queries are exact by default; only text-query options use exact). Those corrections landed in the Task 2 commit; the Task 1 replay remains independently typecheckable.
+**Base:** origin/redesign at fbe7d974798217c8dc2632d9b1285ce00ac57867; branch plan/ui-r3. Code was built first; the two original implementation patches below are its executable record, followed by the exact review-amendment patch. The Task 1 replay patch includes the test-source type corrections discovered during Task 2 (Testing Library role queries are exact by default; only text-query options use exact). Those corrections landed in the Task 2 commit; the Task 1 replay remains independently typecheckable.
 
 ## Execution status
 
@@ -2531,5 +2531,448 @@ In probes-1, independently remove returned-pin updates/reopen fences, actual hat
 R6 may dispatch registered session details/composer/contextual New session actions and read the actual session context. It must preserve editable/IME/modal guards. R4 owns launcher/defaults and the shared catalog parser; changing a live session remains separate from saving hat defaults. R5/parent must integrate the two navigation-only e2e exceptions with their owned suites. No shared source seam changed.
 
 The parent owns independent review, Linux/macOS CI/full PR status, integration/index updates, final installed-iOS/keyboard/push evidence and the single redesign release. Screenshots prove browser geometry, not OS push display. No runtime/backend permission or delivery semantics were weakened.
+
+## Review amendment after PR #207
+
+The independent review of fbe7d974..53f20120 returned **APPROVE AFTER AMENDMENTS**. The parent requested all three P2 fixes and the cheap Family navigation polish. This amendment remains pending scoped re-review and parent-owned CI; it claims no independent approval.
+
+- Reconcile phone question selection against the rendered actionable cards, including earlier pinned cards. Resync/removal restores the composer without moving focus or changing drafts. Local answer outcomes still come from the canonical card/AnswerBook.
+- Both transcript-to-composer handoffs use the existing Write a prompt reveal/focus path before prefilling or asynchronously refilling. Existing append, attachment, error and no-auto-submit behavior is preserved.
+- Pass the session host's idle_hold support and known connection state to the menu. Persisted pins remain editable on older/offline hosts. Explain upgrade/reconnect/unknown states; family and pending-update reasons request holds, and the DTO never claims host acknowledgement.
+- Family explicitly opens the panel and selects its Family tab; the generic Details action retains toggle behavior.
+
+**Amendment evidence:** initial original-code RED: exit 1, nine failed / three passed (selected-card resync/removal, both handoffs, unsupported/offline/unknown host states, Family). The additional pinned fixture was corrected to advertise an older page, then its retention/removal guard was independently probed. Two test-fixture corrections and an asymmetric value-matcher correction were made without weakening their behavioral assertions. Final focused checks: 86 passed / eight files, plus three parking metadata integration tests; exits 0. Full web tests: 2182 passed / 126 files, up from 2170 / 124; typecheck and production build exit 0; emitted-CSS tests 3/3; binary embed exit 0.
+
+All **12 new removal probes** detected their mutations in amendment-probes-1 (16 failed regression assertions across the probes). This fresh copy received independent APFS clones of target/ and web/node_modules before any tools ran in it. Probe coverage: missing-card reconciliation, pinned retention, both composer handoffs, unsupported/offline/unknown support/unknown connection words, both host-metadata wires, Family open and Family tab selection. Exact source bytes were restored after every mutation. No live probe touched the worktree.
+
+The parent explicitly scoped this amendment to targeted checks, web gates and owned browser specs: no full workspace test, full browser suite, full replay or timing/load repetitions. These new checks cover deterministic UI state transitions and introduce no timing/concurrency mechanism. Prior full-plan execution evidence above remains historical.
+
+**Owned browser acceptance:** exit 0, 29 passed / 11 expected skips (ten opt-in windowing cases plus the desktop phone-target skip). Refreshed 44 captures under .superpowers/sdd/ui-r3/amendment-screenshots/ across 390/1280 px and light/dark; the amended parking text wraps inside the menu. The original prototype references and deliberate adaptations still apply.
+
+**Exact amendment patch, based on 53f20120:** ten source/test files; reverse-application check against the tested worktree passed. The original two-patch fresh replay remains the original build record; review amendments use targeted checks and cloned probes under the current verification budget.
+
+```diff
+diff --git a/web/e2e/sessions.spec.ts b/web/e2e/sessions.spec.ts
+index 1c347edb..ccbc2e1f 100644
+--- a/web/e2e/sessions.spec.ts
++++ b/web/e2e/sessions.spec.ts
+@@ -368,7 +368,8 @@ test.describe('redesigned session', () => {
+         const pin = page.getByRole('switch', { name: 'Do not park', exact: true })
+         await expect(pin).toBeEnabled()
+         await expect(pin).not.toBeChecked()
+-        await expect(page.getByText('Kept awake for family work.', { exact: true })).toBeVisible()
++        await expect(page.getByRole('status').filter({ hasText: 'Family work requests a parking hold.' })).toBeVisible()
++        await expect(page.getByRole('status').filter({ hasText: 'Parking hold requested from the host.' })).toBeVisible()
+         await pin.click(); await expect(pin).toBeChecked()
+         await shot('parking-menu')
+         await page.keyboard.press('Escape')
+diff --git a/web/src/components/SessionDetails.test.tsx b/web/src/components/SessionDetails.test.tsx
+index a76f642a..86bea780 100644
+--- a/web/src/components/SessionDetails.test.tsx
++++ b/web/src/components/SessionDetails.test.tsx
+@@ -2,12 +2,13 @@ import { useRef, useState } from 'react'
+ import { fireEvent, render, screen } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+ import { describe, expect, it, vi } from 'vitest'
+-import SessionDetails from './SessionDetails'
++import SessionDetails, { type SessionDetailsTab } from './SessionDetails'
+
+ function View() {
+   const [open, setOpen] = useState(false)
++  const [tab, setTab] = useState<SessionDetailsTab>('Family')
+   const ref = useRef<HTMLButtonElement>(null)
+-  return <><button ref={ref} onClick={() => setOpen(true)}>Session details</button><input aria-label="Retained draft" defaultValue="keep this" /><SessionDetails open={open} onClose={() => setOpen(false)} trigger={ref}><a href="/sessions/child">Worker</a></SessionDetails></>
++  return <><button ref={ref} onClick={() => setOpen(true)}>Session details</button><input aria-label="Retained draft" defaultValue="keep this" /><SessionDetails open={open} tab={tab} onTab={setTab} onClose={() => setOpen(false)} trigger={ref}><a href="/sessions/child">Worker</a></SessionDetails></>
+ }
+
+ describe('SessionDetails', () => {
+diff --git a/web/src/components/SessionDetails.tsx b/web/src/components/SessionDetails.tsx
+index 9854469e..14f6a0ca 100644
+--- a/web/src/components/SessionDetails.tsx
++++ b/web/src/components/SessionDetails.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject, type KeyboardEvent } from 'react'
++import { useEffect, useId, useRef, type ReactNode, type RefObject, type KeyboardEvent } from 'react'
+ import type { HeaderInfo } from './SessionHeader'
+ import type { Item } from '../generated/view'
+ import type { McpSessionDelivery } from '../generated/protocol'
+@@ -9,10 +9,12 @@ import McpDelivery from './McpDelivery'
+ import StepList from './StepList'
+
+ const TABS = ['Family', 'Plan', 'Details'] as const
+-type Tab = typeof TABS[number]
++export type SessionDetailsTab = typeof TABS[number]
+
+ interface Props {
+   open: boolean
++  tab: SessionDetailsTab
++  onTab: (tab: SessionDetailsTab) => void
+   onClose: () => void
+   trigger: RefObject<HTMLButtonElement | null>
+   info?: HeaderInfo
+@@ -26,9 +28,8 @@ interface Props {
+ /** Keep the family reader mounted while tabs are hidden: one bounded reader
+  * supplies both canonical routing and the panel, with no transcript stream. */
+ export default function SessionDetails(props: Props) {
+-  const { open, onClose, trigger } = props
++  const { open, onClose, trigger, tab, onTab: setTab } = props
+   const sheet = useMediaQuery('(max-width: 1023px)')
+-  const [tab, setTab] = useState<Tab>('Family')
+   const prefix = useId()
+   const body = <>
+     <div className="session-details-heading"><h2>Session details</h2><button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close session details">×</button></div>
+diff --git a/web/src/components/SessionHeader.tsx b/web/src/components/SessionHeader.tsx
+index 728f433c..3a0bd0f4 100644
+--- a/web/src/components/SessionHeader.tsx
++++ b/web/src/components/SessionHeader.tsx
+@@ -34,13 +34,14 @@ interface Props {
+   menu?: ReactNode
+   detailsOpen?: boolean
+   toggleDetails?: () => void
++  openFamily?: () => void
+   detailsTrigger?: RefObject<HTMLButtonElement | null>
+   hatName?: string
+   hostConnected?: boolean
+   delivery?: McpSessionDelivery
+ }
+
+-export default function SessionHeader({ id, info, hostName, menu, detailsOpen, toggleDetails, detailsTrigger, hatName, hostConnected, delivery }: Props) {
++export default function SessionHeader({ id, info, hostName, menu, detailsOpen, toggleDetails, openFamily, detailsTrigger, hatName, hostConnected, delivery }: Props) {
+   const scope = useSessionScope()
+   // Share the queue's recent-first summary order, never its overview filters.
+   const waiting = [...(scope?.list.all.values() ?? [])].filter(needsOperator).sort((a, b) => b.last_event_at.localeCompare(a.last_event_at) || a.session_id.localeCompare(b.session_id))
+@@ -112,7 +113,7 @@ export default function SessionHeader({ id, info, hostName, menu, detailsOpen, t
+             </span>
+           )}
+           {delivery && <span className="meta-pill">{delivery.servers} MCP servers</span>}
+-          {info.family && (info.family.parent || info.family.child_counts.total > 0) && <button type="button" className="meta-toggle" onClick={toggleDetails}>Family{info.family.child_counts.total > 0 ? ` · ${info.family.child_counts.total}` : ''}</button>}
++          {info.family && (info.family.parent || info.family.child_counts.total > 0) && <button type="button" className="meta-toggle" onClick={openFamily}>Family{info.family.child_counts.total > 0 ? ` · ${info.family.child_counts.total}` : ''}</button>}
+           {info.lifecycle === 'failed' && info.failure_reason && (
+             <span className="meta-item">
+               Reason: <bdi>{reasonWords('start_failed', info.failure_reason)}</bdi>
+diff --git a/web/src/components/SessionMenu.pin.test.tsx b/web/src/components/SessionMenu.pin.test.tsx
+index 005660ca..81099a51 100644
+--- a/web/src/components/SessionMenu.pin.test.tsx
++++ b/web/src/components/SessionMenu.pin.test.tsx
+@@ -9,6 +9,28 @@ function show(server: ReturnType<typeof routed>, id = 'session/1') {
+ }
+
+ describe('operator idle pin', () => {
++  it.each([
++    [false, true, 'The pin is saved, but automatic parking holds require an updated host.'],
++    [true, false, 'Parking preferences apply after the host reconnects.'],
++    [undefined, true, 'Host support for automatic parking holds is unknown.'],
++    [true, undefined, 'Host connection is unknown; parking enforcement is not confirmed.'],
++  ] as const)('explains saved intent when host support=%s and connected=%s', async (supportsIdleHold, hostConnected, explanation) => {
++    const server = routed(call => json({ ...initial, pinned: call.method === 'PATCH' }))
++    const props = { supportsIdleHold, hostConnected }
++    render(<SessionMenu id="s1" lifecycle="active" canPark {...props} onDeleted={() => {}} />, { wrapper: server.wrapper })
++    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
++    const control = await screen.findByRole('switch', { name: 'Do not park' })
++    await waitFor(() => expect(control).toBeEnabled())
++    fireEvent.click(control)
++    await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'true'))
++    const status = screen.getByRole('status')
++    expect(status).toHaveTextContent(explanation)
++    expect(status).toHaveTextContent('Pinned by you.')
++    expect(status).toHaveTextContent('Family work requests a parking hold.')
++    expect(status).toHaveTextContent('Pending updates request a parking hold.')
++    expect(status).not.toHaveTextContent('Kept awake')
++  })
++
+   it('reads on opening and persists the operator choice with the encoded id, while explaining family holds separately', async () => {
+     let pinned = false
+     const server = routed(call => { if (call.method === 'PATCH') pinned = true; return json({ ...initial, pinned }) })
+@@ -18,7 +40,7 @@ describe('operator idle pin', () => {
+     const control = await screen.findByRole('switch', { name: 'Do not park' })
+     await waitFor(() => expect(control).toBeEnabled())
+     expect(control).toHaveAttribute('aria-checked', 'false')
+-    expect(screen.getByRole('status')).toHaveTextContent('Kept awake for family work. Kept awake for pending updates.')
++    expect(screen.getByRole('status')).toHaveTextContent('Family work requests a parking hold. Pending updates request a parking hold.')
+     fireEvent.click(control)
+     await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'true'))
+     expect(server.calls.map(c => [c.method, c.path])).toEqual([['GET', '/api/sessions/session%2F1/idle-hold'], ['PATCH', '/api/sessions/session%2F1/idle-hold']])
+@@ -38,7 +60,7 @@ describe('operator idle pin', () => {
+     expect(control).toHaveAttribute('aria-checked', 'true')
+     fail = false; fireEvent.click(control)
+     await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'false'))
+-    expect(screen.getByRole('status')).toHaveTextContent('Kept awake for family work.')
++    expect(screen.getByRole('status')).toHaveTextContent('Family work requests a parking hold.')
+     expect(screen.getByRole('status')).not.toHaveTextContent('Automatic idle parking is enabled.')
+   })
+
+diff --git a/web/src/components/SessionMenu.tsx b/web/src/components/SessionMenu.tsx
+index 0a2d6064..bf75a3e1 100644
+--- a/web/src/components/SessionMenu.tsx
++++ b/web/src/components/SessionMenu.tsx
+@@ -35,6 +35,9 @@ interface Props {
+   family?: FamilySummary
+   /** The session's host announced the `park` capability. */
+   canPark: boolean
++  /** Undefined until host metadata is known; the DTO records intent, not acknowledgement. */
++  supportsIdleHold?: boolean
++  hostConnected?: boolean
+   /** The session was deleted (`undefined`: a server that answers 204, or
+    *  a session already gone). */
+   onDeleted: (result: DeleteResult | undefined) => void
+@@ -43,7 +46,7 @@ interface Props {
+   focusAfterDelete?: () => HTMLElement | null
+ }
+
+-export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted, focusAfterDelete }: Props) {
++export default function SessionMenu({ id, lifecycle, family, canPark, supportsIdleHold, hostConnected, onDeleted, focusAfterDelete }: Props) {
+   const client = useClient()
+   const menuId = useId()
+   const [open, setOpen] = useState(false)
+@@ -156,7 +159,17 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
+       {open && (
+         <div className="session-menu-list" id={menuId}>
+           <button type="button" role="switch" aria-checked={hold?.pinned ?? false} disabled={busy || pinBusy || hold === null} onClick={() => void togglePin()}>Do not park</button>
+-          <p className="idle-hold-note" role="status">{hold ? [hold.pinned && 'Pinned by you.', hold.family_active && 'Kept awake for family work.', hold.notices_pending && 'Kept awake for pending updates.', !hold.held && 'Automatic idle parking is enabled.'].filter(Boolean).join(' ') : 'Reading automatic parking settings…'}</p>
++          <p className="idle-hold-note" role="status">{hold ? [
++            hold.pinned && 'Pinned by you.',
++            hold.family_active && 'Family work requests a parking hold.',
++            hold.notices_pending && 'Pending updates request a parking hold.',
++            !hold.held && 'No automatic parking hold is requested.',
++            supportsIdleHold === false && (hold.pinned ? 'The pin is saved, but automatic parking holds require an updated host.' : 'Automatic parking holds require an updated host.'),
++            supportsIdleHold === undefined && 'Host support for automatic parking holds is unknown.',
++            hostConnected === false && 'Parking preferences apply after the host reconnects.',
++            hostConnected === undefined && 'Host connection is unknown; parking enforcement is not confirmed.',
++            supportsIdleHold === true && hostConnected === true && hold.held && 'Parking hold requested from the host.',
++          ].filter(Boolean).join(' ') : 'Reading automatic parking settings…'}</p>
+           {showPark && (
+             <button type="button" disabled={busy} onClick={() => void act(() => park(client, id), parkRefusal)}>
+               Park
+diff --git a/web/src/screens/Session.family.test.tsx b/web/src/screens/Session.family.test.tsx
+index 5583c739..6708b0a8 100644
+--- a/web/src/screens/Session.family.test.tsx
++++ b/web/src/screens/Session.family.test.tsx
+@@ -21,6 +21,14 @@ it('loads family state for a notification deep link with no list summary, and in
+   fireEvent.click(screen.getByRole('button', { name: 'Session details' }))
+   expect(await screen.findByRole('region', { name: 'Session family' })).toBeInTheDocument()
+   expect(document.querySelector('.session-head .badge')).toHaveTextContent('Waiting on children')
++  fireEvent.click(screen.getByRole('tab', { name: 'Plan' }))
++  fireEvent.click(screen.getByRole('button', { name: 'Family · 2' }))
++  expect(screen.getByRole('tab', { name: 'Family' })).toHaveAttribute('aria-selected', 'true')
++  expect(screen.getByRole('region', { name: 'Session family' })).toBeVisible()
++  fireEvent.click(screen.getByRole('tab', { name: 'Details' }))
++  fireEvent.click(screen.getByRole('button', { name: 'Close session details' }))
++  fireEvent.click(screen.getByRole('button', { name: 'Family · 2' }))
++  expect(screen.getByRole('tab', { name: 'Family' })).toHaveAttribute('aria-selected', 'true')
+   await waitFor(() => expect(streams).toHaveLength(1))
+   const reads = () => s.calls.filter(c => c.path.startsWith('/api/view/sessions/parent/family')).length
+   const before = reads()
+diff --git a/web/src/screens/Session.tsx b/web/src/screens/Session.tsx
+index a9aec4e1..b4dad98b 100644
+--- a/web/src/screens/Session.tsx
++++ b/web/src/screens/Session.tsx
+@@ -49,7 +49,7 @@ import { ANSWER_LABEL, answerAsMessage } from '../components/composerWords'
+ import SessionFooter from '../components/SessionFooter'
+ import SessionHeader, { type HeaderInfo } from '../components/SessionHeader'
+ import FamilyPanel from '../components/FamilyPanel'
+-import SessionDetails from '../components/SessionDetails'
++import SessionDetails, { type SessionDetailsTab } from '../components/SessionDetails'
+ import { useSessionScope } from '../components/SessionScope'
+ import { useRegisterAction, useRegisterContext } from '../app-actions'
+ import { saveTheme, useAccentStyle } from '../lib/theme'
+@@ -243,8 +243,10 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
+   const client = useClient()
+   const scope = useSessionScope()
+   const [detailsOpen, setDetailsOpen] = useState(false)
++  const [detailsTab, setDetailsTab] = useState<SessionDetailsTab>('Family')
+   const detailsTrigger = useRef<HTMLButtonElement>(null)
+   const toggleDetails = useCallback(() => setDetailsOpen(open => !open), [])
++  const openFamily = useCallback(() => { setDetailsTab('Family'); setDetailsOpen(true) }, [])
+   const closeDetails = useCallback(() => { setDetailsOpen(false); detailsTrigger.current?.focus() }, [])
+   const [familyRefresh, setFamilyRefresh] = useState(0)
+   const [taking, setTaking] = useState(false)
+@@ -278,6 +280,14 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
+   }, [id, targetQuestion, s.items, s.pinned])
+   const win = useTailWindow(s.items, s.loads, tail, targetQuestion)
+   const narrow = useMediaQuery('(max-width: 767px)')
++  useLayoutEffect(() => {
++    if (!selectedQuestion) return
++    // A resync or removal may unmount the selected card without its live →
++    // stale effect. Reconcile against both rendered transcript regions, using
++    // the card's canonical actionable state (including local answer outcomes).
++    const cards = questionRegion.current?.querySelectorAll<HTMLElement>('.ask:not(.stale)') ?? []
++    if (![...cards].some(card => card.dataset.pendingId === selectedQuestion)) setSelectedQuestion(null)
++  }, [selectedQuestion, win.visible, s.pinned, s.loading])
+   useLayoutEffect(() => {
+     if (!narrow || !selectedQuestion) return
+     // Run after the transcript's tail pin and browser focus scrolling settle.
+@@ -328,11 +338,14 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
+     finally { setTaking(false) }
+   }
+   const onSendAgain = useCallback((item: Extract<Item, { kind: 'marker' }>) => {
+-    if (item.about_turn) void composer.current?.refill(item.about_turn)
+-  }, [])
++    if (item.about_turn) {
++      focusComposer()
++      void composer.current?.refill(item.about_turn)
++    }
++  }, [focusComposer])
+   const onAnswerAsMessage = useCallback(
+-    (question: string) => composer.current?.prefill(answerAsMessage(question), ANSWER_LABEL),
+-    [],
++    (question: string) => { focusComposer(); composer.current?.prefill(answerAsMessage(question), ANSWER_LABEL) },
++    [focusComposer],
+   )
+   const composerEmpty = useCallback(() => composer.current?.isEmpty() ?? true, [])
+   // The view's one resume: the footer's Resume and the composer's "Resume
+@@ -433,6 +446,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
+         delivery={mcp.detail?.mcp_delivery}
+         detailsOpen={detailsOpen}
+         toggleDetails={toggleDetails}
++        openFamily={openFamily}
+         detailsTrigger={detailsTrigger}
+         menu={
+           <SessionMenu
+@@ -440,6 +454,8 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
+             lifecycle={info?.lifecycle}
+             family={info?.family}
+             canPark={capabilities?.includes('park') ?? false}
++            supportsIdleHold={capabilities?.includes('idle_hold')}
++            hostConnected={connectedOf(hostItems, info?.host_id)}
+             onDeleted={onDeleted}
+             focusAfterDelete={() => back.current}
+           />
+@@ -502,7 +518,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
+         />
+       )}
+       </div>
+-      <SessionDetails open={detailsOpen} onClose={closeDetails} trigger={detailsTrigger} info={info} hostName={info ? hosts.get(info.host_id) : undefined} hatName={actualHat?.name} plan={plan} delivery={mcp.detail?.mcp_delivery}>
++      <SessionDetails open={detailsOpen} tab={detailsTab} onTab={setDetailsTab} onClose={closeDetails} trigger={detailsTrigger} info={info} hostName={info ? hosts.get(info.host_id) : undefined} hatName={actualHat?.name} plan={plan} delivery={mcp.detail?.mcp_delivery}>
+         <FamilyPanel key={id} id={id} summary={summary} hosts={hosts} resync={Math.max(0, s.loads - 1) + familyRefresh} onPage={onFamilyPage} />
+       </SessionDetails>
+       </div>
+diff --git a/web/src/screens/Session.parking.test.tsx b/web/src/screens/Session.parking.test.tsx
+new file mode 100644
+index 00000000..57b2c64e
+--- /dev/null
++++ b/web/src/screens/Session.parking.test.tsx
+@@ -0,0 +1,27 @@
++import { fireEvent, render, screen } from '@testing-library/react'
++import { expect, it } from 'vitest'
++import { json, liveStream, routed } from '../test-stream'
++import { parent } from '../test-family'
++import SessionView from './Session'
++
++it.each([
++  [[], true, 'automatic parking holds require an updated host.'],
++  [['idle_hold'], false, 'Parking preferences apply after the host reconnects.'],
++  [['idle_hold'], true, 'Parking hold requested from the host.'],
++] as const)('uses the session host metadata for parking support=%s connected=%s', async (capabilities, connected, explanation) => {
++  const server = routed(call => {
++    const path = new URL(call.path, 'http://h').pathname
++    if (path === '/api/hosts') return json([{ host_id: parent.host_id, name: 'Test workstation', capabilities, connected }])
++    if (path === '/api/sessions/parent/idle-hold') return json({ pinned: true, family_active: false, notices_pending: false, held: true })
++    if (path === '/api/sessions/parent') return json({ ...parent, pending: [] })
++    if (path === '/api/view/sessions/parent') return json({ items: [], older: false, epoch: 'e1', revision: 1 })
++    if (path === '/api/sessions/parent/catalog') return json({ session_id: 'parent', config_options: [], commands: [] })
++    if (path === '/api/stream/view/sessions/parent') return liveStream().response
++    return json({ code: 'not_found', message: 'no' }, 404)
++  })
++  render(<SessionView id="parent" />, { wrapper: server.wrapper })
++  await screen.findByText(connected ? 'Online' : 'Offline', { exact: true })
++  fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
++  await screen.findByRole('switch', { name: 'Do not park', checked: true })
++  expect(document.querySelector('.idle-hold-note')).toHaveTextContent(explanation)
++})
+diff --git a/web/src/screens/Session.presentation.test.tsx b/web/src/screens/Session.presentation.test.tsx
+new file mode 100644
+index 00000000..36cbf54c
+--- /dev/null
++++ b/web/src/screens/Session.presentation.test.tsx
+@@ -0,0 +1,88 @@
++import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
++import { afterEach, expect, it, vi } from 'vitest'
++import type { Item } from '../generated/view'
++import { json } from '../test-stream'
++import SessionView from './Session'
++import { FAST, message, sessionServer } from './test-session'
++
++const liveQuestion: Extract<Item, { kind: 'question' }> = {
++  id: 'question:live', kind: 'question', version: 1, ts: '2026-10-20T10:00:00Z',
++  pending_id: 'live', question_kind: 'permission',
++  request: { type: 'permission', title: 'Run checks?', options: [{ option_id: 'once', name: 'Allow once', option_kind: 'allow_once' }] },
++  state: 'open', answered: false, answerable: true,
++}
++afterEach(() => { vi.unstubAllGlobals(); sessionStorage.clear() })
++function phone() {
++  vi.stubGlobal('matchMedia', vi.fn((q: string) => ({ matches: q === '(max-width: 767px)', addEventListener() {}, removeEventListener() {} })))
++}
++
++it('keeps a selected earlier pinned question through updates, then reveals the composer when it is removed', async () => {
++  phone()
++  const server = sessionServer({ page: () => json({ items: [{ ...message('new', 'new-turn'), ts: '2026-10-20T11:00:00Z' }], older: true, epoch: 'e1', revision: 1 }) })
++  render(<SessionView id="s1" timing={FAST} />, { wrapper: server.wrapper })
++  await waitFor(() => expect(server.streams).toHaveLength(1))
++  act(() => server.streams[0].event('item', { ...liveQuestion, turn_id: 'old-turn' }))
++  const card = await screen.findByRole('region', { name: 'Question from Claude' })
++  expect(card.closest('.pinned-questions')).not.toBeNull()
++  act(() => card.focus())
++  act(() => server.streams[0].event('item', message('newer', 'new-turn')))
++  await screen.findByText('newer', { exact: true })
++  expect(document.querySelector('.session')).toHaveClass('has-question-actions')
++  act(() => server.streams[0].event('item_removed', { id: liveQuestion.id }))
++  await waitFor(() => expect(screen.queryByRole('region', { name: 'Question from Claude' })).not.toBeInTheDocument())
++  expect(document.querySelector('.session')).not.toHaveClass('has-question-actions')
++})
++
++it.each(['resync', 'removal'])('returns to the composer when a selected question leaves through %s without losing drafts or moving focus', async mode => {
++  phone()
++  let rows: Item[] = [liveQuestion]
++  const server = sessionServer({ items: () => rows })
++  render(<SessionView id="s1" timing={FAST} />, { wrapper: server.wrapper })
++  const card = await screen.findByRole('region', { name: 'Question from Claude' })
++  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Keep my draft' } })
++  act(() => card.focus())
++  expect(document.querySelector('.session')).toHaveClass('has-question-actions')
++  await waitFor(() => expect(server.streams).toHaveLength(1))
++  rows = [message('new', 'new-turn', 'New tail after reconnect')]
++  const details = screen.getByRole('button', { name: 'Session details' })
++  act(() => details.focus())
++  act(() => server.streams[0].event(mode === 'resync' ? 'resync_required' : 'item_removed', mode === 'resync' ? {} : { id: liveQuestion.id }))
++  if (mode === 'resync') await screen.findByText('New tail after reconnect', { exact: true })
++  await waitFor(() => expect(screen.queryByRole('region', { name: 'Question from Claude' })).not.toBeInTheDocument())
++  expect(document.querySelector('.question-actions-selected')).toBeNull()
++  expect(document.querySelector('.session')).not.toHaveClass('has-question-actions')
++  expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep my draft')
++  expect(details).toHaveFocus()
++})
++
++it('reveals the composer when answering an older cancelled question as a message', async () => {
++  phone()
++  const old: Item = { ...liveQuestion, id: 'question:old', pending_id: 'old', state: 'cancelled', reason: 'agent_withdrew', answerable: false }
++  const server = sessionServer({ items: () => [old, liveQuestion] })
++  render(<SessionView id="s1" timing={FAST} />, { wrapper: server.wrapper })
++  const cards = await screen.findAllByRole('region', { name: 'Question from Claude' })
++  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Existing draft' } })
++  act(() => cards[1].focus())
++  expect(document.querySelector('.session')).toHaveClass('has-question-actions')
++  fireEvent.click(within(cards[0]).getByRole('button', { name: 'Answer as a new message' }))
++  const prompt = screen.getByRole('textbox', { name: 'Prompt' })
++  await waitFor(() => expect((prompt as HTMLTextAreaElement).value).toContain('Run checks?'))
++  expect(server.changes()).toHaveLength(0)
++  expect(document.querySelector('.session')).not.toHaveClass('has-question-actions')
++  expect((prompt as HTMLTextAreaElement).value).toContain('Existing draft')
++  await waitFor(() => expect(prompt).toHaveFocus())
++})
++
++it('reveals the composer when restoring an undelivered turn beside a selected question', async () => {
++  phone()
++  const marker: Item = { id: 'marker', kind: 'marker', version: 1, ts: '2026-10-20T09:00:00Z', marker: 'turn_not_delivered', about_turn: 'old-turn' }
++  const server = sessionServer({ items: () => [marker, liveQuestion], turn: () => json({ turn_id: 'old-turn', content: [{ type: 'text', text: 'Restore this prompt' }] }) })
++  render(<SessionView id="s1" timing={FAST} />, { wrapper: server.wrapper })
++  const card = await screen.findByRole('region', { name: 'Question from Claude' })
++  act(() => card.focus())
++  fireEvent.click(screen.getByRole('button', { name: 'Send again' }))
++  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Restore this prompt'))
++  expect(server.posted('/prompt')).toHaveLength(0)
++  expect(document.querySelector('.session')).not.toHaveClass('has-question-actions')
++  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveFocus())
++})
+```
 
 Generated with Claude AI — please review before distribution.

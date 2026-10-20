@@ -49,7 +49,7 @@ import { ANSWER_LABEL, answerAsMessage } from '../components/composerWords'
 import SessionFooter from '../components/SessionFooter'
 import SessionHeader, { type HeaderInfo } from '../components/SessionHeader'
 import FamilyPanel from '../components/FamilyPanel'
-import SessionDetails from '../components/SessionDetails'
+import SessionDetails, { type SessionDetailsTab } from '../components/SessionDetails'
 import { useSessionScope } from '../components/SessionScope'
 import { useRegisterAction, useRegisterContext } from '../app-actions'
 import { saveTheme, useAccentStyle } from '../lib/theme'
@@ -243,8 +243,10 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   const client = useClient()
   const scope = useSessionScope()
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [detailsTab, setDetailsTab] = useState<SessionDetailsTab>('Family')
   const detailsTrigger = useRef<HTMLButtonElement>(null)
   const toggleDetails = useCallback(() => setDetailsOpen(open => !open), [])
+  const openFamily = useCallback(() => { setDetailsTab('Family'); setDetailsOpen(true) }, [])
   const closeDetails = useCallback(() => { setDetailsOpen(false); detailsTrigger.current?.focus() }, [])
   const [familyRefresh, setFamilyRefresh] = useState(0)
   const [taking, setTaking] = useState(false)
@@ -278,6 +280,14 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   }, [id, targetQuestion, s.items, s.pinned])
   const win = useTailWindow(s.items, s.loads, tail, targetQuestion)
   const narrow = useMediaQuery('(max-width: 767px)')
+  useLayoutEffect(() => {
+    if (!selectedQuestion) return
+    // A resync or removal may unmount the selected card without its live →
+    // stale effect. Reconcile against both rendered transcript regions, using
+    // the card's canonical actionable state (including local answer outcomes).
+    const cards = questionRegion.current?.querySelectorAll<HTMLElement>('.ask:not(.stale)') ?? []
+    if (![...cards].some(card => card.dataset.pendingId === selectedQuestion)) setSelectedQuestion(null)
+  }, [selectedQuestion, win.visible, s.pinned, s.loading])
   useLayoutEffect(() => {
     if (!narrow || !selectedQuestion) return
     // Run after the transcript's tail pin and browser focus scrolling settle.
@@ -328,11 +338,14 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
     finally { setTaking(false) }
   }
   const onSendAgain = useCallback((item: Extract<Item, { kind: 'marker' }>) => {
-    if (item.about_turn) void composer.current?.refill(item.about_turn)
-  }, [])
+    if (item.about_turn) {
+      focusComposer()
+      void composer.current?.refill(item.about_turn)
+    }
+  }, [focusComposer])
   const onAnswerAsMessage = useCallback(
-    (question: string) => composer.current?.prefill(answerAsMessage(question), ANSWER_LABEL),
-    [],
+    (question: string) => { focusComposer(); composer.current?.prefill(answerAsMessage(question), ANSWER_LABEL) },
+    [focusComposer],
   )
   const composerEmpty = useCallback(() => composer.current?.isEmpty() ?? true, [])
   // The view's one resume: the footer's Resume and the composer's "Resume
@@ -433,6 +446,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         delivery={mcp.detail?.mcp_delivery}
         detailsOpen={detailsOpen}
         toggleDetails={toggleDetails}
+        openFamily={openFamily}
         detailsTrigger={detailsTrigger}
         menu={
           <SessionMenu
@@ -440,6 +454,8 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
             lifecycle={info?.lifecycle}
             family={info?.family}
             canPark={capabilities?.includes('park') ?? false}
+            supportsIdleHold={capabilities?.includes('idle_hold')}
+            hostConnected={connectedOf(hostItems, info?.host_id)}
             onDeleted={onDeleted}
             focusAfterDelete={() => back.current}
           />
@@ -502,7 +518,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         />
       )}
       </div>
-      <SessionDetails open={detailsOpen} onClose={closeDetails} trigger={detailsTrigger} info={info} hostName={info ? hosts.get(info.host_id) : undefined} hatName={actualHat?.name} plan={plan} delivery={mcp.detail?.mcp_delivery}>
+      <SessionDetails open={detailsOpen} tab={detailsTab} onTab={setDetailsTab} onClose={closeDetails} trigger={detailsTrigger} info={info} hostName={info ? hosts.get(info.host_id) : undefined} hatName={actualHat?.name} plan={plan} delivery={mcp.detail?.mcp_delivery}>
         <FamilyPanel key={id} id={id} summary={summary} hosts={hosts} resync={Math.max(0, s.loads - 1) + familyRefresh} onPage={onFamilyPage} />
       </SessionDetails>
       </div>

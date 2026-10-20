@@ -34,13 +34,14 @@ interface Props {
   menu?: ReactNode
   detailsOpen?: boolean
   toggleDetails?: () => void
+  openFamily?: () => void
   detailsTrigger?: RefObject<HTMLButtonElement | null>
   hatName?: string
   hostConnected?: boolean
   delivery?: McpSessionDelivery
 }
 
-export default function SessionHeader({ id, info, hostName, menu, detailsOpen, toggleDetails, detailsTrigger, hatName, hostConnected, delivery }: Props) {
+export default function SessionHeader({ id, info, hostName, menu, detailsOpen, toggleDetails, openFamily, detailsTrigger, hatName, hostConnected, delivery }: Props) {
   const scope = useSessionScope()
   // Share the queue's recent-first summary order, never its overview filters.
   const waiting = [...(scope?.list.all.values() ?? [])].filter(needsOperator).sort((a, b) => b.last_event_at.localeCompare(a.last_event_at) || a.session_id.localeCompare(b.session_id))
@@ -112,7 +113,7 @@ export default function SessionHeader({ id, info, hostName, menu, detailsOpen, t
             </span>
           )}
           {delivery && <span className="meta-pill">{delivery.servers} MCP servers</span>}
-          {info.family && (info.family.parent || info.family.child_counts.total > 0) && <button type="button" className="meta-toggle" onClick={toggleDetails}>Family{info.family.child_counts.total > 0 ? ` · ${info.family.child_counts.total}` : ''}</button>}
+          {info.family && (info.family.parent || info.family.child_counts.total > 0) && <button type="button" className="meta-toggle" onClick={openFamily}>Family{info.family.child_counts.total > 0 ? ` · ${info.family.child_counts.total}` : ''}</button>}
           {info.lifecycle === 'failed' && info.failure_reason && (
             <span className="meta-item">
               Reason: <bdi>{reasonWords('start_failed', info.failure_reason)}</bdi>
