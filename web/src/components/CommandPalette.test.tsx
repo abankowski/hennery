@@ -45,6 +45,14 @@ it('has grouped semantic options, omits disabled providers, selects locally with
   fireEvent.keyDown(input, { key: 'ArrowDown' }); fireEvent.keyDown(input, { key: 'Enter' })
   expect(run).toHaveBeenCalledOnce(); expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
+it('finds Edit defaults by its visible action label and dispatches the real provider', async () => {
+  const { actions, user } = setup(), edit = vi.fn()
+  actions.register('open-defaults', { label: 'Defaults', enabled: true, run: edit })
+  await user.click(screen.getByRole('button', { name: 'Jump to' }))
+  await user.type(screen.getByRole('combobox'), 'edit')
+  await user.click(screen.getByRole('option', { name: 'Edit defaults' }))
+  expect(edit).toHaveBeenCalledOnce()
+})
 it('traps tab, preserves the query on composition, closes with Escape and returns focus', async () => {
   const { user } = setup()
   const trigger = screen.getByRole('button', { name: 'Jump to' }); await user.click(trigger)

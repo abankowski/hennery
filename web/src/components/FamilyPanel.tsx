@@ -1,3 +1,4 @@
+import SessionName, { useSessionNames } from './SessionNames'
 // The family remains a set of independent sessions. Read real receipts and
 // routing state; an accepted operation is never rendered as a successful run.
 import { useEffect, useRef, useState } from 'react'
@@ -98,6 +99,7 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
   const hasAttention = (selected?.operator_attention ?? 0) > 0 || (selected?.family?.attention ?? 0) > 0 || (page?.summary.operator_attention ?? 0) > 0 || (page?.summary.family?.attention ?? 0) > 0
   const siblingKey = JSON.stringify([id, familyKey, resync, refresh])
   const related = siblings?.key === siblingKey ? siblings.page : null
+  const names = useSessionNames([...(selected ? [selected] : []), ...(family?.parent ? [family.parent] : []), ...(page?.children ?? []).map(child => child.summary), ...(related?.children ?? []).map(child => child.summary)])
   const readSiblings = async () => {
     if (!family?.parent || siblingsBusy) return
     const current = generation.current
@@ -115,15 +117,15 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
     <details open>
       <summary tabIndex={0}>{family?.parent || family?.child_counts.total ? 'Family' : 'Attention'}{family?.child_counts.total ? ` · ${family.child_counts.total} children` : ''}</summary>
       {selected && <StatusAttention session={selected} children={page?.children.map(child => child.summary) ?? []} enabled={hasAttention && page !== null} refreshKey={`${familyKey}:${resync}:${refresh}`} onAcknowledged={() => setRefresh(n => n + 1)} />}
-      {selected && <article className="family-child family-current" aria-label="Current session"><span className="item-note">Current session</span><h3><bdi>{selected.title || agentLabel(selected.agent)}</bdi></h3><p>{statusOf(selected).label}</p></article>}
-      {family?.parent && <p>Parent: <Link to={sessionPath(family.parent.session_id)}><bdi>{family.parent.title || agentLabel(family.parent.agent)}</bdi></Link></p>}
+      {selected && <article className="family-child family-current" aria-label="Current session"><span className="item-note">Current session</span><h3><SessionName session={selected} fallback={agentLabel(selected.agent)} /></h3><p>{statusOf(selected).label}</p></article>}
+      {family?.parent && <p>Parent: <Link to={sessionPath(family.parent.session_id)}><SessionName session={family.parent} fallback={agentLabel(family.parent.agent)} /></Link></p>}
       {page?.routing && <p>{routingWords(page.routing)}{page.reason && <> · {attentionReason(page.reason)}</>}</p>}
       {family?.parent && page?.routing === 'active' && <button type="button" className="btn btn-ghost btn-sm" disabled={taking !== null} onClick={() => void takeover({ summary: page.summary })}>{taking === id ? 'Taking over…' : 'Take over'}</button>}
       {page?.children.map(child => {
         const s = child.summary
-        const title = s.title || s.session_id
+        const title = names(s).text
         return <article key={s.session_id} className="family-child" aria-label={title}>
-          <Link to={sessionPath(s.session_id)}><bdi>{title}</bdi></Link>
+          <Link to={sessionPath(s.session_id)}><bdi className={names(s).provisional ? 'session-name-provisional' : undefined}>{title}</bdi></Link>
           <div className="family-meta">
             <span>{agentLabel(s.agent)}</span>{s.model && <bdi>{s.model}</bdi>}
             <bdi>{hosts.get(s.host_id) || s.host_id}</bdi><bdi>{s.cwd}</bdi>
@@ -142,7 +144,7 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
       })}
       {page?.next_cursor && <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void more()}>Load more children</button>}
       {family?.parent && <>
-        {related?.children.filter(child => child.summary.session_id !== id).map(child => <article className="family-child" key={child.summary.session_id} aria-label={`Sibling ${child.summary.title || agentLabel(child.summary.agent)}`}><Link to={sessionPath(child.summary.session_id)}><bdi>{child.summary.title || agentLabel(child.summary.agent)}</bdi></Link><p>{statusOf(child.summary).label}</p><p><bdi>{hosts.get(child.summary.host_id) || child.summary.host_id}</bdi></p>{child.routing === 'active' && <button type="button" className="btn btn-ghost btn-sm" disabled={taking !== null} onClick={() => void takeover(child)}>Take over</button>}</article>)}
+        {related?.children.filter(child => child.summary.session_id !== id).map(child => <article className="family-child" key={child.summary.session_id} aria-label={`Sibling ${names(child.summary, agentLabel(child.summary.agent)).text}`}><Link to={sessionPath(child.summary.session_id)}><SessionName session={child.summary} fallback={agentLabel(child.summary.agent)} /></Link><p>{statusOf(child.summary).label}</p><p><bdi>{hosts.get(child.summary.host_id) || child.summary.host_id}</bdi></p>{child.routing === 'active' && <button type="button" className="btn btn-ghost btn-sm" disabled={taking !== null} onClick={() => void takeover(child)}>Take over</button>}</article>)}
         {(!related || related.next_cursor) && <button type="button" className="btn btn-ghost btn-sm" disabled={siblingsBusy} onClick={() => void readSiblings()}>{siblingsBusy ? 'Loading related sessions…' : related ? 'Load more siblings' : 'Load parent’s other children'}</button>}
         {related && related.children.every(child => child.summary.session_id === id) && !related.next_cursor && <p className="item-note">No other children are listed.</p>}
       </>}

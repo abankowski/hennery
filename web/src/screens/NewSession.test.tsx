@@ -61,7 +61,7 @@ const HATS = [hat('hat-a', 'Work'), hat('hat-b', 'Home')]
 const PROJECTS: HostProjects = {
   recents_hat_id: 'hat-a',
   // Recents come first, so a recent prefix match (cat-tools) is held before
-  // the exact one (cat): only the ranking puts `cat` first.
+  // the exact repository (cat); the picker keeps recents ahead of it.
   recents: [
     { path: '/srv/work/data-cat', last_used_at: '2026-10-01T10:00:00Z' },
     { path: '/srv/work/cat-tools', last_used_at: '2026-09-30T10:00:00Z' },
@@ -120,17 +120,18 @@ function mount(routes: Record<string, Answer | Answer[]> = {}, path = '/new') {
   return { ...server, client, unmount: view.unmount }
 }
 
-it('predicts delivery for the resolved hat and chosen agent', async () => {
+it('keeps technical MCP predictions out of the launcher while retaining the resolved hat and agent choice', async () => {
   mount({ 'GET /api/hosts': json(200, [host('h1', 'laptop', {
     capabilities: ['projects', 'resolve_path', 'mcp_servers'],
     mcp_delivery: { claude: 'isolated', codex: 'default_hat_only' },
   })]) })
   const field = await screen.findByRole('combobox', { name: /^Project/ })
   await userEvent.type(field, '/srv/work/cat')
-  await waitFor(() => expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent("This agent was given only this hat's MCP servers."))
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  expect(screen.queryByRole('region', { name: 'MCP prediction' })).toBeNull()
   await userEvent.click(screen.getByRole('radio', { name: 'Codex' }))
-  expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('not isolated per hat')
-  expect(screen.getByRole('region', { name: 'MCP prediction' })).toHaveTextContent('~/.codex')
+  expect(screen.getByRole('radio', { name: 'Codex' })).toBeChecked()
+  expect(screen.queryByText(/not isolated per hat/)).toBeNull()
 })
 
 const hostButton = (name: string) => screen.getByRole('radio', { name: new RegExp(`^${name}`) })
@@ -248,7 +249,7 @@ describe('agents', () => {
 })
 
 describe('project picker', () => {
-  it('ranks exact, prefix, substring, subsequence, recents first within a rank', async () => {
+  it('keeps recents first, then ranks repository names by the typed match', async () => {
     mount()
     await screen.findByText(/Recent projects of the hat/)
     const user = userEvent.setup()
@@ -256,7 +257,7 @@ describe('project picker', () => {
     const options = within(screen.getByRole('listbox'))
       .getAllByRole('option')
       .map((o) => o.querySelector('bdi')?.textContent)
-    expect(options).toEqual(['cat', 'cat-tools', 'catalog', 'data-cat', 'concat', 'chart'])
+    expect(options).toEqual(['cat-tools', 'data-cat', 'cat', 'catalog', 'concat', 'chart'])
   })
 
   it('labels colliding names as parent and name', async () => {
@@ -289,6 +290,8 @@ describe('project picker', () => {
       }),
     })
     await fill('~/notes')
+    await waitFor(() => expect(server.sent.map((s) => s.path)).toContain('/api/hosts/h1/projects?path=%2Fsrv%2Fnotes'))
+    await userEvent.clear(await projectField())
     await waitFor(() => expect(screen.getByText(/Recent projects of the hat/)).toHaveTextContent('of the hat Home'), {
       timeout: 3000,
     })
@@ -315,7 +318,7 @@ describe('project picker', () => {
     mount()
     await screen.findByText(/Recent projects of the hat/)
     const field = await projectField()
-    expect(field).not.toHaveAttribute('aria-controls')
+    expect(field).toHaveAttribute('aria-controls', screen.getByRole('listbox').id)
     const user = userEvent.setup()
     await user.type(field, 'cat')
     const list = screen.getByRole('listbox')
@@ -669,6 +672,8 @@ describe('reviewed configuration', () => {
     })
     const user = await fill('/srv/work/cat', 'Keep this prompt')
     await waitFor(() => expect(startButton()).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Session settings' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('combobox', { name: 'Model' })).toBeNull()
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat', model: 'sonnet', mode: 'default' })
@@ -695,10 +700,14 @@ describe('reviewed configuration', () => {
   it('requires explicit opt-out when no catalog is available, then sends no unverified config', async () => {
     const server = mount({ [`GET ${runtime}`]: json(409, { code: 'catalog_unavailable', message: 'Offline catalog' }) })
     const user = await fill('/srv/work/cat', 'Start deliberately')
+    expect(await screen.findByLabelText('Settings need attention')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Session settings' })).toHaveAttribute('aria-expanded', 'false')
+    await user.click(await screen.findByRole('button', { name: 'Session settings' }))
     const optOut = await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' })
     expect(startButton()).toBeDisabled()
     await user.click(optOut)
     expect(startButton()).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Close session settings' }))
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
     expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat' })
@@ -740,7 +749,9 @@ it('retains the prompt on a hat mismatch even after explicitly opting out of cat
     'GET /api/sessions/s-1': json(200, { session_id: 's-1', hat_id: 'hat-b', lifecycle: 'active' }),
   })
   const user = await fill('/srv/work/cat', 'Check the hat first')
+  await user.click(await screen.findByRole('button', { name: 'Session settings' }))
   await user.click(await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' }))
+  await user.click(screen.getByRole('button', { name: 'Close session settings' }))
   await user.click(startButton())
   await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
   expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
@@ -794,6 +805,9 @@ describe('pending launch persistence ownership', () => {
     const view = await pendingLaunch(phase)
     view.unmount()
     mount()
+    // Capture the new draft after its own initial agent selection settles.
+    // The old launch must not alter these exact bytes once it finishes.
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Claude' })).toBeChecked())
     fireEvent.change(await screen.findByRole('textbox', { name: 'First prompt optional' }), { target: { value: 'A newer unsent prompt' } })
     await waitFor(() => expect(sessionStorage.getItem('hennery.draft.__launcher__')).toContain('A newer unsent prompt'))
     const newer = sessionStorage.getItem('hennery.draft.__launcher__')

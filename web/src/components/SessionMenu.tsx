@@ -1,3 +1,4 @@
+import SessionName from './SessionNames'
 // The session header's menu (frontend spec §6.6): Park, Close and "Delete
 // session".
 //
@@ -30,7 +31,7 @@ import { closeRefusal, deleteRefusal, parkRefusal } from './sessionWords'
 interface Props {
   id: string
   /** The session's lifecycle; undefined while unknown (Delete only). */
-  lifecycle?: string
+  lifecycle: string | undefined
   /** Already owner/hat-filtered family metadata from the current view. */
   family?: FamilySummary
   /** The session's host announced the `park` capability. */
@@ -61,6 +62,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, supportsId
 
   const showPark = lifecycle === 'active' && canPark
   const showClose = lifecycle !== undefined && lifecycle !== 'closed'
+  const holdNote = !hold ? null : supportsIdleHold === false ? 'Parking hold saved; update the host to enforce it.' : hostConnected === false ? 'Parking hold saved; it applies after the host reconnects.' : supportsIdleHold === undefined || hostConnected === undefined ? 'Host enforcement of parking holds is unconfirmed.' : !hold.held ? null : hold.pinned ? 'You requested a parking hold.' : hold.family_active ? 'Family work requests a parking hold.' : 'Pending updates request a parking hold.'
 
   useEffect(() => {
     const current = ++pinGeneration.current
@@ -158,20 +160,10 @@ export default function SessionMenu({ id, lifecycle, family, canPark, supportsId
       </button>
       {open && (
         <div className="session-menu-list" id={menuId}>
-          <button type="button" role="switch" aria-checked={hold?.pinned ?? false} disabled={busy || pinBusy || hold === null} onClick={() => void togglePin()}>Do not park</button>
-          <p className="idle-hold-note" role="status">{hold ? [
-            hold.pinned && 'Pinned by you.',
-            hold.family_active && 'Family work requests a parking hold.',
-            hold.notices_pending && 'Pending updates request a parking hold.',
-            !hold.held && 'No automatic parking hold is requested.',
-            supportsIdleHold === false && (hold.pinned ? 'The pin is saved, but automatic parking holds require an updated host.' : 'Automatic parking holds require an updated host.'),
-            supportsIdleHold === undefined && 'Host support for automatic parking holds is unknown.',
-            hostConnected === false && 'Parking preferences apply after the host reconnects.',
-            hostConnected === undefined && 'Host connection is unknown; parking enforcement is not confirmed.',
-            supportsIdleHold === true && hostConnected === true && hold.held && 'Parking hold requested from the host.',
-          ].filter(Boolean).join(' ') : 'Reading automatic parking settings…'}</p>
+          <button type="button" role="switch" aria-label="Do not park" aria-checked={hold?.pinned ?? false} disabled={busy || pinBusy || hold === null} onClick={() => void togglePin()}><span>Do not park</span><span className="idle-hold-state" aria-hidden="true">{hold ? hold.pinned ? '✓ On' : 'Off' : '…'}</span></button>
+          {holdNote && <p className="idle-hold-note" role="status">{holdNote}</p>}
           {showPark && (
-            <button type="button" disabled={busy} onClick={() => void act(() => park(client, id), parkRefusal)}>
+            <button type="button" disabled={busy || hostConnected === false} title={hostConnected === false ? 'The host is offline' : undefined} onClick={() => void act(() => park(client, id), parkRefusal)}>
               Park
             </button>
           )}
@@ -180,6 +172,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, supportsId
               Close
             </button>
           )}
+          <hr />
           <button
             type="button"
             className="danger"
@@ -219,7 +212,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, supportsId
           {family && <>
             <p>Copies already delivered to related sessions remain in their transcripts. Those sessions are kept.</p>
             <ul aria-label="Related sessions">
-              {[...(family.parent ? [family.parent] : []), ...family.children].map(related => <li key={related.session_id}><Link to={sessionPath(related.session_id)}><bdi>{related.title || agentLabel(related.agent)}</bdi></Link></li>)}
+              {[...(family.parent ? [family.parent] : []), ...family.children].map(related => <li key={related.session_id}><Link to={sessionPath(related.session_id)}><SessionName session={related} fallback={agentLabel(related.agent)} /></Link></li>)}
             </ul>
           </>}
           <p>The agent’s own transcript on the host is removed too, where the host can.</p>

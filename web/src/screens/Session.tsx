@@ -1,3 +1,5 @@
+import SessionName from '../components/SessionNames'
+import { useTurnEnds } from '../hooks/useTurnEnds'
 import '../styles/session.css'
 // One session (frontend spec §6): its header, its transcript, whose question
 // cards answer, and its composer.
@@ -242,7 +244,8 @@ export default function SessionView(props: Props) {
 function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timing, onRemoved }: Props) {
   const client = useClient()
   const scope = useSessionScope()
-  const [detailsOpen, setDetailsOpen] = useState(false)
+  const wide = useMediaQuery('(min-width: 1024px)')
+  const [detailsOpen, setDetailsOpen] = useState(wide)
   const [detailsTab, setDetailsTab] = useState<SessionDetailsTab>('Family')
   const detailsTrigger = useRef<HTMLButtonElement>(null)
   const toggleDetails = useCallback(() => setDetailsOpen(open => !open), [])
@@ -252,6 +255,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   const [taking, setTaking] = useState(false)
   const [takeError, setTakeError] = useState<string | null>(null)
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null)
+  const [jumpPending, setJumpPending] = useState<string | null>(null)
   const [answerNotice, setAnswerNotice] = useState<string | null>(null)
   const s = useSessionItems(id, timing)
   const mcp = useMcpDelivery(id, summary?.lifecycle, Math.max(0, s.loads - 1))
@@ -260,6 +264,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   const family = familyRead?.id === id && (!summary || (summary.hat_id === familyRead.page.summary.hat_id && summary.family?.revision === familyRead.page.summary.family?.revision)) ? familyRead.page : null
   const info = useHeaderInfo(id, summary ?? family?.summary, awaitSummary, mcp.detail)
   const { search } = useLocation()
+  useEffect(() => { if (new URLSearchParams(search).get('family') === '1') openFamily() }, [search, openFamily])
   const requested = new URLSearchParams(search).get('pending')
   const legacy = mcp.detail?.pending?.find(p => p.state === 'open' && !p.answered)?.pending_id
   const targetQuestion = requested || legacy
@@ -279,6 +284,16 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
     }
   }, [id, targetQuestion, s.items, s.pinned])
   const win = useTailWindow(s.items, s.loads, tail, targetQuestion)
+  const turnEnds = useTurnEnds(id, win.visible, info?.activity, s.loads)
+  const openPending = legacy ?? selectedQuestion ?? [...s.pinned, ...s.items].filter(item => item.kind === 'question').find(item => item.state === 'open' && !item.answered)?.pending_id
+  useLayoutEffect(() => {
+    if (!jumpPending) return
+    const card = [...(questionRegion.current?.querySelectorAll<HTMLElement>('[data-pending-id]') ?? [])].find(el => el.dataset.pendingId === jumpPending)
+    if (!card) return
+    card.tabIndex = -1
+    card.scrollIntoView?.({ block: 'center' }); card.focus({ preventScroll: true })
+    setJumpPending(null)
+  }, [jumpPending, win.visible, s.pinned])
   const narrow = useMediaQuery('(max-width: 767px)')
   useLayoutEffect(() => {
     if (!selectedQuestion) return
@@ -461,7 +476,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
           />
         }
       />
-      {info?.family?.parent && family?.routing === 'active' && <div className="parent-banner" role="region" aria-label="Parent-driven session"><p>Driven by <Link to={`/sessions/${encodeURIComponent(info.family.parent.session_id)}`}><bdi>{info.family.parent.title || 'parent session'}</bdi></Link>. Answers go to this child. A prompt from you takes over this session.</p><button type="button" className="btn btn-ghost btn-sm" disabled={taking} onClick={() => void takeover()}>{taking ? 'Taking over…' : 'Take over'}</button>{takeError && <p role="alert">{takeError}</p>}</div>}
+      {info?.family?.parent && family?.routing === 'active' && <div className="parent-banner" role="region" aria-label="Parent-driven session"><p>Driven by <Link to={`/sessions/${encodeURIComponent(info.family.parent.session_id)}`}><SessionName session={info.family.parent} fallback="parent session" /></Link>. Answers go to this child. A prompt from you takes over this session.</p><button type="button" className="btn btn-ghost btn-sm" disabled={taking} onClick={() => void takeover()}>{taking ? 'Taking over…' : 'Take over'}</button>{takeError && <p role="alert">{takeError}</p>}</div>}
       <div className="session-workspace">
       <div className="session-conversation">
       {answerNotice && <p className="answer-acknowledgement" role="status">{answerNotice}<button type="button" aria-label="Dismiss answer notice" onClick={() => setAnswerNotice(null)}>×</button></p>}
@@ -491,7 +506,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
       >
         {s.loading ? <p className="transcript-empty">Loading…</p> : <>
           {s.pinned.length > 0 && <div className="pinned-questions" aria-label="Earlier questions"><Transcript items={s.pinned} env={env} /></div>}
-          <Transcript items={win.visible} env={env} />
+          <Transcript items={win.visible} env={env} turnEnds={turnEnds} waiting={info?.lifecycle === 'active' && info.activity === 'idle' && !info.question_waits && !info.family?.child_counts.active} />
         </>}
       </Scroller>
       {startNotice && (
@@ -507,6 +522,11 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         catalog={s.catalog}
         onCatalog={s.setCatalog}
         onResume={onResume}
+        onJumpToQuestion={openPending ? () => {
+          setJumpPending(openPending)
+          navigate(`/sessions/${encodeURIComponent(id)}?pending=${encodeURIComponent(openPending)}`)
+          void s.loadQuestion(openPending)
+        } : undefined}
       />
       {info && (
         <SessionFooter

@@ -10,11 +10,11 @@ import { statusOf } from '../lib/status'
 import { basename } from '../lib/time'
 import { Icon } from '../lib/ui'
 import { Link } from '../router'
-import { useSessionScope } from './SessionScope'
-import { needsOperator } from '../lib/status'
+import { useSessionScope, WaitingBadge } from './SessionScope'
 import { Icon as Glyph } from './ui'
 import { sessionPath } from './SessionRow'
 import { reasonWords } from './items/Marker'
+import SessionName from './SessionNames'
 
 /** What the header reads: a list summary or a session's detail. */
 export type HeaderInfo = SessionItem & { question_waits?: boolean; operator_attention?: number; parent_handled_questions?: number; family?: FamilySummary }
@@ -41,10 +41,10 @@ interface Props {
   delivery?: McpSessionDelivery
 }
 
-export default function SessionHeader({ id, info, hostName, menu, detailsOpen, toggleDetails, openFamily, detailsTrigger, hatName, hostConnected, delivery }: Props) {
+export default function SessionHeader({ id, info, hostName, menu, detailsOpen, toggleDetails, openFamily, detailsTrigger, hatName, hostConnected, delivery, narrow }: Props) {
   const scope = useSessionScope()
   // Share the queue's recent-first summary order, never its overview filters.
-  const waiting = [...(scope?.list.all.values() ?? [])].filter(needsOperator).sort((a, b) => b.last_event_at.localeCompare(a.last_event_at) || a.session_id.localeCompare(b.session_id))
+  const waiting = (scope?.attentionRows ?? []).filter(s => !scope?.isAttentionDismissed(s.session_id))
   const position = waiting.findIndex(s => s.session_id === id)
   const complete = scope !== null && !scope.list.loading && !scope.list.hasMore && !scope.list.error && !scope.query && !scope.lifecycle && !scope.hideClosed
   const previous = position > 0 ? waiting[position - 1] : undefined
@@ -70,7 +70,7 @@ export default function SessionHeader({ id, info, hostName, menu, detailsOpen, t
           <Icon.Chevron size={18} className="rot-180" />
         </Link>
         {hatName && <span className="session-hat"><span aria-hidden="true" /><bdi>{hatName}</bdi></span>}
-        <h1 className="conv-name"><bdi>{titleOf(info, id)}</bdi></h1>
+        <h1 className="conv-name"><SessionName session={{ ...info, session_id: id }} ready={!!info} /></h1>
         {status && (
           <span className={'badge badge-' + status.tone}>
             <Glyph name={status.tone === 'attn' ? 'hand-raised' : status.tone === 'run' ? 'play-circle' : status.tone === 'fail' ? 'exclamation-circle' : 'clock'} size={14} />
@@ -82,11 +82,12 @@ export default function SessionHeader({ id, info, hostName, menu, detailsOpen, t
           {previous ? <Link to={sessionPath(previous.session_id)} aria-label="Previous waiting session">↑</Link> : <button type="button" aria-label="Previous waiting session" disabled>↑</button>}
           {next ? <Link to={sessionPath(next.session_id)} aria-label="Next waiting session">↓</Link> : <button type="button" aria-label="Next waiting session" disabled>↓</button>}
         </nav>}
-        {toggleDetails && <button ref={detailsTrigger} className="btn btn-ghost btn-sm session-details-toggle" type="button" aria-label="Session details" aria-pressed={detailsOpen} onClick={toggleDetails}><Glyph name="view-columns" size={16} /><span>Details</span></button>}
+        {toggleDetails && <button ref={detailsTrigger} className="btn btn-ghost btn-sm session-details-toggle" type="button" aria-label="Session details" aria-pressed={detailsOpen} onClick={toggleDetails}><Glyph name="view-columns" size={16} /><span>Details</span>{narrow && <WaitingBadge className="session-wait-count" />}</button>}
         {menu}
       </div>
       {info && (
         <div className="conv-meta">
+          {narrow && hatName && <span className="session-mobile-hat"><bdi>{hatName}</bdi></span>}
           <span className="meta-pill" aria-label="Agent">
             {agentLabel(info.agent)}
           </span>

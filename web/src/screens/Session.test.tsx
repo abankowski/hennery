@@ -388,7 +388,7 @@ describe('SessionView', () => {
     }
   })
 
-  it('shows the newest plan’s steps in the Plan tab', async () => {
+  it('shows the newest plan’s steps in the Plan panel', async () => {
     const plan = (id: string, step: string) =>
       ({ id, version: 1, ts: '2026-10-02T10:00:00.000Z', turn_id: 't5', kind: 'plan', entries: [{ content: step, status: 'in_progress' }] }) as Item
     const s = server({ pages: [() => json(page([plan('p1', 'old step'), plan('p2', 'new step')]))] })
@@ -557,5 +557,7 @@ describe('the tail window', () => {
 
 async function showDetailsTab(name: 'Family' | 'Plan' | 'Details') {
   fireEvent.click(screen.getByRole('button', { name: 'Session details' }))
-  fireEvent.click(await screen.findByRole('tab', { name }))
+  const tab = screen.queryByRole('tab', { name })
+  if (tab) fireEvent.click(tab)
+  else await screen.findByRole('region', { name })
 }

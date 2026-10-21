@@ -1,3 +1,4 @@
+import SessionName from '../components/SessionNames'
 // Hats (frontend spec §8, kernel spec §5): create, rename and recolour hats,
 // pick the default for new hosts, edit each host's path rules with a live
 // "this path resolves to" tester, and purge a hat after seeing what goes.
@@ -5,7 +6,7 @@
 // for when the server refuses.
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { messageOf } from '../api/errors'
-import { createHat, hats as listHats, hosts as listHosts, purgeHat, purgePreview, updateHat } from '../api/manage'
+import { createHat, hats as listHats, hosts as listHosts, pathRules, purgeHat, purgePreview, updateHat } from '../api/manage'
 import { useClient } from '../app-client'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PathRules from '../components/PathRules'
@@ -17,6 +18,7 @@ import { useResource } from '../hooks/useResource'
 import { count, isDefault, purgeState, safeColour } from '../lib/manage'
 import { Text } from '../lib/text'
 import { Link } from '../router'
+import { useSessionScope } from '../components/SessionScope'
 import '../manage.css'
 
 /** The colour a new hat starts with, as the server's own default. */
@@ -26,6 +28,7 @@ export default function Hats() {
   const client = useClient()
   const hats = useResource(() => listHats(client))
   const hosts = useResource(() => listHosts(client))
+  const sessions = useSessionScope()
   const scope = useMcpScope()
   const localMcp = useResource(() => scope ? Promise.resolve([]) : connections(client), [!!scope])
   const mcp = scope ?? localMcp
@@ -35,6 +38,8 @@ export default function Hats() {
   // A purge deletes the hat's path rules on the server: every purge tried,
   // whether it finished or not, has the rules read again.
   const [purges, setPurges] = useState(0)
+  const [ruleSaves, setRuleSaves] = useState(0)
+  const rules = useResource(async () => Promise.all((hosts.data ?? []).filter(host => !host.revoked_at).map(async host => ({ host, rules: await pathRules(client, host.host_id) }))), [hosts.data, purges, ruleSaves])
   const purgeTried = useRef(false)
 
   // As functions of the list held, so two changes landing together both
@@ -67,12 +72,13 @@ export default function Hats() {
   }
 
   return (
-    <div className="manage">
+    <div className="manage hats-screen">
       <header className="manage-head">
         <h1>Hats</h1>
+        <button className="btn btn-secondary btn-sm" onClick={() => { const panel = document.getElementById('new-hat-panel') as HTMLDetailsElement | null; if (panel) { panel.open = true; panel.querySelector('input')?.focus() } }}>+ New hat</button>
       </header>
       <p className="manage-subtitle">Path rules choose a hat. Each hat has its own servers, session defaults and notification privacy.</p>
-      {[hats.error, hosts.error, mcp.error, error].map(
+      {[hats.error, hosts.error, mcp.error, rules.error, error].map(
         (shown, i) =>
           shown && (
             <p key={i} className="form-error" role="alert">
@@ -91,18 +97,23 @@ export default function Hats() {
             isDefault={isDefault(hat, hosts.data ?? [])}
             defaultOn={hosts.data ? hosts.data.filter(h => !h.revoked_at && h.default_hat_id === hat.id).map(h => h.name) : null}
             servers={serverSummary(hat.id)}
+            rules={rules.data ? rules.data.flatMap(row => row.rules.filter(rule => rule.hat_id === hat.id).map(rule => `${rule.prefix} · ${row.host.name}`)) : null}
+            sessions={sessions ? `${sessions.list.shown.filter(row => row.hat_id === hat.id).length} shown` : '—'}
             agents={defaultsAgents(hosts.data)}
             onChanged={replace}
             onPurge={() => askPurge(hat)}
           />
         ))}
       </ul>
-      <NewHat onCreated={(hat) => hats.set((prev) => [...(prev ?? []), hat])} />
+      <details id="new-hat-panel" className="hat-create"><summary>New hat</summary><NewHat onCreated={(hat) => hats.set((prev) => [...(prev ?? []), hat])} /></details>
+      <details className="hat-rules-editor"><summary>Manage path rules</summary>
       <PathRules
         hosts={(hosts.data ?? []).filter((h) => h.revoked_at === undefined)}
         hats={hats.data ?? []}
         purges={purges}
+        onSaved={() => setRuleSaves(value => value + 1)}
       />
+      </details>
       {purge && (
         <PurgeDialog
           hat={purge.hat}
@@ -137,6 +148,8 @@ function HatCard({
   defaultOn,
   servers,
   agents,
+  rules,
+  sessions,
   onChanged,
   onPurge,
 }: {
@@ -145,6 +158,8 @@ function HatCard({
   defaultOn: string[] | null
   servers: string[] | null
   agents: string[]
+  rules: string[] | null
+  sessions: string
   onChanged: (hat: HatItem) => void
   onPurge: () => void
 }) {
@@ -202,15 +217,16 @@ function HatCard({
         <h2 className="card-title" id={titleId} ref={title} tabIndex={-1}>
           <Text>{hat.name}</Text>
         </h2>
+        <span className="hat-session-count">{sessions}</span>
         {hat.default_for_new_hosts && <span className="tag">Default for new hosts</span>}
         {hat.purging && <span className="tag tag-warn">Being purged</span>}
       </div>
       <dl className="facts hat-summary">
+        <dt>Path rules</dt><dd>{rules === null ? 'Not loaded' : rules.length ? rules.map(rule => <div key={rule}><Text className="mono">{rule}</Text></div>) : 'No path rules'}</dd>
         <dt>Default on</dt><dd>{defaultOn === null ? 'Not loaded' : defaultOn.length ? <Text>{defaultOn.join(', ')}</Text> : 'No hosts'}</dd>
         <dt>Gateway servers</dt><dd>{servers === null ? 'Not loaded' : servers.length ? <Text>{servers.join(', ')}</Text> : 'None'}</dd>
       </dl>
-      <HatDefaultsSummary hatId={hat.id} agents={agents} />
-      <p className="hint">Local servers are configured per host and hat in <Link to="/mcp">MCP</Link>. Edit host defaults in <Link to="/hosts">Hosts</Link>.</p>
+      <HatDefaultsSummary hatId={hat.id} agents={agents} compact />
       {editing ? (
         <form className="inline-form" onSubmit={save}>
           <label className="field">
@@ -391,7 +407,7 @@ function PurgeDialog({
             {preview.unassigned.map((s) => (
               <li key={s.session_id}>
                 <Link to={`/sessions/${encodeURIComponent(s.session_id)}`}>
-                  <Text>{s.title ?? s.cwd}</Text>
+                  <SessionName session={s} fallback={s.cwd} />
                 </Link>
               </li>
             ))}

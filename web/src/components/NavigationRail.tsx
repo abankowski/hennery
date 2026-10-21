@@ -5,7 +5,6 @@ import { AppearanceButton, HatChip, Icon, type IconName } from './ui'
 import CommandEntry from './CommandEntry'
 import { McpBadge } from './McpScope'
 import SignOut from './SignOut'
-import { needsOperator } from '../lib/status'
 export const NAV_ICON: Record<View, IconName> = { 'needs-you': 'hand-raised', sessions: 'rectangle-stack', new: 'plus', defaults: 'adjustments-horizontal', hosts: 'server-stack', mcp: 'puzzle-piece', hats: 'rectangle-stack', settings: 'adjustments-horizontal', more: 'ellipsis-horizontal' }
 export default function NavigationRail({ views, current, collapsed, toggle }: { views: readonly View[]; current: View | null; collapsed: boolean; toggle: () => void }) {
   const scope = useSessionScope()
@@ -19,7 +18,7 @@ export default function NavigationRail({ views, current, collapsed, toggle }: { 
       <div>{views.filter(view => ['needs-you', 'sessions', 'new'].includes(view)).map(navigation)}</div>
       {scope && <div className="rail-hats"><div className="nav-label nav-section-label">Hats</div>{hatLinks.map(hat => {
         const loaded = scope.list.shown.filter(s => !hat.id || s.hat_id === hat.id)
-        const waiting = loaded.filter(needsOperator).length
+        const waiting = scope.attentionRows.filter(s => (!hat.id || s.hat_id === hat.id) && !scope.isAttentionDismissed(s.session_id)).length
         const count = `${loaded.length} ${loaded.length === 1 ? 'session' : 'sessions'}${scope.list.hasMore || scope.list.loading ? ' shown' : ''}`
         return <Link key={hat.id} to={`/sessions?hat=${encodeURIComponent(hat.id)}`} className={'rail-hat' + (scope.hat === hat.id ? ' on' : '')} aria-label={hat.name} title={`${hat.name} · ${count} · ${waiting} need you`}><HatChip colour={hat.colour}><span className="nav-label"><bdi>{hat.name}</bdi></span></HatChip><span className="nav-label hat-loaded">{count}</span>{waiting > 0 && <span className="hat-attention" aria-label={`${waiting} shown sessions need you`}>●</span>}</Link>
       })}</div>}

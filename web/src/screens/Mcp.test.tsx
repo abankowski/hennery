@@ -43,7 +43,11 @@ async function stepUp() {
 const sent = (server: ReturnType<typeof stubServer>, method: string, path: string) =>
   server.sent.filter((s) => s.method === method && s.path === path)
 
-const card = (name: string) => screen.findByRole('listitem', { name })
+const card = async (name: string) => {
+  const item = await screen.findByRole('listitem', { name })
+  for (const details of item.querySelectorAll('details')) details.open = true
+  return item
+}
 
 const OAUTH_CAPS = { mode: 'full', features: ['mcp_connections', 'mcp_oauth'] }
 const OAUTH_REDIRECT = json(200, { redirect_uri: 'https://hennery.example/api/mcp/oauth/callback' })
@@ -102,7 +106,7 @@ it('Connect pauses the shared screen reader until Stop waiting, then resumes its
     ['POST ' + ITEM + '/authorize']: json(200, { consent_url: 'https://vendor.example/authorize', expires_at: '2099-01-01T00:00:00Z' }),
   }, OAUTH_CAPS)
   await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-  const docs = screen.getByRole('listitem', { name: 'Docs' })
+  const docs = screen.getByRole('listitem', { name: 'Docs' }); for (const details of docs.querySelectorAll('details')) details.open = true
   await act(async () => fireEvent.click(within(docs).getByRole('button', { name: 'Connect' })))
   await act(async () => { await vi.advanceTimersByTimeAsync(61000) })
   expect(sent(s, 'GET', PATH)).toHaveLength(1)

@@ -48,7 +48,9 @@ import { sendingFor, track } from '../lib/sending'
 import { undeliveredDraft, type DraftPart } from '../lib/sendAgain'
 import { Icon } from '../lib/ui'
 import SessionConfig from './SessionConfig'
-import { CANCEL_OUTCOME, SEND_AGAIN_LABEL, cancelRefusal, configRefusal, promptRefusal } from './composerWords'
+import ComposerSettings, { SettingsSummary } from './ComposerSettings'
+import { modelLabel } from '../lib/agent'
+import { CANCEL_OUTCOME, SEND_AGAIN_LABEL, cancelRefusal, configRefusal, isBusyTurn, promptRefusal } from './composerWords'
 
 /** What the session screen may ask of its composer. */
 export interface ComposerHandle {
@@ -86,6 +88,7 @@ export interface ComposerProps {
    *  rejects with the refusal to show. The view passes its one resume, the
    *  one its footer's Resume goes through. */
   onResume: () => Promise<unknown>
+  onJumpToQuestion?: () => void
   /** The handle above, bound to the composer of the session shown. */
   handle?: Ref<ComposerHandle>
 }
@@ -106,12 +109,13 @@ interface Notice {
   text: string
   /** Offer "Resume and send" (a prompt refused with `not_attached`). */
   resume?: boolean
+  busyTurn?: boolean
 }
 
 /** How a send ended: sent (a 202), or refused, saying why. */
 type Outcome = { sent: true } | { sent: false; notice: Notice }
 
-function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, handle }: ComposerProps) {
+function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, onJumpToQuestion, handle }: ComposerProps) {
   const client = useClient()
   const ids = useId()
   const [text, setText] = useState(() => loadDraft(sessionId))
@@ -141,6 +145,8 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   const configNow = useRef(false)
   const [pendingConfig, setPendingConfig] = useState<Record<string, ConfigValue>>({})
   const [configError, setConfigError] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsTrigger = useRef<HTMLButtonElement>(null)
   const [sel, setSel] = useState(0)
   const [dismissed, setDismissed] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -151,6 +157,12 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   const cursor = useRef<number | null>(null)
 
   useEffect(() => saveDraft(sessionId, text), [sessionId, text])
+  useLayoutEffect(() => {
+    const ta = taRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = text ? `${Math.min(ta.scrollHeight, 160)}px` : ''
+  }, [text])
 
   // Put the cursor after markers just spliced in.
   useLayoutEffect(() => {
@@ -188,6 +200,9 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   }, [])
 
   const options = configOptions(catalog)
+  const actualValue = (option: ConfigOption) => option.kind === 'boolean' ? `${option.name} ${option.current === true ? 'on' : 'off'}` : option.choices.find(choice => choice.value === option.current)?.name || String(option.current)
+  const summaryOptions = options.filter(option => ['model', 'mode', 'thought_level'].includes(option.category ?? '') || ['model', 'mode', 'effort', 'reasoning_effort'].includes(option.id))
+  const configSummary = summaryOptions.map(option => modelLabel(actualValue(option))).join(' · ') || 'Session settings'
   const cmds = commands(catalog)
   // The slash menu: the text starts with `/` and has no space yet.
   const query = !dismissed && /^\/\S*$/.test(text) ? text.slice(1) : null
@@ -312,7 +327,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
     } catch (err) {
       return {
         sent: false,
-        notice: { text: promptRefusal(err), resume: err instanceof ApiFailure && err.code === 'not_attached' },
+        notice: { text: promptRefusal(err), resume: err instanceof ApiFailure && err.code === 'not_attached', busyTurn: isBusyTurn(err) },
       }
     }
     saveDraft(sessionId, '')
@@ -463,25 +478,12 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
             {label}
           </p>
         )}
-        {options.length > 0 && (
-          <div className="composer-controls" role="group" aria-label="Session settings">
-            {options.map((option) => (
-              <SessionConfig
-                key={option.id}
-                option={option}
-                value={Object.hasOwn(pendingConfig, option.id) ? pendingConfig[option.id] : option.current}
-                busy={Object.keys(pendingConfig).length > 0}
-                onPick={(value) => void switchConfig(option, value)}
-              />
-            ))}
-          </div>
-        )}
-        {Object.keys(pendingConfig).length > 0 && <p className="config-pending" role="status">Applying session settings…</p>}
-        {configError && (
-          <p className="form-error" role="alert">
-            <bdi>{configError}</bdi>
-          </p>
-        )}
+        {settingsOpen && <ComposerSettings trigger={settingsTrigger} close={() => setSettingsOpen(false)}>
+          <div className="composer-controls" role="group" aria-label="Session settings">{options.map(option => <SessionConfig key={option.id} option={option} value={Object.hasOwn(pendingConfig, option.id) ? pendingConfig[option.id] : option.current} busy={Object.keys(pendingConfig).length > 0} onPick={value => void switchConfig(option, value)} />)}</div>
+          <p className="config-readback">Agent reports: <bdi>{options.map(option => `${option.name}: ${actualValue(option)}`).join(' · ') || 'No settings reported'}</bdi></p>
+          {Object.keys(pendingConfig).length > 0 && <p className="config-pending" role="status">Applying session settings…</p>}
+          {configError && <p className="form-error" role="alert"><bdi>{configError}</bdi></p>}
+        </ComposerSettings>}
         <div
           className={'composer-box' + (dragging ? ' dragging' : '')}
           onDragOver={(e) => {
@@ -539,12 +541,11 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
             placeholder={cmds.length > 0 ? 'Write a prompt… (/ for commands)' : 'Write a prompt…'}
             onChange={(e) => {
               edit(e.target.value)
-              e.target.style.height = 'auto'
-              e.target.style.height = `${e.target.scrollHeight}px`
             }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
+          {(options.length > 0 || configError || Object.keys(pendingConfig).length > 0) && <SettingsSummary trigger={settingsTrigger} summary={configSummary} expanded={settingsOpen} open={() => setSettingsOpen(true)} pending={Object.keys(pendingConfig).length > 0} warning={!!configError} />}
           {hostImages && (
             <>
               <input
@@ -613,17 +614,9 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
                 Resume and send
               </button>
             )}
+            {notice.busyTurn && onJumpToQuestion && <button className="btn btn-ghost btn-sm" type="button" onClick={onJumpToQuestion}>Go to open request</button>}
           </div>
         )}
-        <div className="composer-hint">
-          <span>
-            <kbd>⌘</kbd>/<kbd>Ctrl</kbd> <kbd>↵</kbd> to send
-          </span>
-          <span>·</span>
-          <span>
-            <kbd>↵</kbd> for a new line
-          </span>
-        </div>
       </div>
     </div>
   )

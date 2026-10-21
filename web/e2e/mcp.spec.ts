@@ -122,6 +122,7 @@ for (const width of [1280, 390]) {
       await stepUp(page)
       const card = page.getByRole('listitem', { name: 'Docs', exact: true })
       await expect(card.getByRole('heading', { name: 'Docs', exact: true })).toBeFocused()
+      await card.locator('.connection-settings > summary').click()
       await expect(card.getByText('hennery-docs', { exact: true })).toBeVisible()
       await expect(card.getByText('Not used yet', { exact: true })).toBeVisible()
       await expect(card.getByText('Not set yet', { exact: true })).toBeVisible()

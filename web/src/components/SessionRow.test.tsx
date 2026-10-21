@@ -116,13 +116,17 @@ describe('SessionRow', () => {
   })
 })
 
-it('adds family links outside the session link, preserving native navigation', () => {
+it('uses a compact child count and an indented clickable child without family link lines', () => {
   const family = { revision: 1, parent: { session_id: 'p/1', title: 'Coordinator', agent: 'claude' }, children: [{ session_id: 'c/1', title: 'Worker', agent: 'codex' }], child_counts: { total: 1, active: 1, waiting: 0 }, attention: 0 }
-  render(<SessionRow now={NOW} session={summary({ family })} selected={false} />)
-  const parentLink = screen.getByRole('link', { name: 'Parent: Coordinator' })
-  const childLink = screen.getByRole('link', { name: 'Child: Worker' })
-  expect(parentLink).toHaveAttribute('href', '/sessions/p%2F1')
-  expect(childLink).toHaveAttribute('href', '/sessions/c%2F1')
-  expect(parentLink.closest('.sess')).toBeNull()
-  expect(childLink.closest('.sess')).toBeNull()
+  const { container } = render(<SessionRow now={NOW} session={summary({ family })} selected={false} childrenCount={1} indent />)
+  expect(screen.getAllByRole('link')).toHaveLength(1)
+  expect(screen.getByRole('button', { name: '↳ 1 child' })).toHaveClass('sess-children')
+  expect(container.querySelector('.sess-child .sess-branch')).toHaveTextContent('↳')
+  expect(screen.queryByText(/^(Parent:|Child:)/)).not.toBeInTheDocument()
+})
+
+it('shortens model ids and retains complete host/model tooltips', () => {
+  render(<table><tbody><SessionRow now={NOW} session={summary({ model: 'claude-haiku-4-5-20251001' })} selected={false} hostName="a-very-long-development-hostname" table /></tbody></table>)
+  expect(screen.getByTitle('claude-haiku-4-5-20251001')).toHaveTextContent('Claude · Haiku 4.5')
+  expect(screen.getByTitle('a-very-long-development-hostname')).toHaveClass('sess-cell-truncate')
 })

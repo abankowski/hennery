@@ -11,15 +11,16 @@ interface Props {
   remove: () => void
   input: (id: number, node: HTMLTextAreaElement | null) => void
   clear: (env?: number) => void
+  compact?: boolean
 }
 
-export default function StdioServerForm({ draft: d, original, locked, allocate, change, remove, input, clear }: Props) {
+export default function StdioServerForm({ draft: d, original, locked, allocate, change, remove, input, clear, compact = false }: Props) {
   const identity = (name: string, command: string) => {
     clear()
     change({ ...d, name, command, env: d.env.map(e => ({ ...e, keep: e.keep && canKeepEnv(original, name, command, e.name), entered: false, empty: false })) })
   }
   const envChange = (id: number, patch: Partial<StdioDraft['env'][number]>) => change({ ...d, env: d.env.map(e => e.id === id ? { ...e, ...patch } : e) })
-  return <fieldset className="stdio-server">
+  const fields = <fieldset className="stdio-server">
     <legend><Text>{d.name || 'New local server'}</Text></legend>
     <label>Server name<input value={d.name} readOnly={locked} onChange={e => { if (!locked) identity(e.target.value, d.command) }} /></label>
     <label>Command<input value={d.command} readOnly={locked} onChange={e => { if (!locked) identity(d.name, e.target.value) }} /></label>
@@ -41,4 +42,8 @@ export default function StdioServerForm({ draft: d, original, locked, allocate, 
     <button type="button" className="btn btn-ghost" aria-disabled={locked} onClick={() => { if (!locked) change({ ...d, env: [...d.env, { id: allocate(), name: '', keep: false }] }) }}>Add environment variable</button>
     <button type="button" className="btn btn-danger" aria-disabled={locked} onClick={() => { if (!locked) remove() }}>Remove local server</button>
   </fieldset>
+  return compact ? <details className="stdio-server-disclosure" open={!original || undefined}>
+    <summary><Text>{d.name || 'New local server'}</Text><code><Text>{[d.command, ...d.args].join(' ')}</Text></code><span>{d.env.length ? `${d.env.length} environment variables` : 'No env'}</span><span>Edit</span></summary>
+    {fields}
+  </details> : fields
 }

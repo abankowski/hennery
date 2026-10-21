@@ -5,7 +5,8 @@
 // A row renders again only when its item (a new object for each version the
 // store takes) or the session's environment changes: an upsert at the tail
 // does not parse every message's Markdown again.
-import { memo } from 'react'
+import { Fragment, memo } from 'react'
+import { clockTime } from '../lib/time'
 import type { Item } from '../generated/view'
 import ItemBoundary from './ItemBoundary'
 import AgentMessage from './items/AgentMessage'
@@ -70,13 +71,14 @@ const Row = memo(function Row({ item, env }: { item: Item; env: ItemEnv }) {
   )
 })
 
-export default function Transcript({ items, env }: { items: Item[]; env: ItemEnv }) {
+export default function Transcript({ items, env, turnEnds, waiting = false }: { items: Item[]; env: ItemEnv; turnEnds?: ReadonlyMap<string, string>; waiting?: boolean }) {
   if (items.length === 0) return <p className="transcript-empty">Nothing in this session yet.</p>
   return (
     <>
-      {items.map((item) => (
-        <Row key={item.id} item={item} env={env} />
-      ))}
+      {items.map((item, index) => {
+        const end = item.turn_id && item.turn_id !== items[index + 1]?.turn_id ? turnEnds?.get(item.turn_id) : undefined
+        return <Fragment key={item.id}><Row item={item} env={env} />{end && <div className="divider turn-complete"><span>Turn complete{waiting && index === items.length - 1 ? ' — waiting for input' : ''} · <time dateTime={end}>{clockTime(end)}</time></span></div>}</Fragment>
+      })}
     </>
   )
 }

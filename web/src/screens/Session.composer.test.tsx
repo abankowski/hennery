@@ -57,6 +57,7 @@ describe('SessionView: the composer', () => {
   it('a config switch is replaced by the catalogue the 202 returns', async () => {
     const s = sessionServer({ config: (id) => json(catalogOf(id, 'c'), 202) })
     render(view('s1'), { wrapper: s.wrapper })
+    fireEvent.click(await screen.findByRole('button', { name: 'Session settings' }, WAIT))
     const select = (await screen.findByRole('combobox', { name: 'Model' }, WAIT)) as HTMLSelectElement
     expect(select.value).toBe('a')
     fireEvent.change(select, { target: { value: 'b' } })
