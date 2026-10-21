@@ -1,43 +1,31 @@
 # Changelog
 
-## Unreleased
+## 0.2.2
 
-- Subtle version information in the sidebar footer, Settings and More shows
-  the collector release and recorded source commit, with a small page/server
-  hint when an older page is still open.
-## Unreleased
-
-- Session tools make clear that Delegation on allows every model, mode and
-  option in the child's live catalog, including modes that never ask for
-  permission. Internal security classifications no longer appear in the
-  model-facing catalog. Actual child permission requests go to the operator.
-  Omitted child modes inherit the parent's mode for the same runtime; across
-  installed Claude/Codex runtimes, only `bypassPermissions` and
-  `agent-full-access` map to each other. Unoffered inherited modes use the
-  runtime default, and explicit modes always win.
-  Live agent mode changes also update inheritance; profile lookup uses host
-  connection metadata and does not start another adapter.
-  Legacy mode notifications from adapters without a mode option preserve
-  configuration evidence so child follow-ups can continue.
-## Unreleased
-
-- PWA updates take over immediately and the worker navigates open app windows
-  onto the new version, including older windows without update listeners.
-  Pages keep a delayed reload fallback, without an update button or waiting
-  for other windows. Saved composer drafts survive; unsent images and other
-  unsaved input may be lost. Drafts restored during a send warn that the prompt
-  may already have been sent, so its transcript can be checked before retrying.
-## Unreleased
-
-- Configure global delegation limits in Settings: live children, child starts
-  per operator message and automatic parent wake-ups, defaulting to 8, 32 and 20.
-- New session directory browsing keeps “Use this directory” beside the current
-  path while scrolling. Enter or a click outside chooses the shown directory;
-  Escape closes without choosing. Touch scrolling, scrollbar drags and secondary
-  clicks leave the choice open. Starting while browsing uses the shown directory
-  after resolving its hat; further edits cancel that pending start.
-  Repeated Start presses keep one pending start; cancellation is shown in words.
-
+- Updates replace immediately (#224). A new version takes over at once and
+  every open hennery window reloads onto it, including windows still on 0.2.1;
+  no button, no waiting for other windows. Saved message drafts survive, and a
+  draft whose send was interrupted notes that it may already have been sent.
+  Unsent images and other unsaved input may be lost.
+- Delegation (#225, #226):
+  - Session tools say plainly that a child may use any model, mode and option
+    its runtime offers, including modes that never ask for permission;
+    permission requests raised by a child go to you.
+  - A child inherits the parent's permission mode when none is given: the same
+    mode on the same runtime, and Claude `bypassPermissions` ↔ Codex
+    `agent-full-access` across runtimes. An explicit mode always wins.
+  - Delegation limits are global settings (Settings → Delegation limits): live
+    children per parent, child starts and automatic parent wake-ups per message
+    you send. Defaults stay 8, 32 and 20; each is 1–64.
+- The page and collector versions show quietly in the sidebar footer and at the
+  bottom of Settings and More, with a small hint when an older page is open
+  (#223).
+- New session directory browsing (#227): "Use this directory" stays beside the
+  current path; Enter or a tap/click outside chooses the shown directory, and
+  Escape closes without choosing. Starting while browsing starts in the shown
+  directory.
+- Database migration 27 runs on first start. An older binary cannot open the
+  upgraded database.
 
 ## 0.2.1
 
