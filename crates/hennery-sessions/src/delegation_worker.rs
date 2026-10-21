@@ -1,5 +1,8 @@
 //! Bounded fair draining of accepted parent commands and child notices.
-use crate::{AppState, delegation_runtime::checked_cwd};
+use crate::{
+    AppState,
+    delegation_runtime::{checked_cwd, config_offered},
+};
 use std::time::Duration;
 #[derive(Default)]
 struct Cursors {
@@ -80,14 +83,97 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
         {
             continue;
         }
+        let candidate = if session.lifecycle == "active" {
+            None
+        } else {
+            let head = match state.store.delegated_attach_candidate(&target, &state.hub)? {
+                Some(head) => Some(head),
+                None => state.store.notice_attach_candidate(&target, &state.hub)?,
+            };
+            let Some(head) = head else { continue };
+            if let Some(code) = head.refusal {
+                if crate::delegation_dispatch::attach_availability(
+                    &state.hub,
+                    &session.host_id,
+                    code != "agent_has_no_record",
+                ) != Some(Some(code))
+                {
+                    continue;
+                }
+                let now = hennery_kernel::secret::unix_now();
+                if code == "configuration_unavailable" {
+                    refuse_configuration(state, &target, &head.operation, now)?;
+                } else {
+                    state.store.fail_delegation_catalog(&target, code, now)?;
+                    state.store.fail_notice_catalog(&target, code, now)?;
+                }
+                continue;
+            }
+            Some(head)
+        };
         let work = async {
             let cwd = checked_cwd(state, &session.host_id, &session.hat_id, &session.cwd).await?;
             anyhow::ensure!(cwd == session.cwd, "invalid_cwd");
-            let catalog = state
-                .catalogs
-                .get(state, &session.host_id, &session.hat_id, &cwd, &session.agent)
-                .await
-                .unwrap_or_else(|_| crate::session_tools::unknown_catalog(session.agent.clone()));
+            let catalog = if session.lifecycle == "active" {
+                state
+                    .catalogs
+                    .get(state, &session.host_id, &session.hat_id, &cwd, &session.agent)
+                    .await
+                    .unwrap_or_else(|_| crate::session_tools::unknown_catalog(session.agent.clone()))
+            } else {
+                match state
+                    .catalogs
+                    .get_for_attach(
+                        state,
+                        &session.host_id,
+                        &session.hat_id,
+                        &cwd,
+                        &session.agent,
+                        candidate
+                            .as_ref()
+                            .and_then(|head| uuid::Uuid::parse_str(&head.operation).ok())
+                            .and_then(|id| id.get_timestamp())
+                            .map(|at| {
+                                let (seconds, nanos) = at.to_unix();
+                                std::time::UNIX_EPOCH + Duration::new(seconds, nanos)
+                            })
+                            .unwrap_or_else(std::time::SystemTime::now),
+                    )
+                    .await
+                    .and_then(|catalog| {
+                        anyhow::ensure!(
+                            catalog.freshness == hennery_proto::delegation_host::CatalogFreshness::Fresh,
+                            "catalog_unavailable"
+                        );
+                        state.store.clear_delegation_catalog_failures(&target)?;
+                        anyhow::ensure!(
+                            config_offered(
+                                &catalog,
+                                &candidate.as_ref().expect("nonactive attach candidate").required
+                            ),
+                            "configuration_unavailable"
+                        );
+                        Ok(catalog)
+                    }) {
+                    Ok(catalog) => catalog,
+                    Err(error) => {
+                        let code = crate::session_tools::error_code(&error);
+                        let now = hennery_kernel::secret::unix_now();
+                        if code == "configuration_unavailable" {
+                            refuse_configuration(
+                                state,
+                                &target,
+                                &candidate.as_ref().expect("attach candidate").operation,
+                                now,
+                            )?;
+                        } else {
+                            state.store.fail_delegation_catalog(&target, code, now)?;
+                            state.store.fail_notice_catalog(&target, code, now)?;
+                        }
+                        return Ok(());
+                    }
+                }
+            };
             if session.lifecycle == "active" {
                 let catalog = state.store.attached_delegation_catalog(&target, &catalog)?;
                 state.store.dispatch_delegated(&target, &catalog, &state.hub)?;
@@ -102,4 +188,9 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
         tokio::select! {biased; ()=state.shutdown.cancelled()=>return Ok(()),_ = work=>{}}
     }
     Ok(())
+}
+
+fn refuse_configuration(state: &AppState, target: &str, operation: &str, now: i64) -> anyhow::Result<()> {
+    state.store.fail_delegation_configuration(target, operation, now)?;
+    state.store.fail_notice_configuration(target, operation, now)
 }

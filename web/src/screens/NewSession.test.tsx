@@ -88,8 +88,6 @@ function base(): Record<string, Answer | Answer[]> {
   for (const agent of ['claude', 'codex', 'my-agent']) for (const hatId of ['hat-a','hat-b']) settings[`GET /api/hats/${hatId}/session-defaults?agent=${agent}`] = json(200, { hat_id: hatId, agent, revision: 0, config: {} })
   return {
     ...settings,
-    'GET /api/hats/hat-a/delegation-policy': json(200, { revision: 0, allowed: {} }),
-    'GET /api/hats/hat-b/delegation-policy': json(200, { revision: 0, allowed: {} }),
     'GET /api/view/sessions/s-1?limit=1': json(200, { items: [] }),
     'GET /api/sessions/s-1': json(200, { session_id: 's-1', hat_id: 'hat-a', lifecycle: 'active' }),
     'GET /api/sessions/s-1/catalog': json(200, { session_id: 's-1', config_options, commands: [] }),
@@ -623,8 +621,6 @@ describe('in the app', () => {
           return base()['GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat'] as Response
         case 'GET /api/hats/hat-b/session-defaults':
           return json(200, { hat_id: 'hat-b', agent: 'claude', revision: 0, config: {} })
-        case 'GET /api/hats/hat-b/delegation-policy':
-          return json(200, { revision: 0, allowed: {} })
         case 'POST /api/hats/resolve':
           return json(200, { ...RESOLVED, hat_id: 'hat-b' })
         case 'POST /api/sessions':

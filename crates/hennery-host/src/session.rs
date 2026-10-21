@@ -703,12 +703,17 @@ struct Turn {
 }
 
 /// Why a start or resume failed: the `start_failed` code and message.
-struct StartError {
+#[derive(Debug)]
+pub(crate) struct StartError {
     code: &'static str,
     message: String,
 }
 
 impl StartError {
+    pub(crate) fn is_auth_required(&self) -> bool {
+        self.code == "agent_not_logged_in"
+    }
+
     fn other(message: String) -> Self {
         Self {
             code: "start_failed",
@@ -730,6 +735,14 @@ impl StartError {
         }
     }
 }
+
+impl std::fmt::Display for StartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for StartError {}
 
 /// What the adapter sent before `session_started`, in wire order: emitted
 /// right after it.
@@ -938,12 +951,15 @@ impl Actor {
     }
 
     fn start_failed(&self, request_id: String, error: StartError) {
+        // Generation-bound attaches also resume operator parents for notices.
+        // Keep session failure codes stable; delegation maps its own results.
+        let code = error.code;
         // Redacted before it is logged too, not only when emitted.
         let message = self.secrets.redact(&error.message);
-        tracing::warn!(session_id = %self.session_id, code = error.code, %message, "session start failed");
+        tracing::warn!(session_id = %self.session_id, code, %message, "session start failed");
         self.emit(SessionBody::StartFailed {
             request_id,
-            code: error.code.into(),
+            code: code.into(),
             message,
         });
     }
@@ -2338,7 +2354,7 @@ pub(crate) async fn probe_catalog(
         };
         let (_, catalog, _) = negotiate(&conn, cwd, &Attach::New, &mcp, &mut updates, &mut replay)
             .await
-            .map_err(|_| anyhow::anyhow!("catalog negotiation failed"))?;
+            .map_err(anyhow::Error::new)?;
         Ok(if catalog.authoritative {
             catalogue_extracts(&catalog.options)
         } else {

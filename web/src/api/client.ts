@@ -17,6 +17,7 @@
 import { ApiFailure, Unauthenticated, retryAfterSeconds } from './errors'
 import { loginHref } from './next'
 import { navigationGate } from '../pwa/navigation'
+import { captureUpdateSave } from '../pwa/update-edits'
 
 export interface ClientDeps {
   fetch: typeof fetch
@@ -62,19 +63,23 @@ export class Client {
    *  empty answer). */
   async request<T>(method: string, path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
     const finish = method === 'GET' || method === 'HEAD' ? () => {} : navigationGate.mutation()
+    const saved = method === 'GET' || method === 'HEAD' ? () => {} : captureUpdateSave()
+    let success = false
     try {
     const first = await this.networkAttempt<{ retry: true } | { retry: false; value: T }>(method, path, body, options, async (response) => {
       if (options.stepUp !== false && await isStepUpRequired(response)) return { retry: true }
       options.onResponse?.(response)
       return { retry: false, value: await this.answer<T>(response) }
     })
-    if (!first.retry) return first.value
+    if (!first.retry) { success = true; return first.value }
     await this.stepUpOnce()
-    return await this.networkAttempt(method, path, body, options, async (response) => {
+    const value = await this.networkAttempt<T>(method, path, body, options, async (response) => {
       options.onResponse?.(response)
       return this.answer<T>(response)
     })
-    } finally { finish() }
+    success = true
+    return value
+    } finally { saved(success); finish() }
   }
 
   private async networkAttempt<T>(method: string, path: string, body: unknown, options: RequestOptions, read: (response: Response) => Promise<T>): Promise<T> {

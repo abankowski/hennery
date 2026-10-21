@@ -55,6 +55,68 @@ fn eligible_in(tx: &Transaction<'_>, owner: &str, n: &Notice) -> Result<bool> {
 }
 
 impl Store {
+    pub(crate) fn notice_attach_candidate(
+        &self,
+        parent: &str,
+        hub: &Hub,
+    ) -> Result<Option<crate::delegation_dispatch::AttachCandidate>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let Some(n) = next_in(&tx, self.owner_id(), parent)? else {
+            return Ok(None);
+        };
+        if !eligible_in(&tx, self.owner_id(), &n)? {
+            return Ok(None);
+        }
+        let (host, cwd, parked, record): (String, String, bool, Option<String>) = tx.query_row(
+            "SELECT host_id,cwd,lifecycle='parked',agent_session_id FROM sessions WHERE owner_id = ?1 AND id=?2",
+            params![self.owner_id(), parent],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        if !parked || !same_hat_in(&tx, self.owner_id(), &host, &n.hat, &cwd)? {
+            return Ok(None);
+        }
+        let Some(refusal) = crate::delegation_dispatch::attach_availability(hub, &host, record.is_some()) else {
+            return Ok(None);
+        };
+        Ok(Some(crate::delegation_dispatch::AttachCandidate {
+            operation: n.id,
+            required: serde_json::from_str(&n.required)?,
+            refusal,
+        }))
+    }
+
+    pub(crate) fn fail_notice_catalog(&self, parent: &str, code: &str, now: i64) -> Result<()> {
+        self.fail_notice_catalog_for(parent, code, now, None)
+    }
+    pub(crate) fn fail_notice_configuration(&self, parent: &str, expected: &str, now: i64) -> Result<()> {
+        self.fail_notice_catalog_for(parent, "configuration_unavailable", now, Some(expected))
+    }
+    fn fail_notice_catalog_for(&self, parent: &str, code: &str, now: i64, expected: Option<&str>) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.settle_notices_in(&tx)?;
+        if let Some(n) = next_in(&tx, self.owner_id(), parent)?
+            && expected.is_none_or(|id| id == n.id)
+            && eligible_in(&tx, self.owner_id(), &n)?
+        {
+            let (host, cwd, parked): (String, String, bool) = tx.query_row(
+                "SELECT host_id,cwd,lifecycle='parked' FROM sessions WHERE owner_id = ?1 AND id=?2",
+                params![self.owner_id(), parent],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            if parked && same_hat_in(&tx, self.owner_id(), &host, &n.hat, &cwd)? {
+                tx.execute(
+                    "UPDATE delegation_notices SET state='operator_required',reason=?3
+                    WHERE owner_id = ?1 AND delivery_id=?2 AND (
+                    ?3 IN ('auth_required','runtime_unavailable','cwd_unavailable','configuration_unavailable','agent_has_no_record') OR (?3 IN ('adapter_failed','catalog_unavailable','busy','timeout') AND deadline<=?4))",
+                    params![self.owner_id(), n.id, code, now],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
     pub fn attach_notice_parent(
         &self,
         parent: &str,
@@ -83,7 +145,7 @@ impl Store {
             || !hub.is_ready(&host)
             || !hub.has_capability(&host, Capability::DelegationConfig)
             || !same_hat_in(&tx, self.owner_id(), &host, &n.hat, &cwd)?
-            || !crate::delegation_runtime::security_allowed(catalog, &self.execution_policy_in(&tx, &n.hat)?, &config)
+            || !crate::delegation_runtime::config_offered(catalog, &config)
         {
             tx.commit()?;
             return Ok(false);
@@ -200,13 +262,7 @@ impl Store {
         };
         let evidence: ConfigEvidence = serde_json::from_str(&proof)?;
         let required: SessionConfig = serde_json::from_str(&n.required)?;
-        if !evidence_satisfies(
-            &evidence,
-            u64::try_from(generation)?,
-            &required,
-            catalog,
-            &self.execution_policy_in(&tx, &n.hat)?,
-        ) {
+        if !evidence_satisfies(&evidence, u64::try_from(generation)?, &required, catalog) {
             tx.execute("UPDATE delegation_notices SET state = 'waiting_config',reason = 'config_unverified' WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id])?;
             tx.commit()?;
             return Ok(false);

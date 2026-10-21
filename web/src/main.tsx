@@ -7,8 +7,10 @@ import App from './App'
 import './index.css'
 import { registerWorker } from './pwa/lifecycle'
 import { watchNavigationEdits } from './pwa/navigation'
+import { listenForUpdates } from './pwa/update-client'
 
 watchNavigationEdits()
+listenForUpdates()
 void registerWorker()
 
 createRoot(document.getElementById('root')!).render(

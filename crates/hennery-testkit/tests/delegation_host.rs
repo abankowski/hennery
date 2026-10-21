@@ -93,6 +93,78 @@ async fn stop(handle: session::SessionHandle) {
 }
 
 #[tokio::test]
+async fn unauthenticated_runtime_catalog_reports_auth_required() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().canonicalize().unwrap();
+    let mut s = script();
+    s.new_session_error = Some(-32000);
+    let error = CatalogProbes::new(1, Duration::from_secs(10))
+        .catalog("signed-out", fake(s, &cwd), Profile::Codex, cwd.clone(), vec![cwd])
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "auth_required");
+}
+
+#[tokio::test]
+async fn unauthenticated_delegated_attach_preserves_session_login_failure_without_a_brief() {
+    for attach in [
+        Attach::New,
+        Attach::Load {
+            agent_session_id: "existing".into(),
+        },
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let (up, _) = Uplink::new(Outbox::open_in_memory().unwrap());
+        let mut s = script();
+        s.new_session_error = Some(-32000);
+        s.load_error = Some(-32000);
+        let handle =
+            session::launch_delegated(up.clone(), launch(root.path(), s, attach), SessionOptions::default(), 1);
+        let facts = until(&up, |facts| !facts.is_empty()).await;
+        handle.finished().await;
+        assert!(
+            matches!(facts.as_slice(), [HostFrame::Session { body: SessionBody::StartFailed { code, message, .. }, .. }] if code == "agent_not_logged_in" && message == &agent_client_protocol::Error::auth_required().to_string()),
+            "{facts:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn operator_parent_reattached_for_a_notice_preserves_its_login_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let (up, _) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let mut s = script();
+    s.load_error = Some(-32000);
+    // Notice delivery resumes the operator's parent through the same
+    // generation-bound attach as children. A generation is not a child marker.
+    let handle = session::launch_delegated(
+        up.clone(),
+        launch(
+            root.path(),
+            s,
+            Attach::Load {
+                agent_session_id: "operator-parent".into(),
+            },
+        ),
+        SessionOptions::default(),
+        3,
+    );
+    let facts = until(&up, |facts| !facts.is_empty()).await;
+    handle.finished().await;
+    let [
+        HostFrame::Session {
+            body: SessionBody::StartFailed { code, message, .. },
+            ..
+        },
+    ] = facts.as_slice()
+    else {
+        panic!("{facts:?}");
+    };
+    assert_eq!(code, "agent_not_logged_in");
+    assert_eq!(message, &agent_client_protocol::Error::auth_required().to_string());
+}
+
+#[tokio::test]
 async fn ordinary_parent_attach_produces_evidence_and_accepts_a_fenced_report() {
     let root = tempfile::tempdir().unwrap();
     let (up, _) = Uplink::new(Outbox::open_in_memory().unwrap());
@@ -555,6 +627,9 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
         cwd.join("host"),
     );
     cfg.agents.insert("chosen".into(), fake(script(), &cwd));
+    let mut signed_out = script();
+    signed_out.new_session_error = Some(-32000);
+    cfg.agents.insert("signed-out".into(), fake(signed_out, &cwd));
     cfg.workspace_roots = vec![cwd.clone()];
     cfg.git = None;
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
@@ -617,6 +692,40 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
     )
     .await;
     assert!(matches!(read(&mut ws).await, HostFrame::ResendComplete));
+    for operator_initiated in [false, true] {
+        send(
+            &mut ws,
+            CollectorFrame::ProbeCatalog {
+                request_id: "signed-out-catalog".into(),
+                agent: "signed-out".into(),
+                cwd: cwd.display().to_string(),
+                operator_initiated,
+            },
+        )
+        .await;
+        assert!(
+            matches!(read(&mut ws).await, HostFrame::Error { code, message, .. } if code == "auth_required" && message.contains("not signed in"))
+        );
+    }
+    send(
+        &mut ws,
+        CollectorFrame::DelegatedAttach {
+            request_id: "signed-out-attach".into(),
+            session_id: "signed-out-child".into(),
+            committed_seq: 0,
+            agent: "signed-out".into(),
+            cwd: cwd.display().to_string(),
+            config: SessionConfig::default(),
+            hat_id: "hat-test".into(),
+            mcp: Default::default(),
+            attach_generation: 1,
+            agent_session_id: None,
+        },
+    )
+    .await;
+    assert!(
+        matches!(read(&mut ws).await, HostFrame::Session { body: SessionBody::StartFailed { code, message, .. }, .. } if code == "agent_not_logged_in" && message.contains("Authentication required"))
+    );
     send(
         &mut ws,
         CollectorFrame::ProbeCatalog {

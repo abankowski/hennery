@@ -131,6 +131,8 @@ async fn main() -> agent_client_protocol::Result<()> {
                         Some(code) => {
                             let message = if script.new_session_error_echoes {
                                 format!("scripted: {}", serde_json::to_string(&req.mcp_servers).unwrap())
+                            } else if code == i32::from(agent_client_protocol::ErrorCode::AuthRequired) {
+                                agent_client_protocol::Error::auth_required().message
                             } else {
                                 "scripted".into()
                             };
@@ -657,6 +659,9 @@ fn answer_load(
     responder: Responder<LoadSessionResponse>,
 ) -> agent_client_protocol::Result<()> {
     match script.load_error {
+        Some(code) if code == i32::from(agent_client_protocol::ErrorCode::AuthRequired) => {
+            responder.respond_with_error(agent_client_protocol::Error::auth_required())
+        }
         Some(code) => responder.respond_with_error(agent_client_protocol::Error::new(code, "scripted")),
         None if script.config_in_update_only => {
             if let Some(options) = announced() {

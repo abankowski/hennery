@@ -410,6 +410,8 @@ const MIGRATIONS: &[&str] = &[
      UPDATE delegation_attention SET state='resolved' WHERE EXISTS(SELECT 1 FROM sessions c
        WHERE c.owner_id=delegation_attention.owner_id AND c.id=delegation_attention.child_id
        AND (c.lifecycle IN ('closed','deleted') OR c.close_requested=1));",
+    // Binary delegation (26): ON follows the live catalog; no stored execution grants.
+    "DROP TABLE IF EXISTS delegation_execution_policy;",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -787,6 +789,7 @@ pub struct Reconciliation {
 }
 
 pub struct Store {
+    pub(crate) delegation_catalog_failures: Mutex<BTreeMap<String, i64>>,
     pub(crate) idle_hub: RwLock<Option<std::sync::Weak<crate::hub::Hub>>>,
     prompt_admissions: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     plugins: Arc<hennery_gateway::plugin::Control>,
@@ -1969,6 +1972,7 @@ impl Store {
             checkpoints.run();
         }
         Ok(Self {
+            delegation_catalog_failures: Mutex::default(),
             conn: hennery_kernel::db::CoordinatedConnection::new(conn),
             idle_hub: RwLock::new(None),
             plugins,
@@ -3857,6 +3861,13 @@ impl Store {
                          OR (lifecycle = 'failed' AND failure_reason = 'start_not_delivered'))",
                     params![session_id, code, self.owner],
                 )?;
+                if changed > 0 && code == "agent_not_logged_in" {
+                    tx.execute(
+                        "UPDATE session_operations SET code='auth_required' WHERE owner_id = ?1
+                        AND child_id=?2 AND state='failed' AND code='agent_not_logged_in'",
+                        params![self.owner_id(), session_id],
+                    )?;
+                }
                 if changed == 0 {
                     created.clear();
                     mark_unapplied(&tx, &self.owner, fact_id)?;
@@ -5505,5 +5516,150 @@ mod tests {
                 assert_eq!(hosts.list().unwrap().len(), 2);
             }
         }
+    }
+
+    #[test]
+    fn binary_delegation_migration_preserves_v25_enabled_hat_and_revision() {
+        use hennery_gateway::{
+            api::GatewayState, identity::SessionIdentity, key::MasterKey, scope::ProxyStore, session::GatewayMcp,
+            store::GatewayStore,
+        };
+        use hennery_kernel::secret::unix_now;
+        use hennery_proto::frames::{McpIsolation, McpServer};
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let hosts = Hosts::open(&db).unwrap();
+        hosts
+            .register(
+                "host",
+                &Enrollment {
+                    public_key: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a".into(),
+                    name: "test".into(),
+                    host_version: "0".into(),
+                    platform: "linux".into(),
+                },
+                1,
+            )
+            .unwrap();
+        hosts
+            .record_hello(
+                "host",
+                "0",
+                &hennery_proto::frames::Capabilities(vec![hennery_proto::frames::Capability::McpServers]),
+                unix_now(),
+            )
+            .unwrap();
+        hosts
+            .record_mcp_isolation(
+                "host",
+                &hennery_proto::frames::AgentIsolation(
+                    [("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect(),
+                ),
+            )
+            .unwrap();
+        let hat = hosts.host("host").unwrap().unwrap().default_hat_id;
+        let operator = Arc::new(Operator::open(&db).unwrap());
+        let setup = operator.issue_setup_token(unix_now()).unwrap().unwrap();
+        assert!(matches!(
+            operator
+                .set_up(&setup, "correct horse battery", "https://hennery.example", unix_now())
+                .unwrap(),
+            SetupOutcome::Done { .. }
+        ));
+        let gateway = Arc::new(GatewayStore::open(&db).unwrap());
+        let runtime = Arc::new(hennery_gateway::runtime::Runtime::new(
+            gateway.clone(),
+            Arc::new(ProxyStore::open(&db).unwrap()),
+            Arc::new(MasterKey::from_bytes([7; 32])),
+            hennery_kernel::egress::Egress::new(hennery_kernel::egress::Timeouts::DEFAULT).unwrap(),
+            Arc::new(hennery_gateway::notify::Silent),
+        ));
+        let state = GatewayState { runtime, operator };
+
+        let before = gateway.set_session_tools(&hat, true).unwrap();
+        {
+            let mut conn = hennery_kernel::db::open(&db).unwrap();
+            let owner = hennery_kernel::db::kernel_owner(&mut conn).unwrap();
+            hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..25]).unwrap();
+            conn.execute("INSERT INTO delegation_execution_policy(owner_id,hat_id,revision,allowed,configured) VALUES (?1,?2,9,?3,1)", params![owner,hat,r#"{"claude":{"mode":["plan"]}}"#]).unwrap();
+        }
+        let store = Store::open(&db).unwrap();
+        let conn = hennery_kernel::db::open(&db).unwrap();
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            26
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE name='delegation_execution_policy'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(gateway.session_tools(&hat).unwrap(), before);
+        store.set_session_mcp(Arc::new(GatewayMcp::for_collector(&state)));
+        let given = store
+            .create_session_with_mcp(
+                "parent",
+                "host",
+                "claude",
+                "/project",
+                &hat,
+                None,
+                McpContext {
+                    capable: true,
+                    isolation: McpIsolation::ClaudeStrict,
+                    rules_name_other_hats: false,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let parent: SessionIdentity = given
+            .servers
+            .iter()
+            .find_map(|s| match s {
+                McpServer::Http { name, headers, .. } if name == "hennery" => gateway
+                    .authenticate_session(headers[0].value.strip_prefix("Bearer ").unwrap())
+                    .unwrap(),
+                _ => None,
+            })
+            .unwrap();
+        store
+            .ingest("parent", 1, &SessionBody::session_started("request", "parent-agent"))
+            .unwrap();
+        let receipt = store
+            .queue_spawn(
+                &parent,
+                before.as_ref().unwrap().revision,
+                "digest",
+                &crate::delegation_queue::DelegatedLaunch {
+                    key: "after-upgrade",
+                    agent: "claude",
+                    cwd: "/project",
+                    brief: "work",
+                    name: None,
+                    config: &SessionConfig {
+                        mode: Some("agent-full-access".into()),
+                        ..Default::default()
+                    },
+                    mcp: McpContext {
+                        capable: true,
+                        isolation: McpIsolation::ClaudeStrict,
+                        rules_name_other_hats: false,
+                    },
+                },
+            )
+            .unwrap();
+        assert!(
+            store
+                .find_session(receipt.child_id.as_deref().unwrap())
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(gateway.session_tools(&hat).unwrap(), before);
+        Store::open(&db).unwrap();
     }
 }

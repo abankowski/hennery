@@ -1,6 +1,10 @@
 # hennery — UI redesign
 
 - **Date:** 2026-10-20
+- **Operator amendment, 2026-10-21:** per-hat Delegation is strictly binary.
+  ON permits all live catalog-offered runtime/model/mode/option values; OFF
+  denies delegation. No execution grants, policy snapshot or grant editor.
+  Enabling writes only the flag and never probes hosts.
 - **Status:** Proposed implementation contract; independent design/security review
   and scoped confirmation belong to the fleet parent. Recommendations below
   are not recorded as operator approvals.
@@ -46,10 +50,10 @@ approved. No application code or plan files are part of this change.
 | D6 | Show supported data only; omit invented progress, diagnostics, version/auth claims and password-change metadata. | **designer's recommendation**: this release adds defaults, not a diagnostics or account API. |
 | D7 | Agent baseline is read-only and comes from the selected host/cwd catalog. Persist sparse overrides by owner × hat × agent, not host or display name; on a different effective model, prune inherited nonsecurity axes as in §6.3. | **designer's recommendation**: the same hat spans different adapter pins and model-dependent axes; no new global agent-preference layer. |
 | D8 | Kernel owns defaults storage; sessions owns its operator HTTP facade. Require step-up on every PUT, including resets. | **designer's recommendation**: hat lifetime belongs to the kernel; all-write step-up covers permissive and unknown security modes without trusting labels. |
-| D9 | The launcher resolves and sends explicit config using existing start/config APIs. Defaults do not implicitly change resume, delegated spawn, or delegation execution policy. | **designer's recommendation**: keeps operator preferences separate from agent authorization. |
+| D9 | The launcher resolves and sends explicit config using existing start/config APIs. Defaults do not implicitly change resume or delegated spawn. | **designer's recommendation**: keeps operator preferences separate from agent authorization. |
 | D10 | Unsupported stored values are omitted with a visible, field-specific notice; unavailable explicit picks block Start until corrected. Hold a first prompt when requested config is not confirmed. | **designer's recommendation**: no silent alternate model or weaker permission setting. |
 | D11 | Use bundled Heroicons SVG paths, native controls where practical, and no new runtime dependency. | **designer's recommendation**: matches the design within current CSP and bundle limits. |
-| D12 | Use the responsive geometry, focus/shortcut contract, hat-only/all-lifecycle Needs you query, honest paging and exclusive file ownership in §§3–10; expose the existing execution-grant editor separately from the delegation toggle. | **designer's recommendation**: resolves prototype-only and parallel-lane gaps. |
+| D12 | Use the responsive geometry, focus/shortcut contract, hat-only/all-lifecycle Needs you query, honest paging and exclusive file ownership in §§3–10. Delegation has one binary switch, with no grant editor. | **operator amendment, 2026-10-21** for Delegation; remaining layout is the designer's recommendation. |
 
 ## 2. Existing implementation boundaries
 
@@ -80,7 +84,7 @@ Important source anchors at this base:
 | Launcher catalog | `GET /api/hosts/{id}/runtime-catalog?agent=…&cwd=…`; `HostCatalog {agent, adapter_revision, config_options, defaults, security, freshness}` |
 | Session configuration | `StartSessionRequest {host_id, agent, cwd, model?, mode?, axes?}`; `POST /api/sessions/{id}/config`; returned `SessionCatalog` is actual adapter state |
 | Attention | `SessionSummary.operator_attention`, `parent_handled_questions`, `question_waits`, `family`; `api/attention.ts` for real delegation fallback records |
-| Hat authorization | GET/PATCH `/api/hats/{id}/session-tools`; separate `/api/hats/{id}/delegation-policy` execution grant |
+| Hat authorization | GET/PATCH `/api/hats/{id}/session-tools`; binary delegation enablement only |
 | Push | `crates/hennery-sessions/src/notify.rs`, `web/worker.js`, `pwa/notification.ts`, `pwa/navigation.ts`, `components/NotificationNavigation.tsx` |
 | HTTP security | `crates/hennery-kernel/src/csp.rs`: scripts, connections, workers and manifest same-origin; default-src also restricts fonts |
 
@@ -580,7 +584,7 @@ never replaces a form while typing or moves focus to another request.
 | Push devices, labels, last acceptance/error, remove | Restyle; registrations are not physical device identities or delivery guarantees | `NotificationSettings.tsx` |
 | Per-hat mute/details/generic title and preview/Save | Restyle existing `PushPolicyItem`; explain details can expose agent text/secrets | `NotificationSettings.tsx`, `api/device.ts` |
 | Per-hat delegation switches, loading/error, activation/disable notices | Build frontend on GET/PATCH session-tools; Settings only, stepped up | `components/DelegationSettings.tsx` (new) |
-| Separate per-hat delegation execution-grant editor, profile baseline, catalog choices and explicit Save | Build frontend on existing GET/PATCH delegation-policy; step-up on PATCH; no automatic grant expansion | `DelegationSettings.tsx`, `api/delegation.ts` (new shared facade) |
+| Per-hat binary Delegation switch | PATCH only `delegation_enabled`, one step-up confirmation, no catalog probes | `DelegationSettings.tsx`, `api/delegation.ts` |
 | Signed-in devices/Revoke, current login/Sign out | Restyle existing behavior and cleanup | `AccountSettings.tsx`, `SignOut.tsx` |
 | Collector Public URL, default hat, Theme | Build/restyle read-only collector info; default-for-new-hosts from hats, per-host defaults stay in Hosts; appearance radios in Settings | `components/CollectorSettings.tsx` (new), `Settings.tsx` |
 | Push contact, attachment usage/cleanup status and deployment explanation omitted by prototype | Restyle/add reads from existing routes; display only reported values and existing isolation guidance | `CollectorSettings.tsx`, `Settings.tsx` |
@@ -693,12 +697,11 @@ and explains reduced prompting. Loading or applying a previously saved
 default does not ask for a second step-up: the deliberate persisted choice
 is the authorization to prefill subsequent operator launches.
 
-Saving defaults must never enable delegation, mutate
-`delegation_execution_policy`, broaden its allowed values or modify a
-running/parked session. The existing stepped-up delegation-policy endpoint
-remains separate; delegated configuration continues through its existing
-explicit config, execution policy and read-back gates. The parent cannot
-acquire a permissive mode because the operator changed a launcher preference.
+Saving defaults must never enable delegation or modify a running/parked
+session. Operator decision, 2026-10-21 removes the execution policy entirely.
+An enabled hat permits all live catalog-offered child configurations, including
+unknown-security profiles; defaults are separate operator launch preferences.
+Configuration must still be applied and confirmed before the child brief runs.
 
 ### 6.3 Deterministic inheritance and heterogeneous catalogs
 
@@ -730,11 +733,7 @@ When the effective model differs from `catalog.defaults.model`, mirror
 `launch_configuration` in
 `crates/hennery-sessions/src/delegation_runtime.rs:180`: remove inherited
 baseline `axes` entries unless their id is a security axis named by
-`catalog.security.axes` or by the selected agent's existing
-`ExecutionPolicy.allowed` keys. Read that policy through the existing
-operator GET `/api/hats/{id}/delegation-policy`; using its axis identities
-does not change its grants or make the operator launcher subject to an
-implicit delegation-policy merge. Preserve the baseline mode and all
+`catalog.security.axes`. No execution-policy read or merge exists. Preserve the baseline mode and all
 security requirements; never prune a sandbox/approval requirement simply
 because the model changed, or classify axes from display labels.
 
@@ -848,52 +847,29 @@ disabling immediately denies built-in calls, cancels undispatched work and
 routes outstanding attention to the operator; already delivered work keeps
 running as ordinary sessions. Re-enabling does not replay cancelled work.
 Do not say disabling stops all child processes, removes unrelated MCP
-mounts, or that enabling broadens the execution policy. No hat-card toggle.
+mounts, or that enabling changes unrelated permission settings. No hat-card toggle.
 
-In the same Settings section, expose a **separate explicit execution-grant
-editor** through existing `GET/PATCH /api/hats/{id}/delegation-policy`.
-GET returns `ExecutionPolicy {revision, allowed}`; PATCH sends the existing
-`SetExecutionPolicy {allowed}` through cookie/Origin and fresh step-up,
-then displays the returned stored policy. This is the existing whole-map
-replacement API: preserve unrelated agent/axis entries deliberately and
-show the complete change for review, rather than silently dropping them
-when editing one agent. Do not invent an optimistic revision request that
-the current API does not accept. Keep saved values/input on refusal or
-cancel, and show stale/unavailable catalog entries without silently removing
-their grants.
+Operator decision, 2026-10-21: the switch is the entire delegation
+configuration. ON means any runtime, model, mode and option offered by the
+live fresh catalog at spawn time, including Generic/ClaudeOwnCli profiles.
+There is no execution-policy route/type, grant editor, allowlist, snapshot or
+per-runtime/axis narrowing. The switch writes only `delegation_enabled`
+with one confirmation and never discovers hosts or probes runtimes. New
+catalog values and runtimes signed in later need no re-toggle.
 
-Explain that enabling session tools alone suffices **when the child's
-requested/actual configuration fits the effective execution policy**. For
-known profiles with no explicit override, the current baseline permits
-Claude `default`/`plan` and Codex `read-only`; own-CLI/generic profiles have
-no known safe baseline. More permissive modes or unknown profiles can
-produce `operator_required` until the operator explicitly configures a
-grant. The toggle still requires a fresh start/resume to deliver the tools;
-a grant is separate from descriptor delivery and runtime/MCP availability.
+An unusable runtime fails only that child spawn. Catalog errors identify host,
+runtime and readable reason; `auth_required` is “not signed in”. Preserve
+model/mode/option read-back and complete current-generation evidence before
+brief delivery. The switch help reads: “Sessions in this hat can start child sessions with any
+model and mode, including modes that don't ask for permission. Children cannot
+start their own children.” This keeps 0.2.0 ON's all-values authorization while
+making “all” current.
 
-Use the selected owned host/agent/validated-cwd runtime catalog for field
-ids and offered values, and trusted profile security classification for
-known security axes. For an unknown profile, require the operator to
-explicitly identify its policy axes and allowed catalog values; do not
-claim an automatically inferred safe policy. Show the effective baseline
-and overrides together, the affected hat/agent, and the reduced-prompting
-consequences before explicit Save. Unknown/stale catalogs are read-only
-for new choices, with Retry; existing grants remain inspectable/resettable.
-Retain the backend's semantics that an explicit axis entry replaces that
-axis's baseline allowed set, and that removing the override returns to the
-profile baseline. Never broaden grants automatically when enabling
-delegation, saving launcher defaults, changing model, encountering
-`operator_required`, or retrying a refused spawn.
-
-Acceptance must enable delegation through Settings and actually spawn a
-child under a supported baseline, then exercise **refusal → explicit
-stepped-up grant → successful spawn** for an out-of-baseline mode. Assert
-the refused configuration returns `operator_required` without launching
-its brief; save only the reviewed grant via Settings, retry deliberately,
-and verify the child config and brief delivery. Also cover the unknown
-profile's explicit-grant requirement and prove that the toggle/defaults
-write alone does not mutate `allowed`. An enabled switch or successful
-policy PATCH alone is not evidence that delegation works.
+Acceptance enables with an unauthenticated runtime present, signs it in later,
+and spawns in any offered mode without toggling again. Unauthenticated spawns
+return `auth_required` to the parent and the UI. Assert no catalog requests
+or policy writes occur while enabling, and verify child configuration and
+brief delivery after read-back. OFF retains immediate denial and cancellation.
 
 Keep per-hat `PushPolicyItem` settings and their current unmuted/no-details/
 session-title defaults. No per-event global switch or “only when hidden”
@@ -1009,7 +985,7 @@ builds. The following are requirements for the implementation plans.
 | Session | Existing `screens/Session*.test.tsx`, Composer/Transcript/item/AnswerBook/FamilyPanel suites; `web/e2e/sessions.spec.ts`, `family.spec.ts`: panel/sheet, parent banner/takeover, actual option ids, multi-question input, queued/uncertain/conflict/withdrawn/delivered, cancel/resume/draft preservation. |
 | Defaults backend | New kernel storage/migration tests and sessions HTTP integration tests: upgrade/reopen, owner/foreign hat, atomic revision race, empty reset/false, purge freeze/cascade, all PUT step-up/expiry/Origin/body bounds/invalid fields; add owner-audit cases and generator checks. |
 | Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, missing stored ids visibly omitted, explicit invalid pick blocked, unknown catalog explicit opt-out, stale responses, config clamp/failure prevents first prompt. Exercise the real Opus→Sonnet case: inherited `fast=false` omitted, required security axes preserved, supported deliberate effort retained and first prompt delivered after read-back. An explicit/stored unsupported `fast` request remains visible and prevents first prompt on failed/missing read-back. Assert actual start frame and no prompt before confirmation. |
-| Settings/management | Existing settings/manage/API tests, `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts` and new `delegation-settings.spec.ts`: new layout, default-hat controls, delegation enable/disable/step-up/cancel, separate execution-grant controls, per-hat privacy, secrets and device lifecycle intact. Actually spawn through enabled Settings under a known baseline; then require `operator_required` refusal → explicit stepped-up catalog-based grant → deliberately retried successful spawn with confirmed config/brief. Unknown profiles require explicit grants; enabling tools/defaults writes do not broaden `allowed`. |
+| Settings/management | Existing settings/manage/API tests, `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts` and new `delegation-settings.spec.ts`: new layout, default-hat controls, delegation enable/disable/step-up/cancel, binary delegation without catalog probes, per-hat privacy, secrets and device lifecycle intact. Actually spawn through enabled Settings with any offered mode, including an unknown-security profile. Enabling with an unauthenticated runtime succeeds; signing in later needs no re-toggle; an unauthenticated spawn returns auth_required. Defaults never enable delegation. |
 | Keyboard | New command/shortcut and palette tests plus browser checks: every key, editable/composed-path/select/IME guards, card-focus digits, dialog focus/return, typing never mutates an answer or starts a session. |
 | Rendering/CSP | Existing `security.test.ts`, `deps.test.ts`, browser CSP collectors and Markdown computed-style checks; no external assets, inline script, lost list markers or mobile controls. |
 
@@ -1086,7 +1062,7 @@ another lane's files.
 | R2 — shell, overview, queue, router, push | After R1; establishes all parallel seams | `App.tsx`/`App.test.tsx`, `app-actions.tsx` and its tests, `api/delegation.ts` and its tests; `components/Shell.tsx`, `SessionScope.tsx`, `NavigationRail.tsx`, `BottomNavigation.tsx`, `SessionList.tsx`, `SessionRow.tsx`, `HatSwitch.tsx`, `SessionFilters.tsx`, `NeedsYouQueue.tsx`, `AttentionPreview.tsx`, `CommandEntry.tsx`; `screens/Sessions.tsx`, `NeedsYou.tsx`, `More.tsx`, `Placeholder.tsx`; `router.tsx`, `lib/views.ts`, status/group helpers, `styles/shell.css`; shell/list/router/push tests, `web/e2e/shell.spec.ts`, `pwa.spec.ts`. Own worker/app-route allowlist integration, hat-only/all-lifecycle queue query and deep-link preservation. |
 | R3 — session | After R2 | `screens/Session.tsx`, session header/footer/menu, Transcript/Composer/FamilyPanel/StepList/McpDelivery/StatusAttention, `components/items/**`, new SessionDetails/QuestionActions/SessionConfig, `styles/session.css`; corresponding tests; `web/e2e/sessions.spec.ts`, `family.spec.ts`, `windowing.spec.ts`. Own session action-provider registration, read-back display, mobile forms and preservation of windowing measurements; do not edit launcher or shared catalog parser. |
 | R4 — launcher and defaults | After R2 | `screens/NewSession.tsx`, `Defaults.tsx`, ProjectPicker/NewSessionFrame/LaunchConfig/CatalogContext/DefaultsEditor, `api/defaults.ts`, `lib/defaults.ts`, `lib/start.ts`, `lib/catalog.ts`, `styles/launch.css`; new defaults backend/store/proto/schema/owner-audit changes; launcher/defaults tests and `web/e2e/new-session.spec.ts`. Own protocol generation and defaults capability; verify persistence/security/catalog divergence/first-prompt gate. |
-| R5 — management and Settings | After R2; final defaults summaries after R4 | `screens/Hosts.tsx`, `Mcp.tsx`, `Hats.tsx`, `Settings.tsx`; Pairing/PathRules/Mounts/MCP/stdio/OAuth forms, new Account/Notification/Delegation/CollectorSettings, management API helpers, `manage.css`; related tests; `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts`, `delegation-settings.spec.ts`. Own both delegation-toggle and separate execution-grant UI using R2's shared API facade; preserve current backend authorization and write-only secrets. |
+| R5 — management and Settings | After R2; final defaults summaries after R4 | `screens/Hosts.tsx`, `Mcp.tsx`, `Hats.tsx`, `Settings.tsx`; Pairing/PathRules/Mounts/MCP/stdio/OAuth forms, new Account/Notification/Delegation/CollectorSettings, management API helpers, `manage.css`; related tests; `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts`, `delegation-settings.spec.ts`. Own the binary delegation-toggle UI using R2's shared API facade; preserve current backend authorization and write-only secrets. |
 | R6 — commands and shortcuts | After R2; contextual acceptance with R3–R5 | `components/CommandPalette.tsx`, `ShortcutHelp.tsx`, `CommandHost.tsx`, `hooks/useShortcuts.ts`, `lib/commands.ts`, `styles/commands.css`; command tests and new `web/e2e/commands.spec.ts`. Consume registered actions, never copy another screen's mutation logic. |
 
 R2 must finish these integration seams before parallel branches start:
@@ -1117,9 +1093,8 @@ R2 must finish these integration seams before parallel branches start:
    and preserves existing exports/semantics. Session and launch config
    presentations have separate owned modules using the same primitives.
 6. R2 provides `web/src/api/delegation.ts` with generated-type wrappers for
-   GET/PATCH session-tools, GET/PATCH delegation-policy and the existing
-   runtime-catalog GET. R4 consumes its execution-policy read for security
-   axis identity; R5 consumes its reads/writes for Settings. Both use this
+   GET/PATCH session-tools and the existing runtime-catalog GET. R4 consumes
+   catalog metadata; R5 consumes session-tools reads/writes for Settings. Both use this
    facade read-only after R2, so parallel work does not duplicate wire types
    or collide in the helper file. Any API-contract change goes through
    the parent as a shared-foundation amendment.
@@ -1157,7 +1132,7 @@ new diagnostics/update/doctor telemetry; inferred “your turn”/read state;
 global editable agent defaults; automatic direct-start palette presets;
 file-mention completion; new provider/model aliases; remote font/icon loads;
 public-URL editing and a password-change API; new memory/board/workflow pages.
-The existing backends for logos, public URL, delegation policy and optional
+The existing backends for logos, public URL and optional
 plug-ins remain available under their established contracts.
 
 The parent should request scoped re-confirmation of review findings 1–4

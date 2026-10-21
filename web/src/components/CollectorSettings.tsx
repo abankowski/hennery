@@ -8,6 +8,7 @@ import { useResource } from '../hooks/useResource'
 import { Text } from '../lib/text'
 import { Link } from '../router'
 import { AppearanceOptions } from './ui'
+import { prepareInputSave } from '../pwa/update-edits'
 
 const REMOVAL: Record<RemovalState, string> = {
   removed: 'Transcript removed',
@@ -35,7 +36,7 @@ export default function CollectorSettings({ push, sessions, hats }: { push: bool
     {sessions && <p><Link to="/hats">Manage hats</Link> · <Link to="/hosts">Per-host defaults</Link></p>}
     {push && config.data && <div className="collector-contact"><p className="hint">The push contact lets a notification service contact the collector operator.</p>
       <label className="field">Push contact<input className="input" disabled={busy} value={contact ?? config.data.contact ?? ''} onChange={e => setContact(e.target.value)} /></label>
-      <button className="btn btn-ghost" disabled={busy} onClick={() => { setBusy(true); setError(null); setNotice(null); void saveContact(client, contact ?? config.data!.contact ?? '').then(value => { setContact(value.contact ?? ''); setNotice('Contact saved.') }).catch(err => setError(messageOf(err))).finally(() => setBusy(false)) }}>Save contact</button>
+      <button className="btn btn-ghost" disabled={busy} onClick={event => { const saved = prepareInputSave(event.currentTarget.parentElement!); setBusy(true); setError(null); setNotice(null); void saveContact(client, contact ?? config.data!.contact ?? '').then(value => { saved(); setContact(value.contact ?? ''); setNotice('Contact saved.') }).catch(err => setError(messageOf(err))).finally(() => setBusy(false)) }}>Save contact</button>
       {error && <p role="alert"><Text>{error}</Text></p>}{notice && <p role="status">{notice}</p>}
     </div>}
     {sessions && <><h3>Host transcript cleanup</h3>

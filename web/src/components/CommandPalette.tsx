@@ -94,7 +94,7 @@ export default function CommandPalette({ actions, loaded, close }: {
       if (event.nativeEvent.isComposing || event.keyCode === 229) return
       trap(event, close)
     }}>
-      <div className="command-search"><Icon name="magnifying-glass" size={20} />
+      <div className="command-search" data-update-search><Icon name="magnifying-glass" size={20} />
         <input ref={input} role="combobox" aria-label="Jump to a session or command" placeholder="Jump to a session, or type a command…" aria-autocomplete="list" aria-expanded="true" aria-controls={listId} aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined} value={query} onChange={event => { setQuery(event.target.value); select(0) }} onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return
           if (['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter'].includes(event.key)) {

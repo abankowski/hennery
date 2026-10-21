@@ -3,6 +3,8 @@
 // or sent, in any session but its own.
 
 const PREFIX = 'hennery.draft.'
+const unstored = new Set<string>()
+export const hasUnstoredDrafts = () => unstored.size > 0
 
 export function draftKey(sessionId: string): string {
   return `${PREFIX}${sessionId}`
@@ -22,14 +24,18 @@ export function saveDraft(sessionId: string, text: string): void {
   try {
     if (text === '') sessionStorage.removeItem(draftKey(sessionId))
     else sessionStorage.setItem(draftKey(sessionId), text)
+    unstored.delete(sessionId)
   } catch {
     // As above: the draft stays in the page only.
+    if (text) unstored.add(sessionId)
+    else unstored.delete(sessionId)
   }
 }
 
 /** Drop every session's draft, and nothing else held in `sessionStorage`
  *  (a sign-out: the text is the half most likely to hold a pasted secret). */
 export function forgetAllDrafts(): void {
+  unstored.clear()
   try {
     // Keys first: removing while walking the indices would skip some.
     const keys: string[] = []

@@ -360,6 +360,17 @@ impl Hub {
             .is_some_and(|h| h.capabilities.has(capability))
     }
 
+    /// A readiness/capability snapshot of the same current connection. An
+    /// offline or unreconciled host cannot establish an unsupported capability.
+    pub(crate) fn ready_capability(&self, host_id: &str, capability: Capability) -> Option<bool> {
+        self.hosts
+            .lock()
+            .expect("hosts lock")
+            .get(host_id)
+            .filter(|h| h.routable())
+            .map(|h| h.capabilities.has(capability))
+    }
+
     /// How the host's current connection isolates `agent`'s MCP servers
     /// (`hello.mcp_isolation`), with whether it announced `mcp_servers` at
     /// all; `None` if it is not connected. For plan 8e's delivery decision.

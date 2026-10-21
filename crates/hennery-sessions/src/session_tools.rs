@@ -1,7 +1,7 @@
 //! D2 handlers accept only the verified caller and one canonical typed request.
 use crate::{
     AppState,
-    delegation_runtime::{checked_cwd, config_offered, security_allowed},
+    delegation_runtime::{checked_cwd, config_offered},
     tool_args::{ToolCall, decode_tool},
 };
 use anyhow::{Result, ensure};
@@ -75,7 +75,6 @@ pub async fn execute(
                 runtimes,
                 catalogs,
                 cwd,
-                policy: state.store.execution_policy(caller.hat_id())?,
                 limits: DelegationLimits {
                     children: 8,
                     starts_per_operator_epoch: 32,
@@ -86,6 +85,7 @@ pub async fn execute(
             })?)
         }
         ToolCall::Spawn(mut args) => {
+            state.store.precheck_spawn(identity, revision, None)?;
             ensure!(
                 state.hub.has_capability(caller.host_id(), Capability::DelegationConfig),
                 "session_tools_unavailable"
@@ -96,30 +96,24 @@ pub async fn execute(
                 "runtime_unavailable"
             );
             let cwd = checked_cwd(state, caller.host_id(), caller.hat_id(), &args.cwd).await?;
+            state.store.precheck_spawn(identity, revision, Some(&cwd))?;
+            // Reserve admission before discovery so this fresh result can also
+            // authorize the first attach without another disposable process.
+            let operation = uuid::Uuid::now_v7().to_string();
             let catalog = state
                 .catalogs
-                .get(state, caller.host_id(), caller.hat_id(), &cwd, agent)
-                .await
-                .unwrap_or_else(|_| unknown_catalog(agent.to_string()));
+                .get_for_spawn(state, caller.host_id(), caller.hat_id(), &cwd, agent)
+                .await?;
             if args.config.model.is_none() && agent == caller.agent() {
                 args.config.model = state
                     .store
                     .find_session(caller.session_id())?
                     .and_then(|s| s.config.model);
             }
-            let fresh = catalog.freshness == CatalogFreshness::Fresh;
-            if fresh {
-                ensure!(config_offered(&catalog, &args.config), "configuration_unavailable");
-            }
-            let policy = state.store.execution_policy(caller.hat_id())?;
-            let required = crate::delegation_runtime::launch_configuration(&catalog, &args.config, &policy);
-            ensure!(
-                (!fresh && required.mode.is_none() && required.axes.is_empty())
-                    || security_allowed(&catalog, &policy, &required),
-                "operator_required"
-            );
+            let required = crate::delegation_runtime::launch_configuration(&catalog, &args.config);
+            ensure!(config_offered(&catalog, &required), "configuration_unavailable");
             let mcp = crate::api::mcp_context(state, caller.host_id(), agent)?;
-            Ok(serde_json::to_value(state.store.queue_spawn(
+            Ok(serde_json::to_value(state.store.queue_spawn_admitted(
                 identity,
                 revision,
                 &digest,
@@ -132,6 +126,7 @@ pub async fn execute(
                     config: &required,
                     mcp,
                 },
+                &operation,
             )?)?)
         }
         ToolCall::Send(args) => Ok(serde_json::to_value(state.store.queue_followup(
@@ -198,6 +193,7 @@ pub fn error_code(error: &anyhow::Error) -> &'static str {
         "generation_limit",
         "session_starting",
         "runtime_unavailable",
+        "agent_has_no_record",
         "configuration_unavailable",
         "session_tools_unavailable",
         "catalog_unavailable",
@@ -207,6 +203,7 @@ pub fn error_code(error: &anyhow::Error) -> &'static str {
         "busy",
         "timeout",
         "adapter_failed",
+        "auth_required",
         "host_offline",
         "invalid_cwd",
         "not_open",
@@ -226,6 +223,30 @@ pub fn error_code(error: &anyhow::Error) -> &'static str {
 /// Expose only deliberate, bounded argument guidance; never raw store errors or
 /// submitted content. These remain MCP tool results so a parent can retry.
 pub fn error_message(error: &anyhow::Error) -> String {
+    let runtime_reason = match error_code(error) {
+        "auth_required" => {
+            Some("the selected runtime is not signed in on the parent’s host; sign in there and retry this child spawn")
+        }
+        "host_offline" => Some("the parent’s host is offline; reconnect it and retry this child spawn"),
+        "runtime_unavailable" => Some("the selected runtime is unavailable on the parent’s host"),
+        "agent_has_no_record" => Some("the runtime has no record of this parked session; start a new child session"),
+        "adapter_failed" => Some(
+            "the selected runtime’s adapter failed to provide a catalog; check the runtime on the parent’s host and retry",
+        ),
+        "catalog_unavailable" | "catalog_stale" => Some(
+            "a fresh catalog is unavailable for the selected runtime on the parent’s host; retry when it is available",
+        ),
+        "configuration_unavailable" => Some(
+            "the selected runtime’s fresh catalog does not offer the requested configuration; read session_capabilities and choose offered values",
+        ),
+        "timeout" => Some("the selected runtime’s catalog probe timed out on the parent’s host; retry"),
+        "busy" => Some("the parent’s host is busy probing runtime catalogs; retry shortly"),
+        "cwd_unavailable" => Some("the working directory is unavailable for the selected runtime on the parent’s host"),
+        _ => None,
+    };
+    if let Some(reason) = runtime_reason {
+        return reason.into();
+    }
     if error.to_string() == "schema_changed" {
         return "the form changed during validation; read session_status and submit an answer matching the current requestedSchema".into();
     }

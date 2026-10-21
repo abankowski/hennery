@@ -21,7 +21,7 @@ export default function Defaults() {
   const [records, setRecords] = useState<Record<string, HatSessionDefaults>>({}), [loading, setLoading] = useState(false), [refresh, setRefresh] = useState(0)
   const generation = useRef(0), tabBase = useId(), recordsKey = JSON.stringify([agent, refresh])
   const [loadedKey, setLoadedKey] = useState('')
-  const context = useLaunchContext(preview?.host ?? '', agent, preview?.cwd ?? '', preview?.hat ?? '')
+  const context = useLaunchContext(preview?.host ?? '', agent, preview?.cwd ?? '', preview?.hat ?? '', 0, hosts.find(h => h.host_id === preview?.host)?.name ?? preview?.host)
   const catalog = context.state === 'ready' ? context.catalog : null
   useRegisterContext({ hostId: host, cwd: preview?.cwd, hatId: selectedHat })
   useEffect(() => {
@@ -85,9 +85,9 @@ export default function Defaults() {
     {error && <p role="alert"><bdi>{error}</bdi><button className="btn btn-secondary" type="button" onClick={() => setRefresh(value => value + 1)}>Retry defaults</button></p>}
     <section id={`${tabBase}-panel`} role="tabpanel" aria-labelledby={agents.includes(agent) ? `${tabBase}-${agents.indexOf(agent)}` : undefined}>
       {loading && <p role="status">Loading saved defaults…</p>}
-      <DefaultsMatrix key={agent} hats={hats} records={currentRecords} catalog={catalog} policy={context.policy} onSaved={saved} />
+      <DefaultsMatrix key={agent} hats={hats} records={currentRecords} catalog={catalog} onSaved={saved} />
       <details className="defaults-advanced" open={!catalog}><summary>Advanced editor</summary><label className="hat-editor-picker">Hat<select value={selectedHat} onChange={event => setSelectedHat(event.target.value)}>{hats.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>
-      {hat && record && <DefaultsEditor key={`${hat.id}:${agent}:${refresh}`} hat={hat} record={record} catalog={catalog} policy={context.policy} onSaved={saved} onReload={() => setRefresh(value => value + 1)} />}</details>
+      {hat && record && <DefaultsEditor key={`${hat.id}:${agent}:${refresh}`} hat={hat} record={record} catalog={catalog} onSaved={saved} onReload={() => setRefresh(value => value + 1)} />}</details>
     </section>
   </div>
 }

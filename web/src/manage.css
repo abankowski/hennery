@@ -140,13 +140,6 @@
 .device-settings { max-width:860px; }
 .device-settings .card > h2:first-child { margin:0 0 16px; padding-bottom:12px; border-bottom:1px solid var(--hn-line); }
 .device-settings > .card > .cards > .card { background:var(--hn-surface); border-radius:8px; }
-.settings-context { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-.settings-context .field { margin:0; }
-.settings-context .context-path { grid-column:1/-1; }
-.policy-values { display:flex; flex-wrap:wrap; gap:8px 16px; }
-.grant-axis { margin:12px 0; min-width:0; padding:12px; border:1px solid var(--hn-line); border-radius:8px; }
-.grant-axis legend { font-weight:500; padding-inline:4px; }
-.grant-review { margin:12px 0; padding:12px; background:var(--hn-sunken); border-radius:8px; }
 @media (max-width:767px) {
   .manage { padding:16px; gap:16px; }
   .manage-head h1 { font-size:20px; }
@@ -157,7 +150,6 @@
   .manage .inline-form, .manage .field-row { align-items:stretch; }
   .manage .inline-form .field, .manage .field-row .field { flex-basis:100%; }
   .manage .check, .manage .policy-control { min-height:44px; }
-  .settings-context { grid-template-columns:minmax(0,1fr); }
 }
 .manage a { min-height:32px; display:inline-flex; align-items:center; }
 @media (max-width:767px) { .manage a { min-height:44px; } }

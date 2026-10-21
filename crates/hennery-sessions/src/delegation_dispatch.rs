@@ -236,13 +236,7 @@ impl Store {
             previous.map_or(1, |(g, _)| g + 1)
         };
         let config: SessionConfig = serde_json::from_str(&required)?;
-        if catalog.agent != agent
-            || !(new_start
-                && catalog.freshness != hennery_proto::delegation_host::CatalogFreshness::Fresh
-                && config.mode.is_none()
-                && config.axes.is_empty())
-                && !crate::delegation_runtime::security_allowed(catalog, &self.execution_policy_in(&tx, &hat)?, &config)
-        {
+        if catalog.agent != agent || !crate::delegation_runtime::config_offered(catalog, &config) {
             return Ok(false);
         }
         let changed = tx.execute(
@@ -333,8 +327,7 @@ impl Store {
         };
         let evidence: ConfigEvidence = serde_json::from_str(&evidence)?;
         let required: SessionConfig = serde_json::from_str(&required)?;
-        let policy = self.execution_policy_in(&tx, &hat)?;
-        if !evidence_satisfies(&evidence, u64::try_from(generation)?, &required, catalog, &policy) {
+        if !evidence_satisfies(&evidence, u64::try_from(generation)?, &required, catalog) {
             tx.execute(
                 "UPDATE session_operations SET state = 'waiting_config' WHERE owner_id = ?1 AND operation_id = ?2",
                 params![self.owner_id(), operation],
@@ -371,7 +364,7 @@ impl Store {
                 serde_json::to_string(&origin)?
             ],
         )?;
-        tx.execute("UPDATE session_operations SET turn_id = ?3,request_id = ?2,state = 'awaiting_reconciliation',validated_attach = ?4,validated_config = ?5,validated_policy = ?6 WHERE owner_id = ?1 AND operation_id = ?2",params![self.owner_id(),operation,turn,generation,i64::try_from(evidence.config_revision)?,policy.revision])?;
+        tx.execute("UPDATE session_operations SET turn_id = ?3,request_id = ?2,state = 'awaiting_reconciliation',validated_attach = ?4,validated_config = ?5 WHERE owner_id = ?1 AND operation_id = ?2",params![self.owner_id(),operation,turn,generation,i64::try_from(evidence.config_revision)?])?;
         tx.execute("UPDATE session_dispatch_queue SET state = 'awaiting_reconciliation' WHERE owner_id = ?1 AND operation_id = ?2",params![self.owner_id(),operation])?;
         let frame = CollectorFrame::DelegatedPrompt {
             request_id: request,
@@ -510,5 +503,135 @@ impl Store {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         Ok(hub.notify_parent_transfer(host, &agent, isolated, frame))
+    }
+}
+
+/// A read-only head snapshot. Attach repeats its transaction-bound predicates
+/// after I/O; a handed-off start is never a new catalog-discovery candidate.
+pub(crate) struct AttachCandidate {
+    pub operation: String,
+    pub required: SessionConfig,
+    pub refusal: Option<&'static str>,
+}
+// The outer None defers discovery for an offline/unreconciled host. A ready
+// host can either attach (inner None) or establish a permanent refusal.
+pub(crate) fn attach_availability(hub: &Hub, host: &str, record: bool) -> Option<Option<&'static str>> {
+    let capable = hub.ready_capability(host, Capability::DelegationConfig)?;
+    Some(if !record {
+        Some("agent_has_no_record")
+    } else if !capable {
+        Some("configuration_unavailable")
+    } else {
+        None
+    })
+}
+
+impl Store {
+    pub(crate) fn delegated_attach_candidate(&self, target: &str, hub: &Hub) -> Result<Option<AttachCandidate>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let head: Option<(String, String, i64, String)> = tx
+            .query_row(
+                "SELECT operation_id,source_id,accepted_revision,required_config FROM session_dispatch_queue
+             WHERE owner_id = ?1 AND target_id=?2 AND state IN ('queued','waiting_config') ORDER BY position LIMIT 1",
+                params![self.owner_id(), target],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        let Some((operation, source, revision, required)) = head else {
+            return Ok(None);
+        };
+        if !self.transfer_in(&tx, &source, target, revision)? {
+            return Ok(None);
+        }
+        let (lifecycle, host, hat, cwd, record): (String, String, String, String, Option<String>) = tx.query_row(
+            "SELECT lifecycle,host_id,hat_id,cwd,agent_session_id FROM sessions WHERE owner_id = ?1 AND id=?2",
+            params![self.owner_id(), target],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        if !same_hat_in(&tx, self.owner_id(), &host, &hat, &cwd)? {
+            return Ok(None);
+        }
+        let possible = match lifecycle.as_str() {
+            "parked" => record.is_some(),
+            "starting" => {
+                let sent: Option<bool> = tx
+                    .query_row(
+                        "SELECT launch_sent FROM session_attach_evidence WHERE owner_id = ?1 AND session_id=?2",
+                        params![self.owner_id(), target],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if sent != Some(false) || record.is_some() {
+                    return Ok(None);
+                }
+                true
+            }
+            _ => return Ok(None),
+        };
+        let Some(refusal) = attach_availability(hub, &host, possible) else {
+            return Ok(None);
+        };
+        Ok(Some(AttachCandidate {
+            operation,
+            required: serde_json::from_str(&required)?,
+            refusal,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+    use hennery_proto::frames::{AgentIsolation, Capabilities};
+
+    #[test]
+    fn disconnect_after_ready_check_defers_attach_instead_of_refusing() {
+        let hub = Hub::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg = hub
+            .register(
+                "host",
+                tx,
+                Capabilities(vec![Capability::DelegationConfig]),
+                AgentIsolation::default(),
+            )
+            .unwrap();
+        hub.mark_ready("host", reg.conn_id);
+        assert!(hub.is_ready("host"));
+        hub.unregister("host", reg.conn_id);
+        assert_eq!(attach_availability(&hub, "host", true), None);
+        assert_eq!(attach_availability(&hub, "host", false), None);
+    }
+
+    #[test]
+    fn unreconciled_host_defers_attach_even_when_capability_is_missing() {
+        let hub = Hub::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        hub.register("host", tx, Capabilities::default(), AgentIsolation::default())
+            .unwrap();
+        assert_eq!(attach_availability(&hub, "host", true), None);
+    }
+
+    #[test]
+    fn ready_host_distinguishes_missing_record_from_unsupported_attach() {
+        for (capable, record, expected) in [
+            (true, true, None),
+            (true, false, Some("agent_has_no_record")),
+            (false, true, Some("configuration_unavailable")),
+        ] {
+            let hub = Hub::new();
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let caps = if capable {
+                vec![Capability::DelegationConfig]
+            } else {
+                vec![]
+            };
+            let reg = hub
+                .register("host", tx, Capabilities(caps), AgentIsolation::default())
+                .unwrap();
+            hub.mark_ready("host", reg.conn_id);
+            assert_eq!(attach_availability(&hub, "host", record), Some(expected));
+        }
     }
 }
