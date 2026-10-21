@@ -1,0 +1,9 @@
+.version-info { color:var(--hn-fg-3); font:400 11px/1.5 var(--font-body); overflow-wrap:anywhere; }
+.version-hint { display:block; }
+.about-version h2 { margin:0 0 4px; color:var(--hn-fg-3); font:500 12px/1.5 var(--font-body); }
+.rail-foot .version-info { flex-basis:100%; }
+.rail-collapsed .version-info { display:none; }
+.more-screen { flex:1; }
+.more-version { padding:12px 24px; margin-top:auto; }
+@media (min-width:768px) and (max-width:1023px) { .rail .version-info { display:none; } }
+@media (max-width:767px) { .more-version { padding:12px 16px; } }

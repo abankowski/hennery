@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Subtle version information in the sidebar footer, Settings and More shows
+  the collector release and recorded source commit, with a small page/server
+  hint when an older page is still open.
 - Session tools make clear that Delegation on allows every model, mode and
   option in the child's live catalog, including modes that never ask for
   permission. Internal security classifications no longer appear in the

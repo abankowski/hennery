@@ -247,6 +247,10 @@
     "CapabilitiesResponse": {
       "description": "`GET /api/capabilities` (kernel spec §8): the mode, which decides the\nviews the web UI shows, and the features this collector has switched\non. `features` is an open list: a client ignores a name it does not\nknow.",
       "properties": {
+        "collector_version": {
+          "description": "The running collector's release, from its crate version.",
+          "type": "string"
+        },
         "features": {
           "items": {
             "type": "string"
@@ -255,11 +259,19 @@
         },
         "mode": {
           "$ref": "#/$defs/DeploymentMode"
+        },
+        "source_commit": {
+          "description": "Release source revision, when recorded by the build; never a path.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "mode",
-        "features"
+        "features",
+        "collector_version"
       ],
       "type": "object"
     },

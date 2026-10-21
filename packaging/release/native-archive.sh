@@ -26,6 +26,7 @@ sh packaging/check-archive.sh "target/distrib/$archive.tar.xz" "$TARGET" --notic
 binary="$PWD/unpacked/$archive/hennery"
 sh packaging/check-linkage.sh "$binary"
 sh packaging/check-web-ui.sh "$binary"
+python3 packaging/release/check_source.py "$binary" release-materials/build-identity.json
 "$binary" --version
 cp target-manifest.json "target/distrib/$TARGET-dist-manifest.json"
 python3 packaging/release/refresh_manifest.py "target/distrib/$TARGET-dist-manifest.json" "target/distrib/$archive.tar.xz"
