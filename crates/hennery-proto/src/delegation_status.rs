@@ -1,7 +1,7 @@
 //! Operator configuration and bounded agent-facing delegation status.
 use crate::{
     delegation::OperationReceipt,
-    delegation_host::HostCatalog,
+    delegation_host::{CatalogFreshness, HostCatalog},
     frames::{PendingKind, SessionConfig},
 };
 use schemars::JsonSchema;
@@ -19,9 +19,33 @@ pub struct DelegationLimits {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct CapabilitiesResult {
     pub runtimes: Vec<String>,
-    pub catalogs: Vec<HostCatalog>,
+    pub catalogs: Vec<CapabilityCatalog>,
     pub cwd: String,
     pub limits: DelegationLimits,
+}
+
+/// Model-facing runtime choices. All offered values are selectable with
+/// Delegation on; internal security metadata is not an execution allowlist.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct CapabilityCatalog {
+    pub agent: String,
+    pub adapter_revision: String,
+    #[ts(type = "unknown[]")]
+    pub config_options: Vec<serde_json::Value>,
+    pub defaults: SessionConfig,
+    pub freshness: CatalogFreshness,
+}
+
+impl From<HostCatalog> for CapabilityCatalog {
+    fn from(catalog: HostCatalog) -> Self {
+        Self {
+            agent: catalog.agent,
+            adapter_revision: catalog.adapter_revision,
+            config_options: catalog.config_options,
+            defaults: catalog.defaults,
+            freshness: catalog.freshness,
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ChildQuestion {

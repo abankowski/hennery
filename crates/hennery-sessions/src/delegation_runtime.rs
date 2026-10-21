@@ -316,6 +316,20 @@ pub fn config_offered(catalog: &HostCatalog, requested: &SessionConfig) -> bool 
             .is_none_or(|v| has("mode", &ConfigValue::Id(v.clone())))
         && requested.axes.iter().all(|(key, value)| has(key, value))
 }
+
+/// Only verified installed profiles map the two modes that never ask.
+pub fn cross_runtime_mode(
+    parent: Option<hennery_proto::delegation_host::RuntimeProfile>,
+    child: Option<hennery_proto::delegation_host::RuntimeProfile>,
+    mode: Option<&str>,
+) -> Option<&'static str> {
+    use hennery_proto::delegation_host::RuntimeProfile::{Claude, Codex};
+    match (parent, child, mode) {
+        (Some(Claude), Some(Codex), Some("bypassPermissions")) => Some("agent-full-access"),
+        (Some(Codex), Some(Claude), Some("agent-full-access")) => Some("bypassPermissions"),
+        _ => None,
+    }
+}
 pub fn launch_configuration(catalog: &HostCatalog, requested: &SessionConfig) -> SessionConfig {
     let mut required = if catalog.freshness == CatalogFreshness::Fresh {
         catalog.defaults.clone()

@@ -1247,6 +1247,29 @@ fn stored(store: &Store) -> SessionConfig {
 }
 
 #[test]
+fn mode_only_live_update_preserves_other_config_and_replay_is_ignored() {
+    let store = Store::open_in_memory().unwrap();
+    started_with(&store, catalogue("model", "bypassPermissions"));
+    let before = store.catalog("s1").unwrap().unwrap();
+    let body = |mode: &str, early: bool| SessionBody::AcpUpdate {
+        indexed: Indexed {
+            current_mode: Some(mode.into()),
+            early,
+            ..Default::default()
+        },
+        payload: json!({"update":{"sessionUpdate":"current_mode_update","currentModeId":mode}}),
+    };
+    store.ingest("s1", 2, &body("default", false)).unwrap();
+    assert_eq!(stored(&store), config("model", "default"));
+    assert_eq!(
+        store.catalog("s1").unwrap().unwrap().config_options,
+        before.config_options
+    );
+    store.ingest("s1", 3, &body("bypassPermissions", true)).unwrap();
+    assert_eq!(stored(&store).mode.as_deref(), Some("default"));
+}
+
+#[test]
 fn session_started_stores_the_announced_catalogue_and_its_current_values() {
     let store = Store::open_in_memory().unwrap();
     started_with(&store, catalogue("large", "plan"));

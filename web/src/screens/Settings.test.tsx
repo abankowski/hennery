@@ -48,6 +48,12 @@ function page(push = true, routes: Record<string, Answer | Answer[]> = {}) {
   return { server, confirm }
 }
 describe('minimum device Settings', () => {
+  it('keeps About after every settings section', async () => {
+    page(false)
+    await screen.findByRole('heading', { name: 'Signed-in devices' })
+    const about = screen.getByRole('region', { name: 'About' })
+    expect(about.parentElement?.lastElementChild).toBe(about)
+  })
   it('loads a read-only Defaults summary and leaves editing on the Defaults screen', async () => {
     const { server } = page(true, {
       'GET /api/hosts': json(200, [{ host_id: 'host', name: 'Host', mcp_delivery: { custom: 'isolated' } }]),

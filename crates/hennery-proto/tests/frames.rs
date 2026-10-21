@@ -407,6 +407,7 @@ fn hello_capabilities_skip_unknown_entries_and_default_to_none() {
     assert!(newer.has(Capability::Park) && !newer.has(Capability::Projects));
     assert_eq!(hello(json!({})), Capabilities::default());
     let sent = HostFrame::Hello {
+        runtime_profiles: Default::default(),
         protocol_version: "1.0".into(),
         host_version: "0".into(),
         host_id: "h".into(),

@@ -41,9 +41,9 @@ pub enum CatalogFreshness {
     Unknown,
 }
 
-/// Profile-owned security axes and their baseline allowed values. `mode`
+/// Profile-owned security axes and their baseline values for operator warnings. `mode`
 /// means `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.
-/// Metadata supports defaults and operator warnings; it does not narrow an enabled hat.
+/// Evidence must confirm these axes were applied; baseline values never narrow delegation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SecurityClassification {
     pub known: bool,
@@ -60,4 +60,17 @@ pub struct HostCatalog {
     pub defaults: SessionConfig,
     pub security: SecurityClassification,
     pub freshness: CatalogFreshness,
+}
+
+/// Host-owned adapter identity for cross-runtime permission-mode inheritance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeProfile {
+    Claude,
+    Codex,
+    ClaudeOwnCli,
+    Generic,
+    /// A newer host profile is unverified here and never maps permission modes.
+    #[serde(other)]
+    Unknown,
 }

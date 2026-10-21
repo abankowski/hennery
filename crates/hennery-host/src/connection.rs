@@ -342,6 +342,7 @@ type WsStream = futures::stream::SplitStream<
 struct Announce {
     workspace_roots: Vec<String>,
     mcp_isolation: AgentIsolation,
+    runtime_profiles: std::collections::BTreeMap<String, hennery_proto::delegation_host::RuntimeProfile>,
 }
 
 async fn handshake(
@@ -389,6 +390,7 @@ async fn handshake(
                 Capability::PluginContext,
             ]),
             mcp_isolation: announce.mcp_isolation,
+            runtime_profiles: announce.runtime_profiles,
             workspace_roots: announce.workspace_roots,
             attached_sessions: attached()?,
         },
@@ -440,6 +442,11 @@ async fn connect_once(
         Announce {
             workspace_roots: cfg.reported_roots(),
             mcp_isolation: cfg.mcp_isolation(),
+            runtime_profiles: cfg
+                .agents
+                .keys()
+                .map(|id| (id.clone(), cfg.profile(id).runtime_profile()))
+                .collect(),
         },
         || attached_sessions(uplink, sessions),
         cfg.connect_timeout,

@@ -103,6 +103,7 @@ impl ScriptedHost {
             seqs: Default::default(),
         };
         host.send(&HostFrame::Hello {
+            runtime_profiles: Default::default(),
             protocol_version: PROTOCOL_VERSION.into(),
             host_version: "test".into(),
             host_id: HOST.into(),
