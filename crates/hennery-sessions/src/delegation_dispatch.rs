@@ -511,8 +511,21 @@ impl Store {
 pub(crate) struct AttachCandidate {
     pub operation: String,
     pub required: SessionConfig,
-    pub possible: bool,
+    pub refusal: Option<&'static str>,
 }
+// The outer None defers discovery for an offline/unreconciled host. A ready
+// host can either attach (inner None) or establish a permanent refusal.
+pub(crate) fn attach_availability(hub: &Hub, host: &str, record: bool) -> Option<Option<&'static str>> {
+    let capable = hub.ready_capability(host, Capability::DelegationConfig)?;
+    Some(if !record {
+        Some("agent_has_no_record")
+    } else if !capable {
+        Some("configuration_unavailable")
+    } else {
+        None
+    })
+}
+
 impl Store {
     pub(crate) fn delegated_attach_candidate(&self, target: &str, hub: &Hub) -> Result<Option<AttachCandidate>> {
         let mut conn = self.conn();
@@ -556,10 +569,69 @@ impl Store {
             }
             _ => return Ok(None),
         };
+        let Some(refusal) = attach_availability(hub, &host, possible) else {
+            return Ok(None);
+        };
         Ok(Some(AttachCandidate {
             operation,
             required: serde_json::from_str(&required)?,
-            possible: possible && hub.has_capability(&host, Capability::DelegationConfig),
+            refusal,
         }))
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+    use hennery_proto::frames::{AgentIsolation, Capabilities};
+
+    #[test]
+    fn disconnect_after_ready_check_defers_attach_instead_of_refusing() {
+        let hub = Hub::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg = hub
+            .register(
+                "host",
+                tx,
+                Capabilities(vec![Capability::DelegationConfig]),
+                AgentIsolation::default(),
+            )
+            .unwrap();
+        hub.mark_ready("host", reg.conn_id);
+        assert!(hub.is_ready("host"));
+        hub.unregister("host", reg.conn_id);
+        assert_eq!(attach_availability(&hub, "host", true), None);
+        assert_eq!(attach_availability(&hub, "host", false), None);
+    }
+
+    #[test]
+    fn unreconciled_host_defers_attach_even_when_capability_is_missing() {
+        let hub = Hub::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        hub.register("host", tx, Capabilities::default(), AgentIsolation::default())
+            .unwrap();
+        assert_eq!(attach_availability(&hub, "host", true), None);
+    }
+
+    #[test]
+    fn ready_host_distinguishes_missing_record_from_unsupported_attach() {
+        for (capable, record, expected) in [
+            (true, true, None),
+            (true, false, Some("agent_has_no_record")),
+            (false, true, Some("configuration_unavailable")),
+        ] {
+            let hub = Hub::new();
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let caps = if capable {
+                vec![Capability::DelegationConfig]
+            } else {
+                vec![]
+            };
+            let reg = hub
+                .register("host", tx, Capabilities(caps), AgentIsolation::default())
+                .unwrap();
+            hub.mark_ready("host", reg.conn_id);
+            assert_eq!(attach_availability(&hub, "host", record), Some(expected));
+        }
     }
 }

@@ -76,10 +76,13 @@ impl Store {
         if !parked || !same_hat_in(&tx, self.owner_id(), &host, &n.hat, &cwd)? {
             return Ok(None);
         }
+        let Some(refusal) = crate::delegation_dispatch::attach_availability(hub, &host, record.is_some()) else {
+            return Ok(None);
+        };
         Ok(Some(crate::delegation_dispatch::AttachCandidate {
             operation: n.id,
             required: serde_json::from_str(&n.required)?,
-            possible: record.is_some() && hub.has_capability(&host, Capability::DelegationConfig),
+            refusal,
         }))
     }
 
@@ -106,7 +109,7 @@ impl Store {
                 tx.execute(
                     "UPDATE delegation_notices SET state='operator_required',reason=?3
                     WHERE owner_id = ?1 AND delivery_id=?2 AND (
-                    ?3 IN ('auth_required','runtime_unavailable','cwd_unavailable','configuration_unavailable') OR (?3 IN ('adapter_failed','catalog_unavailable','busy','timeout') AND deadline<=?4))",
+                    ?3 IN ('auth_required','runtime_unavailable','cwd_unavailable','configuration_unavailable','agent_has_no_record') OR (?3 IN ('adapter_failed','catalog_unavailable','busy','timeout') AND deadline<=?4))",
                     params![self.owner_id(), n.id, code, now],
                 )?;
             }

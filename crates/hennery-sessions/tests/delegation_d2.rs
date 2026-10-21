@@ -6223,7 +6223,7 @@ async fn worker_missing_resume_record_fails_without_a_catalog_probe() {
             .unwrap()
             .state,
         OperationState::Failed {
-            code: "configuration_unavailable".into()
+            code: "agent_has_no_record".into()
         }
     );
     assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "parked");

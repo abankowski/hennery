@@ -2,6 +2,7 @@
 const labels = new Map([
   ['child_failed', 'Child session failed'],
   ['auth_required', 'Runtime is not signed in on its host'],
+  ['agent_has_no_record', 'The runtime has no record of this session'],
   ['configuration_unavailable', 'The runtime no longer offers the required settings'],
   ['runtime_unavailable', 'Runtime is not available on its host'],
   ['adapter_failed', 'The runtime’s adapter failed'],

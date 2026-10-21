@@ -347,17 +347,24 @@ for host evidence without catalog probes. Only unlaunched starts and attachable
 parked work discover catalogs. Reuse a fresh catalog captured after operation
 admission (including the tool's own spawn probe), within its freshness TTL;
 recheck all allocation/attach predicates transactionally. A fresh catalog that
-no longer offers the queued configuration, or a missing resume record, settles
-that head as `configuration_unavailable`; parked sessions remain parked and
+no longer offers the queued configuration settles that head as
+`configuration_unavailable`; a missing resume record uses `agent_has_no_record`.
+Parked sessions remain parked and
 new starts record the failure. These pre-attach failures differ from applied
 configuration mismatches on an already attached child below.
 
 Busy, timeout, adapter and transient catalog failures retry for 30 seconds from the
 first failed probe for that pending operation, irrespective of how long it was
-queued beforehand. In-memory retry clocks may reset after collector restart.
+queued beforehand. Accepting a fresh catalog clears the target’s pending
+retry clocks, so a recovered outage cannot expire a later follow-up. In-memory
+retry clocks may also reset after collector restart.
 Authentication/runtime unavailability remain immediate, and offline behavior
 is unchanged. Concurrent catalog callers share success and failure results;
 workers back off shared failures briefly without blocking independent contexts.
+Final operator review amendment, 2026-10-21: cached failures and Unknown catalogs
+may be reused only if captured at or after that operation’s admission. A host
+that disconnects or is not yet reconciled defers attach; only a ready host’s
+known missing capability is a permanent configuration refusal.
 Evidence confirms requested keys plus catalog security axes, ignoring unrelated
 current settings outside the adapter's option list.
 

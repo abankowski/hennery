@@ -41,7 +41,7 @@ fn prune_failures(tx: &Transaction<'_>, owner: &str, failures: &mut BTreeMap<Str
 impl Store {
     /// An accepted fresh catalog ends the failed-probe streak for every
     /// pending operation on that target, including work behind the head.
-    pub fn clear_delegation_catalog_failures(&self, target: &str) -> Result<()> {
+    pub(crate) fn clear_delegation_catalog_failures(&self, target: &str) -> Result<()> {
         let conn = self.conn();
         let mut statement = conn.prepare(
             "SELECT operation_id FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id = ?2

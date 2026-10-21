@@ -193,6 +193,7 @@ pub fn error_code(error: &anyhow::Error) -> &'static str {
         "generation_limit",
         "session_starting",
         "runtime_unavailable",
+        "agent_has_no_record",
         "configuration_unavailable",
         "session_tools_unavailable",
         "catalog_unavailable",
@@ -228,6 +229,7 @@ pub fn error_message(error: &anyhow::Error) -> String {
         }
         "host_offline" => Some("the parent’s host is offline; reconnect it and retry this child spawn"),
         "runtime_unavailable" => Some("the selected runtime is unavailable on the parent’s host"),
+        "agent_has_no_record" => Some("the runtime has no record of this parked session; start a new child session"),
         "adapter_failed" => Some(
             "the selected runtime’s adapter failed to provide a catalog; check the runtime on the parent’s host and retry",
         ),

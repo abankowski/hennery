@@ -91,9 +91,22 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
                 None => state.store.notice_attach_candidate(&target, &state.hub)?,
             };
             let Some(head) = head else { continue };
-            if !head.possible {
+            if let Some(code) = head.refusal {
+                if crate::delegation_dispatch::attach_availability(
+                    &state.hub,
+                    &session.host_id,
+                    code != "agent_has_no_record",
+                ) != Some(Some(code))
+                {
+                    continue;
+                }
                 let now = hennery_kernel::secret::unix_now();
-                refuse_configuration(state, &target, &head.operation, now)?;
+                if code == "configuration_unavailable" {
+                    refuse_configuration(state, &target, &head.operation, now)?;
+                } else {
+                    state.store.fail_delegation_catalog(&target, code, now)?;
+                    state.store.fail_notice_catalog(&target, code, now)?;
+                }
                 continue;
             }
             Some(head)
@@ -132,6 +145,7 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
                             catalog.freshness == hennery_proto::delegation_host::CatalogFreshness::Fresh,
                             "catalog_unavailable"
                         );
+                        state.store.clear_delegation_catalog_failures(&target)?;
                         anyhow::ensure!(
                             config_offered(
                                 &catalog,
