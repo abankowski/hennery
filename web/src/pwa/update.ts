@@ -1,10 +1,10 @@
 import type { AppWindow, Windows } from './navigation'
-import { appRoute } from './shell'
+import { updateRoute } from '../routes'
 
 export const UPDATE_BUSY = 'Another hennery window is busy — finish or close it, then retry.'
 export const UPDATE_SILENT = 'Another hennery window did not respond (it may be in the background — open or close it)'
 export const UPDATE_BOUND = 1500
-export type UpdateReason = 'busy' | 'silent' | 'self-sending' | 'self-changed'
+export type UpdateReason = 'busy' | 'silent' | 'self-sending' | 'self-changed' | 'replaced'
 type Reply = { ready: boolean; reason?: UpdateReason }
 type Participant = { client: AppWindow; port: MessagePort; ask(kind: string): Promise<Reply | null>; release(): void }
 function participant(client: AppWindow, id: string, until: number, initiator: boolean): Participant {
@@ -26,7 +26,7 @@ function participant(client: AppWindow, id: string, until: number, initiator: bo
 
 /** Includes uncontrolled app documents, but no attachment/auth/proxy pages. */
 export async function coordinateUpdate(clients: Windows, origin: string, sourceId: string, activate: () => Promise<void>, report: (reason: UpdateReason) => void = () => {}): Promise<boolean> {
-  const windows = async () => (await clients.matchAll({ type: 'window', includeUncontrolled: true })).filter(c => { const u = new URL(c.url); return u.origin === origin && appRoute(u.pathname) })
+  const windows = async () => (await clients.matchAll({ type: 'window', includeUncontrolled: true })).filter(c => { const u = new URL(c.url); return u.origin === origin && updateRoute(u.pathname) })
   const initial = await windows()
   if (!initial.some(c => c.id === sourceId)) return false
   const id = crypto.randomUUID(), until = Date.now() + UPDATE_BOUND

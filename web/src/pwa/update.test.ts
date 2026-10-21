@@ -119,12 +119,12 @@ it('only the consenting document reloads, exactly once on the intended controlle
   } finally { stop(); channel.port1.close(); channel.port2.close(); navigationGate.release('once') }
 })
 
-function pendingWindow(controller: object | null = null) {
+function pendingWindow(controller: object | null = null, path = '/sessions/a') {
   const service = new EventTarget(), worker = Object.assign(new EventTarget(), { state: 'installed' })
   Object.defineProperty(service, 'controller', { configurable: true, writable: true, value: controller })
   Object.assign(service, { getRegistration: async () => ({ waiting: worker }) })
   Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: service })
-  history.replaceState(null, '', '/sessions/a')
+  history.replaceState(null, '', path)
   const channel = new MessageChannel(), replies: { kind: string; ready: boolean }[] = []
   channel.port1.onmessage = event => replies.push(event.data)
   const reload = vi.fn(), report = vi.fn()
@@ -176,6 +176,17 @@ it('non-app windows never participate in update readiness', async () => {
   expect(await coordinateUpdate({ matchAll: async () => [a.client, attachment.client], openWindow: vi.fn() }, 'https://app.example', 'a', activate)).toBe(true)
   expect(attachment.requests).toEqual([])
 })
+it.each(['/', '/settings/', '/sessions/a.b', '/sessions/with%20space/'])('router-recognized app window participates at %s', async path => {
+  const a = peer('a'), b = peer('b', false), activate = vi.fn()
+  b.client.url = 'https://app.example' + path
+  expect(await coordinateUpdate({ matchAll: async () => [a.client, b.client], openWindow: vi.fn() }, 'https://app.example', 'a', activate)).toBe(false)
+  expect(b.requests).toContain('update_prepare')
+  expect(activate).not.toHaveBeenCalled()
+})
+it.each(['/', '/settings/', '/sessions/a.b', '/sessions/with%20space/'])('router-recognized app document consents at %s', async path => {
+  const page = pendingWindow(null, path)
+  try { await page.commit() } finally { page.close() }
+})
 it('focused durable composer and search input do not make a window busy', () => {
   for (const durable of ['data-persisted-draft', 'type="search"']) {
     document.body.innerHTML = `<input ${durable} value="keep this">`
@@ -217,7 +228,7 @@ it.each(['worker-first', 'controller-first'] as const)('activation and controlle
     expect(page.reload).toHaveBeenCalledOnce()
   } finally { page.close() }
 })
-it.each([['silent', 'did not respond'], ['busy', 'Another hennery window is busy'], ['self-changed', 'unsaved input changed']] as const)('worker result explains %s distinctly', async (reason, message) => {
+it.each([['silent', 'did not respond'], ['busy', 'Another hennery window is busy'], ['self-changed', 'unsaved input changed'], ['replaced', 'A newer update arrived — try again']] as const)('worker result explains %s distinctly', async (reason, message) => {
   const worker = { postMessage(_m: unknown, ports: MessagePort[]) {
     ports[0].postMessage({ version: 1, kind: 'update_result', ready: false, reason }); ports[0].close()
   } }

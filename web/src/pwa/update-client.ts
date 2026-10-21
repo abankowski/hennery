@@ -3,7 +3,7 @@ import { hasHeldImages } from '../lib/attachments'
 import { hasUnstoredDrafts } from '../lib/drafts'
 import { hasSends } from '../lib/sending'
 import { navigationGate, type NavigationGate } from './navigation'
-import { appRoute } from './shell'
+import { updateRoute } from '../routes'
 import { UPDATE_BOUND, UPDATE_BUSY, UPDATE_SILENT, type UpdateReason } from './update'
 import { editRevision, finishUpdateSubmit, hasUpdateEdits, observeUpdateFocus, observeUpdateInput, observeUpdateSubmit } from './update-edits'
 
@@ -54,7 +54,7 @@ export function listenForUpdates(reload = () => location.reload(), report = publ
     if (!live || !registration?.waiting || event.source !== registration.waiting) return
     const worker = registration.waiting, port = event.ports[0], id = m.id
     const initiator = m.initiator && requestedWorker === worker && requestedRevision === updateReadiness.revision && requestedLosses === updateReadiness.losses()
-    const ready = appRoute(location.pathname) && updateReadiness.reserve(id, m.until, initiator)
+    const ready = updateRoute(location.pathname) && updateReadiness.reserve(id, m.until, initiator)
     let timer: ReturnType<typeof setTimeout> | undefined
     let released = false
     const cleanup = () => { clearTimeout(timer); worker.removeEventListener('statechange', state) }
@@ -109,7 +109,7 @@ export function listenForUpdates(reload = () => location.reload(), report = publ
 let requestedWorker: ServiceWorker | null = null
 let requestedRevision = 0, requestedLosses = false
 const warning = 'Reload to update? Unsent images, question input, text that could not be saved and other unsaved form edits in this window will be lost. Saved text drafts will be preserved.'
-const explanation = (reason?: UpdateReason) => reason === 'silent' ? UPDATE_SILENT : reason === 'self-sending' ? 'This window has a send in progress — try again' : reason === 'self-changed' ? "This window's unsaved input changed — try again" : UPDATE_BUSY
+const explanation = (reason?: UpdateReason) => reason === 'replaced' ? 'A newer update arrived — try again' : reason === 'silent' ? UPDATE_SILENT : reason === 'self-sending' ? 'This window has a send in progress — try again' : reason === 'self-changed' ? "This window's unsaved input changed — try again" : UPDATE_BUSY
 export function reloadOlderWindow() {
   if (updateReadiness.sendingNow()) { publish(explanation('self-sending')); return }
   if (!updateReadiness.losses() || window.confirm(warning)) location.reload()

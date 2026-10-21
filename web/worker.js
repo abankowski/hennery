@@ -1,4 +1,4 @@
-import { appRoute, installShell, shellResponse, SHELL_PREFIX } from './src/pwa/shell'
+import { appRoute, cleanupShell, installShell, shellResponse } from './src/pwa/shell'
 import { pushJournal } from './src/pwa/journal'
 import { decodePush } from './src/pwa/notification'
 import { subscriptionBody } from './src/pwa/subscription'
@@ -11,10 +11,10 @@ self.addEventListener('message', (event) => {
   if (event.data?.version !== 1 || event.data.kind !== 'update_request' || !event.ports[0] || !event.source?.id) return
   event.waitUntil((async () => {
     let ready = false, reason = 'busy'
-    if (!updating && self.registration.waiting === self.serviceWorker) {
+    if (!updating && (self.serviceWorker === undefined || self.registration.waiting === self.serviceWorker)) {
       updating = true
       try { ready = await coordinateUpdate(self.clients, location.origin, event.source.id, () => {
-        if (self.registration.waiting !== self.serviceWorker) throw new Error('Update replaced')
+        if (self.serviceWorker !== undefined && self.registration.waiting !== self.serviceWorker) { reason = 'replaced'; throw new Error('Update replaced') }
         return self.skipWaiting()
       }, value => { reason = value }) }
       catch { /* Busy or vanished windows leave the worker waiting. */ }
@@ -31,11 +31,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   // Activate naturally after old windows close, or via the explicit,
   // all-window update handshake above. Never claim an existing document.
-  event.waitUntil((async () => {
-    for (const name of await caches.keys()) {
-      if (name.startsWith(SHELL_PREFIX) && !name.startsWith(`${SHELL_PREFIX}${__BUILD_ID__}-`)) await caches.delete(name)
-    }
-  })())
+  event.waitUntil(cleanupShell(caches, __BUILD_ID__))
 })
 self.addEventListener('fetch', (event) => {
   const r = event.request, url = new URL(r.url)

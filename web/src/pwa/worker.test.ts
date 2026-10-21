@@ -1,5 +1,6 @@
 import { MessageChannel as NodeMessageChannel } from 'node:worker_threads'
 import { readFileSync } from 'node:fs'
+import { extname } from 'node:path'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { build } from 'vite'
 import { workerHarness } from '../../e2e/push-fixture'
@@ -290,6 +291,12 @@ it('an active or superseded worker never coordinates a different waiting worker'
   expect(skipWaiting).not.toHaveBeenCalled()
   expect(prepare).not.toHaveBeenCalled()
 })
+it('a browser without the worker identity property can coordinate and activate', async () => {
+  const client = updateClient(), skipWaiting = vi.fn(async () => {})
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, workerIdentity: false, skipWaiting })
+  expect(await requestWorker(harness).result).toMatchObject({ ready: true })
+  expect(skipWaiting).toHaveBeenCalledOnce()
+})
 it('the emitted update handler holds updating until activation settles and then permits retry', async () => {
   const client = updateClient()
   let done!: () => void
@@ -311,13 +318,31 @@ it('a worker replaced during the handshake never calls skipWaiting', async () =>
   let scans = 0
   const dependencies = { ownWaiting: true, skipWaiting, clients: { matchAll: async () => { if (++scans === 3) dependencies.ownWaiting = false; return [client] }, openWindow: vi.fn() } }
   const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, dependencies)
-  expect(await requestWorker(harness).result).toMatchObject({ ready: false })
+  expect(await requestWorker(harness).result).toMatchObject({ ready: false, reason: 'replaced' })
   expect(skipWaiting).not.toHaveBeenCalled()
 })
 
-it('coordinated activation deletes old shell caches even with controlled windows, retaining foreign caches', async () => {
+it('activation deletes completed older shells, retaining newer installs and incomplete or foreign caches', async () => {
   const client = updateClient(), remove = vi.fn(async () => true)
-  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, caches: { keys: async () => ['hennery-shell-old-attempt', 'unrelated-cache'], delete: remove } })
+  const data = new Map<string, Map<string, Response>>([
+    ['hennery-shell-old-attempt', new Map([['/__hennery_shell_complete__', new Response('old')]])],
+    ['hennery-shell-older-partial', new Map()], ['unrelated-cache', new Map()],
+  ])
+  const caches = {
+    keys: async () => [...data.keys()], delete: remove,
+    open: async (name: string) => {
+      if (!data.has(name)) data.set(name, new Map())
+      return { put: async (key: string, response: Response) => { data.get(name)!.set(key, response) }, match: async (key: string) => data.get(name)!.get(key)?.clone() } as Cache
+    },
+  }
+  const mime: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2' }
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, {
+    clients: { matchAll: async () => [client], openWindow: vi.fn() }, caches,
+    fetch: async request => { const path = new URL(String(request)).pathname; return new Response(new Uint8Array(readFileSync(`dist${path}`)), { headers: { 'Content-Type': mime[extname(path)] } }) },
+  })
+  await harness.install()
+  data.set('hennery-shell-newer-install', new Map())
+  data.set('hennery-shell-newer-waiting', new Map([['/__hennery_shell_complete__', new Response('newer')]]))
   await harness.activate()
   expect(remove).toHaveBeenCalledExactlyOnceWith('hennery-shell-old-attempt')
 })

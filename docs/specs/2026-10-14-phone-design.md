@@ -230,11 +230,13 @@ all app windows to acknowledge readiness, preserving sessionStorage drafts
 and warning about unsent in-memory images/question input. A busy or
 unresponsive window defers it. Only then activate and reload consenting
 clients; do not use unconditional `clients.claim` to mix builds. Versioned
-cache cleanup touches only superseded hennery shell caches during activation;
-coordinated clients immediately reload.
+cache cleanup touches only completed hennery shell caches created before the
+activating build; a newer install's caches remain intact. Coordinated clients
+immediately reload.
 
 **Built 2026-10-21:** the banner's **Reload to update** action implements
 Update now. The waiting worker asks every same-origin **app-route** window
+(using the router's normalisation, including `/` and trailing slashes)
 to prepare, then arm one reload on controllerchange or that worker's activation
 (including uncontrolled first-install windows). Bounded replies and window-set
 rechecks defer busy or silent app windows with distinct explanations; attachment,
@@ -247,7 +249,10 @@ unmounts (including pending confirmation dialogs and question cards). A redundan
 worker or a five-second post-commit deadline releases the page with a retry
 notice, even if the worker's release message is lost. Previously controlled
 documents missed by coordination show a persistent older-version banner with
-an explicit Reload action. Activation deletes superseded shell caches; consenting
+an explicit Reload action, taking precedence over an activation-retry message.
+Auth pages keep the update notice without an update action. Worker identity is
+checked where the browser exposes it; a superseding update gets its own retry
+explanation. Activation deletes only completed older shell caches; consenting
 windows immediately reload. No unconditional skipWaiting or clients.claim is used.
 
 Browser eviction may remove shell/state at any time. Re-register on launch

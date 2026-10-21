@@ -41,6 +41,18 @@ export async function selectShell(storage: CacheStorage, build: string): Promise
   return null
 }
 
+export async function cleanupShell(storage: CacheStorage, build: string): Promise<void> {
+  // CacheStorage.keys is in creation order. A newer install can be writing
+  // after our cache already exists: never touch that install, even if complete.
+  const names = await storage.keys()
+  const boundary = names.findIndex(name => name.startsWith(`${SHELL_PREFIX}${build}-`))
+  for (const name of names.slice(0, Math.max(0, boundary))) {
+    if (!name.startsWith(SHELL_PREFIX)) continue
+    const completed = await (await (await storage.open(name)).match(COMPLETE))?.text()
+    if (completed && name.startsWith(`${SHELL_PREFIX}${completed}-`)) await storage.delete(name)
+  }
+}
+
 export function appRoute(path: string): boolean {
   return ['/sessions', '/needs-you', '/more', '/defaults', '/new', '/hosts', '/hats', '/settings', '/mcp'].includes(path)
     || /^\/sessions\/[A-Za-z0-9_-]{1,128}$/.test(path)

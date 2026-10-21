@@ -39,7 +39,7 @@ export async function mockPush(context: BrowserContext) {
   })
 }
 
-export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { origin?: string; clients?: Windows; pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void; skipWaiting?: () => Promise<void>; ownWaiting?: boolean; caches?: Pick<CacheStorage, 'keys' | 'delete'> } = {}) {
+export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { origin?: string; clients?: Windows; pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void; skipWaiting?: () => Promise<void>; ownWaiting?: boolean; workerIdentity?: boolean; caches?: Pick<CacheStorage, 'keys' | 'delete' | 'open'> } = {}) {
   type Event = { notification?: { data: { url: unknown }; close(): void }; data?: unknown; source?: { id: string }; ports?: MessagePort[]; oldSubscription?: PushSubscription | null; newSubscription?: PushSubscription | null; request?: Request; respondWith?(promise: Promise<Response>): void; waitUntil(promise: Promise<unknown>): void }
   const handlers = new Map<string, (event: Event) => void>()
   const notifications: { title: string; options: unknown }[] = [], fetches: string[] = []
@@ -63,7 +63,7 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
     return request
   } }
   const serviceWorker = {}
-  runInNewContext(code, { self: { serviceWorker, skipWaiting: dependencies.skipWaiting,
+  runInNewContext(code, { self: { ...(dependencies.workerIdentity === false ? {} : { serviceWorker }), skipWaiting: dependencies.skipWaiting,
     addEventListener: (name: string, handler: typeof handlers extends Map<string, infer V> ? V : never) => handlers.set(name, handler),
     clients: dependencies.clients ?? { matchAll: async () => [], openWindow: async () => null },
     registration: { get waiting() { return dependencies.ownWaiting === false ? {} : serviceWorker }, pushManager: dependencies.pushManager, showNotification: async (title: string, options: unknown) => { notifications.push({ title, options }) } } },
@@ -78,6 +78,7 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
     await work
   }
   return { notifications, fetches, attempts,
+    install: () => dispatch('install', {}),
     activate: () => dispatch('activate', {}),
     message: (data: unknown, source: { id: string }, port: MessagePort) => dispatch('message', { data, source, ports: [port] }),
     click: (url: unknown, close = () => {}) => dispatch('notificationclick', { notification: { data: { url }, close } }),
