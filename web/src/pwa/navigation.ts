@@ -47,6 +47,7 @@ export class NavigationGate {
     return true
   }
   blocked(now = Date.now()) { return this.frozen(now) }
+  hasMutations() { return this.mutations > 0 }
 }
 export const navigationGate = new NavigationGate()
 

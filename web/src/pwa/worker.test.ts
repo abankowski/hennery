@@ -1,3 +1,4 @@
+import { MessageChannel as NodeMessageChannel } from 'node:worker_threads'
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { build } from 'vite'
@@ -263,4 +264,60 @@ it('the shipped handler fences identity/generation, persists a supplied replacem
   await workerHarness(code, persisted).change(null, null)
   expect(persisted.row.enabled).toBe(false)
   expect(persisted.row).toHaveProperty('repair', 'reenable')
+})
+
+function updateClient() {
+  return { id: 'app', url: 'https://app.example/sessions/app', focus: vi.fn(), navigate: vi.fn(), postMessage(message: unknown, transfer?: Transferable[]) {
+    const m = message as { id: string }, port = transfer![0] as MessagePort
+    port.onmessage = event => {
+      if (event.data.kind === 'update_release') { port.close(); return }
+      port.postMessage({ version: 1, kind: 'update_commit_reply', id: m.id, ready: true })
+    }
+    port.postMessage({ version: 1, kind: 'update_prepare_reply', id: m.id, ready: true })
+    if ('unref' in port && typeof port.unref === 'function') port.unref()
+  } }
+}
+function requestWorker(harness: ReturnType<typeof workerHarness>) {
+  const channel = new NodeMessageChannel()
+  const reply = new Promise<unknown>(resolve => { channel.port1.onmessage = event => resolve(event.data) })
+  const work = harness.message({ version: 1, kind: 'update_request' }, { id: 'app' }, channel.port2 as unknown as MessagePort)
+  return { result: Promise.all([reply, work]).then(([value]) => value).finally(() => { channel.port1.close(); channel.port2.close() }) }
+}
+it('an active or superseded worker never coordinates a different waiting worker', async () => {
+  const client = updateClient(), skipWaiting = vi.fn(async () => {}), prepare = vi.spyOn(client, 'postMessage')
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, ownWaiting: false, skipWaiting })
+  expect(await requestWorker(harness).result).toMatchObject({ ready: false })
+  expect(skipWaiting).not.toHaveBeenCalled()
+  expect(prepare).not.toHaveBeenCalled()
+})
+it('the emitted update handler holds updating until activation settles and then permits retry', async () => {
+  const client = updateClient()
+  let done!: () => void
+  const pending = new Promise<void>(resolve => { done = resolve })
+  const skipWaiting = vi.fn(() => pending)
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, skipWaiting })
+  const first = requestWorker(harness)
+  await vi.waitFor(() => expect(skipWaiting).toHaveBeenCalledOnce())
+  expect(await requestWorker(harness).result).toMatchObject({ ready: false })
+  expect(skipWaiting).toHaveBeenCalledOnce()
+  done()
+  expect(await first.result).toMatchObject({ ready: true })
+  expect(await requestWorker(harness).result).toMatchObject({ ready: true })
+  expect(skipWaiting).toHaveBeenCalledTimes(2)
+})
+
+it('a worker replaced during the handshake never calls skipWaiting', async () => {
+  const client = updateClient(), skipWaiting = vi.fn(async () => {})
+  let scans = 0
+  const dependencies = { ownWaiting: true, skipWaiting, clients: { matchAll: async () => { if (++scans === 3) dependencies.ownWaiting = false; return [client] }, openWindow: vi.fn() } }
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, dependencies)
+  expect(await requestWorker(harness).result).toMatchObject({ ready: false })
+  expect(skipWaiting).not.toHaveBeenCalled()
+})
+
+it('coordinated activation deletes old shell caches even with controlled windows, retaining foreign caches', async () => {
+  const client = updateClient(), remove = vi.fn(async () => true)
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, caches: { keys: async () => ['hennery-shell-old-attempt', 'unrelated-cache'], delete: remove } })
+  await harness.activate()
+  expect(remove).toHaveBeenCalledExactlyOnceWith('hennery-shell-old-attempt')
 })

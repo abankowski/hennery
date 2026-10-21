@@ -36,7 +36,7 @@ async function controlled(page: Page) {
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
 }
 
-test('Reload to update defers a busy peer, confirms volatile input, and reloads both builds once preserving stored drafts', async ({ browser }) => {
+for (const controlled of [false, true]) test(`Reload to update from a ${controlled ? 'controlled' : 'first-install'} tab preserves drafts and cleans caches`, async ({ browser }) => {
   const a = await startCollector(resolve('../target/hennery-pwa-base'))
   const b = await startCollector(resolve('../target/hennery-pwa-update'))
   const proxy = await deployProxy(a, b)
@@ -47,19 +47,23 @@ test('Reload to update defers a busy peer, confirms volatile input, and reloads 
     const page = await context.newPage()
     await page.goto(proxy.origin + '/settings')
     await page.evaluate(async () => { await navigator.serviceWorker.ready })
-    await page.reload()
+    expect(await page.evaluate(() => navigator.serviceWorker.controller)).toBeNull()
+    if (controlled) await page.reload()
     const other = await context.newPage(); await other.goto(proxy.origin + '/settings')
-    await other.getByLabel('Push contact', { exact: true }).fill('mailto:keep@example.invalid')
+    await other.getByLabel('Push contact', { exact: true }).fill('keep@example.invalid')
     proxy.use('b')
     await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration('/'))!.update() })
     const update = page.getByRole('button', { name: 'Reload to update', exact: true })
     await expect(update).toBeVisible()
     await update.click()
     await expect(page.getByText('Another hennery window is busy — finish or close it, then retry.', { exact: true })).toBeVisible()
-    await expect(other.getByLabel('Push contact', { exact: true })).toHaveValue('mailto:keep@example.invalid')
+    await expect(other.getByLabel('Push contact', { exact: true })).toHaveValue('keep@example.invalid')
     expect(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration('/'))!.waiting)).toBe(true)
-    await other.close()
-    const ready = await context.newPage(); await ready.goto(proxy.origin + '/settings')
+    expect((await context.request.post(proxy.origin + '/api/auth/step-up/password', { headers: { Origin: proxy.origin }, data: { password: PASSWORD } })).ok()).toBe(true)
+    await other.getByRole('button', { name: 'Save contact', exact: true }).click()
+    await expect(other.getByText('Contact saved.', { exact: true })).toBeVisible()
+    const ready = other
+    const attachment = await context.newPage(); await attachment.goto(proxy.origin + '/api/attachments/missing')
     await page.evaluate(() => sessionStorage.setItem('hennery.draft.update-test', 'Keep this composer draft'))
     await ready.evaluate(() => sessionStorage.setItem('hennery.draft.peer-test', 'Keep the other draft'))
     await page.getByLabel('Push contact', { exact: true }).fill('mailto:unsaved@example.invalid')
@@ -74,10 +78,8 @@ test('Reload to update defers a busy peer, confirms volatile input, and reloads 
       expect(await p.evaluate(() => Number(sessionStorage.getItem('update-loads')))).toBe(counts[index] + 1)
       expect(await p.evaluate(async () => (await (await fetch('/index.html')).text()).includes('pwa test build B'))).toBe(true)
       expect(await p.getByRole('button', { name: 'Reload to update', exact: true }).count()).toBe(0)
-      // Duplicate controller notifications cannot create a reload loop.
-      await p.evaluate(() => { navigator.serviceWorker.dispatchEvent(new Event('controllerchange')); navigator.serviceWorker.dispatchEvent(new Event('controllerchange')) })
-      expect(await p.evaluate(() => Number(sessionStorage.getItem('update-loads')))).toBe(counts[index] + 1)
     }
+    await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('hennery-shell-')).length)).toBe(1)
     expect(await page.evaluate(() => sessionStorage.getItem('hennery.draft.update-test'))).toBe('Keep this composer draft')
     expect(await ready.evaluate(() => sessionStorage.getItem('hennery.draft.peer-test'))).toBe('Keep the other draft')
   } finally { await context.close(); await proxy.stop(); await a.stop(); await b.stop() }

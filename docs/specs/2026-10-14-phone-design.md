@@ -230,18 +230,25 @@ all app windows to acknowledge readiness, preserving sessionStorage drafts
 and warning about unsent in-memory images/question input. A busy or
 unresponsive window defers it. Only then activate and reload consenting
 clients; do not use unconditional `clients.claim` to mix builds. Versioned
-cache cleanup touches only hennery shell caches after old clients are gone.
+cache cleanup touches only superseded hennery shell caches during activation;
+coordinated clients immediately reload.
 
 **Built 2026-10-21:** the banner's **Reload to update** action implements
-Update now. The waiting worker asks every same-origin window to prepare,
-then arm a single reload on its controllerchange, with bounded replies and
-window-set rechecks. Busy, unresponsive or older documents defer with a retry
-explanation. Stored composer text survives; initiating windows confirm loss
-of unsent images, question input and other volatile edits. Other edited
-windows must finish or close first; readiness conservatively retains edit
-evidence even after a control unmounts. No unconditional skipWaiting or
-clients.claim is used. Coordinated activation retains old shell caches for
-documents still reloading; a later natural activation cleans them up.
+Update now. The waiting worker asks every same-origin **app-route** window
+to prepare, then arm one reload on controllerchange or that worker's activation
+(including uncontrolled first-install windows). Bounded replies and window-set
+rechecks defer busy or silent app windows with distinct explanations; attachment,
+auth and MCP proxy documents do not participate. Stored composer text survives;
+initiating windows confirm loss of images, question input and other volatile
+edits. Durable composer/search focus is ready. Successful saves clear only
+unchanged fields in the submitted form; answered questions and saved or explicitly
+discarded renames stop blocking. Unsent drafts remain protected across control
+unmounts (including pending confirmation dialogs and question cards). A redundant
+worker or a five-second post-commit deadline releases the page with a retry
+notice, even if the worker's release message is lost. Previously controlled
+documents missed by coordination show a persistent older-version banner with
+an explicit Reload action. Activation deletes superseded shell caches; consenting
+windows immediately reload. No unconditional skipWaiting or clients.claim is used.
 
 Browser eviction may remove shell/state at any time. Re-register on launch
 and reconcile push state; no claim that an installed icon guarantees offline

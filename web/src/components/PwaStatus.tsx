@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { reloadToUpdate, usePwa } from '../pwa/lifecycle'
+import { reloadOlderWindow, UPDATE_STALE, useUpdateNotice } from '../pwa/update-client'
 export default function PwaStatus() {
   const [offline, setOffline] = useState(!navigator.onLine)
   const { waiting, cleanupWarning, updating, updateMessage } = usePwa()
+  const notice = useUpdateNotice()
   useEffect(() => {
     const update = () => setOffline(!navigator.onLine)
     window.addEventListener('online', update); window.addEventListener('offline', update)
@@ -10,5 +12,6 @@ export default function PwaStatus() {
   }, [])
   return <>{offline && <p className="pwa-banner" role="status">Offline — reconnect to load sessions and answer</p>}
     {waiting && <div className="pwa-banner" role="status">Update available. <button className="btn btn-secondary btn-sm" type="button" disabled={updating} onClick={() => { void reloadToUpdate() }}>{updating ? 'Checking windows…' : 'Reload to update'}</button>{updateMessage && <p>{updateMessage}</p>}</div>}
+    {(notice.stale || notice.message) && <div className="pwa-banner" role="alert">{notice.stale ? UPDATE_STALE : notice.message}{notice.stale && notice.message && notice.message !== UPDATE_STALE && <p>{notice.message}</p>} <button className="btn btn-secondary btn-sm" type="button" onClick={notice.stale || !waiting ? reloadOlderWindow : () => { void reloadToUpdate() }}>{notice.stale || !waiting ? 'Reload' : 'Retry'}</button></div>}
     {cleanupWarning && <p className="pwa-banner" role="alert">{cleanupWarning}</p>}</>
 }

@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- The PWA's update banner offers "Reload to update". It checks every open
+- The PWA's update banner offers "Reload to update". It checks every open app
   window, defers while one is busy or unresponsive, preserves stored text
   drafts, and confirms before discarding unsent images or question input.
+  First-install windows also reload; stalled activation releases the page
+  for retry. Windows missed by coordination show an older-version notice.
 
 ## 0.2.0
 
