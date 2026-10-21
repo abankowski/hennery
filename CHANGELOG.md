@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.2.0
+
+- Redesigned web UI. Light and dark themes, the hat's colour as the accent, and
+  self-hosted Inter and Roboto. A new shell with a hat rail and a phone tab
+  bar. All sessions grouped by hat, host, project or time, with children under
+  their parent. A "Needs you" queue with short previews, dismiss and one-click
+  permission answers. A session view with message bubbles, a compact composer
+  with a settings chip, and Family / Plan / Details panels. A ⌘K command palette
+  and keyboard shortcuts (#202–#214).
+- Per-hat session defaults (model, permission mode, effort): edited in a
+  Defaults matrix, applied in New session. New session has path autocomplete
+  (#208, #212).
+- Delegation is one per-hat switch in Settings. Children start with any model
+  and mode and cannot start their own children (#210, #212).
+- Rename sessions. Untitled sessions get a provisional name from their first
+  prompt (#213, #214).
+- "Do not park": parents stay awake while their children work, and any session
+  can be pinned (#205, #207).
+- Reliability:
+  - Event streams reconnect after silent connections, and SSE responses ask
+    reverse proxies not to buffer (`X-Accel-Buffering: no`) (#211).
+  - The requested model is applied after the mode and confirmed. A
+    configuration that cannot be confirmed fails with a readable reason
+    instead of waiting forever.
+  - Catalog previews work without `workspace_roots`.
+  - Closed sessions no longer appear as needing you (#213).
+- Security: rustls-webpki 0.103.16 and webpki-roots 1.0.10
+  (RUSTSEC-2026-0381, RUSTSEC-2026-0382) (#211).
+- Database migrations 23–25 run on first start. An older binary cannot open the
+  upgraded database.
+
 ## 0.1.4
 
 - Managed adapters: Node 24.22.0, claude-agent-acp 0.93.0 and codex-acp 2.2.2
