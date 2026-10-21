@@ -17,6 +17,12 @@
   connection metadata and does not start another adapter.
   Legacy mode notifications from adapters without a mode option preserve
   configuration evidence so child follow-ups can continue.
+- PWA updates take over immediately and the worker navigates open app windows
+  onto the new version, including older windows without update listeners.
+  Pages keep a delayed reload fallback, without an update button or waiting
+  for other windows. Saved composer drafts survive; unsent images and other
+  unsaved input may be lost. Drafts restored during a send warn that the prompt
+  may already have been sent, so its transcript can be checked before retrying.
 
 ## 0.2.1
 

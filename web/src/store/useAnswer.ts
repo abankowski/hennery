@@ -19,7 +19,6 @@ import { useLayoutEffect, useMemo, useSyncExternalStore } from 'react'
 import { answerQuestion } from '../api/answer'
 import { questionCard } from '../api/view'
 import { navigationGate } from '../pwa/navigation'
-import { changedUpdateDraft, watchUpdateDrafts } from '../pwa/update-edits'
 import type { Client } from '../api/client'
 import { ApiFailure, messageOf } from '../api/errors'
 import { useClient } from '../app-client'
@@ -47,7 +46,6 @@ export class AnswerBook {
   private since: number | undefined
   private readonly fresh = new Set<string>()
   private readonly drafts = new Map<string, Draft>()
-  private readonly resolvedDrafts = new Set<string>()
   private said = ''
 
   constructor(
@@ -87,12 +85,6 @@ export class AnswerBook {
     return this.drafts.get(id) ?? NO_DRAFT
   }
 
-  hasUnsavedDrafts(): boolean {
-    return [...this.drafts].some(([id, draft]) => !this.resolvedDrafts.has(id)
-      && !['sent', 'taken', 'closed', 'gone'].includes(this.localOf(id)?.phase ?? '')
-      && Object.values(draft).some(value => value !== '' && (!Array.isArray(value) || value.length > 0)))
-  }
-
   /** Change the draft of the question `id`, from the one held now. */
   updateDraft(id: string, next: (draft: Draft) => Draft) {
     if (!navigationGate.edit()) return
@@ -100,7 +92,6 @@ export class AnswerBook {
     const draft = next(held)
     if (draft === held) return
     this.drafts.set(id, draft)
-    changedUpdateDraft()
     this.emit()
   }
 
@@ -167,7 +158,6 @@ export class AnswerBook {
     const held = known ?? new Set<string>()
     let changed = false
     for (const item of [...items, ...pinned]) if (item.kind === 'question') {
-      if (item.answered || item.delivered || item.state !== 'open') this.resolvedDrafts.add(item.id)
       held.add(item.id)
       this.versions.set(item.id, Math.max(item.version, this.versions.get(item.id) ?? -Infinity))
       const local = this.local.get(item.id)
@@ -255,7 +245,6 @@ export function useAnswering(
 ): AnswerBook {
   const client = useClient()
   const book = useMemo(() => new AnswerBook(client, sessionId, onQuestion), [client, sessionId, onQuestion])
-  useLayoutEffect(() => watchUpdateDrafts(() => book.hasUnsavedDrafts()), [book])
   // Before the cards' effects (a layout effect runs first): a fresh card
   // finds itself fresh when it mounts.
   useLayoutEffect(() => {

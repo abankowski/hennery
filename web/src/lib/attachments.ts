@@ -145,7 +145,6 @@ interface Held {
 }
 
 const bySession = new Map<string, Held>()
-export const hasHeldImages = () => [...bySession.values()].some(held => held.attachments.length > 0)
 
 export function heldFor(sessionId: string): Held {
   return bySession.get(sessionId) ?? { attachments: [], nextN: 1 }

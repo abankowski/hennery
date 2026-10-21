@@ -50,7 +50,7 @@ export function match(pathname: string): Route {
   return { name: 'not_found' }
 }
 
-/** App documents that take part in coordinated updates. Auth pages have no app state. */
+/** App documents only; API, auth and MCP proxy documents never get replaced. */
 export function updateRoute(pathname: string): boolean {
   if (pathname === '/api' || pathname.startsWith('/api/') || pathname.startsWith('/mcp/')) return false
   return !['setup', 'login', 'not_found'].includes(match(pathname).name)

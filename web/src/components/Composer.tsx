@@ -43,7 +43,7 @@ import {
   type Attachment,
 } from '../lib/attachments'
 import { commands, configOptions, matchCommands, type Command, type ConfigOption } from '../lib/catalog'
-import { loadDraft, saveDraft } from '../lib/drafts'
+import { clearDraftSending, draftMayHaveBeenSent, loadDraft, markDraftSending, saveDraft } from '../lib/drafts'
 import { sendingFor, track } from '../lib/sending'
 import { navigationGate } from '../pwa/navigation'
 import { undeliveredDraft, type DraftPart } from '../lib/sendAgain'
@@ -129,6 +129,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   // again (lib/sending.ts). Read once: the flag and the mount's follower
   // below hold the same send, even one that ends before the effect runs.
   const [mountedSend] = useState(() => sendingFor<Outcome>(sessionId))
+  const [restoredSend, setRestoredSend] = useState(() => !mountedSend && draftMayHaveBeenSent(sessionId))
   const [sending, setSending] = useState(mountedSend !== undefined)
   // The same, read synchronously: a refill answering later, or a paste in
   // the render a send started from, sees it at once.
@@ -157,7 +158,10 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   const fileRef = useRef<HTMLInputElement>(null)
   const cursor = useRef<number | null>(null)
 
-  useEffect(() => saveDraft(sessionId, text), [sessionId, text])
+  useEffect(() => {
+    saveDraft(sessionId, text)
+    if (!draftMayHaveBeenSent(sessionId)) setRestoredSend(false)
+  }, [sessionId, text])
   useLayoutEffect(() => {
     const ta = taRef.current
     if (!ta) return
@@ -326,8 +330,11 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
    *  draft at its source, as this may answer after the composer went. */
   async function deliver(draft: string, images: Attachment[]): Promise<Outcome> {
     try {
-      await prompt(client, sessionId, await promptBlocks(draft, images))
+      const blocks = await promptBlocks(draft, images)
+      markDraftSending(sessionId, draft)
+      await prompt(client, sessionId, blocks)
     } catch (err) {
+      if (err instanceof ApiFailure) clearDraftSending(sessionId)
       return {
         sent: false,
         notice: { text: promptRefusal(err), resume: err instanceof ApiFailure && err.code === 'not_attached', busyTurn: isBusyTurn(err) },
@@ -343,6 +350,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   async function follow(pending: Promise<Outcome>) {
     const outcome = await pending
     if (outcome.sent) {
+      setRestoredSend(false)
       nextN.current = 1
       setAtts([])
       setText('')
@@ -533,7 +541,6 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
             </ul>
           )}
           <textarea
-            data-persisted-draft
             ref={taRef}
             aria-label="Prompt"
             aria-autocomplete="list"
@@ -607,6 +614,9 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
           <p className="form-error" role="alert">
             <bdi>{draftError}</bdi>
           </p>
+        )}
+        {restoredSend && !sending && (
+          <p className="composer-hint" role="status">This draft may already have been sent. Check the transcript before sending again.</p>
         )}
         {notice && (
           <div className="composer-hint" role="status">
