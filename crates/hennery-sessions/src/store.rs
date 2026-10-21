@@ -789,6 +789,7 @@ pub struct Reconciliation {
 }
 
 pub struct Store {
+    pub(crate) delegation_catalog_failures: Mutex<BTreeMap<String, i64>>,
     pub(crate) idle_hub: RwLock<Option<std::sync::Weak<crate::hub::Hub>>>,
     prompt_admissions: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     plugins: Arc<hennery_gateway::plugin::Control>,
@@ -1971,6 +1972,7 @@ impl Store {
             checkpoints.run();
         }
         Ok(Self {
+            delegation_catalog_failures: Mutex::default(),
             conn: hennery_kernel::db::CoordinatedConnection::new(conn),
             idle_hub: RwLock::new(None),
             plugins,
