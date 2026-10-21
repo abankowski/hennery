@@ -83,3 +83,25 @@ it('shows key hints only on the routes and viewports that bind them', async () =
   expect(commandHint('focus-composer', 'sessions', true)).toBe('')
   expect(commandHint('open-settings', 'sessions', true)).toBe('')
 })
+
+it.each([1, 2, 3, 4, 5])('uses physical Option/Alt digit %s for Recent on every route', n => {
+  for (const mac of [true, false]) {
+    platform(mac)
+    expect(shortcutAction(event('™', { code: `Digit${n}`, altKey: true }), 'settings', false)).toBe(`recent-session-${n}`)
+  }
+})
+it('backtick returns to the previous session and leaves unrelated modified keys native', () => {
+  expect(shortcutAction(event('`'), 'session', true)).toBe('previous-session')
+  for (const init of [{ altKey: true }, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { keyCode: 229 }, { isComposing: true }, { repeat: true }]) expect(shortcutAction(event('`', init), 'session', true)).toBeNull()
+  for (const init of [{ shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { keyCode: 229 }, { isComposing: true }, { repeat: true }]) expect(shortcutAction(event('2', { code: 'Digit2', altKey: true, ...init }), 'sessions', true)).toBeNull()
+  for (const code of ['Digit0', 'Digit6', 'Digit9', 'Numpad2']) expect(shortcutAction(event('2', { code, altKey: true }), 'session', true)).toBeNull()
+})
+it.each(['input', 'textarea', 'select', 'div'])('keeps new session shortcuts native inside %s, including editable descendants', tag => {
+  const input = document.createElement(tag)
+  if (tag === 'div') input.setAttribute('contenteditable', 'true')
+  document.body.append(input)
+  for (const e of [event('`'), event('™', { code: 'Digit2', altKey: true })]) {
+    vi.spyOn(e, 'composedPath').mockReturnValue([input, document.body, window])
+    expect(shortcutAction(e, 'session', true)).toBeNull()
+  }
+})

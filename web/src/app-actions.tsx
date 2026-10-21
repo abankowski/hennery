@@ -10,9 +10,10 @@ export function useLoadedSessions(): ReadonlyMap<string, SessionSummary> {
 
 /** Stable R2 integration contract. Providers own mutations and capability checks;
  * the command host only discovers and dispatches enabled actions. */
-export type AppActionId = 'new-session' | 'rename-session' | 'add-host' | 'search-sessions' | 'toggle-rail' | 'toggle-details' | 'focus-composer' | 'open-needs-you' | 'open-sessions' | 'open-hosts' | 'open-mcp' | 'open-hats' | 'open-defaults' | 'open-settings' | 'open-commands'
+export type SessionJumpActionId = 'previous-session' | `recent-session-${1 | 2 | 3 | 4 | 5}`
+export type AppActionId = SessionJumpActionId | 'new-session' | 'rename-session' | 'add-host' | 'search-sessions' | 'toggle-rail' | 'toggle-details' | 'focus-composer' | 'open-needs-you' | 'open-sessions' | 'open-hosts' | 'open-mcp' | 'open-hats' | 'open-defaults' | 'open-settings' | 'open-commands'
 export interface AppAction { label: string; enabled: boolean; run: () => void }
-export interface AppContext { sessionId?: string; hostId?: string; cwd?: string; hatId?: string; loadedSessions?: ReadonlyMap<string, SessionSummary>; hats?: readonly HatItem[]; hosts?: readonly HostItem[] }
+export interface AppContext { sessionId?: string; hostId?: string; cwd?: string; hatId?: string; scopeHatId?: string; recentSessions?: readonly SessionSummary[]; previousSessionId?: string; loadedSessions?: ReadonlyMap<string, SessionSummary>; hats?: readonly HatItem[]; hosts?: readonly HostItem[] }
 export class AppActions {
   private entries = new Map<AppActionId, { token: symbol; action: AppAction; priority: number }[]>()
   private contexts: { token: symbol; context: AppContext; priority: number }[] = []
@@ -59,5 +60,5 @@ export function useRegisterAction(id: AppActionId, action: AppAction, priority =
 }
 export function useRegisterContext(context: AppContext, priority = 0) {
   const actions = useAppActions()
-  useEffect(() => actions?.registerContext(context, priority), [actions, context.sessionId, context.hostId, context.cwd, context.hatId, context.loadedSessions, context.hats, context.hosts, priority])
+  useEffect(() => actions?.registerContext(context, priority), [actions, context.sessionId, context.hostId, context.cwd, context.hatId, context.scopeHatId, context.recentSessions, context.previousSessionId, context.loadedSessions, context.hats, context.hosts, priority])
 }

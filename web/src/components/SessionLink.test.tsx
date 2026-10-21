@@ -231,7 +231,11 @@ describe('a session’s link (F-11, F-19)', () => {
     expect(within(views).queryByText('Task b')).toBeNull()
     expect(location.pathname).toBe('/sessions/b')
     expect(s.of('/api/sessions/b')).toHaveLength(1)
-    expect(s.of(LIST).every((u) => u.searchParams.get('hat') === 'hat-a')).toBe(true)
+    expect(s.of(LIST).filter(u => !u.searchParams.has('q')).every(u => u.searchParams.get('hat') === 'hat-a')).toBe(true)
+    // Visit hydration is an exact-id read outside the browse filter. It
+    // does not alter that filter or the shared stream's waiting scope.
+    expect(s.of(LIST).filter(u => u.searchParams.has('q')).every(u => u.searchParams.get('q') === 'b' && !u.searchParams.has('hat'))).toBe(true)
+    expect(s.of(LIST_STREAM).every(u => u.searchParams.get('hat') === 'hat-a')).toBe(true)
   })
 
   it('shows a session the loaded list does not hold', async () => {

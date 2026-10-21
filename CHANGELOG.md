@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Recent sessions follow your visits in this browser, with up to six sidebar
+  entries, status icons, hat colours and the current session highlighted.
+  Option/Alt+1–5 opens the numbered entries; backtick returns to this window's
+  previous session. The command palette starts with Recent and preselects
+  that window's previous visit. Collapsed navigation keeps distinct status
+  icons with hat-colour badges. These shortcuts pause while typing, composing
+  text or using a dialog; help shows enabled keys and notes US-layout backtick.
+- The selected hat scopes sessions, Needs you, Recent and their counts.
+  All hats restores the full view. Visit history is bounded, prunes removed or
+  inaccessible sessions and clears on sign-out. Expanding the hat scope checks
+  cached entries for missed deletions; transient lookups retry once with backoff.
+  Collapsed navigation uses icon buttons for appearance and sign-out.
+
 ## 0.2.2
 
 - Updates replace immediately (#224). A new version takes over at once and

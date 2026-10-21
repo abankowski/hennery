@@ -9,8 +9,9 @@ import { messageOf } from '../api/errors'
 import { Text } from '../lib/text'
 import { useClient } from '../app-client'
 import { completeLogout } from '../pwa/logout'
+import { IconButton } from './ui/Button'
 
-export default function SignOut({ className = 'btn btn-ghost btn-sm' }: { className?: string }) {
+export default function SignOut({ className = 'btn btn-ghost btn-sm', compact = false }: { className?: string; compact?: boolean }) {
   const client = useClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -35,9 +36,9 @@ export default function SignOut({ className = 'btn btn-ghost btn-sm' }: { classN
 
   return (
     <>
-      <button type="button" className={className} onClick={signOut} disabled={busy}>
+      {compact ? <IconButton icon="arrow-right-on-rectangle" label="Sign out" title="Sign out" variant="ghost" onClick={signOut} disabled={busy} /> : <button type="button" className={className} title="Sign out" onClick={signOut} disabled={busy}>
         Sign out
-      </button>
+      </button>}
       {error && (
         <p className="form-error sign-out-error" role="alert">
           Not signed out: this browser is still signed in. <Text>{error}</Text>

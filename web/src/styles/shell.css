@@ -33,7 +33,8 @@
 .rail-collapsed .nav-item { padding:10px; justify-content:center; position:relative; }
 .rail-collapsed .badge { position:absolute; right:0; top:0; padding:0 3px; font-size:8px; }
 .rail-collapsed .command-entry { padding:8px; justify-content:center; }
-.rail-collapsed .rail-foot { align-items:center; }
+.rail-collapsed .rail-foot { align-items:center; flex-direction:column; flex-wrap:nowrap; }
+.rail-collapsed .rail-foot .version-info { display:none; }
 .tabbar,.mtopbar { display:none; }
 .overview { display:flex; flex-direction:column; min-width:0; padding-bottom:24px; }
 .overview-head { display:flex; align-items:center; gap:12px; min-height:52px; padding:8px 24px; border-bottom:1px solid var(--hn-line); background:var(--hn-panel); }
@@ -289,3 +290,24 @@
 .attention-card .attention-origin > bdi:last-child { flex:none; }
 .attention-preview .preview-choices .preview-permission { min-height:0; }
 @media(max-width:767px) { .attention-card .attention-card-meta { padding-right:38px; }.attention-card .attention-origin { margin-bottom:6px; } }
+/* Visit history follows the same compact rhythm as the prototype navigation. */
+.rail-recent { min-width:0; }
+.recent-heading { display:flex; justify-content:space-between; padding:0 8px 6px; color:var(--hn-fg-3); font:700 11px var(--font-display); letter-spacing:.06em; text-transform:uppercase; }
+.recent-heading > span:last-child { font:400 11px var(--font-data); letter-spacing:0; text-transform:none; }
+.recent-heading kbd,.recent-session kbd { font:500 11px var(--font-mono); }
+.recent-empty { margin:4px 8px; font-size:11px; color:var(--hn-fg-3); }
+.recent-session { display:flex; align-items:center; gap:8px; height:30px; min-width:0; padding:0 8px; border-radius:6px; color:var(--hn-fg-2); text-decoration:none; font:500 13px var(--font-data); }
+.recent-session:hover { background:var(--hn-hover); }.recent-session.on { background:var(--hn-selected); color:var(--hn-accent-fg); }
+.recent-status { position:relative; display:flex; flex:none; background:transparent; border:0; }
+.recent-heading h2 { margin:0; font:inherit; }
+.recent-hat-badge { display:none; position:absolute; width:6px; height:6px; right:-2px; bottom:-1px; border-radius:2px; box-shadow:0 0 0 2px var(--hn-surface); }
+.rail-collapsed .recent-hat-badge { display:block; }
+@media (min-width:768px) and (max-width:1023px) { .recent-hat-badge { display:block; } }
+.recent-hat { width:8px; height:8px; border-radius:2px; flex:none; }
+.recent-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.recent-session kbd { flex:none; margin-left:auto; color:var(--hn-fg-3); }
+.rail-collapsed .recent-session { height:32px; justify-content:center; padding:0; }
+.rail-collapsed .rail-recent { border-top:1px solid var(--hn-line); padding-top:8px; }
+.rail-foot .btn-icon { width:32px; height:32px; min-height:32px; padding:6px; flex:none; }
+@media (min-width:768px) and (max-width:1023px) { .rail .rail-foot .version-info { display:none; } }
+@media (min-width:768px) and (max-width:1023px) { .rail .recent-session { height:32px; justify-content:center; padding:0; }.rail .rail-recent { border-top:1px solid var(--hn-line); padding-top:8px; } }

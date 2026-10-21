@@ -42,6 +42,7 @@ import {
   type ListState,
 } from './sessionList'
 import { ResyncBackoff, type Timing } from './useSessionItems'
+import { forgetVisitedSession } from '../lib/sessionHistory'
 
 const DEFAULT_TIMING: Timing = {
   retryMs: (attempt) => Math.min(1000 * 2 ** attempt, 30000),
@@ -165,7 +166,7 @@ export class SessionListController {
     const store = listReducer(this.snapshot.store, action)
     const known = new Map(this.known)
     for (const [id, summary] of store.all) known.set(id, summary)
-    if (action.type === 'removed') known.delete(action.id)
+    if (action.type === 'removed') { known.delete(action.id); forgetVisitedSession(action.id) }
     this.known = known
     if (store !== this.snapshot.store) this.update({ store })
   }
