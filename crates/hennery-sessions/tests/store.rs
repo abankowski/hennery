@@ -2217,6 +2217,7 @@ fn a_session_item_is_the_row_with_its_title_and_current_model_and_mode() {
             host_id: "h1".into(),
             agent: "fake".into(),
             cwd,
+            project_root: None,
             hat_id: "hat-1".into(),
             title: Some("Fix the login bug".into()),
             title_source: Some(hennery_proto::rest::TitleSource::Agent),
@@ -2466,6 +2467,122 @@ fn a_git_state_fills_the_git_columns_and_records_the_base_commit_once() {
     // Detached: no branch.
     store.ingest("s1", 5, &git(None, false, None)).unwrap();
     assert_eq!(store.find_session_item("s1").unwrap().unwrap().git_branch, None);
+}
+
+#[test]
+fn project_root_survives_reopen_without_affecting_activity_order_and_is_scrubbed() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = format!("/projects/{}/repository", "a".repeat(300));
+    let store = Store::open(&dir.path().join("hennery.db")).unwrap();
+    started(&store);
+    let conn = rusqlite::Connection::open(dir.path().join("hennery.db")).unwrap();
+    conn.execute(
+        "UPDATE sessions SET last_event_at='2000-01-01T00:00:00.000Z' WHERE id='s1'",
+        [],
+    )
+    .unwrap();
+    let before = store.find_session_item("s1").unwrap().unwrap().last_event_at;
+    let fact = SessionBody::ProjectRoot {
+        project_root: root.clone(),
+    };
+    assert_eq!(kinds(&store.ingest("s1", 2, &fact).unwrap()), ["project_root"]);
+    assert!(store.ingest("s1", 3, &fact).unwrap().is_empty());
+    drop(store);
+    let store = Store::open(&dir.path().join("hennery.db")).unwrap();
+    let item = store.list(&Default::default()).unwrap().sessions.remove(0);
+    assert_eq!(item.project_root.as_deref(), Some(root.as_str()));
+    assert_eq!(item.last_event_at, before);
+    store.ingest("s1", 4, &SessionBody::SessionClosed).unwrap();
+    delete(&store, "s1");
+    let conn = rusqlite::Connection::open(dir.path().join("hennery.db")).unwrap();
+    let value: Option<String> = conn
+        .query_row("SELECT project_root FROM sessions WHERE id='s1'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(value, None);
+    assert!(store.ingest("s1", 5, &fact).unwrap().is_empty());
+}
+
+#[test]
+fn project_root_rejects_invalid_or_oversized_host_input() {
+    let store = Store::open_in_memory().unwrap();
+    started(&store);
+    for (i, root) in [
+        "relative",
+        "/bad\nroot",
+        "/bad\u{0}root",
+        &format!("/{}", "x".repeat(16385)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            store
+                .ingest(
+                    "s1",
+                    2 + i as u64,
+                    &SessionBody::ProjectRoot {
+                        project_root: root.into()
+                    }
+                )
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(store.find_session_item("s1").unwrap().unwrap().project_root, None);
+    }
+}
+
+#[test]
+fn project_root_applies_after_failed_start_and_never_reopens_closed_metadata() {
+    let store = Store::open_in_memory().unwrap();
+    store
+        .create_session("failed", "host", "fake", "/projects/repository/sub", "hat-1", None)
+        .unwrap();
+    store
+        .ingest(
+            "failed",
+            1,
+            &SessionBody::StartFailed {
+                request_id: "r".into(),
+                code: "spawn_failed".into(),
+                message: "unavailable".into(),
+            },
+        )
+        .unwrap();
+    let root = SessionBody::ProjectRoot {
+        project_root: "/projects/repository".into(),
+    };
+    assert_eq!(kinds(&store.ingest("failed", 2, &root).unwrap()), ["project_root"]);
+    assert_eq!(
+        store
+            .find_session_item("failed")
+            .unwrap()
+            .unwrap()
+            .project_root
+            .as_deref(),
+        Some("/projects/repository")
+    );
+    store.close_now("failed").unwrap();
+    assert!(
+        store
+            .ingest(
+                "failed",
+                3,
+                &SessionBody::ProjectRoot {
+                    project_root: "/different".into()
+                }
+            )
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .find_session_item("failed")
+            .unwrap()
+            .unwrap()
+            .project_root
+            .as_deref(),
+        Some("/projects/repository")
+    );
 }
 
 /// The task review's gap: a state that differs only in `worktree`, or only

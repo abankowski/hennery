@@ -322,13 +322,66 @@ close an unsent form or overwrite it merely because attention changed.
 ### 4.2 Sessions and Needs you
 
 Sessions becomes the overview rather than auto-selecting the first row.
-Group by Hat (default) or Host; retain the stable newest-first ordering
-within each group using `last_event_at`, id as deterministic tie-breaker.
-Persist grouping. The design's grouped view replaces day headers; old DST
-helpers may remain for other displays. Parent/child identity uses actual
-family metadata. Indent children only when parent and child are both held
-in the same group, preserving each child's link and displayed recency.
+**Redesign 2 amendment (operator/parent, 2026-10-21):** Group by Hat
+(default) or Host, then Project (default) or Nothing. Persist both choices
+and sorting per browser in the shared session scope. Project subheaders
+are collapsible and show the directory name, full path (ellipsized with
+the full value available), hosts, running count and number of loaded sessions
+needing the operator. Primary headers summarize waiting/running/total loaded
+sessions; desktop column headings appear once above the groups. Remember
+collapsed projects in sessionStorage across row navigation and remounts;
+prune ids absent from the current loaded project groups after loading
+completes. Collapsed projects do not spend the visible row budget. Keep a complete held family in its root's primary/project
+group, including children whose cwd, host or repository differs. Missing
+parents become visible roots; duplicate rows and malformed cycles must
+not lose sessions or loop. Counts are loaded counts until paging completes.
+Local status/host filters retain a held parent as context when a child
+matches, keeping the root's project/host placement. Ancestors come only
+from the current hat/lifecycle/search/Hide closed baseline; unrelated
+siblings are not added and no family page is fetched. The overview counter
+counts actual filter matches, excluding context-only ancestors. Inline
+family previews count and show direct children, not grandchildren.
+
+Sort whole families by Needs you first (default: any loaded member
+with actual operator attention, then latest member activity), Last activity
+(latest member event), or Started (root creation time, newest first).
+Creation time and deterministic session-id ties keep Started order stable
+through token/status/attention updates, including expanded child previews.
+Needs you first and Last activity deliberately move families as their
+attention/activity changes; only Started promises stable order.
+The design's grouped view replaces day headers; old DST helpers may remain
+for other displays. Parent/child identity uses actual family metadata.
+Preserve each child's link and displayed recency.
 Never load an entire family merely to decorate a list row.
+
+The desktop overview header, including its title, counter, Group Hat/Host,
+then Project/Nothing and New session button, stays on one line at 1024 px
+with the 240 px sidebar open. Only the counter shrinks and ellipsizes;
+labels and actions stay intact. Phone controls adapt to the available width
+and retain 44 px touch targets; sorting is also available in the filter sheet.
+
+The host asynchronously resolves a project's repository root when it learns
+the cwd. A bounded local Git process (no shell or network) reads
+`git rev-parse --path-format=absolute --git-common-dir`. Only a common
+directory named exactly `.git` uses its parent as the project identity.
+Other common directories identify themselves, keeping bare repositories,
+separate Git directories and submodules distinct. A submodule is its own
+project, not the superproject (parent ruling, 2026-10-22); its common-dir
+basename labels it. Labels omit a trailing `.git`. Normal repositories,
+linked worktrees and subdirectories share the same identity. Cache definitive
+success/non-repository results by cwd; transient errors/timeouts use a short
+retry TTL. A definitive non-repository reports cwd. Unavailable Git and
+transient errors/timeouts emit no project-root metadata: the UI falls back
+to cwd, and a later successful attach reports the real identity. This avoids
+persisting a transient fallback on a session that closes before recovery.
+Persist definitive identity with the session (migration 30),
+expose optional `project_root` in summaries and fall back to `cwd` in the
+browser for older hosts. Root identity must remain complete rather than use
+the summary cwd's display truncation; ingest bounds it to 16 KiB of JSON.
+This metadata must not advance session activity or appear in the transcript.
+It is display-only: it may name a directory outside the hat's workspace
+roots and grants no filesystem or session authority. The same absolute path
+on different hosts intentionally shares a project group.
 
 Status chips: All, Needs you, Running, Idle, Parked / offline, Failed.
 Keep Hide closed and lifecycle controls in the filter panel. Status and host
@@ -468,7 +521,7 @@ the honest replacement instead of quietly adding another backend feature.
 
 | Element / variant | Disposition and behavior | Target |
 |---|---|---|
-| Desktop overview title/count, Group by Hat/Host, New session | Build/restyle; native radio group, persistent grouping | `screens/Sessions.tsx` (new), `components/SessionList.tsx` |
+| Desktop overview title/count, Group Hat/Host then Project/Nothing, New session | Native radio groups; persistent grouping/sort; single line at 1024 px, ellipsized counter | `screens/Sessions.tsx`, `components/SessionList.tsx`, `SessionGroupingControls.tsx` |
 | All/Needs you/Running/Idle/Parked-offline/Failed chips | Build; status predicates in one pure helper, loaded-count qualification | `components/SessionFilters.tsx` (new), `lib/status.ts` |
 | All hosts selector, title/path/branch search, slash hint | Build/restyle; host filters loaded data, search uses existing server q contract | `SessionFilters.tsx`, `SessionScope.tsx` |
 | Needs you section title, descriptive subtitle, total badge, recent-first text | Build; only actual operator attention and honest partial state | `screens/NeedsYou.tsx`, `components/NeedsYouQueue.tsx` (new) |
@@ -479,6 +532,7 @@ the honest replacement instead of quietly adding another backend feature.
 | Queue-empty success line and push promise | Restyle; “Nothing needs you” only when complete; explain notification state conditionally | `NeedsYouQueue.tsx` |
 | Desktop column headers: Session, Doing, Host, Agent/model, Last | Build responsive semantic list/table; Doing follows available data | `SessionList.tsx`, `SessionRow.tsx` |
 | Hat/host group header, summary count, host note | Build; no invented full totals or cross-hat grouping | `SessionList.tsx` |
+| Project subheader, name/path/hosts/waiting count and disclosure; three sort choices | Root-resolved project groups, whole-family sorting and collapse; stable newest-first Started order | `SessionList.tsx`, `SessionFilters.tsx`, `lib/sessionGroups.ts` |
 | Parent row, child indentation/arrow, child-count badge, selected/wait/fail row | Restyle; actual family links, stable row keys and preserved separate actions | `SessionRow.tsx` |
 | Row progress bar / plan fraction | Drop when unavailable; actual selected-session plan only, no transcript fan-out | `SessionRow.tsx`, `StepList.tsx` |
 | Status glyph, Doing subtitle, host, agent/model, last-event age | Restyle; unknown fields omitted; failure explanation remains keyboard/touch reachable | `SessionRow.tsx` |

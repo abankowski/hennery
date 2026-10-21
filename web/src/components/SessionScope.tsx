@@ -17,7 +17,7 @@ import { navigate, useLocation, type Route } from '../router'
 import { useSessionList, type SessionList } from '../store/useSessionList'
 import type { StatusFilter } from '../lib/status'
 import { useRegisterContext } from '../app-actions'
-import type { SessionGrouping } from '../lib/sessionGroups'
+import type { ProjectGrouping, SessionGrouping, SessionSort } from '../lib/sessionGroups'
 import { useDismissedAttention } from '../lib/dismissedAttention'
 import { useAttentionSessions } from '../hooks/useAttentionSessions'
 import type { SessionSummary } from '../generated/view'
@@ -50,6 +50,10 @@ export interface SessionScopeValue {
   setStatus: (status: StatusFilter) => void
   group: SessionGrouping
   setGroup: (group: SessionGrouping) => void
+  subgroup: ProjectGrouping
+  setSubgroup: (group: ProjectGrouping) => void
+  sort: SessionSort
+  setSort: (sort: SessionSort) => void
   hideClosed: boolean
   setHideClosed: (on: boolean) => void
   /** One lifecycle, or `''` for any. */
@@ -92,11 +96,25 @@ export default function SessionScope({ route, children, onReconnect }: { route: 
   const [host, setHost] = useState('')
   const [status, setStatus] = useState<StatusFilter>('all')
   const [group, updateGroup] = useState<SessionGrouping>(() => {
-    try { const held = localStorage.getItem('hennery.group'); return held === 'host' || held === 'project' || held === 'time' ? held : 'hat' } catch { return 'hat' }
+    try { return localStorage.getItem('hennery.group') === 'host' ? 'host' : 'hat' } catch { return 'hat' }
   })
   const setGroup = useCallback((next: SessionGrouping) => {
     updateGroup(next)
     try { localStorage.setItem('hennery.group', next) } catch { /* document only */ }
+  }, [])
+  const [subgroup, updateSubgroup] = useState<ProjectGrouping>(() => {
+    try { return localStorage.getItem('hennery.subgroup') === 'none' ? 'none' : 'project' } catch { return 'project' }
+  })
+  const setSubgroup = useCallback((next: ProjectGrouping) => {
+    updateSubgroup(next)
+    try { localStorage.setItem('hennery.subgroup', next) } catch { /* In-memory choice still works. */ }
+  }, [])
+  const [sort, updateSort] = useState<SessionSort>(() => {
+    try { const held = localStorage.getItem('hennery.sort'); return held === 'activity' || held === 'started' ? held : 'attention' } catch { return 'attention' }
+  })
+  const setSort = useCallback((next: SessionSort) => {
+    updateSort(next)
+    try { localStorage.setItem('hennery.sort', next) } catch { /* In-memory choice still works. */ }
   }, [])
   const [hideClosed, setHideClosed] = usePersistentToggle(HIDE_CLOSED_KEY, true)
   const [lifecycle, setLifecycle] = useState('')
@@ -206,7 +224,7 @@ export default function SessionScope({ route, children, onReconnect }: { route: 
       hat,
       chooseHat,
       hostNames,
-      hosts, host, setHost, status, setStatus, group, setGroup,
+      hosts, host, setHost, status, setStatus, group, setGroup, subgroup, setSubgroup, sort, setSort,
       hideClosed,
       setHideClosed,
       lifecycle,
@@ -215,7 +233,7 @@ export default function SessionScope({ route, children, onReconnect }: { route: 
       setQuery,
       selectedId,
     }),
-    [list, visibleWaiting, attentionRows, isAttentionDismissed, reportAttentionKey, hats, hat, chooseHat, hostNames, hosts, host, status, group, setGroup, hideClosed, setHideClosed, lifecycle, query, selectedId],
+    [list, visibleWaiting, attentionRows, isAttentionDismissed, reportAttentionKey, hats, hat, chooseHat, hostNames, hosts, host, status, group, setGroup, subgroup, setSubgroup, sort, setSort, hideClosed, setHideClosed, lifecycle, query, selectedId],
   )
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>
 }

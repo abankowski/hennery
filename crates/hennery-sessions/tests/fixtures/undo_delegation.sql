@@ -1,3 +1,51 @@
+-- Test-only rollback of sessions migration 30 before historical fixtures.
+ALTER TABLE sessions DROP COLUMN project_root;
+-- Test-only rollback of sessions migration 29 before historical fixtures.
+DROP TRIGGER prompt_queue_insert;
+DROP TRIGGER prompt_queue_update;
+DROP TRIGGER prompt_queue_delete;
+DROP TRIGGER delegation_endpoint_end;
+DROP TRIGGER delegation_grant_end;
+DROP TABLE prompt_queue_attachments;
+ALTER TABLE session_dispatch_queue DROP COLUMN origin;
+ALTER TABLE session_dispatch_queue DROP COLUMN image_bytes;
+ALTER TABLE sessions DROP COLUMN prompt_queue_dirty;
+CREATE TRIGGER delegation_endpoint_end AFTER UPDATE OF close_requested,lifecycle,hat_id ON sessions
+WHEN NEW.close_requested = 1 OR NEW.lifecycle IN ('closed','deleted','failed') OR NEW.hat_id <> OLD.hat_id
+BEGIN
+    UPDATE session_operations SET state = CASE WHEN NEW.lifecycle = 'failed' AND child_id = NEW.id THEN 'failed' ELSE 'cancelled' END,
+        code = CASE WHEN NEW.lifecycle = 'failed' AND child_id = NEW.id THEN COALESCE(NEW.failure_reason,'start_failed') ELSE 'endpoint_unavailable' END
+    WHERE owner_id = NEW.owner_id AND (state IN ('accepted','queued','waiting_config') OR (state = 'awaiting_reconciliation' AND turn_id IS NULL AND tool IN ('session_spawn','session_send')))
+      AND (caller_id = NEW.id OR child_id = NEW.id);
+    UPDATE session_dispatch_queue SET state = 'cancelled', payload = ''
+    WHERE owner_id = NEW.owner_id AND (source_id = NEW.id OR target_id = NEW.id)
+      AND state IN ('queued','waiting_config');
+    UPDATE session_attach_evidence SET evidence = NULL
+    WHERE owner_id = NEW.owner_id AND session_id = NEW.id;
+    DELETE FROM session_dispatch_queue
+    WHERE owner_id = NEW.owner_id AND (source_id = NEW.id OR target_id = NEW.id) AND NEW.lifecycle = 'deleted';
+    DELETE FROM session_operations
+    WHERE owner_id = NEW.owner_id AND caller_id = NEW.id AND NEW.lifecycle = 'deleted';
+    UPDATE session_operations SET child_id = NULL, tool = '', state = 'failed', code = 'gone',
+        turn_id = NULL, pending_id = NULL, request_id = NULL, accepted_revision = 0, epoch = 0,
+        validated_attach = NULL, validated_config = NULL, validated_policy = NULL
+    WHERE owner_id = NEW.owner_id AND child_id = NEW.id AND NEW.lifecycle = 'deleted';
+    DELETE FROM delegation_start_budgets
+    WHERE owner_id = NEW.owner_id AND caller_id = NEW.id AND NEW.lifecycle = 'deleted';
+    DELETE FROM session_attach_evidence WHERE owner_id = NEW.owner_id AND session_id = NEW.id AND NEW.lifecycle = 'deleted';
+END;
+CREATE TRIGGER delegation_grant_end AFTER UPDATE OF revision ON hat_session_tools
+BEGIN
+    UPDATE session_operations SET state = 'cancelled', code = 'grant_changed'
+    WHERE owner_id = NEW.owner_id AND (state IN ('accepted','queued','waiting_config') OR (state = 'awaiting_reconciliation' AND turn_id IS NULL AND tool IN ('session_spawn','session_send')))
+      AND caller_id IN (SELECT id FROM sessions WHERE owner_id = NEW.owner_id AND hat_id = NEW.hat_id);
+    UPDATE session_dispatch_queue SET state = 'cancelled', payload = ''
+    WHERE owner_id = NEW.owner_id AND accepted_revision <> NEW.revision
+      AND source_id IN (SELECT id FROM sessions WHERE owner_id = NEW.owner_id AND hat_id = NEW.hat_id)
+      AND state IN ('queued','waiting_config');
+END;
+-- Test-only rollback of sessions migration 28: runtime catalog cache.
+DROP TABLE runtime_catalog;
 -- Test-only rollback of sessions migration 27: restore the v26 budget CHECK.
 DROP TABLE delegation_limits;
 DROP TRIGGER notice_endpoint_end;

@@ -41,12 +41,13 @@ pub const SILENT_UPDATES: [&str; 5] = [
 
 /// Event kinds that make no item: the session's own state, shown by the
 /// session list and the header.
-pub const SILENT_EVENTS: [&str; 7] = [
+pub const SILENT_EVENTS: [&str; 8] = [
     "family_changed",
     "session_started",
     "turn_started",
     "config_applied",
     "git_state",
+    "project_root",
     // Its `operator_closed` is the divider.
     "session_closed",
     // Its `session_parked` is the divider.

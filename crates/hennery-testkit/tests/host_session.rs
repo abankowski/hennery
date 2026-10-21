@@ -63,6 +63,7 @@ fn kinds(frames: &[HostFrame]) -> Vec<String> {
                 },
                 SessionBody::AnswerResult { delivered, .. } => format!("answer_result:{delivered}"),
                 SessionBody::GitState { .. } => "git_state".to_string(),
+                SessionBody::ProjectRoot { .. } => "project_root".to_string(),
             },
             other => format!("{other:?}"),
         })
@@ -3917,6 +3918,201 @@ fn probing(git: Option<std::path::PathBuf>) -> SessionOptions {
         git,
         ..SessionOptions::default()
     }
+}
+
+#[tokio::test]
+async fn project_root_fallback_is_reported_after_session_start_outside_git() {
+    let cwd = tempfile::tempdir().unwrap();
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let _handle = session::spawn(
+        uplink.clone(),
+        "r0".into(),
+        "s1".into(),
+        fake_with(&FakeScript::default()),
+        cwd.path().to_path_buf(),
+        SessionOptions {
+            git: Some(hennery_host::git::find_git().expect("git in dev shell")),
+            project_roots: Some(std::sync::Arc::default()),
+            ..SessionOptions::default()
+        },
+    );
+    let frames = wait_until(&uplink, has("project_root")).await;
+    assert_eq!(kinds(&frames), ["session_started", "project_root"]);
+    let HostFrame::Session {
+        body: SessionBody::ProjectRoot { project_root },
+        ..
+    } = &frames[1]
+    else {
+        panic!("missing repository metadata");
+    };
+    assert_eq!(project_root, cwd.path().to_str().unwrap());
+}
+
+#[tokio::test]
+async fn project_root_is_reported_even_when_adapter_start_fails() {
+    let cwd = tempfile::tempdir().unwrap();
+    setup_git(cwd.path(), &["init", "-q"]);
+    let sub = cwd.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let mut adapter = fake_with(&FakeScript::default());
+    adapter.program = "/nonexistent-hennery-test-adapter".into();
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = session::spawn(
+        uplink.clone(),
+        "r0".into(),
+        "s1".into(),
+        adapter,
+        sub,
+        SessionOptions {
+            git: hennery_host::git::find_git(),
+            project_roots: Some(std::sync::Arc::default()),
+            ..SessionOptions::default()
+        },
+    );
+    wait_ended(&handle).await;
+    let frames = wait_until(&uplink, has("project_root")).await;
+    assert_eq!(kinds(&frames), ["start_failed", "project_root"]);
+    let HostFrame::Session {
+        body: SessionBody::ProjectRoot { project_root },
+        ..
+    } = &frames[1]
+    else {
+        panic!("missing failed session repository metadata");
+    };
+    assert_eq!(project_root, cwd.path().canonicalize().unwrap().to_str().unwrap());
+}
+
+#[tokio::test]
+async fn project_root_non_git_fallback_is_reported_after_failed_start() {
+    let cwd = tempfile::tempdir().unwrap();
+    let mut adapter = fake_with(&FakeScript::default());
+    adapter.program = "/nonexistent-hennery-test-adapter".into();
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = session::spawn(
+        uplink.clone(),
+        "r0".into(),
+        "s1".into(),
+        adapter,
+        cwd.path().to_path_buf(),
+        SessionOptions {
+            git: Some(hennery_host::git::find_git().expect("git in dev shell")),
+            project_roots: Some(std::sync::Arc::default()),
+            ..SessionOptions::default()
+        },
+    );
+    wait_ended(&handle).await;
+    let frames = wait_until(&uplink, has("project_root")).await;
+    assert_eq!(kinds(&frames), ["start_failed", "project_root"]);
+    let HostFrame::Session {
+        body: SessionBody::ProjectRoot { project_root },
+        ..
+    } = &frames[1]
+    else {
+        panic!("missing failed session non-Git metadata");
+    };
+    assert_eq!(project_root, cwd.path().to_str().unwrap());
+}
+
+async fn project_root_retry_is_omitted_until_next_attach(failed_start: bool) {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
+    let repo = tempfile::tempdir().unwrap();
+    setup_git(repo.path(), &["init", "-q"]);
+    let sub = repo.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let roots = std::sync::Arc::new(hennery_host::git::ProjectRoots::default());
+    // Prime the transient result so the actor and test share the exact lookup.
+    roots.resolve(None, &sub).await;
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let mut adapter = fake_with(&FakeScript::default());
+    if failed_start {
+        adapter.program = "/nonexistent-hennery-test-adapter".into();
+    }
+    let handle = session::spawn(
+        uplink.clone(),
+        "initial".into(),
+        "s1".into(),
+        adapter,
+        sub.clone(),
+        SessionOptions {
+            project_roots: Some(roots.clone()),
+            ..SessionOptions::default()
+        },
+    );
+    wait_until(
+        &uplink,
+        has(if failed_start {
+            "start_failed"
+        } else {
+            "session_started"
+        }),
+    )
+    .await;
+    // The metadata task is asynchronous. Observe a bounded quiet interval;
+    // every subsequent assertion also rejects any late fallback publication.
+    let observed = tokio::time::timeout(Duration::from_millis(200), wait_until(&uplink, has("project_root"))).await;
+    assert!(
+        observed.is_err(),
+        "a transient lookup published cwd as project identity"
+    );
+    let agent_session = handle.agent_session_id();
+    if !failed_start {
+        assert!(handle.send(SessionCmd::Park {
+            request_id: "park".into()
+        }));
+    }
+    wait_ended(&handle).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let options = SessionOptions {
+        git: Some(hennery_host::git::find_git().expect("git in dev shell")),
+        project_roots: Some(roots),
+        ..SessionOptions::default()
+    };
+    let recovered = if let Some(agent_session) = agent_session {
+        session::resume(
+            uplink.clone(),
+            "retry".into(),
+            "s1".into(),
+            agent_session,
+            fake_with(&FakeScript::default()),
+            sub,
+            options,
+        )
+    } else {
+        session::spawn(
+            uplink.clone(),
+            "retry".into(),
+            "s1".into(),
+            fake_with(&FakeScript::default()),
+            sub,
+            options,
+        )
+    };
+    let frames = wait_until(&uplink, has("project_root")).await;
+    let seen: Vec<_> = frames
+        .iter()
+        .filter_map(|frame| match frame {
+            HostFrame::Session {
+                body: SessionBody::ProjectRoot { project_root },
+                ..
+            } => Some(project_root.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(seen, [repo.path().canonicalize().unwrap().to_str().unwrap()]);
+    assert!(recovered.send(SessionCmd::Close {
+        request_id: "close".into()
+    }));
+    wait_ended(&recovered).await;
+}
+
+#[tokio::test]
+async fn project_root_successful_attach_skips_retry_then_recovers_on_resume() {
+    project_root_retry_is_omitted_until_next_attach(false).await;
+}
+
+#[tokio::test]
+async fn project_root_failed_attach_skips_retry_then_recovers_on_next_start() {
+    project_root_retry_is_omitted_until_next_attach(true).await;
 }
 
 fn setup_git(dir: &Path, args: &[&str]) -> String {

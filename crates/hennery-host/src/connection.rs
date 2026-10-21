@@ -75,6 +75,8 @@ pub struct HostConfig {
     /// `git` for the sessions' git probe (ACP core §7), found on `PATH` once,
     /// when the host starts; `None`: no `git_state`.
     pub git: Option<PathBuf>,
+    /// Shared repository identities, cached across session actors and reconnects.
+    pub project_roots: Arc<crate::git::ProjectRoots>,
 }
 
 impl HostConfig {
@@ -98,6 +100,7 @@ impl HostConfig {
             workspace_roots: Vec::new(),
             home: None,
             git: crate::git::find_git(),
+            project_roots: Arc::default(),
         }
     }
 
@@ -129,6 +132,7 @@ impl HostConfig {
         SessionOptions {
             idle_timeout: (!self.idle_timeout.is_zero()).then_some(self.idle_timeout),
             git: self.git.clone(),
+            project_roots: Some(self.project_roots.clone()),
             ..SessionOptions::default()
         }
     }

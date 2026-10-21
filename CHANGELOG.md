@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Sessions can group by Hat or Host, then by Project or Nothing. Project
+  sections remember their collapse state within the tab and show their path,
+  hosts, running count and sessions needing you;
+  parent and child sessions stay together across hosts and worktrees.
+- Choose Needs you first, Last activity or Started. Started keeps newest
+  sessions first without moving rows as agents work. Grouping and sorting
+  choices are remembered in this browser.
+- The overview header stays on one line at 1024 px with the sidebar open;
+  its session counter ellipsizes when space runs out.
+- Hosts report an optional repository root for project grouping, mapping
+  linked worktrees and subdirectories to their main repository. The UI falls
+  back to the working directory when no root is available. Bare repositories,
+  separate Git directories and submodules retain distinct project identities;
+  transient Git errors are retried after a short delay without persisting
+  their working-directory fallback.
+- Database migration 30 adds the stored project root. An older binary
+  cannot open the upgraded database.
+
 ## 0.2.2
 
 - Updates replace immediately (#224). A new version takes over at once and

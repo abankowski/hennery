@@ -5445,6 +5445,23 @@
             "worktree"
           ],
           "type": "object"
+        },
+        {
+          "description": "Bounded, asynchronous local repository lookup after attachment. The\ngit common dir's parent joins linked worktrees and subdirectories;\noutside git or on lookup failure this is cwd. Display metadata only.",
+          "properties": {
+            "kind": {
+              "const": "project_root",
+              "type": "string"
+            },
+            "project_root": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "project_root"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -5621,6 +5638,13 @@
           "description": "Parked only because its host has been offline past the threshold\n(ACP core §5.3); the host may still be running it.",
           "type": "boolean"
         },
+        "project_root": {
+          "description": "Main repository of the host's git common dir; cwd outside git. Absent\nuntil a supporting host reports it. Complete identity, never truncated.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "session_id": {
           "type": "string"
         },
@@ -5764,6 +5788,13 @@
         "presumed_parked": {
           "description": "Parked only because its host has been offline past the threshold\n(ACP core §5.3); the host may still be running it.",
           "type": "boolean"
+        },
+        "project_root": {
+          "description": "Main repository of the host's git common dir; cwd outside git. Absent\nuntil a supporting host reports it. Complete identity, never truncated.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "session_id": {
           "type": "string"

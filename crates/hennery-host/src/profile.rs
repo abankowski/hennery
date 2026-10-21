@@ -227,7 +227,8 @@ impl Secrets {
             | SessionBody::PendingOpened { .. }
             | SessionBody::PendingResolved { .. }
             | SessionBody::AnswerResult { .. }
-            | SessionBody::GitState { .. }) => body,
+            | SessionBody::GitState { .. }
+            | SessionBody::ProjectRoot { .. }) => body,
         }
     }
 }

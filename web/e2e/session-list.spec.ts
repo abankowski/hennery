@@ -8,6 +8,7 @@ test.afterAll(async () => { await collector?.stop() })
 
 for (const width of [1280, 390]) for (const count of [1, 100]) test(`${count} children remain compact and stable during streaming at ${width}px`, async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width, height: 900 } })
+  await context.addInitScript(() => { localStorage.setItem('hennery.sort', 'started'); localStorage.setItem('hennery.subgroup', 'none') })
   const ts = '2026-10-01T09:00:00Z', hostname = 'a-very-long-development-hostname-that-must-not-wrap'
   const base: SessionSummary = { session_id: 'parent', title: 'Coordinator', host_id: 'host', hat_id: 'hat', agent: 'claude', model: 'claude-haiku-4-5-20251001', cwd: '/srv/project', lifecycle: 'active', activity: 'idle', presumed_parked: false, question_waits: false, operator_attention: 0, parent_handled_questions: 0, created_at: ts, last_event_at: ts }
   const parent = { ...base, family: { revision: 1, children: [{ session_id: 'child', agent: 'claude' }, { session_id: 'child', agent: 'claude' }, { session_id: 'closed', agent: 'claude' }], child_counts: { total: count + 1, active: 1, waiting: 0 }, attention: 0 } }
@@ -65,14 +66,16 @@ for (const width of [1280, 390]) for (const count of [1, 100]) test(`${count} ch
     await expect(links.locator('.sess-name')).toHaveText(visible)
     expect(await before.evaluate(state => ({ same: state.rows.every((row, i) => row === row.parentElement?.children[i]), changes: state.changes }))).toEqual({ same: true, changes: [] })
     await before.evaluate(state => state.observer.disconnect())
-    for (const grouping of ['host', 'project', 'time', 'hat']) {
-      if (width === 390) await page.getByRole('combobox', { name: 'Group sessions by', exact: true }).selectOption(grouping)
-      else await page.getByRole('radio', { name: `By ${grouping}`, exact: true }).check()
+    for (const grouping of ['host', 'hat']) {
+      await page.getByRole('radio', { name: grouping === 'host' ? 'Host' : 'Hat', exact: true }).check()
       await expect(links.locator('.sess-name')).toHaveText(visible)
       expect(await page.evaluate(() => localStorage.getItem('hennery.group'))).toBe(grouping)
-      if (grouping === 'time') expect(await page.locator('.grp-head').evaluate(el => getComputedStyle(el).position)).toBe('sticky')
-      if (grouping === 'project') await expect(page.locator('.grp-path')).toHaveAttribute('title', '/srv/project')
     }
+    await page.getByRole('radio', { name: 'Project', exact: true }).check()
+    await expect(page.locator('.grp-path')).toHaveAttribute('title', '/srv/project')
+    await expect(links.locator('.sess-name')).toHaveText(visible)
+    await page.getByRole('radio', { name: 'Nothing', exact: true }).check()
+    await expect(page.locator('.project-toggle')).toHaveCount(0)
     const host = page.locator('[data-session-id="parent"] [data-label="Host"] bdi')
     const model = page.locator('[data-session-id="parent"] [data-label="Agent / model"] bdi')
     await expect(host).toHaveAttribute('title', hostname)

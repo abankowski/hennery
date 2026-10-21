@@ -207,6 +207,8 @@ pub struct SessionOptions {
     /// `git` for the git probe (ACP core §7), found once when the host
     /// starts (`git::find_git`); `None`: no probe, no `git_state`.
     pub git: Option<PathBuf>,
+    /// Host-wide repository cache. None only for isolated actor tests/embedders.
+    pub project_roots: Option<Arc<crate::git::ProjectRoots>>,
     /// Where the agent's data is registered before each `session_started`
     /// (plan 9d decision 1, B1); `None`: nothing is recorded.
     pub home: Option<HomeRecorder>,
@@ -234,6 +236,7 @@ impl Default for SessionOptions {
             cancel_grace: CANCEL_GRACE,
             config_timeout: CONFIG_TIMEOUT,
             git: None,
+            project_roots: None,
             home: None,
             #[cfg(feature = "test-hooks")]
             test_hooks: None,
@@ -445,6 +448,7 @@ fn launch_inner(
         inbound: OnceLock::new(),
         probe: Mutex::new(None),
         base_probe: Mutex::new(None),
+        project_probe: Mutex::new(None),
         ending: ending.clone(),
         secrets: Secrets::of(&launch.mcp_servers),
     };
@@ -494,6 +498,7 @@ enum Inbound {
         state: crate::git::GitState,
         base: bool,
     },
+    ProjectRoot(PathBuf),
 }
 
 /// A `session/request_permission` or `elicitation/create` from the adapter
@@ -782,7 +787,10 @@ impl Replay {
             Inbound::Question(question) => self.kept.push(Early::Question(question)),
             // No switch is sent, no question is open and no probe runs
             // before the actor's main loop starts.
-            Inbound::SwitchAnswer { .. } | Inbound::QuestionWithdrawn { .. } | Inbound::Git { .. } => {}
+            Inbound::SwitchAnswer { .. }
+            | Inbound::QuestionWithdrawn { .. }
+            | Inbound::Git { .. }
+            | Inbound::ProjectRoot(_) => {}
         }
     }
 
@@ -844,6 +852,8 @@ struct Actor {
     /// turn's probe waits for it rather than aborting it (the second
     /// review's B1), so the states stay in order; the actor's end aborts it.
     base_probe: Mutex<Option<(Watcher, watch::Receiver<bool>)>>,
+    /// The bounded start-time repository lookup, aborted with the actor.
+    project_probe: Mutex<Option<Watcher>>,
     /// Shared with the handle (`SessionHandle::is_ending`).
     ending: Arc<AtomicBool>,
     /// Shared with the handle (`SessionHandle::agent_session_id`).
@@ -965,7 +975,36 @@ impl Actor {
     }
 
     async fn run(self, launch: Launch, mut commands: mpsc::UnboundedReceiver<SessionCmd>) {
+        let cwd = launch.cwd.clone();
         self.drive(launch, &mut commands).await;
+        if self.agent_session_id.lock().expect("agent session id lock").is_none()
+            && let Some(roots) = self.options.project_roots.clone()
+        {
+            // Failed starts still belong to their repository. The error is
+            // already sequenced; let this bounded metadata task survive the
+            // failed actor, without holding its completion or the error reply.
+            let git = self.options.git.clone();
+            let uplink = self.uplink.clone();
+            let session_id = self.session_id.clone();
+            let secrets = self.secrets.clone();
+            drop(tokio::spawn(async move {
+                let root = match roots.resolve(git.as_deref(), &cwd).await {
+                    crate::git::ProjectLookup::Root(root) => root,
+                    crate::git::ProjectLookup::NotRepository => cwd,
+                    crate::git::ProjectLookup::Retry => return,
+                };
+                if let Some(root) = root.to_str()
+                    && let Err(err) = uplink.emit(
+                        &session_id,
+                        SessionBody::ProjectRoot {
+                            project_root: root.into(),
+                        },
+                    )
+                {
+                    tracing::error!(%session_id, error = %secrets.redact(&err.to_string()), "failed to persist repository metadata");
+                }
+            }));
+        }
         // The session's last frame is in the outbox. Commands sent while the
         // actor was ending (killing its adapter can take the whole grace) are
         // answered, never dropped: the collector would otherwise wait out its
@@ -1205,7 +1244,12 @@ impl Actor {
             match updates.try_recv() {
                 Ok(Inbound::Update(payload)) => early.push(Early::Update(payload)),
                 Ok(Inbound::Question(question)) => early.push(Early::Question(question)),
-                Ok(Inbound::SwitchAnswer { .. } | Inbound::QuestionWithdrawn { .. } | Inbound::Git { .. }) => {}
+                Ok(
+                    Inbound::SwitchAnswer { .. }
+                    | Inbound::QuestionWithdrawn { .. }
+                    | Inbound::Git { .. }
+                    | Inbound::ProjectRoot(_),
+                ) => {}
                 Err(_) => break,
             }
         }
@@ -1233,6 +1277,7 @@ impl Actor {
         // it started from (the review's O3: a resume's would name a later
         // one).
         self.probe_git(&probe_cwd, matches!(attach, Attach::New));
+        self.probe_project_root(&probe_cwd);
 
         // Prompts are deduplicated by turn_id: a retried delivery after a
         // lost acknowledgement must never run the same turn twice. Only a
@@ -1780,7 +1825,34 @@ impl Actor {
                 });
                 false
             }
+            Inbound::ProjectRoot(root) => {
+                if let Some(root) = root.to_str() {
+                    self.emit(SessionBody::ProjectRoot {
+                        project_root: root.to_string(),
+                    });
+                }
+                false
+            }
         }
+    }
+
+    /// Resolve repository metadata after attachment without holding the actor.
+    /// The ordered result follows session_started; actor shutdown aborts it.
+    fn probe_project_root(&self, cwd: &std::path::Path) {
+        let (Some(roots), Some(inbound)) = (self.options.project_roots.clone(), self.inbound.get().cloned()) else {
+            return;
+        };
+        let cwd = cwd.to_path_buf();
+        let git = self.options.git.clone();
+        let task = tokio::spawn(async move {
+            let root = match roots.resolve(git.as_deref(), &cwd).await {
+                crate::git::ProjectLookup::Root(root) => root,
+                crate::git::ProjectLookup::NotRepository => cwd,
+                crate::git::ProjectLookup::Retry => return,
+            };
+            let _ = inbound.send(Inbound::ProjectRoot(root));
+        });
+        *self.project_probe.lock().expect("project probe lock") = Some(Watcher(Some(task)));
     }
 
     /// Probe `cwd`'s git state on a task of its own (ACP core §7; plan
@@ -2286,7 +2358,12 @@ async fn negotiate(
                 match updates.try_recv() {
                     Ok(Inbound::Update(payload)) => replay.kept.push(Early::Update(payload)),
                     Ok(Inbound::Question(question)) => replay.kept.push(Early::Question(question)),
-                    Ok(Inbound::SwitchAnswer { .. } | Inbound::QuestionWithdrawn { .. } | Inbound::Git { .. }) => {}
+                    Ok(
+                        Inbound::SwitchAnswer { .. }
+                        | Inbound::QuestionWithdrawn { .. }
+                        | Inbound::Git { .. }
+                        | Inbound::ProjectRoot(_),
+                    ) => {}
                     Err(_) => break,
                 }
             }

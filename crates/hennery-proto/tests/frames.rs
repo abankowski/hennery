@@ -213,6 +213,7 @@ fn bare_item() -> hennery_proto::rest::SessionItem {
         host_id: "h".into(),
         agent: "claude".into(),
         cwd: "/tmp".into(),
+        project_root: None,
         hat_id: "hat-1".into(),
         title: None,
         title_source: None,
@@ -226,6 +227,44 @@ fn bare_item() -> hennery_proto::rest::SessionItem {
         mode: None,
         created_at: "2026-10-07T12:00:00.000Z".into(),
         last_event_at: "2026-10-07T12:00:01.000Z".into(),
+    }
+}
+
+#[test]
+fn project_root_is_optional_and_preserves_complete_group_identity() {
+    let mut old = serde_json::to_value(bare_item()).unwrap();
+    old.as_object_mut().unwrap().remove("project_root");
+    let mut item: hennery_proto::rest::SessionItem = serde_json::from_value(old).unwrap();
+    assert_eq!(item.project_root, None);
+    assert!(serde_json::to_value(&item).unwrap().get("project_root").is_none());
+    let root = format!("/projects/{}/repository", "a".repeat(300));
+    item.project_root = Some(root.clone());
+    let encoded = serde_json::to_value(item.bounded()).unwrap();
+    assert_eq!(encoded["project_root"], root);
+    let body = SessionBody::ProjectRoot { project_root: root };
+    let encoded = serde_json::to_value(&body).unwrap();
+    assert_eq!(encoded["kind"], "project_root");
+    assert_eq!(serde_json::from_value::<SessionBody>(encoded).unwrap(), body);
+}
+
+#[test]
+fn project_root_is_bounded_without_truncating_its_identity() {
+    use hennery_proto::rest::PROJECT_ROOT_MAX_JSON_BYTES;
+    let mut item = bare_item();
+    let root = format!("/{}", "x".repeat(PROJECT_ROOT_MAX_JSON_BYTES - 1));
+    item.project_root = Some(root.clone());
+    let item = item.bounded();
+    assert_eq!(item.project_root.as_deref(), Some(root.as_str()));
+    assert!(serde_json::to_vec(&item).unwrap().len() < 18 * 1024);
+    for root in [
+        format!("{root}x"),
+        "relative".into(),
+        "/bad\npath".into(),
+        "/bad\u{202e}path".into(),
+    ] {
+        let mut item = bare_item();
+        item.project_root = Some(root);
+        assert_eq!(item.bounded().project_root, None);
     }
 }
 
@@ -335,6 +374,7 @@ fn a_listed_item_stays_under_1_kib_with_every_field_at_its_worst() {
         agent: "\"".repeat(40),
         // Exactly 128 bytes as JSON writes it: kept whole.
         cwd: format!("/{}", "\"\\😀".repeat(15)) + &"x".repeat(7),
+        project_root: None,
         hat_id: "hat-0123456789abcdef".into(),
         title: Some("\"".repeat(500)),
         title_source: Some(hennery_proto::rest::TitleSource::Operator),

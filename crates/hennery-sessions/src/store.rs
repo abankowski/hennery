@@ -439,6 +439,11 @@ BEGIN
       AND (child_id = NEW.id OR parent_id = NEW.id) AND NEW.lifecycle = 'deleted';
     DELETE FROM delegation_budgets WHERE owner_id = NEW.owner_id AND root_id = NEW.id AND NEW.lifecycle = 'deleted';
 END;",
+    // Exact prerequisite schemas from prompt-queue c2d253e2 (28, 29).
+    include_str!("runtime_catalog.sql"),
+    include_str!("prompt_queue.sql"),
+    // Repository grouping identity (30). Older hosts/rows retain NULL.
+    "ALTER TABLE sessions ADD COLUMN project_root TEXT;",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -1318,7 +1323,7 @@ fn store_state(tx: &Transaction<'_>, owner: &str, session_id: &str, indexed: &In
 
 /// The columns of a list item, in `read_item`'s order.
 const SESSION_ITEM_COLUMNS: &str = "id, host_id, agent, cwd, title, lifecycle, activity, failure_reason,
-     presumed_parked, git_branch, git_dirty, model, mode, created_at, last_event_at, hat_id, title_source";
+     presumed_parked, git_branch, git_dirty, model, mode, created_at, last_event_at, hat_id, title_source, project_root";
 
 /// A row of `SESSION_ITEM_COLUMNS` as a list item, as stored.
 pub(crate) fn read_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionItem> {
@@ -1327,6 +1332,7 @@ pub(crate) fn read_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionItem> 
         host_id: r.get(1)?,
         agent: r.get(2)?,
         cwd: r.get(3)?,
+        project_root: r.get(17)?,
         title: r.get(4)?,
         title_source: match r.get::<_, Option<String>>(16)?.as_deref() {
             Some("agent") => Some(hennery_proto::rest::TitleSource::Agent),
@@ -3197,7 +3203,7 @@ impl Store {
         let event = collector_event(&tx, &self.owner, session_id, "session_deleted", json!({}), &now())?;
         let scrubbed = tx.execute(
             "UPDATE sessions SET lifecycle = 'deleted', cwd = '', agent = '', title = NULL,
-             agent_title = NULL, prompt_title = NULL, title_source = NULL, configuration_error = NULL, git_branch = NULL,
+             agent_title = NULL, prompt_title = NULL, title_source = NULL, configuration_error = NULL, git_branch = NULL, project_root = NULL,
                  git_dirty = NULL, git_worktree = NULL, base_commit = NULL, model = NULL, mode = NULL,
                  config_axes = NULL, agent_session_id = NULL, failure_reason = NULL, hat_rule_id = NULL,
                  open_turn_id = NULL, activity = NULL, presumed_parked = 0, close_requested = 0, agent_home = NULL,
@@ -4279,6 +4285,23 @@ impl Store {
                     mark_unapplied(&tx, &self.owner, fact_id)?;
                 }
             }
+            SessionBody::ProjectRoot { project_root } => {
+                let changed = if hennery_proto::rest::valid_project_root(project_root)
+                    && fact_applies(&tx, &self.owner, session_id, None)?
+                {
+                    tx.execute(
+                        "UPDATE sessions SET project_root = ?2 WHERE id = ?1 AND owner_id = ?3
+                         AND project_root IS NOT ?2",
+                        params![session_id, project_root, self.owner],
+                    )?
+                } else {
+                    0
+                };
+                if changed == 0 {
+                    created.clear();
+                    mark_unapplied(&tx, &self.owner, fact_id)?;
+                }
+            }
             SessionBody::GitState {
                 branch,
                 dirty,
@@ -4352,7 +4375,12 @@ impl Store {
         // timeline, so it must not move the session up the list either.
         // The fact's collector events come after it, so the last of them
         // is the session's last event.
-        if let Some(last) = created.iter().map(|e| e.event_id).max() {
+        if let Some(last) = created
+            .iter()
+            .filter(|e| e.kind != "project_root")
+            .map(|e| e.event_id)
+            .max()
+        {
             tx.execute(
                 "UPDATE sessions SET last_event_at = ?2, last_event_id = ?3 WHERE id = ?1 AND owner_id = ?4",
                 params![session_id, ts, last, self.owner],
@@ -4985,6 +5013,7 @@ fn body_kind(body: &SessionBody) -> &'static str {
         SessionBody::PendingResolved { .. } => "pending_resolved",
         SessionBody::AnswerResult { .. } => "answer_result",
         SessionBody::GitState { .. } => "git_state",
+        SessionBody::ProjectRoot { .. } => "project_root",
     }
 }
 
@@ -5634,6 +5663,51 @@ mod tests {
             .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn project_root_migration30_preserves_older_rows_and_tombstones() {
+        let mut conn = hennery_kernel::db::open_in_memory().unwrap();
+        let owner = hennery_kernel::db::kernel_owner(&mut conn).unwrap();
+        hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..29]).unwrap();
+        for (id, lifecycle, cwd) in [
+            ("old", "active", "/projects/repository/sub"),
+            ("deleted", "deleted", ""),
+        ] {
+            conn.execute(
+                "INSERT INTO sessions(id,host_id,agent,cwd,lifecycle,created_at,last_event_at,owner_id)
+                 VALUES (?1,'host','fake',?2,?3,'2000-01-01','2000-01-01',?4)",
+                params![id, cwd, lifecycle, owner],
+            )
+            .unwrap();
+        }
+        hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..30]).unwrap();
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            30
+        );
+        let values = conn
+            .prepare("SELECT id,cwd,project_root FROM sessions ORDER BY id")
+            .unwrap()
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            values,
+            [
+                ("deleted".into(), "".into(), None),
+                ("old".into(), "/projects/repository/sub".into(), None)
+            ]
+        );
+        hennery_kernel::db::migrate(&mut conn, MIGRATIONS).unwrap();
     }
 
     #[test]
