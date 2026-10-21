@@ -387,6 +387,7 @@ async fn handshake(
                 Capability::McpServers,
                 Capability::CatalogProbe,
                 Capability::DelegationConfig,
+                Capability::OperatorResume,
                 Capability::PluginContext,
             ]),
             mcp_isolation: announce.mcp_isolation,

@@ -45,6 +45,8 @@ pub enum Capability {
     CatalogProbe,
     /// Generation-bound evidence and serialized delegated prompt admission.
     DelegationConfig,
+    /// Collector-owned operator queue resume with operator authority (hennery 0.3.0).
+    OperatorResume,
 }
 
 /// The longest agent data root a host may report (plan 9d, O12's shape

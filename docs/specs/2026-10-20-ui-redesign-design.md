@@ -532,16 +532,23 @@ the honest replacement instead of quietly adding another backend feature.
 while a session is running or waiting. On a parked session its label, tooltip
 and accessible name are "Resume and send"; this submits one collector queue
 request, and the collector owns resume/delivery. Keep standalone Resume and
-show the parked notice above the input. Ctrl+Enter and Cmd+Enter use the same
+show the parked notice above the input, including "N queued messages will be
+sent when you resume" when applicable. Explicit Park holds existing queued
+work; Resume or a new Send releases it. Ctrl+Enter and Cmd+Enter use the same
 submission handler in every state; ignore IME composition/keyCode 229 and
 autorepeat. Plain Enter retains its existing newline behavior. Accepted messages appear in a bounded
 "Queued" list under the composer, with a text preview, image count, Edit and
 Remove. Editing uses a separate inline draft and retains images; FIFO order
-cannot be changed. Once delivering, an item is immutable. Failed items retain
-text/images, explain why, and offer Copy/Dismiss.
+cannot be changed. Once delivering, an item is immutable. If delivery wins
+while editing, keep the textarea visible with "Already sending; your edit
+wasn’t applied" and Copy edit/Dismiss edit actions, including a manual copy
+fallback. Failed items retain text/images for seven days, explain why, and
+offer Copy/Dismiss. Each submission carries one client request key, retained
+for retries of the same checked content so an uncertain response cannot duplicate it.
 Deleting the session or purging its hat scrubs queued text and images with
 the transcript; the delete confirmation names the number of unsent messages
-that will also be deleted. No recovery list remains after deletion.
+that will also be deleted, excluding items already delivering. No recovery
+list remains after deletion.
 Queue state comes from the
 collector and its existing session view stream (`queue_changed` snapshots),
 so reload and multiple windows converge on one list; ordinary unsent drafts

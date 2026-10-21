@@ -3217,7 +3217,7 @@ impl Store {
                  config_axes = NULL, agent_session_id = NULL, failure_reason = NULL, hat_rule_id = NULL,
                  open_turn_id = NULL, activity = NULL, presumed_parked = 0, close_requested = 0, agent_home = NULL,
                  mcp_delivery_mode = NULL, mcp_delivery_servers = NULL, mcp_delivery_at = NULL,
-                 idle_pinned = 0, idle_hold_dirty = 0, prompt_queue_dirty = 0
+                 idle_pinned = 0, idle_hold_dirty = 0, prompt_queue_dirty = 0, prompt_queue_held = 0
              WHERE id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
         )?;
@@ -3332,6 +3332,10 @@ impl Store {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let event = collector_event(&tx, &self.owner, session_id, "operator_parked", json!({}), &now())?;
+        tx.execute(
+            "UPDATE sessions SET prompt_queue_held=1 WHERE owner_id = ?1 AND id=?2 AND lifecycle<>'deleted'",
+            params![self.owner_id(), session_id],
+        )?;
         tx.commit()?;
         Ok(event)
     }
@@ -3483,7 +3487,7 @@ impl Store {
         )?);
         tx.execute(
             "UPDATE sessions SET lifecycle = 'starting', activity = NULL, failure_reason = NULL,
-                 close_requested = 0, open_turn_id = NULL, presumed_parked = 0
+                 close_requested = 0, open_turn_id = NULL, presumed_parked = 0, prompt_queue_held = 0
              WHERE id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
         )?;
@@ -4074,9 +4078,10 @@ impl Store {
                 let changed = tx.execute(
                     "UPDATE sessions SET
                          lifecycle = CASE WHEN close_requested = 1 THEN 'closed' ELSE 'parked' END,
-                         activity = NULL, close_requested = 0, presumed_parked = 0
+                         activity = NULL, close_requested = 0, presumed_parked = 0,
+                         prompt_queue_held = CASE WHEN ?3 THEN prompt_queue_held ELSE 0 END
                      WHERE id = ?1 AND owner_id = ?2 AND (lifecycle = 'active' OR presumed_parked = 1)",
-                    [session_id, &self.owner],
+                    params![session_id, self.owner, *reason == ParkReason::Operator],
                 )?;
                 if changed == 0 {
                     created.clear();
@@ -4521,7 +4526,7 @@ impl Store {
                         tx.execute(
                             "UPDATE sessions SET
                                  lifecycle = CASE WHEN close_requested = 1 THEN 'closed' ELSE 'parked' END,
-                                 activity = NULL, open_turn_id = NULL, close_requested = 0, presumed_parked = 0
+                                 activity = NULL, open_turn_id = NULL, close_requested = 0, presumed_parked = 0, prompt_queue_held = 0
                              WHERE id = ?1 AND owner_id = ?2",
                             [&id, &self.owner],
                         )?;
@@ -4538,7 +4543,7 @@ impl Store {
                 _ => {}
             }
         }
-        self.settle_notices_in(&tx)?;
+        self.settle_delegation_in(&tx)?;
         commit_then_cut(tx, mcp.as_ref(), cut)?;
         Ok(out)
     }

@@ -18,8 +18,9 @@ fn bounds(tx: &Transaction<'_>, owner: &str, target: &str, exclude: &str, bytes:
     let (count, used): (i64, i64) = tx.query_row(
         "SELECT COUNT(*),COALESCE(SUM(length(CAST(payload AS BLOB))+image_bytes),0)
          FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id=?2 AND operation_id<>?3
-         AND (state IN ('queued','waiting_config','awaiting_reconciliation') OR (origin='operator' AND state='failed'))",
-        params![owner, target, exclude], |r| Ok((r.get(0)?, r.get(1)?)),
+         AND state IN ('queued','waiting_config','awaiting_reconciliation')",
+        params![owner, target, exclude],
+        |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     ensure!(count < MAX_QUEUE && used + bytes <= MAX_QUEUE_BYTES, "queue_full");
     Ok(())
@@ -47,6 +48,11 @@ pub fn failure_reason(code: &str) -> String {
         "agent_has_no_record" => "The agent no longer has this session. Copy this message to a new session.",
         "previous_turn_failed" => "The previous turn failed. Review the transcript before sending again.",
         "image_unavailable" => "An attached image is unavailable. Attach it again before sending.",
+        "host_revoked" => "The host was revoked. Copy this message to a session on a paired host.",
+        "host_offline" => "The host is offline. Copy or resend this message after it reconnects.",
+        "operator_resume_unsupported" => {
+            "This host needs hennery 0.3.0 to resume and send. Update the host before sending again."
+        }
         _ => "The session could not accept this message. Review its status before sending again.",
     }
     .into()
@@ -56,9 +62,9 @@ impl Store {
     /// Also used to keep immediate prompts behind an accepted FIFO head.
     pub fn prompt_must_queue(&self, session: &str) -> Result<bool> {
         Ok(self.conn().query_row(
-            "SELECT open_turn_id IS NOT NULL OR lifecycle='parked' OR activity='blocked'
+            "SELECT open_turn_id IS NOT NULL OR lifecycle='parked' OR activity='blocked' OR prompt_queue_held=1
              OR EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=?2 AND p.state='open')
-             OR EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.state IN ('queued','waiting_config'))
+             OR EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.state IN ('queued','waiting_config','awaiting_reconciliation'))
              FROM sessions WHERE owner_id = ?1 AND id=?2", params![self.owner_id(),session], |r| r.get(0),
         )?)
     }
@@ -66,6 +72,8 @@ impl Store {
     pub fn enqueue_operator_prompt(&self, session: &str, prompt: &Checked) -> Result<String> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let revoked: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sessions s JOIN hosts h ON h.owner_id=s.owner_id AND h.id=s.host_id WHERE s.owner_id = ?1 AND s.id=?2 AND h.revoked_at IS NOT NULL)",params![self.owner_id(),session],|r|r.get(0))?;
+        ensure!(!revoked, "host_revoked");
         let eligible: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.owner_id = ?1 AND s.id=?2
              AND s.lifecycle IN ('active','parked') AND s.close_requested=0 AND s.configuration_error IS NULL
@@ -114,6 +122,10 @@ impl Store {
                 params![self.owner_id(), id, image.sha256, position as i64],
             )?;
         }
+        tx.execute(
+            "UPDATE sessions SET prompt_queue_held=0 WHERE owner_id = ?1 AND id=?2",
+            params![self.owner_id(), session],
+        )?;
         tx.commit()?;
         Ok(id)
     }
@@ -203,11 +215,23 @@ impl Store {
         source: &str,
         target: &str,
         revision: i64,
+        operator: bool,
     ) -> Result<bool> {
-        if source == target && revision == 0 {
+        if self.operator_queue_fenced_in(tx, target)? {
+            return Ok(false);
+        }
+        let held: bool = tx.query_row(
+            "SELECT prompt_queue_held FROM sessions WHERE owner_id = ?1 AND id=?2",
+            params![self.owner_id(), target],
+            |r| r.get(0),
+        )?;
+        if held {
+            return Ok(false);
+        }
+        if operator {
             return Ok(tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.owner_id = ?1 AND s.id=?2
-                 AND s.close_requested=0 AND s.presumed_parked=0 AND s.lifecycle IN ('active','parked')
+                 AND s.close_requested=0 AND s.presumed_parked=0 AND s.lifecycle IN ('active','parked') AND s.prompt_queue_held=0
                  AND s.configuration_error IS NULL
                  AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id=s.hat_id)
                  AND EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2
@@ -219,13 +243,16 @@ impl Store {
         self.transfer_in(tx, source, target, revision)
     }
 
-    pub(crate) fn operator_dispatch_id(&self, session: &str) -> Result<String> {
-        Ok(self.conn().query_row(
-            "SELECT operation_id FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id=?2
+    pub(crate) fn operator_dispatch_id(&self, session: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT operation_id FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id=?2
             AND state IN ('queued','waiting_config') ORDER BY position LIMIT 1",
-            params![self.owner_id(), session],
-            |r| r.get(0),
-        )?)
+                params![self.owner_id(), session],
+                |r| r.get(0),
+            )
+            .optional()?)
     }
 
     /// Only an operator FIFO head with no open request can be prepared.
@@ -233,7 +260,8 @@ impl Store {
         Ok(self.conn().query_row(
             "SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.owner_id = ?1 AND s.id=?2 AND s.lifecycle='active'
              AND s.open_turn_id IS NULL AND COALESCE(s.activity,'idle')<>'blocked' AND s.close_requested=0
-             AND s.configuration_error IS NULL AND s.presumed_parked=0
+             AND s.configuration_error IS NULL AND s.presumed_parked=0 AND s.prompt_queue_held=0
+             AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.origin='operator' AND q.state='awaiting_reconciliation')
              AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=?2 AND p.state='open')
              AND (SELECT origin FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2
                  AND q.state IN ('queued','waiting_config') ORDER BY position LIMIT 1)='operator')",
@@ -253,11 +281,14 @@ impl Store {
     ) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if self.operator_queue_fenced_in(&tx, session)? {
+            return Ok(false);
+        }
         let head: Option<(String, String, String, String, bool)> = tx
             .query_row(
                 "SELECT q.operation_id,q.payload,s.host_id,q.state,
              s.lifecycle='active' AND s.open_turn_id IS NULL AND COALESCE(s.activity,'idle')<>'blocked'
-             AND s.close_requested=0 AND s.presumed_parked=0 AND s.configuration_error IS NULL
+             AND s.close_requested=0 AND s.presumed_parked=0 AND s.configuration_error IS NULL AND s.prompt_queue_held=0
              AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=s.id AND p.state='open')
              AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id=s.hat_id)
              FROM session_dispatch_queue q JOIN sessions s ON s.owner_id = ?1 AND s.id=q.target_id
@@ -311,7 +342,7 @@ impl Store {
                 StoredBlock::Text { text } => sent.push(serde_json::json!({"type":"text","text":text})),
                 StoredBlock::Image { mime_type, sha256, .. } => {
                     if !hub.has_capability(&host, Capability::Images) {
-                        self.fail_operator_queue_in(&tx, session, "image_unavailable")?;
+                        self.fail_operator_item_in(&tx, &id, "image_unavailable")?;
                         tx.commit()?;
                         return Ok(false);
                     }
@@ -319,10 +350,18 @@ impl Store {
                         .attachments
                         .as_deref()
                         .map(|dir| crate::attachments::read(dir, sha256))
-                        .transpose()?
-                        .flatten();
+                        .transpose();
+                    let bytes = match bytes {
+                        Ok(bytes) => bytes,
+                        Err(_) => {
+                            self.fail_operator_item_in(&tx, &id, "image_unavailable")?;
+                            tx.commit()?;
+                            return Ok(false);
+                        }
+                    }
+                    .flatten();
                     let Some(bytes) = bytes else {
-                        self.fail_operator_queue_in(&tx, session, "image_unavailable")?;
+                        self.fail_operator_item_in(&tx, &id, "image_unavailable")?;
                         tx.commit()?;
                         return Ok(false);
                     };
@@ -394,6 +433,46 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn operator_queue_fenced_in(&self, tx: &Transaction<'_>, session: &str) -> Result<bool> {
+        Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id=?2 AND origin='operator' AND state='awaiting_reconciliation')",params![self.owner_id(),session],|r|r.get(0))?)
+    }
+
+    pub(crate) fn fail_operator_item_in(&self, tx: &Transaction<'_>, id: &str, code: &str) -> Result<()> {
+        tx.execute("UPDATE session_operations SET state='failed',code=?3 WHERE owner_id = ?1 AND operation_id=?2 AND tool='operator_prompt' AND state IN ('queued','waiting_config','awaiting_reconciliation')",params![self.owner_id(),id,code])?;
+        tx.execute("UPDATE session_dispatch_queue SET state='failed' WHERE owner_id = ?1 AND operation_id=?2 AND origin='operator' AND state IN ('queued','waiting_config','awaiting_reconciliation')",params![self.owner_id(),id])?;
+        Ok(())
+    }
+
+    pub(crate) fn fail_unavailable_operator_queue(&self, session: &str, code: &str) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        self.fail_operator_queue_in(&tx, session, code)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn expire_operator_prompts(&self, now: i64) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let ids = {
+            let mut stmt=tx.prepare("SELECT operation_id,target_id FROM session_dispatch_queue WHERE owner_id = ?1 AND origin='operator' AND state='failed' AND failed_at<=?2 ORDER BY position LIMIT 128")?;
+            stmt.query_map(params![self.owner_id(), now - 7 * 24 * 60 * 60], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut images = BTreeSet::new();
+        for (id, session) in ids {
+            images.extend(hashes(&tx, self.owner_id(), &id)?);
+            tx.execute("DELETE FROM session_dispatch_queue WHERE owner_id = ?1 AND operation_id=?2 AND origin='operator' AND state='failed'",params![self.owner_id(),id])?;
+            tx.execute("DELETE FROM session_operations WHERE owner_id = ?1 AND caller_id=?2 AND operation_id=?3 AND tool='operator_prompt'",params![self.owner_id(),session,id])?;
+        }
+        let dropped = crate::store::drop_unreferenced(&tx, self.owner_id(), &images)?;
+        tx.commit()?;
+        self.remove_files(&conn, &dropped);
+        Ok(())
+    }
+
     pub fn reject_operator_prompt(&self, host: &str, request: &str, code: &str) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -411,11 +490,15 @@ impl Store {
             "UPDATE sessions SET open_turn_id=NULL WHERE owner_id = ?1 AND id=?2 AND open_turn_id=?3",
             params![self.owner_id(), session, turn],
         )?;
-        tx.execute(
-            "UPDATE session_operations SET state='not_delivered',code=?3 WHERE owner_id = ?1 AND operation_id=?2",
-            params![self.owner_id(), request, code],
-        )?;
-        self.fail_operator_queue_in(&tx, &session, code)?;
+        if code == "turn_in_progress" {
+            tx.execute(
+                "UPDATE session_operations SET state='not_delivered',code=?3 WHERE owner_id = ?1 AND operation_id=?2",
+                params![self.owner_id(), request, code],
+            )?;
+        } else {
+            self.fail_operator_item_in(&tx, request, code)?;
+            self.fail_operator_queue_in(&tx, &session, code)?;
+        }
         self.settle_delegation_in(&tx)?;
         tx.commit()?;
         Ok(true)

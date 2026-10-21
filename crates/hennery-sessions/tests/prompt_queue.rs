@@ -262,7 +262,7 @@ fn queue_changes_are_durable_events_seen_by_every_window() {
 }
 
 #[test]
-fn queue_bounds_include_images_edits_failed_items_and_the_shared_parent_fifo() {
+fn queue_bounds_include_images_edits_and_the_shared_parent_fifo() {
     let w = World::new();
     for _ in 0..32 {
         w.queue("small");
@@ -370,8 +370,12 @@ fn operator_prompts_cannot_overtake_a_shared_parent_fifo_head() {
     let (hub, mut rx) = host(vec![]);
     let owner = w.store.owner_id();
     let conn = w.conn();
-    conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state) VALUES (?1,'session','parent-head','parent-head','','session_send','session','queued')",[owner]).unwrap();
-    conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES (?1,'parent-head','session','session',1,'parent first','{}')",[owner]).unwrap();
+    let hat = w.store.find_session("session").unwrap().unwrap().hat_id;
+    w.store
+        .create_session("parent", "host", "fake", "/project", &hat, None)
+        .unwrap();
+    conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state) VALUES (?1,'parent','parent-head','parent-head','','session_send','session','queued')",[owner]).unwrap();
+    conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES (?1,'parent-head','parent','session',1,'parent first','{}')",[owner]).unwrap();
     w.queue("operator second");
     assert!(!w.dispatch(&hub));
     assert!(!w.store.open_prompt("session", "overtake", &checked("direct")).unwrap());
@@ -433,7 +437,7 @@ fn two_workers_dispatch_each_queue_head_exactly_once() {
 #[test]
 fn parked_operator_queue_uses_the_existing_attach_generation_and_confirmed_configuration() {
     let w = World::new();
-    let (hub, mut rx) = host(vec![Capability::DelegationConfig]);
+    let (hub, mut rx) = host(vec![Capability::DelegationConfig, Capability::OperatorResume]);
     w.emit(SessionBody::SessionParked {
         reason: ParkReason::Idle,
     });
@@ -548,7 +552,7 @@ fn a_failed_turn_stops_pending_operator_prompts_and_dismissal_cleans_their_image
 }
 
 #[tokio::test]
-async fn parked_resume_refusals_keep_every_message_and_offline_hosts_leave_them_queued() {
+async fn parked_resume_refusals_keep_every_message_with_a_readable_reason() {
     for missing_record in [true, false] {
         let w = World::new();
         w.emit(SessionBody::SessionParked {
@@ -570,18 +574,9 @@ async fn parked_resume_refusals_keep_every_message_and_offline_hosts_leave_them_
             Hosts::open(&db).unwrap(),
             hennery_kernel::operator::Operator::open(&db).unwrap(),
         );
-        hennery_sessions::delegation_worker::drain(&state).await.unwrap();
-        assert!(
-            state
-                .store
-                .operator_prompt_queue("session")
-                .unwrap()
-                .iter()
-                .all(|q| q.state == "queued")
-        );
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let capabilities = if missing_record {
-            vec![Capability::DelegationConfig]
+            vec![Capability::DelegationConfig, Capability::OperatorResume]
         } else {
             vec![]
         };
@@ -599,7 +594,7 @@ async fn parked_resume_refusals_keep_every_message_and_offline_hosts_leave_them_
             assert!(item.reason.as_deref().unwrap().contains(if missing_record {
                 "no longer has this session"
             } else {
-                "session settings"
+                "0.3.0"
             }));
         }
         assert!(rx.try_recv().is_err());
@@ -642,4 +637,432 @@ fn session_delete_scrubs_queued_text_and_removes_queue_only_images() {
         )
         .unwrap();
     assert_eq!(retained, 0);
+}
+
+// Review B1: these two paths reproduce the independent reviewer's lost-head probes.
+#[test]
+fn reconnect_requeues_a_proven_unsent_head_before_any_later_prompt() {
+    lost_head_is_retried_in_order(false);
+}
+
+#[test]
+fn host_restart_requeues_a_proven_unsent_head_before_resuming_later_work() {
+    lost_head_is_retried_in_order(true);
+}
+
+fn lost_head_is_retried_in_order(restarted: bool) {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![]);
+    let ids = [w.queue("one"), w.queue("two"), w.queue("three")];
+    assert!(w.dispatch(&hub));
+    assert_eq!(prompt(&mut rx).0, ids[0]);
+    let listed = if restarted {
+        vec![]
+    } else {
+        vec![hennery_proto::frames::AttachedSession {
+            session_id: "session".into(),
+            last_seq: w.seq.get(),
+            open_turn_id: None,
+        }]
+    };
+    w.store.reconcile_host("host", &listed).unwrap();
+    let queue = w.store.operator_prompt_queue("session").unwrap();
+    assert_eq!(
+        queue.iter().map(|q| q.id.as_str()).collect::<Vec<_>>(),
+        ids.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+    assert!(queue.iter().all(|q| q.state == "queued"), "{queue:?}");
+    if restarted {
+        let hat = w.store.find_session("session").unwrap().unwrap().hat_id;
+        w.store.request_resume("session", &hat).unwrap();
+        w.emit(SessionBody::session_started("resume", "agent-session"));
+    }
+    for expected in ids {
+        assert!(w.dispatch(&hub));
+        let (request, turn, _) = prompt(&mut rx);
+        assert_eq!(request, expected);
+        w.start(&request, &turn);
+        w.end(&turn, TurnOutcome::Completed);
+    }
+    assert!(w.store.operator_prompt_queue("session").unwrap().is_empty());
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn a_bad_session_does_not_abort_the_dispatch_page_before_later_sessions() {
+    let w = World::new();
+    let hat = w.store.find_session("session").unwrap().unwrap().hat_id;
+    for id in ["a", "b", "c"] {
+        w.store
+            .create_session(id, "host", "fake", "/project", &hat, None)
+            .unwrap();
+        w.store
+            .ingest(id, 1, &SessionBody::session_started("start", "agent"))
+            .unwrap();
+        w.store.enqueue_operator_prompt(id, &checked(id)).unwrap();
+    }
+    w.conn()
+        .execute(
+            "UPDATE session_dispatch_queue SET payload=?2 WHERE owner_id=?1 AND target_id='b'",
+            params![w.store.owner_id(), "invalid stored payload"],
+        )
+        .unwrap();
+    let db = w.dir.path().join("hennery.db");
+    let state = hennery_sessions::AppState::new(
+        Store::open(&db).unwrap(),
+        Hosts::open(&db).unwrap(),
+        hennery_kernel::operator::Operator::open(&db).unwrap(),
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let reg = state
+        .hub
+        .register("host", tx, Capabilities::default(), AgentIsolation::default())
+        .unwrap();
+    state.hub.mark_ready("host", reg.conn_id);
+    hennery_sessions::delegation_worker::drain(&state).await.unwrap();
+    let mut sent = vec![];
+    while let Ok(frame) = rx.try_recv() {
+        if let CollectorFrame::Prompt { session_id, .. } = frame {
+            sent.push(session_id)
+        }
+    }
+    assert_eq!(sent, ["a", "c"]);
+    state.shutdown.cancel();
+}
+
+#[test]
+fn explicit_park_holds_existing_queue_while_idle_park_resumes_it() {
+    for reason in [ParkReason::Operator, ParkReason::Idle] {
+        let w = World::new();
+        let (hub, mut rx) = host(vec![Capability::DelegationConfig, Capability::OperatorResume]);
+        w.queue("already queued");
+        if reason == ParkReason::Operator {
+            w.store.record_park_request("session").unwrap();
+        }
+        w.emit(SessionBody::SessionParked { reason });
+        let catalog = HostCatalog {
+            agent: "fake".into(),
+            adapter_revision: "fixture".into(),
+            freshness: CatalogFreshness::Fresh,
+            config_options: vec![],
+            defaults: SessionConfig::default(),
+            security: SecurityClassification {
+                known: true,
+                axes: Default::default(),
+            },
+        };
+        let attached = w
+            .store
+            .attach_delegated("session", McpContext::NONE, &catalog, &hub)
+            .unwrap();
+        if reason == ParkReason::Operator {
+            assert!(!attached, "explicit Park must hold the queue");
+            assert!(rx.try_recv().is_err());
+            assert_eq!(w.store.operator_prompt_queue("session").unwrap()[0].state, "queued");
+            w.queue("new operator send releases the hold");
+            assert!(
+                w.store
+                    .attach_delegated("session", McpContext::NONE, &catalog, &hub)
+                    .unwrap()
+            );
+        } else {
+            assert!(attached)
+        }
+    }
+}
+
+#[test]
+fn a_send_during_the_park_handshake_releases_the_hold_and_resume_clears_it() {
+    for send_before_park in [false, true] {
+        let w = World::new();
+        let (hub, _rx) = host(vec![]);
+        w.queue("existing");
+        w.store.record_park_request("session").unwrap();
+        assert!(!w.store.operator_dispatch_ready("session").unwrap());
+        assert!(!w.dispatch(&hub));
+        if send_before_park {
+            w.queue("send while parking");
+        }
+        w.emit(SessionBody::SessionParked {
+            reason: ParkReason::Operator,
+        });
+        let held: bool = w
+            .conn()
+            .query_row(
+                "SELECT prompt_queue_held FROM sessions WHERE owner_id=?1 AND id='session'",
+                [w.store.owner_id()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(held, !send_before_park);
+        let hat = w.store.find_session("session").unwrap().unwrap().hat_id;
+        assert!(matches!(
+            w.store.request_resume("session", &hat).unwrap(),
+            hennery_sessions::store::ResumeRequest::Starting { .. }
+        ));
+        let held: bool = w
+            .conn()
+            .query_row(
+                "SELECT prompt_queue_held FROM sessions WHERE owner_id=?1 AND id='session'",
+                [w.store.owner_id()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!held);
+    }
+}
+
+#[test]
+fn host_busy_refusal_requeues_the_head_without_failing_its_tail() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![]);
+    let one = w.queue("one");
+    let two = w.queue("two");
+    assert!(w.dispatch(&hub));
+    let (request, _, _) = prompt(&mut rx);
+    assert!(
+        w.store
+            .reject_operator_prompt("host", &request, "turn_in_progress")
+            .unwrap()
+    );
+    let q = w.store.operator_prompt_queue("session").unwrap();
+    assert_eq!(q.iter().map(|q| q.id.clone()).collect::<Vec<_>>(), [one.clone(), two]);
+    assert!(q.iter().all(|q| q.state == "queued"));
+    assert!(w.dispatch(&hub));
+    assert_eq!(prompt(&mut rx).0, one);
+}
+
+#[test]
+fn retained_failures_do_not_consume_the_active_queue_capacity() {
+    let w = World::new();
+    w.store.open_prompt("session", "running", &checked("first")).unwrap();
+    w.start("first", "running");
+    for _ in 0..32 {
+        w.queue("retained failure");
+    }
+    w.end("running", TurnOutcome::Failed);
+    for _ in 0..32 {
+        w.queue("new work");
+    }
+    assert_eq!(w.store.operator_prompt_queue("session").unwrap().len(), 64);
+    assert_eq!(
+        w.store
+            .enqueue_operator_prompt("session", &checked("overflow"))
+            .unwrap_err()
+            .to_string(),
+        "queue_full"
+    );
+}
+
+#[tokio::test]
+async fn parked_offline_and_revoked_hosts_fail_waiting_input_readably() {
+    for revoked in [false, true] {
+        let w = World::new();
+        w.emit(SessionBody::SessionParked {
+            reason: ParkReason::Idle,
+        });
+        w.queue("keep this text");
+        let db = w.dir.path().join("hennery.db");
+        let hosts = Hosts::open(&db).unwrap();
+        if revoked {
+            hosts.revoke("host", 1).unwrap();
+        }
+        let state = hennery_sessions::AppState::new(
+            Store::open(&db).unwrap(),
+            hosts,
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        hennery_sessions::delegation_worker::drain(&state).await.unwrap();
+        let q = state.store.operator_prompt_queue("session").unwrap();
+        assert_eq!(q[0].state, "failed");
+        assert!(
+            q[0].reason
+                .as_deref()
+                .unwrap()
+                .contains(if revoked { "revoked" } else { "offline" })
+        );
+        if revoked {
+            assert!(
+                state
+                    .store
+                    .enqueue_operator_prompt("session", &checked("refuse revoked"))
+                    .is_err()
+            );
+        }
+        state.shutdown.cancel();
+    }
+}
+
+#[test]
+fn operator_resume_requires_a_host_capability_instead_of_opaque_failure() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![Capability::DelegationConfig]);
+    w.emit(SessionBody::SessionParked {
+        reason: ParkReason::Idle,
+    });
+    w.queue("resume");
+    let catalog = HostCatalog {
+        agent: "fake".into(),
+        adapter_revision: "fixture".into(),
+        freshness: CatalogFreshness::Fresh,
+        config_options: vec![],
+        defaults: SessionConfig::default(),
+        security: SecurityClassification {
+            known: true,
+            axes: Default::default(),
+        },
+    };
+    assert!(
+        !w.store
+            .attach_delegated("session", McpContext::NONE, &catalog, &hub)
+            .unwrap()
+    );
+    assert!(rx.try_recv().is_err());
+    let q = w.store.operator_prompt_queue("session").unwrap();
+    assert_eq!(q[0].state, "failed");
+    assert!(q[0].reason.as_deref().unwrap().contains("hennery 0.3.0"));
+}
+
+#[tokio::test]
+async fn failed_items_expire_after_seven_days_and_remove_only_their_images() {
+    let w = World::new();
+    w.store.open_prompt("session", "running", &checked("first")).unwrap();
+    w.start("first", "running");
+    let image = content::check(vec![
+        json!({"type":"text","text":"expire"}),
+        json!({"type":"image","mimeType":"image/png","data":STANDARD.encode(b"\x89PNG\r\n\x1a\nexpire")}),
+    ])
+    .unwrap();
+    let sha = image.images[0].sha256.clone();
+    let old = w.store.enqueue_operator_prompt("session", &image).unwrap();
+    let fresh = w.queue("recent failure");
+    w.end("running", TurnOutcome::Failed);
+    let now = hennery_kernel::secret::unix_now();
+    w.conn()
+        .execute(
+            "UPDATE session_dispatch_queue SET failed_at=?3 WHERE owner_id=?1 AND operation_id=?2",
+            params![w.store.owner_id(), old, now - 7 * 24 * 60 * 60],
+        )
+        .unwrap();
+    let db = w.dir.path().join("hennery.db");
+    let state = hennery_sessions::AppState::new(
+        Store::open(&db).unwrap(),
+        Hosts::open(&db).unwrap(),
+        hennery_kernel::operator::Operator::open(&db).unwrap(),
+    );
+    hennery_sessions::delegation_worker::drain(&state).await.unwrap();
+    let q = w.store.operator_prompt_queue("session").unwrap();
+    assert_eq!(q.len(), 1);
+    assert_eq!(q[0].id, fresh);
+    assert!(w.store.attachment(&sha).unwrap().is_none());
+    assert!(!w.dir.path().join("attachments").join(sha).exists());
+    state.shutdown.cancel();
+}
+
+#[test]
+fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_prefix() {
+    for seed in 1_u64..=32 {
+        let w = World::new();
+        let (hub, mut rx) = host(vec![]);
+        let mut rng = seed;
+        let mut order = Vec::new();
+        let mut current: Option<(String, String, bool)> = None;
+        let mut delivered = Vec::new();
+        for step in 0..96 {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            match rng % 8 {
+                0 => {
+                    if let Ok(id) = w
+                        .store
+                        .enqueue_operator_prompt("session", &checked(&format!("seed {seed} step {step}")))
+                    {
+                        order.push(id);
+                    }
+                }
+                1 => {
+                    if w.dispatch(&hub) {
+                        assert!(current.is_none());
+                        let (id, turn, _) = prompt(&mut rx);
+                        current = Some((id, turn, false));
+                    }
+                }
+                2 => {
+                    if let Some((id, turn, started)) = &mut current {
+                        if !*started {
+                            w.start(id, turn);
+                            delivered.push(id.clone());
+                            *started = true;
+                        }
+                    }
+                }
+                3 => {
+                    if current.as_ref().is_some_and(|(_, _, started)| *started) {
+                        let (_, turn, _) = current.take().unwrap();
+                        w.end(&turn, TurnOutcome::Completed);
+                    }
+                }
+                4 => {
+                    if current.as_ref().is_some_and(|(_, _, started)| !*started) {
+                        let restarted = rng & 8 != 0;
+                        let listed = if restarted {
+                            vec![]
+                        } else {
+                            vec![hennery_proto::frames::AttachedSession {
+                                session_id: "session".into(),
+                                last_seq: w.seq.get(),
+                                open_turn_id: None,
+                            }]
+                        };
+                        w.store.reconcile_host("host", &listed).unwrap();
+                        current = None;
+                        if restarted {
+                            let hat = w.store.find_session("session").unwrap().unwrap().hat_id;
+                            w.store.request_resume("session", &hat).unwrap();
+                            w.emit(SessionBody::session_started("resume", "agent-session"));
+                        }
+                    }
+                }
+                5 | 6 => {
+                    if order.len() > delivered.len() {
+                        let index = delivered.len() + ((rng >> 8) as usize % (order.len() - delivered.len()));
+                        let id = &order[index];
+                        if rng % 8 == 5 {
+                            let _ = w.store.edit_operator_prompt("session", id, "edited text");
+                        } else if w.store.remove_operator_prompt("session", id).unwrap() {
+                            order.remove(index);
+                        }
+                    }
+                }
+                _ => {
+                    if let Some((id, turn, true)) = &current {
+                        w.start(id, turn);
+                    }
+                }
+            }
+            assert_eq!(delivered, order[..delivered.len()], "seed={seed}, step={step}");
+            assert_eq!(
+                delivered.iter().collect::<std::collections::BTreeSet<_>>().len(),
+                delivered.len()
+            );
+            let actual = w
+                .store
+                .events("session", 0, 10000)
+                .unwrap()
+                .into_iter()
+                .filter(|e| e.kind == "user_turn")
+                .map(|e| {
+                    w.conn()
+                        .query_row(
+                            "SELECT operation_id FROM session_operations WHERE owner_id=?1 AND turn_id=?2",
+                            params![w.store.owner_id(), e.body["turn_id"].as_str().unwrap()],
+                            |r| r.get::<_, String>(0),
+                        )
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, delivered, "applied transcript prefix, seed={seed}, step={step}");
+        }
+    }
 }

@@ -721,6 +721,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
         } => {
             assert!(capabilities.has(Capability::CatalogProbe));
             assert!(capabilities.has(Capability::DelegationConfig));
+            assert!(capabilities.has(Capability::OperatorResume));
             assert!(mcp_isolation.0.contains_key("chosen"));
             assert_eq!(
                 runtime_profiles["chosen"],

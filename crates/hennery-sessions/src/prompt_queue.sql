@@ -2,6 +2,11 @@
 ALTER TABLE session_dispatch_queue ADD COLUMN origin TEXT NOT NULL DEFAULT 'parent' CHECK(origin IN ('parent','operator'));
 ALTER TABLE session_dispatch_queue ADD COLUMN image_bytes INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN prompt_queue_dirty INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN prompt_queue_held INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE session_dispatch_queue ADD COLUMN failed_at INTEGER;
+CREATE TRIGGER prompt_queue_failed AFTER UPDATE OF state ON session_dispatch_queue
+WHEN NEW.origin='operator' AND NEW.state='failed' AND OLD.state<>'failed'
+BEGIN UPDATE session_dispatch_queue SET failed_at=unixepoch() WHERE owner_id=NEW.owner_id AND operation_id=NEW.operation_id; END;
 CREATE TABLE prompt_queue_attachments (
     owner_id TEXT NOT NULL, operation_id TEXT NOT NULL, sha256 TEXT NOT NULL, position INTEGER NOT NULL,
     PRIMARY KEY(owner_id,operation_id,position),
