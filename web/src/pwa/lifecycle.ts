@@ -1,11 +1,18 @@
 import { useSyncExternalStore } from 'react'
-interface PwaStatus { registration: ServiceWorkerRegistration | null; error: string | null; waiting: boolean; cleanupWarning: string | null }
+import { requestUpdate } from './update-client'
+interface PwaStatus { registration: ServiceWorkerRegistration | null; error: string | null; waiting: boolean; cleanupWarning: string | null; updating: boolean; updateMessage: string | null }
 const rememberedCleanup = () => { try { return sessionStorage.getItem('hennery.logout-cleanup') } catch { return null } }
-let status: PwaStatus = { registration: null, error: null, waiting: false, cleanupWarning: rememberedCleanup() }
+let status: PwaStatus = { registration: null, error: null, waiting: false, cleanupWarning: rememberedCleanup(), updating: false, updateMessage: null }
 const listeners = new Set<() => void>()
 const set = (change: Partial<PwaStatus>) => { status = { ...status, ...change }; listeners.forEach((f) => f()) }
 let pending: Promise<void> | null = null
 export const usePwa = () => useSyncExternalStore((fn) => { listeners.add(fn); return () => { listeners.delete(fn) } }, () => status)
+export async function reloadToUpdate() {
+  if (status.updating) return
+  set({ updating: true, updateMessage: null })
+  try { set({ updateMessage: await requestUpdate(status.registration) }) }
+  finally { set({ updating: false }) }
+}
 export const setCleanupWarning = (warning: string | null) => {
   try {
     if (warning) sessionStorage.setItem('hennery.logout-cleanup', warning)

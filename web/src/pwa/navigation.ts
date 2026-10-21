@@ -26,6 +26,13 @@ export class NavigationGate {
     this.lease = { id, target, until }
     return true
   }
+  // Reload readiness checks draft durability separately from notification
+  // navigation's sticky dirty bit. Both operations share the mutation fence.
+  reserveUpdate(id: string, until: number, now = Date.now()): boolean {
+    if (this.mutations > 0 || this.frozen(now) || until <= now || until > now + LEASE_MS) return false
+    this.lease = { id, target: '', until }
+    return true
+  }
   release(id: string) { if (this.lease?.id === id) this.lease = null }
   begin(id: string, now = Date.now()): boolean {
     if (!this.lease || this.lease.id !== id || this.lease.until <= now) return false

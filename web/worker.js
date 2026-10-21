@@ -4,14 +4,34 @@ import { decodePush } from './src/pwa/notification'
 import { subscriptionBody } from './src/pwa/subscription'
 import { withPushOwnership } from './src/pwa/ownership'
 import { clickNotification } from './src/pwa/navigation'
+import { coordinateUpdate } from './src/pwa/update'
+
+let updating = false
+self.addEventListener('message', (event) => {
+  if (event.data?.version !== 1 || event.data.kind !== 'update_request' || !event.ports[0] || !event.source?.id) return
+  event.waitUntil((async () => {
+    let ready = false
+    if (!updating && self.registration.waiting) {
+      updating = true
+      try { ready = await coordinateUpdate(self.clients, location.origin, event.source.id, () => self.skipWaiting()) }
+      catch { /* Busy or vanished windows leave the worker waiting. */ }
+      finally { updating = false }
+    }
+    event.ports[0].postMessage({ version: 1, kind: 'update_result', ready })
+    event.ports[0].close()
+  })())
+})
 
 self.addEventListener('install', (event) => {
   event.waitUntil(installShell(caches, fetch, __PRECACHE__, __BUILD_ID__, crypto.randomUUID()))
 })
 self.addEventListener('activate', (event) => {
-  // Natural activation only, once the old controlled windows have closed.
-  // Never claim an existing document or call skipWaiting.
+  // Activate naturally after old windows close, or via the explicit,
+  // all-window update handshake above. Never claim an existing document.
   event.waitUntil((async () => {
+    // Coordinated reloads may still be using the old shell. Keep its lazy
+    // chunks until a later activation with no existing documents.
+    if ((await self.clients.matchAll({ type: 'window', includeUncontrolled: false })).length) return
     for (const name of await caches.keys()) {
       if (name.startsWith(SHELL_PREFIX) && !name.startsWith(`${SHELL_PREFIX}${__BUILD_ID__}-`)) await caches.delete(name)
     }

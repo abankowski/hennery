@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The PWA's update banner offers "Reload to update". It checks every open
+  window, defers while one is busy or unresponsive, preserves stored text
+  drafts, and confirms before discarding unsent images or question input.
+
 ## 0.2.0
 
 - Redesigned web UI. Light and dark themes, the hat's colour as the accent, and
