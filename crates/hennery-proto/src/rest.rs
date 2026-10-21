@@ -1716,6 +1716,10 @@ pub enum DeploymentMode {
 pub struct CapabilitiesResponse {
     pub mode: DeploymentMode,
     pub features: Vec<String>,
+    /// The running collector's release, from its crate version.
+    pub collector_version: String,
+    /// Release source revision, when recorded by the build; never a path.
+    pub source_commit: Option<String>,
 }
 
 /// Which hats' sessions on a host get gateway MCP servers for one agent

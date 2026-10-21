@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Subtle version information in the sidebar footer, Settings and More shows
+  the collector release and recorded source commit, with a small page/server
+  hint when an older page is still open.
 - Configure global delegation limits in Settings: live children, child starts
   per operator message and automatic parent wake-ups, defaulting to 8, 32 and 20.
 

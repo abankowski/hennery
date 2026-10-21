@@ -7,6 +7,7 @@ import DelegationSettings from '../components/DelegationSettings'
 import DelegationLimitsSettings from '../components/DelegationLimitsSettings'
 import { DefaultsSettings } from '../components/HatDefaultsSummary'
 import { useResource } from '../hooks/useResource'
+import VersionInfo from '../components/VersionInfo'
 import '../manage.css'
 
 export default function Settings({ push, sessions }: { push: boolean; sessions: boolean }) {
@@ -23,5 +24,6 @@ export default function Settings({ push, sessions }: { push: boolean; sessions: 
     {sessions && <DelegationLimitsSettings />}
     {sessions && <DefaultsSettings hats={hats.data} />}
     <AccountLogins />
+    <section className="about-version" aria-label="About"><h2>About</h2><VersionInfo /></section>
   </div>
 }

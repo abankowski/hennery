@@ -1798,7 +1798,15 @@ export type DeploymentMode = "full" | "gateway";
  * on. `features` is an open list: a client ignores a name it does not
  * know.
  */
-export type CapabilitiesResponse = { mode: DeploymentMode, features: Array<string>, };
+export type CapabilitiesResponse = { mode: DeploymentMode, features: Array<string>,
+/**
+ * The running collector's release, from its crate version.
+ */
+collector_version: string,
+/**
+ * Release source revision, when recorded by the build; never a path.
+ */
+source_commit: string | null, };
 
 /**
  * Which hats' sessions on a host get gateway MCP servers for one agent
