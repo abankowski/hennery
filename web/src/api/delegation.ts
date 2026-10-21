@@ -1,5 +1,5 @@
 // Shared facade owned by R2; R4/R5 consume it without duplicating wire types.
-import type { ExecutionPolicy, HatSessionTools, HostCatalog, SetExecutionPolicy, SetSessionTools } from '../generated/protocol'
+import type { HatSessionTools, HostCatalog, SetSessionTools } from '../generated/protocol'
 import type { Client, RequestOptions } from './client'
 const hatPath = (hat: string) => `/api/hats/${encodeURIComponent(hat)}`
 export function sessionTools(client: Client, hat: string): Promise<HatSessionTools> {
@@ -7,12 +7,6 @@ export function sessionTools(client: Client, hat: string): Promise<HatSessionToo
 }
 export function setSessionTools(client: Client, hat: string, value: SetSessionTools, options?: RequestOptions): Promise<HatSessionTools> {
   return client.request('PATCH', `${hatPath(hat)}/session-tools`, value, options)
-}
-export function executionPolicy(client: Client, hat: string): Promise<ExecutionPolicy> {
-  return client.request('GET', `${hatPath(hat)}/delegation-policy`)
-}
-export function setExecutionPolicy(client: Client, hat: string, value: SetExecutionPolicy, options?: RequestOptions): Promise<ExecutionPolicy> {
-  return client.request('PATCH', `${hatPath(hat)}/delegation-policy`, value, options)
 }
 export function runtimeCatalog(client: Client, host: string, agent: string, cwd: string, signal?: AbortSignal): Promise<HostCatalog> {
   const query = new URLSearchParams({ agent, cwd })

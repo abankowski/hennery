@@ -75,14 +75,16 @@ for (const width of [1280, 390]) test(`Settings authorization drives real delega
     const toggle = page.getByRole('switch', { name: 'Delegation', exact: true })
     await expect(toggle).not.toBeChecked()
     await captureManagement(page, 'settings', 'Desktop settings; mobile adaptation')
-    const policyPath = `/api/hats/${hat}/delegation-policy`, toolsPath = `/api/hats/${hat}/session-tools`
-    const empty = await (await page.request.get(policyPath)).json(); expect(empty.allowed).toEqual({})
+    const toolsPath = `/api/hats/${hat}/session-tools`
+    expect((await (await page.request.get(toolsPath)).json()).delegation_enabled).toBe(false)
+    const enablingRequests: string[] = []
+    page.on('request', request => { enablingRequests.push(`${request.method()} ${new URL(request.url()).pathname}`) })
     let confirmations = 0
     page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/auth/step-up/password') confirmations++ })
     await toggle.click(); await confirm(page); await expect(toggle).toBeChecked()
     expect(confirmations).toBe(1)
-    const allModes = ['default', 'plan', 'bypassPermissions']
-    expect((await (await page.request.get(policyPath)).json()).allowed).toEqual({ claude: { mode: allModes }, custom: { mode: allModes } })
+    expect(enablingRequests.some(request => request.includes('/runtime-catalog') || request.includes('/delegation-policy'))).toBe(false)
+    expect((await (await page.request.get(toolsPath)).json()).delegation_enabled).toBe(true)
     const started = await page.request.post('/api/sessions', { headers: origin, data: { host_id: hostId, agent: 'claude', cwd: project } })
     expect(started.status()).toBe(202)
     const parent = (await started.json()).session_id
@@ -113,15 +115,14 @@ for (const width of [1280, 390]) test(`Settings authorization drives real delega
       }).toPass({ timeout: 30_000 })
     }
     const permissive = await spawnChild('permissive', 'bypassPermissions')
-    expect(typeof permissive.child_id).toBe('string')
+    expect(typeof permissive.child_id, JSON.stringify(permissive)).toBe('string')
     await waitChild(permissive.child_id, 'bypassPermissions', 'permissive')
     const custom = await spawnChild('custom-permissive', 'bypassPermissions', 'custom')
-    expect(typeof custom.child_id).toBe('string')
+    expect(typeof custom.child_id, JSON.stringify(custom)).toBe('string')
     await waitChild(custom.child_id, 'bypassPermissions', 'custom-permissive')
     console.log('Delegation acceptance: permissive children confirmed for both runtimes')
     await toggle.click(); await confirm(page); await expect(toggle).not.toBeChecked()
     expect(confirmations).toBe(2)
-    expect((await (await page.request.get(policyPath)).json()).allowed).toEqual({})
     expect((await (await page.request.get(toolsPath)).json()).delegation_enabled).toBe(false)
     const afterDisable = await spawnChild('disabled', 'default', 'claude', 404)
     expect(afterDisable.code).toBe('not_found')

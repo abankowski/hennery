@@ -1,10 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { executionPolicy, sessionTools, setExecutionPolicy, setSessionTools } from '../api/delegation'
+import { sessionTools, setSessionTools } from '../api/delegation'
 import { messageOf, StepUpCancelled } from '../api/errors'
 import { useClient } from '../app-client'
 import type { HatItem } from '../generated/protocol'
 import { useResource } from '../hooks/useResource'
-import { currentDelegationGrants } from '../lib/delegationSwitch'
 import { Text, visible } from '../lib/text'
 
 export default function DelegationSettings({ hats }: { hats: HatItem[] | null }) {
@@ -23,7 +22,6 @@ export default function DelegationSettings({ hats }: { hats: HatItem[] | null })
 function HatDelegation({ hat, busy, setBusy }: { hat: HatItem; busy: boolean; setBusy: (value: boolean) => void }) {
   const client = useClient(), help = useId()
   const tools = useResource(() => sessionTools(client, hat.id), [client, hat.id])
-  const policy = useResource(() => executionPolicy(client, hat.id), [client, hat.id])
   const [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null)
   const [retry, setRetry] = useState<boolean | null>(null)
   const running = useRef(false), live = useRef(true)
@@ -33,32 +31,26 @@ function HatDelegation({ hat, busy, setBusy }: { hat: HatItem; busy: boolean; se
     running.current = true; setBusy(true); setError(null); setNotice(null); setRetry(null)
     let writing = false
     try {
-      const allowed = enabled ? await currentDelegationGrants(client) : {}
-      if (!live.current) return
-      // Exactly one prompt covers both writes; neither request may prompt again.
+      // The setting has one confirmation, regardless of host availability.
       await client.confirm()
       if (!live.current) return
       writing = true
       const options = { stepUp: false }
-      // Grant before enabling. Disable tools before clearing the grant.
-      const savedTools = enabled ? null : await setSessionTools(client, hat.id, { delegation_enabled: false }, options)
-      const savedPolicy = await setExecutionPolicy(client, hat.id, { allowed }, options)
-      const saved = savedTools ?? await setSessionTools(client, hat.id, { delegation_enabled: true }, options)
+      const saved = await setSessionTools(client, hat.id, { delegation_enabled: enabled }, options)
       if (live.current) {
-        tools.set(saved); policy.set(savedPolicy)
+        tools.set(saved)
         if (saved.delegation_enabled !== enabled) throw new Error('The collector did not save the requested Delegation setting.')
         setNotice(enabled ? 'Delegation enabled.' : 'Delegation disabled. Already delivered work continues as ordinary sessions.')
       }
     } catch (err) {
       if (live.current) {
-        setError(err instanceof StepUpCancelled ? 'Change cancelled. The saved setting is unchanged.' : `${writing ? 'Delegation could not be fully saved. ' : ''}${messageOf(err)}`)
+        setError(err instanceof StepUpCancelled ? 'Change cancelled. The saved setting is unchanged.' : `${writing ? 'Delegation could not be saved. ' : ''}${messageOf(err)}`)
         if (!(err instanceof StepUpCancelled)) setRetry(enabled)
         if (writing) {
-          const readback = await Promise.allSettled([sessionTools(client, hat.id), executionPolicy(client, hat.id)])
-          if (live.current) {
-            if (readback[0].status === 'fulfilled') tools.set(readback[0].value)
-            if (readback[1].status === 'fulfilled') policy.set(readback[1].value)
-          }
+          try {
+            const saved = await sessionTools(client, hat.id)
+            if (live.current) tools.set(saved)
+          } catch { /* Retain the last confirmed setting and offer retry. */ }
         }
       }
     } finally { running.current = false; if (live.current) setBusy(false) }
@@ -66,9 +58,8 @@ function HatDelegation({ hat, busy, setBusy }: { hat: HatItem; busy: boolean; se
   return <div>
     {hat.purging && <p role="alert">This hat is being purged. Delegation settings are read-only.</p>}
     {tools.error && <p role="alert">Unable to load session tools. <Text>{tools.error}</Text> <button className="btn btn-ghost" onClick={tools.reload}>Retry session tools</button></p>}
-    {policy.error && <p role="alert">Unable to load Delegation policy. <Text>{policy.error}</Text> <button className="btn btn-ghost" onClick={policy.reload}>Retry policy</button></p>}
-    {(!tools.data || !policy.data) && !tools.error && !policy.error && <p role="status">Loading Delegation…</p>}
-    {tools.data && policy.data && <label className="delegation-switch-row"><span>Delegation</span><input className="plain-switch" role="switch" type="checkbox" aria-describedby={help} checked={tools.data.delegation_enabled} disabled={busy || hat.purging} onChange={e => void change(e.target.checked)} /></label>}
+    {!tools.data && !tools.error && <p role="status">Loading Delegation…</p>}
+    {tools.data && <label className="delegation-switch-row"><span>Delegation</span><input className="plain-switch" role="switch" type="checkbox" aria-describedby={help} checked={tools.data.delegation_enabled} disabled={busy || hat.purging} onChange={e => void change(e.target.checked)} /></label>}
     <p id={help}>Sessions in this hat can start child sessions with any model and mode. Children cannot start their own children. Permission requests always come to you.</p>
     <p className="hint">Takes effect at the next start or resume.</p>
     {error && <p role="alert"><Text>{error}</Text></p>}{notice && <p role="status">{notice}</p>}

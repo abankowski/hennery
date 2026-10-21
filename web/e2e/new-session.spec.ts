@@ -62,8 +62,6 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       const hats = await (await context.request.get('/api/hats')).json(), hat = hats[0]
       const probe = await context.request.get(`/api/hosts/${hostId}/runtime-catalog?${new URLSearchParams({ agent: 'claude', cwd: project })}`)
       expect(await probe.json()).toMatchObject({ freshness: 'fresh' })
-      const policyProbe = await context.request.get(`/api/hats/${hat.id}/delegation-policy`)
-      expect(policyProbe.ok()).toBe(true)
       const defaultsProbe = await context.request.get(`/api/hats/${hat.id}/session-defaults?agent=claude`)
       expect(defaultsProbe.ok()).toBe(true)
       await page.goto(`/defaults?${new URLSearchParams({ host: hostId, cwd: project, agent: 'claude', hat: hat.id })}`)

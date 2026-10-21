@@ -2,21 +2,21 @@ import { useState } from 'react'
 import { useClient } from '../app-client'
 import { putSessionDefaults } from '../api/defaults'
 import { ApiFailure } from '../api/errors'
-import type { HatItem, HatSessionDefaults, HostCatalog, ExecutionPolicy } from '../generated/protocol'
+import type { HatItem, HatSessionDefaults, HostCatalog } from '../generated/protocol'
 import { fieldsOf, flatConfig, resolveDefaults, securityWarnings, sparseConfig, usableCatalog, supports, valueLabel } from '../lib/defaults'
 import { useAccentStyle } from '../lib/theme'
 import ConfirmDialog from './ConfirmDialog'
 import { ConfigControl } from './LaunchConfig'
 
-export default function DefaultsEditor({ hat, record, catalog, policy, onSaved, onReload }: {
-  hat: HatItem; record: HatSessionDefaults; catalog: HostCatalog | null; policy?: ExecutionPolicy; onSaved: (record: HatSessionDefaults) => void; onReload: () => void
+export default function DefaultsEditor({ hat, record, catalog, onSaved, onReload }: {
+  hat: HatItem; record: HatSessionDefaults; catalog: HostCatalog | null; onSaved: (record: HatSessionDefaults) => void; onReload: () => void
 }) {
   const client = useClient(), [base, setBase] = useState(record), [edits, setEdits] = useState(record.config), [confirm, setConfirm] = useState(false)
   const [conflict, setConflict] = useState(false), [saved, setSaved] = useState(false)
   const accent = useAccentStyle(hat.colour), flat = flatConfig(edits)
   const fields = fieldsOf(catalog), known = new Map(fields.map(f => [f.key, f.option]))
   const keys = [...new Set([...fields.map(f => f.key), ...Object.keys(flat)])]
-  const preview = catalog ? resolveDefaults(catalog, edits, {}, policy) : null
+  const preview = catalog ? resolveDefaults(catalog, edits, {}) : null
   const effective = flatConfig(preview?.config ?? {})
   const dirty = JSON.stringify(edits) !== JSON.stringify(base.config)
   const replacements = Object.keys(flat).filter(key => flatConfig(base.config)[key] !== flat[key])
@@ -42,6 +42,6 @@ export default function DefaultsEditor({ hat, record, catalog, policy, onSaved, 
     {confirm && <ConfirmDialog title={`Save defaults for ${hat.name}`} confirm="Confirm save" action={async () => {
       try { const updated = await putSessionDefaults(client, hat.id, base.agent, { revision: base.revision, config: edits }); setBase(updated); setEdits(updated.config); onSaved(updated); setSaved(true) }
       catch (err) { if (err instanceof ApiFailure && err.code === 'defaults_changed') { setConflict(true); setConfirm(false) } throw err }
-    }} onClose={() => setConfirm(false)}><p>Save these launcher preferences for <bdi>{hat.name}</bdi> / <bdi>{base.agent}</bdi>?</p><ul>{[...new Set([...Object.keys(flatConfig(base.config)), ...Object.keys(flat)])].filter(key => flatConfig(base.config)[key] !== flat[key]).map(key => <li key={key}><bdi>{known.get(key)?.name ?? key}: {String(flatConfig(base.config)[key] ?? 'Inherits')} → {String(flat[key] ?? 'Inherits')}</bdi></li>)}</ul>{warnings.map(warning => <p key={warning}>{warning}</p>)}<p>This affects later operator launches. Delegation grants and existing sessions keep their own settings.</p></ConfirmDialog>}
+    }} onClose={() => setConfirm(false)}><p>Save these launcher preferences for <bdi>{hat.name}</bdi> / <bdi>{base.agent}</bdi>?</p><ul>{[...new Set([...Object.keys(flatConfig(base.config)), ...Object.keys(flat)])].filter(key => flatConfig(base.config)[key] !== flat[key]).map(key => <li key={key}><bdi>{known.get(key)?.name ?? key}: {String(flatConfig(base.config)[key] ?? 'Inherits')} → {String(flat[key] ?? 'Inherits')}</bdi></li>)}</ul>{warnings.map(warning => <p key={warning}>{warning}</p>)}<p>This affects later operator launches. Existing sessions keep their own settings.</p></ConfirmDialog>}
   </section>
 }

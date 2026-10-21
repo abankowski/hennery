@@ -3,8 +3,8 @@ import { resolveDefaults, securityWarnings } from './defaults'
 
 import { catalog, select } from '../test-launch-catalog'
 describe('catalog-aware defaults', () => {
-  it('prunes only inherited nonsecurity axes for Opus to Sonnet, preserving policy identities and deliberate effort', () => {
-    const result = resolveDefaults(catalog, { model: 'sonnet', axes: { effort: 'high' } }, {}, { revision: 1, allowed: { claude: { sandbox: [true] } } })
+  it('prunes only inherited nonsecurity axes for Opus to Sonnet, preserving baseline security axes and deliberate effort', () => {
+    const result = resolveDefaults({ ...catalog, security: { known: true, axes: { mode: ['default'], sandbox: [true] } } }, { model: 'sonnet', axes: { effort: 'high' } })
     expect(result.config).toEqual({ model: 'sonnet', mode: 'default', axes: { effort: 'high', sandbox: true } })
     expect(result.sources.model).toBe('Hat override')
     expect(result.sources.effort).toBe('Hat override')
@@ -43,7 +43,7 @@ describe('catalog-aware defaults', () => {
     expect(securityWarnings({ ...catalog, security: { known: false, axes: {} } }, {})).toHaveLength(1)
     expect(securityWarnings(catalog, { mode: 'default' })).toEqual([])
   })
-  it('preserves baseline security axes even without an execution-policy grant', () => {
+  it('preserves baseline security axes when choosing another model', () => {
     const result = resolveDefaults({ ...catalog, security: { known: true, axes: { mode: ['default'], sandbox: [true] } } }, {}, { model: 'sonnet' })
     expect(result.config.axes).toEqual({ sandbox: true })
     expect(result.sources.model).toBe('Your choice')
@@ -88,4 +88,12 @@ it('excludes incompatible model shapes and axis ids that collide with a wire rol
   expect(fieldsOf(malformed).map(field => [field.key, field.option.id])).toEqual([['mode', 'permission']])
   expect(usableCatalog(malformed)).toBe(false)
   expect(resolveDefaults(malformed, {}, { mode: 'bypass' }).config).toEqual({ mode: 'bypass' })
+})
+
+it('keeps every offered mode for unknown-security runtimes, including modes added later', () => {
+  const live = { ...catalog, agent: 'codex', security: { known: false, axes: {} }, config_options: [select('model', ['opus', 'sonnet']), select('mode', ['default', 'agent-full-access'])] }
+  const result = resolveDefaults(live, { mode: 'agent-full-access' })
+  expect(result.config.mode).toBe('agent-full-access')
+  expect(result.sources.mode).toBe('Hat override')
+  expect(result.blocked).toBe(false)
 })

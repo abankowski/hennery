@@ -245,7 +245,7 @@ export default function NewSession() {
 
   const agentName = agent === OTHER ? otherName.trim() : agent
   const current = resolved.state === 'ok' && resolved.hostId === hostId && resolved.path === cwd ? resolved.resolution : null
-  const context = useLaunchContext(hostId, agentName, current?.canonical ?? '', current?.hat_id ?? '', generation)
+  const context = useLaunchContext(hostId, agentName, current?.canonical ?? '', current?.hat_id ?? '', generation, host?.name)
   const config = requestFor(context, picks, optOut)
   const accent = useAccentStyle(hats.find(h => h.id === current?.hat_id)?.colour)
   useRegisterContext({ hostId, cwd: current?.canonical, hatId: current?.hat_id })

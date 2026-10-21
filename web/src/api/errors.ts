@@ -10,6 +10,7 @@ const MESSAGES: Record<string, string> = {
   hat_mismatch: 'This directory now belongs to another hat than the session’s.',
   presumed_parked: 'Its host has been away and may still run it: close the session first.',
   images_unsupported: 'This agent takes no images.',
+  auth_required: 'The agent is not signed in.',
   host_offline: 'The host is offline.',
   host_installing: 'The host is still installing its agents.',
   already_set_up: 'hennery is set up already: sign in instead.',
@@ -97,4 +98,10 @@ export function messageOf(err: unknown): string {
 export function retryAfterSeconds(value: string | null): number {
   if (value !== null && /^\d+$/.test(value.trim())) return Number(value.trim())
   return 60
+}
+
+/** Catalog failures always identify the selected runtime and host. */
+export function catalogError(err: unknown, host: string, agent: string): string {
+  const reason = err instanceof ApiFailure && err.code === 'auth_required' ? 'not signed in' : messageOf(err)
+  return `${agent} on ${host}: ${reason}`
 }
