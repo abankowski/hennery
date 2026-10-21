@@ -38,7 +38,7 @@ approved. No application code or plan files are part of this change.
 | O5 | Retain the hat-logo backend and wire field; render no hat logos or logo editor in this UI. | Operator, 2026-10-20. |
 | O6 | Accent comes from the hat. Implement both light and dark; use design surfaces, text and status colors. | Operator, 2026-10-20. Fixed prototype blue is not the application accent. |
 | O7 | Stack all redesign work into `redesign`; release through one final integration PR to `main`. | Operator, 2026-10-20. No partial redesign release. |
-| O8 | Use the design's Inter for body/content and Roboto for headings/UI labels; commit self-hosted WOFF2 latin + latin-ext subsets, including Polish characters, with `font-display: swap` and OFL license/notice. No npm/fontsource package, remote font load or CSP change. R1 owns this. | Operator, 2026-10-20; replaces and removes D1. |
+| O8 | Use the design system's Roboto for headings, body/content (including bubbles and markdown), buttons, labels and links; Inter only for form values, table cells and dense data; commit self-hosted WOFF2 latin + latin-ext subsets, including Polish characters, with `font-display: swap` and OFL license/notice. No npm/fontsource package, remote font load or CSP change. R1 owns this. | Operator, 2026-10-21; corrects the prototype Inter-body mapping recorded 2026-10-20, replaces and removes D1. |
 | D2 | Keep CSS variables and existing class-based CSS with Tailwind 4. Add semantic tokens and temporary aliases, rather than migrate components to another styling system. | **designer's recommendation**: fits `index.css`/`manage.css` and protects the Markdown scope. |
 | D3 | Use system/light/dark appearance, browser-persisted, through the blocking external `/theme.js`; derive contrast-checked palettes per theme. | **designer's recommendation**; CSP/no-inline behavior is settled by the implementation. |
 | D4 | Use `/needs-you`, `/sessions`, `/new`, `/more`, `/defaults` and existing management/session routes; desktop Sessions becomes an overview without automatic session selection. | **designer's recommendation**: follows the new overview and mobile tabs, superseding the old list/detail rail layout. |
@@ -105,7 +105,7 @@ the prototype's stylesheet, its Google Fonts import or global element rules.
 | Radius | `--radius-xs/sm/md/lg/xl/full` | 4/6/8/12/16/9999 px. Mobile cards 14 px and sheets 20 px are explicit frame variants. |
 | Spacing | `--space-1/2/3/4/5/6/8/10/12/16/20/24` | 4/8/12/16/20/24/32/40/48/64/80/100 px, matching the source scale's actual final value. |
 | Shadow/motion | `--shadow-xs`, `--hn-pop-shadow`, `--hn-scrim`, durations/easings | Design's subtle xs shadow, paired light/dark popover shadows, 50% dark-text or 60% black scrim; 120/180/240 ms, standard/out easing. Disable animation and smooth scrolling under reduced motion. |
-| Typography | `--font-display`, `--font-body`, `--font-mono` plus size classes | Self-hosted Roboto display/headings/UI labels and Inter body/content, with system fallbacks; existing system mono stack. Desktop heading 18/1.2 medium, row title 13/1.3 medium, prose 14/1.55–1.6, mono 12–13/1.5; mobile heading 20, title 16, prose/input 15–16, labels 12–13. Section labels 11 bold uppercase; tab labels 10. |
+| Typography | `--font-display`, `--font-body`, `--font-data`, `--font-mono` plus size classes | Self-hosted Roboto headings/body/content/buttons/labels and Inter form values/table cells/dense data, with system fallbacks; existing system mono stack. Desktop heading 18/1.2 medium, row title 13/1.3 medium, prose 14/1.55–1.6, mono 12–13/1.5; mobile heading 20, title 16, prose/input 15–16, labels 12–13. Section labels 11 bold uppercase; tab labels 10. |
 
 The source color scales are local numeric inputs, not application branding:
 neutral 050–1000, primary/orange/success/error 050–800 and warning 500.
@@ -211,12 +211,19 @@ verify the actual cascade, including on-accent and status tints.
 
 ### 3.4 Fonts, icons and CSP
 
-Use **Inter** for body/content and **Roboto** for headings, buttons and UI
-labels, as the design specifies (O8). Commit the actual `.woff2` font assets
-under `web/public/fonts/`, including **latin + latin-ext** subsets for both
+Use **Roboto** for headings, body/content (including message bubbles and
+markdown), buttons, labels and links; use **Inter** only for form control
+values (`input`, `select`, `textarea`), table cells and dense data. Table
+headers are labels and remain Roboto; code remains mono. This follows the
+design system body-1/2/3 tokens and README typography mapping, as confirmed
+by the operator on **2026-10-21** (O8), replacing the prototype Inter body
+mapping. `--font-display` and `--font-body` select Roboto; `--font-data`
+selects Inter. Commit the actual `.woff2` font assets under
+`web/public/fonts/`, including **latin + latin-ext** subsets for both
 families; Polish characters must render from these faces. Include every
-weight/style used by the UI: normal 400/500/600/700 and Inter italic for
-thinking text, using variable faces where appropriate. Define local
+weight/style used by the UI: normal and italic 400/500/600/700 for both
+families, including Roboto italic for thinking text and markdown emphasis,
+using variable faces where appropriate. Define local
 `@font-face` rules with matching weight/style and Unicode ranges in
 `styles/fonts.css`; use `font-display: swap`. System stacks remain fallbacks
 while fonts load, not the selected production fonts. Keep system mono.

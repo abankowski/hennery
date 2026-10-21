@@ -20,7 +20,7 @@
 }
 .text-input.text-input, .ui-select, .ui-textarea {
   min-height:32px; padding:6px 10px; border:1px solid var(--hn-boundary); border-radius:var(--radius-sm);
-  background:var(--hn-surface); color:var(--hn-fg-1); font:400 13px/1.4 var(--font-body); max-width:100%;
+  background:var(--hn-surface); color:var(--hn-fg-1); font:400 13px/1.4 var(--font-data); max-width:100%;
 }
 .text-input.text-input:focus, .ui-select:focus, .ui-textarea:focus {
   outline:2px solid var(--hn-focus-ring); outline-offset:1px; border-color:var(--hn-focus-ring); box-shadow:0 0 0 5px var(--hn-focus-halo);

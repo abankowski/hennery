@@ -1,7 +1,7 @@
 .command-overlay { position: fixed; inset: 0; z-index: 80; background: var(--hn-scrim); display: flex; align-items: flex-start; justify-content: center; padding: 96px 16px 24px; overflow: auto; }
 .command-dialog { width: 620px; max-width: 100%; max-height: calc(100dvh - 120px); display: flex; flex-direction: column; background: var(--hn-surface); color: var(--hn-fg-1); border: 1px solid var(--hn-control); border-radius: 12px; box-shadow: var(--hn-pop-shadow); overflow: hidden; }
 .command-search { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 4px 12px 4px 16px; border-bottom: 1px solid var(--hn-line); }
-.command-search input { width: 100%; min-width: 0; padding: 10px 0; color: var(--hn-fg-1); background: transparent; border: 0; font: 400 15px/1.4 var(--font-body); }
+.command-search input { width: 100%; min-width: 0; padding: 10px 0; color: var(--hn-fg-1); background: transparent; border: 0; font: 400 15px/1.4 var(--font-data); }
 .command-search input:focus-visible { outline-offset: 2px; }
 .command-close { border: 0; border-radius: 6px; background: transparent; color: var(--hn-fg-2); min-width: 44px; min-height: 44px; cursor: pointer; }
 .command-results { overflow-y: auto; min-height: 0; padding: 6px; }

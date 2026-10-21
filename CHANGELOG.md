@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Correct web typography to the design system: Roboto for headings, content,
+  buttons and labels; Inter for form values and table cells. Bundle Roboto
+  italic, including Polish glyphs, for online and offline use.
+
 ## 0.2.0
 
 - Redesigned web UI. Light and dark themes, the hat's colour as the accent, and

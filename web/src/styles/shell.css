@@ -45,7 +45,7 @@
 .group-choice legend { float:left; margin-right:12px; color:var(--hn-fg-3); }
 .group-choice label { display:flex; align-items:center; gap:5px; cursor:pointer; }
 .group-select { display:none; }
-@media(max-width:767px) { .overview-filters .group-choice { display:none; }.group-select { display:flex; align-items:center; gap:8px; font-size:12px; }.group-select select { min-height:44px; font:400 16px var(--font-body); background:var(--hn-surface); border:1px solid var(--hn-line); border-radius:6px; padding:4px 10px; } }
+@media(max-width:767px) { .overview-filters .group-choice { display:none; }.group-select { display:flex; align-items:center; gap:8px; font-size:12px; }.group-select select { min-height:44px; font:400 16px var(--font-data); background:var(--hn-surface); border:1px solid var(--hn-line); border-radius:6px; padding:4px 10px; } }
 .status-filters { display:flex; gap:6px; flex-wrap:wrap; flex-basis:100%; }
 .status-filters .chip { font:500 12px var(--font-display); }
 .status-filters span { color:var(--hn-fg-3); font-size:11px; margin-left:4px; }

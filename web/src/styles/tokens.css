@@ -22,7 +22,8 @@
   --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px;
   --space-8:32px; --space-10:40px; --space-12:48px; --space-16:64px; --space-20:80px; --space-24:100px;
   --font-display:'Roboto',system-ui,-apple-system,'Segoe UI',sans-serif;
-  --font-body:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-body:'Roboto',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-data:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
   --font-mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
   --shadow-xs:0 1px 2px rgb(16 24 40 / .05);
   --duration-fast:120ms; --duration-normal:180ms; --duration-slow:240ms;
