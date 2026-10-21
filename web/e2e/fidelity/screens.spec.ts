@@ -22,7 +22,7 @@ const rows = [
  { ...base, session_id: 'question', title: 'Choose provider fallback', agent: 'codex', activity: 'blocked', operator_attention: 1, question_waits: true },
  { ...base, session_id: 'running', title: 'Regenerate protocol', activity: 'running', agent: 'codex', git_branch: 'protocol', family: { revision: 1, children: [{ session_id: 'permission', title: 'Port parser tests', agent: 'claude' }], child_counts: { total: 1, active: 1, waiting: 1 }, attention: 0 } },
  { ...base, session_id: 'idle', title: 'Update project documentation', hat_id: 'personal' },
-].map((row: SessionSummary): SessionSummary => screen === 'busy-turn' && row.session_id === 'permission' ? { ...row, activity: 'idle' } : row).map(row => screen.startsWith('provisional') ? { ...row, title: undefined, family: row.family ? { ...row.family, parent: row.family.parent ? { ...row.family.parent, title: undefined } : undefined, children: row.family.children.map(child => ({ ...child, title: undefined })) } : undefined } : row)
+].map((row: SessionSummary): SessionSummary => screen === 'busy-turn' && row.session_id === 'permission' ? { ...row, activity: 'idle' } : row).map((row): SessionSummary => screen.startsWith('provisional') ? { ...row, title: firstPrompts[row.session_id], title_source: 'prompt', family: row.family ? { ...row.family, parent: row.family.parent ? { ...row.family.parent, title: firstPrompts[row.family.parent.session_id], title_source: 'prompt' } : undefined, children: row.family.children.map(child => ({ ...child, title: firstPrompts[child.session_id], title_source: 'prompt' })) } : undefined } : row)
 const question = { id: 'question:permission', version: 1, ts, kind: 'question', pending_id: 'permission', question_kind: 'permission', request: { type: 'permission', title: 'Run pnpm test for the parser', options: [{ option_id: 'once', name: 'Allow once', option_kind: 'allow_once' }, { option_id: 'always', name: 'Always', option_kind: 'allow_always' }, { option_id: 'reject', name: 'Reject', option_kind: 'reject_once' }] }, answerable: true, answered: false, state: 'open' }
 const elicitation = { ...question, id: 'question:question', pending_id: 'question', question_kind: 'elicitation', request: { type: 'elicitation', message: 'Which provider should the service fall back to first?', form_supported: true, fields: [{ key: 'provider', field_kind: 'single', label: 'Provider', options: [{ value: 'azure', label: 'Azure first' }, { value: 'google', label: 'Google first' }] }], required: ['provider'] } }
 const select = (id: string, name: string, values: string[]) => ({ id, name, category: id === 'effort' ? 'thought_level' : id, type: 'select', currentValue: values[0], options: values.map(value => ({ value, name: value })) })
@@ -80,7 +80,7 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
   const route = screen === 'overview' || screen === 'provisional-overview' ? '/sessions' : ['session', 'busy-turn', 'provisional-session'].includes(screen) ? '/sessions/permission?pending=permission' : screen === 'running-family' ? '/sessions/running' : screen === 'elicitation' ? '/sessions/question?pending=question' : ['new-session', 'autocomplete'].includes(screen) ? '/new' : screen === 'palette' || screen === 'provisional-palette' ? '/sessions' : '/' + screen
   await app.goto(collector.origin + route)
   await expect(app.locator('main')).toBeVisible()
-  if (screen.startsWith('provisional')) await expect(app.locator('.session-name-provisional').filter({ hasText: 'Check parser permission handling' }).first()).toBeVisible()
+  if (screen.startsWith('provisional')) await expect(app.locator('.session-name-provisional').filter({ hasText: screen !== 'provisional-session' && width === 390 ? firstPrompts.running : firstPrompts.permission }).first()).toBeVisible()
   if (screen === 'new-session' || screen === 'autocomplete') {
    const dialog = app.getByRole('dialog', { name: 'New session', exact: true })
    await dialog.getByRole('textbox', { name: /^First prompt/ }).fill('Check why the latency panel has gaps after midnight')
@@ -137,6 +137,7 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
    else await reference.getByRole('button', { name: new RegExp('^' + screen[0].toUpperCase() + screen.slice(1), 'i') }).first().click()
   }
   if (!mobile && screen === 'needs-you') await reference.getByRole('button', { name: /^Needs you/ }).first().click()
+  if (screen === 'provisional-palette') await expect(app.getByRole('dialog', { name: 'Command palette', exact: true }).locator('.session-name-provisional').filter({ hasText: firstPrompts.permission }).first()).toBeVisible()
   mkdirSync(output, { recursive: true })
   const name = `${screen}-${width}-${theme}`
   if (mobile) {
@@ -153,6 +154,17 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
    await expect(app.getByRole('dialog', { name: 'Session settings', exact: true })).toBeVisible()
    await app.screenshot({ path: join(output, `${name}-settings-app.png`) })
    await app.getByRole('button', { name: 'Close session settings', exact: true }).click()
+   await app.locator('.session-head').getByRole('button', { name: 'Rename session', exact: true }).click()
+   await expect(app.getByRole('textbox', { name: 'Session name', exact: true })).toBeFocused()
+   const renameInput = (await app.getByRole('textbox', { name: 'Session name', exact: true }).boundingBox())!
+   const renameSave = (await app.getByRole('button', { name: 'Save', exact: true }).boundingBox())!
+   expect(renameInput.y).toBeGreaterThanOrEqual(0)
+   expect(Math.abs(renameInput.y + renameInput.height / 2 - renameSave.y - renameSave.height / 2)).toBeLessThan(2)
+   if (width === 390) expect((await app.getByRole('button', { name: 'Cancel rename', exact: true }).boundingBox())!.width).toBeGreaterThanOrEqual(44)
+   expect(await app.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+   await app.screenshot({ path: join(output, `${name}-rename-app.png`) })
+   await app.keyboard.press('Escape')
+   await expect(app.getByRole('textbox', { name: 'Session name', exact: true })).toHaveCount(0)
   }
   if (screen === 'settings') {
    await app.locator('.delegation-settings').scrollIntoViewIfNeeded()

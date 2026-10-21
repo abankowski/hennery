@@ -4,7 +4,6 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { StepUpCancelled } from './api/errors'
 import { ClientContext, browserClient } from './app-client'
 import Shell from './components/Shell'
-import { SessionNamesProvider } from './components/SessionNames'
 import StepUpDialog from './components/StepUpDialog'
 import { match, navigate, useLocation } from './router'
 import Login from './screens/Login'
@@ -55,7 +54,7 @@ export default function App({ fetchImpl }: { fetchImpl?: typeof fetch }) {
 
   return (
     <ClientContext.Provider value={client}>
-      <SessionNamesProvider active={!['setup', 'login'].includes(route.name)}><AppActionsProvider>
+      <AppActionsProvider>
       <div className="application-root">
       <PwaStatus />
       <NotificationNavigation />
@@ -67,7 +66,7 @@ export default function App({ fetchImpl }: { fetchImpl?: typeof fetch }) {
       {waiting && <StepUpDialog returnTo={focusBeforeStepUp.current} onDone={() => close('done')} onCancel={() => close('cancelled')} />}
       <Suspense fallback={null}><CommandHost /></Suspense>
       </div>
-      </AppActionsProvider></SessionNamesProvider>
+      </AppActionsProvider>
     </ClientContext.Provider>
   )
 }

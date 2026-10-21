@@ -212,6 +212,60 @@ for (const width of [1280, 390]) {
       }
     })
 
+    test('renames from the title, menu and palette using the server title and source', async () => {
+      const path = new URL(page.url()).pathname
+      const read = async () => (await page.request.get('/api' + path)).json()
+      const initial = await read()
+      expect(initial.title_source).toBe('prompt')
+      expect(initial.title).toBe(PROMPT)
+      await expect(page.locator('.session-head h1 .session-name-provisional')).toHaveText(PROMPT)
+      for (const entry of ['header', 'menu', 'palette']) {
+        if (entry === 'header') await page.locator('.session-head').getByRole('button', { name: 'Rename session', exact: true }).click()
+        else if (entry === 'menu') {
+          await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+          await expect(page.locator('.session-menu-list > button').first()).toHaveText('Rename')
+          await page.getByRole('button', { name: 'Rename', exact: true }).click()
+        } else {
+          await expect(page.locator('.command-entry').first()).toBeEnabled()
+          await page.locator('.session-head').getByRole('button', { name: 'Rename session', exact: true }).focus()
+          await expect(page.locator('.session-head').getByRole('button', { name: 'Rename session', exact: true })).toBeFocused()
+          const mod = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control')
+          await page.keyboard.press(`${mod}+k`)
+          const palette = page.getByRole('dialog', { name: 'Command palette', exact: true })
+          await expect(palette).toBeVisible()
+          await palette.getByRole('combobox', { name: 'Jump to a session or command', exact: true }).fill('Rename session')
+          await palette.getByRole('option', { name: 'Rename session', exact: true }).click()
+        }
+        const form = page.getByRole('form', { name: 'Rename session', exact: true })
+        const name = `Operator name from ${entry}`
+        await expect(form.getByRole('textbox', { name: 'Session name', exact: true })).toBeFocused()
+        await form.getByRole('textbox', { name: 'Session name', exact: true }).fill(name)
+        await form.getByRole('button', { name: 'Save', exact: true }).click()
+        await expect(page.locator('.session-head h1')).toHaveText(name)
+        await expect(page.locator('.session-head h1 .session-name-provisional')).toHaveCount(0)
+        expect(await read()).toMatchObject({ title: name, title_source: 'operator' })
+        await page.reload()
+        await expect(page.locator('.session-head h1')).toHaveText(name)
+      }
+      await expect(page.getByText('Session name changed', { exact: true })).toHaveCount(3)
+      await expect(page.getByText('Unsupported update (session_renamed)', { exact: true })).toHaveCount(0)
+      await page.locator('.session-head').getByRole('button', { name: 'Rename session', exact: true }).click()
+      const reset = page.getByRole('button', { name: 'Reset to agent title', exact: true })
+      await expect(reset).toBeInViewport()
+      if (narrow) expect((await reset.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: test.info().outputPath('rename-reset.png') })
+      await reset.click()
+      await expect(page.locator('.session-head h1 .session-name-provisional')).toHaveText(PROMPT)
+      expect(await read()).toMatchObject({ title: PROMPT, title_source: 'prompt' })
+      await page.reload()
+      await expect(page.locator('.session-head h1 .session-name-provisional')).toHaveText(PROMPT)
+      await expect(page.getByText('Session name changed', { exact: true })).toHaveCount(4)
+      await page.locator('.session-head').getByRole('button', { name: 'Rename session', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Reset to agent title', exact: true })).toHaveCount(0)
+      await page.getByRole('textbox', { name: 'Session name', exact: true }).press('Escape')
+    })
+
     test('a host that crashed and came back leaves the session parked', async () => {
       // Idle first, so no turn is cut short by the crash.
       await expect(page.locator('.session-head .badge')).toHaveText('Idle')
@@ -253,7 +307,8 @@ for (const width of [1280, 390]) {
       // An active session: Close, Delete, and Park if its host can park.
       const list = page.locator('.session-menu-list')
       const names = await list.getByRole('button').allTextContents()
-      expect(names.filter((n) => n !== 'Park')).toEqual(['Close', 'Delete session'])
+      expect(names.filter((n) => n !== 'Park')).toEqual(['Rename', 'Close', 'Delete session'])
+      expect((await list.getByRole('switch', { name: 'Do not park', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
       for (const name of names) {
         const box = await list.getByRole('button', { name, exact: true }).boundingBox()
         expect(box!.height).toBeGreaterThanOrEqual(44)
