@@ -4,6 +4,7 @@ import AccountSettings, { AccountLogins } from '../components/AccountSettings'
 import CollectorSettings from '../components/CollectorSettings'
 import NotificationSettings from '../components/NotificationSettings'
 import DelegationSettings from '../components/DelegationSettings'
+import DelegationLimitsSettings from '../components/DelegationLimitsSettings'
 import { DefaultsSettings } from '../components/HatDefaultsSummary'
 import { useResource } from '../hooks/useResource'
 import VersionInfo from '../components/VersionInfo'
@@ -20,6 +21,7 @@ export default function Settings({ push, sessions }: { push: boolean; sessions: 
     <CollectorSettings push={push} sessions={sessions} hats={hats.data} />
     {hats.error && <p role="alert">Unable to load hats. <button className="btn btn-ghost" onClick={hats.reload}>Retry hats</button></p>}
     {sessions && <DelegationSettings hats={hats.data} />}
+    {sessions && <DelegationLimitsSettings />}
     {sessions && <DefaultsSettings hats={hats.data} />}
     <AccountLogins />
     <section className="about-version" aria-label="About"><h2>About</h2><VersionInfo /></section>

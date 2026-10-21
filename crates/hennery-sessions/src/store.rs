@@ -412,6 +412,33 @@ const MIGRATIONS: &[&str] = &[
        AND (c.lifecycle IN ('closed','deleted') OR c.close_requested=1));",
     // Binary delegation (26): ON follows the live catalog; no stored execution grants.
     "DROP TABLE IF EXISTS delegation_execution_policy;",
+    // Global operator delegation limits (27). An absent row uses 8/32/20.
+    "CREATE TABLE delegation_limits (
+       owner_id TEXT PRIMARY KEY REFERENCES owners(id) ON DELETE CASCADE,
+       children INTEGER NOT NULL CHECK(children BETWEEN 1 AND 64),
+       starts_per_operator_epoch INTEGER NOT NULL CHECK(starts_per_operator_epoch BETWEEN 1 AND 64),
+       automatic_wakes_per_operator_epoch INTEGER NOT NULL CHECK(automatic_wakes_per_operator_epoch BETWEEN 1 AND 64)
+     );
+DROP TRIGGER notice_endpoint_end;
+ALTER TABLE delegation_budgets RENAME TO delegation_budgets_old;
+CREATE TABLE delegation_budgets (
+    owner_id TEXT NOT NULL, root_id TEXT NOT NULL, epoch INTEGER NOT NULL,
+    wakes INTEGER NOT NULL CHECK(wakes >= 0 AND wakes <= 64),
+    PRIMARY KEY(owner_id,root_id,epoch),
+    FOREIGN KEY(root_id,owner_id) REFERENCES sessions(id,owner_id));
+INSERT INTO delegation_budgets(owner_id,root_id,epoch,wakes)
+    SELECT owner_id,root_id,epoch,wakes FROM delegation_budgets_old;
+DROP TABLE delegation_budgets_old;
+CREATE TRIGGER notice_endpoint_end AFTER UPDATE OF close_requested,lifecycle,hat_id ON sessions
+WHEN NEW.close_requested = 1 OR NEW.lifecycle IN ('closed','deleted','failed') OR NEW.hat_id <> OLD.hat_id
+BEGIN
+    UPDATE delegation_notices SET state = 'operator_required',reason = 'endpoint_unavailable'
+    WHERE owner_id = NEW.owner_id AND (parent_id = NEW.id OR (child_id = NEW.id AND NEW.lifecycle <> 'failed'))
+      AND state IN ('parent_queued','waiting_config');
+    DELETE FROM delegation_notices WHERE owner_id = NEW.owner_id
+      AND (child_id = NEW.id OR parent_id = NEW.id) AND NEW.lifecycle = 'deleted';
+    DELETE FROM delegation_budgets WHERE owner_id = NEW.owner_id AND root_id = NEW.id AND NEW.lifecycle = 'deleted';
+END;",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -790,6 +817,7 @@ pub struct Reconciliation {
 
 pub struct Store {
     pub(crate) delegation_catalog_failures: Mutex<BTreeMap<String, i64>>,
+    pub(crate) delegation_notice_warnings: Mutex<HashMap<String, std::time::Instant>>,
     pub(crate) idle_hub: RwLock<Option<std::sync::Weak<crate::hub::Hub>>>,
     prompt_admissions: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     plugins: Arc<hennery_gateway::plugin::Control>,
@@ -1985,6 +2013,7 @@ impl Store {
         }
         Ok(Self {
             delegation_catalog_failures: Mutex::default(),
+            delegation_notice_warnings: Mutex::default(),
             conn: hennery_kernel::db::CoordinatedConnection::new(conn),
             idle_hub: RwLock::new(None),
             plugins,
@@ -5531,6 +5560,83 @@ mod tests {
     }
 
     #[test]
+    fn operator_limits_migration27_preserves_budgets_and_the_endpoint_trigger() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let mut conn = hennery_kernel::db::open(&db).unwrap();
+        let owner = hennery_kernel::db::kernel_owner(&mut conn).unwrap();
+        hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..26]).unwrap();
+        conn.execute("INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,created_at,last_event_at) VALUES ('root',?1,'host','hat','claude','/project','active','t','t')",[&owner]).unwrap();
+        for epoch in [0, 41] {
+            conn.execute(
+                "INSERT INTO delegation_budgets(owner_id,root_id,epoch,wakes) VALUES (?1,'root',?2,20)",
+                params![owner, epoch],
+            )
+            .unwrap();
+        }
+        assert!(
+            conn.execute("UPDATE delegation_budgets SET wakes=21 WHERE owner_id=?1", [&owner])
+                .is_err()
+        );
+        let original: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE name='notice_endpoint_end'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        hennery_kernel::db::migrate(&mut conn, MIGRATIONS).unwrap();
+        let rebuilt: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE name='notice_endpoint_end'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rebuilt, original);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name='delegation_budgets_old'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        let rows: Vec<(i64, i64)> = conn
+            .prepare("SELECT epoch,wakes FROM delegation_budgets WHERE owner_id=?1 ORDER BY epoch")
+            .unwrap()
+            .query_map([&owner], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(rows, [(0, 20), (41, 20)]);
+        assert_eq!(
+            conn.execute("UPDATE delegation_budgets SET wakes=64 WHERE owner_id=?1", [&owner])
+                .unwrap(),
+            2
+        );
+        assert!(
+            conn.execute("UPDATE delegation_budgets SET wakes=65 WHERE owner_id=?1", [&owner])
+                .is_err()
+        );
+        conn.execute(
+            "UPDATE sessions SET lifecycle='deleted' WHERE owner_id=?1 AND id='root'",
+            [&owner],
+        )
+        .unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM delegation_budgets WHERE owner_id=?1",
+                [&owner],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
     fn binary_delegation_migration_preserves_v25_enabled_hat_and_revision() {
         use hennery_gateway::{
             api::GatewayState, identity::SessionIdentity, key::MasterKey, scope::ProxyStore, session::GatewayMcp,
@@ -5600,7 +5706,7 @@ mod tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            26
+            MIGRATIONS.len() as i64
         );
         assert_eq!(
             conn.query_row(

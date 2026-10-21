@@ -1,25 +1,74 @@
 //! Operator-only launcher catalog and delegation attention.
+use crate::delegation_settings::LimitsChange;
 use crate::{
     AppState,
     api::{error, internal},
 };
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{DefaultBodyLimit, Path, Query, State},
+    handler::Handler,
     http::StatusCode,
+    middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use hennery_kernel::json::ApiJson;
+use hennery_kernel::operator::Authenticated;
+use hennery_proto::delegation_status::PatchDelegationLimits;
 use serde::Deserialize;
 pub fn router(state: AppState) -> Router {
     let routes = Router::new()
+        .route(
+            "/api/settings/delegation-limits",
+            get(limits).patch(patch_limits.layer(middleware::from_fn(hennery_kernel::auth::require_step_up))),
+        )
         .route("/api/hosts/{id}/runtime-catalog", get(catalog))
         .route("/api/delegation/attention", get(attention))
         .route("/api/delegation/attention/{id}/rearm", post(rearm))
         .route("/api/delegation/attention/{id}/acknowledge", post(acknowledge))
         .layer(DefaultBodyLimit::max(32 * 1024));
     hennery_kernel::auth::operator_only(routes, state.operator.clone()).with_state(state)
+}
+
+async fn limits(State(state): State<AppState>) -> Response {
+    match state.store.delegation_limits() {
+        Ok(limits) => Json(limits).into_response(),
+        Err(err) => internal(err),
+    }
+}
+
+async fn patch_limits(
+    State(state): State<AppState>,
+    Extension(auth): Extension<Authenticated>,
+    patch: Result<ApiJson<PatchDelegationLimits>, hennery_kernel::json::ApiJsonRejection>,
+) -> Response {
+    let patch = match patch {
+        Ok(ApiJson(patch)) => patch,
+        Err(err) => {
+            let response = err.into_response();
+            if matches!(
+                response.status(),
+                StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
+            ) {
+                return invalid_limits();
+            }
+            return response;
+        }
+    };
+    match state.store.patch_delegation_limits(&patch, &auth) {
+        Ok(LimitsChange::Done(limits)) => Json(limits).into_response(),
+        Ok(LimitsChange::StepUpRequired) => hennery_kernel::auth::step_up_required(),
+        Ok(LimitsChange::Invalid) => invalid_limits(),
+        Err(err) => internal(err),
+    }
+}
+fn invalid_limits() -> Response {
+    error(
+        StatusCode::BAD_REQUEST,
+        "invalid_limits",
+        "Each delegation limit must be a whole number from 1 to 64.",
+    )
 }
 
 #[derive(Deserialize)]
