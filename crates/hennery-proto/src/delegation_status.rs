@@ -8,10 +8,42 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// Global operator settings; protection of collector queues remains fixed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorDelegationLimits {
+    pub children: u16,
+    pub starts_per_operator_epoch: u16,
+    pub automatic_wakes_per_operator_epoch: u16,
+}
+impl Default for OperatorDelegationLimits {
+    fn default() -> Self {
+        Self {
+            children: 8,
+            starts_per_operator_epoch: 32,
+            automatic_wakes_per_operator_epoch: 20,
+        }
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct PatchDelegationLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub children: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub starts_per_operator_epoch: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub automatic_wakes_per_operator_epoch: Option<u16>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct DelegationLimits {
     pub children: u16,
     pub starts_per_operator_epoch: u16,
+    pub automatic_wakes_per_operator_epoch: u16,
     pub queued_prompts: u16,
     pub queued_bytes: u32,
     pub message_bytes: u32,

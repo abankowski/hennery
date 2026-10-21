@@ -229,5 +229,8 @@
 .device-settings .policy-control { min-height:36px; font-size:12px; }.device-settings fieldset.card { padding:10px 12px; }.device-settings .facts { font-size:12px; }.device-settings .appearance-options { flex-wrap:wrap; }
 @media(max-width:767px) { .device-settings .manage-head { margin:-16px -16px 0; padding:12px 16px; }.device-settings .passkey-add { flex-wrap:wrap; }.device-settings .btn { min-height:44px; }.delegation-switch-row { min-height:56px; }.plain-switch { width:44px; height:26px; }.plain-switch::after { width:22px; height:22px; }.plain-switch:checked::after { transform:translateX(18px); } }
 .shell:has(.device-settings) > .mtopbar { display:none; }
+.delegation-limit-field { display:grid; grid-template-columns:minmax(0,1fr) 88px; gap:6px 16px; align-items:center; margin:16px 0; }
+.delegation-limit-field label { font-family:var(--font-body); font-size:13px; }
+.delegation-limit-field .hint { grid-column:1/-1; margin:0; color:var(--hn-fg-3); font-family:var(--font-body); }
 .device-settings { max-width:none; margin-inline:0; }.device-settings > .card { width:100%; max-width:712px; align-self:flex-start; }.device-settings > .card > h2:first-child { margin:0 -16px 12px; padding:12px 16px; }
 .device-settings.account-sign-in > .cards > .card,.device-settings > .account-sign-in > .cards > .card { background:none; border-radius:0; }.device-settings .account-sign-in .btn { color:var(--st-fail-fg); }.device-settings .passkey-add .btn { color:var(--hn-fg-1); }.device-settings > .btn { align-self:flex-start; }

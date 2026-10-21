@@ -20,6 +20,147 @@ const HOST: &str = "delegation-host";
 const BOUND: Duration = Duration::from_secs(30);
 
 #[tokio::test]
+async fn operator_limits_are_reported_by_session_capabilities_and_enforced_on_next_spawn() {
+    let h = Harness::new(script()).await;
+    for method in [reqwest::Method::GET, reqwest::Method::PATCH] {
+        let response = h
+            .raw
+            .request(method, format!("{}/api/settings/delegation-limits", h.url))
+            .bearer_auth(&h.token)
+            .header("origin", &h.url)
+            .json(&json!({"children":1}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 401);
+        assert_eq!(response.json::<Value>().await.unwrap()["code"], "unauthenticated");
+    }
+    let defaults = h.ok("session_capabilities", json!({"agent":"worker"})).await;
+    assert_eq!(
+        defaults["limits"],
+        json!({"children":8,"starts_per_operator_epoch":32,"automatic_wakes_per_operator_epoch":20,"queued_prompts":32,"queued_bytes":1048576,"message_bytes":65536})
+    );
+    let response = h
+        .client
+        .patch(format!("{}/api/settings/delegation-limits", h.url))
+        .json(&json!({"children":2,"starts_per_operator_epoch":4,"automatic_wakes_per_operator_epoch":6}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let changed = h.ok("session_capabilities", json!({"agent":"worker"})).await;
+    assert_eq!(
+        changed["limits"],
+        json!({"children":2,"starts_per_operator_epoch":4,"automatic_wakes_per_operator_epoch":6,"queued_prompts":32,"queued_bytes":1048576,"message_bytes":65536})
+    );
+    h.spawn("first", json!({})).await;
+    h.spawn("second", json!({})).await;
+    let refused = h
+        .call(
+            "session_spawn",
+            json!({"operation_key":"third","cwd":h.cwd,"agent":"worker","brief":"third child","config":{}}),
+        )
+        .await;
+    assert_eq!(refused["structuredContent"]["code"], "child_limit", "{refused}");
+    h.finish().await;
+}
+
+#[derive(Clone, Default)]
+struct NoticeLogs(Arc<Mutex<Vec<u8>>>);
+impl std::io::Write for NoticeLogs {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn operator_limits_dispatch_failure_warns_with_notice_id_without_content() {
+    let h = Harness::with_worker(script(), None, false).await;
+    let caps = h.ok("session_capabilities", json!({"agent":"claude"})).await;
+    let catalog = serde_json::from_value(caps["catalogs"][0].clone()).unwrap();
+    let child = h.spawn("log-child", json!({})).await["child_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let conn = rusqlite::Connection::open(h.cwd.join("hennery.db")).unwrap();
+    let owner = h.state.store.owner_id();
+    let parent = h.state.store.find_session(&h.parent).unwrap().unwrap();
+    conn.execute("INSERT INTO delegation_notices(owner_id,delivery_id,child_id,parent_id,root_id,hat_id,source_event_id,source_events,kind,incident,accepted_revision,created_at,deadline,required_config)
+        SELECT ?1,'limits-error-notice',?2,?3,?3,?4,1,'[1]','report','log-incident',revision,?5,?6,'{}'
+        FROM hat_session_tools WHERE owner_id=?1 AND hat_id=?4",rusqlite::params![owner,child,h.parent,parent.hat_id,hennery_kernel::secret::unix_now(),hennery_kernel::secret::unix_now()+300]).unwrap();
+    conn.execute(
+        "UPDATE session_attach_evidence SET evidence='PRIVATE_SENTINEL' WHERE owner_id=?1 AND session_id=?2",
+        rusqlite::params![owner, h.parent],
+    )
+    .unwrap();
+    let logs = NoticeLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        for state in ["parent_queued", "waiting_config"] {
+            conn.execute(
+                "UPDATE delegation_notices SET state=?2 WHERE owner_id=?1 AND delivery_id='limits-error-notice'",
+                rusqlite::params![owner, state],
+            )
+            .unwrap();
+            assert!(h.state.store.notice_parents_after("").unwrap().contains(&h.parent));
+            assert!(
+                h.state
+                    .store
+                    .dispatch_child_notice(&h.parent, &catalog, &h.state.hub)
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            String::from_utf8(logs.0.lock().unwrap().clone())
+                .unwrap()
+                .matches("delegation notice dispatch failed")
+                .count(),
+            1,
+            "retries for the same notice must be throttled"
+        );
+        conn.execute(
+            "UPDATE delegation_notices SET state='obsolete' WHERE owner_id=?1 AND delivery_id='limits-error-notice'",
+            [owner],
+        )
+        .unwrap();
+        assert!(h.state.store.notice_parents_after("").unwrap().is_empty());
+        // Reuse the fixture ID to prove settling removed its throttle entry.
+        conn.execute(
+            "UPDATE delegation_notices SET state='parent_queued' WHERE owner_id=?1 AND delivery_id='limits-error-notice'",
+            [owner],
+        )
+        .unwrap();
+        assert!(
+            h.state
+                .store
+                .dispatch_child_notice(&h.parent, &catalog, &h.state.hub)
+                .is_err()
+        );
+    });
+    let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        output.contains("WARN")
+            && output.contains("delegation notice dispatch failed")
+            && output.contains("limits-error-notice")
+    );
+    assert!(!output.contains("PRIVATE_SENTINEL"));
+    assert_eq!(output.matches("delegation notice dispatch failed").count(), 2);
+    assert_eq!(output.matches("code=invalid_arguments").count(), 2);
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn spawn_admission_catalog_is_reused_for_the_first_attach() {
     let h = Harness::with_worker(script(), None, false).await;
     let receipt = h.spawn("reuse-admission", json!({})).await;

@@ -37,6 +37,7 @@ function page(push = true, routes: Record<string, Answer | Answer[]> = {}) {
     'GET /api/hats': json(200, [{ id: 'hat', name: 'Personal', colour: '#000', default_for_new_hosts: true }]),
     'GET /api/hosts': json(200, []),
     'GET /api/hats/hat/session-tools': json(200, { delegation_enabled: false, revision: 1 }),
+    'GET /api/settings/delegation-limits': json(200, { children: 8, starts_per_operator_epoch: 32, automatic_wakes_per_operator_epoch: 20 }),
     'GET /api/push/policies': json(200, [{ hat_id: 'hat', muted: false, details: false, generic_title: false }]),
     'PATCH /api/settings': json(200, { public_url: 'https://app.example', contact: 'mailto:new@example.invalid' }),
     'PUT /api/push/policies/hat': json(200, { hat_id: 'hat', muted: false, details: true, generic_title: true }),
@@ -147,6 +148,7 @@ describe('minimum device Settings', () => {
     expect(server.sent.some((c) => c.path.includes('/api/push'))).toBe(false)
     expect(server.sent.some(c => /^\/api\/(?:hats|hosts|settings\/(?:attachments|host-removals))/.test(c.path))).toBe(false)
     expect(screen.queryByRole('heading', { name: 'Delegation by hat' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Delegation limits' })).toBeNull()
   })
   it('sends only contact and uses read-back, with no public_url field', async () => {
     const { server } = page()

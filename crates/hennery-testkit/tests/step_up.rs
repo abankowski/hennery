@@ -92,6 +92,137 @@ async fn code_of(resp: reqwest::Response) -> (u16, String) {
     )
 }
 
+#[tokio::test]
+async fn delegation_limits_auth_step_up_bounds_and_partial_round_trip() {
+    let c = Collector::start().await;
+    let path = "/api/settings/delegation-limits";
+    let defaults =
+        serde_json::json!({"children":8,"starts_per_operator_epoch":32,"automatic_wakes_per_operator_epoch":20});
+    for method in ["GET", "PATCH"] {
+        let response = c
+            .request("invalid", method, path)
+            .json(&serde_json::json!({"children":2}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(code_of(response).await, (401, "unauthenticated".into()));
+    }
+    let stale = c.session(300);
+    assert_eq!(
+        code_of(
+            c.request(&stale, "PATCH", path)
+                .header("content-type", "application/json")
+                .body("not-json")
+                .send()
+                .await
+                .unwrap()
+        )
+        .await,
+        (403, "step_up_required".into())
+    );
+    assert_eq!(
+        c.request(&stale, "GET", path)
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        defaults
+    );
+    assert_eq!(
+        code_of(
+            c.request(&stale, "PATCH", path)
+                .json(&serde_json::json!({"children":2}))
+                .send()
+                .await
+                .unwrap()
+        )
+        .await,
+        (403, "step_up_required".into())
+    );
+    assert_eq!(c.state.store.delegation_limits().unwrap().children, 8);
+    assert_eq!(c.step_up(&stale, OWNER_PASSWORD).await.status(), 204);
+    let expected =
+        serde_json::json!({"children":2,"starts_per_operator_epoch":32,"automatic_wakes_per_operator_epoch":20});
+    assert_eq!(
+        c.request(&stale, "PATCH", path)
+            .json(&serde_json::json!({"children":2}))
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        c.request(&stale, "GET", path)
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        expected
+    );
+    for field in [
+        "children",
+        "starts_per_operator_epoch",
+        "automatic_wakes_per_operator_epoch",
+    ] {
+        for value in [
+            serde_json::json!(0),
+            serde_json::json!(65),
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!("2"),
+            serde_json::json!(true),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            let response = c
+                .request(&stale, "PATCH", path)
+                .json(&serde_json::json!({field:value}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(code_of(response).await, (400, "invalid_limits".into()));
+            assert_eq!(c.state.store.delegation_limits().unwrap().children, 2);
+        }
+    }
+    for body in [
+        r#"{"children":1,"children":2}"#,
+        r#"{"CHILDREN":2}"#,
+        r#"{"children":2,"unknown":1}"#,
+        "not-json",
+    ] {
+        assert_eq!(
+            code_of(
+                c.request(&stale, "PATCH", path)
+                    .header("content-type", "application/json")
+                    .body(body)
+                    .send()
+                    .await
+                    .unwrap()
+            )
+            .await,
+            (400, "invalid_limits".into())
+        );
+    }
+    assert_eq!(
+        c.request(&stale, "PATCH", path)
+            .header("content-type", "application/json")
+            .body(r#"{"\u0063hildren":3}"#)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(c.state.store.delegation_limits().unwrap().children, 3);
+}
+
 /// A browser's subscription (web-push-native's example keys).
 const SUBSCRIBE: &str = r#"{"endpoint":"https://fcm.googleapis.com/fcm/send/x","keys":{"p256dh":"BLn9b-VR0ca83knDNZ32dCHGyjJp-1riX9ZTN40MqV8K_LpQmLqxC_DoHvqvFXO_nGdAB4W9dogZb_sM-uV4JbY","auth":"_ordMnz7uTCmrpBTeUV4Bw"}}"#;
 

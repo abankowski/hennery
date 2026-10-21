@@ -32,6 +32,7 @@ let
       ../crates/hennery-memory/src/ui-client.mjs
       ../crates/hennery-memory/tests/ui-client.test.mjs
       ../crates/hennery-sessions/tests/fixtures/undo_delegation.sql
+      ../crates/hennery-sessions/tests/fixtures/undo_delegation_limits.sql
       ../crates/hennery-testkit/tests/fixtures/delegation-codex-acp-1.13.0.jsonl
       ../crates/hennery-testkit/tests/support/codex_mcp_probe.mjs
       ../crates/hennery-view/tests/fixtures

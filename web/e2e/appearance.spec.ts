@@ -30,6 +30,7 @@ async function fixture(context: BrowserContext) {
     if (path === '/api/hosts/visual-host/recent-projects') return json([])
     if (path === '/api/hosts/visual-host' && route.request().method() === 'DELETE') return json({ code: 'step_up_required', message: 'Confirm it is you' }, 403)
     if (path === '/api/settings') return json({ public_url: collector.origin })
+    if (path === '/api/settings/delegation-limits') return json({ children: 8, starts_per_operator_epoch: 32, automatic_wakes_per_operator_epoch: 20 })
     if (path.endsWith('/session-tools')) return json({ delegation_enabled: false, revision: 1 })
     if (path.endsWith('/delegation-policy')) return json({ allowed: {}, revision: 1 })
     return json({ code: 'not_found', message: 'Unavailable in visual fixture' }, 404)

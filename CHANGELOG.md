@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Configure global delegation limits in Settings: live children, child starts
+  per operator message and automatic parent wake-ups, defaulting to 8, 32 and 20.
+
 ## 0.2.1
 
 - Delegation is strictly on or off per hat (#218). On means a child may use any

@@ -71,13 +71,15 @@ pub async fn execute(
                         .unwrap_or_else(|_| unknown_catalog(agent.clone())),
                 );
             }
+            let limits = state.store.delegation_limits()?;
             Ok(serde_json::to_value(CapabilitiesResult {
                 runtimes,
                 catalogs,
                 cwd,
                 limits: DelegationLimits {
-                    children: 8,
-                    starts_per_operator_epoch: 32,
+                    children: limits.children,
+                    starts_per_operator_epoch: limits.starts_per_operator_epoch,
+                    automatic_wakes_per_operator_epoch: limits.automatic_wakes_per_operator_epoch,
                     queued_prompts: 32,
                     queued_bytes: 1024 * 1024,
                     message_bytes: 65536,

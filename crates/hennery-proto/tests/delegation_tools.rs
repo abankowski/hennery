@@ -2,6 +2,25 @@ use hennery_proto::delegation::{OperationReceipt, OperationState, argument_schem
 use serde_json::{Value, json};
 
 #[test]
+fn operator_limits_patch_omits_unset_fields_and_has_optional_typescript_properties() {
+    use hennery_proto::delegation_status::PatchDelegationLimits;
+    use ts_rs::TS;
+    let patch = PatchDelegationLimits {
+        children: Some(2),
+        ..Default::default()
+    };
+    assert_eq!(serde_json::to_value(patch).unwrap(), json!({"children":2}));
+    let ts = PatchDelegationLimits::decl(&ts_rs::Config::default());
+    for field in [
+        "children",
+        "starts_per_operator_epoch",
+        "automatic_wakes_per_operator_epoch",
+    ] {
+        assert!(ts.contains(&format!("{field}?: number")), "{ts}");
+    }
+}
+
+#[test]
 fn discovery_schemas_reject_unknown_config_and_resolve_every_reference() {
     fn refs(value: &Value, root: &Value) {
         match value {

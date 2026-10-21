@@ -13,6 +13,21 @@ use hennery_proto::{
     rest::EventDto,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
+
+fn notice_warning_due(warnings: &mut HashMap<String, Instant>, id: &str, now: Instant) -> bool {
+    if warnings
+        .get(id)
+        .is_some_and(|last| now.duration_since(*last) < Duration::from_secs(300))
+    {
+        return false;
+    }
+    warnings.insert(id.to_owned(), now);
+    true
+}
 
 struct Notice {
     id: String,
@@ -27,6 +42,7 @@ struct Notice {
     revision: i64,
     required: String,
 }
+
 fn next_in(tx: &Transaction<'_>, owner: &str, parent: &str) -> Result<Option<Notice>> {
     Ok(tx.query_row("SELECT delivery_id,child_id,parent_id,root_id,hat_id,source_event_id,kind,source_turn,pending_id,accepted_revision,required_config
         FROM delegation_notices WHERE owner_id = ?1 AND parent_id = ?2 AND state IN ('parent_queued','waiting_config')
@@ -196,6 +212,21 @@ impl Store {
     }
     pub fn notice_parents_after(&self, after: &str) -> Result<Vec<String>> {
         let conn = self.conn();
+        // The worker scans even an empty queue, so settled/deleted notices do
+        // not keep warning timestamps alive. Read committed state, outside the
+        // dispatch transaction: a rollback must not reset a notice's throttle.
+        let mut warnings = self.delegation_notice_warnings.lock().unwrap();
+        if !warnings.is_empty() {
+            let mut queued = conn.prepare(
+                "SELECT delivery_id FROM delegation_notices WHERE owner_id = ?1
+                AND state IN ('parent_queued','waiting_config')",
+            )?;
+            let queued = queued
+                .query_map([self.owner_id()], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<HashSet<_>>>()?;
+            warnings.retain(|id, _| queued.contains(id));
+        }
+        drop(warnings);
         let mut stmt = conn.prepare(
             "SELECT DISTINCT parent_id FROM delegation_notices WHERE owner_id = ?1 AND parent_id > ?2
             AND state IN ('parent_queued','waiting_config') ORDER BY parent_id LIMIT 128",
@@ -224,72 +255,75 @@ impl Store {
         Ok(())
     }
     pub fn dispatch_child_notice(&self, parent: &str, catalog: &HostCatalog, hub: &Hub) -> Result<bool> {
-        let mut conn = self.conn();
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        self.settle_notices_in(&tx)?;
-        let Some(n) = next_in(&tx, self.owner_id(), parent)? else {
-            tx.commit()?;
-            return Ok(false);
-        };
-        if !eligible_in(&tx, self.owner_id(), &n)? {
-            tx.commit()?;
-            return Ok(false);
-        }
-        let (host,agent,cwd,available):(String,String,String,bool)=tx.query_row("SELECT host_id,agent,cwd,
+        let mut notice_id = None;
+        let result = (|| {
+            let mut conn = self.conn();
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            self.settle_notices_in(&tx)?;
+            let Some(n) = next_in(&tx, self.owner_id(), parent)? else {
+                tx.commit()?;
+                return Ok(false);
+            };
+            notice_id = Some(n.id.clone());
+            if !eligible_in(&tx, self.owner_id(), &n)? {
+                tx.commit()?;
+                return Ok(false);
+            }
+            let (host,agent,cwd,available):(String,String,String,bool)=tx.query_row("SELECT host_id,agent,cwd,
             lifecycle = 'active' AND open_turn_id IS NULL AND COALESCE(activity,'idle') <> 'blocked'
             AND NOT EXISTS(SELECT 1 FROM pending q WHERE q.owner_id = ?1 AND q.session_id = sessions.id AND q.state = 'open')
             FROM sessions WHERE owner_id = ?1 AND id = ?2",params![self.owner_id(),parent],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
-        if !available
-            || catalog.agent != agent
-            || !hub.is_ready(&host)
-            || !hub.has_capability(&host, Capability::DelegationConfig)
-            || !same_hat_in(&tx, self.owner_id(), &host, &n.hat, &cwd)?
-        {
-            tx.commit()?;
-            return Ok(false);
-        }
-        let proof: Option<(i64, String)> = tx
-            .query_row(
-                "SELECT attach_generation,evidence FROM session_attach_evidence
+            if !available
+                || catalog.agent != agent
+                || !hub.is_ready(&host)
+                || !hub.has_capability(&host, Capability::DelegationConfig)
+                || !same_hat_in(&tx, self.owner_id(), &host, &n.hat, &cwd)?
+            {
+                tx.commit()?;
+                return Ok(false);
+            }
+            let proof: Option<(i64, String)> = tx
+                .query_row(
+                    "SELECT attach_generation,evidence FROM session_attach_evidence
             WHERE owner_id = ?1 AND session_id = ?2 AND evidence IS NOT NULL",
-                params![self.owner_id(), parent],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        let Some((generation, proof)) = proof else {
-            tx.commit()?;
-            return Ok(false);
-        };
-        let evidence: ConfigEvidence = serde_json::from_str(&proof)?;
-        let required: SessionConfig = serde_json::from_str(&n.required)?;
-        if !evidence_satisfies(&evidence, u64::try_from(generation)?, &required, catalog) {
-            tx.execute("UPDATE delegation_notices SET state = 'waiting_config',reason = 'config_unverified' WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id])?;
-            tx.commit()?;
-            return Ok(false);
-        }
-        let epoch:i64=tx.query_row("SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1 AND session_id = ?2
+                    params![self.owner_id(), parent],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((generation, proof)) = proof else {
+                tx.commit()?;
+                return Ok(false);
+            };
+            let evidence: ConfigEvidence = serde_json::from_str(&proof)?;
+            let required: SessionConfig = serde_json::from_str(&n.required)?;
+            if !evidence_satisfies(&evidence, u64::try_from(generation)?, &required, catalog) {
+                tx.execute("UPDATE delegation_notices SET state = 'waiting_config',reason = 'config_unverified' WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id])?;
+                tx.commit()?;
+                return Ok(false);
+            }
+            let epoch:i64=tx.query_row("SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1 AND session_id = ?2
             AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'",params![self.owner_id(),n.root],|r|r.get(0))?;
-        let spent:i64=tx.query_row("SELECT COALESCE((SELECT wakes FROM delegation_budgets WHERE owner_id = ?1 AND root_id = ?2 AND epoch = ?3),0)",params![self.owner_id(),n.root,epoch],|r|r.get(0))?;
-        if spent >= 20 {
-            tx.execute("UPDATE delegation_notices SET state = 'operator_required',reason = 'wake_budget' WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id])?;
-            tx.commit()?;
-            return Ok(false);
-        }
-        let text = report_in(&tx, self.owner_id(), &n)?;
-        let content = vec![serde_json::json!({"type":"text","text":text})];
-        let turn = uuid::Uuid::now_v7().to_string();
-        let origin = InputOrigin::ChildReport {
-            child_id: n.child.clone(),
-            source_event_id: n.event.to_string(),
-            delivery_id: n.id.clone(),
-        };
-        tx.execute(
-            "INSERT INTO delegation_budgets(owner_id,root_id,epoch,wakes) VALUES (?1,?2,?3,1)
+            let spent:i64=tx.query_row("SELECT COALESCE((SELECT wakes FROM delegation_budgets WHERE owner_id = ?1 AND root_id = ?2 AND epoch = ?3),0)",params![self.owner_id(),n.root,epoch],|r|r.get(0))?;
+            if spent >= i64::from(self.delegation_limits_in(&tx)?.automatic_wakes_per_operator_epoch) {
+                tx.execute("UPDATE delegation_notices SET state = 'operator_required',reason = 'wake_budget' WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id])?;
+                tx.commit()?;
+                return Ok(false);
+            }
+            let text = report_in(&tx, self.owner_id(), &n)?;
+            let content = vec![serde_json::json!({"type":"text","text":text})];
+            let turn = uuid::Uuid::now_v7().to_string();
+            let origin = InputOrigin::ChildReport {
+                child_id: n.child.clone(),
+                source_event_id: n.event.to_string(),
+                delivery_id: n.id.clone(),
+            };
+            tx.execute(
+                "INSERT INTO delegation_budgets(owner_id,root_id,epoch,wakes) VALUES (?1,?2,?3,1)
             ON CONFLICT(owner_id,root_id,epoch) DO UPDATE SET wakes = wakes + 1 WHERE delegation_budgets.owner_id = ?1",
-            params![self.owner_id(), n.root, epoch],
-        )?;
-        tx.execute("UPDATE sessions SET open_turn_id = ?3 WHERE owner_id = ?1 AND id = ?2 AND open_turn_id IS NULL AND close_requested = 0",params![self.owner_id(),parent,turn])?;
-        tx.execute(
+                params![self.owner_id(), n.root, epoch],
+            )?;
+            tx.execute("UPDATE sessions SET open_turn_id = ?3 WHERE owner_id = ?1 AND id = ?2 AND open_turn_id IS NULL AND close_requested = 0",params![self.owner_id(),parent,turn])?;
+            tx.execute(
             "INSERT INTO turns(owner_id,turn_id,session_id,content,created_at,input_origin) VALUES (?1,?2,?3,?4,?5,?6)",
             params![
                 self.owner_id(),
@@ -300,40 +334,54 @@ impl Store {
                 serde_json::to_string(&origin)?
             ],
         )?;
-        tx.execute("UPDATE delegation_notices SET state = 'awaiting_reconciliation',target_turn = ?3,reason = NULL WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id,turn])?;
-        let frame = CollectorFrame::DelegatedPrompt {
-            request_id: n.id.clone(),
-            session_id: parent.into(),
-            turn_id: turn.clone(),
-            content,
-            expected: PromptFence {
-                attach_generation: u64::try_from(generation)?,
-                config_revision: evidence.config_revision,
-            },
-        };
-        tx.commit()?;
-        // Retain the owner gate through handoff: neither endpoint can close in
-        // the gap. No asynchronous claim exists for an expired lease to steal.
-        if !self.handoff_delegated(&conn, parent, &host, frame, hub)? {
-            let tx = conn.transaction()?;
-            tx.execute(
-                "UPDATE sessions SET open_turn_id = NULL WHERE owner_id = ?1 AND id = ?2 AND open_turn_id = ?3",
-                params![self.owner_id(), parent, turn],
-            )?;
-            tx.execute(
-                "DELETE FROM turns WHERE owner_id = ?1 AND turn_id = ?2 AND state = 'sent'",
-                params![self.owner_id(), turn],
-            )?;
-            tx.execute("UPDATE delegation_notices SET state = 'parent_queued',target_turn = NULL WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id])?;
-            tx.execute(
+            tx.execute("UPDATE delegation_notices SET state = 'awaiting_reconciliation',target_turn = ?3,reason = NULL WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id,turn])?;
+            let frame = CollectorFrame::DelegatedPrompt {
+                request_id: n.id.clone(),
+                session_id: parent.into(),
+                turn_id: turn.clone(),
+                content,
+                expected: PromptFence {
+                    attach_generation: u64::try_from(generation)?,
+                    config_revision: evidence.config_revision,
+                },
+            };
+            tx.commit()?;
+            // Retain the owner gate through handoff: neither endpoint can close in
+            // the gap. No asynchronous claim exists for an expired lease to steal.
+            if !self.handoff_delegated(&conn, parent, &host, frame, hub)? {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "UPDATE sessions SET open_turn_id = NULL WHERE owner_id = ?1 AND id = ?2 AND open_turn_id = ?3",
+                    params![self.owner_id(), parent, turn],
+                )?;
+                tx.execute(
+                    "DELETE FROM turns WHERE owner_id = ?1 AND turn_id = ?2 AND state = 'sent'",
+                    params![self.owner_id(), turn],
+                )?;
+                tx.execute("UPDATE delegation_notices SET state = 'parent_queued',target_turn = NULL WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id])?;
+                tx.execute(
                 "UPDATE delegation_budgets SET wakes = wakes - 1 WHERE owner_id = ?1 AND root_id = ?2 AND epoch = ?3",
                 params![self.owner_id(), n.root, epoch],
             )?;
-            tx.commit()?;
-            return Ok(false);
+                tx.commit()?;
+                return Ok(false);
+            }
+            Ok(true)
+        })();
+        if let Err(e) = &result
+            && notice_id.as_deref().is_none_or(|id| {
+                notice_warning_due(&mut self.delegation_notice_warnings.lock().unwrap(), id, Instant::now())
+            })
+        {
+            tracing::warn!(
+                notice_id = notice_id.as_deref().unwrap_or("unavailable"),
+                code = %crate::session_tools::error_code(e),
+                "delegation notice dispatch failed"
+            );
         }
-        Ok(true)
+        result
     }
+
     pub(crate) fn reject_child_notice(&self, host: &str, request: &str) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -454,5 +502,45 @@ fn report_in(tx: &Transaction<'_>, owner: &str, n: &Notice) -> Result<String> {
         }
         budget /= 2;
         anyhow::ensure!(budget > 0, "report_metadata_too_large");
+    }
+}
+
+#[cfg(test)]
+mod warning_tests {
+    use super::*;
+
+    #[test]
+    fn notice_warning_throttle_is_per_notice_and_reopens_every_five_minutes() {
+        let mut warnings = HashMap::new();
+        let now = Instant::now();
+        assert!(notice_warning_due(&mut warnings, "first", now));
+        assert!(!notice_warning_due(&mut warnings, "first", now));
+        assert!(notice_warning_due(&mut warnings, "second", now));
+        assert!(!notice_warning_due(
+            &mut warnings,
+            "first",
+            now + Duration::from_secs(299)
+        ));
+        assert!(notice_warning_due(
+            &mut warnings,
+            "first",
+            now + Duration::from_secs(300)
+        ));
+        assert!(!notice_warning_due(
+            &mut warnings,
+            "first",
+            now + Duration::from_secs(301)
+        ));
+        assert!(!notice_warning_due(
+            &mut warnings,
+            "first",
+            now + Duration::from_secs(599)
+        ));
+        assert!(notice_warning_due(
+            &mut warnings,
+            "first",
+            now + Duration::from_secs(600)
+        ));
+        assert_eq!(warnings.len(), 2);
     }
 }

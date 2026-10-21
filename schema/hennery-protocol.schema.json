@@ -1398,6 +1398,12 @@
     },
     "DelegationLimits": {
       "properties": {
+        "automatic_wakes_per_operator_epoch": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
         "children": {
           "format": "uint16",
           "maximum": 65535,
@@ -1430,6 +1436,7 @@
       "required": [
         "children",
         "starts_per_operator_epoch",
+        "automatic_wakes_per_operator_epoch",
         "queued_prompts",
         "queued_bytes",
         "message_bytes"
@@ -3611,6 +3618,36 @@
         }
       ]
     },
+    "OperatorDelegationLimits": {
+      "additionalProperties": false,
+      "description": "Global operator settings; protection of collector queues remains fixed.",
+      "properties": {
+        "automatic_wakes_per_operator_epoch": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "children": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "starts_per_operator_epoch": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "children",
+        "starts_per_operator_epoch",
+        "automatic_wakes_per_operator_epoch"
+      ],
+      "type": "object"
+    },
     "PairingCodeResponse": {
       "description": "201 to `POST /api/hosts/pairing-codes` (kernel spec §4.1): a single-use\ncode for `hennery host join`, shown once.",
       "properties": {
@@ -3704,6 +3741,39 @@
       "required": [
         "label"
       ],
+      "type": "object"
+    },
+    "PatchDelegationLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "automatic_wakes_per_operator_epoch": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "children": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "starts_per_operator_epoch": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "PathRuleInput": {
