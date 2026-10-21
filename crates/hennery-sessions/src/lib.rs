@@ -11,6 +11,7 @@ pub mod delegation_control;
 pub mod delegation_delivery;
 pub mod delegation_delivery_dispatch;
 pub mod delegation_dispatch;
+mod delegation_failures;
 mod delegation_form;
 pub mod delegation_queue;
 pub mod delegation_runtime;

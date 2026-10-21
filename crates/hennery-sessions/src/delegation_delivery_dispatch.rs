@@ -55,6 +55,30 @@ fn eligible_in(tx: &Transaction<'_>, owner: &str, n: &Notice) -> Result<bool> {
 }
 
 impl Store {
+    pub(crate) fn fail_notice_catalog(&self, parent: &str, code: &str, now: i64) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.settle_notices_in(&tx)?;
+        if let Some(n) = next_in(&tx, self.owner_id(), parent)?
+            && eligible_in(&tx, self.owner_id(), &n)?
+        {
+            let (host, cwd, parked): (String, String, bool) = tx.query_row(
+                "SELECT host_id,cwd,lifecycle='parked' FROM sessions WHERE owner_id = ?1 AND id=?2",
+                params![self.owner_id(), parent],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            if parked && same_hat_in(&tx, self.owner_id(), &host, &n.hat, &cwd)? {
+                tx.execute(
+                    "UPDATE delegation_notices SET state='operator_required',reason=?3
+                    WHERE owner_id = ?1 AND delivery_id=?2 AND (
+                    ?3 IN ('auth_required','runtime_unavailable','adapter_failed','cwd_unavailable','catalog_unavailable') OR (?3 IN ('busy','timeout') AND deadline<=?4))",
+                    params![self.owner_id(), n.id, code, now],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
     pub fn attach_notice_parent(
         &self,
         parent: &str,

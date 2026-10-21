@@ -83,11 +83,34 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
         let work = async {
             let cwd = checked_cwd(state, &session.host_id, &session.hat_id, &session.cwd).await?;
             anyhow::ensure!(cwd == session.cwd, "invalid_cwd");
-            let catalog = state
-                .catalogs
-                .get(state, &session.host_id, &session.hat_id, &cwd, &session.agent)
-                .await
-                .unwrap_or_else(|_| crate::session_tools::unknown_catalog(session.agent.clone()));
+            let catalog = if session.lifecycle == "active" {
+                state
+                    .catalogs
+                    .get(state, &session.host_id, &session.hat_id, &cwd, &session.agent)
+                    .await
+                    .unwrap_or_else(|_| crate::session_tools::unknown_catalog(session.agent.clone()))
+            } else {
+                match state
+                    .catalogs
+                    .get_for_spawn(state, &session.host_id, &session.hat_id, &cwd, &session.agent)
+                    .await
+                    .and_then(|catalog| {
+                        anyhow::ensure!(
+                            catalog.freshness == hennery_proto::delegation_host::CatalogFreshness::Fresh,
+                            "catalog_unavailable"
+                        );
+                        Ok(catalog)
+                    }) {
+                    Ok(catalog) => catalog,
+                    Err(error) => {
+                        let code = crate::session_tools::error_code(&error);
+                        let now = hennery_kernel::secret::unix_now();
+                        state.store.fail_delegation_catalog(&target, code, now)?;
+                        state.store.fail_notice_catalog(&target, code, now)?;
+                        return Ok(());
+                    }
+                }
+            };
             if session.lifecycle == "active" {
                 let catalog = state.store.attached_delegation_catalog(&target, &catalog)?;
                 state.store.dispatch_delegated(&target, &catalog, &state.hub)?;

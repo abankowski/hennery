@@ -1831,3 +1831,268 @@ async fn background_answer_worker_advances_past_held_page_and_wraps_to_repaired_
     .await;
     h.finish().await;
 }
+
+async fn signout_worker() -> (Harness, tempfile::TempDir, PathBuf) {
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("signed-out");
+    let wrapper = root.path().join("auth.cjs");
+    std::fs::write(
+        &wrapper,
+        r#"
+const {spawn}=require('node:child_process');
+const fs=require('node:fs');
+const script=JSON.parse(process.env.HENNERY_FAKE_ACP_SCRIPT);
+if(fs.existsSync(process.argv[3])) { if(fs.readFileSync(process.argv[3],"utf8")==="unknown")script.config_options=[]; else script.new_session_error=-32000; }
+process.env.HENNERY_FAKE_ACP_SCRIPT=JSON.stringify(script);
+const child=spawn(process.argv[2],[],{env:process.env,stdio:'inherit'});
+child.on('exit',code=>process.exit(code??1));
+"#,
+    )
+    .unwrap();
+    let node = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|p| p.join("node"))
+        .find(|p| p.is_file())
+        .unwrap();
+    hennery_testkit::first_exec(node.to_str().unwrap());
+    let mut command = fake(root.path(), "signout", script());
+    command.args = vec![
+        wrapper.display().to_string(),
+        command.program,
+        marker.display().to_string(),
+    ];
+    command.program = node.display().to_string();
+    let h = Harness::with_worker(script(), Some((command, Profile::Claude)), false).await;
+    (h, root, marker)
+}
+
+#[tokio::test]
+async fn accepted_start_signout_fails_operation_and_child_without_reprobing() {
+    let (h, _root, marker) = signout_worker().await;
+    let receipt = h.spawn("signout-start", json!({})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    std::fs::write(marker, "signed out").unwrap();
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    assert!(
+        h.state.store.delegation_targets().unwrap().is_empty(),
+        "failed queue cleared before any tool read"
+    );
+    let status = h
+        .ok(
+            "session_status",
+            json!({"child_id":child,"operation_key":"signout-start"}),
+        )
+        .await;
+    assert_eq!(
+        status["operations"][0]["state"],
+        json!({"state":"failed","code":"auth_required"}),
+        "{status}"
+    );
+    let session = h.state.store.find_session(child).unwrap().unwrap();
+    assert_eq!(session.lifecycle, "failed");
+    assert_eq!(session.failure_reason.as_deref(), Some("agent_not_logged_in"));
+    let conn = rusqlite::Connection::open(h.cwd.join("hennery.db")).unwrap();
+    assert!(
+        conn.query_row(
+            "SELECT revoked_at IS NOT NULL FROM gw_session_tokens WHERE session_id=?1",
+            [child],
+            |r| r.get::<_, bool>(0)
+        )
+        .unwrap()
+    );
+    assert!(h.state.store.delegation_targets().unwrap().is_empty());
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    assert_eq!(
+        h.state.store.find_session(&h.parent).unwrap().unwrap().lifecycle,
+        "active"
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn parked_followup_signout_fails_operation_without_failing_existing_session() {
+    let (h, _root, marker) = signout_worker().await;
+    let receipt = h.spawn("before-signout", json!({})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    eventually("initial child completes", async || {
+        hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+        let status = h
+            .ok(
+                "session_status",
+                json!({"child_id":child,"operation_key":"before-signout"}),
+            )
+            .await;
+        (status["operations"][0]["state"]["state"] == "completed").then_some(())
+    })
+    .await;
+    let (status, body) = h.post(&format!("/api/sessions/{child}/park"), json!({})).await;
+    assert!(status.is_success(), "{body}");
+    eventually("child parked", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.lifecycle == "parked" && !s.presumed_parked)
+            .map(|_| ())
+    })
+    .await;
+    h.ok(
+        "session_send",
+        json!({"operation_key":"after-signout","child_id":child,"text":"continue"}),
+    )
+    .await;
+    std::fs::write(marker, "signed out").unwrap();
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    assert!(
+        h.state.store.delegation_targets().unwrap().is_empty(),
+        "failed queue cleared before any tool read"
+    );
+    let status = h
+        .ok(
+            "session_status",
+            json!({"child_id":child,"operation_key":"after-signout"}),
+        )
+        .await;
+    assert_eq!(
+        status["operations"][0]["state"],
+        json!({"state":"failed","code":"auth_required"}),
+        "{status}"
+    );
+    let session = h.state.store.find_session(child).unwrap().unwrap();
+    assert_eq!(session.lifecycle, "parked");
+    assert_eq!(session.failure_reason, None);
+    assert!(h.state.store.delegation_targets().unwrap().is_empty());
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn parent_notice_signout_requires_operator_without_failing_parent_session() {
+    let (mut h, root, marker) = signout_worker().await;
+    let (status, body) = h
+        .post("/api/sessions", json!({"host_id":HOST,"agent":"worker","cwd":h.cwd}))
+        .await;
+    assert!(status.is_success(), "{body}");
+    h.parent = body["session_id"].as_str().unwrap().to_owned();
+    eventually("worker parent active", async || {
+        h.state
+            .store
+            .find_session(&h.parent)
+            .unwrap()
+            .filter(|s| s.lifecycle == "active")
+            .map(|_| ())
+    })
+    .await;
+    let log = std::fs::read_to_string(root.path().join("signout-sessions.jsonl")).unwrap();
+    let record: Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+    h.token = record["params"]["mcpServers"][0]["headers"][0]["value"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("Bearer ")
+        .unwrap()
+        .to_owned();
+    let receipt = h.spawn("notice-signout", json!({})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    eventually("child attached", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.lifecycle == "active")
+            .map(|_| ())
+    })
+    .await;
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    h.done(child, "notice-signout").await;
+    let (status, body) = h.post(&format!("/api/sessions/{}/park", h.parent), json!({})).await;
+    assert!(status.is_success(), "{body}");
+    eventually("notice parent parked", async || {
+        h.state
+            .store
+            .find_session(&h.parent)
+            .unwrap()
+            .filter(|s| s.lifecycle == "parked" && !s.presumed_parked)
+            .map(|_| ())
+    })
+    .await;
+    std::fs::write(marker, "signed out").unwrap();
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    let conn = rusqlite::Connection::open(h.cwd.join("hennery.db")).unwrap();
+    let disposition: (String, Option<String>) = conn
+        .query_row(
+            "SELECT state,reason FROM delegation_notices WHERE child_id=?1 AND kind='turn_ended'",
+            [child],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(disposition, ("operator_required".into(), Some("auth_required".into())));
+    let session = h.state.store.find_session(&h.parent).unwrap().unwrap();
+    assert_eq!(session.lifecycle, "parked");
+    assert_eq!(session.failure_reason, None);
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn accepted_start_catalog_becomes_unavailable_fails_with_readable_reason() {
+    let (h, _root, marker) = signout_worker().await;
+    let receipt = h.spawn("lost-catalog", json!({})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    std::fs::write(marker, "unknown").unwrap();
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    let status = h
+        .ok(
+            "session_status",
+            json!({"child_id":child,"operation_key":"lost-catalog"}),
+        )
+        .await;
+    assert_eq!(
+        status["operations"][0]["state"],
+        json!({"state":"failed","code":"catalog_unavailable"}),
+        "{status}"
+    );
+    assert_eq!(
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .unwrap()
+            .failure_reason
+            .as_deref(),
+        Some("catalog_unavailable")
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn delegated_host_signin_failure_retains_session_login_reason_and_tool_auth_code() {
+    let h = Harness::with_worker(script(), None, false).await;
+    let receipt = h.spawn("host-signin", json!({})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    let facts = h
+        .state
+        .store
+        .ingest(
+            child,
+            1,
+            &hennery_proto::frames::SessionBody::StartFailed {
+                request_id: "attach-request".into(),
+                code: "agent_not_logged_in".into(),
+                message: "Sign in using the runtime login command".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(facts[0].body["message"], "Sign in using the runtime login command");
+    let session = h.state.store.find_session(child).unwrap().unwrap();
+    assert_eq!(session.failure_reason.as_deref(), Some("agent_not_logged_in"));
+    let status = h
+        .ok(
+            "session_status",
+            json!({"child_id":child,"operation_key":"host-signin"}),
+        )
+        .await;
+    assert_eq!(
+        status["operations"][0]["state"],
+        json!({"state":"failed","code":"auth_required"}),
+        "{status}"
+    );
+    h.finish().await;
+}

@@ -3859,6 +3859,13 @@ impl Store {
                          OR (lifecycle = 'failed' AND failure_reason = 'start_not_delivered'))",
                     params![session_id, code, self.owner],
                 )?;
+                if changed > 0 && code == "agent_not_logged_in" {
+                    tx.execute(
+                        "UPDATE session_operations SET code='auth_required' WHERE owner_id = ?1
+                        AND child_id=?2 AND state='failed' AND code='agent_not_logged_in'",
+                        params![self.owner_id(), session_id],
+                    )?;
+                }
                 if changed == 0 {
                     created.clear();
                     mark_unapplied(&tx, &self.owner, fact_id)?;

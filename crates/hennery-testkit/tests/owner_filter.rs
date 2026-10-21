@@ -58,12 +58,17 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-sessions/src/delegation_delivery_dispatch.rs",
         include_str!("../../hennery-sessions/src/delegation_delivery_dispatch.rs"),
-        34,
+        36,
     ),
     (
         "hennery-sessions/src/delegation_delivery.rs",
         include_str!("../../hennery-sessions/src/delegation_delivery.rs"),
         11,
+    ),
+    (
+        "hennery-sessions/src/delegation_failures.rs",
+        include_str!("../../hennery-sessions/src/delegation_failures.rs"),
+        5,
     ),
     (
         "hennery-sessions/src/delegation_control.rs",
@@ -169,7 +174,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-sessions/src/store.rs",
         include_str!("../../hennery-sessions/src/store.rs"),
-        156,
+        157,
     ),
     (
         "hennery-gateway/src/store.rs",
