@@ -70,8 +70,23 @@ impl Store {
     }
 
     pub fn enqueue_operator_prompt(&self, session: &str, prompt: &Checked) -> Result<String> {
+        match self.enqueue_operator_prompt_with_key(session, prompt, None)? {
+            crate::prompt_receipts::PromptReceipt::Queued { queue_id } => Ok(queue_id),
+            crate::prompt_receipts::PromptReceipt::Turn { .. } => anyhow::bail!("unexpected turn receipt"),
+        }
+    }
+
+    pub fn enqueue_operator_prompt_with_key(
+        &self,
+        session: &str,
+        prompt: &Checked,
+        key: Option<&crate::prompt_receipts::PromptRequestKey>,
+    ) -> Result<crate::prompt_receipts::PromptReceipt> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some(receipt) = crate::prompt_receipts::lookup_in(&tx, self.owner_id(), session, key)? {
+            return Ok(receipt);
+        }
         let revoked: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sessions s JOIN hosts h ON h.owner_id=s.owner_id AND h.id=s.host_id WHERE s.owner_id = ?1 AND s.id=?2 AND h.revoked_at IS NOT NULL)",params![self.owner_id(),session],|r|r.get(0))?;
         ensure!(!revoked, "host_revoked");
         let eligible: bool = tx.query_row(
@@ -126,8 +141,10 @@ impl Store {
             "UPDATE sessions SET prompt_queue_held=0 WHERE owner_id = ?1 AND id=?2",
             params![self.owner_id(), session],
         )?;
+        let receipt = crate::prompt_receipts::PromptReceipt::Queued { queue_id: id };
+        crate::prompt_receipts::record_in(&tx, self.owner_id(), session, key, &receipt)?;
         tx.commit()?;
-        Ok(id)
+        Ok(receipt)
     }
 
     pub fn operator_prompt_queue(&self, session: &str) -> Result<Vec<QueuedPrompt>> {

@@ -6,6 +6,7 @@ DROP TRIGGER prompt_queue_delete;
 DROP TRIGGER delegation_endpoint_end;
 DROP TRIGGER delegation_grant_end;
 DROP TABLE prompt_queue_attachments;
+DROP TABLE prompt_receipts;
 ALTER TABLE session_dispatch_queue DROP COLUMN origin;
 ALTER TABLE session_dispatch_queue DROP COLUMN image_bytes;
 ALTER TABLE sessions DROP COLUMN prompt_queue_dirty;

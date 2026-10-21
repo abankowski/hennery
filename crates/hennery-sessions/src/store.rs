@@ -2795,6 +2795,17 @@ impl Store {
         self.open_turn_with_startup(session_id, turn_id, &prompt.stored_json(), &prompt.images, startup)
     }
 
+    pub fn open_prompt_with_startup_and_key(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        prompt: &Checked,
+        startup: &mut Option<hennery_proto::plugin::StartupRecord>,
+        key: Option<&crate::prompt_receipts::PromptRequestKey>,
+    ) -> Result<crate::prompt_receipts::PromptAdmission> {
+        self.open_turn_with_startup_and_key(session_id, turn_id, &prompt.stored_json(), &prompt.images, startup, key)
+    }
+
     fn open_turn_with(&self, session_id: &str, turn_id: &str, content: &[Value], images: &[Image]) -> Result<bool> {
         self.open_turn_with_startup(session_id, turn_id, content, images, &mut None)
     }
@@ -2807,8 +2818,27 @@ impl Store {
         images: &[Image],
         startup: &mut Option<hennery_proto::plugin::StartupRecord>,
     ) -> Result<bool> {
+        match self.open_turn_with_startup_and_key(session_id, turn_id, content, images, startup, None)? {
+            crate::prompt_receipts::PromptAdmission::Opened => Ok(true),
+            crate::prompt_receipts::PromptAdmission::MustQueue => Ok(false),
+            crate::prompt_receipts::PromptAdmission::Existing(_) => anyhow::bail!("unexpected keyed receipt"),
+        }
+    }
+
+    fn open_turn_with_startup_and_key(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        content: &[Value],
+        images: &[Image],
+        startup: &mut Option<hennery_proto::plugin::StartupRecord>,
+        key: Option<&crate::prompt_receipts::PromptRequestKey>,
+    ) -> Result<crate::prompt_receipts::PromptAdmission> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        if let Some(receipt) = crate::prompt_receipts::lookup_in(&tx, &self.owner, session_id, key)? {
+            return Ok(crate::prompt_receipts::PromptAdmission::Existing(receipt));
+        }
         let changed = tx.execute(
             "UPDATE sessions SET open_turn_id = ?2
              WHERE id = ?1 AND lifecycle = 'active' AND open_turn_id IS NULL AND owner_id = ?3
@@ -2852,9 +2882,22 @@ impl Store {
                 }
             }
             link_turn_attachments(&tx, &self.owner, turn_id, &content)?;
+            crate::prompt_receipts::record_in(
+                &tx,
+                &self.owner,
+                session_id,
+                key,
+                &crate::prompt_receipts::PromptReceipt::Turn {
+                    turn_id: turn_id.into(),
+                },
+            )?;
         }
         tx.commit()?;
-        Ok(changed == 1)
+        Ok(if changed == 1 {
+            crate::prompt_receipts::PromptAdmission::Opened
+        } else {
+            crate::prompt_receipts::PromptAdmission::MustQueue
+        })
     }
 
     /// Save each image's file (plan 6a), before `open_prompt` records it.
@@ -2927,6 +2970,14 @@ impl Store {
     pub fn abandon_turn(&self, session_id: &str, turn_id: &str) -> Result<()> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let unsent: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM turns WHERE owner_id = ?1 AND session_id=?2 AND turn_id=?3 AND state='sent')",
+            params![self.owner, session_id, turn_id],
+            |r| r.get(0),
+        )?;
+        if !unsent {
+            return Ok(());
+        }
         tx.execute(
             "UPDATE sessions SET open_turn_id = NULL WHERE id = ?1 AND open_turn_id = ?2 AND owner_id = ?3",
             params![session_id, turn_id, self.owner],
@@ -2940,6 +2991,12 @@ impl Store {
         tx.execute(
             "DELETE FROM turns WHERE turn_id = ?1 AND owner_id = ?2",
             [turn_id, &self.owner],
+        )?;
+        // This path proves the host never accepted the still-sent turn.
+        // Accepted/uncertain turns are reconciled elsewhere and retain keys.
+        tx.execute(
+            "DELETE FROM prompt_receipts WHERE owner_id = ?1 AND session_id=?2 AND receipt_kind='turn' AND receipt_id=?3",
+            params![self.owner, session_id, turn_id],
         )?;
         let dropped = drop_unreferenced(&tx, &self.owner, &hashes)?;
         tx.commit()?;

@@ -1,4 +1,10 @@
 -- Sessions migration 29: shared durable operator/delegation prompt FIFO.
+CREATE TABLE prompt_receipts (
+    owner_id TEXT NOT NULL, session_id TEXT NOT NULL, request_key TEXT NOT NULL,
+    digest TEXT NOT NULL, receipt_kind TEXT NOT NULL CHECK(receipt_kind IN ('turn','queue')),
+    receipt_id TEXT NOT NULL,
+    PRIMARY KEY(owner_id,session_id,request_key),
+    FOREIGN KEY(session_id,owner_id) REFERENCES sessions(id,owner_id));
 ALTER TABLE session_dispatch_queue ADD COLUMN origin TEXT NOT NULL DEFAULT 'parent' CHECK(origin IN ('parent','operator'));
 ALTER TABLE session_dispatch_queue ADD COLUMN image_bytes INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN prompt_queue_dirty INTEGER NOT NULL DEFAULT 0;
@@ -40,6 +46,7 @@ BEGIN
     WHERE owner_id = NEW.owner_id AND (source_id = NEW.id OR target_id = NEW.id) AND NEW.lifecycle = 'deleted';
     DELETE FROM session_operations
     WHERE owner_id = NEW.owner_id AND caller_id = NEW.id AND NEW.lifecycle = 'deleted';
+    DELETE FROM prompt_receipts WHERE owner_id=NEW.owner_id AND session_id=NEW.id AND NEW.lifecycle='deleted';
     UPDATE session_operations SET child_id = NULL, tool = '', state = 'failed', code = 'gone',
         turn_id = NULL, pending_id = NULL, request_id = NULL, accepted_revision = 0, epoch = 0,
         validated_attach = NULL, validated_config = NULL, validated_policy = NULL

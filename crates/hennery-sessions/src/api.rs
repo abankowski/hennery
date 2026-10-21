@@ -3,6 +3,7 @@
 use crate::AppState;
 use crate::content::{self, Refusal};
 use crate::hub::{RequestError, Undo};
+use crate::prompt_receipts::{PromptAdmission, PromptReceipt, PromptRequestKey};
 use crate::resolve::{NotResolved, OnHost, resolve_on_host};
 use crate::store::{
     AnswerSubmission, Cursor, Deletion, HostForgets, LIFECYCLES, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, ListQuery,
@@ -46,6 +47,10 @@ const CANCEL_TIMEOUT: Duration = Duration::from_secs(60);
 /// `set_config` (ACP core §3.4). The host answers a switch the adapter
 /// leaves hanging well before this (`hennery_host::session::CONFIG_TIMEOUT`).
 const CONFIG_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[cfg(test)]
+#[path = "prompt_receipts_api_tests.rs"]
+mod prompt_receipts_tests;
 
 // ACP core §3.4: every state-changing request waits at least the read
 // deadline, so on a live connection its fact or rejection arrives first and
@@ -862,6 +867,22 @@ async fn prompt(
         Err(Refusal::Invalid(why)) => return error(StatusCode::BAD_REQUEST, "invalid_content", why),
         Err(Refusal::TooLarge(why)) => return error(StatusCode::PAYLOAD_TOO_LARGE, "content_too_large", why),
     };
+    let key = match req
+        .request_key
+        .as_deref()
+        .map(|key| PromptRequestKey::new(key, &checked))
+        .transpose()
+    {
+        Ok(key) => key,
+        Err(err) => return queue_error(err),
+    };
+    if let Some(key) = key.as_ref() {
+        match state.store.prompt_receipt(&id, key) {
+            Ok(Some(receipt)) => return accepted_prompt_receipt(receipt),
+            Ok(None) => {}
+            Err(err) => return queue_error(err),
+        }
+    }
     let session = match state.store.find_session(&id) {
         Ok(Some(s)) => s,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
@@ -901,7 +922,7 @@ async fn prompt(
         }
     }
     match state.store.prompt_must_queue(&id) {
-        Ok(true) => return accept_queued_prompt(&state, &id, &checked),
+        Ok(true) => return accept_queued_prompt(&state, &id, &checked, key.as_ref()),
         Ok(false) => {}
         Err(err) => return internal(err),
     }
@@ -910,7 +931,7 @@ async fn prompt(
     }
     let turn_id = uuid::Uuid::now_v7().to_string();
     let Some(_admission) = state.store.reserve_prompt(&id) else {
-        return accept_queued_prompt(&state, &id, &checked);
+        return accept_queued_prompt(&state, &id, &checked, key.as_ref());
     };
     let request_id = uuid::Uuid::now_v7().to_string();
     let mut startup = state
@@ -924,11 +945,12 @@ async fn prompt(
         .await;
     match state
         .store
-        .open_prompt_with_startup(&id, &turn_id, &checked, &mut startup)
+        .open_prompt_with_startup_and_key(&id, &turn_id, &checked, &mut startup, key.as_ref())
     {
-        Ok(true) => {}
-        Ok(false) => return accept_queued_prompt(&state, &id, &checked),
-        Err(err) => return internal(err),
+        Ok(PromptAdmission::Opened) => {}
+        Ok(PromptAdmission::MustQueue) => return accept_queued_prompt(&state, &id, &checked, key.as_ref()),
+        Ok(PromptAdmission::Existing(receipt)) => return accepted_prompt_receipt(receipt),
+        Err(err) => return queue_error(err),
     }
     drop(_admission);
     let frame = CollectorFrame::Prompt {
@@ -964,6 +986,16 @@ async fn prompt(
 
 fn queue_error(err: anyhow::Error) -> Response {
     match err.to_string().as_str() {
+        "invalid_request_key" => error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_key",
+            "A request key must contain 1 to 128 printable ASCII characters.",
+        ),
+        "request_key_conflict" => error(
+            StatusCode::CONFLICT,
+            "request_key_conflict",
+            "This request key was already used for a different message. Submit the changed message with a new key.",
+        ),
         "queue_full" => error(
             StatusCode::CONFLICT,
             "queue_full",
@@ -992,19 +1024,24 @@ fn queue_error(err: anyhow::Error) -> Response {
         _ => internal(err),
     }
 }
-fn accept_queued_prompt(state: &AppState, id: &str, checked: &content::Checked) -> Response {
-    match state.store.enqueue_operator_prompt(id, checked) {
-        Ok(queue_id) => {
+fn accepted_prompt_receipt(receipt: PromptReceipt) -> Response {
+    (StatusCode::ACCEPTED, Json(receipt)).into_response()
+}
+
+fn accept_queued_prompt(
+    state: &AppState,
+    id: &str,
+    checked: &content::Checked,
+    key: Option<&PromptRequestKey>,
+) -> Response {
+    match state.store.enqueue_operator_prompt_with_key(id, checked, key) {
+        Ok(receipt) => {
             if let Err(err) = state.store.flush_prompt_queue_changes(&state.hub) {
                 // Acceptance already committed. The durable dirty flag lets
                 // the worker repair publication without another operator send.
                 tracing::warn!(session_id = id, error = %err, "queued prompt notification deferred");
             }
-            (
-                StatusCode::ACCEPTED,
-                Json(hennery_proto::rest::QueuedPromptResponse { queue_id }),
-            )
-                .into_response()
+            accepted_prompt_receipt(receipt)
         }
         Err(err) => queue_error(err),
     }
@@ -1034,7 +1071,7 @@ async fn edit_queued_prompt(
         return queue_error(err);
     }
     if let Err(err) = state.store.flush_prompt_queue_changes(&state.hub) {
-        return internal(err);
+        tracing::warn!(session_id = id, error = %err, "queued prompt edit notification deferred");
     }
     prompt_queue(State(state), Path(id)).await
 }
@@ -1056,7 +1093,7 @@ async fn remove_queued_prompt(State(state): State<AppState>, Path((id, queue_id)
         Err(err) => return internal(err),
     }
     if let Err(err) = state.store.flush_prompt_queue_changes(&state.hub) {
-        return internal(err);
+        tracing::warn!(session_id = id, error = %err, "queued prompt removal notification deferred");
     }
     prompt_queue(State(state), Path(id)).await
 }
@@ -2219,7 +2256,7 @@ mod not_sent_tests {
             .unwrap();
         state.store.conn().execute_batch("CREATE TRIGGER refuse_queue_notification BEFORE INSERT ON events WHEN NEW.kind='queue_changed' BEGIN SELECT RAISE(ABORT,'notification unavailable'); END;").unwrap();
         let checked = content::check(vec![serde_json::json!({"type":"text","text":"only once"})]).unwrap();
-        let (status, body) = answer(accept_queued_prompt(&state, "s1", &checked)).await;
+        let (status, body) = answer(accept_queued_prompt(&state, "s1", &checked, None)).await;
         let queue = state.store.operator_prompt_queue("s1").unwrap();
         assert_eq!(queue.len(), 1, "the queue commit already succeeded");
         assert_eq!(status, StatusCode::ACCEPTED);

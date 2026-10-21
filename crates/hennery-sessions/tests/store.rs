@@ -2950,6 +2950,13 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
     prompt_in(&store, "s1", "t2", vec![image(&b)]);
     prompt_in(&store, "s2", "t9", vec![image(&kept)]);
     store.ingest("s2", 5, &turn_started("t9")).unwrap();
+    for id in ["s1", "s2"] {
+        let checked = hennery_sessions::content::check(vec![json!({"type":"text","text":"receipt fixture"})]).unwrap();
+        let key = hennery_sessions::prompt_receipts::PromptRequestKey::new("delete-receipt", &checked).unwrap();
+        store
+            .enqueue_operator_prompt_with_key(id, &checked, Some(&key))
+            .unwrap();
+    }
     let conn = Connection::open(&db).unwrap();
     let ids = |sql: &str, id: &str| -> Vec<String> {
         conn.prepare(sql)
@@ -3008,6 +3015,7 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
         "events",
         "pending",
         "session_catalog",
+        "prompt_receipts",
         "session_families",
         "session_operations",
         "session_dispatch_queue",

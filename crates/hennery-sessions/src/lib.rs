@@ -29,6 +29,7 @@ pub mod plugin;
 pub mod plugin_api;
 pub mod projects;
 pub mod prompt_queue;
+pub mod prompt_receipts;
 pub mod push;
 mod redact;
 mod resolve;

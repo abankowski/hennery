@@ -43,6 +43,10 @@ pub struct StartSessionResponse {
 pub struct PromptRequest {
     #[ts(type = "unknown[]")]
     pub content: Vec<Value>,
+    /// Reuse for retries of the same submit, including a lost response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "string | undefined", optional)]
+    pub request_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
