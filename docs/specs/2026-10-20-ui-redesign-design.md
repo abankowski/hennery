@@ -214,7 +214,8 @@ verify the actual cascade, including on-accent and status tints.
 Use **Roboto** for headings, body/content (including message bubbles and
 markdown), buttons, labels and links; use **Inter** only for form control
 values (`input`, `select`, `textarea`), table cells and dense data. Table
-headers are labels and remain Roboto; code remains mono. This follows the
+headers are labels and remain Roboto; code and paths (including path entry
+and directory suggestions) remain mono. This follows the
 design system body-1/2/3 tokens and README typography mapping, as confirmed
 by the operator on **2026-10-21** (O8), replacing the prototype Inter body
 mapping. `--font-display` and `--font-body` select Roboto; `--font-data`

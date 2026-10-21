@@ -436,6 +436,7 @@ export default function NewSession() {
                 <div className="path-input">
                   <input
                     aria-label="Agent name"
+                    className="agent-name-input"
                     value={otherName}
                     onChange={(e) => setOtherName(e.target.value)}
                     placeholder="The agent's name on the host"
