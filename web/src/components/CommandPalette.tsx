@@ -75,7 +75,7 @@ export default function CommandPalette({ actions, loaded, close }: {
     icon: (row.operator_attention > 0 ? 'hand-raised' : row.activity === 'running' ? 'play-circle' : 'clock') as IconName,
     run: () => navigate(`/sessions/${encodeURIComponent(row.session_id)}`),
   })
-  const primary = new Set(['new-session', 'add-host', 'open-defaults'])
+  const primary = new Set(['new-session', 'rename-session', 'add-host', 'open-defaults'])
   const commands = registeredCommands(actions, desktop).map(action => ({ ...action, label: action.id === 'open-defaults' ? 'Edit defaults' : action.label })).filter(action => q || primary.has(action.id)).filter(action => action.label.toLocaleLowerCase().includes(q.toLocaleLowerCase()))
   const groups = [
     { label: 'Needs you', results: rows.filter(row => row.operator_attention > 0).map(sessionResult) },

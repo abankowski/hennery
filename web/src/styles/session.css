@@ -343,6 +343,13 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
 .session-menu-list [role=switch][aria-checked=true] { color:var(--hn-accent-fg); background:var(--hn-accent-wash); }
 .session-menu-list [role=switch] { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .idle-hold-state { font-size:11px; color:var(--hn-fg-3); }.session-menu-list [aria-checked=true] .idle-hold-state { color:var(--hn-accent-fg); }
+.session-title-button { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:0; background:transparent; color:inherit; font:inherit; text-align:left; padding:0; cursor:text; }
+.session-title-button:hover { text-decoration:underline; text-decoration-color:var(--hn-fg-3); text-underline-offset:4px; }
+.session-rename-form { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:0; }
+.session-rename-form input { flex:1; width:100px; min-width:0; min-height:32px; padding:5px 8px; font:400 14px var(--font-body); }
+.session-rename-form .form-error { flex-basis:100%; margin:0; font:400 12px var(--font-body); }
+.session-head:has(.session-rename-form) .waiting-navigation { display:none; }
+@media(max-width:767px) { .session-title-button,.session-rename-form input,.session-rename-form button { min-height:44px; }.session-head:has(.session-rename-form) .badge,.session-head:has(.session-rename-form) .session-hat,.session-head:has(.session-rename-form) .session-details-toggle { display:none; } }
 .session-menu-list hr { border:0; border-top:1px solid var(--hn-line); margin:6px 0; }
 .idle-hold-note { margin:4px 12px 8px; color:var(--hn-fg-3); font-size:12px; line-height:1.5; }
 .waiting-navigation { display:flex; align-items:center; gap:4px; font-size:11px; color:var(--hn-fg-3); white-space:nowrap; }
@@ -538,6 +545,10 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
 .composer-settings-panel .composer-controls { display:flex; flex-direction:column; align-items:stretch; gap:12px; max-height:none; margin:0; overflow:visible; }
 .composer-settings-panel .switcher { justify-content:space-between; }.composer-settings-panel .switcher select { max-width:65%; }
 .composer-settings-panel .session-effort { flex-wrap:wrap; }
+.session-title-button > bdi { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.session-head .session-rename-form { display:flex; overflow:visible; white-space:normal; }
+.session-rename-reset { flex-basis:100%; align-self:flex-start; text-align:left; }
+.session-rename-form input { border:1px solid var(--hn-control-strong); border-radius:6px; color:var(--hn-fg-1); background:var(--hn-surface); }
 .config-readback { margin:14px 0 0; color:var(--hn-fg-3); font:400 12px/1.5 var(--font-body); }
 @media(max-width:767px) {
   .session .transcript { padding:12px 10px 8px; }.bubble,.bubble.user { padding:10px 12px; }
@@ -548,4 +559,10 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
   .composer-settings-layer { background:var(--hn-scrim); }
   .composer-settings-panel { left:0; right:0; bottom:0; width:100%; max-height:80dvh; border-radius:18px 18px 0 0; padding:16px 16px max(20px,env(safe-area-inset-bottom)); }
   .composer-settings-panel .switcher select { max-width:70%; }.composer-settings-panel header button { min-height:44px; min-width:44px; }
+  .session-head .conv-name:has(.session-title-button) { grid-row:1 / 3; align-self:stretch; display:flex; align-items:flex-start; }
+  .session-title-button { display:flex; align-items:flex-start; line-height:24px; }
+  .session-head .session-rename-form { grid-column:2 / 4; grid-row:1 / 3; align-self:center; }
+  .session-head:has(.session-rename-form) .conv-title-row { grid-template-rows:auto auto; }
+  .session-rename-form input { font-size:16px; }
+  .session-rename-form button[aria-label="Cancel rename"] { min-width:44px; }
 }

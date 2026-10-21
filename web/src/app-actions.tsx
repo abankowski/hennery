@@ -10,7 +10,7 @@ export function useLoadedSessions(): ReadonlyMap<string, SessionSummary> {
 
 /** Stable R2 integration contract. Providers own mutations and capability checks;
  * the command host only discovers and dispatches enabled actions. */
-export type AppActionId = 'new-session' | 'add-host' | 'search-sessions' | 'toggle-rail' | 'toggle-details' | 'focus-composer' | 'open-needs-you' | 'open-sessions' | 'open-hosts' | 'open-mcp' | 'open-hats' | 'open-defaults' | 'open-settings' | 'open-commands'
+export type AppActionId = 'new-session' | 'rename-session' | 'add-host' | 'search-sessions' | 'toggle-rail' | 'toggle-details' | 'focus-composer' | 'open-needs-you' | 'open-sessions' | 'open-hosts' | 'open-mcp' | 'open-hats' | 'open-defaults' | 'open-settings' | 'open-commands'
 export interface AppAction { label: string; enabled: boolean; run: () => void }
 export interface AppContext { sessionId?: string; hostId?: string; cwd?: string; hatId?: string; loadedSessions?: ReadonlyMap<string, SessionSummary>; hats?: readonly HatItem[]; hosts?: readonly HostItem[] }
 export class AppActions {

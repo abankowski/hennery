@@ -341,6 +341,10 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   const openProject = useCallback(() => {
     if (info) navigate(`/new?host=${encodeURIComponent(info.host_id)}&cwd=${encodeURIComponent(info.cwd)}`)
   }, [info])
+  const [renaming, setRenaming] = useState(false)
+  const beginRename = useCallback(() => setRenaming(true), [])
+  const finishRename = useCallback(() => setRenaming(false), [])
+  useRegisterAction('rename-session', { label: 'Rename session', enabled: !s.removed && !!info, run: beginRename })
   useRegisterAction('toggle-details', { label: 'Toggle session details', enabled: !s.removed, run: toggleDetails })
   useRegisterAction('focus-composer', { label: 'Focus composer', enabled: !s.removed, run: focusComposer })
   useRegisterAction('new-session', { label: 'New session in this project', enabled: !s.removed && !!info, run: openProject })
@@ -451,6 +455,9 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
     <QuestionPresentationContext.Provider value={presentation}>
     <div className={'session hn-accent-scope' + (narrow && selectedQuestion ? ' has-question-actions' : '')} style={accent} ref={questionRegion}>
       <SessionHeader
+        renaming={renaming}
+        onRename={info && !s.removed ? beginRename : undefined}
+        finishRename={finishRename}
         id={id}
         info={info}
         hostName={info ? hosts.get(info.host_id) : undefined}
@@ -465,6 +472,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         detailsTrigger={detailsTrigger}
         menu={
           <SessionMenu
+            onRename={info && !s.removed ? beginRename : undefined}
             id={id}
             lifecycle={info?.lifecycle}
             family={info?.family}

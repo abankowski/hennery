@@ -29,6 +29,7 @@ import ConfirmDialog from './ConfirmDialog'
 import { closeRefusal, deleteRefusal, parkRefusal } from './sessionWords'
 
 interface Props {
+  onRename?: () => void
   id: string
   /** The session's lifecycle; undefined while unknown (Delete only). */
   lifecycle: string | undefined
@@ -47,7 +48,7 @@ interface Props {
   focusAfterDelete?: () => HTMLElement | null
 }
 
-export default function SessionMenu({ id, lifecycle, family, canPark, supportsIdleHold, hostConnected, onDeleted, focusAfterDelete }: Props) {
+export default function SessionMenu({ id, lifecycle, family, canPark, supportsIdleHold, hostConnected, onDeleted, focusAfterDelete, onRename }: Props) {
   const client = useClient()
   const menuId = useId()
   const [open, setOpen] = useState(false)
@@ -160,6 +161,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, supportsId
       </button>
       {open && (
         <div className="session-menu-list" id={menuId}>
+          {onRename && <button type="button" onClick={() => { setOpen(false); onRename() }}>Rename</button>}
           <button type="button" role="switch" aria-label="Do not park" aria-checked={hold?.pinned ?? false} disabled={busy || pinBusy || hold === null} onClick={() => void togglePin()}><span>Do not park</span><span className="idle-hold-state" aria-hidden="true">{hold ? hold.pinned ? '✓ On' : 'Off' : '…'}</span></button>
           {holdNote && <p className="idle-hold-note" role="status">{holdNote}</p>}
           {showPark && (

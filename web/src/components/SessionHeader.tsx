@@ -2,8 +2,8 @@
 // where it stands in words, model and mode, and the newest step list. On a
 // phone it carries the way back to the list, and the steps start closed.
 // The session's menu (Park, Close, Delete) sits at the end of its title row.
-import type { SessionItem, McpSessionDelivery } from '../generated/protocol'
-import type { ReactNode, RefObject } from 'react'
+import type { SessionItem, SessionDetail, McpSessionDelivery } from '../generated/protocol'
+import { useRef, useState, type ReactNode, type RefObject } from 'react'
 import type { FamilySummary, PlanEntry } from '../generated/view'
 import { agentLabel } from '../lib/agent'
 import { statusOf } from '../lib/status'
@@ -14,7 +14,8 @@ import { useSessionScope, WaitingBadge } from './SessionScope'
 import { Icon as Glyph } from './ui'
 import { sessionPath } from './SessionRow'
 import { reasonWords } from './items/Marker'
-import SessionName from './SessionNames'
+import SessionName, { useSessionName } from './SessionNames'
+import RenameSession from './RenameSession'
 
 /** What the header reads: a list summary or a session's detail. */
 export type HeaderInfo = SessionItem & { question_waits?: boolean; operator_attention?: number; parent_handled_questions?: number; family?: FamilySummary }
@@ -24,6 +25,9 @@ export function titleOf(info: HeaderInfo | undefined, id: string): string {
 }
 
 interface Props {
+  renaming?: boolean
+  onRename?: () => void
+  finishRename?: () => void
   id: string
   info?: HeaderInfo
   hostName?: string
@@ -41,7 +45,12 @@ interface Props {
   delivery?: McpSessionDelivery
 }
 
-export default function SessionHeader({ id, info, hostName, menu, detailsOpen, toggleDetails, openFamily, detailsTrigger, hatName, hostConnected, delivery, narrow }: Props) {
+export default function SessionHeader({ id, info, hostName, menu, detailsOpen, toggleDetails, openFamily, detailsTrigger, hatName, hostConnected, delivery, narrow, renaming, onRename, finishRename }: Props) {
+  const titleButton = useRef<HTMLButtonElement>(null)
+  const [savedName, setSavedName] = useState<{ before: HeaderInfo | undefined; session: SessionDetail } | null>(null)
+  const named = savedName && savedName.before === info ? { ...info, title: savedName.session.title, title_source: savedName.session.title_source } : info
+  const titleName = useSessionName({ ...named, session_id: id })
+  const finish = () => { finishRename?.(); requestAnimationFrame(() => titleButton.current?.focus()) }
   const scope = useSessionScope()
   // Share the queue's recent-first summary order, never its overview filters.
   const waiting = (scope?.attentionRows ?? []).filter(s => !scope?.isAttentionDismissed(s.session_id))
@@ -70,7 +79,7 @@ export default function SessionHeader({ id, info, hostName, menu, detailsOpen, t
           <Icon.Chevron size={18} className="rot-180" />
         </Link>
         {hatName && <span className="session-hat"><span aria-hidden="true" /><bdi>{hatName}</bdi></span>}
-        <h1 className="conv-name"><SessionName session={{ ...info, session_id: id }} ready={!!info} /></h1>
+        {renaming ? <RenameSession key={id} id={id} title={named?.title ?? ''} canReset={named?.title_source === 'operator'} saved={session => { setSavedName({ before: info, session }); finish() }} cancel={finish} /> : <h1 className="conv-name" aria-label={titleName.text}>{onRename && info ? <button ref={titleButton} type="button" className="session-title-button" aria-label="Rename session" title="Rename session" onClick={onRename}><SessionName session={{ ...named, session_id: id }} /></button> : <SessionName session={{ ...named, session_id: id }} />}</h1>}
         {status && (
           <span className={'badge badge-' + status.tone}>
             <Glyph name={status.tone === 'attn' ? 'hand-raised' : status.tone === 'run' ? 'play-circle' : status.tone === 'fail' ? 'exclamation-circle' : 'clock'} size={14} />
