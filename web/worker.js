@@ -1,43 +1,30 @@
-import { appRoute, cleanupShell, installShell, shellResponse } from './src/pwa/shell'
+import { appRoute, cleanupShell, installShell, replacesShell, shellResponse } from './src/pwa/shell'
 import { pushJournal } from './src/pwa/journal'
 import { decodePush } from './src/pwa/notification'
 import { subscriptionBody } from './src/pwa/subscription'
 import { withPushOwnership } from './src/pwa/ownership'
-import { clickNotification } from './src/pwa/navigation'
-import { coordinateUpdate } from './src/pwa/update'
-
-let updating = false
-self.addEventListener('message', (event) => {
-  if (event.data?.version !== 1 || event.data.kind !== 'update_request' || !event.ports[0] || !event.source?.id) return
-  event.waitUntil((async () => {
-    let ready = false, reason = 'busy'
-    if (!updating && self.registration.waiting && (self.serviceWorker === undefined || self.registration.waiting === self.serviceWorker)) {
-      updating = true
-      try { ready = await coordinateUpdate(self.clients, location.origin, event.source.id, () => {
-        if (self.serviceWorker !== undefined && self.registration.waiting !== self.serviceWorker) { reason = 'replaced'; throw new Error('Update replaced') }
-        return self.skipWaiting()
-      }, value => { reason = value }) }
-      catch { /* Busy or vanished windows leave the worker waiting. */ }
-      finally { updating = false }
-    }
-    event.ports[0].postMessage({ version: 1, kind: 'update_result', ready, reason })
-    event.ports[0].close()
-  })())
-})
+import { clickNotification, replaceAppWindows } from './src/pwa/navigation'
+import { updateRoute } from './src/routes'
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(installShell(caches, fetch, __PRECACHE__, __BUILD_ID__, crypto.randomUUID()))
+  event.waitUntil((async () => {
+    await installShell(caches, fetch, __PRECACHE__, __BUILD_ID__, crypto.randomUUID(), undefined, !!self.registration.active)
+    await self.skipWaiting()
+  })())
 })
 self.addEventListener('activate', (event) => {
-  // Activate naturally after old windows close, or via the explicit,
-  // all-window update handshake above. Never claim an existing document.
-  event.waitUntil(cleanupShell(caches, __BUILD_ID__))
+  event.waitUntil((async () => {
+    const replacing = await replacesShell(caches, __BUILD_ID__)
+    await cleanupShell(caches, __BUILD_ID__)
+    await self.clients.claim()
+    if (replacing) await replaceAppWindows(self.clients, location.origin)
+  })())
 })
 self.addEventListener('fetch', (event) => {
   const r = event.request, url = new URL(r.url)
   if (r.method !== 'GET' || url.origin !== location.origin) return
   const path = url.pathname + url.search
-  if (!(r.mode === 'navigate' && appRoute(url.pathname)) && !__PRECACHE__.some((entry) => entry.url === path)) return
+  if (!(r.mode === 'navigate' && updateRoute(url.pathname)) && !__PRECACHE__.some((entry) => entry.url === path)) return
   event.respondWith((async () => {
     const cached = await shellResponse(caches, __BUILD_ID__, path, r.mode === 'navigate', __PRECACHE__)
     return cached ?? fetch(r)

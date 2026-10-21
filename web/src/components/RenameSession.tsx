@@ -2,23 +2,21 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useClient } from '../app-client'
 import { messageOf } from '../api/errors'
 import type { SessionDetail, UpdateSessionRequest } from '../generated/protocol'
-import { discardUpdateInputs, prepareInputSave } from '../pwa/update-edits'
 
 export default function RenameSession({ id, title, canReset = false, saved, cancel }: { id: string; title: string; canReset?: boolean; saved: (session: SessionDetail) => void; cancel: () => void }) {
   const client = useClient()
   const [text, setText] = useState(title), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null), request = useRef<AbortController | null>(null)
-  const discard = () => { if (input.current?.form) discardUpdateInputs(input.current.form); cancel() }
+  const discard = () => cancel()
   useEffect(() => { input.current?.focus(); input.current?.select(); return () => request.current?.abort() }, [])
   async function update(title: string | null) {
     if (busy) return
     const abort = new AbortController(); request.current = abort
     setBusy(true); setError(null)
     const body: UpdateSessionRequest = { title }
-    const acknowledge = input.current?.form ? prepareInputSave(input.current.form) : () => {}
     try {
       const result = await client.request<SessionDetail>('PATCH', `/api/sessions/${encodeURIComponent(id)}`, body, { signal: abort.signal })
-      if (!abort.signal.aborted) { acknowledge(); saved(result) }
+      if (!abort.signal.aborted) { saved(result) }
     } catch (error) { if (!abort.signal.aborted) { setError(messageOf(error)); setBusy(false) } }
   }
   function submit(event: FormEvent) {

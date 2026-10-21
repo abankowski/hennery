@@ -1,8 +1,10 @@
 // Static-only worker cache. A unique attempt is never reused; a final marker
 // makes a whole cache selectable across worker restarts. Writes are not atomic.
+import { updateRoute } from '../routes'
 export interface StaticEntry { url: string; mime: string; digest: string }
 export const SHELL_PREFIX = 'hennery-shell-'
 const COMPLETE = '/__hennery_shell_complete__'
+const REPLACEMENT = '/__hennery_shell_replacement__'
 
 export async function sha256(bytes: ArrayBuffer): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -11,6 +13,7 @@ export async function sha256(bytes: ArrayBuffer): Promise<string> {
 export async function installShell(
   storage: CacheStorage, fetcher: typeof fetch, entries: StaticEntry[], build: string, attempt: string,
   deps = { origin: location.origin, digest: sha256 },
+  replacing = false,
 ): Promise<void> {
   const name = `${SHELL_PREFIX}${build}-${attempt}`
   // Fail rather than touch a cache that may belong to a running worker.
@@ -25,6 +28,8 @@ export async function installShell(
         || await deps.digest(await r.clone().arrayBuffer()) !== entry.digest) throw new Error(`shell verification failed: ${entry.url}`)
       await cache.put(entry.url, r)
     }
+    // Persist across worker termination between installation and activation.
+    await cache.put(REPLACEMENT, new Response(replacing ? '1' : '0'))
     await cache.put(COMPLETE, new Response(build))
   } catch (err) {
     await storage.delete(name)
@@ -51,13 +56,17 @@ export async function cleanupShell(storage: CacheStorage, build: string): Promis
   }
 }
 
+export async function replacesShell(storage: CacheStorage, build: string): Promise<boolean> {
+  return await (await (await selectShell(storage, build))?.match(REPLACEMENT))?.text() === '1'
+}
+
 export function appRoute(path: string): boolean {
   return ['/sessions', '/needs-you', '/more', '/defaults', '/new', '/hosts', '/hats', '/settings', '/mcp'].includes(path)
     || /^\/sessions\/[A-Za-z0-9_-]{1,128}$/.test(path)
 }
 
 export async function shellResponse(storage: CacheStorage, build: string, path: string, navigation: boolean, entries: StaticEntry[]): Promise<Response | null> {
-  const key = navigation && appRoute(path.split('?')[0]) ? '/index.html' : path
+  const key = navigation && updateRoute(path.split('?')[0]) ? '/index.html' : path
   if (!entries.some((e) => e.url === key)) return null
   return (await (await selectShell(storage, build))?.match(key)) ?? null
 }

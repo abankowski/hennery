@@ -91,11 +91,12 @@ describe('verified static shell', () => {
   it('serves only exact static URLs and controlled routes, never APIs or queries', async () => {
     const { api } = storage()
     await installShell(api, async () => response(), [entry], 'v1', 'active', deps)
-    for (const path of ['/api/auth/login', '/api/sessions', '/mcp/proxy', '/setup', '/login', '/oauth/callback', '/index.html?x=1', '/logos/a', '/unknown']) {
+    for (const path of ['/api/auth/login', '/api/sessions', '/mcp/', '/mcp/proxy', '/setup', '/login', '/oauth/callback', '/index.html?x=1', '/logos/a', '/unknown']) {
       expect(await shellResponse(api, 'v1', path, true, [entry])).toBeNull()
     }
     expect(await shellResponse(api, 'v1', '/index.html', false, [entry])).not.toBeNull()
     expect(await shellResponse(api, 'v1', '/sessions/a?pending=p', true, [entry])).not.toBeNull()
+    for (const path of ['/', '/sessions/', '/settings/']) expect(await shellResponse(api, 'v1', path, true, [entry])).not.toBeNull()
   })
   it.each(['/sessions', '/sessions/s-1', '/new', '/hosts', '/hats', '/settings', '/mcp'])('recognizes app route %s', (path) => expect(appRoute(path)).toBe(true))
   it.each(['/api', '/login', '/setup', '/mcp/', '/mcp/mount', '/sessions/a/b', '/sessions/%2f', '/sessions/..', '//sessions'])('bypasses %s', (path) => expect(appRoute(path)).toBe(false))
