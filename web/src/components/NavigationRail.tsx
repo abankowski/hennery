@@ -5,6 +5,7 @@ import { AppearanceButton, HatChip, Icon, type IconName } from './ui'
 import CommandEntry from './CommandEntry'
 import { McpBadge } from './McpScope'
 import SignOut from './SignOut'
+import VersionInfo from './VersionInfo'
 export const NAV_ICON: Record<View, IconName> = { 'needs-you': 'hand-raised', sessions: 'rectangle-stack', new: 'plus', defaults: 'adjustments-horizontal', hosts: 'server-stack', mcp: 'puzzle-piece', hats: 'rectangle-stack', settings: 'adjustments-horizontal', more: 'ellipsis-horizontal' }
 export default function NavigationRail({ views, current, collapsed, toggle }: { views: readonly View[]; current: View | null; collapsed: boolean; toggle: () => void }) {
   const scope = useSessionScope()
@@ -24,6 +25,6 @@ export default function NavigationRail({ views, current, collapsed, toggle }: { 
       })}</div>}
       <div><div className="nav-label nav-section-label">Configure</div>{views.filter(view => !['more', 'needs-you', 'sessions', 'new'].includes(view)).map(navigation)}</div>
     </nav>
-    <div className="rail-foot"><span className="owner-mark">O<span className="nav-label">Owner</span></span>{scope && <span className="host-fraction" title="Online / owned non-revoked hosts">{hosts ? `${hosts.filter(h => h.connected).length}/${hosts.length} hosts online` : 'Hosts unknown'}</span>}<AppearanceButton />{current !== 'settings' && current !== 'more' && <SignOut />}</div>
+    <div className="rail-foot"><VersionInfo /><span className="owner-mark">O<span className="nav-label">Owner</span></span>{scope && <span className="host-fraction" title="Online / owned non-revoked hosts">{hosts ? `${hosts.filter(h => h.connected).length}/${hosts.length} hosts online` : 'Hosts unknown'}</span>}<AppearanceButton />{current !== 'settings' && current !== 'more' && <SignOut />}</div>
   </aside>
 }
