@@ -42,19 +42,14 @@ impl CachedCatalog {
         if !self.live() {
             return false;
         }
-        match &self.result {
-            // Independent tool retries can observe a runtime signed in moments
-            // later. Only attach retries back off on an earlier failure.
-            Err(_) => matches!(origin, CatalogOrigin::Attach(_)) || self.received >= requested,
-            Ok(catalog) => match origin {
-                CatalogOrigin::Spawn => self.received >= requested,
-                CatalogOrigin::Attach(not_before) => {
-                    // A non-fresh preview is reused only as a short-lived
-                    // failure; it can never authorize an attach.
-                    catalog.freshness != CatalogFreshness::Fresh || self.captured >= *not_before
-                }
-                CatalogOrigin::Agent | CatalogOrigin::Operator => true,
-            },
+        match origin {
+            // Failures and non-fresh previews back off only operations admitted
+            // before they were captured; newer operations must observe recovery.
+            CatalogOrigin::Attach(not_before) => self.captured >= *not_before,
+            CatalogOrigin::Spawn => self.received >= requested,
+            // Independent tool retries can observe sign-in immediately, while
+            // callers already waiting on the same probe share its failure.
+            CatalogOrigin::Agent | CatalogOrigin::Operator => self.result.is_ok() || self.received >= requested,
         }
     }
 

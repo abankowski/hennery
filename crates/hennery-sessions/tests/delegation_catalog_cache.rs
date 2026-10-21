@@ -318,7 +318,7 @@ async fn attach_cannot_authorize_from_an_unknown_catalog_even_after_admission() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn attach_retries_share_a_negative_catalog_for_five_seconds_regardless_of_minimum() {
+async fn attach_retries_for_the_same_operation_share_a_negative_catalog_for_five_seconds() {
     let world = World::new();
     let host = serve(world.state.clone(), world.connection, world.receiver, |index| {
         if index == 0 {
@@ -327,6 +327,7 @@ async fn attach_retries_share_a_negative_catalog_for_five_seconds_regardless_of_
             Ok(catalog())
         }
     });
+    let admitted = SystemTime::now();
     let result = world
         .state
         .catalogs
@@ -334,24 +335,23 @@ async fn attach_retries_share_a_negative_catalog_for_five_seconds_regardless_of_
         .await;
     assert_eq!(result.unwrap_err().to_string(), "auth_required");
     tokio::time::advance(Duration::from_secs(4)).await;
-    let later_operation = SystemTime::now();
     let result = world
         .state
         .catalogs
-        .get_for_attach(&world.state, "host", &world.hat, "/project", "claude", later_operation)
+        .get_for_attach(&world.state, "host", &world.hat, "/project", "claude", admitted)
         .await;
     assert_eq!(result.unwrap_err().to_string(), "auth_required");
     assert_eq!(
         host.count.load(Ordering::SeqCst),
         1,
-        "negative backoff ignores the new operation's minimum"
+        "the same operation must retain its short failure backoff"
     );
     tokio::time::advance(Duration::from_secs(2)).await;
     assert_eq!(
         world
             .state
             .catalogs
-            .get_for_attach(&world.state, "host", &world.hat, "/project", "claude", later_operation)
+            .get_for_attach(&world.state, "host", &world.hat, "/project", "claude", admitted)
             .await
             .unwrap(),
         catalog()
@@ -453,14 +453,7 @@ async fn unknown_catalog_is_a_short_lived_attach_failure_and_remains_an_agent_pr
         let result = world
             .state
             .catalogs
-            .get_for_attach(
-                &world.state,
-                "host",
-                &world.hat,
-                "/project",
-                "claude",
-                SystemTime::now(),
-            )
+            .get_for_attach(&world.state, "host", &world.hat, "/project", "claude", admitted)
             .await;
         assert_eq!(result.unwrap_err().to_string(), "catalog_unavailable");
     }
@@ -481,4 +474,49 @@ async fn unknown_catalog_is_a_short_lived_attach_failure_and_remains_an_agent_pr
         .unwrap();
     assert_eq!(result.freshness, CatalogFreshness::Fresh);
     assert_eq!(host.count.load(Ordering::SeqCst), 2);
+}
+
+async fn earlier_failure_cannot_block_a_new_attach(signed_out: bool) {
+    let world = World::new();
+    let host = serve(world.state.clone(), world.connection, world.receiver, move |index| {
+        if index == 0 && signed_out {
+            return Err("auth_required");
+        }
+        let mut catalog = catalog();
+        if index == 0 {
+            catalog.freshness = CatalogFreshness::Unknown;
+        }
+        Ok(catalog)
+    });
+    let earlier = world
+        .state
+        .catalogs
+        .get_for_spawn(&world.state, "host", &world.hat, "/project", "claude")
+        .await;
+    if signed_out {
+        assert_eq!(earlier.unwrap_err().to_string(), "auth_required");
+    } else {
+        assert_eq!(earlier.unwrap().freshness, CatalogFreshness::Unknown);
+    }
+    // The runtime becomes usable before a later operation is admitted. That
+    // operation must not inherit the earlier operation's cached refusal.
+    let admitted = SystemTime::now();
+    let attached = world
+        .state
+        .catalogs
+        .get_for_attach(&world.state, "host", &world.hat, "/project", "claude", admitted)
+        .await
+        .unwrap();
+    assert_eq!(attached.freshness, CatalogFreshness::Fresh);
+    assert_eq!(host.count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn older_auth_failure_cannot_block_a_newly_admitted_attach_after_sign_in() {
+    earlier_failure_cannot_block_a_new_attach(true).await;
+}
+
+#[tokio::test]
+async fn older_unknown_catalog_cannot_block_a_newly_admitted_attach() {
+    earlier_failure_cannot_block_a_new_attach(false).await;
 }
