@@ -250,7 +250,7 @@ fn workspace_fence_rejects_outside_and_symlink_swap() {
     assert!(checked_cwd(cwd.join("alias").to_str().unwrap(), std::slice::from_ref(&cwd)).is_err());
 }
 #[test]
-fn security_is_profile_bound_and_never_authorizes_bypass() {
+fn security_baselines_are_profile_bound_metadata() {
     let safe = security_classification(Profile::Claude);
     assert!(safe.known);
     assert!(safe.axes["mode"].contains(&ConfigValue::Id("default".into())));
@@ -278,6 +278,7 @@ async fn cold_catalog_uses_selected_adapter_without_prompt_or_mcp() {
     assert_eq!(result.defaults.model.as_deref(), Some("small"));
     assert!(!result.adapter_revision.is_empty());
     assert!(result.security.known);
+    assert!(serde_json::to_value(&result).unwrap().get("profile").is_none());
     assert_eq!(
         result.freshness,
         hennery_proto::delegation_host::CatalogFreshness::Fresh
@@ -407,6 +408,47 @@ async fn fresh_attach_evidence_admits_matching_prompt_and_rejects_stale_generati
     .await;
     stop(h).await;
 }
+#[tokio::test]
+async fn legacy_mode_without_catalogue_axis_preserves_evidence_and_followups() {
+    let root = tempfile::tempdir().unwrap();
+    let (up, _) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let mut s = script();
+    s.config_options.retain(|option| option["id"] != "mode");
+    s.prompt_updates = vec![json!({"sessionUpdate":"current_mode_update","currentModeId":"legacy"})];
+    let h = session::launch_delegated(
+        up.clone(),
+        launch(root.path(), s, Attach::New),
+        SessionOptions::default(),
+        9,
+    );
+    let initial = evidence(&until(&up, |f| !f.is_empty()).await);
+    assert_eq!(initial.completeness, ConfigCompleteness::Complete);
+    assert_eq!(initial.actual.mode, None);
+    for request in ["first", "followup"] {
+        h.send(prompt(
+            PromptFence {
+                attach_generation: initial.attach_generation,
+                config_revision: initial.config_revision,
+            },
+            request,
+        ));
+        let frames = until(&up, |frames| {
+            frames.iter().any(|f| {
+                matches!(f,
+                    HostFrame::Session {body: SessionBody::TurnEnded {turn_id,..},..} if turn_id == request
+                )
+            })
+        })
+        .await;
+        assert_eq!(
+            evidence(&frames),
+            initial,
+            "unsupported mode delta changed the configuration proof"
+        );
+    }
+    stop(h).await;
+}
+
 #[tokio::test]
 async fn no_resume_readback_is_not_old_configuration_evidence() {
     let root = tempfile::tempdir().unwrap();
@@ -674,11 +716,16 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
         HostFrame::Hello {
             capabilities,
             mcp_isolation,
+            runtime_profiles,
             ..
         } => {
             assert!(capabilities.has(Capability::CatalogProbe));
             assert!(capabilities.has(Capability::DelegationConfig));
             assert!(mcp_isolation.0.contains_key("chosen"));
+            assert_eq!(
+                runtime_profiles["chosen"],
+                hennery_proto::delegation_host::RuntimeProfile::Generic
+            );
         }
         other => panic!("{other:?}"),
     }

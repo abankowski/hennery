@@ -1221,9 +1221,21 @@ fn close_session_in(tx: &Transaction<'_>, owner: &str, session_id: &str) -> Resu
 /// §8): the options for `GET …/catalog`, and the current values in the
 /// session's `model`, `mode` and `config_axes`, which a resume re-applies.
 /// Extracts without a snapshot (none, or an empty read-back) change
-/// nothing: the stored values are never replaced by a guess (P-13).
+/// nothing, except an explicit live mode delta: the stored values are never
+/// replaced by a guess (P-13).
 fn store_catalogue(tx: &Transaction<'_>, owner: &str, session_id: &str, indexed: &Indexed, ts: &str) -> Result<()> {
     let Some(current) = indexed.current_config() else {
+        // A live legacy ACP mode notification is a delta, not a replacement
+        // catalog. Preserve the model, other axes and option inventory.
+        // Early/replayed deltas cannot overwrite the post-attach read-back.
+        if !indexed.early
+            && let Some(mode) = &indexed.current_mode
+        {
+            tx.execute(
+                "UPDATE sessions SET mode = ?3 WHERE owner_id = ?1 AND id = ?2",
+                params![owner, session_id, mode],
+            )?;
+        }
         return Ok(());
     };
     let options = indexed.config_options.clone().unwrap_or_default();

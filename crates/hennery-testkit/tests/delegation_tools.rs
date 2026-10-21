@@ -290,6 +290,7 @@ child.on('exit',code=>process.exit(code??1));
     let before: Value = h.client.get(&tools_url).send().await.unwrap().json().await.unwrap();
     let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
     assert_eq!(caps["catalogs"][0]["freshness"], "unknown");
+    assert!(caps["catalogs"][0].get("security").is_none());
     std::fs::write(&marker, "signed in").unwrap();
     let preview = h.ok("session_capabilities", json!({"agent":"worker"})).await;
     assert_eq!(preview["catalogs"][0]["freshness"], "fresh");
@@ -303,6 +304,50 @@ child.on('exit',code=>process.exit(code??1));
     assert_eq!(h.status(child).await["actual"]["mode"], "agent-full-access");
     let after: Value = h.client.get(&tools_url).send().await.unwrap().json().await.unwrap();
     assert_eq!(before, after, "no re-toggle or grant write");
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn binary_delegation_claude_catalog_allows_bypass_permissions_end_to_end() {
+    let root = tempfile::tempdir().unwrap();
+    let mut worker = script();
+    let mode = worker.config_options.iter_mut().find(|o| o["id"] == "mode").unwrap();
+    mode["currentValue"] = json!("default");
+    mode["options"] = json!([
+        {"value":"default","name":"Default"},
+        {"value":"plan","name":"Plan"},
+        {"value":"bypassPermissions","name":"Bypass permissions"}
+    ]);
+    let command = fake(root.path(), "claude-bypass", worker);
+    let h = Harness::with_worker(script(), Some((command, Profile::Claude)), true).await;
+    let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
+    let catalog = &caps["catalogs"][0];
+    assert_eq!(catalog["freshness"], "fresh");
+    assert!(
+        catalog.get("security").is_none(),
+        "model-facing catalog leaked security metadata"
+    );
+    let mode = catalog["config_options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == "mode")
+        .unwrap();
+    assert!(
+        mode["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["value"] == "bypassPermissions")
+    );
+    let receipt = h.spawn("claude-bypass", json!({"mode":"bypassPermissions"})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    h.done(child, "claude-bypass").await;
+    let status = h.status(child).await;
+    assert_eq!(status["requested"]["mode"], "bypassPermissions");
+    assert_eq!(status["actual"]["mode"], "bypassPermissions");
+    assert!(status["questions"].as_array().unwrap().is_empty());
+    assert_eq!(status["last_report"], "child-result");
     h.finish().await;
 }
 
@@ -544,6 +589,245 @@ fn script() -> FakeScript {
     }
 }
 
+fn modes(default: &str, offered: &[&str]) -> FakeScript {
+    let mut s = script();
+    let mode = s.config_options.iter_mut().find(|o| o["id"] == "mode").unwrap();
+    mode["currentValue"] = json!(default);
+    // Labels intentionally carry no profile or mode semantics.
+    mode["options"] = json!(
+        offered
+            .iter()
+            .map(|id| json!({"value":id,"name":"Mode"}))
+            .collect::<Vec<_>>()
+    );
+    s
+}
+
+async fn inherited_mode_case(
+    parent_profile: Profile,
+    parent_mode: &str,
+    child_profile: Profile,
+    same_runtime: bool,
+    offered: &[&str],
+    explicit: Option<&str>,
+    expected: &str,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let worker = modes(offered[0], offered);
+    let command = fake(root.path(), "inherit-worker", worker);
+    let h = Harness::with_worker_and_parent_options(
+        script(),
+        Some((command, child_profile)),
+        false,
+        hennery_host::session::IDLE_TIMEOUT,
+        true,
+        (
+            modes(
+                "default",
+                &["default", "plan", "bypassPermissions", "read-only", "agent-full-access"],
+            ),
+            parent_profile,
+            Some(parent_mode),
+        ),
+    )
+    .await;
+    assert_eq!(
+        h.state
+            .store
+            .find_session(&h.parent)
+            .unwrap()
+            .unwrap()
+            .config
+            .mode
+            .as_deref(),
+        Some(parent_mode)
+    );
+    let receipt = h
+        .ok(
+            "session_spawn",
+            json!({
+                "operation_key":"inherit-mode", "cwd":h.cwd, "brief":"child brief",
+                "agent":if same_runtime { "claude" } else { "worker" }, "config":{"mode":explicit}
+            }),
+        )
+        .await;
+    let child = receipt["child_id"].as_str().unwrap();
+    if !same_runtime {
+        let log = std::fs::read_to_string(h.cwd.join("claude-sessions.jsonl")).unwrap();
+        let starts = log
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|v| v["method"] == "session/new")
+            .count();
+        assert_eq!(starts, 1, "mode inheritance must not probe the parent runtime");
+    }
+    // Report delivery may independently need a parent catalog. Keep its worker
+    // stopped until the spawn admission's no-parent-probe assertion is complete.
+    hennery_sessions::delegation_worker::after_startup(&h.state);
+    h.done(child, "inherit-mode").await;
+    let status = h.status(child).await;
+    assert_eq!(status["requested"]["mode"], expected);
+    assert_eq!(status["actual"]["mode"], expected);
+    assert_eq!(status["last_report"], "child-result");
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn omitted_mode_inherits_same_runtime_claude_bypass() {
+    inherited_mode_case(
+        Profile::Claude,
+        "bypassPermissions",
+        Profile::Claude,
+        true,
+        &["default", "bypassPermissions"],
+        None,
+        "bypassPermissions",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn omitted_mode_maps_claude_bypass_to_codex_full_access() {
+    inherited_mode_case(
+        Profile::Claude,
+        "bypassPermissions",
+        Profile::Codex,
+        false,
+        &["read-only", "agent-full-access"],
+        None,
+        "agent-full-access",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn omitted_mode_maps_codex_full_access_to_claude_bypass() {
+    inherited_mode_case(
+        Profile::Codex,
+        "agent-full-access",
+        Profile::Claude,
+        false,
+        &["default", "bypassPermissions"],
+        None,
+        "bypassPermissions",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn other_cross_runtime_modes_and_unverified_profiles_use_default() {
+    for (profile, mode) in [
+        (Profile::Claude, "default"),
+        (Profile::Generic, "bypassPermissions"),
+        (Profile::ClaudeOwnCli, "bypassPermissions"),
+    ] {
+        inherited_mode_case(
+            profile,
+            mode,
+            Profile::Codex,
+            false,
+            &["read-only", "agent-full-access"],
+            None,
+            "read-only",
+        )
+        .await;
+    }
+    inherited_mode_case(
+        Profile::Claude,
+        "bypassPermissions",
+        Profile::Generic,
+        false,
+        &["read-only", "agent-full-access"],
+        None,
+        "read-only",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn explicit_mode_overrides_same_and_cross_runtime_inheritance() {
+    inherited_mode_case(
+        Profile::Claude,
+        "bypassPermissions",
+        Profile::Claude,
+        true,
+        &["default", "bypassPermissions"],
+        Some("plan"),
+        "plan",
+    )
+    .await;
+    inherited_mode_case(
+        Profile::Claude,
+        "bypassPermissions",
+        Profile::Codex,
+        false,
+        &["read-only", "agent-full-access"],
+        Some("read-only"),
+        "read-only",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn inherited_mode_not_offered_uses_runtime_default() {
+    inherited_mode_case(
+        Profile::Claude,
+        "bypassPermissions",
+        Profile::Codex,
+        false,
+        &["read-only"],
+        None,
+        "read-only",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn omitted_mode_follows_mid_session_operator_downgrade() {
+    let h = Harness::with_worker_and_parent_options(
+        script(),
+        None,
+        true,
+        hennery_host::session::IDLE_TIMEOUT,
+        true,
+        (
+            modes("default", &["default", "bypassPermissions"]),
+            Profile::Claude,
+            Some("bypassPermissions"),
+        ),
+    )
+    .await;
+    let response = h
+        .client
+        .post(format!("{}/api/sessions/{}/config", h.url, h.parent))
+        .json(&json!({"config_id":"mode","value":"default"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    assert_eq!(
+        h.state
+            .store
+            .find_session(&h.parent)
+            .unwrap()
+            .unwrap()
+            .config
+            .mode
+            .as_deref(),
+        Some("default")
+    );
+    let receipt = h
+        .ok(
+            "session_spawn",
+            json!({"operation_key":"downgraded","cwd":h.cwd,"agent":"claude","brief":"child brief","config":{}}),
+        )
+        .await;
+    let child = receipt["child_id"].as_str().unwrap();
+    h.done(child, "downgraded").await;
+    assert_eq!(h.status(child).await["actual"]["mode"], "default");
+    h.finish().await;
+}
+
 #[tokio::test]
 async fn park_hold_pin_api_requires_cookie_origin_and_scopes_sessions_without_step_up() {
     let h = Harness::new(script()).await;
@@ -779,11 +1063,30 @@ impl Harness {
     }
     async fn with_worker_options(
         worker: FakeScript,
-        mut pinned: Option<(AgentCommand, Profile)>,
+        pinned: Option<(AgentCommand, Profile)>,
         dispatch: bool,
         idle: Duration,
         workspace_roots: bool,
     ) -> Self {
+        Self::with_worker_and_parent_options(
+            worker,
+            pinned,
+            dispatch,
+            idle,
+            workspace_roots,
+            (script(), Profile::Claude, None),
+        )
+        .await
+    }
+    async fn with_worker_and_parent_options(
+        worker: FakeScript,
+        mut pinned: Option<(AgentCommand, Profile)>,
+        dispatch: bool,
+        idle: Duration,
+        workspace_roots: bool,
+        parent: (FakeScript, Profile, Option<&str>),
+    ) -> Self {
+        let (parent_script, parent_profile, parent_mode) = parent;
         hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().canonicalize().unwrap();
@@ -891,13 +1194,13 @@ impl Harness {
         cfg.idle_timeout = idle;
         cfg.workspace_roots = if workspace_roots { vec![cwd.clone()] } else { vec![] };
         cfg.git = None;
-        for (runtime, s) in [("claude", script()), ("worker", worker)] {
+        for (runtime, s) in [("claude", parent_script), ("worker", worker)] {
             let (command, profile) = if runtime == "worker" {
                 pinned
                     .take()
                     .unwrap_or_else(|| (fake(&cwd, runtime, s), Profile::Claude))
             } else {
-                (fake(&cwd, runtime, s), Profile::Claude)
+                (fake(&cwd, runtime, s), parent_profile)
             };
             cfg.agents.insert(runtime.into(), command);
             cfg.profiles.insert(runtime.into(), profile);
@@ -909,7 +1212,7 @@ impl Harness {
         eventually("ready host", async || state.hub.is_ready(HOST).then_some(())).await;
         let response = client
             .post(format!("{url}/api/sessions"))
-            .json(&json!({"host_id":HOST,"agent":"claude","cwd":cwd}))
+            .json(&json!({"host_id":HOST,"agent":"claude","cwd":cwd,"mode":parent_mode}))
             .send()
             .await
             .unwrap();
@@ -1057,7 +1360,13 @@ async fn seven_handlers_share_launcher_catalog_and_choose_runtime_and_model_with
         .await
         .unwrap();
     assert_eq!(catalog.status(), reqwest::StatusCode::OK);
-    assert_eq!(catalog.json::<Value>().await.unwrap(), caps["catalogs"][0]);
+    let mut operator_catalog = catalog.json::<Value>().await.unwrap();
+    assert!(operator_catalog["security"]["known"].as_bool().unwrap());
+    assert!(operator_catalog.get("profile").is_none());
+    assert!(caps["catalogs"][0].get("security").is_none());
+    assert!(caps["catalogs"][0].get("profile").is_none());
+    operator_catalog.as_object_mut().unwrap().remove("security");
+    assert_eq!(operator_catalog, caps["catalogs"][0]);
     let receipt = h.spawn("spawn-large", json!({"model":"large"})).await;
     let child = receipt["child_id"].as_str().unwrap();
     h.done(child, "spawn-large").await;
@@ -1674,7 +1983,7 @@ async fn pinned_adapter_discovers_seven_tools_and_attaches_one_child_without_inf
     let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
     assert_eq!(caps["catalogs"][0]["freshness"], "fresh");
     assert_eq!(caps["catalogs"][0]["agent"], "worker");
-    assert_eq!(caps["catalogs"][0]["security"]["known"], true);
+    assert!(caps["catalogs"][0].get("security").is_none());
     let config = if runtime == "codex" {
         json!({"mode":"read-only"})
     } else {
@@ -1738,7 +2047,7 @@ async fn pinned_adapter_discovers_seven_tools_and_attaches_one_child_without_inf
     assert!(status["last_report"].is_null());
     println!(
         "{}",
-        json!({"runtime":runtime,"child_id":child,"child_attached":true,"brief_dispatched":false,"catalog_agent":caps["catalogs"][0]["agent"],"profile_security_known":caps["catalogs"][0]["security"]["known"],"catalog_freshness":caps["catalogs"][0]["freshness"],"mcp_delivery":delivery,"mcp_isolation":profile.mcp_isolation(),"mcp":trace})
+        json!({"runtime":runtime,"child_id":child,"child_attached":true,"brief_dispatched":false,"catalog_agent":caps["catalogs"][0]["agent"],"catalog_freshness":caps["catalogs"][0]["freshness"],"mcp_delivery":delivery,"mcp_isolation":profile.mcp_isolation(),"mcp":trace})
     );
     h.finish().await;
 }

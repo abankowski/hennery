@@ -2019,12 +2019,45 @@ impl Actor {
     /// plan mode) replaces the catalogue and carries its extracts.
     fn live_update(&self, payload: Value, turn: Option<&str>) -> SessionBody {
         let mut body = update(payload, turn);
-        if let SessionBody::AcpUpdate { indexed, payload } = &mut body
-            && let Some(options) = config_update(payload)
-        {
+        if let SessionBody::AcpUpdate { indexed, payload } = &mut body {
+            let notification = serde_json::from_value::<SessionNotification>(payload.clone()).ok();
+            let mode = match notification.map(|n| n.update) {
+                Some(SessionUpdate::ConfigOptionUpdate(update)) if !update.config_options.is_empty() => {
+                    *self.catalogue.lock().expect("catalogue lock") = Catalogue {
+                        options: update.config_options,
+                        current: true,
+                    };
+                    None
+                }
+                Some(SessionUpdate::CurrentModeUpdate(update)) => {
+                    let mode = update.current_mode_id.to_string();
+                    let mut catalogue = self.catalogue.lock().expect("catalogue lock");
+                    let Some(id) = axis_id(&catalogue.options, &SessionConfigOptionCategory::Mode, "mode") else {
+                        // Legacy mode notifications cannot change evidence for an absent axis.
+                        return body;
+                    };
+                    if let Some(option) = catalogue.options.iter_mut().find(|o| o.id.0.as_ref() == id)
+                        && let SessionConfigKind::Select(select) = &mut option.kind
+                    {
+                        select.current_value = mode.clone().into();
+                    }
+                    // A mode delta never upgrades stale cached options to a read-back.
+                    Some(mode)
+                }
+                _ => return body,
+            };
             self.config_revision.fetch_add(1, Ordering::SeqCst);
-            *self.catalogue.lock().expect("catalogue lock") = Catalogue { options, current: true };
-            let catalogue = self.catalogue_extracts();
+            let mut catalogue = self.catalogue_extracts();
+            if let Some(mode) = mode {
+                let represented = catalogue.current_mode.as_deref() == Some(&mode);
+                catalogue.current_mode = Some(mode.clone());
+                if let Some(evidence) = &mut catalogue.config_evidence {
+                    evidence.actual.mode = Some(mode);
+                    if !represented {
+                        evidence.completeness = ConfigCompleteness::Partial;
+                    }
+                }
+            }
             indexed.config_options = catalogue.config_options;
             indexed.current_model = catalogue.current_model;
             indexed.current_mode = catalogue.current_mode;
@@ -2456,7 +2489,7 @@ fn held_questions(replay: &Replay, updates: &mut mpsc::UnboundedReceiver<Inbound
     )
 }
 
-/// The options of a non-empty `config_option_update` notification.
+/// Startup/load may seed its catalog from the last non-empty option snapshot.
 fn config_update(payload: &Value) -> Option<Vec<SessionConfigOption>> {
     let notification = serde_json::from_value::<SessionNotification>(payload.clone()).ok()?;
     match notification.update {

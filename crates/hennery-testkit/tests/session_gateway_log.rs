@@ -84,6 +84,7 @@ fn a_token_a_host_frame_quotes_never_reaches_the_collectors_log() {
         let nonce = hex::decode(response.headers()[HELLO_NONCE_HEADER].to_str().unwrap()).unwrap();
         let (mut sink, mut stream) = ws.split();
         let hello = HostFrame::Hello {
+            runtime_profiles: Default::default(),
             protocol_version: PROTOCOL_VERSION.into(),
             host_version: "0".into(),
             host_id: "host-1".into(),

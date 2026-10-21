@@ -68,7 +68,8 @@ pub async fn execute(
                         .catalogs
                         .get(state, caller.host_id(), caller.hat_id(), &cwd, agent)
                         .await
-                        .unwrap_or_else(|_| unknown_catalog(agent.clone())),
+                        .unwrap_or_else(|_| unknown_catalog(agent.clone()))
+                        .into(),
                 );
             }
             let limits = state.store.delegation_limits()?;
@@ -106,11 +107,39 @@ pub async fn execute(
                 .catalogs
                 .get_for_spawn(state, caller.host_id(), caller.hat_id(), &cwd, agent)
                 .await?;
-            if args.config.model.is_none() && agent == caller.agent() {
-                args.config.model = state
-                    .store
-                    .find_session(caller.session_id())?
-                    .and_then(|s| s.config.model);
+            let parent = state.store.find_session(caller.session_id())?;
+            if let Some(parent) = parent {
+                if args.config.model.is_none() && agent == caller.agent() {
+                    args.config.model = parent.config.model;
+                }
+                if args.config.mode.is_none() {
+                    let inherited = if agent == caller.agent() {
+                        parent.config.mode
+                    } else if matches!(
+                        parent.config.mode.as_deref(),
+                        Some("bypassPermissions" | "agent-full-access")
+                    ) {
+                        // Profiles are fixed by the authenticated connection's hello.
+                        // Inheritance must not start another disposable adapter.
+                        crate::delegation_runtime::cross_runtime_mode(
+                            state.hub.runtime_profile(caller.host_id(), caller.agent()),
+                            state.hub.runtime_profile(caller.host_id(), agent),
+                            parent.config.mode.as_deref(),
+                        )
+                        .map(str::to_owned)
+                    } else {
+                        None
+                    };
+                    args.config.mode = inherited.filter(|mode| {
+                        config_offered(
+                            &catalog,
+                            &hennery_proto::frames::SessionConfig {
+                                mode: Some(mode.clone()),
+                                ..Default::default()
+                            },
+                        )
+                    });
+                }
             }
             let required = crate::delegation_runtime::launch_configuration(&catalog, &args.config);
             ensure!(config_offered(&catalog, &required), "configuration_unavailable");

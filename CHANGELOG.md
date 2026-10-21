@@ -5,8 +5,23 @@
 - Subtle version information in the sidebar footer, Settings and More shows
   the collector release and recorded source commit, with a small page/server
   hint when an older page is still open.
+## Unreleased
+
+- Session tools make clear that Delegation on allows every model, mode and
+  option in the child's live catalog, including modes that never ask for
+  permission. Internal security classifications no longer appear in the
+  model-facing catalog. Actual child permission requests go to the operator.
+  Omitted child modes inherit the parent's mode for the same runtime; across
+  installed Claude/Codex runtimes, only `bypassPermissions` and
+  `agent-full-access` map to each other. Unoffered inherited modes use the
+  runtime default, and explicit modes always win.
+  Live agent mode changes also update inheritance; profile lookup uses host
+  connection metadata and does not start another adapter.
+  Legacy mode notifications from adapters without a mode option preserve
+  configuration evidence so child follow-ups can continue.
 - Configure global delegation limits in Settings: live children, child starts
   per operator message and automatic parent wake-ups, defaulting to 8, 32 and 20.
+
 
 ## 0.2.1
 

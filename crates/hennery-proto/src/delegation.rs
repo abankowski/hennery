@@ -120,7 +120,8 @@ tool_args! {
     }
 }
 tool_args! {
-    /// Answer ordinary elicitation only. ACP permissions remain operator-only.
+    /// Answer ordinary elicitation only. Permission requests raised by a child
+    /// go to the operator; the parent cannot answer them.
     pub struct AnswerArgs {
         pub operation_key: String,
         pub child_id: String,

@@ -356,6 +356,7 @@ async fn host(collector: &str, roots: &[PathBuf]) -> (HostTask, mpsc::UnboundedR
     let nonce = hex::decode(response.headers()[HELLO_NONCE_HEADER].to_str().unwrap()).unwrap();
     ws.send(Message::text(
         serde_json::to_string(&HostFrame::Hello {
+            runtime_profiles: Default::default(),
             protocol_version: PROTOCOL_VERSION.into(),
             host_version: "recall-fixture".into(),
             host_id: HOST.into(),

@@ -79,6 +79,7 @@ async fn a_failed_ingest_drops_the_connection_instead_of_acking_past_it() {
     let (mut sink, mut stream) = ws.split();
     sink.send(Message::text(
         serde_json::to_string(&HostFrame::Hello {
+            runtime_profiles: Default::default(),
             protocol_version: PROTOCOL_VERSION.into(),
             host_version: "0".into(),
             host_id: "host-1".into(),
@@ -164,6 +165,7 @@ async fn an_undo_error_answers_delivery_unknown_and_drops_the_connection() {
     let (mut sink, mut stream) = ws.split();
     sink.send(Message::text(
         serde_json::to_string(&HostFrame::Hello {
+            runtime_profiles: Default::default(),
             protocol_version: PROTOCOL_VERSION.into(),
             host_version: "0".into(),
             host_id: "host-1".into(),

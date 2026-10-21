@@ -77,7 +77,7 @@ The two OPERATOR QUESTIONS are reproduced verbatim in §12.
 | D5 | Child runtime/model/config are independent; explicit unavailable values fail without running the brief on a substitute. | Cloning the parent's runtime or falling back silently violates the operator's instruction. | **designer's recommendation**, implementing the explicit brief; selection is already in umbrella §1.2 and ACP core §4.3. |
 | D6 | Same host and hat, direct-child authority only; canonical workspace-root check before spawn. | Arbitrary placement and transitive family control enlarge authority before there is a host grant model. | **designer's recommendation**; hat separation itself is **settled by spec**, umbrella §8. |
 | D7 | Persist command acceptance and child-event delivery; reuse one-turn scheduling and reconciliation. | Blind retry after a timeout can duplicate work; polling-only parents miss the promised reporting loop. | **designer's recommendation**, constrained by umbrella §5.7 and ACP core §4.4. |
-| D8 | Parent answers elicitation; ACP permissions remain operator-only by default. | Treating every pending callback as parent-answerable silently delegates execution approval. | **OPERATOR QUESTION Q1** — default in §12. |
+| D8 | Parent answers elicitation; permission requests raised by a child go to the operator and cannot be answered by the parent. Choosing an offered non-asking mode is allowed. | Treating every pending callback as parent-answerable silently delegates execution approval. | **OPERATOR QUESTION Q1** — default in §12; mode selection clarified by the operator, 2026-10-21. |
 | D9 | One generation of children initially; preserve a schema that can represent deeper trees. | Unlimited recursive spawning makes resource and escalation bounds unclear. A permanent flat schema makes future nesting unnecessarily hard. | **OPERATOR QUESTION Q2** — default in §12. |
 | D10 | Explicit parent `session_close` closes only its direct child; never cascade close or delete. Closed parents are never auto-resumed. | Closing a family destroys independent progress; auto-resuming a closed parent contradicts “I am done”. | **designer's recommendation**, requiring the narrow umbrella §6.3 amendment in §11. |
 | D11 | Parent/child inputs carry typed provenance and links; assistant reports stay untrusted. | Calling them operator turns poisons memory, notification budgets and authorization reasoning. | **designer's recommendation**; supports umbrella §§5.2, 8.3. |
@@ -270,7 +270,7 @@ identifier already used by `StartSessionRequest`.
 
 | Tool | Typed arguments | Result and behavior |
 |---|---|---|
-| `session_capabilities` | `CapabilitiesArgs { agent: Option<String>, cwd: Option<String> }` | Caller-host runtimes, availability, config catalogs, catalog freshness, delivery modes and limits. Omitted cwd means caller cwd; supplied cwd is validated in the same hat. No other hats' paths, sessions or catalogs. |
+| `session_capabilities` | `CapabilitiesArgs { agent: Option<String>, cwd: Option<String> }` | Caller-host runtimes, availability, model-facing config catalogs, catalog freshness, delivery modes and limits. Every offered model/mode/option is allowed with Delegation on. Catalogs omit internal `security` and installed-profile metadata. Omitted cwd means caller cwd; supplied cwd is validated in the same hat. No other hats' paths, sessions or catalogs. |
 | `session_spawn` | `SpawnArgs { operation_key: String, cwd: String, brief: String, name: Option<String>, agent: Option<String>, config: SessionConfig }` | `OperationReceipt` with a durable child id once allocated, launch/config state, and initial-brief delivery state. No caller/parent/host/hat argument. |
 | `session_send` | `SendArgs { operation_key: String, child_id: String, text: String }` | Accept a follow-up into the child's bounded durable queue. Resume a genuinely parked child first; never reopen a closed one. |
 | `session_answer` | `AnswerArgs { operation_key: String, child_id: String, pending_id: String, action: ElicitationAction, content: Option<Value> }` | Existing answer acceptance receipt plus delivery state, for direct-child elicitation only under Q1's default. `accept` content is an object; validate through the same answer service as the operator. |
@@ -316,9 +316,23 @@ Do not silently substitute a runtime or configuration.
 
 An omitted agent inherits the parent's agent. An omitted model inherits the
 parent's current model only for the same agent; otherwise use that agent's
-reported default. Other axes and permission mode use the chosen runtime's
-defaults unless explicitly supplied: a privileged parent mode is not silently
-inherited. Explicit values are checked against the target catalog and then
+reported default. Operator decision, 2026-10-21: an omitted permission mode
+inherits the parent's current host-confirmed mode for the same runtime. Across
+different runtime ids, only installed `Profile::Claude` with `bypassPermissions`
+maps to installed `Profile::Codex` with `agent-full-access`, and vice versa.
+Use typed host-authored `hello.runtime_profiles` (`RuntimeProfile`), never runtime
+names, display labels or security baseline values, to identify these profiles.
+The authenticated connection owns this map; replacement/disconnection drops it.
+Lookups never probe a runtime or consult another catalog. Installed-profile
+metadata appears only in hello, never in `HostCatalog` or the operator catalog API.
+The map defaults to empty for older hosts; unknown future profile strings
+decode to `Unknown` and never map modes. Missing or unverified profile evidence,
+other profiles and other cross-runtime modes use the child's
+runtime default. An inherited mode must be offered in the child's live catalog;
+otherwise use the child's runtime default without failing the spawn. An explicit
+`config.mode` always wins, even if unavailable (then it fails normally). Other
+axes use runtime defaults unless explicitly supplied. Explicit values are
+checked against the target catalog and then
 against the newly started child's reported configuration. Apply model, axes,
 then mode, as ACP core §4.3 requires.
 
@@ -333,6 +347,46 @@ catalog values while making “all” current. Narrowed v0.2.0 grants are droppe
 on upgrade without changing the enabled flag or its revision. Children cannot
 start children. Offered modes may run without asking for permission; when an
 adapter does ask, permission requests remain operator-owned.
+
+Model-facing clarification, 2026-10-21: `CapabilitiesResult.catalogs` contains
+`CapabilityCatalog` projections with `agent`, `adapter_revision`,
+`config_options`, `defaults` and `freshness`. `HostCatalog.security` stays on
+the host/operator API for warnings and internal applied-configuration evidence;
+it is not a limit on selectable modes and never appears in the tool result,
+including unknown catalogs. The dashboard keeps the complete `HostCatalog`.
+Installed profile identity is internal to mode mapping and also omitted from
+the model-facing projection.
+
+The model-facing `session_spawn` description says:
+
+> With Delegation on, you may pick any model, mode and option in the child runtime's catalog (session_capabilities), including modes that don't ask for permission (Claude bypassPermissions, Codex agent-full-access).
+
+Its single inheritance sentence is:
+
+> If mode is omitted, inherit the parent's mode for the same runtime, or map installed Claude bypassPermissions to Codex agent-full-access (and vice versa) across runtimes when offered; otherwise use the runtime default.
+
+`session_spawn`, `session_answer` and `session_status` all clarify:
+
+> Permission requests raised by a child go to the operator; the parent cannot answer them.
+
+This distinguishes selecting a non-asking mode from answering a request that
+the child actually raises; no additional approval is needed to select an
+offered mode with Delegation on.
+
+Child-report notices use the same permission-request clarification. Tool
+descriptions, notices, error hints and receipts must not use the ambiguous
+phrase “permissions remain operator-only”.
+
+Pinned adapter source inspection (Claude ACP 0.93.0, Codex ACP 2.2.2) confirms
+that a standalone legacy `current_mode_update` must be handled: Claude's
+`SessionModeController.publishCurrent` emits it, including fallback paths;
+Codex's inspected command/config paths emit `config_option_update` snapshots.
+Live mode deltas update the host's cached mode and the collector's current
+mode without clearing unrelated settings. They never promote stale options to
+complete evidence. When the current catalog has no mode axis, legacy mode
+notifications leave configuration evidence and its revision untouched, so queued
+follow-ups retain their proof. Replayed deltas cannot overwrite post-attach
+configuration.
 
 Operator review amendment, 2026-10-21: reject nested callers, child-count and
 start-budget excess, and other-hat paths before catalog probing; retain the

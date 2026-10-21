@@ -261,6 +261,7 @@ fn a_hello_announces_per_agent_isolation_read_leniently() {
     };
     assert_eq!(mcp_isolation, AgentIsolation::default());
     let sent = HostFrame::Hello {
+        runtime_profiles: Default::default(),
         protocol_version: "1.0".into(),
         host_version: "0".into(),
         host_id: "h".into(),
