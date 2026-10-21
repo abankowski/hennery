@@ -556,6 +556,37 @@ never replaces a form while typing or moves focus to another request.
 | Edit defaults link | Build; opens Defaults for current hat/agent, preserving launcher draft on return | `NewSession.tsx`, `Defaults.tsx` |
 | Summary, Cancel, Start session / Start on host, local send hint | Restyle; disabled until prerequisites valid; actual config checked before first prompt | `NewSession.tsx`, `lib/start.ts` |
 
+In the project browser, keep “Use this directory” beside the current path in a
+sticky header, visible without scrolling even for long listings. Enter from the
+input or a browse control chooses the shown directory; Enter on a directory row
+retains native button activation and descends, including `.. (up)`. Clicking or
+tapping outside the picker chooses the shown directory and closes the browser.
+While loading or after a failed listing, an outside pointer only closes it.
+Escape closes without choosing, from any browse control. A choice displays the
+full directory path in the project field. Suggestion mode keeps its existing
+selection behavior. (Operator decision via fleet parent, 2026-10-21.)
+
+Only a primary mouse click away from a scrollbar commits an outside choice.
+Touch and pen commit on the click produced by a tap, never on a swipe's initial
+pointerdown. After row navigation focus the choice button; an inside choice or
+Escape returns focus to the input. Composition Enter and held-Enter repeats do not choose
+or submit. Describe the choice button with the current path and announce a new
+directory politely; keep the path to one ellipsized line with its full title.
+Start or Cmd/Ctrl+Enter while browsing commits the shown directory, waits for its
+hat and session settings, then starts there. Resolution failure or intervening
+user interaction cancels this pending start. Close and Edit defaults retain the
+outside-choice rule. (Parent review ruling, 2026-10-21.)
+
+An outside choice preserves the focus of the tapped control. Only a row's
+navigation moves focus to the choice button; an initial listing arriving while
+the input is focused leaves it there. Composition Escape stays inside the picker
+without closing it or its dialog. Touch click source is consumed after each click.
+Repeated Start (including double-click and Cmd/Ctrl+Enter), key autorepeat and
+modifier-only keys retain a pending start. Actual cancellation shows a muted,
+polite note; a ready catalog needing an explicit configuration choice also
+cancels, so no pending request waits indefinitely. (Parent re-review ruling,
+2026-10-21.)
+
 ### 5.5 Management, settings and palette
 
 | Element / variant | Disposition and behavior | Target |

@@ -80,6 +80,62 @@ const PROJECTS: HostProjects = {
 
 const RESOLVED = { canonical: '/srv/work/cat', exists: true, is_dir: true, hat_id: 'hat-a' }
 
+it.each(['start', 'shortcut', 'edit', 'outside', 'failure', 'blocked', 'again', 'shortcut-again', 'modifier', 'repeat', 'submit-enter', 'submit-space', 'submit-tab', 'submit-escape'])('a browse pending start: %s', async action => {
+  let finish!: (response: Response) => void
+  const path = '/srv/work/cat/child'
+  const server = mount({
+    'POST /api/hats/resolve': [json(200, RESOLVED), () => new Promise<Response>(resolve => { finish = resolve })],
+    'GET /api/hosts/h1/browse?path=%2Fsrv%2Fwork%2Fcat': json(200, { path: RESOLVED.canonical, entries: [{ name: 'child' }], truncated: false }),
+    'GET /api/hosts/h1/browse?path=%2Fsrv%2Fwork%2Fcat%2Fchild': json(200, { path, parent: RESOLVED.canonical, entries: [], truncated: false }),
+    'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat%2Fchild': base()['GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat'],
+    ...(action === 'blocked' ? { 'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat': json(200, { agent: 'claude', adapter_revision: 'test', freshness: 'fresh', defaults: {}, security: { known: true, axes: {} }, config_options: [{ id: 'model', name: 'Model', type: 'select', currentValue: 'a', options: [{ value: 'a', name: 'A' }, { value: 'b', name: 'B' }] }] }) } : {}),
+  }, '/new?host=h1&cwd=%2Fsrv%2Fwork%2Fcat')
+  const user = userEvent.setup()
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  if (action === 'blocked') {
+    await user.click(screen.getByRole('button', { name: 'Session settings' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Model' }), 'b')
+    await user.click(screen.getByRole('button', { name: 'Close session settings' }))
+  }
+  await user.click(screen.getByRole('button', { name: 'Browse' }))
+  const browse = screen.getByRole('group', { name: 'Browse directories' })
+  await user.click(await within(browse).findByRole('button', { name: 'child' }))
+  await within(browse).findByRole('button', { name: 'Use this directory' })
+  if (action === 'shortcut') {
+    await user.keyboard('{Control>}{Enter}{/Control}')
+  } else {
+    await user.click(startButton())
+  }
+  await waitFor(() => expect(finish).toBeDefined())
+  expect(screen.getByText('Preparing session…', { exact: true })).toBeVisible()
+  expect(server.sent.filter(s => s.path === '/api/sessions')).toHaveLength(0)
+  expect(await projectField()).toHaveValue(path)
+  if (action === 'start') {
+    expect(startButton()).toHaveAttribute('aria-busy', 'true')
+    expect(startButton()).toBeEnabled()
+  }
+  if (action === 'again') { fireEvent.pointerDown(startButton()); fireEvent.click(startButton()); fireEvent.submit(screen.getByRole('form', { name: 'New session' })) }
+  if (action === 'shortcut-again') fireEvent.keyDown(await projectField(), { key: 'Enter', ctrlKey: true })
+  if (action === 'modifier') for (const key of ['Control', 'Meta', 'Shift', 'Alt', 'AltGraph']) fireEvent.keyDown(await projectField(), { key })
+  if (action === 'repeat') fireEvent.keyDown(await projectField(), { key: 'Enter', repeat: true })
+  const submitKeys: Record<string, string> = { 'submit-enter': 'Enter', 'submit-space': ' ', 'submit-tab': 'Tab', 'submit-escape': 'Escape' }
+  if (action in submitKeys) fireEvent.keyDown(startButton(), { key: submitKeys[action] })
+  if (action === 'edit') await user.type(screen.getByRole('textbox', { name: /^First prompt/ }), 'Changed')
+  if (action === 'outside') fireEvent.pointerDown(document.body)
+  await act(async () => { finish(action === 'failure' ? json(503, { message: 'Resolution unavailable' }) : json(200, { ...RESOLVED, canonical: path })) })
+  if (action === 'edit' || action === 'outside' || action === 'failure' || action === 'blocked' || action === 'submit-tab' || action === 'submit-escape') {
+    if (action === 'failure') await screen.findByRole('alert')
+    else if (action !== 'blocked') await waitFor(() => expect(startButton()).toBeEnabled())
+    await waitFor(() => expect(screen.queryByText('Preparing session…', { exact: true })).toBeNull())
+    expect(server.sent.filter(s => s.path === '/api/sessions')).toHaveLength(0)
+    expect(screen.getByText('Start cancelled. Review your choices, then start again.', { exact: true })).toBeVisible()
+    expect(screen.getByText('Start cancelled. Review your choices, then start again.', { exact: true })).not.toHaveAttribute('aria-live')
+  } else {
+    await waitFor(() => expect(server.sent.find(s => s.path === '/api/sessions')?.body).toMatchObject({ cwd: path }))
+    expect(server.sent.filter(s => s.path === '/api/sessions')).toHaveLength(1)
+  }
+})
+
 function base(): Record<string, Answer | Answer[]> {
   const config_options = [{ id: 'model', name: 'Model', type: 'select', currentValue: 'a', options: [{ value: 'a', name: 'A' }] }]
   const catalog = { agent: 'claude', adapter_revision: 'test', freshness: 'fresh', config_options, defaults: {}, security: { known: true, axes: {} } }
@@ -401,7 +457,7 @@ describe('project picker', () => {
     await within(panel).findByText('/srv/work/atlas')
     await user.click(within(panel).getByRole('button', { name: 'Use this directory' }))
     expect(screen.queryByRole('group', { name: 'Browse directories' })).toBeNull()
-    expect(await projectField()).toHaveValue('atlas')
+    expect(await projectField()).toHaveValue('/srv/work/atlas')
     await waitFor(() => expect(startButton()).toBeEnabled())
     await user.click(startButton())
     await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))

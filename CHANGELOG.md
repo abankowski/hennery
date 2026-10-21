@@ -27,8 +27,16 @@
   for other windows. Saved composer drafts survive; unsent images and other
   unsaved input may be lost. Drafts restored during a send warn that the prompt
   may already have been sent, so its transcript can be checked before retrying.
+## Unreleased
+
 - Configure global delegation limits in Settings: live children, child starts
   per operator message and automatic parent wake-ups, defaulting to 8, 32 and 20.
+- New session directory browsing keeps “Use this directory” beside the current
+  path while scrolling. Enter or a click outside chooses the shown directory;
+  Escape closes without choosing. Touch scrolling, scrollbar drags and secondary
+  clicks leave the choice open. Starting while browsing uses the shown directory
+  after resolving its hat; further edits cancel that pending start.
+  Repeated Start presses keep one pending start; cancellation is shown in words.
 
 
 ## 0.2.1
