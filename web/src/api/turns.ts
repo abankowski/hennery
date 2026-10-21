@@ -21,8 +21,8 @@ const enc = encodeURIComponent
 export type PromptBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
 
 /** `POST /api/sessions/{id}/prompt` → 202 `{turn_id}`. */
-export function prompt(client: Client, id: string, content: PromptBlock[]): Promise<PromptResponse | QueuedPromptResponse> {
-  return client.request<PromptResponse | QueuedPromptResponse>('POST', `/api/sessions/${enc(id)}/prompt`, { content })
+export function prompt(client: Client, id: string, content: PromptBlock[], requestKey?: string): Promise<PromptResponse | QueuedPromptResponse> {
+  return client.request<PromptResponse | QueuedPromptResponse>('POST', `/api/sessions/${enc(id)}/prompt`, { content, ...(requestKey === undefined ? {} : { request_key: requestKey }) })
 }
 
 /** `POST /api/sessions/{id}/cancel` → 202 with the open turn's real outcome. */

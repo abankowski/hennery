@@ -11,10 +11,39 @@ function mount(items: QueuedPrompt[], status = 200) {
   const fetch = vi.fn(async () => new Response(JSON.stringify(status === 200 ? [] : { code: 'queue_item_unavailable', message: 'Already delivering' }), { status, headers: { 'Content-Type': 'application/json' } }))
   const changed = vi.fn(async () => {})
   const client = new Client({ fetch: fetch as typeof globalThis.fetch, navigate: vi.fn(), here: () => ({ pathname: '/sessions/s1', search: '' }), stepUp: async () => {} })
-  render(<ClientContext.Provider value={client}><PromptQueue sessionId="s/1" items={items} changed={changed} /></ClientContext.Provider>)
-  return { fetch, changed }
+  const view = (next: QueuedPrompt[]) => <ClientContext.Provider value={client}><PromptQueue sessionId="s/1" items={next} changed={changed} /></ClientContext.Provider>
+  const rendered = render(view(items))
+  return { fetch, changed, rerender: (next: QueuedPrompt[]) => rendered.rerender(view(next)) }
 }
 describe('durable prompt queue', () => {
+  it.each([true, false])('preserves an interrupted edit through delivery and disappearance, clipboard available: %s', async clipboardAvailable => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboardAvailable ? { writeText } : undefined })
+    const m = mount([item])
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued message 1' }))
+    const draft = 'My unsaved edit '.repeat(40)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Edit queued message 1' }), { target: { value: draft } })
+    m.rerender([{ ...item, state: 'delivering' }])
+    expect(screen.getByRole('textbox', { name: 'Edit queued message 1' })).toHaveValue(draft)
+    expect(screen.getByText('Already sending; your edit wasn’t applied.', { exact: true })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+    m.rerender([])
+    expect(screen.getByRole('textbox', { name: 'Edit queued message 1' })).toHaveValue(draft)
+    fireEvent.click(screen.getByRole('button', { name: 'Copy edit' }))
+    if (clipboardAvailable) {
+      await screen.findByRole('button', { name: 'Copied' })
+      expect(writeText).toHaveBeenCalledWith(draft)
+    } else {
+      expect(await screen.findByRole('alert')).toHaveTextContent('Select the full edit text to copy it.')
+      const editor = screen.getByRole('textbox', { name: 'Edit queued message 1' }) as HTMLTextAreaElement
+      expect(editor).toHaveValue(draft)
+      expect(editor).toHaveFocus()
+      expect([editor.selectionStart, editor.selectionEnd]).toEqual([0, draft.length])
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss edit' }))
+    expect(screen.queryByRole('region', { name: 'Queued messages' })).toBeNull()
+    expect(m.fetch).not.toHaveBeenCalled()
+  })
   it('offers the complete failed message for manual copy when the clipboard is unavailable', async () => {
     Object.defineProperty(navigator,'clipboard',{configurable:true,value:undefined})
     const text='Unsent message '.repeat(40)

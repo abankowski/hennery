@@ -129,6 +129,21 @@ afterEach(() => {
 })
 
 describe('Composer: sending', () => {
+  it.each(['button', 'meta', 'ctrl'])('reuses one request key through a client retry submitted by %s', async via => {
+    let attempts = 0
+    const c = mount(() => ++attempts === 1 ? json({ code: 'step_up_required', message: 'Confirm' }, 403) : json({ queue_id: 'q1' }, 202))
+    type('one submission')
+    if (via === 'button') fireEvent.click(sendButton())
+    else fireEvent.keyDown(textarea(), { key: 'Enter', metaKey: via === 'meta', ctrlKey: via === 'ctrl' })
+    await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
+    const first = c.prompts()[0].body as { request_key: string }
+    expect(first.request_key).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i)
+    expect(c.prompts().map(p => p.body)).toEqual(Array.from({ length: 2 }, () => ({ request_key: first.request_key, content: [{ type: 'text', text: 'one submission' }] })))
+    type('another submission')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(c.prompts()).toHaveLength(3), WAIT)
+    expect((c.prompts()[2].body as { request_key: string }).request_key).not.toBe(first.request_key)
+  })
   it.each([
     [409, 'turn_in_progress'], [409, 'not_attached'], [400, 'invalid'],
   ])('a server refusal %i %s clears the uncertain-send warning after remount', async (status, code) => {
@@ -184,7 +199,7 @@ describe('Composer: sending', () => {
     const c = mount()
     type('hello')
     fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true })
-    await waitFor(() => expect(c.prompts()).toEqual([{ path: '/api/sessions/s1/prompt', body: { content: [{ type: 'text', text: 'hello' }] } }]), WAIT)
+    await waitFor(() => expect(c.prompts()).toEqual([{ path: '/api/sessions/s1/prompt', body: { request_key: expect.any(String), content: [{ type: 'text', text: 'hello' }] } }]), WAIT)
   })
 
   it('Cmd+Enter sends the prompt', async () => {
@@ -212,6 +227,7 @@ describe('Composer: sending', () => {
     fireEvent.click(sendButton())
     await waitFor(() => expect(textarea().value).toBe(''), WAIT)
     expect(c.prompts()[0].body).toEqual({
+      request_key: expect.any(String),
       content: [
         { type: 'text', text: 'see ' },
         { type: 'image', mimeType: 'image/png', data: btoa('ONE') },
@@ -512,6 +528,7 @@ describe('Composer: images', () => {
     fireEvent.click(sendButton())
     await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
     expect(c.prompts()[0].body).toEqual({
+      request_key: expect.any(String),
       content: [
         { type: 'image', mimeType: 'image/png', data: btoa('B') },
         { type: 'text', text: ' only' },
@@ -703,7 +720,7 @@ describe('Composer: per session', () => {
     type('for b')
     fireEvent.click(sendButton())
     await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
-    expect(c.prompts()[0]).toEqual({ path: '/api/sessions/s2/prompt', body: { content: [{ type: 'text', text: 'for b' }] } })
+    expect(c.prompts()[0]).toEqual({ path: '/api/sessions/s2/prompt', body: { request_key: expect.any(String), content: [{ type: 'text', text: 'for b' }] } })
     await waitFor(() => expect(textarea().value).toBe(''), WAIT)
 
     c.rerender({ sessionId: 's1' })
@@ -828,7 +845,7 @@ describe('Composer: work added while a prompt is being sent', () => {
     // Still said once the send has gone: the operator adds the image again.
     expect(refusal()).toBe(STILL_SENDING)
     expect(heldFor('s1').attachments).toEqual([])
-    expect(c.prompts()[0].body).toEqual({ content: [{ type: 'text', text: 'first ' }] })
+    expect(c.prompts()[0].body).toEqual({ request_key: expect.any(String), content: [{ type: 'text', text: 'first ' }] })
   })
 
   it('refuses an answer as a new message, saying why, and the 202 clears the draft that was sent', async () => {

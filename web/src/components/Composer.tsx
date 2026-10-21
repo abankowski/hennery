@@ -331,11 +331,11 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
 
   /** POST `draft` with `images`. Kept on any refusal; a 202 clears the
    *  draft at its source, as this may answer after the composer went. */
-  async function deliver(draft: string, images: Attachment[]): Promise<Outcome> {
+  async function deliver(draft: string, images: Attachment[], requestKey: string): Promise<Outcome> {
     try {
       const blocks = await promptBlocks(draft, images)
       markDraftSending(sessionId, draft)
-      await prompt(client, sessionId, blocks)
+      await prompt(client, sessionId, blocks, requestKey)
       void onQueueChange?.()
     } catch (err) {
       if (err instanceof ApiFailure) clearDraftSending(sessionId)
@@ -367,7 +367,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   }
 
   /** Start `work` as this session's send, the draft as it stands. */
-  function begin(work: (draft: string, images: Attachment[]) => Promise<Outcome>) {
+  function begin(work: (draft: string, images: Attachment[], requestKey: string) => Promise<Outcome>) {
     // One send at a time: a second click before the composer renders again
     // finds the first one here.
     if (sendingNow.current) return
@@ -376,9 +376,12 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
     setDraftError(null)
     const draft = text
     const images = atts
+    // The Client may retry after step-up. One submission keeps one key,
+    // including while its tracked send outlives this composer instance.
+    const requestKey = crypto.randomUUID()
     // Every path of `work` ends in an outcome; a throw is worded all the same.
     const thrown = (err: unknown): Outcome => ({ sent: false, notice: { text: messageOf(err) } })
-    void follow(track(sessionId, () => work(draft, images), thrown))
+    void follow(track(sessionId, () => work(draft, images, requestKey), thrown))
   }
 
   function send() {
@@ -388,13 +391,13 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   /** Resume, then send; tracked as one send, so a composer mounted again
    *  while the resume is answered waits for both. */
   function resumeAndSend() {
-    begin(async (draft, images) => {
+    begin(async (draft, images, requestKey) => {
       try {
         await onResume()
       } catch (err) {
         return { sent: false, notice: { text: messageOf(err) } }
       }
-      return deliver(draft, images)
+      return deliver(draft, images, requestKey)
     })
   }
 

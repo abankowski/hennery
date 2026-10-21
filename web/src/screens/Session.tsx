@@ -451,7 +451,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
     )
   }
 
-  const sessionFooter = info && <SessionFooter key={info.lifecycle} info={info} hostName={hosts.get(info.host_id)} hostAway={hostAway} onResume={onResume} />
+  const sessionFooter = info && <SessionFooter key={info.lifecycle} info={info} hostName={hosts.get(info.host_id)} hostAway={hostAway} queuedCount={s.queue.filter(item => item.state === 'queued').length} onResume={onResume} />
 
   return (
     <QuestionPresentationContext.Provider value={presentation}>
@@ -474,7 +474,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         detailsTrigger={detailsTrigger}
         menu={
           <SessionMenu
-            queuedCount={s.queue.length}
+            queuedCount={s.queue.filter(item => item.state !== 'delivering').length}
             onRename={info && !s.removed ? beginRename : undefined}
             id={id}
             lifecycle={info?.lifecycle}

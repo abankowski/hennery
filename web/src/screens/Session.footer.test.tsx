@@ -37,6 +37,26 @@ async function refused(answer: Response, detail: Partial<SessionDetail> = { life
 }
 
 describe('SessionView: the footer of a session that is not running', () => {
+  it.each([1, 2])('explains that %s queued messages wait for Resume, excluding delivering and failed items', async count => {
+    await show({ lifecycle: 'parked' }, { queue: () => json([
+      ...Array.from({ length: count }, (_, index) => ({ id: `q${index}`, state: 'queued', reason: null, content: [{ type: 'text', text: 'later' }] })),
+      { id: 'sending', state: 'delivering', reason: null, content: [{ type: 'text', text: 'sending' }] },
+      { id: 'failed', state: 'failed', reason: 'Closed', content: [{ type: 'text', text: 'failed' }] },
+    ]) })
+    const notice = await screen.findByText(`${count} queued ${count === 1 ? 'message' : 'messages'} will be sent when you resume.`, { exact: true })
+    expect(notice.compareDocumentPosition(screen.getByLabelText('Prompt')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('excludes a delivering message from the deletion warning count', async () => {
+    await show({ lifecycle: 'active' }, { queue: () => json([
+      { id: 'queued', state: 'queued', reason: null, content: [{ type: 'text', text: 'later' }] },
+      { id: 'sending', state: 'delivering', reason: null, content: [{ type: 'text', text: 'sending' }] },
+    ]) })
+    await screen.findByText('later', { exact: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete session' }))
+    expect(await screen.findByRole('dialog', { name: 'Delete this session?' })).toHaveTextContent('1 unsent queued message and its images will also be deleted.')
+  })
   it('a parked session offers Resume, which resumes it; the composer stays', async () => {
     const r = await show({ lifecycle: 'parked' })
     expect(text(footer(r)?.querySelector('.txt'))).toBe('This session is parked.')

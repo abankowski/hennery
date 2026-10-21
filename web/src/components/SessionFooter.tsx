@@ -44,11 +44,12 @@ interface Props {
   /** Whether the host is away: the view's answer book says it, as it says
    *  it to the question cards. */
   hostAway?: boolean
+  queuedCount?: number
   /** `POST …/resume`; rejects with the refusal. */
   onResume: () => Promise<unknown>
 }
 
-export default function SessionFooter({ info, hostName, hostAway = false, onResume }: Props) {
+export default function SessionFooter({ info, hostName, hostAway = false, queuedCount = 0, onResume }: Props) {
   const [busy, setBusy] = useState(false)
   const [refusal, setRefusal] = useState<unknown>(null)
   const lifecycle = info.lifecycle
@@ -89,6 +90,7 @@ export default function SessionFooter({ info, hostName, hostAway = false, onResu
               ? 'This session is closed.'
               : <FailureText reason={reason} />}
         </p>
+        {lifecycle === 'parked' && queuedCount > 0 && <p className="txt">{queuedCount} queued {queuedCount === 1 ? 'message' : 'messages'} will be sent when you resume.</p>}
         {hostAway && (
           <p className="txt session-footer-offline">
             {info.presumed_parked

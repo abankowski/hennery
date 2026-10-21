@@ -49,7 +49,7 @@ describe('SessionView: the composer', () => {
     send()
     await waitFor(() => expect(s.posted('/prompt')).toHaveLength(1), WAIT)
     expect(s.posted('/prompt')).toEqual([
-      { path: '/api/sessions/s1/prompt', body: { content: [{ type: 'text', text: 'hello there' }] } },
+      { path: '/api/sessions/s1/prompt', body: { request_key: expect.any(String), content: [{ type: 'text', text: 'hello there' }] } },
     ])
     await waitFor(() => expect(textarea().value).toBe(''), WAIT)
   })
@@ -123,6 +123,7 @@ describe('SessionView: the composer', () => {
       {
         path: '/api/sessions/s2/prompt',
         body: {
+          request_key: expect.any(String),
           content: [
             { type: 'text', text: 'second ' },
             { type: 'image', mimeType: 'image/png', data: base64('TWO') },
@@ -248,8 +249,8 @@ describe('SessionView: a send in flight when the composer is mounted again', () 
     await waitFor(() => expect(textarea().value).toBe(''), WAIT)
     expect(textarea().readOnly).toBe(false)
     expect(s.posted('/prompt').map((p) => p.body)).toEqual([
-      { content: [{ type: 'text', text: 'later' }] },
-      { content: [{ type: 'text', text: 'later' }] },
+      { request_key: expect.any(String), content: [{ type: 'text', text: 'later' }] },
+      { request_key: expect.any(String), content: [{ type: 'text', text: 'later' }] },
     ])
   })
 })
@@ -283,6 +284,7 @@ describe('SessionView: Send again', () => {
     send()
     await waitFor(() => expect(s.posted('/prompt')).toHaveLength(1), WAIT)
     expect(s.posted('/prompt')[0].body).toEqual({
+      request_key: expect.any(String),
       content: [
         { type: 'text', text: 'look at ' },
         { type: 'image', mimeType: 'image/png', data: base64('PNG!') },
@@ -311,6 +313,7 @@ describe('SessionView: Send again', () => {
     send()
     await waitFor(() => expect(s.posted('/prompt')).toHaveLength(1), WAIT)
     expect(s.posted('/prompt')[0].body).toEqual({
+      request_key: expect.any(String),
       content: [
         { type: 'text', text: 'see [Image #1] above ' },
         { type: 'image', mimeType: 'image/png', data: base64('PNG!') },
