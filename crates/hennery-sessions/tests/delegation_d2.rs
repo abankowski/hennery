@@ -256,6 +256,8 @@ fn closed_attention_migration_repairs_existing_closed_and_deleted_rows() {
             w.store.delete_session("child", None).unwrap();
         }
         let conn = raw(&w);
+        conn.execute_batch(include_str!("fixtures/undo_delegation_limits.sql"))
+            .unwrap();
         conn.execute_batch("DROP TRIGGER attention_terminal_session; DROP TRIGGER attention_terminal_insert; DROP TRIGGER attention_terminal_update;
             PRAGMA user_version=24;").unwrap();
         conn.execute(
@@ -3085,6 +3087,320 @@ fn live_child_cap_and_one_generation_are_independent_of_runtime_choice() {
         "generation_limit"
     );
 }
+
+fn limits_auth(w: &World) -> hennery_kernel::operator::Authenticated {
+    let operator = Operator::open(&w.db).unwrap();
+    let phc: String = raw(w)
+        .query_row(
+            "SELECT phc FROM password_credentials WHERE owner_id=?1",
+            [w.store.owner_id()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let token = operator.open_session("limits test", &phc, unix_now()).unwrap().unwrap();
+    operator.authenticate(&token, unix_now()).unwrap().unwrap()
+}
+fn set_limits(w: &World, patch: serde_json::Value) {
+    assert!(matches!(
+        w.store
+            .patch_delegation_limits(&serde_json::from_value(patch).unwrap(), &limits_auth(w))
+            .unwrap(),
+        hennery_sessions::delegation_settings::LimitsChange::Done(_)
+    ));
+}
+
+#[test]
+fn operator_limits_defaults_bounds_partial_patch_and_reopen() {
+    use hennery_proto::delegation_status::OperatorDelegationLimits;
+    use hennery_sessions::delegation_settings::LimitsChange;
+    let w = World::new();
+    assert_eq!(
+        w.store.delegation_limits().unwrap(),
+        OperatorDelegationLimits::default()
+    );
+    set_limits(&w, json!({"children":2}));
+    let expected = OperatorDelegationLimits {
+        children: 2,
+        ..Default::default()
+    };
+    assert_eq!(Store::open(&w.db).unwrap().delegation_limits().unwrap(), expected);
+    for field in [
+        "children",
+        "starts_per_operator_epoch",
+        "automatic_wakes_per_operator_epoch",
+    ] {
+        for value in [0, 65, u16::MAX] {
+            let patch = serde_json::from_value(json!({field:value})).unwrap();
+            assert_eq!(
+                w.store.patch_delegation_limits(&patch, &limits_auth(&w)).unwrap(),
+                LimitsChange::Invalid
+            );
+            assert_eq!(w.store.delegation_limits().unwrap(), expected);
+        }
+    }
+    for value in [1, 64] {
+        set_limits(
+            &w,
+            json!({"children":value,"starts_per_operator_epoch":value,"automatic_wakes_per_operator_epoch":value}),
+        );
+        assert_eq!(w.store.delegation_limits().unwrap().children, value);
+    }
+}
+
+#[test]
+fn operator_limits_recheck_auth_inside_write_transaction() {
+    use hennery_sessions::delegation_settings::LimitsChange;
+    let w = World::new();
+    for sql in [
+        "UPDATE auth_sessions SET last_step_up_at=0 WHERE owner_id=?1 AND id_hash=?2",
+        "UPDATE auth_sessions SET expires_at=0 WHERE owner_id=?1 AND id_hash=?2",
+        "DELETE FROM auth_sessions WHERE owner_id=?1 AND id_hash=?2",
+    ] {
+        let auth = limits_auth(&w);
+        raw(&w)
+            .execute(sql, params![w.store.owner_id(), auth.session_id])
+            .unwrap();
+        assert!(auth.stepped_up(unix_now()));
+        assert_eq!(
+            w.store
+                .patch_delegation_limits(&serde_json::from_value(json!({"children":1})).unwrap(), &auth)
+                .unwrap(),
+            LimitsChange::StepUpRequired
+        );
+        assert_eq!(w.store.delegation_limits().unwrap().children, 8);
+    }
+}
+
+#[test]
+fn operator_limits_are_owner_scoped_and_database_bounds_are_enforced() {
+    let w = World::new();
+    raw(&w).execute_batch("INSERT INTO owners(id,created_at,set_up_at) VALUES ('other-limits-owner',9223372036854775807,9223372036854775807);
+        INSERT INTO delegation_limits(owner_id,children,starts_per_operator_epoch,automatic_wakes_per_operator_epoch) VALUES ('other-limits-owner',1,2,3);").unwrap();
+    assert_eq!(w.store.delegation_limits().unwrap().children, 8);
+    set_limits(&w, json!({"children":4}));
+    assert_eq!(
+        raw(&w)
+            .query_row(
+                "SELECT children FROM delegation_limits WHERE owner_id='other-limits-owner'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+    for field in [
+        "children",
+        "starts_per_operator_epoch",
+        "automatic_wakes_per_operator_epoch",
+    ] {
+        for value in [0, 65] {
+            assert!(
+                raw(&w)
+                    .execute(
+                        &format!("UPDATE delegation_limits SET {field}=?1 WHERE owner_id=?2"),
+                        params![value, w.store.owner_id()]
+                    )
+                    .is_err()
+            );
+        }
+    }
+    let mut auth = limits_auth(&w);
+    auth.owner_id = "other-limits-owner".into();
+    assert_eq!(
+        w.store
+            .patch_delegation_limits(&serde_json::from_value(json!({"children":1})).unwrap(), &auth)
+            .unwrap(),
+        hennery_sessions::delegation_settings::LimitsChange::StepUpRequired
+    );
+}
+
+#[test]
+fn operator_limits_concurrent_spawns_cannot_overrun_the_configured_cap() {
+    for starts in [false, true] {
+        let (w, p) = pair();
+        set_limits(
+            &w,
+            if starts {
+                json!({"starts_per_operator_epoch":1})
+            } else {
+                json!({"children":2})
+            },
+        );
+        let barrier = Arc::new(Barrier::new(4));
+        let accepted = std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..4)
+                .map(|i| {
+                    let barrier = barrier.clone();
+                    let db = w.db.clone();
+                    let p = p.clone();
+                    scope.spawn(move || {
+                        let store = Store::open(&db).unwrap();
+                        barrier.wait();
+                        match store.queue_spawn(
+                            &p,
+                            1,
+                            "digest",
+                            &hennery_sessions::delegation_queue::DelegatedLaunch {
+                                key: &format!("race-{i}"),
+                                agent: "claude",
+                                cwd: "/project",
+                                brief: "brief",
+                                name: None,
+                                config: &SessionConfig::default(),
+                                mcp: McpContext::NONE,
+                            },
+                        ) {
+                            Ok(_) => 1,
+                            Err(error) => {
+                                assert_eq!(error.to_string(), if starts { "start_budget" } else { "child_limit" });
+                                0
+                            }
+                        }
+                    })
+                })
+                .collect();
+            jobs.into_iter().map(|job| job.join().unwrap()).sum::<i32>()
+        });
+        assert_eq!(accepted, 1);
+    }
+}
+
+#[test]
+fn operator_limits_next_spawn_checks_children_and_starts_without_resetting_counters() {
+    let (w, p) = pair(); // One live child, no charged starts.
+    set_limits(&w, json!({"children":2,"starts_per_operator_epoch":3}));
+    spawn(&w, &p, "second").unwrap();
+    assert_eq!(
+        w.store.precheck_spawn(&p, 1, None).unwrap_err().to_string(),
+        "child_limit"
+    );
+    assert_eq!(spawn(&w, &p, "third").unwrap_err().to_string(), "child_limit");
+    set_limits(&w, json!({"children":4}));
+    spawn(&w, &p, "third").unwrap();
+    set_limits(&w, json!({"starts_per_operator_epoch":2}));
+    assert_eq!(
+        w.store.precheck_spawn(&p, 1, None).unwrap_err().to_string(),
+        "start_budget"
+    );
+    assert_eq!(spawn(&w, &p, "fourth").unwrap_err().to_string(), "start_budget");
+    set_limits(&w, json!({"starts_per_operator_epoch":3}));
+    spawn(&w, &p, "fourth").unwrap();
+    raw(&w)
+        .execute(
+            "UPDATE sessions SET lifecycle='closed' WHERE owner_id=?1 AND id<>'parent'",
+            [w.store.owner_id()],
+        )
+        .unwrap();
+    assert_eq!(spawn(&w, &p, "fifth").unwrap_err().to_string(), "start_budget");
+    user_turn_with_origin(&w, "parent", 2, "new-operator-epoch", InputOrigin::Operator {});
+    assert!(spawn(&w, &p, "new-epoch").is_ok());
+}
+
+#[test]
+fn operator_limits_next_wake_uses_saved_budget() {
+    let (w, _) = pair();
+    set_limits(&w, json!({"automatic_wakes_per_operator_epoch":1}));
+    ready_parent(&w);
+    let (h, mut rx) = connected();
+    pending(&w, "child", 2, "question-1", PendingKind::Elicitation);
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    let (request, turn) = take_prompt(&mut rx);
+    w.store
+        .ingest(
+            "parent",
+            3,
+            &SessionBody::TurnStarted {
+                request_id: request,
+                turn_id: turn.clone(),
+            },
+        )
+        .unwrap();
+    ended(&w, "parent", 4, &turn);
+    pending(&w, "child", 3, "question-2", PendingKind::Elicitation);
+    assert!(!w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+    assert_eq!(notices(&w).last().unwrap().1, "operator_required");
+    set_limits(&w, json!({"automatic_wakes_per_operator_epoch":2}));
+    pending(&w, "child", 4, "question-3", PendingKind::Elicitation);
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap());
+}
+
+#[test]
+fn operator_limits_wakes_cross_twenty_and_stop_at_twenty_one_or_sixty_four() {
+    for limit in [21, 64] {
+        let (w, _) = pair();
+        set_limits(&w, json!({"automatic_wakes_per_operator_epoch":limit}));
+        ready_parent(&w);
+        raw(&w)
+            .execute(
+                "INSERT INTO delegation_budgets(owner_id,root_id,epoch,wakes) VALUES (?1,'parent',0,20)",
+                [w.store.owner_id()],
+            )
+            .unwrap();
+        let (h, mut rx) = connected();
+        for spent in 20..=limit {
+            let index = (spent - 20) as u64;
+            pending(
+                &w,
+                "child",
+                index + 2,
+                &format!("boundary-{spent}"),
+                PendingKind::Elicitation,
+            );
+            assert_eq!(
+                w.store.dispatch_child_notice("parent", &catalog(), &h).unwrap(),
+                spent < limit
+            );
+            if spent < limit {
+                let (request, turn) = take_prompt(&mut rx);
+                w.store
+                    .ingest(
+                        "parent",
+                        index * 2 + 3,
+                        &SessionBody::TurnStarted {
+                            request_id: request,
+                            turn_id: turn.clone(),
+                        },
+                    )
+                    .unwrap();
+                ended(&w, "parent", index * 2 + 4, &turn);
+            } else {
+                let state:(String,String)=raw(&w).query_row("SELECT state,reason FROM delegation_notices WHERE owner_id=?1 ORDER BY source_event_id DESC LIMIT 1",[w.store.owner_id()],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+                assert_eq!(state, ("operator_required".into(), "wake_budget".into()));
+                assert!(rx.try_recv().is_err());
+            }
+        }
+        assert_eq!(
+            raw(&w)
+                .query_row(
+                    "SELECT wakes FROM delegation_budgets WHERE owner_id=?1 AND root_id='parent' AND epoch=0",
+                    [w.store.owner_id()],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            limit
+        );
+    }
+}
+
+#[test]
+fn operator_limits_children_and_starts_allow_sixty_four_and_refuse_sixty_five() {
+    for starts in [false, true] {
+        let (w, p) = pair();
+        set_limits(&w, json!({"children":64,"starts_per_operator_epoch":64}));
+        if starts {
+            w.store.close_now("child").unwrap();
+        }
+        for i in 0..if starts { 64 } else { 63 } {
+            let receipt = spawn(&w, &p, &format!("maximum-{i}")).unwrap();
+            if starts {
+                w.store.close_now(receipt.child_id.as_deref().unwrap()).unwrap();
+            }
+        }
+        let code = if starts { "start_budget" } else { "child_limit" };
+        assert_eq!(w.store.precheck_spawn(&p, 1, None).unwrap_err().to_string(), code);
+        assert_eq!(spawn(&w, &p, "over-maximum").unwrap_err().to_string(), code);
+    }
+}
 #[test]
 fn replacement_children_cannot_reset_starts_budget_or_parent_report_cannot_reset_epoch() {
     let (w, p) = pair();
@@ -5849,6 +6165,7 @@ fn reviewer_migration20_recovers_preexisting_orphan_questions() {
     // edge are scrubbed, while the surviving child's callback is still open.
     raw(&w)
         .execute_batch(concat!(
+            include_str!("fixtures/undo_delegation_limits.sql"),
             include_str!("fixtures/undo_family.sql"),
             "DROP TRIGGER attention_notice_update;
         DROP TRIGGER attention_parent_delete;
@@ -6028,6 +6345,7 @@ fn d3b_migration20_filters_answers_terminal_and_root_questions() {
     w.store.delete_session("parent", None).unwrap();
     raw(&w)
         .execute_batch(concat!(
+            include_str!("fixtures/undo_delegation_limits.sql"),
             include_str!("fixtures/undo_family.sql"),
             "DROP TRIGGER attention_notice_update;
         DROP TRIGGER attention_parent_delete;

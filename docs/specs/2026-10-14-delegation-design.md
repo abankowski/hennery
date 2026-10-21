@@ -623,20 +623,40 @@ detached family or another hat.
 
 Routing state is separate from lifecycle: `parent_queued`, `parent_delivered`,
 `operator_required`, `resolved` or `obsolete`, with a reason. Default
-recommendations: 8 non-closed children per parent, 32 queued prompts/1 MiB per
+operator settings (2026-10-21): 8 non-closed children per parent, and 32 child
+starts per operator-prompt epoch of that parent. These limits are global to
+the owner, not per hat. Each is an integer from 1 to 64; unset settings retain
+these defaults. The epoch starts with the operator's last own prompt to that
+parent; injected parent/child messages do not reset it. Fixed collector
+protection caps remain 32 queued prompts/1 MiB per
 destination, 64 KiB per brief/follow-up, 8 KiB per injected report and a page
-of at most 100 child summaries. Also bound child creation to 32 starts per
-root operator-prompt epoch, so closing/replacing children cannot bypass the
+of at most 100 child summaries. Bound child creation per
+operator-prompt epoch, so closing/replacing children cannot bypass the
 concurrent-child limit. Enforce caps transactionally. Do not silently
 drop an accepted message. Queue overflow produces a receipt/refusal and an
 operator attention record, never an unbounded payload backlog.
 
-Persist a budget of 20 automatic parent wake-ups per family between actual
+Persist a budget of automatic parent wake-ups per family (default 20) between actual
 operator prompts to the root. Reserve budget in the same transaction as the
 dispatch; retries of that delivery spend none again. Parent/child prompts and
 memory jobs do not reset it. Closing and replacing children cannot reset it.
 If Q2 permits nesting, apply the root budget and a maximum depth before enabling
 it; do not ship recursion with a budget per edge alone.
+
+The wake-up budget is also a global owner setting, bounded 1–64. Settings has
+a Delegation limits card beside Delegation by hat, with all three values,
+their defaults and reset rules. Authenticated `GET /api/settings/delegation-limits`
+returns the effective settings; `PATCH` changes supplied fields after the same
+fresh step-up used by the Delegation switch. Invalid values are rejected by
+the server. Spawn checks and wake reservations read settings in their existing
+transactions, and `session_capabilities.limits` reports the effective values.
+Changes apply to the next allocation/reservation without closing existing
+children, resetting spent counters or replaying escalated notices. This is the
+operator decision of 2026-10-21.
+
+Saving pins all three effective values in the owner's row, including values
+omitted from a partial PATCH. Later code-default changes only reach owners
+without a saved row; they do not change previously saved limits.
 
 Immediate fallback: parent closed/deleted, routing detached, permanent resume
 failure, unsupported delivery, budget exhausted, or permission question under

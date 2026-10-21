@@ -77,7 +77,14 @@ export type SetSessionTools = { delegation_enabled: boolean, };
 
 export type SessionFamily = { child_id: string, parent_id: string, root_id: string, hat_id: string, created_event_id: number, detached: boolean, reason: string | null, };
 
-export type DelegationLimits = { children: number, starts_per_operator_epoch: number, queued_prompts: number, queued_bytes: number, message_bytes: number, };
+/**
+ * Global operator settings; protection of collector queues remains fixed.
+ */
+export type OperatorDelegationLimits = { children: number, starts_per_operator_epoch: number, automatic_wakes_per_operator_epoch: number, };
+
+export type PatchDelegationLimits = { children?: number, starts_per_operator_epoch?: number, automatic_wakes_per_operator_epoch?: number, };
+
+export type DelegationLimits = { children: number, starts_per_operator_epoch: number, automatic_wakes_per_operator_epoch: number, queued_prompts: number, queued_bytes: number, message_bytes: number, };
 
 export type CapabilitiesResult = { runtimes: Array<string>, catalogs: Array<CapabilityCatalog>, cwd: string, limits: DelegationLimits, };
 

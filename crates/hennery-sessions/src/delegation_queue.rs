@@ -14,8 +14,6 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 pub const MAX_QUEUE: i64 = 32;
 pub const MAX_QUEUE_BYTES: i64 = 1024 * 1024;
-pub const MAX_CHILDREN: i64 = 8;
-pub const MAX_STARTS: i64 = 32;
 
 /// Validated launch values retained together through atomic allocation.
 pub struct DelegatedLaunch<'a> {
@@ -106,14 +104,15 @@ impl Store {
             params![self.owner_id(), caller.session_id()],
             |r| r.get(0),
         )?;
-        ensure!(live < MAX_CHILDREN, "child_limit");
+        let limits = self.delegation_limits_in(tx)?;
+        ensure!(live < i64::from(limits.children), "child_limit");
         let epoch:i64=tx.query_row("SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1 AND session_id = ?2
             AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'",params![self.owner_id(),caller.session_id()],|r|r.get(0))?;
         let starts: i64 = tx.query_row(
             "SELECT COALESCE((SELECT starts FROM delegation_start_budgets WHERE owner_id = ?1 AND caller_id = ?2 AND epoch = ?3),0)",
             params![self.owner_id(), caller.session_id(), epoch], |r| r.get(0),
         )?;
-        ensure!(starts < MAX_STARTS, "start_budget");
+        ensure!(starts < i64::from(limits.starts_per_operator_epoch), "start_budget");
         Ok(epoch)
     }
     pub fn delegation_retry(
