@@ -11,9 +11,9 @@ use serde_json::Value;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Weak},
-    time::{Duration, Instant},
+    time::{Duration, SystemTime},
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::Instant};
 
 pub(crate) fn same_hat_in(tx: &Transaction<'_>, owner: &str, host: &str, hat: &str, cwd: &str) -> Result<bool> {
     Ok(
@@ -23,8 +23,44 @@ pub(crate) fn same_hat_in(tx: &Transaction<'_>, owner: &str, host: &str, hat: &s
 type CatalogKey = (String, String, String, String, String, u64, bool);
 #[derive(Default)]
 struct CatalogCache {
-    values: BTreeMap<CatalogKey, (Instant, HostCatalog)>,
+    values: BTreeMap<CatalogKey, CachedCatalog>,
     probes: BTreeMap<CatalogKey, Weak<Mutex<()>>>,
+}
+#[derive(Clone)]
+struct CachedCatalog {
+    received: Instant,
+    captured: SystemTime,
+    result: std::result::Result<HostCatalog, String>,
+}
+impl CachedCatalog {
+    fn live(&self) -> bool {
+        let fresh = matches!(&self.result, Ok(catalog) if catalog.freshness == CatalogFreshness::Fresh);
+        self.received.elapsed() < Duration::from_secs(if fresh { 30 } else { 5 })
+    }
+
+    fn reusable(&self, origin: &CatalogOrigin, requested: Instant) -> bool {
+        if !self.live() {
+            return false;
+        }
+        match &self.result {
+            // Independent tool retries can observe a runtime signed in moments
+            // later. Only attach retries back off on an earlier failure.
+            Err(_) => matches!(origin, CatalogOrigin::Attach(_)) || self.received >= requested,
+            Ok(catalog) => match origin {
+                CatalogOrigin::Spawn => self.received >= requested,
+                CatalogOrigin::Attach(not_before) => {
+                    // A non-fresh preview is reused only as a short-lived
+                    // failure; it can never authorize an attach.
+                    catalog.freshness != CatalogFreshness::Fresh || self.captured >= *not_before
+                }
+                CatalogOrigin::Agent | CatalogOrigin::Operator => true,
+            },
+        }
+    }
+
+    fn result(self) -> Result<HostCatalog> {
+        self.result.map_err(anyhow::Error::msg)
+    }
 }
 #[derive(Default)]
 pub struct Catalogs {
@@ -34,6 +70,17 @@ enum CatalogOrigin {
     Operator,
     Agent,
     Spawn,
+    Attach(SystemTime),
+}
+impl CatalogOrigin {
+    fn result(&self, result: Result<HostCatalog>) -> Result<HostCatalog> {
+        let catalog = result?;
+        ensure!(
+            !matches!(self, Self::Attach(_)) || catalog.freshness == CatalogFreshness::Fresh,
+            "catalog_unavailable"
+        );
+        Ok(catalog)
+    }
 }
 impl Catalogs {
     pub async fn get(&self, state: &AppState, host: &str, hat: &str, cwd: &str, agent: &str) -> Result<HostCatalog> {
@@ -51,6 +98,20 @@ impl Catalogs {
         agent: &str,
     ) -> Result<HostCatalog> {
         self.get_for_origin(state, host, hat, cwd, agent, CatalogOrigin::Spawn)
+            .await
+    }
+    /// Reuse the operation's successful preflight only while it is still fresh
+    /// and was captured after admission. Older previews never authorize attach.
+    pub async fn get_for_attach(
+        &self,
+        state: &AppState,
+        host: &str,
+        hat: &str,
+        cwd: &str,
+        agent: &str,
+        not_before: SystemTime,
+    ) -> Result<HostCatalog> {
+        self.get_for_origin(state, host, hat, cwd, agent, CatalogOrigin::Attach(not_before))
             .await
     }
     pub async fn get_operator(
@@ -75,7 +136,6 @@ impl Catalogs {
     ) -> Result<HostCatalog> {
         let requested_at = Instant::now();
         let operator_initiated = matches!(origin, CatalogOrigin::Operator);
-        let refresh = matches!(origin, CatalogOrigin::Spawn);
         state.store.catalog_scope(host, hat, cwd)?;
         let connection = state
             .hub
@@ -98,20 +158,24 @@ impl Catalogs {
             connection,
             operator_initiated,
         );
+        let check_scope = || -> Result<()> {
+            ensure!(state.hub.routable_conn(host) == Some(connection), "catalog_stale");
+            state.store.catalog_scope(host, hat, cwd)
+        };
         // Hold the global cache lock only for map access. Independent keys can
         // probe concurrently; identical in-flight requests share a per-key lock.
         let probe = {
             let mut cache = self.cache.lock().await;
-            cache.values.retain(|_, (when, catalog)| {
-                when.elapsed()
-                    < Duration::from_secs(if catalog.freshness == CatalogFreshness::Fresh {
-                        30
-                    } else {
-                        5
-                    })
-            });
-            if !refresh && let Some((_, catalog)) = cache.values.get(&key) {
-                return Ok(catalog.clone());
+            cache.values.retain(|_, catalog| catalog.live());
+            if let Some(catalog) = cache
+                .values
+                .get(&key)
+                .filter(|entry| entry.reusable(&origin, requested_at))
+            {
+                let catalog = catalog.clone();
+                drop(cache);
+                check_scope()?;
+                return origin.result(catalog.result());
             }
             cache.probes.retain(|_, probe| probe.strong_count() > 0);
             ensure!(cache.values.len() < 128 || cache.values.contains_key(&key), "busy");
@@ -125,19 +189,18 @@ impl Catalogs {
             }
         };
         let _in_flight = probe.lock().await;
+        check_scope()?;
         {
             let cache = self.cache.lock().await;
-            if let Some((when, catalog)) = cache.values.get(&key)
-                && ((!refresh
-                    && when.elapsed()
-                        < Duration::from_secs(if catalog.freshness == CatalogFreshness::Fresh {
-                            30
-                        } else {
-                            5
-                        }))
-                    || *when >= requested_at)
+            if let Some(catalog) = cache
+                .values
+                .get(&key)
+                .filter(|entry| entry.reusable(&origin, requested_at))
             {
-                return Ok(catalog.clone());
+                let catalog = catalog.clone();
+                drop(cache);
+                check_scope()?;
+                return origin.result(catalog.result());
             }
         }
         let request_id = uuid::Uuid::now_v7().to_string();
@@ -147,48 +210,64 @@ impl Catalogs {
             cwd: cwd.into(),
             operator_initiated,
         };
-        let answer = state
-            .hub
-            .probe(host, &request_id, frame, Duration::from_secs(30))
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!(match error {
-                    crate::hub::RequestError::Rejected { code, .. } => match code.as_str() {
-                        "cwd_unavailable" => "cwd_unavailable",
-                        "busy" => "busy",
-                        "timeout" => "timeout",
-                        "auth_required" => "auth_required",
-                        "unknown_agent" | "runtime_unavailable" => "runtime_unavailable",
-                        _ => "adapter_failed",
-                    },
-                    crate::hub::RequestError::Busy => "busy",
-                    crate::hub::RequestError::NotConnected => "host_offline",
-                    crate::hub::RequestError::DeliveryUnknown => "timeout",
-                    _ => "catalog_unavailable",
-                })
-            })?;
-        let HostFrame::Catalog { catalog, .. } = answer else {
-            anyhow::bail!("catalog_unavailable")
-        };
-        ensure!(
-            catalog.agent == agent
-                && catalog.adapter_revision.len() <= 256
-                && catalog.config_options.len() <= 128
-                && serde_json::to_vec(&catalog)?.len() <= 256 * 1024,
-            "catalog_unavailable"
-        );
-        ensure!(state.hub.routable_conn(host) == Some(connection), "catalog_stale");
+        let result = async {
+            let answer = state
+                .hub
+                .probe(host, &request_id, frame, Duration::from_secs(30))
+                .await
+                .map_err(|error| {
+                    anyhow::anyhow!(match error {
+                        crate::hub::RequestError::Rejected { code, .. } => match code.as_str() {
+                            "cwd_unavailable" => "cwd_unavailable",
+                            "busy" => "busy",
+                            "timeout" => "timeout",
+                            "auth_required" => "auth_required",
+                            "unknown_agent" | "runtime_unavailable" => "runtime_unavailable",
+                            _ => "adapter_failed",
+                        },
+                        crate::hub::RequestError::Busy => "busy",
+                        crate::hub::RequestError::NotConnected => "host_offline",
+                        crate::hub::RequestError::DeliveryUnknown => "timeout",
+                        _ => "catalog_unavailable",
+                    })
+                })?;
+            let HostFrame::Catalog { catalog, .. } = answer else {
+                anyhow::bail!("catalog_unavailable")
+            };
+            ensure!(
+                catalog.agent == agent
+                    && catalog.adapter_revision.len() <= 256
+                    && catalog.config_options.len() <= 128
+                    && serde_json::to_vec(&catalog)?.len() <= 256 * 1024,
+                "catalog_unavailable"
+            );
+            let mut value = serde_json::to_value(catalog)?;
+            hennery_kernel::redact::value(&mut value);
+            let catalog: HostCatalog = serde_json::from_value(value)?;
+            Ok::<_, anyhow::Error>(catalog)
+        }
+        .await;
         state.store.catalog_scope(host, hat, cwd)?;
-        let mut value = serde_json::to_value(catalog)?;
-        hennery_kernel::redact::value(&mut value);
-        let catalog: HostCatalog = serde_json::from_value(value)?;
+        if state.hub.routable_conn(host) != Some(connection) {
+            // Preserve transport failures (notably offline), but never cache a
+            // reply after its connection changed or admit a successful stale one.
+            return match result {
+                Ok(_) => Err(anyhow::anyhow!("catalog_stale")),
+                Err(error) => Err(error),
+            };
+        }
+        let cached = CachedCatalog {
+            received: Instant::now(),
+            captured: SystemTime::now(),
+            result: result.as_ref().cloned().map_err(ToString::to_string),
+        };
         let mut cache = self.cache.lock().await;
         // Concurrent different-key probes may fill the cache while we await I/O.
         if cache.values.len() >= 128 && !cache.values.contains_key(&key) {
             cache.values.pop_first();
         }
-        cache.values.insert(key, (Instant::now(), catalog.clone()));
-        Ok(catalog)
+        cache.values.insert(key, cached);
+        origin.result(result)
     }
 }
 /// Host resolves canonical existence; the collector compares scope with its
