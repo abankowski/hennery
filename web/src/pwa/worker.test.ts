@@ -1,4 +1,6 @@
+import { MessageChannel as NodeMessageChannel } from 'node:worker_threads'
 import { readFileSync } from 'node:fs'
+import { extname } from 'node:path'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { build } from 'vite'
 import { workerHarness } from '../../e2e/push-fixture'
@@ -263,4 +265,93 @@ it('the shipped handler fences identity/generation, persists a supplied replacem
   await workerHarness(code, persisted).change(null, null)
   expect(persisted.row.enabled).toBe(false)
   expect(persisted.row).toHaveProperty('repair', 'reenable')
+})
+
+function updateClient() {
+  return { id: 'app', url: 'https://app.example/sessions/app', focus: vi.fn(), navigate: vi.fn(), postMessage(message: unknown, transfer?: Transferable[]) {
+    const m = message as { id: string }, port = transfer![0] as MessagePort
+    port.onmessage = event => {
+      if (event.data.kind === 'update_release') { port.close(); return }
+      port.postMessage({ version: 1, kind: 'update_commit_reply', id: m.id, ready: true })
+    }
+    port.postMessage({ version: 1, kind: 'update_prepare_reply', id: m.id, ready: true })
+    if ('unref' in port && typeof port.unref === 'function') port.unref()
+  } }
+}
+function requestWorker(harness: ReturnType<typeof workerHarness>) {
+  const channel = new NodeMessageChannel()
+  const reply = new Promise<unknown>(resolve => { channel.port1.onmessage = event => resolve(event.data) })
+  const work = harness.message({ version: 1, kind: 'update_request' }, { id: 'app' }, channel.port2 as unknown as MessagePort)
+  return { result: Promise.all([reply, work]).then(([value]) => value).finally(() => { channel.port1.close(); channel.port2.close() }) }
+}
+it('an active or superseded worker never coordinates a different waiting worker', async () => {
+  const client = updateClient(), skipWaiting = vi.fn(async () => {}), prepare = vi.spyOn(client, 'postMessage')
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, ownWaiting: false, skipWaiting })
+  expect(await requestWorker(harness).result).toMatchObject({ ready: false })
+  expect(skipWaiting).not.toHaveBeenCalled()
+  expect(prepare).not.toHaveBeenCalled()
+})
+it('a browser without the worker identity property can coordinate and activate', async () => {
+  const client = updateClient(), skipWaiting = vi.fn(async () => {})
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, workerIdentity: false, skipWaiting })
+  expect(await requestWorker(harness).result).toMatchObject({ ready: true })
+  expect(skipWaiting).toHaveBeenCalledOnce()
+})
+it.each([true, false])('no waiting worker means no readiness or activation, identity supported=%s', async workerIdentity => {
+  const client = updateClient(), prepare = vi.spyOn(client, 'postMessage'), skipWaiting = vi.fn(async () => {})
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, waiting: false, workerIdentity, skipWaiting })
+  expect(await requestWorker(harness).result).toMatchObject({ ready: false })
+  expect(prepare).not.toHaveBeenCalled()
+  expect(skipWaiting).not.toHaveBeenCalled()
+})
+it('the emitted update handler holds updating until activation settles and then permits retry', async () => {
+  const client = updateClient()
+  let done!: () => void
+  const pending = new Promise<void>(resolve => { done = resolve })
+  const skipWaiting = vi.fn(() => pending)
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, skipWaiting })
+  const first = requestWorker(harness)
+  await vi.waitFor(() => expect(skipWaiting).toHaveBeenCalledOnce())
+  expect(await requestWorker(harness).result).toMatchObject({ ready: false })
+  expect(skipWaiting).toHaveBeenCalledOnce()
+  done()
+  expect(await first.result).toMatchObject({ ready: true })
+  expect(await requestWorker(harness).result).toMatchObject({ ready: true })
+  expect(skipWaiting).toHaveBeenCalledTimes(2)
+})
+
+it('a worker replaced during the handshake never calls skipWaiting', async () => {
+  const client = updateClient(), skipWaiting = vi.fn(async () => {})
+  let scans = 0
+  const dependencies = { ownWaiting: true, skipWaiting, clients: { matchAll: async () => { if (++scans === 3) dependencies.ownWaiting = false; return [client] }, openWindow: vi.fn() } }
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, dependencies)
+  expect(await requestWorker(harness).result).toMatchObject({ ready: false, reason: 'replaced' })
+  expect(skipWaiting).not.toHaveBeenCalled()
+})
+
+it('activation deletes all older shells including interrupted installs, retaining newer and foreign caches', async () => {
+  const client = updateClient(), remove = vi.fn(async () => true)
+  const data = new Map<string, Map<string, Response>>([
+    ['hennery-shell-old-attempt', new Map([['/__hennery_shell_complete__', new Response('old')]])],
+    ['hennery-shell-older-partial', new Map()], ['unrelated-cache', new Map()],
+  ])
+  const caches = {
+    keys: async () => [...data.keys()], delete: remove,
+    open: async (name: string) => {
+      if (!data.has(name)) data.set(name, new Map())
+      return { put: async (key: string, response: Response) => { data.get(name)!.set(key, response) }, match: async (key: string) => data.get(name)!.get(key)?.clone() } as Cache
+    },
+  }
+  const mime: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2' }
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, {
+    clients: { matchAll: async () => [client], openWindow: vi.fn() }, caches,
+    fetch: async request => { const path = new URL(String(request)).pathname; return new Response(new Uint8Array(readFileSync(`dist${path}`)), { headers: { 'Content-Type': mime[extname(path)] } }) },
+  })
+  await harness.install()
+  data.set('hennery-shell-newer-install', new Map())
+  data.set('hennery-shell-newer-waiting', new Map([['/__hennery_shell_complete__', new Response('newer')]]))
+  await harness.activate()
+  expect(remove).toHaveBeenCalledTimes(2)
+  expect(remove).toHaveBeenNthCalledWith(1, 'hennery-shell-old-attempt')
+  expect(remove).toHaveBeenNthCalledWith(2, 'hennery-shell-older-partial')
 })

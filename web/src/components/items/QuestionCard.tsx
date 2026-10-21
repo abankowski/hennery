@@ -113,6 +113,7 @@ export default function QuestionCard({ item, env }: Props) {
 
   return (
     <section
+      data-question-draft
       ref={ref}
       data-pending-id={item.pending_id}
       className={'ask fade-in' + (live ? '' : ' stale')}
