@@ -9,6 +9,40 @@ fn spawn() -> Value {
 }
 
 #[test]
+fn discovery_allows_non_asking_modes_and_explains_child_permission_requests() {
+    let listed = discovery();
+    let tools = listed["tools"].as_array().unwrap();
+    let contract = listed.to_string().to_ascii_lowercase();
+    assert!(!contract.contains("operator-only") && !contract.contains("operator only"));
+    let description = |name| {
+        tools.iter().find(|t| t["name"] == name).unwrap()["description"]
+            .as_str()
+            .unwrap()
+    };
+    let spawn = description("session_spawn");
+    for required in [
+        "any model, mode and option",
+        "session_capabilities",
+        "including modes that don't ask for permission",
+        "bypassPermissions",
+        "agent-full-access",
+        "If mode is omitted, inherit the parent's mode",
+        "same runtime",
+        "otherwise use the runtime default",
+    ] {
+        assert!(spawn.contains(required), "missing spawn guidance: {required}");
+    }
+    for name in ["session_spawn", "session_answer", "session_status"] {
+        assert!(
+            description(name)
+                .contains("Permission requests raised by a child go to the operator; the parent cannot answer them"),
+            "{name} must distinguish choosing a mode from answering a permission request"
+        );
+        assert!(!description(name).contains("operator-only"));
+    }
+}
+
+#[test]
 fn all_seven_tools_decode_and_discover_generated_strict_schemas() {
     let cases = [
         ("session_capabilities", json!({})),

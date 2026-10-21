@@ -25,6 +25,17 @@ pub enum Profile {
 }
 
 impl Profile {
+    /// Installed identity announced in this connection's runtime metadata.
+    pub fn runtime_profile(self) -> hennery_proto::delegation_host::RuntimeProfile {
+        use hennery_proto::delegation_host::RuntimeProfile;
+        match self {
+            Self::Claude => RuntimeProfile::Claude,
+            Self::Codex => RuntimeProfile::Codex,
+            Self::ClaudeOwnCli => RuntimeProfile::ClaudeOwnCli,
+            Self::Generic => RuntimeProfile::Generic,
+        }
+    }
+
     /// The profile of an installed set's adapter `name`; `own_cli` when
     /// `host.toml` gives it the operator's CLI.
     pub fn of_installed(name: &str, own_cli: bool) -> Self {

@@ -27,7 +27,7 @@
     },
     "AnswerArgs": {
       "additionalProperties": false,
-      "description": "Answer ordinary elicitation only. ACP permissions remain operator-only.",
+      "description": "Answer ordinary elicitation only. Permission requests raised by a child\ngo to the operator; the parent cannot answer them.",
       "properties": {
         "action": {
           "$ref": "#/$defs/ElicitationAction"
@@ -279,7 +279,7 @@
       "properties": {
         "catalogs": {
           "items": {
-            "$ref": "#/$defs/HostCatalog"
+            "$ref": "#/$defs/CapabilityCatalog"
           },
           "type": "array"
         },
@@ -358,6 +358,35 @@
           "type": "string"
         }
       ]
+    },
+    "CapabilityCatalog": {
+      "description": "Model-facing runtime choices. All offered values are selectable with\nDelegation on; internal security metadata is not an execution allowlist.",
+      "properties": {
+        "adapter_revision": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "config_options": {
+          "items": true,
+          "type": "array"
+        },
+        "defaults": {
+          "$ref": "#/$defs/SessionConfig"
+        },
+        "freshness": {
+          "$ref": "#/$defs/CatalogFreshness"
+        }
+      },
+      "required": [
+        "agent",
+        "adapter_revision",
+        "config_options",
+        "defaults",
+        "freshness"
+      ],
+      "type": "object"
     },
     "CatalogFreshness": {
       "enum": [
@@ -2062,6 +2091,14 @@
             "protocol_version": {
               "type": "string"
             },
+            "runtime_profiles": {
+              "additionalProperties": {
+                "$ref": "#/$defs/RuntimeProfile"
+              },
+              "default": {},
+              "description": "Installed profiles for this connection's runtime ids. Missing or\nunknown profiles use runtime defaults for cross-runtime inheritance.",
+              "type": "object"
+            },
             "type": {
               "const": "hello",
               "type": "string"
@@ -2529,7 +2566,7 @@
       "type": "object"
     },
     "Indexed": {
-      "description": "Fields the collector may read from a session event. Closed set (ACP core §3.2).\n\nThe catalogue extracts (`config_options`, `current_model`,\n`current_mode`, `current_axes`) travel together: when `config_options`\nis present and not empty, the four are one snapshot of the adapter's\nconfig. An absent or empty `config_options` means \"no read-back\", never\n\"the adapter has no config\" (a response that failed to parse looks\nempty).",
+      "description": "Fields the collector may read from a session event. Closed set (ACP core §3.2).\n\nThe catalogue extracts (`config_options`, `current_model`,\n`current_mode`, `current_axes`) travel together: when `config_options`\nis present and not empty, the four are one snapshot of the adapter's\nconfig. An absent or empty `config_options` means \"no read-back\", never\n\"the adapter has no config\" (a response that failed to parse looks\nempty). A live `current_mode` without a snapshot is a mode-only delta;\nit never clears the model, other axes or option inventory. Early/replayed\nmode deltas are ignored.",
       "properties": {
         "commands": {
           "description": "On an `available_commands_update`: the adapter's slash commands, the\nfull list (ACP `AvailableCommand` objects, those hennery can parse).\nAn empty list means the adapter has none, unlike an empty\n`config_options`. Never part of the catalogue snapshot.",
@@ -4915,8 +4952,27 @@
       ],
       "type": "string"
     },
+    "RuntimeProfile": {
+      "description": "Host-owned adapter identity for cross-runtime permission-mode inheritance.",
+      "oneOf": [
+        {
+          "enum": [
+            "claude",
+            "codex",
+            "claude_own_cli",
+            "generic"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A newer host profile is unverified here and never maps permission modes.",
+          "type": "string"
+        }
+      ]
+    },
     "SecurityClassification": {
-      "description": "Profile-owned security axes and their baseline allowed values. `mode`\nmeans `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.\nMetadata supports defaults and operator warnings; it does not narrow an enabled hat.",
+      "description": "Profile-owned security axes and their baseline values for operator warnings. `mode`\nmeans `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.\nEvidence must confirm these axes were applied; baseline values never narrow delegation.",
       "properties": {
         "axes": {
           "additionalProperties": {

@@ -98,6 +98,7 @@ struct HostConn {
     capabilities: Capabilities,
     /// From the same `hello`: per agent, how it isolates MCP servers.
     mcp_isolation: AgentIsolation,
+    runtime_profiles: std::collections::BTreeMap<String, hennery_proto::delegation_host::RuntimeProfile>,
 }
 
 impl HostConn {
@@ -210,6 +211,18 @@ impl Hub {
         capabilities: Capabilities,
         mcp_isolation: AgentIsolation,
     ) -> Option<Registration> {
+        self.register_with_profiles(host_id, tx, capabilities, mcp_isolation, Default::default())
+    }
+
+    /// Installed profile identity belongs to one authenticated connection.
+    pub fn register_with_profiles(
+        &self,
+        host_id: &str,
+        tx: mpsc::UnboundedSender<CollectorFrame>,
+        capabilities: Capabilities,
+        mcp_isolation: AgentIsolation,
+        runtime_profiles: std::collections::BTreeMap<String, hennery_proto::delegation_host::RuntimeProfile>,
+    ) -> Option<Registration> {
         let mut last = self.last_conn.lock().expect("last_conn lock");
         let mut hosts = self.hosts.lock().expect("hosts lock");
         if hosts.get(host_id).is_some_and(|h| !h.tx.is_closed()) {
@@ -227,6 +240,7 @@ impl Hub {
                 ended: CancellationToken::new(),
                 capabilities,
                 mcp_isolation,
+                runtime_profiles,
             },
         );
         if let Some(old) = replaced {
@@ -435,6 +449,21 @@ impl Hub {
             .filter(|h| h.routable())
             .map(|h| h.mcp_isolation.0.keys().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// Read installed profile identity from the live connection, without probes.
+    pub fn runtime_profile(
+        &self,
+        host_id: &str,
+        agent: &str,
+    ) -> Option<hennery_proto::delegation_host::RuntimeProfile> {
+        self.hosts
+            .lock()
+            .expect("hosts lock")
+            .get(host_id)
+            .filter(|h| h.routable())
+            .and_then(|h| h.runtime_profiles.get(agent))
+            .copied()
     }
 
     /// Send a request and wait until the outboxed fact carrying `request_id`
@@ -837,6 +866,38 @@ mod tests {
     use crate::store::Store;
     use std::sync::{TryLockError, mpsc as sync_mpsc};
     use std::time::Instant;
+
+    #[test]
+    fn runtime_profiles_are_scoped_to_the_ready_connection() {
+        use hennery_proto::delegation_host::RuntimeProfile;
+        let hub = Hub::new();
+        let (tx, _first_rx) = mpsc::unbounded_channel();
+        let registration = hub
+            .register_with_profiles(
+                "host",
+                tx,
+                Capabilities::default(),
+                AgentIsolation::default(),
+                [("alias".into(), RuntimeProfile::Codex)].into(),
+            )
+            .unwrap();
+        assert_eq!(hub.runtime_profile("host", "alias"), None);
+        hub.mark_ready("host", registration.conn_id);
+        assert_eq!(hub.runtime_profile("host", "alias"), Some(RuntimeProfile::Codex));
+        assert_eq!(hub.runtime_profile("host", "absent"), None);
+        hub.unregister("host", registration.conn_id);
+        assert_eq!(hub.runtime_profile("host", "alias"), None);
+        let (tx, _second_rx) = mpsc::unbounded_channel();
+        let old_host = hub
+            .register("host", tx, Capabilities::default(), AgentIsolation::default())
+            .unwrap();
+        hub.mark_ready("host", old_host.conn_id);
+        assert_eq!(
+            hub.runtime_profile("host", "alias"),
+            None,
+            "older connection must not inherit stale profile metadata"
+        );
+    }
 
     #[test]
     fn offline_presumption_and_reconnect_must_finish() {
