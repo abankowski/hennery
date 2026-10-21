@@ -5,10 +5,26 @@ import { ClientContext } from '../app-client'
 import { json, stubServer } from '../test-server'
 import { catalog } from '../test-launch-catalog'
 import { useLaunchContext } from './CatalogContext'
-function Harness({ host, generation = 0, hostName }: { host: string; generation?: number; hostName?: string }) {
-  const context = useLaunchContext(host, 'claude', '/project', 'hat-a', generation, hostName)
-  return <><output>{context.state}:{context.catalog?.adapter_revision}</output><button onClick={context.refresh}>Refresh</button>{context.error && <p role="alert">{context.error}</p>}</>
+function Harness({ host, generation = 0, hostName, agent = 'claude', hat = 'hat-a' }: { host: string; generation?: number; hostName?: string; agent?: string; hat?: string }) {
+  const context = useLaunchContext(host, agent, '/project', hat, generation, hostName)
+  return <><output>{context.state}:{context.catalog?.adapter_revision}:{context.defaults?.config.mode}</output>{context.refresh && <button onClick={context.refresh}>Refresh</button>}{context.error && <p role="alert">{context.error}</p>}</>
 }
+
+it.each([{ agent: '' }, { hat: '' }])('has no Refresh action for incomplete context %j', props => {
+  const client = new Client({ fetch: vi.fn(), navigate: vi.fn(), here: () => ({ pathname: '/new', search: '' }), stepUp: vi.fn() })
+  render(<ClientContext.Provider value={client}><Harness host="workstation" {...props} /></ClientContext.Provider>)
+  expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
+})
+
+it('loads hat overrides while the catalog is still pending', async () => {
+  const server = stubServer({
+    'GET /api/hosts/workstation/runtime-catalog?agent=claude&cwd=%2Fproject': () => new Promise<Response>(() => {}),
+    'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 0, config: { mode: 'default' } }),
+  })
+  const client = new Client({ fetch: server.fetch, navigate: vi.fn(), here: () => ({ pathname: '/new', search: '' }), stepUp: vi.fn() })
+  render(<ClientContext.Provider value={client}><Harness host="workstation" /></ClientContext.Provider>)
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('loading::default'))
+})
 it('fences late catalog responses by whole host context and retry generation', async () => {
   let finish!: (response: Response) => void
   const late = new Promise<Response>(resolve => { finish = resolve })

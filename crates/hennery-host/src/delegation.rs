@@ -59,6 +59,7 @@ pub(crate) fn catalog_identity(command: &AgentCommand, profile: Profile) -> Cata
     CatalogIdentity {
         adapter_revision: hex::encode(Sha256::digest(material)),
         security,
+        agent_defaults: None,
     }
 }
 

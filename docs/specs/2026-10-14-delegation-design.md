@@ -297,7 +297,8 @@ deduplication. Explain this retry contract in tool descriptions.
 
 Use one runtime/config catalog service for this tool and the dashboard launcher.
 Operator previews persist in SQLite by owner, host, hat, canonical cwd, runtime
-and adapter/config revision, with the collector observation time. Authoritative
+and adapter revision, with the collector observation time. On insertion, prune
+older revisions in that exact scope in the same transaction. Authoritative
 real-session start/resume catalogs and explicit operator Refresh probes write
 through to it. Never borrow another host's, hat's, cwd's or runtime's catalog.
 The most recently observed revision is only a saved preview: reconnects and
@@ -306,16 +307,30 @@ Return `cached` with its age, or `unknown` when no exact-context snapshot exists
 `cached` never satisfies delegation's `Fresh` checks or configuration evidence.
 Preview admission limits (256 KiB, 128 options, 256-byte revision) skip only
 the saved preview; they never reject a valid durable session fact. An earlier
-snapshot keeps its original age. Deleting a session invalidates all saved
-revisions in its exact owner/host/hat/cwd/runtime scope, including Refresh
-snapshots, and any previews it supplied before a hat reassignment. Other
-scopes remain intact. Session-derived snapshots retain their source session
-identity for this deletion contract.
+snapshot keeps its original age. Deleting a session removes only previews
+sourced by that session, including copies supplied before a hat reassignment.
+A newer preview supplied by another session in the same scope, and an
+independent Refresh snapshot, remain intact. Track the baseline's source
+separately when its offered options come from a later attachment: deleting
+the baseline's session clears only those defaults, preserving another session's
+options. Hat purge, host forget and owner deletion still remove their scope.
+
+The operator preview's `defaults` are the adapter's own `session/new` values
+before hennery applies switches, carried by host identity metadata only for
+an operator new attachment, or the result of an explicit Refresh. Session
+write-through always updates offered options; resume/restart and delegated
+attachments preserve an existing baseline for the same adapter revision.
+Without such a baseline, defaults are empty and unknown, never copied from
+the session's current model/mode/axes. A revision change cannot borrow the
+previous revision's baseline. Delegation continues to use only fresh live
+catalogs, with its existing inheritance and configuration checks.
 
 Opening New session or Defaults only reads the saved preview; no automatic,
 background or timer-driven probe runs. Refresh is an explicit operator POST.
 No catalog means Agent defaults and an immediately enabled Start once host,
-runtime and canonical cwd are valid, with no configuration picks sent. Saved
+runtime and canonical cwd are valid. Always send hat overrides and explicit
+picks, including while the preview loads; unsupported requirements fail with
+a readable configuration error. Saved
 choices remain subject to the real session's post-start verification.
 
 For a cold catalog, a new capability-gated host probe obtains the adapter's

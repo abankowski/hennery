@@ -9,6 +9,7 @@ CREATE TABLE runtime_catalog (
     saved_at INTEGER NOT NULL,
     observation INTEGER NOT NULL,
     source_session_id TEXT,
+    defaults_source_session_id TEXT,
     PRIMARY KEY(owner_id, host_id, hat_id, cwd, agent, adapter_revision),
     FOREIGN KEY(host_id, owner_id) REFERENCES hosts(id, owner_id) ON DELETE CASCADE,
     FOREIGN KEY(hat_id, owner_id) REFERENCES hats(id, owner_id) ON DELETE CASCADE,

@@ -415,6 +415,17 @@
         "adapter_revision": {
           "type": "string"
         },
+        "agent_defaults": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only an operator's new attachment carries session/new's pre-switch values.\nResume, restart and delegated attachments must leave this absent."
+        },
         "security": {
           "$ref": "#/$defs/SecurityClassification"
         }
@@ -2059,7 +2070,7 @@
     "HostCatalog": {
       "properties": {
         "adapter_revision": {
-          "description": "Opaque digest of the configured adapter command/environment and catalog.",
+          "description": "Opaque digest of the configured adapter command/environment and security profile.",
           "type": "string"
         },
         "agent": {
@@ -2070,7 +2081,8 @@
           "type": "array"
         },
         "defaults": {
-          "$ref": "#/$defs/SessionConfig"
+          "$ref": "#/$defs/SessionConfig",
+          "description": "Adapter values before hennery switches. Empty when no baseline is known."
         },
         "freshness": {
           "$ref": "#/$defs/CatalogFreshness"

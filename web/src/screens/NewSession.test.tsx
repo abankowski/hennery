@@ -822,6 +822,20 @@ it('starts immediately with no picks while the saved catalog request is still pe
   expect(posts(server.sent)).toContain('/api/sessions/s-1/prompt')
   await act(async () => { finish(json(200, {})); await pending })
 })
+it.each(['unknown', 'pending'] as const)('sends the hat permission override on a first start with a %s preview', async state => {
+  const server = mount({
+    'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat': state === 'pending' ? () => new Promise<Response>(() => {}) : json(200, { freshness: 'unknown' }),
+    'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 1, config: { mode: 'default' } }),
+    'GET /api/sessions/s-1/catalog': json(200, { session_id: 's-1', config_options: [{ id: 'mode', type: 'select', currentValue: 'default', options: [{ value: 'default' }] }], commands: [], mode: 'default' }),
+  })
+  const user = await fill('/srv/work/cat', 'Keep the permission requirement')
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  await user.click(startButton())
+  await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+  expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat', mode: 'default' })
+  expect(posts(server.sent)).toContain('/api/sessions/s-1/prompt')
+  expect(server.sent.some(s => s.path === '/api/sessions/s-1/catalog')).toBe(true)
+})
 it('starts only on a deliberate local Mod+Enter, ignoring repeat, IME and extra modifiers', async () => {
   const server = mount()
   await fill('/srv/work/cat', 'Keyboard launch')

@@ -20,8 +20,34 @@ const HOST: &str = "delegation-host";
 const BOUND: Duration = Duration::from_secs(30);
 
 #[tokio::test]
+async fn explicit_start_choices_never_become_agent_defaults_without_a_prior_probe() {
+    let h = Harness::new(modes("default", &["default", "bypassPermissions"])).await;
+    let (status, body) = h
+        .post(
+            "/api/sessions",
+            json!({"host_id":HOST,"agent":"worker","cwd":h.cwd,"model":"large","mode":"bypassPermissions"}),
+        )
+        .await;
+    assert_eq!(status, 202, "{body}");
+    let preview: Value = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(preview["defaults"]["model"], "small");
+    assert_eq!(preview["defaults"]["mode"], "default");
+    assert_eq!(preview["config_options"][0]["currentValue"], "large");
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn operator_catalog_reads_never_probe_and_real_start_resume_write_through() {
-    let h = Harness::new(script()).await;
+    let h = Harness::new(modes("default", &["default", "plan", "bypassPermissions"])).await;
     let path = format!("{}/api/hosts/{HOST}/runtime-catalog", h.url);
     let query = [("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())];
     let unknown: Value = h
@@ -71,7 +97,7 @@ async fn operator_catalog_reads_never_probe_and_real_start_resume_write_through(
     let (status, body) = h
         .post(
             "/api/sessions",
-            json!({"host_id":HOST,"agent":"worker","cwd":h.cwd,"model":"large"}),
+            json!({"host_id":HOST,"agent":"worker","cwd":h.cwd,"model":"large","mode":"bypassPermissions"}),
         )
         .await;
     assert_eq!(status, 202, "{body}");
@@ -87,7 +113,10 @@ async fn operator_catalog_reads_never_probe_and_real_start_resume_write_through(
             .json()
             .await
             .unwrap();
-        (value["defaults"]["model"] == "large").then_some(())
+        (value["config_options"][0]["currentValue"] == "large").then(|| {
+            assert_eq!(value["defaults"]["model"], "small");
+            assert_eq!(value["defaults"]["mode"], "default");
+        })
     })
     .await;
     let (status, body) = h.post(&format!("/api/sessions/{id}/park"), json!({})).await;
@@ -110,7 +139,9 @@ async fn operator_catalog_reads_never_probe_and_real_start_resume_write_through(
             .json()
             .await
             .unwrap();
-        (value["freshness"] == "cached" && value["defaults"]["model"] == "large").then_some(())
+        (value["freshness"] == "cached").then(|| {
+            assert_eq!(value["defaults"], json!({}), "resume cannot invent an agent baseline");
+        })
     })
     .await;
     assert_eq!(
@@ -488,6 +519,17 @@ async fn binary_delegation_claude_catalog_allows_bypass_permissions_end_to_end()
     ]);
     let command = fake(root.path(), "claude-bypass", worker);
     let h = Harness::with_worker(script(), Some((command, Profile::Claude)), true).await;
+    let before: Value = h
+        .client
+        .post(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(before["defaults"]["mode"], "default");
     let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
     let catalog = &caps["catalogs"][0];
     assert_eq!(catalog["freshness"], "fresh");
@@ -516,6 +558,33 @@ async fn binary_delegation_claude_catalog_allows_bypass_permissions_end_to_end()
     assert_eq!(status["actual"]["mode"], "bypassPermissions");
     assert!(status["questions"].as_array().unwrap().is_empty());
     assert_eq!(status["last_report"], "child-result");
+    let preview: Value = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        preview["defaults"]["mode"], "default",
+        "a delegated bypass choice must not become the operator baseline"
+    );
+    assert_eq!(preview["defaults"], before["defaults"]);
+    let baseline_source: Option<String> = rusqlite::Connection::open(h.cwd.join("hennery.db"))
+        .unwrap()
+        .query_row(
+            "SELECT defaults_source_session_id FROM runtime_catalog WHERE agent='worker'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        baseline_source, None,
+        "a delegated attachment cannot replace Refresh baseline provenance"
+    );
     h.finish().await;
 }
 
@@ -2818,5 +2887,69 @@ async fn review_real_session_delete_must_forget_derived_preview() {
     assert_eq!(
         remaining["freshness"], "unknown",
         "deleted real session preview remains available: {remaining}"
+    );
+}
+#[tokio::test]
+async fn rereview_delete_old_session_preserves_later_sessions_http_preview() {
+    let h = Harness::new(script()).await;
+    let (status, first) = h
+        .post(
+            "/api/sessions",
+            json!({"host_id":HOST,"agent":"worker","cwd":h.cwd,"model":"small"}),
+        )
+        .await;
+    assert_eq!(status, 202, "{first}");
+    let first_id = first["session_id"].as_str().unwrap();
+    let (status, second) = h
+        .post(
+            "/api/sessions",
+            json!({"host_id":HOST,"agent":"worker","cwd":h.cwd,"model":"large"}),
+        )
+        .await;
+    assert_eq!(status, 202, "{second}");
+    let second_id = second["session_id"].as_str().unwrap();
+    let path = format!("{}/api/hosts/{HOST}/runtime-catalog", h.url);
+    let query = [("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())];
+    let before: Value = h
+        .client
+        .get(&path)
+        .query(&query)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(before["freshness"], "cached");
+    assert_eq!(before["defaults"]["model"], "small");
+    assert_eq!(before["config_options"][0]["currentValue"], "large");
+    let deletion = h
+        .client
+        .delete(format!("{}/api/sessions/{first_id}", h.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deletion.status(), 200);
+    let kept = h.state.store.find_session(second_id).unwrap().unwrap();
+    assert_eq!(kept.lifecycle, "active");
+    assert_eq!(kept.config.model.as_deref(), Some("large"));
+    let after: Value = h
+        .client
+        .get(&path)
+        .query(&query)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    h.finish().await;
+    assert_eq!(
+        after["freshness"], "cached",
+        "deleting the earlier session removed the later session's preview: {after}"
+    );
+    assert_eq!(
+        after, before,
+        "the newer session's full preview and age must remain unchanged"
     );
 }

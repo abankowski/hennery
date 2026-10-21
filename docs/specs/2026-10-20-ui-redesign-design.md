@@ -745,15 +745,25 @@ also populate this exact-context cache. Cached previews survive reconnect and
 collector restart but never count as Fresh for delegation.
 The backend resolves the cwd/hat; the launcher
 also uses its existing hat-resolution preview. Fence responses by the
-whole context (host, agent, canonical cwd/resolved hat and request generation)
-and the catalog's `adapter_revision`. Never use the last session of another
+whole context (host, agent, canonical cwd/resolved hat and request generation).
+Only the active request generation may publish its response, including its
+`adapter_revision`; the web does not compare revisions to reject responses.
+The opaque revision identifies the adapter command/environment and installed
+security profile, not `config_options` or the session's chosen settings.
+Never use the last session of another
 hat, a display model name or another host's probe as the baseline.
 
 Resolve each field independently:
 
-1. The chosen catalog's `defaults` supplies the read-only agent baseline.
-2. A stored field/key for this hat and agent replaces that baseline only
-   when the exact id and value are supported by this catalog.
+1. The chosen catalog's `defaults` supplies the read-only agent baseline:
+   the adapter's own `session/new` values before any hennery switch, or the
+   equivalent explicit Refresh result. Resume/restart and delegated attaches
+   update offered options but never replace that baseline with current picks.
+   If no baseline is known, `defaults` is empty; send only deliberate overrides.
+2. A stored field/key for this hat and agent replaces that baseline. Always
+   send the hat's overrides, including when the preview is unavailable or
+   loading. Unsupported values produce a readable configuration refusal and
+   retain the first prompt; never silently discard an operator requirement.
 3. An explicit New session choice replaces the inherited value while the
    context supports it. Show its source as “Your choice”.
 
@@ -761,7 +771,8 @@ Missing keys inherit; do not use truthiness, since a boolean false is real.
 Use `lib/catalog.ts`'s category/id rules to identify model/mode and stable
 remaining axes. Reasoning effort is one catalog axis, not a special
 three-value hard-coded field. Render other select/boolean axes; unsupported
-shapes display unavailable and are never sent.
+catalog shapes display unavailable and cannot be chosen here. Existing hat
+overrides remain requests even when this preview cannot represent them.
 
 **Model-dependent axis rule:** the pre-start endpoint accepts agent/cwd,
 not a model, and describes the probe's default model. Keep the origin of
@@ -777,7 +788,7 @@ because the model changed, or classify axes from display labels.
 After that pruning, overlay applicable **stored and explicit** axes; they
 are deliberate requests, not inherited probe defaults. A coarse pre-start
 catalog cannot prove they exist for the newly selected model. Send only
-choices offered by that context, then require the actual post-start
+explicit choices offered by that context, plus all stored requirements, then require the actual post-start
 read-back to confirm every requested value before the first prompt (§6.4).
 Do not call an invented per-model catalog endpoint or silently erase a
 stored/explicit request merely to pass the read-back gate.
@@ -795,10 +806,9 @@ unsupported requested axis. Never report success or substitute another
 axis/model to satisfy it.
 
 Example without private fixtures: a hat stores model A and effort High;
-the selected host offers only model B and Low/Medium. The launcher uses
-that host's baseline for both, lists “Saved model A is unavailable on this
-host; using B” and the effort equivalent, and omits the unavailable
-overrides from the request. The stored record is not erased. Keep the
+the selected host offers only model B and Low/Medium. The launcher lists
+the unavailable overrides and still requests A and High; an unsupported
+configuration fails visibly. The stored record is not erased. Keep the
 notice visible through Start, not only as a fleeting toast. If the
 operator explicitly picked A and it later disappears, reject Start with a
 request for a new choice rather than treating that explicit choice as implicit.
@@ -808,7 +818,9 @@ model choice changes which axes apply, recompute applicability, preserve
 still-valid explicit choices, and explain every discarded value. Offline,
 stale/unknown/unavailable catalog contexts never promise supported config.
 With no usable snapshot, show “Agent defaults”, enable Start as soon as its
-host/runtime/cwd prerequisites hold, and send no saved or chosen settings.
+host/runtime/cwd prerequisites hold, and send hat overrides and explicit picks.
+Read the hat record independently of the preview; a start waits for that
+record if necessary, never for a catalog probe or preview response.
 Loading or refreshing a preview never gates Start. A usable cached snapshot
 offers choices with its age visible; the real session still verifies them.
 Store editors may reset values without a catalog, but choosing a replacement
@@ -856,9 +868,9 @@ Bound the post-start confirmation wait to 30 seconds and retain the draft
 on timeout. A newly created session has no earlier attachment to confuse
 with this read-back. Do not add automatic resume/repair or a new public
 config-evidence API for this launcher; existing delegated resume/evidence
-gates remain authoritative. The no-catalog path in §6.3 uses the ordinary
-agent-default start without requesting overrides or claiming configuration
-verification. Ambiguous delivery keeps the existing
+gates remain authoritative. The no-catalog path in §6.3 verifies every hat
+override and explicit pick against the actual session. With no requested
+values it checks the successful attachment and actual hat. Ambiguous delivery keeps the existing
 session id and draft and never retries Start automatically. Tests must
 exercise a real clamped/failed adapter config before the first prompt,
 not just mock a successful POST response.
@@ -1035,7 +1047,7 @@ builds. The following are requirements for the implementation plans.
 | Push navigation | `pwa/notification.test.ts`, `pwa/navigation.test.ts`, `pwa/worker.test.ts`, `web/e2e/pwa.spec.ts`, existing producer tests: real URL → worker data.url → click → exact session/card, auth return, older question, dirty/exact window, gateway and invalid URL cases. |
 | Session | Existing `screens/Session*.test.tsx`, Composer/Transcript/item/AnswerBook/FamilyPanel suites; `web/e2e/sessions.spec.ts`, `family.spec.ts`: panel/sheet, parent banner/takeover, actual option ids, multi-question input, queued/uncertain/conflict/withdrawn/delivered, cancel/resume/draft preservation. |
 | Defaults backend | New kernel storage/migration tests and sessions HTTP integration tests: upgrade/reopen, owner/foreign hat, atomic revision race, empty reset/false, purge freeze/cascade, all PUT step-up/expiry/Origin/body bounds/invalid fields; add owner-audit cases and generator checks. |
-| Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, missing stored ids visibly omitted, explicit invalid pick rejected, immediate agent-default starts without a catalog, cached age and explicit Refresh, stale responses, config clamp/failure prevents first prompt. Exercise the real Opus→Sonnet case after an explicit Refresh: inherited `fast=false` omitted, required security axes preserved, supported deliberate effort retained and first prompt delivered after read-back. An explicit/stored unsupported `fast` request remains visible and prevents first prompt on failed/missing read-back. Assert actual start frame and no prompt before confirmation. |
+| Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, unavailable stored requirements visibly retained and sent, explicit invalid pick rejected, immediate starts with hat overrides without a catalog, cached age and explicit Refresh, stale responses, config clamp/failure prevents first prompt. Exercise the real Opus→Sonnet case without a Refresh workaround: inherited `fast=false` omitted, required security axes preserved, supported deliberate effort retained and first prompt delivered after read-back. An explicit/stored unsupported `fast` request remains visible and prevents first prompt on failed/missing read-back. Assert actual start frame and no prompt before confirmation. |
 | Settings/management | Existing settings/manage/API tests, `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts` and new `delegation-settings.spec.ts`: new layout, default-hat controls, delegation enable/disable/step-up/cancel, binary delegation without catalog probes, per-hat privacy, secrets and device lifecycle intact. Actually spawn through enabled Settings with any offered mode, including an unknown-security profile. Enabling with an unauthenticated runtime succeeds; signing in later needs no re-toggle; an unauthenticated spawn returns auth_required. Defaults never enable delegation. |
 | Keyboard | New command/shortcut and palette tests plus browser checks: every key, editable/composed-path/select/IME guards, card-focus digits, dialog focus/return, typing never mutates an answer or starts a session. |
 | Rendering/CSP | Existing `security.test.ts`, `deps.test.ts`, browser CSP collectors and Markdown computed-style checks; no external assets, inline script, lost list markers or mobile controls. |

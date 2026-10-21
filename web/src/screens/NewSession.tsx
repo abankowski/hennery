@@ -1,10 +1,11 @@
 import '../styles/launch.css'
 import LaunchConfig, { requestFor } from '../components/LaunchConfig'
 import { useLaunchContext } from '../components/CatalogContext'
+import { sessionDefaults } from '../api/defaults'
 import { useAccentStyle } from '../lib/theme'
 import { useRegisterContext } from '../app-actions'
 import { confirmStart, rememberConfigurationReview } from '../lib/start'
-import type { Picks } from '../lib/defaults'
+import { flatConfig, type Picks } from '../lib/defaults'
 // New session (frontend spec §7): a host, an agent, a project, the hat the
 // project resolves to, an optional first prompt, then Start.
 //
@@ -90,8 +91,6 @@ export default function NewSession() {
 
   const [prompt, setPrompt] = useState(draft?.prompt ?? '')
   const [picks, setPicks] = useState<Picks>(draft?.picks ?? {})
-  const [optOut, setOptOut] = useState(false)
-  const [generation, setGeneration] = useState(0)
   const [expanded, setExpanded] = useState(false)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false), liveRef = useRef(true)
@@ -274,21 +273,19 @@ export default function NewSession() {
     setRecentsFor(null)
     setNotice('Host changed. Choose the agent and project again; their previous choices were reset.')
     setPicks({})
-    setOptOut(false)
     setError(null)
   }
 
   const agentName = agent === OTHER ? otherName.trim() : agent
   const current = resolved.state === 'ok' && resolved.hostId === hostId && resolved.path === cwd ? resolved.resolution : null
-  const context = useLaunchContext(hostId, agentName, current?.canonical ?? '', current?.hat_id ?? '', generation, host?.name)
-  const config = requestFor(context, picks, optOut)
+  const context = useLaunchContext(hostId, agentName, current?.canonical ?? '', current?.hat_id ?? '', 0, host?.name)
+  const config = requestFor(context, picks)
   const accent = useAccentStyle(hats.find(h => h.id === current?.hat_id)?.colour)
   useRegisterContext({ hostId, cwd: current?.canonical, hatId: current?.hat_id })
   useEffect(() => {
     if (!hostId || !sameLogin()) return
     try { sessionStorage.setItem(LAUNCH_DRAFT, JSON.stringify({ owner: draftOwner, host: hostId, cwd, prompt, agent, otherName, picks })) } catch { /* Current form remains usable. */ }
   }, [hostId, cwd, prompt, agent, otherName, picks, draftOwner, sameLogin])
-  useEffect(() => { setOptOut(false) }, [context.key])
   function chooseAgent(next: string) { if (next !== agent) { setAgent(next); setPicks({}); setNotice('Agent changed. Session setting choices were reset.') } }
   const canStart = !busy && host?.connected === true && agentName !== '' && current?.exists === true && current.is_dir
   const canRequestStart = canStart || pendingStart !== null || (!busy && host?.connected === true && agentName !== '' && browsePath !== null)
@@ -308,7 +305,6 @@ export default function NewSession() {
       const height = e.currentTarget.getBoundingClientRect().height
       const path = picker.current.chooseShownDirectory()
       if (path === null || host?.connected !== true || !agentName) return
-      if (path !== cwd) setOptOut(false)
       const pending = { hostId, path, agent: agentName }
       setStartHeight(height)
       pendingStartRef.current = pending
@@ -327,9 +323,17 @@ export default function NewSession() {
     setExpanded(false)
     form.closest<HTMLElement>('[role="dialog"]')?.focus()
     setError(null)
-    const request: StartSessionRequest = { host_id: hostId, agent: agentName, cwd: current!.canonical, ...config }
+    let launchConfig = config
     let sessionId: string
     try {
+      // Hat requirements are independent of preview availability. Never send
+      // a start that silently omits them while either read is still pending.
+      const defaults = context.defaults ?? await sessionDefaults(client, current!.hat_id, agentName)
+      const requested = requestFor({ ...context, defaults }, picks)
+      if (requested === null) throw new Error('Choose an available session setting before starting.')
+      launchConfig = requested
+      if (!sameLogin()) return
+      const request: StartSessionRequest = { host_id: hostId, agent: agentName, cwd: current!.canonical, ...launchConfig }
       sessionId = (await client.request<StartSessionResponse>('POST', '/api/sessions', request)).session_id
     } catch (err) {
       if (!sameLogin()) return
@@ -350,14 +354,14 @@ export default function NewSession() {
     {
       // A default start has no requested configuration to verify; still check
       // the actual hat and successful attachment before releasing its prompt.
-      const verifyConfig = context.catalog !== null && !optOut
-      const confirmation = await confirmStart(client, sessionId, current!.hat_id, config, 30_000, verifyConfig)
+      const verifyConfig = context.catalog !== null || Object.keys(flatConfig(launchConfig)).length > 0
+      const confirmation = await confirmStart(client, sessionId, current!.hat_id, launchConfig, 30_000, verifyConfig)
       if (!sameLogin()) return
       if (!liveRef.current) { retainClosedStart(sessionId); return }
       if (confirmation !== 'confirmed') {
         const code = !verifyConfig && confirmation === 'config_unconfirmed' ? 'start_unconfirmed' : confirmation
         keepDraft(sessionId, prompt)
-        if (code === 'config_unconfirmed') rememberConfigurationReview(sessionId, context.catalog, config!)
+        if (code === 'config_unconfirmed') rememberConfigurationReview(sessionId, context.catalog, launchConfig)
         clearLauncherDraft(draftOwner)
         openSession(sessionHref(sessionId, { kind: 'prompt_failed', code }))
         return
@@ -546,7 +550,7 @@ export default function NewSession() {
               <HatPreview resolved={resolved} hatName={hatName} />
             </div>
 
-            {current && <LaunchConfig context={context} picks={picks} onPicks={setPicks} optOut={optOut} onOptOut={setOptOut} retry={() => setGeneration(g => g + 1)} expanded={expanded} onExpanded={setExpanded} />}
+            {current && <LaunchConfig context={context} picks={picks} onPicks={setPicks} expanded={expanded} onExpanded={setExpanded} />}
 
           </>
         )}

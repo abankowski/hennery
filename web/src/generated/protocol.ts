@@ -123,15 +123,24 @@ export type SecurityClassification = { known: boolean, axes: { [key in string]: 
 
 export type HostCatalog = { agent: string,
 /**
- * Opaque digest of the configured adapter command/environment and catalog.
+ * Opaque digest of the configured adapter command/environment and security profile.
  */
-adapter_revision: string, config_options: unknown[], defaults: SessionConfig, security: SecurityClassification, freshness: CatalogFreshness,
+adapter_revision: string, config_options: unknown[],
+/**
+ * Adapter values before hennery switches. Empty when no baseline is known.
+ */
+defaults: SessionConfig, security: SecurityClassification, freshness: CatalogFreshness,
 /**
  * Collector observation time (Unix seconds), absent for a live host reply.
  */
 saved_at?: number, };
 
-export type CatalogIdentity = { adapter_revision: string, security: SecurityClassification, };
+export type CatalogIdentity = { adapter_revision: string, security: SecurityClassification,
+/**
+ * Only an operator's new attachment carries session/new's pre-switch values.
+ * Resume, restart and delegated attachments must leave this absent.
+ */
+agent_defaults?: SessionConfig, };
 
 /**
  * Host-owned adapter identity for cross-runtime permission-mode inheritance.

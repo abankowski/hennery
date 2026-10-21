@@ -3166,13 +3166,18 @@ impl Store {
             "DELETE FROM session_catalog WHERE session_id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
         )?;
-        // Invalidate every retained revision in this exact preview scope,
-        // including Refresh snapshots, and copies this session supplied before
-        // a hat reassignment. Do this before scrubbing its scope below.
+        // A later attachment can own the options while retaining an earlier
+        // session's agent baseline. Forget only that baseline, not its options.
         tx.execute(
-            "DELETE FROM runtime_catalog WHERE owner_id = ?1 AND
-             ((host_id = ?2 AND hat_id = ?3 AND cwd = ?4 AND agent = ?5) OR source_session_id = ?6)",
-            params![self.owner, host_id, hat_id, cwd, agent, session_id],
+            "UPDATE runtime_catalog SET catalog=json_set(catalog,'$.defaults',json_object()),defaults_source_session_id=NULL
+             WHERE owner_id = ?1 AND defaults_source_session_id=?2 AND source_session_id<>?2",
+            params![self.owner, session_id],
+        )?;
+        // Includes previews supplied before a hat reassignment, without
+        // touching a newer preview from another session or an explicit Refresh.
+        tx.execute(
+            "DELETE FROM runtime_catalog WHERE owner_id = ?1 AND source_session_id=?2",
+            params![self.owner, session_id],
         )?;
         tx.execute(
             "DELETE FROM turns WHERE session_id = ?1 AND owner_id = ?2",

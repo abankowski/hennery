@@ -130,7 +130,7 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     await form.getByRole('textbox', { name: 'First prompt optional', exact: true }).fill('Show delivery.')
     // This delivery/session fixture reports no settings catalog.
     await form.getByRole('button', { name: 'Session settings', exact: true }).click()
-    await expect(page.getByText('Agent defaults. No saved or chosen settings will be sent.', { exact: true })).toBeVisible()
+    await expect(page.getByText('Agent defaults are unknown. Hat overrides and your choices will still be requested and checked after starting.', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
     // Reading a missing preview starts no disposable adapter. Count every
     // actual launch, including empty delivery for other hats below.
@@ -173,7 +173,7 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toHaveCount(0)
     // This delivery/session fixture reports no settings catalog.
     await form.getByRole('button', { name: 'Session settings', exact: true }).click()
-    await expect(page.getByText('Agent defaults. No saved or chosen settings will be sent.', { exact: true })).toBeVisible()
+    await expect(page.getByText('Agent defaults are unknown. Hat overrides and your choices will still be requested and checked after starting.', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
     await form.getByRole('button', { name: 'Start session', exact: true }).click()
     await expect(page).toHaveURL(/\/sessions\/[^/?#]+$/, { timeout: 45_000 })

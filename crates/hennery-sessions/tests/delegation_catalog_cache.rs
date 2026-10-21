@@ -312,6 +312,15 @@ fn persistent_catalog_survives_restart_and_never_authorizes_delegation() {
         "pin",
         "latest observation wins even when an older revision returns in the same second"
     );
+    let conn = rusqlite::Connection::open(world._dir.path().join("hennery.db")).unwrap();
+    let revisions: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM runtime_catalog WHERE agent='claude' AND cwd='/project'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(revisions, 1, "obsolete adapter revisions must be pruned on insert");
 }
 
 #[test]
@@ -794,6 +803,7 @@ fn review_started(options: Vec<serde_json::Value>, identity: bool) -> hennery_pr
             catalog_identity: identity.then(|| {
                 Box::new(CatalogIdentity {
                     adapter_revision: "pin".into(),
+                    agent_defaults: None,
                     security: SecurityClassification {
                         known: false,
                         axes: Default::default(),
@@ -803,6 +813,130 @@ fn review_started(options: Vec<serde_json::Value>, identity: bool) -> hennery_pr
             ..Default::default()
         },
     }
+}
+
+#[test]
+fn session_without_pre_switch_values_keeps_baseline_unknown_or_preserves_refresh() {
+    let world = World::new();
+    world
+        .state
+        .store
+        .create_session("session", "host", "claude", "/project", &world.hat, None)
+        .unwrap();
+    let option = serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"},{"value":"large"}]});
+    world
+        .state
+        .store
+        .ingest("session", 1, &review_started(vec![option.clone()], true))
+        .unwrap();
+    let unknown = world
+        .state
+        .store
+        .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+        .unwrap();
+    assert_eq!(
+        unknown.defaults,
+        SessionConfig::default(),
+        "current session settings are not a baseline"
+    );
+    let baseline = HostCatalog {
+        config_options: vec![option.clone()],
+        defaults: SessionConfig {
+            model: Some("large".into()),
+            ..Default::default()
+        },
+        ..catalog()
+    };
+    world
+        .state
+        .store
+        .save_runtime_catalog("host", &world.hat, "/project", &baseline)
+        .unwrap();
+    world
+        .state
+        .store
+        .create_session("later-attach", "host", "claude", "/project", &world.hat, None)
+        .unwrap();
+    world
+        .state
+        .store
+        .ingest("later-attach", 1, &review_started(vec![option], true))
+        .unwrap();
+    let retained = world
+        .state
+        .store
+        .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+        .unwrap();
+    assert_eq!(
+        retained.defaults, baseline.defaults,
+        "resume/restart must preserve the known baseline"
+    );
+    let mut changed = review_started(retained.config_options, true);
+    let hennery_proto::frames::SessionBody::SessionStarted { indexed, .. } = &mut changed else {
+        unreachable!()
+    };
+    indexed.catalog_identity.as_mut().unwrap().adapter_revision = "new-pin".into();
+    world
+        .state
+        .store
+        .create_session("changed-revision", "host", "claude", "/project", &world.hat, None)
+        .unwrap();
+    world.state.store.ingest("changed-revision", 1, &changed).unwrap();
+    let changed = world
+        .state
+        .store
+        .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+        .unwrap();
+    assert!(
+        changed.defaults.is_empty(),
+        "a changed revision cannot borrow the previous baseline"
+    );
+}
+
+#[test]
+fn deleting_baseline_source_preserves_another_sessions_options_but_forgets_its_defaults() {
+    let world = World::new();
+    let option = serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"},{"value":"large"}]});
+    let mut started = review_started(vec![option.clone()], true);
+    let hennery_proto::frames::SessionBody::SessionStarted { indexed, .. } = &mut started else {
+        unreachable!()
+    };
+    indexed.catalog_identity = Some(Box::new(
+        serde_json::from_value(serde_json::json!({
+            "adapter_revision":"pin", "security":{"known":false,"axes":{}},
+            "agent_defaults":{"model":"large"}
+        }))
+        .unwrap(),
+    ));
+    for id in ["baseline-source", "options-source"] {
+        world
+            .state
+            .store
+            .create_session(id, "host", "claude", "/project", &world.hat, None)
+            .unwrap();
+    }
+    world.state.store.ingest("baseline-source", 1, &started).unwrap();
+    world
+        .state
+        .store
+        .ingest("options-source", 1, &review_started(vec![option], true))
+        .unwrap();
+    let before = world
+        .state
+        .store
+        .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+        .unwrap();
+    assert_eq!(before.defaults.model.as_deref(), Some("large"));
+    world.state.store.close_now("baseline-source").unwrap();
+    world.state.store.delete_session("baseline-source", None).unwrap();
+    let after = world
+        .state
+        .store
+        .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+        .unwrap();
+    assert_eq!(after.freshness, CatalogFreshness::Cached);
+    assert_eq!(after.config_options, before.config_options);
+    assert!(after.defaults.is_empty(), "deleted source's baseline must be forgotten");
 }
 
 #[test]
@@ -932,7 +1066,7 @@ fn review_delete_must_remove_last_sessions_derived_catalog() {
 }
 
 #[test]
-fn deleting_a_session_invalidates_all_preview_revisions_only_in_its_scope() {
+fn deleting_a_session_preserves_independent_refresh_and_other_scopes() {
     let world = World::new();
     let hosts = Hosts::open(&world._dir.path().join("hennery.db")).unwrap();
     hosts
@@ -996,16 +1130,15 @@ fn deleting_a_session_invalidates_all_preview_revisions_only_in_its_scope() {
         rows,
         vec![
             ("/other".into(), "claude".into(), "new-pin".into()),
-            ("/other".into(), "claude".into(), "old-pin".into()),
+            ("/project".into(), "claude".into(), "new-pin".into()),
             ("/project".into(), "codex".into(), "new-pin".into()),
-            ("/project".into(), "codex".into(), "old-pin".into())
         ],
-        "no retained revision may survive; other scopes must remain"
+        "all independent Refresh rows remain, with only their latest revision"
     );
     assert_eq!(
         db.query_row("SELECT count(*) FROM runtime_catalog", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        8,
+        5,
         "other host and hat snapshots must remain too"
     );
 }

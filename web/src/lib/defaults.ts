@@ -26,10 +26,10 @@ export function supports(option: ConfigOption, value: ConfigValue): boolean {
 export function usableCatalog(catalog: HostCatalog | null): catalog is HostCatalog {
   if (catalog === null || !['fresh', 'cached'].includes(catalog.freshness) || catalog.adapter_revision === '') return false
   const fields = fieldsOf(catalog), defaults = flatConfig(catalog.defaults)
-  const required = new Set([...Object.keys(catalog.security.axes), ...['model', 'mode'].filter(key => Object.hasOwn(defaults, key))])
+  const required = new Set(['model', 'mode'].filter(key => Object.hasOwn(defaults, key)))
   return fields.length > 0 && [...required].every(key => {
     const option = fields.find(field => field.key === key)?.option
-    return Object.hasOwn(defaults, key) && option !== undefined && supports(option, defaults[key]) && option.current === defaults[key]
+    return option !== undefined && supports(option, defaults[key])
   })
 }
 export function securityWarnings(catalog: HostCatalog, config: SessionConfig): string[] {
@@ -60,8 +60,9 @@ export function resolveDefaults(catalog: HostCatalog, stored: SessionConfig, pic
     if (value === undefined || value === null) return
     const option = offered.get(key)
     if (!option || !supports(option, value)) {
-      notices.push(`${explicit ? 'Chosen' : 'Saved'} ${option?.name ?? key} “${String(value)}” is unavailable on this host; ${explicit ? 'choose another value before starting.' : `using ${String(flat[key] ?? 'the agent default')}.`}`)
+      notices.push(`${explicit ? 'Chosen' : 'Saved'} ${option?.name ?? key} “${String(value)}” is unavailable on this host; ${explicit ? 'choose another value before starting.' : 'it will still be requested and must be confirmed before the first prompt.'}`)
       if (explicit) blocked = true
+      else { flat[key] = value; sources[key] = 'Hat override' }
       return
     }
     flat[key] = value

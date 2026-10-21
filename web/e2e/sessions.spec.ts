@@ -145,7 +145,7 @@ for (const width of [1280, 390]) {
       await form.getByRole('textbox', { name: /^First prompt/ }).fill(PROMPT)
       // This delivery/session fixture reports no settings catalog.
       await form.getByRole('button', { name: 'Session settings', exact: true }).click()
-      await expect(page.getByText('Agent defaults. No saved or chosen settings will be sent.', { exact: true })).toBeVisible()
+      await expect(page.getByText('Agent defaults are unknown. Hat overrides and your choices will still be requested and checked after starting.', { exact: true })).toBeVisible()
       await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
       await form.getByRole('button', { name: 'Start session', exact: true }).click()
       // The start waits for the host to start the agent: on a loaded runner,

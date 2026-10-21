@@ -15,11 +15,11 @@ describe('catalog-aware defaults', () => {
     expect(result.config.axes?.fast).toBe(false)
     expect(result.sources.fast).toBe(source === 'stored' ? 'Hat override' : 'Your choice')
   })
-  it('omits unavailable stored values visibly without changing the stored record', () => {
+  it('preserves unavailable stored requirements visibly without changing the stored record', () => {
     const saved = { model: 'removed', axes: { effort: 'medium' } }
     const result = resolveDefaults(catalog, saved)
-    expect(result.config.model).toBe('opus')
-    expect(result.config.axes?.effort).toBe('low')
+    expect(result.config.model).toBe('removed')
+    expect(result.config.axes?.effort).toBe('medium')
     expect(result.notices).toHaveLength(2)
     expect(result.blocked).toBe(false)
     expect(saved.model).toBe('removed')
@@ -61,11 +61,11 @@ it('preserves boolean false for opaque axis ids, including JavaScript object nam
   expect(Object.hasOwn(result.config.axes!, '__proto__')).toBe(true)
   expect(result.config.axes!['__proto__']).toBe(false)
 })
-it('requires read-back of profile security defaults even when the catalog has other usable settings', async () => {
+it('accepts unknown baselines and separates defaults from the session current values', async () => {
   const { usableCatalog } = await import('./defaults')
   expect(usableCatalog(catalog)).toBe(true)
-  expect(usableCatalog({ ...catalog, defaults: { model: 'opus' } })).toBe(false)
-  expect(usableCatalog({ ...catalog, defaults: { ...catalog.defaults, axes: { sandbox: false } }, security: { known: true, axes: { sandbox: [false] } } })).toBe(false)
+  expect(usableCatalog({ ...catalog, defaults: {} })).toBe(true)
+  expect(usableCatalog({ ...catalog, defaults: { ...catalog.defaults, axes: { sandbox: false } }, security: { known: true, axes: { sandbox: [false] } } })).toBe(true)
   const off = { ...catalog, config_options: [{ id: 'sandbox', name: 'Sandbox', type: 'boolean', currentValue: false }], defaults: { axes: { sandbox: false } }, security: { known: true, axes: { sandbox: [false] } } }
   expect(usableCatalog(off)).toBe(true)
 })

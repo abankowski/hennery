@@ -458,7 +458,7 @@ impl crate::store::Store {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         if same_hat_in(&tx, self.owner_id(), host, hat, cwd)? {
-            save_catalog_in(&tx, self.owner_id(), host, hat, cwd, catalog, None)?;
+            save_catalog_in(&tx, self.owner_id(), host, hat, cwd, catalog, CatalogSources::default())?;
         }
         tx.commit()?;
         Ok(())
@@ -481,6 +481,12 @@ impl crate::store::Store {
     }
 }
 
+#[derive(Default)]
+struct CatalogSources<'a> {
+    options: Option<&'a str>,
+    defaults: Option<&'a str>,
+}
+
 fn save_catalog_in(
     tx: &Transaction<'_>,
     owner: &str,
@@ -488,7 +494,7 @@ fn save_catalog_in(
     hat: &str,
     cwd: &str,
     catalog: &HostCatalog,
-    source_session: Option<&str>,
+    sources: CatalogSources<'_>,
 ) -> Result<()> {
     if catalog.freshness != CatalogFreshness::Fresh
         || catalog.adapter_revision.is_empty()
@@ -504,13 +510,13 @@ fn save_catalog_in(
     if raw.len() > 256 * 1024 || catalog.adapter_revision.len() > 256 || catalog.config_options.len() > 128 {
         return Ok(());
     }
-    tx.execute(
-        "INSERT INTO runtime_catalog(owner_id,host_id,hat_id,cwd,agent,adapter_revision,catalog,saved_at,observation,source_session_id)
-         SELECT ?1,?2,?3,?4,?5,?6,?7,?8,(SELECT COALESCE(MAX(observation),0)+1 FROM runtime_catalog WHERE owner_id = ?1),?9
+    let written = tx.execute(
+        "INSERT INTO runtime_catalog(owner_id,host_id,hat_id,cwd,agent,adapter_revision,catalog,saved_at,observation,source_session_id,defaults_source_session_id)
+         SELECT ?1,?2,?3,?4,?5,?6,?7,?8,(SELECT COALESCE(MAX(observation),0)+1 FROM runtime_catalog WHERE owner_id = ?1),?9,?10
          WHERE EXISTS(SELECT 1 FROM hosts WHERE owner_id = ?1 AND id=?2 AND revoked_at IS NULL)
          AND NOT EXISTS(SELECT 1 FROM purged_hats WHERE owner_id = ?1 AND hat_id=?3)
          ON CONFLICT(owner_id,host_id,hat_id,cwd,agent,adapter_revision)
-         DO UPDATE SET catalog=excluded.catalog,saved_at=excluded.saved_at,observation=excluded.observation,source_session_id=excluded.source_session_id",
+         DO UPDATE SET catalog=excluded.catalog,saved_at=excluded.saved_at,observation=excluded.observation,source_session_id=excluded.source_session_id,defaults_source_session_id=excluded.defaults_source_session_id",
         params![
             owner,
             host,
@@ -520,9 +526,16 @@ fn save_catalog_in(
             catalog.adapter_revision,
             raw,
             hennery_kernel::secret::unix_now(),
-            source_session
+            sources.options,
+            sources.defaults
         ],
     )?;
+    if written > 0 {
+        tx.execute(
+            "DELETE FROM runtime_catalog WHERE owner_id = ?1 AND host_id=?2 AND hat_id=?3 AND cwd=?4 AND agent=?5 AND adapter_revision<>?6",
+            params![owner, host, hat, cwd, catalog.agent, catalog.adapter_revision],
+        )?;
+    }
     Ok(())
 }
 
@@ -542,8 +555,22 @@ pub(crate) fn save_session_catalog_in(
         .optional()?;
     if let Some((host, hat, cwd, agent)) = scope
         && same_hat_in(tx, owner, &host, &hat, &cwd)?
-        && let Some(defaults) = indexed.current_config()
+        && indexed.current_config().is_some()
     {
+        // The session snapshot describes current choices, never agent defaults.
+        // Only a pre-switch session/new snapshot or Refresh can supply those.
+        let previous: Option<(String, Option<String>)> = tx.query_row(
+            "SELECT catalog,defaults_source_session_id FROM runtime_catalog WHERE owner_id = ?1 AND host_id=?2 AND hat_id=?3 AND cwd=?4 AND agent=?5 AND adapter_revision=?6",
+            params![owner, host, hat, cwd, agent, identity.adapter_revision],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        let (defaults, defaults_source) = if let Some(defaults) = &identity.agent_defaults {
+            (defaults.clone(), Some(session.to_owned()))
+        } else if let Some((raw, source)) = previous {
+            (serde_json::from_str::<HostCatalog>(&raw)?.defaults, source)
+        } else {
+            (SessionConfig::default(), None)
+        };
         save_catalog_in(
             tx,
             owner,
@@ -559,7 +586,10 @@ pub(crate) fn save_session_catalog_in(
                 freshness: CatalogFreshness::Fresh,
                 saved_at: None,
             },
-            Some(session),
+            CatalogSources {
+                options: Some(session),
+                defaults: defaults_source.as_deref(),
+            },
         )?;
     }
     Ok(())
