@@ -4,16 +4,18 @@
 //
 // One host per mount: the screen remounts it (`key={hostId}`) when the host
 // changes, which resets the query, the list and the browser at once.
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type Ref } from 'react'
 import { messageOf } from '../api/errors'
 import { useClient } from '../app-client'
 import type { DirectoryListing } from '../generated/protocol'
 import { childPath, filterProjects, isLiteralPath, type ProjectEntry } from '../lib/projects'
-import { basename, relTime } from '../lib/time'
+import { relTime } from '../lib/time'
 import { Icon } from '../lib/ui'
 import { Icon as Glyph } from './ui'
 
 interface Props {
+  ref?: Ref<ProjectPickerHandle>
+  onBrowsePath?: (path: string | null) => void
   inline?: boolean
   recentHat?: string
   hostId: string
@@ -27,6 +29,11 @@ interface Props {
   onChange: (path: string) => void
   /** The field's accessible name comes from this element. */
   labelledBy: string
+}
+
+export interface ProjectPickerHandle {
+  isBrowsing: () => boolean
+  chooseShownDirectory: () => string | null
 }
 
 type Browse =
@@ -45,8 +52,11 @@ function completionPath(query: string, home?: string): { parent: string; prefix:
   return { parent: expanded.slice(0, slash) || '/', prefix: expanded.slice(slash + 1), expanded }
 }
 
-export default function ProjectPicker({ hostId, entries, browseRoot, initialText = '', onChange, labelledBy, inline = false, recentHat }: Props) {
+export default function ProjectPicker({ ref, onBrowsePath, hostId, entries, browseRoot, initialText = '', onChange, labelledBy, inline = false, recentHat }: Props) {
   const client = useClient()
+  const picker = useRef<HTMLDivElement>(null)
+  const input = useRef<HTMLInputElement>(null), useButton = useRef<HTMLButtonElement>(null)
+  const restoringFocus = useRef(false), focusListing = useRef(false), lastPointer = useRef('')
   // From React, never the host's id: an id reference holds no spaces.
   const listId = useId()
   const [query, setQuery] = useState(initialText)
@@ -55,6 +65,26 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
   const [browse, setBrowse] = useState<Browse>({ state: 'closed' })
   const [completion, setCompletion] = useState<{ query: string; listing?: DirectoryListing; error?: string } | null>(null)
   const browsing = browse.state !== 'closed'
+  useEffect(() => { onBrowsePath?.(browse.state === 'shown' ? browse.listing.path : null) }, [browse, onBrowsePath])
+  useImperativeHandle(ref, () => ({
+    isBrowsing: () => browsing,
+    chooseShownDirectory: () => {
+      if (browse.state !== 'shown') return null
+      pick(browse.listing.path, browse.listing.path, false)
+      return browse.listing.path
+    },
+  }))
+  function focusInput() {
+    restoringFocus.current = true
+    input.current?.focus()
+    restoringFocus.current = false
+  }
+  useLayoutEffect(() => {
+    if (!focusListing.current || browse.state === 'loading') return
+    focusListing.current = false
+    if (browse.state === 'shown') useButton.current?.focus()
+    else if (browse.state === 'failed') focusInput()
+  }, [browse])
   useEffect(() => {
     const path = completionPath(query, browseRoot)
     if (!path || !open || browsing) return
@@ -98,12 +128,75 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
     }
   }, [client, hostId, browsePath])
 
-  function pick(path: string, label: string) {
+  function pick(path: string, label: string, restoreFocus = true) {
     setQuery(label)
     setOpen(false)
     setActive(-1)
     setBrowse({ state: 'closed' })
+    if (restoreFocus) focusInput()
     onChange(path)
+  }
+
+  // Mouse choices precede focus changes. Touch/pen choices wait for a click:
+  // a pan produces pointerdown and pointercancel, but no click.
+  useEffect(() => {
+    if (!browsing) return
+    function outside(event: MouseEvent) {
+      if (!(event.target instanceof Element) || picker.current?.contains(event.target)) return
+      let target: Element | null = event.target
+      while (target && !(target instanceof HTMLElement)) target = target.parentElement
+      if (!(target instanceof HTMLElement)) return
+      if (event.button !== 0 || (target.clientWidth > 0 && event.offsetX >= target.clientWidth) || (target.clientHeight > 0 && event.offsetY >= target.clientHeight)) return
+      // The form commits the browse choice as part of its pending Start.
+      const submit = target.closest('button[type="submit"],input[type="submit"]')
+      if (submit && submit.closest('form') === picker.current?.closest('form')) return
+      if (browse.state === 'shown') {
+        pick(browse.listing.path, browse.listing.path, false)
+      } else {
+        setBrowse({ state: 'closed' })
+        setOpen(false)
+      }
+    }
+    function pointerDown(event: PointerEvent) {
+      lastPointer.current = event.pointerType
+      if (event.pointerType !== 'touch' && event.pointerType !== 'pen') outside(event)
+    }
+    function click(event: MouseEvent) {
+      const pointer = lastPointer.current
+      lastPointer.current = ''
+      if (pointer === 'touch' || pointer === 'pen') outside(event)
+    }
+    function cancel() { lastPointer.current = '' }
+    document.addEventListener('pointerdown', pointerDown)
+    document.addEventListener('pointercancel', cancel)
+    document.addEventListener('click', click, true)
+    return () => {
+      document.removeEventListener('pointerdown', pointerDown)
+      document.removeEventListener('pointercancel', cancel)
+      document.removeEventListener('click', click, true)
+    }
+  })
+
+  function onBrowseKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) {
+      if (e.key === 'Escape') e.stopPropagation()
+      return
+    }
+    if (e.defaultPrevented) return
+    if (!browsing) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      setBrowse({ state: 'closed' })
+      setOpen(false)
+      focusInput()
+    } else if (e.key === 'Enter') {
+      if (e.metaKey || e.ctrlKey) return
+      // Row buttons retain native Enter activation, including the parent row.
+      if (e.target instanceof Element && e.target.closest('[data-browse-directory]')) return
+      e.preventDefault()
+      if (browse.state === 'shown') pick(browse.listing.path, browse.listing.path)
+    }
   }
 
   function onInput(next: string) {
@@ -115,6 +208,12 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) {
+      if (e.key === 'Escape') e.stopPropagation()
+      return
+    }
+    if (e.key === 'Enter' && e.repeat) { e.preventDefault(); return }
+    if (browsing) return
     if (e.key === 'Escape') {
       setOpen(false)
       return
@@ -142,10 +241,11 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
   // The option arrow keys moved to, told to a screen reader while it shows.
   const activeId = showList && active >= 0 && active < matches.length ? optionId(active) : undefined
   useEffect(() => { if (activeId) document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' }) }, [activeId])
-  const go = (path: string) => setBrowse({ state: 'loading', path })
+  const go = (path: string, focusChoice = false) => { focusListing.current = focusChoice; setBrowse({ state: 'loading', path }) }
 
   return (
-    <div className={'picker' + (inline ? ' picker-inline' : '')}>
+    <div ref={picker} onKeyDown={onBrowseKeyDown} className={'picker' + (inline ? ' picker-inline' : '')}>
+      {browsing && <span className="picker-announcement" role="status" aria-live="polite">{browse.state === 'shown' ? browse.listing.path : ''}</span>}
       <div className="picker-row">
         <div className="picker-anchor">
           <div className="path-input">
@@ -153,9 +253,10 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
               <Icon.Folder size={15} />
             </span>
             <input
+              ref={input}
               value={query}
               onChange={(e) => onInput(e.target.value)}
-              onFocus={() => setOpen(true)}
+              onFocus={() => { if (!restoringFocus.current) { focusListing.current = false; setOpen(true) } }}
               onBlur={() => window.setTimeout(() => setOpen(false), 120)}
               onKeyDown={onKeyDown}
               spellCheck={false}
@@ -212,11 +313,20 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
               )}
               {browse.state === 'shown' && (
                 <>
-                  <div className="picker-path">
-                    <bdi>{browse.listing.path}</bdi>
+                  <div className="picker-browse-header">
+                    <bdi id={`${listId}-path`} className="picker-path" title={browse.listing.path}>{browse.listing.path}</bdi>
+                    <button
+                      ref={useButton}
+                      aria-describedby={`${listId}-path`}
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => pick(browse.listing.path, browse.listing.path)}
+                    >
+                      Use this directory
+                    </button>
                   </div>
                   {browse.listing.parent !== undefined && (
-                    <button type="button" className="picker-item" onClick={() => go(browse.listing.parent!)}>
+                    <button type="button" data-browse-directory className="picker-item" onClick={() => go(browse.listing.parent!, true)}>
                       .. (up)
                     </button>
                   )}
@@ -224,22 +334,16 @@ export default function ProjectPicker({ hostId, entries, browseRoot, initialText
                     <button
                       key={d.name}
                       type="button"
+                      data-browse-directory
                       className={'picker-item' + (d.git ? ' git' : '')}
                       // Every row descends, a repository too: a worktree can
                       // live inside one. Choosing is "Use this directory".
-                      onClick={() => go(childPath(browse.listing.path, d.name))}
+                      onClick={() => go(childPath(browse.listing.path, d.name), true)}
                     >
                       <bdi>{d.name}</bdi>
                     </button>
                   ))}
                   {browse.listing.truncated && <div className="picker-path">Not every directory is listed.</div>}
-                  <button
-                    type="button"
-                    className="picker-item"
-                    onClick={() => pick(browse.listing.path, basename(browse.listing.path))}
-                  >
-                    Use this directory
-                  </button>
                 </>
               )}
             </div>

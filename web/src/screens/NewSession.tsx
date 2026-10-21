@@ -24,7 +24,7 @@ import type { Picks } from '../lib/defaults'
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ApiFailure, messageOf } from '../api/errors'
 import { useClient } from '../app-client'
-import ProjectPicker from '../components/ProjectPicker'
+import ProjectPicker, { type ProjectPickerHandle } from '../components/ProjectPicker'
 import type {
   HatItem,
   HatResolution,
@@ -58,7 +58,7 @@ type Resolved =
   | { state: 'idle' }
   | { state: 'pending' }
   | { state: 'ok'; resolution: HatResolution; hostId: string; path: string }
-  | { state: 'failed'; error: string }
+  | { state: 'failed'; error: string; hostId: string; path: string }
 
 export default function NewSession() {
   const client = useClient()
@@ -99,6 +99,41 @@ export default function NewSession() {
   const [sameLogin] = useState(() => launcherLogin(() => liveRef.current))
   useEffect(() => { liveRef.current = true; return () => { liveRef.current = false } }, [])
   const [error, setError] = useState<string | null>(null)
+  const picker = useRef<ProjectPickerHandle>(null)
+  const [browsePath, setBrowsePath] = useState<string | null>(null)
+  type PendingStart = { hostId: string; path: string; agent: string }
+  const [pendingStart, setPendingStart] = useState<PendingStart | null>(null)
+  const pendingStartRef = useRef<PendingStart | null>(null)
+  const [startHeight, setStartHeight] = useState<number>()
+  const [startCancelled, setStartCancelled] = useState(false)
+  function clearPendingStart() { pendingStartRef.current = null; setPendingStart(null); setStartHeight(undefined) }
+  function cancelPendingStart() {
+    if (pendingStartRef.current === null) return
+    clearPendingStart()
+    setStartCancelled(true)
+  }
+  useEffect(() => {
+    if (!pendingStart) return
+    const cancel = (event: Event) => {
+      const submit = event.target instanceof Element ? event.target.closest('button[type="submit"],input[type="submit"]') : null
+      if (submit?.closest('form') === form.current && (event.type === 'pointerdown' || event.type === 'click' || (event instanceof KeyboardEvent && ['Enter', ' '].includes(event.key)))) return
+      if (event instanceof KeyboardEvent) {
+        if (event.repeat || ['Control', 'Meta', 'Shift', 'Alt', 'AltGraph'].includes(event.key)) return
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) return
+      }
+      cancelPendingStart()
+    }
+    // Include controls outside the form, especially the dialog's close button.
+    const events = ['pointerdown', 'keydown', 'input', 'click'] as const
+    for (const event of events) document.addEventListener(event, cancel, true)
+    // A held pixel height must not outgrow the frame after rotation or resize.
+    const releaseHeight = () => setStartHeight(undefined)
+    window.addEventListener('resize', releaseHeight)
+    return () => {
+      for (const event of events) document.removeEventListener(event, cancel, true)
+      window.removeEventListener('resize', releaseHeight)
+    }
+  }, [pendingStart])
 
   // The hosts, once, and the prefilled (or first connected) host.
   useEffect(() => {
@@ -207,7 +242,7 @@ export default function NewSession() {
         .request<HatResolution>('POST', '/api/hats/resolve', { host_id: hostId, path: cwd.trim() }, { signal: abort.signal })
         .then(
           (resolution) => live && setResolved({ state: 'ok', resolution, hostId, path: cwd }),
-          (err) => live && setResolved({ state: 'failed', error: startRefusal(err) }),
+          (err) => live && setResolved({ state: 'failed', error: startRefusal(err), hostId, path: cwd }),
         )
     }, RESOLVE_DEBOUNCE_MS)
     return () => {
@@ -256,6 +291,8 @@ export default function NewSession() {
   useEffect(() => { setOptOut(false) }, [context.key])
   function chooseAgent(next: string) { if (next !== agent) { setAgent(next); setPicks({}); setNotice('Agent changed. Session setting choices were reset.') } }
   const canStart = !busy && host?.connected === true && agentName !== '' && current?.exists === true && current.is_dir && config !== null
+  const canRequestStart = canStart || pendingStart !== null || (!busy && host?.connected === true && agentName !== '' && browsePath !== null)
+  const form = useRef<HTMLFormElement>(null)
   function retainClosedStart(sessionId: string) {
     if (!sameLogin()) return
     keepDraft(sessionId, prompt)
@@ -263,13 +300,31 @@ export default function NewSession() {
   }
   function openSession(href: string) { if (sameLogin() && liveRef.current) navigate(href) }
 
-  async function start(e: FormEvent) {
+  function start(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    if (busyRef.current || pendingStartRef.current !== null || !sameLogin()) return
+    setStartCancelled(false)
+    if (picker.current?.isBrowsing()) {
+      const height = e.currentTarget.getBoundingClientRect().height
+      const path = picker.current.chooseShownDirectory()
+      if (path === null || host?.connected !== true || !agentName) return
+      if (path !== cwd) setOptOut(false)
+      const pending = { hostId, path, agent: agentName }
+      setStartHeight(height)
+      pendingStartRef.current = pending
+      setPendingStart(pending)
+      e.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus()
+      return
+    }
+    void launch(e.currentTarget)
+  }
+
+  async function launch(form: HTMLFormElement) {
     if (!canStart || busyRef.current || !sameLogin()) return
     busyRef.current = true
     setBusy(true)
     setExpanded(false)
-    e.currentTarget.closest<HTMLElement>('[role="dialog"]')?.focus()
+    form.closest<HTMLElement>('[role="dialog"]')?.focus()
     setError(null)
     const request: StartSessionRequest = { host_id: hostId, agent: agentName, cwd: current!.canonical, ...config }
     let sessionId: string
@@ -324,10 +379,26 @@ export default function NewSession() {
     openSession(sessionHref(sessionId))
   }
 
+  useEffect(() => {
+    if (!pendingStart || pendingStartRef.current !== pendingStart) return
+    if (hostId !== pendingStart.hostId || cwd !== pendingStart.path || agentName !== pendingStart.agent || host?.connected !== true) {
+      cancelPendingStart()
+      return
+    }
+    if ((resolved.state === 'failed' && resolved.hostId === hostId && resolved.path === cwd) || (current && (!current.exists || !current.is_dir || ((context.state === 'unavailable' || context.state === 'ready') && config === null)))) {
+      cancelPendingStart()
+      return
+    }
+    if (canStart && form.current) {
+      clearPendingStart()
+      void launch(form.current)
+    }
+  })
+
   const options = choices ? agentOptions(choices.agents) : []
 
   return (
-    <form className="new-session hn-accent-scope" style={accent} onSubmit={start} aria-busy={busy} aria-labelledby="new-session-title" onKeyDown={e => { if (!e.defaultPrevented && !e.repeat && !e.altKey && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (canStart) e.currentTarget.requestSubmit() } }}>
+    <form ref={form} className="new-session hn-accent-scope" style={{ ...accent, minHeight: startHeight }} data-start-pending={pendingStart !== null ? '' : undefined} onSubmit={start} aria-busy={busy} aria-labelledby="new-session-title" onChangeCapture={cancelPendingStart} onKeyDown={e => { if (!e.defaultPrevented && !e.repeat && !e.altKey && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); if (canRequestStart) e.currentTarget.requestSubmit() } }}>
       <div className="modal-head">
         <div className="modal-eyebrow">Start a session</div>
         <h1 className="modal-title" id="new-session-title">
@@ -451,6 +522,8 @@ export default function NewSession() {
                 <Icon.Folder size={16} /> Project <span className="hint">type a name, or a path</span>
               </div>
               <ProjectPicker
+                ref={picker}
+                onBrowsePath={setBrowsePath}
                 inline
                 key={hostId}
                 hostId={hostId}
@@ -482,8 +555,10 @@ export default function NewSession() {
             <bdi>{error}</bdi>
           </p>
         )}
+        {pendingStart !== null && <p className="hint" role="status">Preparing session…</p>}
+        {startCancelled && <p className="hint" role="status">Start cancelled. Review your choices, then start again.</p>}
         <div className="spacer" />
-        <button type="submit" className="btn btn-primary" aria-label={busy ? 'Starting…' : 'Start session'} disabled={!canStart}>
+        <button type="submit" className="btn btn-primary" aria-busy={busy || pendingStart !== null} aria-label={busy ? 'Starting…' : 'Start session'} disabled={!canRequestStart}>
           <Icon.Bolt size={16} /> {busy ? 'Starting…' : 'Start session'}
         </button>
       </div>

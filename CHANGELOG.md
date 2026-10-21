@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- New session directory browsing keeps “Use this directory” beside the current
+  path while scrolling. Enter or a click outside chooses the shown directory;
+  Escape closes without choosing. Touch scrolling, scrollbar drags and secondary
+  clicks leave the choice open. Starting while browsing uses the shown directory
+  after resolving its hat; further edits cancel that pending start.
+  Repeated Start presses keep one pending start; cancellation is shown in words.
+
 ## 0.2.1
 
 - Delegation is strictly on or off per hat (#218). On means a child may use any

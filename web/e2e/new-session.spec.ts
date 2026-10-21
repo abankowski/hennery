@@ -18,6 +18,150 @@ async function setup(page: Page, collector: Collector) {
   await page.getByRole('button', { name: 'Skip', exact: true }).click()
   await expect(page).toHaveURL(`${collector.origin}/sessions`)
 }
+
+for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as const) {
+  test(`browse directory selection at ${width}px ${appearance}`, async ({ browser }) => {
+    const collector = await startCollector()
+    const host = testHost(fakeAgent('claude', { config_options: options, chunks: ['Ready.'] }))
+    const context = await browser.newContext({ baseURL: collector.origin, viewport: { width, height: width < 768 ? 844 : 900 }, reducedMotion: 'reduce', colorScheme: appearance })
+    const page = await context.newPage()
+    try {
+      await setup(page, collector)
+      const hostId = await pair(context.request, collector, host, 'Browse host')
+      const project = join(realpathSync(host.dir), 'synthetic-project')
+      const workspace = join(project, 'workspace'), nested = join(workspace, 'nested')
+      mkdirSync(nested, { recursive: true })
+      for (let i = 0; i < 40; i++) mkdirSync(join(workspace, `directory-${String(i).padStart(2, '0')}`))
+      await page.goto(`/new?${new URLSearchParams({ host: hostId, cwd: project })}`)
+      const form = page.getByRole('form', { name: 'New session', exact: true })
+      const field = form.getByRole('combobox', { name: /^Project/ })
+      const browse = form.getByRole('group', { name: 'Browse directories', exact: true })
+      const use = browse.getByRole('button', { name: 'Use this directory', exact: true })
+      const starts: object[] = []
+      page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/api/sessions')) starts.push(request.postDataJSON()) })
+      await form.getByRole('button', { name: 'Browse', exact: true }).click()
+      // A focused row keeps native Enter activation and descends.
+      await browse.getByRole('button', { name: 'workspace', exact: true }).press('Enter')
+      await expect(browse.getByText(workspace, { exact: true })).toBeVisible()
+      // The path is also shown while loading; wait for the actual listing.
+      await expect(use).toBeVisible()
+      await expect(use).toBeFocused()
+      await expect(use).toHaveAccessibleDescription(workspace)
+      await expect(browse.locator('.picker-path')).toHaveCSS('white-space', 'nowrap')
+      expect(await browse.evaluate(element => element.scrollHeight > element.clientHeight && element.scrollTop === 0)).toBe(true)
+      await expect(use).toBeInViewport({ ratio: 1 })
+      if (width < 768) expect((await use.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      if (process.env.PICKER_SCREENSHOTS === '1') {
+        const directory = join(process.cwd(), '../.superpowers/sdd/picker-choose/screenshots')
+        mkdirSync(directory, { recursive: true })
+        await page.evaluate(async () => { await document.fonts.ready })
+        await page.screenshot({ path: join(directory, `browse-${width}-${appearance}.png`), fullPage: true, animations: 'disabled' })
+      }
+      await browse.evaluate(element => { element.scrollTop = element.scrollHeight })
+      await expect(use).toBeInViewport({ ratio: 1 })
+      await page.keyboard.down('Enter')
+      await expect(field).toHaveValue(workspace)
+      await expect(browse).toHaveCount(0)
+      await expect(field).toBeFocused()
+      await expect(form.getByRole('button', { name: 'Start session', exact: true })).toBeEnabled()
+      await page.keyboard.down('Enter')
+      await page.keyboard.up('Enter')
+      expect(starts).toHaveLength(0)
+      await expect(form).toBeVisible()
+      await form.getByRole('button', { name: 'Browse', exact: true }).click()
+      await browse.getByRole('button', { name: 'nested', exact: true }).click()
+      await expect(browse.getByText(nested, { exact: true })).toBeVisible()
+      await form.getByRole('textbox', { name: /^First prompt/ }).click()
+      await expect(field).toHaveValue(nested)
+      await expect(browse).toHaveCount(0)
+      await form.getByRole('button', { name: 'Browse', exact: true }).click()
+      await expect(use).toBeVisible()
+      await field.press('Escape')
+      await expect(browse).toHaveCount(0)
+      await expect(form).toBeVisible()
+      await expect(field).toHaveValue(nested)
+      const launch = join(nested, 'launch-target')
+      mkdirSync(launch)
+      await form.getByRole('button', { name: 'Browse', exact: true }).click()
+      await browse.getByRole('button', { name: 'launch-target', exact: true }).click()
+      await expect(use).toHaveAccessibleDescription(launch)
+      let release = () => {}
+      const held = new Promise<void>(resolve => { release = resolve })
+      await page.route('**/api/hats/resolve', async route => {
+        if (route.request().postDataJSON().path === launch) await held
+        await route.continue()
+      })
+      const startBox = (await form.getByRole('button', { name: 'Start session', exact: true }).boundingBox())!
+      try {
+        if (appearance === 'dark') {
+          const shortcut = width === 1280 ? 'Meta+Enter' : 'Control+Enter'
+          await page.keyboard.press(shortcut)
+          await page.keyboard.press(shortcut)
+        } else await form.getByRole('button', { name: 'Start session', exact: true }).dblclick()
+        await expect(form.getByText('Preparing session…', { exact: true })).toBeVisible()
+        expect((await form.getByRole('button', { name: 'Start session', exact: true }).boundingBox())!.y).toBeCloseTo(startBox.y, 0)
+        expect(starts).toHaveLength(0)
+        const start = form.getByRole('button', { name: 'Start session', exact: true })
+        // Rotation or browser chrome can reduce the viewport during resolution.
+        await page.setViewportSize({ width, height: 460 })
+        await expect.poll(async () => {
+          const frame = page.getByRole('dialog', { name: 'New session', exact: true })
+          const maxHeight = await frame.evaluate(element => parseFloat(getComputedStyle(element).maxHeight))
+          return (await form.boundingBox())!.height <= maxHeight
+        }).toBe(true)
+        await expect(start).toBeInViewport({ ratio: 1 })
+        await expect(start).toHaveAttribute('aria-busy', 'true')
+        await expect(start).toBeEnabled()
+        await expect(start.locator('svg')).toHaveCSS('opacity', '0.6')
+      } finally { release() }
+      await expect(page).toHaveURL(/\/sessions\/[^/?]+$/, { timeout: 45_000 })
+      expect(starts).toHaveLength(1)
+      expect(starts[0]).toMatchObject({ cwd: launch })
+    } finally { await context.close(); await host.stop(); await collector.stop() }
+  })
+}
+
+test('touch scrolling outside the picker does not choose; tapping and Start do', async ({ browser }) => {
+  const collector = await startCollector(), host = testHost(fakeAgent('claude', { config_options: options, chunks: ['Ready.'] }))
+  const context = await browser.newContext({ baseURL: collector.origin, viewport: { width: 390, height: 600 }, hasTouch: true, isMobile: true, reducedMotion: 'reduce' })
+  const page = await context.newPage()
+  try {
+    await setup(page, collector)
+    const hostId = await pair(context.request, collector, host, 'Touch host')
+    const project = join(realpathSync(host.dir), 'synthetic-project'), child = join(project, 'child'), nested = join(child, 'nested')
+    mkdirSync(nested, { recursive: true })
+    await page.goto(`/new?${new URLSearchParams({ host: hostId, cwd: project })}`)
+    const form = page.getByRole('form', { name: 'New session', exact: true }), field = form.getByRole('combobox', { name: /^Project/ })
+    const browse = form.getByRole('group', { name: 'Browse directories', exact: true })
+    await form.getByRole('button', { name: 'Browse', exact: true }).tap()
+    await browse.getByRole('button', { name: 'child', exact: true }).tap()
+    await expect(browse.getByRole('button', { name: 'Use this directory', exact: true })).toHaveAccessibleDescription(child)
+    const body = form.locator('.modal-body')
+    await expect.poll(() => body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+    await body.evaluate(element => { element.scrollTop = 0 })
+    const box = (await body.boundingBox())!, x = box.x + 2, y = box.y + box.height - 10
+    const touch = await context.newCDPSession(page)
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+    for (const delta of [40, 80, 120, 160]) await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - delta }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    await expect(browse).toBeVisible()
+    await expect(field).toHaveValue(project)
+    const prompt = form.getByRole('textbox', { name: /^First prompt/ })
+    await prompt.tap()
+    await expect(prompt).toBeFocused()
+    await expect(field).toHaveValue(child)
+    await expect(browse).toHaveCount(0)
+    await form.getByRole('button', { name: 'Browse', exact: true }).tap()
+    await browse.getByRole('button', { name: 'nested', exact: true }).tap()
+    await expect(browse.getByRole('button', { name: 'Use this directory', exact: true })).toHaveAccessibleDescription(nested)
+    const started = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/api/sessions'))
+    await form.getByRole('button', { name: 'Start session', exact: true }).tap()
+    expect((await started).postDataJSON()).toMatchObject({ cwd: nested })
+    await expect(page).toHaveURL(/\/sessions\/[^/?]+$/, { timeout: 45_000 })
+  } finally { await context.close(); await host.stop(); await collector.stop() }
+})
 async function pair(request: APIRequestContext, collector: Collector, host: TestHost, name: string) {
   const code = await (await request.post(`${collector.origin}/api/hosts/pairing-codes`, { headers: { origin: collector.origin } })).json()
   expect(await host.join(`hennery host join ${collector.origin} ${code.code}`, ['--name', name, '--no-runtime'])).toBe(0)

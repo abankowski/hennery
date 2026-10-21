@@ -39,6 +39,9 @@
 @media (max-width:400px) { .seg-item { flex:1 1 100%; } }
 .launcher-frame { width:min(620px,100%); }
 .launcher-frame .new-session { min-height:0; display:flex; flex-direction:column; }
+/* Keep Start under the pointer when choosing collapses the browse list. */
+.launcher-frame .new-session[data-start-pending] .modal-body { flex:1; }
+.launcher-frame .new-session button[type="submit"][aria-busy="true"] svg { opacity:.6; }
 .launcher-frame .modal-body { min-height:0; }
 @media (max-width:767px) { .launcher-frame .modal-x { width:44px; height:44px; }.launcher-frame input,.launcher-frame textarea { font-size:16px; }.launcher-frame .modal-head { padding-right:64px; } }
 @media (max-width:767px) { .launcher-frame { padding-bottom:env(safe-area-inset-bottom); } }
@@ -233,6 +236,11 @@
 .launcher-frame .path-input input { font-family:var(--font-mono); }.launch-path { font-family:var(--font-mono); }
 .path-input input.agent-name-input { font-family:var(--font-data); }
 .picker-list-header { padding:7px 10px; border-bottom:1px solid var(--hn-line); }
+.picker-browse-header { position:sticky; top:-4px; z-index:1; display:flex; align-items:center; gap:8px; padding:6px; background:var(--surface); border-bottom:1px solid var(--hn-line); }
+.picker-browse-header .picker-path { flex:1; min-width:0; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.picker-browse-header .btn { flex-shrink:0; }
+.picker-announcement { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media(max-width:767px) { .picker-browse-header .btn { min-height:44px; } }
 .launcher-frame .launch-config { margin-left:114px; border:0; background:transparent; padding:0; }
 .launch-settings-disclosure { max-width:100%; width:100%; justify-content:flex-start; padding:4px 0; border:0; background:transparent; text-align:left; }
 .launch-settings-disclosure > span:last-child { margin-left:auto; }.config-warning-icon { flex:none; color:var(--st-wait-fg); }
