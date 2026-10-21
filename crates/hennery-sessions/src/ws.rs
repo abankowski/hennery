@@ -63,6 +63,7 @@ async fn serve(socket: WebSocket, state: AppState, nonce: [u8; 32]) {
         proof,
         capabilities,
         mcp_isolation,
+        runtime_profiles,
         workspace_roots,
         attached_sessions,
     }) = hello
@@ -107,10 +108,13 @@ async fn serve(socket: WebSocket, state: AppState, nonce: [u8; 32]) {
         }
     }
     let (tx, mut rx) = mpsc::unbounded_channel::<CollectorFrame>();
-    let Some(registration) = state
-        .hub
-        .register(&host_id, tx.clone(), capabilities.clone(), mcp_isolation.clone())
-    else {
+    let Some(registration) = state.hub.register_with_profiles(
+        &host_id,
+        tx.clone(),
+        capabilities.clone(),
+        mcp_isolation.clone(),
+        runtime_profiles,
+    ) else {
         let _ = sink
             .send(text(&reject(
                 "already_connected",

@@ -2,7 +2,7 @@
   "tools": [
     {
       "name": "session_capabilities",
-      "description": "Discover the caller host's runtimes and configuration catalogs for a same-hat cwd. Unknown or stale catalogs are reported honestly.",
+      "description": "Discover the caller host's runtimes and configuration catalogs for a same-hat cwd. With Delegation on, every listed model, mode and option is allowed. Unknown or stale catalogs are reported honestly.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "CapabilitiesArgs",
@@ -27,7 +27,7 @@
     },
     {
       "name": "session_spawn",
-      "description": "Spawn one direct child using an independently selected runtime and model. No provider or model substitute is used. The brief waits for confirmed configuration. Permissions remain operator-only; children cannot spawn grandchildren. Mutations use a durable operation_key scoped to this caller session across tool names, including token rotation. Retry the same canonical typed request with the same key to retrieve its receipt; changed requests return operation_conflict. Delivery is not completion.",
+      "description": "Spawn one direct child in a selected runtime. With Delegation on, you may pick any model, mode and option in the child runtime's catalog (session_capabilities), including modes that don't ask for permission (Claude bypassPermissions, Codex agent-full-access). If mode is omitted, inherit the parent's mode for the same runtime, or map installed Claude bypassPermissions to Codex agent-full-access (and vice versa) across runtimes when offered; otherwise use the runtime default. No provider or model substitute is used. The brief waits for confirmed configuration. Permission requests raised by a child go to the operator; the parent cannot answer them. Children cannot spawn grandchildren. Mutations use a durable operation_key scoped to this caller session across tool names, including token rotation. Retry the same canonical typed request with the same key to retrieve its receipt; changed requests return operation_conflict. Delivery is not completion.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "SpawnArgs",
@@ -136,11 +136,11 @@
     },
     {
       "name": "session_answer",
-      "description": "Answer ordinary elicitation only using its pending_id. For action accept, content must be a JSON object matching the child's requestedSchema, embedded in the question delivery and session_status. Example: requestedSchema={\"type\":\"object\",\"properties\":{\"question_0\":{\"type\":\"string\",\"enum\":[\"blue\",\"green\"]}},\"required\":[\"question_0\"]} requires content={\"question_0\":\"blue\"}. Use the actual schema's property names and values, not this example's. Omit content for decline/cancel. Invalid content returns invalid_arguments as a tool error; correct the content and retry. Permission requests are operator-only and return operator_required. Escalate missing facts and product decisions to the operator. Mutations use a durable operation_key scoped to this caller session across tool names, including token rotation. Retry the same canonical typed request with the same key to retrieve its receipt; changed requests return operation_conflict. Delivery is not completion.",
+      "description": "Answer ordinary elicitation only using its pending_id. For action accept, content must be a JSON object matching the child's requestedSchema, embedded in the question delivery and session_status. Example: requestedSchema={\"type\":\"object\",\"properties\":{\"question_0\":{\"type\":\"string\",\"enum\":[\"blue\",\"green\"]}},\"required\":[\"question_0\"]} requires content={\"question_0\":\"blue\"}. Use the actual schema's property names and values, not this example's. Omit content for decline/cancel. Invalid content returns invalid_arguments as a tool error; correct the content and retry. Permission requests raised by a child go to the operator; the parent cannot answer them (operator_required). Escalate missing facts and product decisions to the operator. Mutations use a durable operation_key scoped to this caller session across tool names, including token rotation. Retry the same canonical typed request with the same key to retrieve its receipt; changed requests return operation_conflict. Delivery is not completion.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "AnswerArgs",
-        "description": "Answer ordinary elicitation only. ACP permissions remain operator-only.",
+        "description": "Answer ordinary elicitation only. Permission requests raised by a child\ngo to the operator; the parent cannot answer them.",
         "type": "object",
         "properties": {
           "operation_key": {
@@ -182,7 +182,7 @@
     },
     {
       "name": "session_status",
-      "description": "Read one owned direct child's lifecycle, configuration, questions, reports and operation receipts. Permission questions have no parent-answerable schema.",
+      "description": "Read one owned direct child's lifecycle, configuration, questions, reports and operation receipts. Permission requests raised by a child go to the operator; the parent cannot answer them and receives no answerable schema for them.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "StatusArgs",

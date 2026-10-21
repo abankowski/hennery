@@ -1677,6 +1677,11 @@ fn child_question_delivery_contains_the_exact_form_contract() {
         panic!("prompt")
     };
     let text = serde_json::to_string(&content).unwrap();
+    assert!(
+        !text.contains("operator-only") && !text.contains("operator only"),
+        "{text}"
+    );
+    assert!(text.contains("Permission requests raised by a child go to the operator; the parent cannot answer them."));
     assert!(text.contains("requestedSchema"), "{text}");
     assert!(text.contains("JSON object"), "{text}");
     assert!(text.contains("boolean"), "{text}");
@@ -3616,6 +3621,32 @@ macro_rules! error_case {
         }
     };
 }
+#[test]
+fn model_facing_error_hints_do_not_imply_a_mode_restriction() {
+    use hennery_sessions::session_tools;
+    for code in [
+        "auth_required",
+        "host_offline",
+        "runtime_unavailable",
+        "agent_has_no_record",
+        "adapter_failed",
+        "catalog_unavailable",
+        "catalog_stale",
+        "configuration_unavailable",
+        "timeout",
+        "busy",
+        "cwd_unavailable",
+        "schema_changed",
+        "invalid_arguments",
+    ] {
+        let hint = session_tools::error_message(&anyhow::anyhow!(code)).to_ascii_lowercase();
+        assert!(
+            !hint.contains("operator-only") && !hint.contains("operator only"),
+            "{code}: {hint}"
+        );
+    }
+}
+
 error_case!(error_not_found, "not_found");
 error_case!(error_operation_conflict, "operation_conflict");
 error_case!(error_operator_required, "operator_required");
@@ -6175,6 +6206,114 @@ async fn worker_launched_starting_child_never_probes_again() {
         state.store.find_session("child").unwrap().unwrap().lifecycle,
         "starting"
     );
+}
+
+#[test]
+fn absent_profile_never_maps_cross_runtime_modes() {
+    use hennery_proto::delegation_host::RuntimeProfile::{Claude, Codex};
+    use hennery_sessions::delegation_runtime::cross_runtime_mode;
+    for mode in ["bypassPermissions", "agent-full-access"] {
+        for profile in [Some(Claude), Some(Codex), None] {
+            assert_eq!(cross_runtime_mode(None, profile, Some(mode)), None);
+            assert_eq!(cross_runtime_mode(profile, None, Some(mode)), None);
+        }
+    }
+}
+
+#[tokio::test]
+async fn legacy_parent_profile_and_unoffered_same_runtime_mode_use_defaults_without_probing_parent() {
+    for (agent, offer_bypass, expected) in [
+        ("claude", true, "bypassPermissions"),
+        ("claude", false, "default"),
+        ("worker", true, "default"),
+    ] {
+        let (w, p) = pair();
+        let mut c = catalog();
+        c.config_options[1]["options"] =
+            json!([{"value":"default"},{"value":"bypassPermissions"},{"value":"agent-full-access"}]);
+        c.defaults.mode = Some("default".into());
+        w.store
+            .ingest(
+                "parent",
+                2,
+                &SessionBody::ConfigApplied {
+                    request_id: "set-mode".into(),
+                    indexed: Indexed {
+                        config_options: Some(c.config_options.clone()),
+                        current_mode: Some("bypassPermissions".into()),
+                        current_model: Some("wanted".into()),
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap();
+        let state = hennery_sessions::AppState::new(
+            Store::open(&w.db).unwrap(),
+            Hosts::open(&w.db).unwrap(),
+            Operator::open(&w.db).unwrap(),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg = state
+            .hub
+            .register(
+                "host",
+                tx,
+                Capabilities(vec![
+                    Capability::ResolvePath,
+                    Capability::CatalogProbe,
+                    Capability::DelegationConfig,
+                    Capability::McpServers,
+                ]),
+                AgentIsolation(
+                    [
+                        ("claude".into(), McpIsolation::ClaudeStrict),
+                        ("worker".into(), McpIsolation::ClaudeStrict),
+                    ]
+                    .into(),
+                ),
+            )
+            .unwrap();
+        state.hub.mark_ready("host", reg.conn_id);
+        let spawn = hennery_sessions::session_tools::execute(
+            &state,
+            &p,
+            1,
+            "session_spawn",
+            json!({"operation_key":"legacy-mode","cwd":"/project","agent":agent,"brief":"work","config":{}}),
+        );
+        tokio::pin!(spawn);
+        let mut probes = Vec::new();
+        let receipt = loop {
+            tokio::select! {
+                result=&mut spawn=>break result.unwrap(),
+                frame=rx.recv()=>{
+                    let reply=match frame.unwrap() {
+                        CollectorFrame::ResolvePath { request_id,path } => hennery_proto::frames::HostFrame::ResolvedPath { request_id,canonical:path,exists:true,is_dir:true },
+                        CollectorFrame::ProbeCatalog { request_id,agent:requested,.. } => {
+                            probes.push(requested.clone());
+                            let mut reply=c.clone(); reply.agent=requested.clone();
+                            if !offer_bypass { reply.config_options[1]["options"]=json!([{"value":"default"}]); }
+                            hennery_proto::frames::HostFrame::Catalog { request_id,catalog:reply }
+                        },
+                        other=>panic!("unexpected frame: {other:?}"),
+                    };
+                    state.hub.probe_reply("host",reg.conn_id,reply);
+                }
+            }
+        };
+        let child = receipt["child_id"].as_str().unwrap();
+        assert_eq!(
+            state
+                .store
+                .child_status(&p, 1, child, None)
+                .unwrap()
+                .requested
+                .mode
+                .as_deref(),
+            Some(expected)
+        );
+        assert_eq!(probes, vec![agent], "profile lookup must not issue another probe");
+    }
 }
 #[tokio::test]
 async fn worker_dropped_model_followup_fails_after_one_probe_and_stays_parked() {

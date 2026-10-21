@@ -582,7 +582,9 @@ impl SessionConfig {
 /// is present and not empty, the four are one snapshot of the adapter's
 /// config. An absent or empty `config_options` means "no read-back", never
 /// "the adapter has no config" (a response that failed to parse looks
-/// empty).
+/// empty). A live `current_mode` without a snapshot is a mode-only delta;
+/// it never clears the model, other axes or option inventory. Early/replayed
+/// mode deltas are ignored.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Indexed {
     /// Fresh host-produced configuration proof, never retained collector values.
@@ -825,6 +827,10 @@ pub enum HostFrame {
         /// Absent means none is isolated (an older host).
         #[serde(default)]
         mcp_isolation: AgentIsolation,
+        /// Installed profiles for this connection's runtime ids. Missing or
+        /// unknown profiles use runtime defaults for cross-runtime inheritance.
+        #[serde(default)]
+        runtime_profiles: BTreeMap<String, crate::delegation_host::RuntimeProfile>,
         /// The workspace roots from the host's config (ACP core §7), as
         /// configured. Absent means none (an older host).
         #[serde(default)]

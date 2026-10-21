@@ -2091,6 +2091,76 @@ async fn only_a_live_config_option_update_carries_the_catalogue() {
 }
 
 #[tokio::test]
+async fn standalone_live_mode_update_reaches_store_and_survives_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("mode-only.log");
+    let (uplink, _) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let script = FakeScript {
+        replay: vec![json!({"sessionUpdate":"current_mode_update","currentModeId":"bypass"})],
+        prompt_updates: vec![json!({"sessionUpdate":"current_mode_update","currentModeId":"default"})],
+        ..config_script(&log)
+    };
+    let handle = launching(
+        &uplink,
+        &script,
+        Attach::Load {
+            agent_session_id: "agent-7".into(),
+        },
+        wanted(None, Some("plan"), &[]),
+        SessionOptions::default(),
+    );
+    let frames = wait_until(&uplink, has("session_started")).await;
+    let store = hennery_sessions::store::Store::open_in_memory().unwrap();
+    store
+        .create_session("s1", "host", "claude", "/fixture", "hat", None)
+        .unwrap();
+    for frame in &frames {
+        if let HostFrame::Session { seq, body, .. } = frame {
+            store.ingest("s1", *seq, body).unwrap();
+        }
+    }
+    assert_eq!(
+        store.find_session("s1").unwrap().unwrap().config.mode.as_deref(),
+        Some("plan")
+    );
+    assert!(
+        store
+            .open_turn("s1", "t1", &[json!({"type":"text","text":"work"})])
+            .unwrap()
+    );
+    assert!(handle.send(prompt("r1", "t1")));
+    let frames = wait_until(&uplink, has("turn_ended")).await;
+    for frame in &frames {
+        if let HostFrame::Session { seq, body, .. } = frame {
+            store.ingest("s1", *seq, body).unwrap();
+        }
+    }
+    assert_eq!(
+        store.find_session("s1").unwrap().unwrap().config.mode.as_deref(),
+        Some("default")
+    );
+    assert!(handle.send(SessionCmd::Restart {
+        request_id: "r9".into()
+    }));
+    let frames = wait_until(&uplink, |f| {
+        kinds(f).iter().filter(|k| *k == "session_started").count() == 2
+    })
+    .await;
+    let indexed = frames
+        .iter()
+        .rev()
+        .find_map(|f| match f {
+            HostFrame::Session {
+                body: SessionBody::SessionStarted { indexed, .. },
+                ..
+            } => Some(indexed),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(indexed.current_mode.as_deref(), Some("default"));
+}
+
+#[tokio::test]
 async fn a_switch_still_out_when_the_session_ends_is_not_attached() {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("config.log");

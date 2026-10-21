@@ -102,6 +102,7 @@ async fn connect(addr: SocketAddr) -> (Ws, Vec<u8>) {
 async fn hello(ws: &mut Ws, host_id: &str, proof: String) -> CollectorFrame {
     ws.send(Message::text(
         serde_json::to_string(&HostFrame::Hello {
+            runtime_profiles: Default::default(),
             protocol_version: PROTOCOL_VERSION.into(),
             host_version: "0".into(),
             host_id: host_id.into(),

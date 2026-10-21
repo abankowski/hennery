@@ -77,6 +77,7 @@ impl ScriptedHost {
         let nonce = hex::decode(response.headers()[HELLO_NONCE_HEADER].to_str().unwrap()).unwrap();
         let mut host = Self { ws, seq: 0 };
         host.send(&HostFrame::Hello {
+            runtime_profiles: Default::default(),
             protocol_version: PROTOCOL_VERSION.into(),
             host_version: "test".into(),
             host_id: HOST.into(),
@@ -107,6 +108,7 @@ impl ScriptedHost {
         let nonce = hex::decode(response.headers()[HELLO_NONCE_HEADER].to_str().unwrap()).unwrap();
         let mut host = Self { ws, seq: 0 };
         host.send(&HostFrame::Hello {
+            runtime_profiles: Default::default(),
             protocol_version: PROTOCOL_VERSION.into(),
             host_version: "test".into(),
             host_id: HOST.into(),
