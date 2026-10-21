@@ -109,7 +109,12 @@ impl CatalogProbes {
         let indexed = crate::session::probe_catalog(&command, cwd, profile, self.timeout)
             .await
             .map_err(|error| {
-                anyhow::anyhow!(if error.to_string() == "catalog probe timed out" {
+                anyhow::anyhow!(if error
+                    .downcast_ref::<crate::session::StartError>()
+                    .is_some_and(|error| error.is_auth_required())
+                {
+                    "auth_required"
+                } else if error.to_string() == "catalog probe timed out" {
                     "timeout"
                 } else {
                     "adapter_failed"
