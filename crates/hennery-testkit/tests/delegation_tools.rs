@@ -80,8 +80,18 @@ impl std::io::Write for NoticeLogs {
 #[tokio::test]
 async fn operator_limits_dispatch_failure_warns_with_notice_id_without_content() {
     let h = Harness::with_worker(script(), None, false).await;
-    let caps = h.ok("session_capabilities", json!({"agent":"claude"})).await;
-    let catalog = serde_json::from_value(caps["catalogs"][0].clone()).unwrap();
+    // The model-facing capabilities omit `security`; dispatch takes the full
+    // host catalog, which the operator endpoint returns.
+    let catalog = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "claude"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json::<hennery_proto::delegation_host::HostCatalog>()
+        .await
+        .unwrap();
     let child = h.spawn("log-child", json!({})).await["child_id"]
         .as_str()
         .unwrap()
