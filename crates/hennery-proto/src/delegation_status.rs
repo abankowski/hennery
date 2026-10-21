@@ -2,27 +2,12 @@
 use crate::{
     delegation::OperationReceipt,
     delegation_host::HostCatalog,
-    frames::{ConfigValue, PendingKind, SessionConfig},
+    frames::{PendingKind, SessionConfig},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use ts_rs::TS;
 
-pub type ExecutionAllowlist = BTreeMap<String, BTreeMap<String, Vec<ConfigValue>>>;
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionPolicy {
-    #[ts(type = "number")]
-    pub revision: i64,
-    /// Runtime -> profile security option id -> explicitly permitted values.
-    pub allowed: ExecutionAllowlist,
-}
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(deny_unknown_fields)]
-pub struct SetExecutionPolicy {
-    pub allowed: ExecutionAllowlist,
-}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct DelegationLimits {
     pub children: u16,
@@ -36,7 +21,6 @@ pub struct CapabilitiesResult {
     pub runtimes: Vec<String>,
     pub catalogs: Vec<HostCatalog>,
     pub cwd: String,
-    pub policy: ExecutionPolicy,
     pub limits: DelegationLimits,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

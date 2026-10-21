@@ -37,7 +37,6 @@ function page(push = true, routes: Record<string, Answer | Answer[]> = {}) {
     'GET /api/hats': json(200, [{ id: 'hat', name: 'Personal', colour: '#000', default_for_new_hosts: true }]),
     'GET /api/hosts': json(200, []),
     'GET /api/hats/hat/session-tools': json(200, { delegation_enabled: false, revision: 1 }),
-    'GET /api/hats/hat/delegation-policy': json(200, { allowed: {}, revision: 1 }),
     'GET /api/push/policies': json(200, [{ hat_id: 'hat', muted: false, details: false, generic_title: false }]),
     'PATCH /api/settings': json(200, { public_url: 'https://app.example', contact: 'mailto:new@example.invalid' }),
     'PUT /api/push/policies/hat': json(200, { hat_id: 'hat', muted: false, details: true, generic_title: true }),

@@ -135,8 +135,8 @@ for (const width of [1280, 390]) {
       const allHats = await (await page.request.get('/api/hats')).json() as { id: string; name: string }[]
       const work = allHats.find(hat => hat.name === 'Work')!
       const path = `/api/hats/${work.id}/session-defaults?agent=custom-agent`
-      const policyPath = `/api/hats/${work.id}/delegation-policy`
-      const policyBefore = await (await page.request.get(policyPath)).json()
+      const toolsPath = `/api/hats/${work.id}/session-tools`
+      const toolsBefore = await (await page.request.get(toolsPath)).json()
       const saved = await page.request.put(path, { headers: { Origin: collector.origin }, data: { revision: 0, config: { model: 'saved-custom-model', axes: { fast: false } } } })
       expect(saved.status()).toBe(200)
       const record = await saved.json()
@@ -154,7 +154,7 @@ for (const width of [1280, 390]) {
         await captureManagement(page, route === '/hats' ? 'hats-defaults-integrated' : 'settings-defaults-integrated', 'R4 integration / saved overrides')
       }
       expect(await (await page.request.get(path)).json()).toEqual(record)
-      expect(await (await page.request.get(policyPath)).json()).toEqual(policyBefore)
+      expect(await (await page.request.get(toolsPath)).json()).toEqual(toolsBefore)
     })
 
     test('Settings adds and removes a real passkey and keeps per-hat notification privacy', async () => {

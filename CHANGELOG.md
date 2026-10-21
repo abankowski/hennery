@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Make per-hat Delegation strictly ON/OFF: enabling never probes hosts, and
+  children can use every runtime configuration currently offered without
+  re-enabling after sign-in or adapter updates. Remove execution grants.
+- Hats with Delegation ON now allow every model and mode the runtime offers; any narrowed v0.2.0 grants are dropped.
+- Report unauthenticated runtimes as “not signed in” with `auth_required`,
+  and include host/runtime context in catalog errors. Preserve operator session login instructions.
+- Refuse nested or over-budget starts before probing; isolate catalog probes by
+  context, and settle accepted child work with a readable sign-in/runtime failure.
+- Avoid repeated catalog probes while child starts are in flight; reuse spawn
+  discovery for the first attach, report unavailable queued configurations, and
+  measure transient probe retries from their first failure rather than queue age.
 - The PWA's update banner offers "Reload to update". It checks every open app
   window, defers while one is busy or unresponsive, preserves stored text
   drafts, and confirms before discarding unsent images or question input.

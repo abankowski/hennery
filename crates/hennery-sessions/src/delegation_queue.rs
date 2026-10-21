@@ -63,6 +63,7 @@ fn receipt_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OperationReceipt> {
     })
 }
 struct QueuedInput<'a> {
+    operation: Option<&'a str>,
     key: &'a str,
     digest: &'a str,
     child: &'a str,
@@ -74,6 +75,47 @@ const RECEIPT: &str = "SELECT operation_id, child_id, turn_id, pending_id, state
     WHERE owner_id = ?1 AND caller_id = ?2 AND operation_key = ?3";
 
 impl Store {
+    /// Refuse ineligible callers before any disposable runtime probe. Allocation
+    /// repeats these checks under its writer transaction after the probe.
+    pub fn precheck_spawn(&self, identity: &SessionIdentity, revision: i64, cwd: Option<&str>) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let caller = self
+            .session_tool_context_in(&tx, identity, revision, true)?
+            .ok_or_else(|| anyhow::anyhow!("not_found"))?;
+        self.spawn_precheck_in(&tx, &caller, cwd)?;
+        Ok(())
+    }
+    fn spawn_precheck_in(&self, tx: &Transaction<'_>, caller: &SessionToolContext, cwd: Option<&str>) -> Result<i64> {
+        let nested: bool = tx.query_row(
+            "SELECT delegated_child = 1 FROM sessions WHERE owner_id = ?1 AND id = ?2",
+            params![self.owner_id(), caller.session_id()],
+            |r| r.get(0),
+        )?;
+        ensure!(!nested, "generation_limit");
+        if let Some(cwd) = cwd {
+            ensure!(hennery_kernel::hats::is_canonical(cwd), "invalid_cwd");
+            ensure!(
+                crate::delegation_runtime::same_hat_in(tx, self.owner_id(), caller.host_id(), caller.hat_id(), cwd)?,
+                "not_found"
+            );
+        }
+        let live: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM session_families f JOIN sessions c ON c.owner_id = ?1 AND c.id = f.child_id
+            WHERE f.owner_id = ?1 AND f.parent_id = ?2 AND c.lifecycle NOT IN ('closed','deleted')",
+            params![self.owner_id(), caller.session_id()],
+            |r| r.get(0),
+        )?;
+        ensure!(live < MAX_CHILDREN, "child_limit");
+        let epoch:i64=tx.query_row("SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1 AND session_id = ?2
+            AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'",params![self.owner_id(),caller.session_id()],|r|r.get(0))?;
+        let starts: i64 = tx.query_row(
+            "SELECT COALESCE((SELECT starts FROM delegation_start_budgets WHERE owner_id = ?1 AND caller_id = ?2 AND epoch = ?3),0)",
+            params![self.owner_id(), caller.session_id(), epoch], |r| r.get(0),
+        )?;
+        ensure!(starts < MAX_STARTS, "start_budget");
+        Ok(epoch)
+    }
     pub fn delegation_retry(
         &self,
         identity: &SessionIdentity,
@@ -179,6 +221,7 @@ impl Store {
         input: QueuedInput<'_>,
     ) -> Result<OperationReceipt> {
         let QueuedInput {
+            operation,
             key,
             digest,
             child,
@@ -195,7 +238,7 @@ impl Store {
             count < MAX_QUEUE && bytes + text.len() as i64 <= MAX_QUEUE_BYTES,
             "queue_full"
         );
-        let operation = uuid();
+        let operation = operation.map(str::to_owned).unwrap_or_else(uuid);
         tx.execute(
             "INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state)
             VALUES (?1,?2,?3,?4,?5,?6,?7,'queued')",
@@ -245,6 +288,7 @@ impl Store {
             &tx,
             &caller,
             QueuedInput {
+                operation: None,
                 key,
                 digest,
                 child,
@@ -263,6 +307,26 @@ impl Store {
         digest: &str,
         launch: &DelegatedLaunch<'_>,
     ) -> Result<OperationReceipt> {
+        self.queue_spawn_with_operation(identity, revision, digest, launch, None)
+    }
+    pub(crate) fn queue_spawn_admitted(
+        &self,
+        identity: &SessionIdentity,
+        revision: i64,
+        digest: &str,
+        launch: &DelegatedLaunch<'_>,
+        operation: &str,
+    ) -> Result<OperationReceipt> {
+        self.queue_spawn_with_operation(identity, revision, digest, launch, Some(operation))
+    }
+    fn queue_spawn_with_operation(
+        &self,
+        identity: &SessionIdentity,
+        revision: i64,
+        digest: &str,
+        launch: &DelegatedLaunch<'_>,
+        operation: Option<&str>,
+    ) -> Result<OperationReceipt> {
         let DelegatedLaunch {
             key,
             agent,
@@ -280,35 +344,7 @@ impl Store {
         if let Some(receipt) = self.retry_in(&tx, &caller, key, digest)? {
             return Ok(receipt);
         }
-        let nested: bool = tx.query_row(
-            "SELECT delegated_child = 1 FROM sessions WHERE owner_id = ?1 AND id = ?2",
-            params![self.owner_id(), caller.session_id()],
-            |r| r.get(0),
-        )?;
-        ensure!(!nested, "generation_limit");
-        ensure!(hennery_kernel::hats::is_canonical(cwd), "invalid_cwd");
-        // Resolve under the same shared writer gate as allocation, so path rule,
-        // default-hat and purge changes cannot race family/token persistence.
-        ensure!(
-            crate::delegation_runtime::same_hat_in(&tx, self.owner_id(), caller.host_id(), caller.hat_id(), cwd)?,
-            "not_found"
-        );
-        let live: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM session_families f JOIN sessions c ON c.owner_id = ?1 AND c.id = f.child_id
-            WHERE f.owner_id = ?1 AND f.parent_id = ?2 AND c.lifecycle NOT IN ('closed','deleted')",
-            params![self.owner_id(), caller.session_id()],
-            |r| r.get(0),
-        )?;
-        ensure!(live < MAX_CHILDREN, "child_limit");
-        let epoch:i64=tx.query_row("SELECT COALESCE(MAX(event_id),0) FROM events WHERE owner_id = ?1 AND session_id = ?2
-            AND kind = 'user_turn' AND applied = 1 AND COALESCE(json_extract(body,'$.origin.kind'),'operator') = 'operator'",params![self.owner_id(),caller.session_id()],|r|r.get(0))?;
-        let starts: i64 = tx.query_row(
-            "SELECT COALESCE((SELECT starts FROM delegation_start_budgets
-            WHERE owner_id = ?1 AND caller_id = ?2 AND epoch = ?3),0)",
-            params![self.owner_id(), caller.session_id(), epoch],
-            |r| r.get(0),
-        )?;
-        ensure!(starts < MAX_STARTS, "start_budget");
+        let epoch = self.spawn_precheck_in(&tx, &caller, Some(cwd))?;
         tx.execute(
             "INSERT INTO delegation_start_budgets(owner_id,caller_id,epoch,starts) VALUES (?1,?2,?3,1)
             ON CONFLICT(owner_id,caller_id,epoch) DO UPDATE SET starts = starts + 1
@@ -342,6 +378,7 @@ impl Store {
             &tx,
             &caller,
             QueuedInput {
+                operation,
                 key,
                 digest,
                 child: &child,

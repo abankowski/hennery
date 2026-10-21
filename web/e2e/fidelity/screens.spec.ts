@@ -51,7 +51,6 @@ async function fixtures(context: BrowserContext) {
   if (path.endsWith('/path-rules')) return json([{ prefix: '/srv/project', hat_id: 'work', verified: true }, { prefix: '/srv/personal', hat_id: 'personal', verified: true }])
   if (path.endsWith('/runtime-catalog')) return json({ agent: url.searchParams.get('agent'), adapter_revision: 'fixture', freshness: 'fresh', config_options: [select('model', 'Model', ['Sonnet', 'Opus']), select('mode', 'Permission mode', ['Default', 'Accept edits', 'Bypass permissions']), select('effort', 'Reasoning effort', ['Medium', 'High'])], defaults: { model: 'Sonnet', mode: 'Default', axes: { effort: 'Medium' } }, security: { known: true, axes: { mode: ['Default'] } } })
   if (path.endsWith('/session-defaults')) return json({ hat_id: path.split('/')[3], agent: url.searchParams.get('agent'), revision: 0, config: {} })
-  if (path.endsWith('/delegation-policy')) return json({ allowed: {}, revision: 0 })
   if (path.endsWith('/session-tools')) return json({ delegation_enabled: false, revision: 0 })
   if (path === '/api/settings') return json({ public_url: 'https://collector.example.test' })
   if (path === '/api/settings/attachments') return json({ count: 2, bytes: 4096 })

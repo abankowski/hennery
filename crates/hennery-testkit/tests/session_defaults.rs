@@ -49,9 +49,8 @@ impl Fixture {
     }
 }
 #[tokio::test]
-async fn persist_reset_conflict_and_never_mutate_delegation_policy() {
+async fn persist_reset_conflict_and_never_enable_delegation() {
     let f = Fixture::new().await;
-    let policy = f.state.store.execution_policy(&f.hat).unwrap();
     let response = f.request("GET", &f.hat, "custom").send().await.unwrap();
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers()["cache-control"], "private, no-store");
@@ -92,7 +91,6 @@ async fn persist_reset_conflict_and_never_mutate_delegation_policy() {
         .await
         .unwrap();
     assert_eq!(stored["config"], json!({}));
-    assert_eq!(f.state.store.execution_policy(&f.hat).unwrap(), policy);
     let conn = rusqlite::Connection::open(f._dir.path().join("hennery.db")).unwrap();
     let enabled: i64 = conn
         .query_row(

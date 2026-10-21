@@ -1,4 +1,4 @@
-import type { ConfigValue, ExecutionPolicy, HostCatalog, SessionConfig } from '../generated/protocol'
+import type { ConfigValue, HostCatalog, SessionConfig } from '../generated/protocol'
 import { catalogFields, configOptions, type ConfigOption } from './catalog'
 
 export type Picks = Record<string, ConfigValue | null>
@@ -39,12 +39,12 @@ export function securityWarnings(catalog: HostCatalog, config: SessionConfig): s
     `${fieldsOf(catalog).find(f => f.key === key)?.option.name ?? key} is outside the agent’s permission baseline. The agent may act with fewer prompts.`)
 }
 /** Only inherited, nonsecurity probe axes are pruned on a model change. */
-export function resolveDefaults(catalog: HostCatalog, stored: SessionConfig, picks: Picks = {}, policy?: ExecutionPolicy): ResolvedDefaults {
+export function resolveDefaults(catalog: HostCatalog, stored: SessionConfig, picks: Picks = {}): ResolvedDefaults {
   const fields = fieldsOf(catalog), offered = new Map(fields.map(field => [field.key, field.option]))
   const baseline = flatConfig(catalog.defaults), saved = flatConfig(stored)
   const flat: Record<string, ConfigValue> = Object.create(null), sources: Record<string, Source> = Object.create(null), notices: string[] = []
   let blocked = false
-  const security = new Set(['mode', ...Object.keys(catalog.security.axes), ...Object.keys(policy?.allowed[catalog.agent] ?? {})])
+  const security = new Set(['mode', ...Object.keys(catalog.security.axes)])
   for (const [key, value] of Object.entries(baseline)) {
     const option = offered.get(key)
     if (option && supports(option, value)) { flat[key] = value; sources[key] = 'Agent default' }

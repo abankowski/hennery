@@ -806,10 +806,16 @@ fn handle(
                             "cwd_unavailable" => "cwd_unavailable",
                             "busy" => "busy",
                             "timeout" => "timeout",
+                            "auth_required" => "auth_required",
                             _ => "adapter_failed",
                         }
                         .into(),
-                        message: "runtime catalog unavailable".into(),
+                        message: if error.to_string() == "auth_required" {
+                            "runtime is not signed in (Authentication required)"
+                        } else {
+                            "runtime catalog unavailable"
+                        }
+                        .into(),
                     },
                 });
             });

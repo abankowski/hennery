@@ -43,7 +43,7 @@ pub enum CatalogFreshness {
 
 /// Profile-owned security axes and their baseline allowed values. `mode`
 /// means `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.
-/// Unknown profiles require explicit operator configuration on the collector.
+/// Metadata supports defaults and operator warnings; it does not narrow an enabled hat.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SecurityClassification {
     pub known: bool,

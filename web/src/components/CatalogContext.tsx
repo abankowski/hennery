@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useClient } from '../app-client'
-import { executionPolicy, runtimeCatalog } from '../api/delegation'
+import { runtimeCatalog } from '../api/delegation'
 import { sessionDefaults } from '../api/defaults'
-import { messageOf } from '../api/errors'
-import type { ExecutionPolicy, HatSessionDefaults, HostCatalog, HostItem } from '../generated/protocol'
+import { catalogError } from '../api/errors'
+import type { HatSessionDefaults, HostCatalog, HostItem } from '../generated/protocol'
 import { usableCatalog } from '../lib/defaults'
 
 export interface LaunchContext {
@@ -11,12 +11,11 @@ export interface LaunchContext {
   state: 'loading' | 'ready' | 'unavailable'
   catalog: HostCatalog | null
   defaults: HatSessionDefaults | null
-  policy?: ExecutionPolicy
   error?: string
 }
 /** Each response belongs to the whole canonical context, never the last probe. */
-export function useLaunchContext(host: string, agent: string, cwd: string, hat: string, generation = 0): LaunchContext {
-  const client = useClient(), key = JSON.stringify([host, agent, cwd, hat, generation])
+export function useLaunchContext(host: string, agent: string, cwd: string, hat: string, generation = 0, hostName = host): LaunchContext {
+  const client = useClient(), key = JSON.stringify([host, agent, cwd, hat, generation, hostName])
   // A → B → A is a new read, even when B never finished loading.
   const request = useMemo(() => ({}), [key])
   const [result, setResult] = useState<(LaunchContext & { request: object }) | null>(null)
@@ -24,12 +23,12 @@ export function useLaunchContext(host: string, agent: string, cwd: string, hat: 
     if (!host || !agent || !cwd || !hat) return
     const abort = new AbortController()
     let live = true
-    Promise.all([runtimeCatalog(client, host, agent, cwd, abort.signal), sessionDefaults(client, hat, agent, abort.signal), executionPolicy(client, hat)]).then(
-      ([catalog, defaults, policy]) => { if (live) setResult({ key, request, state: usableCatalog(catalog) ? 'ready' : 'unavailable', catalog, defaults, policy, ...(!usableCatalog(catalog) ? { error: 'This host did not provide a fresh, complete settings preview. Retry or deliberately use agent defaults for this start.' } : {}) }) },
-      err => { if (live) setResult({ key, request, state: 'unavailable', catalog: null, defaults: null, error: messageOf(err) }) },
+    Promise.all([runtimeCatalog(client, host, agent, cwd, abort.signal), sessionDefaults(client, hat, agent, abort.signal)]).then(
+      ([catalog, defaults]) => { if (live) setResult({ key, request, state: usableCatalog(catalog) ? 'ready' : 'unavailable', catalog, defaults, ...(!usableCatalog(catalog) ? { error: `${agent} on ${hostName}: settings preview is not fresh and complete. Retry or deliberately use agent defaults for this start.` } : {}) }) },
+      err => { if (live) setResult({ key, request, state: 'unavailable', catalog: null, defaults: null, error: catalogError(err, hostName, agent) }) },
     )
     return () => { live = false; abort.abort() }
-  }, [client, host, agent, cwd, hat, key, request])
+  }, [client, host, hostName, agent, cwd, hat, key, request])
   return result?.request === request ? result : { key, state: 'loading', catalog: null, defaults: null }
 }
 export default function CatalogContext({ hosts, host, cwd, onHost, onCwd, onPreview, busy }: {

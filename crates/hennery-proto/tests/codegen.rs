@@ -5,9 +5,10 @@ use std::path::Path;
 fn delegation_wire_dependencies_are_exported_once() {
     let ts = render_ts();
     let schema: serde_json::Value = serde_json::from_str(&render_schema()).unwrap();
+    assert!(!ts.contains("ExecutionPolicy"));
+    assert!(schema["$defs"].get("ExecutionPolicy").is_none());
+    assert!(schema["$defs"].get("SetExecutionPolicy").is_none());
     for name in [
-        "ExecutionPolicy",
-        "SetExecutionPolicy",
         "DelegationLimits",
         "CapabilitiesResult",
         "ChildQuestion",

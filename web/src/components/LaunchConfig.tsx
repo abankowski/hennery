@@ -19,7 +19,7 @@ export default function LaunchConfig({ context, picks, onPicks, optOut, onOptOut
   context: LaunchContext; picks: Picks; onPicks: (picks: Picks) => void; optOut: boolean; onOptOut: (value: boolean) => void; retry: () => void; expanded: boolean; onExpanded: (value: boolean) => void
 }) {
   const trigger = useRef<HTMLButtonElement>(null)
-  const result = context.catalog ? resolveDefaults(context.catalog, context.defaults?.config ?? {}, picks, context.policy) : null
+  const result = context.catalog ? resolveDefaults(context.catalog, context.defaults?.config ?? {}, picks) : null
   const effective = flatConfig(result?.config ?? {})
   const requested = Object.keys(picks).filter(key => picks[key] !== null)
   const summaryFields = fieldsOf(context.catalog).filter(({ key, option }) => Object.hasOwn(effective, key) && (['model', 'mode', 'effort', 'reasoning_effort'].includes(key) || ['model', 'mode', 'thought_level'].includes(option.category ?? '')))
@@ -40,6 +40,6 @@ export default function LaunchConfig({ context, picks, onPicks, optOut, onOptOut
 }
 export function requestFor(context: LaunchContext, picks: Picks, optOut: boolean): SessionConfig | null {
   if (context.state !== 'ready' || !context.catalog) return optOut && context.state === 'unavailable' ? {} : null
-  const result = resolveDefaults(context.catalog, context.defaults?.config ?? {}, picks, context.policy)
+  const result = resolveDefaults(context.catalog, context.defaults?.config ?? {}, picks)
   return result.blocked ? null : result.config
 }

@@ -1136,6 +1136,12 @@ async fn an_agent_that_is_not_logged_in_fails_start_and_resume_as_agent_not_logg
     );
     let frames = wait_until(&uplink, has("start_failed")).await;
     assert_eq!(start_failed_code(&frames).as_deref(), Some("agent_not_logged_in"));
+    assert!(
+        matches!(frames.as_slice(), [HostFrame::Session {
+        body: SessionBody::StartFailed { message, .. }, ..
+    }] if message == &agent_client_protocol::Error::auth_required().to_string()),
+        "{frames:?}"
+    );
 
     let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
     let script = FakeScript {
@@ -1145,6 +1151,12 @@ async fn an_agent_that_is_not_logged_in_fails_start_and_resume_as_agent_not_logg
     let _resumed = resuming(&uplink, &script);
     let frames = wait_until(&uplink, has("start_failed")).await;
     assert_eq!(start_failed_code(&frames).as_deref(), Some("agent_not_logged_in"));
+    assert!(
+        matches!(frames.as_slice(), [HostFrame::Session {
+        body: SessionBody::StartFailed { message, .. }, ..
+    }] if message == &agent_client_protocol::Error::auth_required().to_string()),
+        "{frames:?}"
+    );
 }
 
 #[tokio::test]

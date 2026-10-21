@@ -1,4 +1,4 @@
-//! Operator-only execution policy and the launcher's shared host catalog.
+//! Operator-only launcher catalog and delegation attention.
 use crate::{
     AppState,
     api::{error, internal},
@@ -6,22 +6,14 @@ use crate::{
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Path, Query, State},
-    handler::Handler,
     http::StatusCode,
-    middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use hennery_kernel::json::ApiJson;
-use hennery_proto::delegation_status::SetExecutionPolicy;
 use serde::Deserialize;
-use serde_json::Value;
 pub fn router(state: AppState) -> Router {
     let routes = Router::new()
-        .route(
-            "/api/hats/{id}/delegation-policy",
-            get(policy).patch(set_policy.layer(middleware::from_fn(hennery_kernel::auth::require_step_up))),
-        )
         .route("/api/hosts/{id}/runtime-catalog", get(catalog))
         .route("/api/delegation/attention", get(attention))
         .route("/api/delegation/attention/{id}/rearm", post(rearm))
@@ -82,34 +74,6 @@ async fn acknowledge(State(state): State<AppState>, Path(id): Path<String>) -> R
         Err(err) => internal(err),
     }
 }
-async fn policy(State(state): State<AppState>, Path(hat): Path<String>) -> Response {
-    if !matches!(state.hosts.hat(&hat), Ok(Some(_))) {
-        return error(StatusCode::NOT_FOUND, "not_found", "not found");
-    }
-    match state.store.execution_policy(&hat) {
-        Ok(policy) => Json(policy).into_response(),
-        Err(err) => internal(err),
-    }
-}
-async fn set_policy(
-    State(state): State<AppState>,
-    Path(hat): Path<String>,
-    ApiJson(value): ApiJson<Value>,
-) -> Response {
-    if !value.is_object() {
-        return error(StatusCode::BAD_REQUEST, "invalid_policy", "invalid policy");
-    }
-    let Ok(request) = serde_json::from_value::<SetExecutionPolicy>(value) else {
-        return error(StatusCode::BAD_REQUEST, "invalid_policy", "invalid policy");
-    };
-    if !matches!(state.hosts.hat(&hat), Ok(Some(_))) {
-        return error(StatusCode::NOT_FOUND, "not_found", "not found");
-    }
-    match state.store.set_execution_policy(&hat, &request.allowed) {
-        Ok(policy) => Json(policy).into_response(),
-        Err(_) => error(StatusCode::BAD_REQUEST, "invalid_policy", "invalid policy"),
-    }
-}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CatalogQuery {
@@ -144,10 +108,25 @@ async fn catalog(
         .await
     {
         Ok(catalog) => Json(catalog).into_response(),
-        Err(error_) => error(
-            StatusCode::CONFLICT,
-            crate::session_tools::error_code(&error_),
-            "catalog unavailable",
-        ),
+        Err(error_) => {
+            let code = crate::session_tools::error_code(&error_);
+            let name = state.hosts.host(&host).ok().flatten().map(|h| h.name).unwrap_or(host);
+            let reason = match code {
+                "auth_required" => "not signed in",
+                "host_offline" => "host offline",
+                "adapter_failed" => "adapter failed to provide a catalog",
+                "timeout" => "catalog probe timed out",
+                "busy" => "catalog probe busy; retry shortly",
+                "runtime_unavailable" => "runtime unavailable",
+                "cwd_unavailable" => "working directory unavailable",
+                "catalog_stale" => "host reconnected during the catalog probe; retry",
+                _ => "fresh catalog unavailable",
+            };
+            error(
+                StatusCode::CONFLICT,
+                code,
+                format!("{} on {name}: {reason}", query.agent),
+            )
+        }
     }
 }
