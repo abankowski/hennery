@@ -731,11 +731,7 @@ impl StartError {
         };
         Self {
             code,
-            message: if err.code == ErrorCode::AuthRequired {
-                "runtime is not signed in (Authentication required)".into()
-            } else {
-                err.to_string()
-            },
+            message: err.to_string(),
         }
     }
 }
@@ -955,13 +951,9 @@ impl Actor {
     }
 
     fn start_failed(&self, request_id: String, error: StartError) {
-        // Ordinary sessions retain their existing code; generation-bound
-        // delegation shares the catalog probe's actionable authentication code.
-        let code = if self.attach_generation.is_some_and(|generation| generation > 0) && error.is_auth_required() {
-            "auth_required"
-        } else {
-            error.code
-        };
+        // Generation-bound attaches also resume operator parents for notices.
+        // Keep session failure codes stable; delegation maps its own results.
+        let code = error.code;
         // Redacted before it is logged too, not only when emitted.
         let message = self.secrets.redact(&error.message);
         tracing::warn!(session_id = %self.session_id, code, %message, "session start failed");

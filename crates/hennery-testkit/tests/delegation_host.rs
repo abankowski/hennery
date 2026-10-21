@@ -106,7 +106,7 @@ async fn unauthenticated_runtime_catalog_reports_auth_required() {
 }
 
 #[tokio::test]
-async fn unauthenticated_delegated_attach_reports_auth_required_without_a_brief() {
+async fn unauthenticated_delegated_attach_preserves_session_login_failure_without_a_brief() {
     for attach in [
         Attach::New,
         Attach::Load {
@@ -123,10 +123,45 @@ async fn unauthenticated_delegated_attach_reports_auth_required_without_a_brief(
         let facts = until(&up, |facts| !facts.is_empty()).await;
         handle.finished().await;
         assert!(
-            matches!(facts.as_slice(), [HostFrame::Session { body: SessionBody::StartFailed { code, message, .. }, .. }] if code == "auth_required" && message.contains("not signed in")),
+            matches!(facts.as_slice(), [HostFrame::Session { body: SessionBody::StartFailed { code, message, .. }, .. }] if code == "agent_not_logged_in" && message == &agent_client_protocol::Error::auth_required().to_string()),
             "{facts:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn operator_parent_reattached_for_a_notice_preserves_its_login_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let (up, _) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let mut s = script();
+    s.load_error = Some(-32000);
+    // Notice delivery resumes the operator's parent through the same
+    // generation-bound attach as children. A generation is not a child marker.
+    let handle = session::launch_delegated(
+        up.clone(),
+        launch(
+            root.path(),
+            s,
+            Attach::Load {
+                agent_session_id: "operator-parent".into(),
+            },
+        ),
+        SessionOptions::default(),
+        3,
+    );
+    let facts = until(&up, |facts| !facts.is_empty()).await;
+    handle.finished().await;
+    let [
+        HostFrame::Session {
+            body: SessionBody::StartFailed { code, message, .. },
+            ..
+        },
+    ] = facts.as_slice()
+    else {
+        panic!("{facts:?}");
+    };
+    assert_eq!(code, "agent_not_logged_in");
+    assert_eq!(message, &agent_client_protocol::Error::auth_required().to_string());
 }
 
 #[tokio::test]
@@ -689,7 +724,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
     )
     .await;
     assert!(
-        matches!(read(&mut ws).await, HostFrame::Session { body: SessionBody::StartFailed { code, message, .. }, .. } if code == "auth_required" && message.contains("not signed in"))
+        matches!(read(&mut ws).await, HostFrame::Session { body: SessionBody::StartFailed { code, message, .. }, .. } if code == "agent_not_logged_in" && message.contains("Authentication required"))
     );
     send(
         &mut ws,

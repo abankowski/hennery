@@ -43,7 +43,7 @@ describe('the plain per-hat Delegation switch', () => {
     expect(writes(server)).toEqual([
       ['/api/hats/hat/session-tools', { delegation_enabled: true }],
     ])
-    expect(screen.getByText('Sessions in this hat can start child sessions with any model and mode. Children cannot start their own children. Permission requests always come to you.', { exact: true })).toBeVisible()
+    expect(screen.getByText('Sessions in this hat can start child sessions with any model and mode, including modes that don’t ask for permission. Children cannot start their own children.', { exact: true })).toBeVisible()
     expect(screen.getByText('Takes effect at the next start or resume.', { exact: true })).toBeVisible()
     expect(screen.queryByText('Execution grants', { exact: true })).toBeNull()
     expect(screen.queryByLabelText('Grant agent', { exact: true })).toBeNull()

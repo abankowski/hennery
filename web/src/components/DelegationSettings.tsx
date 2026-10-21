@@ -60,7 +60,7 @@ function HatDelegation({ hat, busy, setBusy }: { hat: HatItem; busy: boolean; se
     {tools.error && <p role="alert">Unable to load session tools. <Text>{tools.error}</Text> <button className="btn btn-ghost" onClick={tools.reload}>Retry session tools</button></p>}
     {!tools.data && !tools.error && <p role="status">Loading Delegation…</p>}
     {tools.data && <label className="delegation-switch-row"><span>Delegation</span><input className="plain-switch" role="switch" type="checkbox" aria-describedby={help} checked={tools.data.delegation_enabled} disabled={busy || hat.purging} onChange={e => void change(e.target.checked)} /></label>}
-    <p id={help}>Sessions in this hat can start child sessions with any model and mode. Children cannot start their own children. Permission requests always come to you.</p>
+    <p id={help}>Sessions in this hat can start child sessions with any model and mode, including modes that don’t ask for permission. Children cannot start their own children.</p>
     <p className="hint">Takes effect at the next start or resume.</p>
     {error && <p role="alert"><Text>{error}</Text></p>}{notice && <p role="status">{notice}</p>}
     {retry !== null && <button className="btn btn-ghost" disabled={busy} onClick={() => void change(retry)}>Retry change</button>}
