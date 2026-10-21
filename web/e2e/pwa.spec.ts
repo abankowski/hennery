@@ -7,6 +7,7 @@ import { resolve } from 'node:path'
 import { deployProxy } from './pwa-proxy'
 import { producerNotice } from './producer'
 import { fakeAgent, testHost, type TestHost } from './host'
+import { RELOAD_GRACE_MS } from '../src/pwa/update-client'
 
 const PASSWORD = 'correct horse battery staple'
 let collector: Collector
@@ -36,53 +37,115 @@ async function controlled(page: Page) {
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
 }
 
-for (const controlled of [false, true]) test(`Reload to update from a ${controlled ? 'controlled' : 'first-install'} tab preserves drafts and cleans caches`, async ({ browser }) => {
+test('immediate replacement reloads new and legacy windows once, preserves drafts and excludes proxy documents', async ({ browser }) => {
   const a = await startCollector(resolve('../target/hennery-pwa-base'))
   const b = await startCollector(resolve('../target/hennery-pwa-update'))
   const proxy = await deployProxy(a, b)
   const context = await browser.newContext({ serviceWorkers: 'allow' })
+  const updateHost = testHost(fakeAgent('claude', { chunks: ['PWA update draft'], chunk_delay_ms: 0 }))
   try {
     await context.addInitScript(() => sessionStorage.setItem('update-loads', String(Number(sessionStorage.getItem('update-loads') ?? '0') + 1)))
-    expect((await context.request.post(proxy.origin + '/api/setup', { headers: { Origin: proxy.origin }, data: { token: new URL(a.setupLink).hash.slice(1), password: PASSWORD, public_url: proxy.origin, default_hat_name: 'Personal' } })).ok()).toBe(true)
+    const headers = { Origin: proxy.origin }
+    expect((await context.request.post(proxy.origin + '/api/setup', { headers, data: { token: new URL(a.setupLink).hash.slice(1), password: PASSWORD, public_url: proxy.origin, default_hat_name: 'Personal' } })).ok()).toBe(true)
+    const pairing = await context.request.post(proxy.origin + '/api/hosts/pairing-codes', { headers })
+    expect(await updateHost.join(`hennery host join ${a.origin} ${(await pairing.json()).code}`, ['--name', 'pwa update host', '--no-runtime'])).toBe(0)
+    updateHost.run()
+    const hosts = async () => (await (await context.request.get(proxy.origin + '/api/hosts')).json()) as HostItem[]
+    await expect.poll(async () => (await hosts()).some(h => h.connected)).toBe(true)
+    const started = await context.request.post(proxy.origin + '/api/sessions', { headers, data: { host_id: (await hosts()).find(h => h.connected)!.host_id, agent: 'claude', cwd: updateHost.dir } })
+    expect(started.ok()).toBe(true)
+    const { session_id: id } = await started.json() as StartSessionResponse
     const page = await context.newPage()
-    await page.goto(proxy.origin + '/settings')
-    await page.evaluate(async () => { await navigator.serviceWorker.ready })
-    expect(await page.evaluate(() => navigator.serviceWorker.controller)).toBeNull()
-    if (controlled) await page.reload()
+    await page.goto(proxy.origin + '/sessions/' + id)
+    await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
+    // Claim on the first install must leave this original document in place.
+    await page.waitForTimeout(RELOAD_GRACE_MS + 500)
+    expect(await page.evaluate(() => sessionStorage.getItem('update-loads'))).toBe('1')
+    const draft = page.getByLabel('Prompt', { exact: true })
+    await draft.fill('Keep this composer draft')
     const other = await context.newPage(); await other.goto(proxy.origin + '/settings')
-    await other.getByLabel('Push contact', { exact: true }).fill('keep@example.invalid')
+    await expect(other.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+    await other.getByLabel('Push contact', { exact: true }).fill('unsaved@example.invalid')
+    // A v0.2.1-like document: its old bundle never installed either recovery
+    // listener. Only the replacement worker can bootstrap this window.
+    const legacy = await context.newPage()
+    await legacy.addInitScript(() => {
+      if (sessionStorage.getItem('legacy-bootstrapped')) return
+      sessionStorage.setItem('legacy-bootstrapped', '1')
+      const blocked = () => sessionStorage.setItem('legacy-blocked-listeners', String(Number(sessionStorage.getItem('legacy-blocked-listeners') ?? '0') + 1))
+      const serviceAdd = navigator.serviceWorker.addEventListener.bind(navigator.serviceWorker)
+      navigator.serviceWorker.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => {
+        if (type === 'controllerchange') { blocked(); return }
+        serviceAdd(type, listener, options)
+      }) as typeof navigator.serviceWorker.addEventListener
+      const windowAdd = window.addEventListener.bind(window)
+      window.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => {
+        if (type === 'vite:preloadError') { blocked(); return }
+        windowAdd(type, listener, options)
+      }) as typeof window.addEventListener
+    })
+    await legacy.goto(proxy.origin + '/settings/')
+    await expect(legacy.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+    expect(await legacy.evaluate(() => sessionStorage.getItem('legacy-blocked-listeners'))).toBe('2')
+    const excluded = []
+    for (const path of ['/api/attachments/missing', '/mcp/mount/missing']) {
+      const document = await context.newPage(); await document.goto(proxy.origin + path)
+      await document.evaluate(() => { (window as unknown as { sentinel: string }).sentinel = 'same-document' })
+      excluded.push({ document, url: document.url(), loads: await document.evaluate(() => sessionStorage.getItem('update-loads')) })
+    }
+    const windows = [page, other, legacy]
+    const oldBuild = await page.locator('meta[name="hennery-build"]').getAttribute('content')
+    const counts = await Promise.all(windows.map(p => p.evaluate(() => Number(sessionStorage.getItem('update-loads')))))
     proxy.use('b')
     await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration('/'))!.update() })
-    const update = page.getByRole('button', { name: 'Reload to update', exact: true })
-    await expect(update).toBeVisible()
-    await update.click()
-    await expect(page.getByText('Another hennery window is busy — finish or close it, then retry.', { exact: true })).toBeVisible()
-    await expect(other.getByLabel('Push contact', { exact: true })).toHaveValue('keep@example.invalid')
-    expect(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration('/'))!.waiting)).toBe(true)
-    expect((await context.request.post(proxy.origin + '/api/auth/step-up/password', { headers: { Origin: proxy.origin }, data: { password: PASSWORD } })).ok()).toBe(true)
-    await other.getByRole('button', { name: 'Save contact', exact: true }).click()
-    await expect(other.getByText('Contact saved.', { exact: true })).toBeVisible()
-    const ready = other
-    const attachment = await context.newPage(); await attachment.goto(proxy.origin + '/api/attachments/missing')
-    await page.evaluate(() => sessionStorage.setItem('hennery.draft.update-test', 'Keep this composer draft'))
-    await ready.evaluate(() => sessionStorage.setItem('hennery.draft.peer-test', 'Keep the other draft'))
-    await page.getByLabel('Push contact', { exact: true }).fill('mailto:unsaved@example.invalid')
-    page.once('dialog', dialog => { expect(dialog.message()).toContain('question input'); void dialog.dismiss() })
-    await update.click()
-    await expect(page.getByText('Update postponed. Your unsent input is still here.', { exact: true })).toBeVisible()
-    const counts = await Promise.all([page, ready].map(p => p.evaluate(() => Number(sessionStorage.getItem('update-loads')))))
-    page.once('dialog', dialog => { void dialog.accept() })
-    await Promise.all([page.waitForEvent('domcontentloaded'), ready.waitForEvent('domcontentloaded'), update.click()])
-    for (const [index, p] of [page, ready].entries()) {
-      await expect(p.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+    for (const [index, p] of windows.entries()) {
+      await expect(p.locator('meta[name="hennery-build"]')).not.toHaveAttribute('content', oldBuild!)
       expect(await p.evaluate(() => Number(sessionStorage.getItem('update-loads')))).toBe(counts[index] + 1)
       expect(await p.evaluate(async () => (await (await fetch('/index.html')).text()).includes('pwa test build B'))).toBe(true)
       expect(await p.getByRole('button', { name: 'Reload to update', exact: true }).count()).toBe(0)
     }
+    await expect(draft).toHaveValue('Keep this composer draft')
     await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('hennery-shell-')).length)).toBe(1)
-    expect(await page.evaluate(() => sessionStorage.getItem('hennery.draft.update-test'))).toBe('Keep this composer draft')
-    expect(await ready.evaluate(() => sessionStorage.getItem('hennery.draft.peer-test'))).toBe('Keep the other draft')
-  } finally { await context.close(); await proxy.stop(); await a.stop(); await b.stop() }
+    // Observe beyond the fallback deadline: worker navigation and the page's
+    // controllerchange must still yield only one new document per window.
+    await page.waitForTimeout(RELOAD_GRACE_MS + 500)
+    for (const { document, url, loads } of excluded) {
+      expect(document.url()).toBe(url)
+      expect(await document.evaluate(() => sessionStorage.getItem('update-loads'))).toBe(loads)
+      expect(await document.evaluate(() => (window as unknown as { sentinel: string }).sentinel)).toBe('same-document')
+    }
+    // Repeated update checks and replayed signals must not cause another load.
+    await Promise.all(windows.map(p => p.evaluate(async () => {
+      await (await navigator.serviceWorker.getRegistration('/'))!.update()
+      navigator.serviceWorker.dispatchEvent(new Event('controllerchange'))
+    })))
+    for (const [index, p] of windows.entries()) expect(await p.evaluate(() => Number(sessionStorage.getItem('update-loads')))).toBe(counts[index] + 1)
+  } finally { await context.close(); await updateHost.stop(); await proxy.stop(); await a.stop(); await b.stop() }
+})
+
+test('a real failed lazy import recovers once and cannot loop onto the same build', async ({ browser }) => {
+  const context = await browser.newContext({ serviceWorkers: 'block' })
+  try {
+    await login(context)
+    await context.addInitScript(() => sessionStorage.setItem('chunk-loads', String(Number(sessionStorage.getItem('chunk-loads') ?? '0') + 1)))
+    let failures = 0
+    await context.route('**/assets/Settings-*.js', route => { failures++; return route.abort('failed') })
+    const page = await context.newPage()
+    await page.goto(collector.origin + '/sessions')
+    await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
+    // Direct navigation to the lazy Settings screen fails, then retries the
+    // same route after a real document reload. Both requests are refused.
+    await page.goto(collector.origin + '/settings')
+    // Retrying the assertion also retries an evaluation interrupted by the
+    // very navigation this test requires.
+    await expect(async () => {
+      expect(await page.evaluate(() => Number(sessionStorage.getItem('chunk-loads')))).toBe(3)
+    }).toPass({ timeout: 10_000 })
+    await expect.poll(() => failures).toBeGreaterThanOrEqual(2)
+    expect(await page.evaluate(() => sessionStorage.getItem('hennery.update-reload'))).toBe(await page.locator('meta[name="hennery-build"]').getAttribute('content'))
+    await page.evaluate(() => window.dispatchEvent(new Event('vite:preloadError', { cancelable: true })))
+    expect(await page.evaluate(() => Number(sessionStorage.getItem('chunk-loads')))).toBe(3)
+  } finally { await context.close() }
 })
 
 for (const width of [1280, 390]) test(`embedded PWA and gesture-safe device lifecycle at ${width}px`, async ({ browser }) => {
@@ -160,7 +223,7 @@ test('actual emitted worker handlers show a bounded notification offline, and ro
   expect(persisted.row.enabled).toBe(false)
 })
 
-test('mixed digest install fails, preserving the old offline shell; a complete new build waits with two dirty windows', async ({ browser }) => {
+test('mixed digest install fails, preserving the old offline shell; a complete new build replaces dirty windows', async ({ browser }) => {
   const a = await startCollector(resolve('../target/hennery-pwa-base'))
   const b = await startCollector(resolve('../target/hennery-pwa-update'))
   const proxy = await deployProxy(a, b)
@@ -203,16 +266,10 @@ test('mixed digest install fails, preserving the old offline shell; a complete n
     expect(await page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
     expect(await other.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
     await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration('/'))!.update() })
-    await expect.poll(() => page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration('/'))?.waiting)).toBe(true)
-    await expect(page.getByRole('button', { name: 'Reload to update', exact: true })).toBeVisible()
-    await expect(page.getByLabel('Push contact', { exact: true })).toHaveValue('mailto:unsent@example.invalid')
-    await expect(other.getByLabel('Push contact', { exact: true })).toHaveValue('mailto:other-unsent@example.invalid')
-    expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistration('/'))!.active!.state)).toBe('activated')
-    expect(await page.evaluate(() => caches.keys())).toHaveLength(2)
-    await page.close(); await other.close()
-    const next = await context.newPage(); await next.goto(`${proxy.origin}/settings`)
-    await expect.poll(() => next.evaluate(async () => (await caches.keys()).length)).toBe(1)
-    expect(await next.evaluate(async () => (await fetch('/index.html')).text())).toContain('pwa test build B')
+    await expect(page.getByLabel('Push contact', { exact: true })).toHaveValue('')
+    await expect(other.getByLabel('Push contact', { exact: true })).toHaveValue('')
+    await expect.poll(() => page.evaluate(async () => (await caches.keys()).length)).toBe(1)
+    expect(await page.evaluate(async () => (await fetch('/index.html')).text())).toContain('pwa test build B')
   } finally { await context.close(); await proxy.stop(); await a.stop(); await b.stop() }
 })
 

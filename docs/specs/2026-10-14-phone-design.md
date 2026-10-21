@@ -222,39 +222,52 @@ until one successful installation; Settings explains failed storage/install.
 
 ### 4.3 Updates
 
-A new worker installs into its own cache and waits while old clients exist.
-Show Update available; do not call `skipWaiting` or reload a page while the
-operator edits or a mutation is in flight. Natural activation after all old
-clients close supplies next-launch updates. An explicit Update now requires
-all app windows to acknowledge readiness, preserving sessionStorage drafts
-and warning about unsent in-memory images/question input. A busy or
-unresponsive window defers it. Only then activate and reload consenting
-clients; do not use unconditional `clients.claim` to mix builds. Versioned
-cache cleanup touches only hennery shell caches created before the activating
-build, including interrupted installs; a newer install's caches remain intact.
-Coordinated clients immediately reload.
+**Operator decision 2026-10-21:** immediate replacement supersedes #217's
+coordinated Reload to update flow. A new worker verifies its complete shell,
+then calls `skipWaiting()`. On activation it deletes every hennery shell cache
+created before its own (including interrupted installs), preserves newer and
+unrelated caches, and calls `clients.claim()`. When this installation replaces
+an active worker,
+it then navigates every same-origin app window to its current URL, including
+uncontrolled app windows. The shared router rule accepts `/` and trailing
+slashes; API, auth, MCP proxy and non-app documents are excluded. A rejected
+or unsupported per-window navigation is logged without stopping other windows.
+The worker starts navigations without waiting for their new documents, whose
+fetches may depend on activation finishing. The replacement flag is persisted
+with the verified shell so a worker restart preserves first-install behavior.
 
-**Built 2026-10-21:** the banner's **Reload to update** action implements
-Update now. The waiting worker asks every same-origin **app-route** window
-(using the router's normalisation, including `/` and trailing slashes)
-to prepare, then arm one reload on controllerchange or that worker's activation
-(including uncontrolled first-install windows). Bounded replies and window-set
-rechecks defer busy or silent app windows with distinct explanations; attachment,
-auth and MCP proxy documents do not participate. Stored composer text survives;
-initiating windows confirm loss of images, question input and other volatile
-edits. Durable composer/search focus is ready. Successful saves clear only
-unchanged fields in the submitted form; answered questions and saved or explicitly
-discarded renames stop blocking. Unsent drafts remain protected across control
-unmounts (including pending confirmation dialogs and question cards). A redundant
-worker or a five-second post-commit deadline releases the page with a retry
-notice, even if the worker's release message is lost. Previously controlled
-documents missed by coordination show a persistent older-version banner with
-an explicit Reload action, taking precedence over an activation-retry message.
-Auth pages keep the update notice without an update action. Worker identity is
-checked where the browser exposes it; a superseding update gets its own retry
-explanation. Activation deletes all older shell caches, including interrupted
-installs; consenting windows immediately reload. No unconditional skipWaiting
-or clients.claim is used.
+Worker-driven navigation also rescues v0.2.1 and older pages that do not have
+the new recovery listeners. A previously controlled page keeps a 1.5-second
+controllerchange fallback: pagehide cancels it, avoiding a second reload after
+worker navigation. On pageshow, recovery resumes and compares the controller
+again, including after a bfcache restore. The fallback checks the current
+router path when its timer fires, so login and setup keep their document and
+in-memory setup token. A replacement skipped there reloads once when in-app
+or history navigation enters an app route. If navigation is unavailable and
+the app page stays alive, the shared build guard permits one fallback reload.
+The first install claims an uncontrolled page without navigating or reloading it. There is
+no readiness handshake, busy-window veto, confirmation, or update button.
+Composer text persisted in sessionStorage survives; losing unsent in-memory
+images, question input, other unsaved edits or a request's in-memory outcome
+is accepted. An update may arrive while a mutation is in flight. Composer text
+clears only after the prompt's 202 response: a reload before that response can
+restore a draft whose prompt was already accepted, and sending it again can
+duplicate the prompt. Before sending, persist a send-started marker with the
+draft. A restored draft with that marker shows a subtle “may already have been
+sent” note asking the operator to check the transcript. An accepted response,
+editing or clearing the draft removes the marker; sign-out removes it too.
+An explicit server refusal (`ApiFailure`) also clears it without discarding
+the draft. Network, timeout and abort failures keep it because delivery is
+still uncertain.
+
+A failed lazy chunk import (`vite:preloadError`) uses the same reload guard on
+every route, including login and setup.
+A per-window sessionStorage marker identifies the build that attempted the
+reload: landing back on that build cannot reload again, while a different
+build can recover once. The build ID covers both the shell and the bundled
+worker, including imported worker helpers. If storage refuses the marker, automatic recovery is
+suppressed to avoid a navigation loop. The offline banner and logout cleanup
+warning remain.
 
 Browser eviction may remove shell/state at any time. Re-register on launch
 and reconcile push state; no claim that an installed icon guarantees offline
@@ -827,7 +840,7 @@ fleet session is authorized by this design.
 | Manifest identity and capability | Stable app id/scope, start Sessions with gateway redirect; additive `web_push` advertisement. | Hat-specific install identities and mode inference do not match one operator app/API availability. | **designer's recommendation**. |
 | Worker build/cache | Generated URL/content-digest allowlist, verify every file before accepting one pinned shell build; external root worker, no new PWA library by default. | ETags lack a cross-request build fence; a hand-maintained list loses lazy imports; blanket runtime caching risks owner data. | **designer's recommendation**; digest amendment required by maintainer's review; shell/no-inline settled by frontend §9/current CSP. |
 | Question snapshot and merge | One coherent owner/session/question/state/version/grouping snapshot for shared HTTP/SSE item construction; version-fenced client merges. | Individually guarded reads can stamp stale answerability with a newer version; response order alone cannot establish freshness. | **designer's recommendation** under the client-view contract; coherent-snapshot amendment required by maintainer's review. |
-| Update lifecycle | Waiting worker, next-launch activation; explicit coordinated update only when clients ready. | Unconditional skipWaiting/reload loses edits and mixes builds. | **built 2026-10-21:** Reload to update implements §4.3; next-launch activation retained. |
+| Update lifecycle | Verified install skips waiting, claims and navigates app windows; page reload is a delayed fallback. | Stored composer drafts survive; volatile input loss is accepted by the operator. | **amended 2026-10-21:** immediate replacement supersedes #217; see §4.3. |
 | Renewal recovery | Bounded IndexedDB record, existing cookie/rotate, explicit re-enable for missing rows. | In-memory-only loses worker retries; bearer renewal credentials expand scope; automatic POST resurrects revoked push. | **designer's recommendation** under kernel §6's rotation contract. |
 | Foreground attention | Always display valid push once; SSE supplies badges, no duplicate native notification. | Suppression based on an open tab conflicts with visible-push expectations; a second notification path adds duplication. | **designer's recommendation**. |
 | Gateway relay | Typed untrusted invalidation hint into the existing shared reader. | Copying push state into cards or adding another poller misstates current gateway status. | **designer's recommendation**; 4e-ii-b's seam and hedged copy retained. |

@@ -178,27 +178,3 @@ describe('useHostAway', () => {
     expect(h.result.current).toBe(false)
   })
 })
-
-it('a successfully answered elicitation is no longer an unsaved update draft', async () => {
-  const { hasUpdateEdits } = await import('../pwa/update-edits')
-  const t = routed(() => json({}, 202))
-  const q = question('update-answer') as Extract<Item, { kind: 'question' }>
-  const h = use(t, { items: [q], loading: false })
-  try {
-    act(() => h.result.current.updateDraft(q.id, () => ({ note: 'answer me' })))
-    expect(hasUpdateEdits()).toBe(true)
-    await act(async () => { await h.result.current.answer(q, { option_id: 'a' }) })
-    expect(hasUpdateEdits()).toBe(false)
-  } finally { h.unmount() }
-})
-it('an authoritative answered question no longer blocks an update', async () => {
-  const { hasUpdateEdits } = await import('../pwa/update-edits')
-  const t = routed(() => json({})), q = question('resolved-update')
-  const h = use(t, { items: [q], loading: false })
-  try {
-    act(() => h.result.current.updateDraft(q.id, () => ({ note: 'typed here' })))
-    expect(hasUpdateEdits()).toBe(true)
-    h.rerender({ items: [sent(q.id)], loading: false })
-    expect(hasUpdateEdits()).toBe(false)
-  } finally { h.unmount() }
-})

@@ -10,7 +10,7 @@ export default function SessionFilters() {
   if (!scope) return null
   const { list, query, setQuery, hideClosed, setHideClosed, lifecycle, setLifecycle, host, setHost, status, setStatus, group, setGroup, hosts } = scope
   const groupings = ['hat', 'host', 'project', 'time'] as const
-  return <div className="overview-filters" data-update-search>
+  return <div className="overview-filters">
     <fieldset className="group-choice"><legend>Group by</legend>{groupings.map(value => <label key={value}><input type="radio" name="group" value={value} checked={group === value} onChange={() => setGroup(value)} />By {value}</label>)}</fieldset>
     <label className="group-select">Group by<select aria-label="Group sessions by" value={group} onChange={event => { const next = groupings.find(value => value === event.target.value); if (next) setGroup(next) }}>{groupings.map(value => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}</select></label>
     <div className="status-filters" role="group" aria-label="Status">{STATUS_FILTERS.map(value => <button type="button" key={value} aria-pressed={status === value} disabled={list.searching} className={'chip' + (status === value ? ' on' : '')} onClick={() => setStatus(value)}>{STATUS_LABEL[value]} <span>{value === 'attention' ? list.counts.waiting : list.shown.filter(s => matchesStatus(s, value)).length}{list.hasMore ? ' shown' : ''}</span></button>)}</div>

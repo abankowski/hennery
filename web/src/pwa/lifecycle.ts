@@ -1,18 +1,11 @@
 import { useSyncExternalStore } from 'react'
-import { requestUpdate } from './update-client'
-interface PwaStatus { registration: ServiceWorkerRegistration | null; error: string | null; waiting: boolean; cleanupWarning: string | null; updating: boolean; updateMessage: string | null }
+interface PwaStatus { registration: ServiceWorkerRegistration | null; error: string | null; cleanupWarning: string | null }
 const rememberedCleanup = () => { try { return sessionStorage.getItem('hennery.logout-cleanup') } catch { return null } }
-let status: PwaStatus = { registration: null, error: null, waiting: false, cleanupWarning: rememberedCleanup(), updating: false, updateMessage: null }
+let status: PwaStatus = { registration: null, error: null, cleanupWarning: rememberedCleanup() }
 const listeners = new Set<() => void>()
 const set = (change: Partial<PwaStatus>) => { status = { ...status, ...change }; listeners.forEach((f) => f()) }
 let pending: Promise<void> | null = null
 export const usePwa = () => useSyncExternalStore((fn) => { listeners.add(fn); return () => { listeners.delete(fn) } }, () => status)
-export async function reloadToUpdate() {
-  if (status.updating) return
-  set({ updating: true, updateMessage: null })
-  try { set({ updateMessage: await requestUpdate(status.registration) }) }
-  finally { set({ updating: false }) }
-}
 export const setCleanupWarning = (warning: string | null) => {
   try {
     if (warning) sessionStorage.setItem('hennery.logout-cleanup', warning)
@@ -32,14 +25,11 @@ export function registerWorker(): Promise<void> {
   pending = (async () => {
     try {
       const registration = await bounded(navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }))
-      const check = () => set({ waiting: !!registration.waiting })
       registration.addEventListener('updatefound', () => {
         const worker = registration.installing
         worker?.addEventListener('statechange', () => {
-          check()
           if (worker.state === 'redundant') set({ error: 'Offline shell verification or storage failed. Retry worker setup.' })
         })
-        check()
       })
       await bounded(new Promise<void>((resolve, reject) => {
         if (registration.active?.state === 'activated') { resolve(); return }
@@ -51,7 +41,7 @@ export function registerWorker(): Promise<void> {
         }
         worker.addEventListener('statechange', change); change()
       }))
-      set({ registration, waiting: !!registration.waiting })
+      set({ registration })
       await registration.update()
     } catch (err) { set({ error: err instanceof Error ? err.message : 'Worker setup failed.' }) }
     finally { pending = null }
