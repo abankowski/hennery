@@ -1,12 +1,17 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import { useClient } from '../app-client'
 import type { Client } from '../api/client'
-import type { EventDto } from '../generated/protocol'
+import type { EventDto, TitleSource } from '../generated/protocol'
 import { basename } from '../lib/time'
 import { visible } from '../lib/text'
 
-export interface NamedSession { session_id: string; title?: string | null; cwd?: string; last_event_at?: string; activity?: string | null; lifecycle?: string }
-interface Name { text: string; provisional: boolean; source: 'agent' | 'prompt' | 'project' }
+export interface NamedSession { session_id: string; title?: string | null; title_source?: TitleSource; cwd?: string; last_event_at?: string; activity?: string | null; lifecycle?: string }
+interface Name { text: string; provisional: boolean; source: TitleSource | 'project' }
+function serverName(session: NamedSession): Name | null {
+  if (!session.title?.trim()) return null
+  const source = session.title_source ?? 'agent'
+  return { text: visible(session.title), provisional: source === 'prompt', source }
+}
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 export function firstPromptName(body: unknown): string | null {
   if (!record(body) || !Array.isArray(body.content)) return null
@@ -41,7 +46,8 @@ class Names {
   snapshot = () => this.revision
   prompt = (id: string) => this.cache.get(id)?.text ?? null
   name(session: NamedSession, fallback?: string): Name {
-    if (session.title?.trim()) return { text: visible(session.title), provisional: false, source: 'agent' }
+    const supplied = serverName(session)
+    if (supplied) return supplied
     const prompt = this.cache.get(session.session_id)?.text
     return { text: prompt || fallback || basename(session.cwd ?? '') || session.session_id, provisional: true, source: prompt ? 'prompt' : 'project' }
   }
@@ -87,14 +93,14 @@ export function useSessionNames(sessions: readonly NamedSession[]) {
   const names = useContext(Context)
   useSyncExternalStore(names?.subscribe ?? noSubscribe, names?.snapshot ?? zero)
   useEffect(() => { for (const session of sessions) names?.ensure(session) }, [names, sessions])
-  return (session: NamedSession, fallback?: string): Name => names?.name(session, fallback) ?? { text: session.title || fallback || basename(session.cwd ?? '') || session.session_id, provisional: !session.title, source: session.title ? 'agent' : 'project' }
+  return (session: NamedSession, fallback?: string): Name => names?.name(session, fallback) ?? serverName(session) ?? { text: fallback || basename(session.cwd ?? '') || session.session_id, provisional: true, source: 'project' }
 }
-export function useSessionName(session: NamedSession, fallback?: string, ready = true) {
+export function useSessionName(session: NamedSession, fallback?: string, ready = true): Name {
   const names = useContext(Context)
   // A name arriving for another session must not render every memoized row.
   useSyncExternalStore(names?.subscribe ?? noSubscribe, () => names?.prompt(session.session_id) ?? null)
   useEffect(() => { if (ready) names?.ensure(session) }, [names, session, ready])
-  return names?.name(session, fallback) ?? { text: session.title || fallback || basename(session.cwd ?? '') || session.session_id, provisional: !session.title, source: session.title ? 'agent' : 'project' }
+  return names?.name(session, fallback) ?? serverName(session) ?? { text: fallback || basename(session.cwd ?? '') || session.session_id, provisional: true, source: 'project' }
 }
 export default function SessionName({ session, fallback, ready = true }: { session: NamedSession; fallback?: string; ready?: boolean }) {
   const name = useSessionName(session, fallback, ready)
