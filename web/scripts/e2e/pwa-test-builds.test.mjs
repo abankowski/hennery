@@ -3,10 +3,10 @@ import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, stat
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { spawnHennery } from '../e2e/spawn.ts'
+import { spawnHennery } from '../../e2e/spawn.ts'
 
 test('PWA test binaries replace the old inode, preserving executable bytes and open readers', async () => {
-  const script = readFileSync(new URL('../../packaging/pwa-test-builds.sh', import.meta.url), 'utf8')
+  const script = readFileSync(new URL('../../../packaging/pwa-test-builds.sh', import.meta.url), 'utf8')
   const operation = script.split('\n').filter(line => /^(?:cp|copy_variant) target\/debug\/hennery target\/hennery-pwa-base$/.test(line))
   assert.equal(operation.length, 1, 'exercise the actual base-binary copy operation')
   const helper = script.match(/copy_variant\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
