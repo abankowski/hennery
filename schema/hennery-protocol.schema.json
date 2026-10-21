@@ -356,6 +356,11 @@
           "const": "delegation_config",
           "description": "Generation-bound evidence and serialized delegated prompt admission.",
           "type": "string"
+        },
+        {
+          "const": "operator_resume",
+          "description": "Collector-owned operator queue resume with operator authority (hennery 0.3.0).",
+          "type": "string"
         }
       ]
     },
@@ -4458,6 +4463,13 @@
         "content": {
           "items": true,
           "type": "array"
+        },
+        "request_key": {
+          "description": "Reuse for retries of the same submit, including a lost response.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

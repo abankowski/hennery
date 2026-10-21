@@ -892,8 +892,10 @@ leaves the session `failed` like a failed start, and `failed` is resumable.
   Resumed operator delivery requires both host `operator_resume` and
   `delegation_config` capabilities; older hosts leave a readable failure
   asking for hennery 0.3.0. An explicit operator Park holds the whole prompt
-  FIFO until Resume or a new Send clears the durable hold. Idle and host-restart
-  parks do not hold it. Adapter exit fails unsent items with retained input.
+  FIFO until Resume or a new Send clears the durable hold. Send during the park
+  handshake waits for its acknowledgement before dispatching; proven rejection
+  releases only that Park's hold, preserving newer Park intent. Idle and
+  host-restart parks do not hold it. Adapter exit fails unsent items with retained input.
   *(P-15: overlapping host prompts remain prohibited.)*
 - Queued operator prompts and delegated parent follow-ups share
   `session_dispatch_queue` position order. Immediate operator prompts cannot
@@ -912,10 +914,19 @@ leaves the session `failed` like a failed start, and `failed` is resumable.
   operator work with readable reasons; failed content remains until dismissed
   or seven days after failure, when its unreferenced images are cleaned too.
   Revoked hosts reject new prompts; revoked or offline hosts fail queued
-  parked input with readable reasons. A `turn_in_progress` host refusal proves
+  parked input with readable reasons. A connected host still resending or
+  reconciling defers the queue; lack of readiness is not proof of being offline.
+  A `turn_in_progress` host refusal proves
   non-admission and requeues the same head to wait for that turn's end.
   Awaiting reconciliation fences every immediate, operator and delegated
   head path; reconciliation settles its receipt in the same transaction.
+  Queue receipts stay stable while each delivery attempt receives a fresh
+  request UUID, also used for plugin startup evidence. Delayed errors from
+  earlier attempts cannot reject a newer reservation. The host's reconnect
+  snapshot includes the oldest prompt waiting in its actor mailbox before
+  falling back to the running turn. Its marker remains until rejection or
+  an outboxed `turn_started`; this makes absent-turn reconciliation a valid
+  non-admission proof even when the actor has not read its command channel.
   One session's preparation failure does not abort other sessions' dispatch.
   Session deletion and hat purge scrub queued content and attachments under
   §4.10; deleted queue/transcript routes answer 404. The delete confirmation
@@ -1808,8 +1819,10 @@ All endpoints require an operator session (kernel spec §3). Types come from
 `delivery_unknown` ("host disconnected; delivery unknown") whenever the host
 connection dropped or the request timed out after it was sent (§3.4); the
 fact, if it happened, still arrives and applies. 409 `host_offline` to a start,
-resume or prompt when the host is not connected, or connected but not yet
-reconciled; cancel, config and park answer `not_attached` then. A start
+resume or immediate prompt when the host is not connected, or connected but not
+yet reconciled. A parked prompt is accepted durably and then fails readably
+when its host is offline. Revoked hosts refuse new prompts with `host_revoked`.
+Cancel, config and park answer `not_attached` then. A start
 on a host that has not connected since it was paired says so in the
 `host_offline` message: its first start installs the agents before it
 connects (distribution §3.2), which can take minutes. Error bodies are

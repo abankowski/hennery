@@ -30,6 +30,15 @@ pub mod plugin_api;
 pub mod projects;
 pub mod prompt_queue;
 pub mod prompt_receipts;
+
+#[cfg(test)]
+mod prompt_queue_head_tests {
+    #[test]
+    fn a_queue_head_removed_before_preparation_is_optional() {
+        let store = crate::store::Store::open_in_memory().unwrap();
+        assert!(store.operator_dispatch_id("removed-session-head").unwrap().is_none());
+    }
+}
 pub mod push;
 mod redact;
 mod resolve;

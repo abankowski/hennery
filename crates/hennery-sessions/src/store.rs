@@ -2842,9 +2842,11 @@ impl Store {
         let changed = tx.execute(
             "UPDATE sessions SET open_turn_id = ?2
              WHERE id = ?1 AND lifecycle = 'active' AND open_turn_id IS NULL AND owner_id = ?3
-             AND close_requested = 0 AND NOT EXISTS(SELECT 1 FROM purged_hats p
+             AND close_requested = 0 AND prompt_queue_held=0
+             AND NOT EXISTS(SELECT 1 FROM hosts h WHERE h.owner_id = ?3 AND h.id=sessions.host_id AND h.revoked_at IS NOT NULL)
+             AND NOT EXISTS(SELECT 1 FROM purged_hats p
                 WHERE p.owner_id = ?3 AND p.hat_id = sessions.hat_id)
-             AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?3 AND q.target_id = ?1 AND q.state IN ('queued','waiting_config'))
+             AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?3 AND q.target_id = ?1 AND q.state IN ('queued','waiting_config','awaiting_reconciliation'))
              AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?3 AND p.session_id = ?1 AND p.state='open')",
             params![session_id, turn_id, self.owner],
         )?;
@@ -3395,6 +3397,17 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(event)
+    }
+
+    /// A proven-unsent/rejected Park cannot leave a handshake hold behind.
+    /// A later Park has its own event and retains its newer operator intent.
+    pub fn release_rejected_park(&self, session: &str, event: i64) -> Result<()> {
+        self.conn().execute(
+            "UPDATE sessions SET prompt_queue_held=0 WHERE owner_id = ?1 AND id=?2 AND lifecycle='active'
+             AND ?3=(SELECT MAX(e.event_id) FROM events e WHERE e.owner_id = ?1 AND e.session_id=?2 AND e.kind='operator_parked')",
+            params![self.owner_id(),session,event],
+        )?;
+        Ok(())
     }
 
     /// Record an operator close of an attached session before
@@ -4136,9 +4149,9 @@ impl Store {
                     "UPDATE sessions SET
                          lifecycle = CASE WHEN close_requested = 1 THEN 'closed' ELSE 'parked' END,
                          activity = NULL, close_requested = 0, presumed_parked = 0,
-                         prompt_queue_held = CASE WHEN ?3 THEN prompt_queue_held ELSE 0 END
+                         prompt_queue_held = CASE WHEN prompt_queue_held=1 THEN 1 ELSE 0 END
                      WHERE id = ?1 AND owner_id = ?2 AND (lifecycle = 'active' OR presumed_parked = 1)",
-                    params![session_id, self.owner, *reason == ParkReason::Operator],
+                    params![session_id, self.owner],
                 )?;
                 if changed == 0 {
                     created.clear();

@@ -888,6 +888,11 @@ async fn prompt(
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
         Err(err) => return internal(err),
     };
+    match state.hosts.is_revoked(&session.host_id) {
+        Ok(true) => return queue_error(anyhow::anyhow!("host_revoked")),
+        Ok(false) => {}
+        Err(err) => return internal(err),
+    }
     if !matches!(session.lifecycle.as_str(), "active" | "parked") {
         return error(StatusCode::CONFLICT, "not_attached", "resume the session first");
     }
@@ -986,6 +991,11 @@ async fn prompt(
 
 fn queue_error(err: anyhow::Error) -> Response {
     match err.to_string().as_str() {
+        "host_revoked" => error(
+            StatusCode::CONFLICT,
+            "host_revoked",
+            crate::prompt_queue::failure_reason("host_revoked"),
+        ),
         "invalid_request_key" => error(
             StatusCode::BAD_REQUEST,
             "invalid_request_key",
@@ -1321,10 +1331,12 @@ async fn park(State(state): State<AppState>, Path(id): Path<String>) -> Response
             "this host cannot park sessions; close the session instead",
         );
     }
-    match state.store.record_park_request(&id) {
-        Ok(event) => state.hub.publish(event),
+    let park_event = match state.store.record_park_request(&id) {
+        Ok(event) => event,
         Err(err) => return internal(err),
-    }
+    };
+    let park_event_id = park_event.event_id;
+    state.hub.publish(park_event);
     let request_id = uuid::Uuid::now_v7().to_string();
     let frame = CollectorFrame::ParkSession {
         request_id: request_id.clone(),
@@ -1336,7 +1348,14 @@ async fn park(State(state): State<AppState>, Path(id): Path<String>) -> Response
         .await
     {
         Ok(_) => lifecycle_response(&state, &id),
-        Err(err) => request_failed(err),
+        Err(err) => {
+            if !matches!(&err, RequestError::DeliveryUnknown)
+                && let Err(error) = state.store.release_rejected_park(&id, park_event_id)
+            {
+                return internal(error);
+            }
+            request_failed(err)
+        }
     }
 }
 

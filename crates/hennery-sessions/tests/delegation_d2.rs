@@ -1247,6 +1247,84 @@ fn ready(w: &World) {
 fn queue(w: &World, p: &SessionIdentity, key: &str) -> OperationReceipt {
     w.store.queue_followup(p, 1, key, key, "child", key).unwrap()
 }
+
+#[test]
+fn explicit_operator_park_holds_delegated_followups_in_the_shared_fifo() {
+    for reason in [ParkReason::Operator, ParkReason::Idle] {
+        let (w, parent) = pair();
+        ready(&w);
+        queue(&w, &parent, "held-followup");
+        if reason == ParkReason::Operator {
+            w.store.record_park_request("child").unwrap();
+        }
+        w.store
+            .ingest("child", 10, &SessionBody::SessionParked { reason })
+            .unwrap();
+        let (hub, mut frames) = connected();
+        let attached = w
+            .store
+            .attach_delegated("child", McpContext::NONE, &catalog(), &hub)
+            .unwrap();
+        assert_eq!(attached, reason == ParkReason::Idle);
+        if reason == ParkReason::Operator {
+            assert!(frames.try_recv().is_err());
+            assert_eq!(receipt(&w, &parent, "held-followup").state, OperationState::Queued);
+            assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "parked");
+        } else {
+            assert!(matches!(
+                frames.try_recv().unwrap(),
+                CollectorFrame::DelegatedAttach { .. }
+            ));
+        }
+    }
+}
+
+#[test]
+fn retained_operator_failures_do_not_consume_the_shared_delegated_capacity() {
+    let (w, parent) = pair();
+    ready(&w);
+    let prompt =
+        hennery_sessions::content::check(vec![json!({"type":"text","text":"retained operator input"})]).unwrap();
+    assert!(w.store.open_prompt("child", "failed-work", &prompt).unwrap());
+    w.store
+        .ingest(
+            "child",
+            3,
+            &SessionBody::TurnStarted {
+                request_id: "initial".into(),
+                turn_id: "failed-work".into(),
+            },
+        )
+        .unwrap();
+    for _ in 0..32 {
+        w.store.enqueue_operator_prompt("child", &prompt).unwrap();
+    }
+    w.store
+        .ingest(
+            "child",
+            4,
+            &SessionBody::TurnEnded {
+                turn_id: "failed-work".into(),
+                outcome: TurnOutcome::Failed,
+                stop_reason: None,
+                error: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(w.store.operator_prompt_queue("child").unwrap().len(), 32);
+    assert_eq!(w.store.delegation_queue_depth("child").unwrap(), (0, 0));
+    for index in 0..32 {
+        queue(&w, &parent, &format!("new-parent-{index}"));
+    }
+    assert_eq!(w.store.delegation_queue_depth("child").unwrap().0, 32);
+    assert_eq!(
+        w.store
+            .queue_followup(&parent, 1, "overflow", "overflow", "child", "overflow")
+            .unwrap_err()
+            .to_string(),
+        "queue_full"
+    );
+}
 fn receipt(w: &World, p: &SessionIdentity, key: &str) -> OperationReceipt {
     w.store.delegation_receipt(p, 1, key).unwrap().unwrap()
 }

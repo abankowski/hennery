@@ -93,6 +93,19 @@ impl World {
 fn checked(text: &str) -> content::Checked {
     content::check(vec![json!({"type":"text","text":text})]).unwrap()
 }
+fn operator_catalog() -> HostCatalog {
+    HostCatalog {
+        agent: "fake".into(),
+        adapter_revision: "fixture".into(),
+        freshness: CatalogFreshness::Fresh,
+        config_options: vec![],
+        defaults: SessionConfig::default(),
+        security: SecurityClassification {
+            known: true,
+            axes: Default::default(),
+        },
+    }
+}
 fn host(caps: Vec<Capability>) -> (Arc<Hub>, tokio::sync::mpsc::UnboundedReceiver<CollectorFrame>) {
     let hub = Arc::new(Hub::new());
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -392,6 +405,39 @@ fn operator_prompts_cannot_overtake_a_shared_parent_fifo_head() {
 }
 
 #[test]
+fn a_parent_origin_row_cannot_gain_operator_authority_from_equal_source_and_target() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![Capability::DelegationConfig, Capability::OperatorResume]);
+    let owner = w.store.owner_id();
+    let conn = w.conn();
+    conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state) VALUES (?1,'session','forged-parent','forged-parent','','session_send','session','queued')",[owner]).unwrap();
+    conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config,origin) VALUES (?1,'forged-parent','session','session',0,'parent without grant','{}','parent')",[owner]).unwrap();
+    w.queue("operator behind the parent");
+    w.emit(SessionBody::SessionParked {
+        reason: ParkReason::Idle,
+    });
+    let catalog = HostCatalog {
+        agent: "fake".into(),
+        adapter_revision: "fixture".into(),
+        freshness: CatalogFreshness::Fresh,
+        config_options: vec![],
+        defaults: SessionConfig::default(),
+        security: SecurityClassification {
+            known: true,
+            axes: Default::default(),
+        },
+    };
+    assert!(
+        !w.store
+            .attach_delegated("session", McpContext::NONE, &catalog, &hub)
+            .unwrap()
+    );
+    assert!(rx.try_recv().is_err());
+    assert_eq!(w.store.find_session("session").unwrap().unwrap().lifecycle, "parked");
+    assert_eq!(w.store.operator_prompt_queue("session").unwrap()[0].state, "queued");
+}
+
+#[test]
 fn grant_revision_changes_do_not_cancel_operator_input() {
     let w = World::new();
     w.queue("operator");
@@ -655,6 +701,72 @@ fn reconnect_requeues_a_proven_unsent_head_before_any_later_prompt() {
 }
 
 #[test]
+fn an_unresolved_operator_receipt_fences_typed_input_even_without_a_turn_slot() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![Capability::DelegationConfig, Capability::OperatorResume]);
+    w.queue("uncertain head");
+    assert!(w.dispatch(&hub));
+    prompt(&mut rx);
+    let tail = w.queue("later queued input");
+    w.conn()
+        .execute(
+            "UPDATE sessions SET open_turn_id=NULL WHERE owner_id = ?1 AND id='session'",
+            [w.store.owner_id()],
+        )
+        .unwrap();
+    assert!(w.store.prompt_must_queue("session").unwrap());
+    assert!(!w.store.operator_dispatch_ready("session").unwrap());
+    assert!(!w.dispatch(&hub));
+    w.conn()
+        .execute(
+            "UPDATE sessions SET lifecycle='parked' WHERE owner_id = ?1 AND id='session'",
+            [w.store.owner_id()],
+        )
+        .unwrap();
+    assert!(
+        !w.store
+            .attach_delegated("session", McpContext::NONE, &operator_catalog(), &hub)
+            .unwrap()
+    );
+    w.conn()
+        .execute(
+            "UPDATE sessions SET lifecycle='active' WHERE owner_id = ?1 AND id='session'",
+            [w.store.owner_id()],
+        )
+        .unwrap();
+    assert!(w.store.remove_operator_prompt("session", &tail).unwrap());
+    assert!(
+        !w.store
+            .open_prompt("session", "overtake-uncertain", &checked("later input"))
+            .unwrap()
+    );
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn an_image_io_error_fails_only_that_item_and_keeps_the_next_item_dispatchable() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![Capability::Images]);
+    let image = content::check(vec![
+        json!({"type":"image","mimeType":"image/png","data":STANDARD.encode(b"\x89PNG\r\n\x1a\nread-error")}),
+    ])
+    .unwrap();
+    let path = w.dir.path().join("attachments").join(&image.images[0].sha256);
+    let broken = w.store.enqueue_operator_prompt("session", &image).unwrap();
+    let next = w.queue("healthy next");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert!(!w.dispatch(&hub));
+    let q = w.store.operator_prompt_queue("session").unwrap();
+    assert_eq!(q[0].id, broken);
+    assert_eq!(q[0].state, "failed");
+    assert!(q[0].reason.as_deref().unwrap().contains("image is unavailable"));
+    assert_eq!(q[1].state, "queued");
+    assert!(w.dispatch(&hub));
+    assert_eq!(w.operation(&prompt(&mut rx).0), next);
+}
+
+#[test]
 fn host_restart_requeues_a_proven_unsent_head_before_resuming_later_work() {
     lost_head_is_retried_in_order(true);
 }
@@ -782,7 +894,12 @@ fn explicit_park_holds_existing_queue_while_idle_park_resumes_it() {
 
 #[test]
 fn a_send_during_the_park_handshake_releases_the_hold_and_resume_clears_it() {
-    for send_before_park in [false, true] {
+    for (send_before_park, reason) in [
+        (false, ParkReason::Operator),
+        (true, ParkReason::Operator),
+        (false, ParkReason::Idle),
+        (true, ParkReason::Idle),
+    ] {
         let w = World::new();
         let (hub, _rx) = host(vec![]);
         w.queue("existing");
@@ -791,10 +908,10 @@ fn a_send_during_the_park_handshake_releases_the_hold_and_resume_clears_it() {
         assert!(!w.dispatch(&hub));
         if send_before_park {
             w.queue("send while parking");
+            assert!(!w.store.operator_dispatch_ready("session").unwrap());
+            assert!(!w.dispatch(&hub));
         }
-        w.emit(SessionBody::SessionParked {
-            reason: ParkReason::Operator,
-        });
+        w.emit(SessionBody::SessionParked { reason });
         let held: bool = w
             .conn()
             .query_row(
@@ -1013,6 +1130,75 @@ async fn parked_offline_and_revoked_hosts_fail_waiting_input_readably() {
     }
 }
 
+#[tokio::test]
+async fn a_reconnecting_parked_host_defers_the_queue_until_resend_completes() {
+    let w = World::new();
+    w.emit(SessionBody::SessionParked {
+        reason: ParkReason::Idle,
+    });
+    w.queue("wait for reconnect proof");
+    let db = w.dir.path().join("hennery.db");
+    let state = hennery_sessions::AppState::new(
+        Store::open(&db).unwrap(),
+        Hosts::open(&db).unwrap(),
+        hennery_kernel::operator::Operator::open(&db).unwrap(),
+    );
+    let (tx, mut frames) = tokio::sync::mpsc::unbounded_channel();
+    let connection = state
+        .hub
+        .register(
+            "host",
+            tx,
+            Capabilities(vec![Capability::DelegationConfig, Capability::OperatorResume]),
+            AgentIsolation::default(),
+        )
+        .unwrap();
+    assert!(!state.hub.is_ready("host"));
+    hennery_sessions::delegation_worker::drain(&state).await.unwrap();
+    assert_eq!(state.store.operator_prompt_queue("session").unwrap()[0].state, "queued");
+    assert!(frames.try_recv().is_err());
+    state.hub.unregister("host", connection.conn_id);
+    hennery_sessions::delegation_worker::drain(&state).await.unwrap();
+    let queue = state.store.operator_prompt_queue("session").unwrap();
+    assert_eq!(queue[0].state, "failed");
+    assert!(queue[0].reason.as_deref().unwrap().contains("offline"));
+    state.shutdown.cancel();
+}
+
+#[test]
+fn revocation_after_worker_preparation_fences_every_operator_handoff() {
+    let w = World::new();
+    let (hub, mut frames) = host(vec![Capability::DelegationConfig, Capability::OperatorResume]);
+    w.queue("prepared before revocation");
+    assert!(w.store.operator_dispatch_ready("session").unwrap());
+    Hosts::open(&w.dir.path().join("hennery.db"))
+        .unwrap()
+        .revoke("host", 1)
+        .unwrap();
+    assert!(!w.store.operator_dispatch_ready("session").unwrap());
+    assert!(!w.dispatch(&hub));
+    w.emit(SessionBody::SessionParked {
+        reason: ParkReason::Idle,
+    });
+    assert!(
+        !w.store
+            .attach_delegated("session", McpContext::NONE, &operator_catalog(), &hub)
+            .unwrap()
+    );
+    assert!(frames.try_recv().is_err());
+    let idle = World::new();
+    Hosts::open(&idle.dir.path().join("hennery.db"))
+        .unwrap()
+        .revoke("host", 1)
+        .unwrap();
+    assert!(
+        !idle
+            .store
+            .open_prompt("session", "revoked-immediate", &checked("new immediate input"))
+            .unwrap()
+    );
+}
+
 #[test]
 fn operator_resume_requires_a_host_capability_instead_of_opaque_failure() {
     let w = World::new();
@@ -1056,8 +1242,23 @@ async fn failed_items_expire_after_seven_days_and_remove_only_their_images() {
     let sha = image.images[0].sha256.clone();
     let old = w.store.enqueue_operator_prompt("session", &image).unwrap();
     let fresh = w.queue("recent failure");
+    let failed_after = hennery_kernel::secret::unix_now();
     w.end("running", TurnOutcome::Failed);
     let now = hennery_kernel::secret::unix_now();
+    for id in [&old, &fresh] {
+        let at: Option<i64> = w
+            .conn()
+            .query_row(
+                "SELECT failed_at FROM session_dispatch_queue WHERE owner_id = ?1 AND operation_id=?2",
+                params![w.store.owner_id(), id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            at.is_some_and(|at| at >= failed_after && at <= now),
+            "failure age must be durably recorded"
+        );
+    }
     w.conn()
         .execute(
             "UPDATE session_dispatch_queue SET failed_at=?3 WHERE owner_id=?1 AND operation_id=?2",
@@ -1111,12 +1312,12 @@ fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_pr
                     }
                 }
                 2 => {
-                    if let Some((operation, request, turn, started)) = &mut current {
-                        if !*started {
-                            w.start(request, turn);
-                            delivered.push(operation.clone());
-                            *started = true;
-                        }
+                    if let Some((operation, request, turn, started)) = &mut current
+                        && !*started
+                    {
+                        w.start(request, turn);
+                        delivered.push(operation.clone());
+                        *started = true;
                     }
                 }
                 3 => {

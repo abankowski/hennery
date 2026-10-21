@@ -93,7 +93,7 @@ async fn drain_target(state: &AppState, target: &str) -> anyhow::Result<()> {
         state.store.fail_unavailable_operator_queue(target, "host_revoked")?;
         return Ok(());
     }
-    if session.lifecycle == "parked" && !state.hub.is_ready(&session.host_id) {
+    if session.lifecycle == "parked" && !state.hub.has_connection(&session.host_id) {
         state.store.fail_unavailable_operator_queue(target, "host_offline")?;
         return Ok(());
     }

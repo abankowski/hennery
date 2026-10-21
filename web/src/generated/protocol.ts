@@ -228,7 +228,7 @@ export type SessionConfig = { model?: string | null, mode?: string | null, axes?
  * collector never sends a frame that needs a capability to a host that
  * lacks it.
  */
-export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "delegation_config";
+export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "delegation_config" | "operator_resume";
 
 /**
  * `hello.capabilities`. Deserialized leniently: a capability this build
@@ -652,7 +652,11 @@ export type StartSessionRequest = { host_id: string, agent: string, cwd: string,
 
 export type StartSessionResponse = { session_id: string, };
 
-export type PromptRequest = { content: unknown[], };
+export type PromptRequest = { content: unknown[],
+/**
+ * Reuse for retries of the same submit, including a lost response.
+ */
+request_key?: string | undefined, };
 
 export type PromptResponse = { turn_id: string, };
 

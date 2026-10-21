@@ -62,7 +62,7 @@ impl Store {
     /// Also used to keep immediate prompts behind an accepted FIFO head.
     pub fn prompt_must_queue(&self, session: &str) -> Result<bool> {
         Ok(self.conn().query_row(
-            "SELECT open_turn_id IS NOT NULL OR lifecycle='parked' OR activity='blocked' OR prompt_queue_held=1
+            "SELECT open_turn_id IS NOT NULL OR lifecycle='parked' OR activity='blocked' OR prompt_queue_held<>0
              OR EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=?2 AND p.state='open')
              OR EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.state IN ('queued','waiting_config','awaiting_reconciliation'))
              FROM sessions WHERE owner_id = ?1 AND id=?2", params![self.owner_id(),session], |r| r.get(0),
@@ -138,7 +138,7 @@ impl Store {
             )?;
         }
         tx.execute(
-            "UPDATE sessions SET prompt_queue_held=0 WHERE owner_id = ?1 AND id=?2",
+            "UPDATE sessions SET prompt_queue_held=CASE WHEN lifecycle='active' AND prompt_queue_held<>0 THEN 2 ELSE 0 END WHERE owner_id = ?1 AND id=?2",
             params![self.owner_id(), session],
         )?;
         let receipt = crate::prompt_receipts::PromptReceipt::Queued { queue_id: id };
@@ -250,6 +250,7 @@ impl Store {
                 "SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.owner_id = ?1 AND s.id=?2
                  AND s.close_requested=0 AND s.presumed_parked=0 AND s.lifecycle IN ('active','parked') AND s.prompt_queue_held=0
                  AND s.configuration_error IS NULL
+                 AND NOT EXISTS(SELECT 1 FROM hosts h WHERE h.owner_id = ?1 AND h.id=s.host_id AND h.revoked_at IS NOT NULL)
                  AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id=s.hat_id)
                  AND EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2
                      AND q.origin='operator' AND q.state IN ('queued','waiting_config')))",
@@ -278,6 +279,7 @@ impl Store {
             "SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.owner_id = ?1 AND s.id=?2 AND s.lifecycle='active'
              AND s.open_turn_id IS NULL AND COALESCE(s.activity,'idle')<>'blocked' AND s.close_requested=0
              AND s.configuration_error IS NULL AND s.presumed_parked=0 AND s.prompt_queue_held=0
+             AND NOT EXISTS(SELECT 1 FROM hosts h WHERE h.owner_id = ?1 AND h.id=s.host_id AND h.revoked_at IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.origin='operator' AND q.state='awaiting_reconciliation')
              AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=?2 AND p.state='open')
              AND (SELECT origin FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2
@@ -323,6 +325,7 @@ impl Store {
                 "SELECT q.operation_id,q.payload,s.host_id,q.state,
              s.lifecycle='active' AND s.open_turn_id IS NULL AND COALESCE(s.activity,'idle')<>'blocked'
              AND s.close_requested=0 AND s.presumed_parked=0 AND s.configuration_error IS NULL AND s.prompt_queue_held=0
+             AND NOT EXISTS(SELECT 1 FROM hosts h WHERE h.owner_id = ?1 AND h.id=s.host_id AND h.revoked_at IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=s.id AND p.state='open')
              AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id=s.hat_id)
              FROM session_dispatch_queue q JOIN sessions s ON s.owner_id = ?1 AND s.id=q.target_id

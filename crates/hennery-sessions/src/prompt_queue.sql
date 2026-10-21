@@ -8,6 +8,7 @@ CREATE TABLE prompt_receipts (
 ALTER TABLE session_dispatch_queue ADD COLUMN origin TEXT NOT NULL DEFAULT 'parent' CHECK(origin IN ('parent','operator'));
 ALTER TABLE session_dispatch_queue ADD COLUMN image_bytes INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN prompt_queue_dirty INTEGER NOT NULL DEFAULT 0;
+-- 0: runnable; 1: explicit operator hold; 2: Send releases after park acknowledgement.
 ALTER TABLE sessions ADD COLUMN prompt_queue_held INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE session_dispatch_queue ADD COLUMN failed_at INTEGER;
 CREATE TRIGGER prompt_queue_failed AFTER UPDATE OF state ON session_dispatch_queue
@@ -37,9 +38,11 @@ BEGIN
     WHERE origin <> 'operator' AND owner_id = NEW.owner_id AND (source_id = NEW.id OR target_id = NEW.id)
       AND state IN ('queued','waiting_config');
     UPDATE session_operations SET state='failed',code=CASE WHEN NEW.hat_id <> OLD.hat_id THEN 'hat_changed' ELSE COALESCE(NEW.failure_reason,'session_closed') END
-    WHERE owner_id=NEW.owner_id AND child_id=NEW.id AND tool='operator_prompt' AND state IN ('queued','waiting_config');
+    WHERE owner_id=NEW.owner_id AND child_id=NEW.id AND tool='operator_prompt'
+      AND (state IN ('queued','waiting_config') OR (state='awaiting_reconciliation' AND NEW.lifecycle IN ('closed','failed')));
     UPDATE session_dispatch_queue SET state='failed'
-    WHERE owner_id=NEW.owner_id AND target_id=NEW.id AND origin='operator' AND state IN ('queued','waiting_config');
+    WHERE owner_id=NEW.owner_id AND target_id=NEW.id AND origin='operator'
+      AND (state IN ('queued','waiting_config') OR (state='awaiting_reconciliation' AND NEW.lifecycle IN ('closed','failed')));
     UPDATE session_attach_evidence SET evidence = NULL
     WHERE owner_id = NEW.owner_id AND session_id = NEW.id;
     DELETE FROM session_dispatch_queue

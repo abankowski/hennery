@@ -65,6 +65,98 @@ async fn a_request_key_reuses_a_queue_receipt_and_rejects_changed_content() {
 }
 
 #[tokio::test]
+async fn revoked_hosts_refuse_new_prompts_without_allocating_input() {
+    for (running, with_image) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (_dir, state) = fixture();
+        state
+            .hosts
+            .register(
+                "h",
+                &hennery_kernel::hosts::Enrollment {
+                    public_key: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a".into(),
+                    name: "fixture".into(),
+                    host_version: "fixture".into(),
+                    platform: "fixture".into(),
+                },
+                0,
+            )
+            .unwrap();
+        if running {
+            busy(&state);
+        }
+        state.hosts.revoke("h", 1).unwrap();
+        let (status, body) = if with_image {
+            let request=serde_json::from_value(json!({"request_key":"revoked-key","content":[{"type":"image","mimeType":"image/png","data":"iVBORw0KGgo="}]})).unwrap();
+            answer(prompt(State(state.clone()), Path("s".into()), ApiJson(request)).await).await
+        } else {
+            send(&state, "revoked-key", "refuse input").await
+        };
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "host_revoked");
+        assert!(body["message"].as_str().unwrap().contains("revoked"));
+        assert!(state.store.operator_prompt_queue("s").unwrap().is_empty());
+        assert!(
+            state
+                .store
+                .prompt_receipt(
+                    "s",
+                    &PromptRequestKey::new(
+                        "revoked-key",
+                        &content::check(vec![json!({"type":"text","text":"refuse input"})]).unwrap()
+                    )
+                    .unwrap()
+                )
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn rejected_park_releases_only_its_own_hold() {
+    for newer_park in [false, true] {
+        let (_dir, state) = fixture();
+        let queued = content::check(vec![json!({"type":"text","text":"waiting work"})]).unwrap();
+        state.store.enqueue_operator_prompt("s", &queued).unwrap();
+        let (tx, mut frames) = tokio::sync::mpsc::unbounded_channel();
+        let host = state
+            .hub
+            .register("h", tx, Capabilities(vec![Capability::Park]), AgentIsolation::default())
+            .unwrap();
+        state.hub.mark_ready("h", host.conn_id);
+        let first_state = state.clone();
+        let first = tokio::spawn(async move { answer(park(State(first_state), Path("s".into())).await).await });
+        let CollectorFrame::ParkSession { request_id, .. } = frames.recv().await.unwrap() else {
+            panic!("park")
+        };
+        let second = if newer_park {
+            let second_state = state.clone();
+            let task = tokio::spawn(async move { answer(park(State(second_state), Path("s".into())).await).await });
+            let CollectorFrame::ParkSession { request_id, .. } = frames.recv().await.unwrap() else {
+                panic!("second park")
+            };
+            Some((task, request_id))
+        } else {
+            None
+        };
+        state.store.enqueue_operator_prompt("s", &queued).unwrap();
+        assert!(!state.store.operator_dispatch_ready("s").unwrap());
+        state
+            .hub
+            .reject(&request_id, "not_attached".into(), "nothing was parked".into());
+        assert_eq!(first.await.unwrap().1["code"], "not_attached");
+        assert_eq!(state.store.operator_dispatch_ready("s").unwrap(), !newer_park);
+        if let Some((task, request)) = second {
+            state
+                .hub
+                .reject(&request, "not_attached".into(), "nothing was parked".into());
+            task.await.unwrap();
+            assert!(state.store.operator_dispatch_ready("s").unwrap());
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_request_key_reuses_an_immediate_turn_without_sending_again() {
     let (_dir, state) = fixture();
     let (tx, mut frames) = tokio::sync::mpsc::unbounded_channel();

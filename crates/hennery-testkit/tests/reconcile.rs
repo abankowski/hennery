@@ -495,7 +495,16 @@ async fn a_prompt_lost_in_a_drop_is_released_and_the_next_prompt_runs() {
     else {
         panic!("expected the next prompt");
     };
-    assert_eq!(request_id, queue_id);
+    assert_ne!(request_id, queue_id);
+    let association: (String, String) = rusqlite::Connection::open(collector._dir.path().join("hennery.db"))
+        .unwrap()
+        .query_row(
+            "SELECT request_id,turn_id FROM session_operations WHERE owner_id = ?1 AND operation_id=?2",
+            rusqlite::params![collector.state.store.owner_id(), queue_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(association, (request_id.clone(), turn_id.clone()));
     host.emit(&session, SessionBody::TurnStarted { request_id, turn_id })
         .await;
     wait_for("queued prompt acknowledged", || async {
