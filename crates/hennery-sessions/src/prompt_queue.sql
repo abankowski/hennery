@@ -1,4 +1,4 @@
--- Sessions migration 28: shared durable operator/delegation prompt FIFO.
+-- Sessions migration 29: shared durable operator/delegation prompt FIFO.
 ALTER TABLE session_dispatch_queue ADD COLUMN origin TEXT NOT NULL DEFAULT 'parent' CHECK(origin IN ('parent','operator'));
 ALTER TABLE session_dispatch_queue ADD COLUMN image_bytes INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN prompt_queue_dirty INTEGER NOT NULL DEFAULT 0;

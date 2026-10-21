@@ -16,6 +16,7 @@ export default function PromptQueue({ sessionId, items, changed }: { sessionId: 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  const [manualCopy, setManualCopy] = useState<string | null>(null)
   if (!items.length) return null
 
   async function mutate(work: () => Promise<unknown>) {
@@ -48,6 +49,7 @@ export default function PromptQueue({ sessionId, items, changed }: { sessionId: 
               {images > 0 && <small>{images} {images === 1 ? 'image' : 'images'}</small>}
               {item.state === 'delivering' && <small role="status">Delivering…</small>}
               {item.reason && <p className="queue-reason"><bdi>{item.reason}</bdi></p>}
+              {manualCopy === item.id && <textarea readOnly aria-label={`Full text of queued message ${index + 1}`} value={preview} onFocus={event => event.currentTarget.select()} />}
             </div>
           </div>
           <div className="queue-actions">
@@ -56,7 +58,13 @@ export default function PromptQueue({ sessionId, items, changed }: { sessionId: 
               <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setEditing(null)}>Cancel edit</button>
             </> : item.state === 'queued' && <button className="btn btn-ghost btn-sm" disabled={busy} aria-label={`Edit queued message ${index + 1}`} onClick={() => { setEditing(item.id); setText(preview); setError(null) }}>Edit</button>}
             {item.state === 'failed' && <button className="btn btn-ghost btn-sm" onClick={() => {
-              void navigator.clipboard.writeText(preview).then(() => setCopied(item.id)).catch(() => setError('Copy was unavailable. Select the message text to copy it.'))
+              void (async () => {
+                try {
+                  if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable')
+                  await navigator.clipboard.writeText(preview)
+                  setCopied(item.id)
+                } catch { setManualCopy(item.id); setError('Copy was unavailable. Select the full message text to copy it.') }
+              })()
             }}>{copied === item.id ? 'Copied' : 'Copy'}</button>}
             {item.state !== 'delivering' && <button className="btn btn-ghost btn-sm" disabled={busy} aria-label={`${item.state === 'failed' ? 'Dismiss' : 'Remove'} queued message ${index + 1}`} onClick={() => void mutate(() => removeQueuedPrompt(client, sessionId, item.id))}>{item.state === 'failed' ? 'Dismiss' : 'Remove'}</button>}
           </div>

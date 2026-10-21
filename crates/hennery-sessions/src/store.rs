@@ -439,7 +439,9 @@ BEGIN
       AND (child_id = NEW.id OR parent_id = NEW.id) AND NEW.lifecycle = 'deleted';
     DELETE FROM delegation_budgets WHERE owner_id = NEW.owner_id AND root_id = NEW.id AND NEW.lifecycle = 'deleted';
 END;",
-    // Shared operator prompt FIFO (28).
+    // Persistent, exactly scoped operator previews (28).
+    include_str!("runtime_catalog.sql"),
+    // Shared operator prompt FIFO (29).
     include_str!("prompt_queue.sql"),
 ];
 
@@ -5570,6 +5572,54 @@ mod tests {
                 assert_eq!(hosts.list().unwrap().len(), 2);
             }
         }
+    }
+
+    #[test]
+    fn operator_queue_migration29_preserves_v28_catalog_schema_and_delegated_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let mut conn = hennery_kernel::db::open(&db).unwrap();
+        let owner = hennery_kernel::db::kernel_owner(&mut conn).unwrap();
+        hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..28]).unwrap();
+        assert!(
+            !conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('session_dispatch_queue') WHERE name='origin')",
+                    [],
+                    |r| r.get::<_, bool>(0),
+                )
+                .unwrap(),
+            "operator queue columns belong to migration 29"
+        );
+        let catalog_schema: String = conn
+            .query_row("SELECT sql FROM sqlite_schema WHERE name='runtime_catalog'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute("INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,created_at,last_event_at) VALUES ('kept',?1,'host','hat','claude','/project','active','t','t')", [&owner]).unwrap();
+        conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state) VALUES (?1,'kept','key','op','digest','session_send','kept','queued')", [&owner]).unwrap();
+        conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES (?1,'op','kept','kept',0,?2,?3)", params![owner,"delegated work","{}"] ).unwrap();
+        hennery_kernel::db::migrate(&mut conn, MIGRATIONS).unwrap();
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            29
+        );
+        assert_eq!(
+            conn.query_row("SELECT sql FROM sqlite_schema WHERE name='runtime_catalog'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            catalog_schema
+        );
+        let row: (String, String, String) = conn
+            .query_row(
+                "SELECT payload,state,origin FROM session_dispatch_queue WHERE owner_id = ?1 AND operation_id='op'",
+                [&owner],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("delegated work".into(), "queued".into(), "parent".into()));
     }
 
     #[test]

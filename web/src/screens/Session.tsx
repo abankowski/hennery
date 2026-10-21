@@ -474,6 +474,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         detailsTrigger={detailsTrigger}
         menu={
           <SessionMenu
+            queuedCount={s.queue.length}
             onRename={info && !s.removed ? beginRename : undefined}
             id={id}
             lifecycle={info?.lifecycle}

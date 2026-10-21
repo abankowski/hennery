@@ -473,11 +473,12 @@ async fn a_prompt_lost_in_a_drop_is_released_and_the_next_prompt_runs() {
     let seq = host.seq;
     host.drop_connection(&collector).await; // the prompt never reached the adapter
     assert_eq!(call.await.unwrap().0, 503);
-    // Still wedged until the host is back: one turn at a time.
-    assert_eq!(
-        post(&client(&collector), prompt_url.clone(), prompt_body()).await.0,
-        409
-    );
+    // The next operator message is durable while reconciliation still owns
+    // the old slot; it cannot reach the adapter yet.
+    let (status, queued) = post(&client(&collector), prompt_url.clone(), prompt_body()).await;
+    assert_eq!(status, 202);
+    let queue_id = queued["queue_id"].as_str().unwrap().to_string();
+    assert_eq!(collector.state.store.operator_prompt_queue(&session).unwrap().len(), 1);
 
     let mut host = ScriptedHost::connect(&collector, vec![attached(&session, seq)], seq).await;
     assert!(
@@ -485,18 +486,28 @@ async fn a_prompt_lost_in_a_drop_is_released_and_the_next_prompt_runs() {
             .event_kinds(&session)
             .contains(&"turn_not_delivered".to_string())
     );
-    let c = client(&collector);
-    let url = prompt_url.clone();
-    let call = tokio::spawn(async move { post(&c, url, prompt_body()).await });
+    hennery_sessions::delegation_worker::drain(&collector.state)
+        .await
+        .unwrap();
     let CollectorFrame::Prompt {
         request_id, turn_id, ..
     } = host.next().await
     else {
         panic!("expected the next prompt");
     };
+    assert_eq!(request_id, queue_id);
     host.emit(&session, SessionBody::TurnStarted { request_id, turn_id })
         .await;
-    assert_eq!(call.await.unwrap().0, 202);
+    wait_for("queued prompt acknowledged", || async {
+        collector
+            .state
+            .store
+            .operator_prompt_queue(&session)
+            .unwrap()
+            .is_empty()
+            .then_some(())
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -539,7 +550,9 @@ async fn a_restarted_host_parks_its_sessions_and_interrupts_the_open_turn_only_a
         prompt_body(),
     )
     .await;
-    assert_eq!((status, body["code"].as_str()), (409, Some("not_attached")));
+    assert_eq!(status, 202, "{body}");
+    assert!(body["queue_id"].is_string());
+    assert_eq!(collector.state.store.operator_prompt_queue(&session).unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -744,7 +757,9 @@ async fn a_host_offline_past_the_threshold_is_presumed_parked_and_reattached_on_
         prompt_body(),
     )
     .await;
-    assert_eq!((status, body["code"].as_str()), (409, Some("not_attached")));
+    assert_eq!(status, 202, "{body}");
+    assert!(body["queue_id"].is_string());
+    assert_eq!(collector.state.store.operator_prompt_queue(&session).unwrap().len(), 1);
 
     // The host comes back; its adapter is still running the turn.
     let listed = AttachedSession {
@@ -756,7 +771,11 @@ async fn a_host_offline_past_the_threshold_is_presumed_parked_and_reattached_on_
     assert!(!presumed(&collector, &session));
     let kinds = collector.event_kinds(&session);
     assert!(
-        kinds.ends_with(&["presumed_parked".to_string(), "reattached".to_string()]),
+        kinds.ends_with(&[
+            "presumed_parked".to_string(),
+            "queue_changed".to_string(),
+            "reattached".to_string()
+        ]),
         "{kinds:?}"
     );
     assert_eq!(

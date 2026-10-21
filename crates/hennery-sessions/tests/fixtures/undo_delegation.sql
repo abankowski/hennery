@@ -1,4 +1,4 @@
--- Test-only rollback of sessions migration 28 before historical fixtures.
+-- Test-only rollback of sessions migration 29 before historical fixtures.
 DROP TRIGGER prompt_queue_insert;
 DROP TRIGGER prompt_queue_update;
 DROP TRIGGER prompt_queue_delete;
@@ -42,6 +42,8 @@ BEGIN
       AND source_id IN (SELECT id FROM sessions WHERE owner_id = NEW.owner_id AND hat_id = NEW.hat_id)
       AND state IN ('queued','waiting_config');
 END;
+-- Test-only rollback of sessions migration 28: runtime catalog cache.
+DROP TABLE runtime_catalog;
 -- Test-only rollback of sessions migration 27: restore the v26 budget CHECK.
 DROP TABLE delegation_limits;
 DROP TRIGGER notice_endpoint_end;

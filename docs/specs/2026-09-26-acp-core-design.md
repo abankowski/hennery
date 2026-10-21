@@ -894,13 +894,17 @@ leaves the session `failed` like a failed start, and `failed` is resumable.
   priority than that FIFO; none interrupts a turn. The per-session bounds are
   32 items / 1 MiB, counting stored payload and decoded image bytes, including
   retained failed operator items. Prompt/image validation still applies.
-- Queue acceptance survives collector restart and page reload. A committed
+- Queue acceptance survives collector restart and page reload. Sessions
+  migration 29 extends the shared queue independently of migration 28's
+  runtime catalog cache. A committed
   turn/request association is never automatically resent after uncertain
   handoff: existing host resend/reconciliation decides its disposition.
   Delivery is acknowledged by `turn_started`, never a socket write. Failed
   or closed sessions, runtime refusal and a failed preceding turn stop unsent
   operator work with readable reasons; failed content remains until dismissed.
-  Session deletion still scrubs queued content and attachments under §4.9.
+  Session deletion and hat purge scrub queued content and attachments under
+  §4.10; deleted queue/transcript routes answer 404. The delete confirmation
+  counts the unsent operator messages that will also be deleted.
   Queued image references participate in the existing attachment lifecycle.
 - **Empty prompts are rejected at the API** (400): no image, and no text
   but whitespace.

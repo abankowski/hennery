@@ -35,6 +35,8 @@ interface Props {
   lifecycle: string | undefined
   /** Already owner/hat-filtered family metadata from the current view. */
   family?: FamilySummary
+  /** Unsent operator messages, including retained failures, removed with this session. */
+  queuedCount?: number
   /** The session's host announced the `park` capability. */
   canPark: boolean
   /** Undefined until host metadata is known; the DTO records intent, not acknowledgement. */
@@ -48,7 +50,7 @@ interface Props {
   focusAfterDelete?: () => HTMLElement | null
 }
 
-export default function SessionMenu({ id, lifecycle, family, canPark, supportsIdleHold, hostConnected, onDeleted, focusAfterDelete, onRename }: Props) {
+export default function SessionMenu({ id, lifecycle, family, queuedCount = 0, canPark, supportsIdleHold, hostConnected, onDeleted, focusAfterDelete, onRename }: Props) {
   const client = useClient()
   const menuId = useId()
   const [open, setOpen] = useState(false)
@@ -211,6 +213,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, supportsId
             Its transcript, its questions and the images only it holds are deleted here for good. A running session is
             closed first.
           </p>
+          {queuedCount > 0 && <p>{queuedCount} unsent queued {queuedCount === 1 ? 'message and its images will' : 'messages and their images will'} also be deleted.</p>}
           {family && <>
             <p>Copies already delivered to related sessions remain in their transcripts. Those sessions are kept.</p>
             <ul aria-label="Related sessions">

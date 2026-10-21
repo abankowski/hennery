@@ -401,6 +401,36 @@ for (const width of [1280, 390]) {
       await page.keyboard.press('Escape')
     })
 
+    test('deleting a session warns about unsent messages and scrubs them in every window', async () => {
+      await page.getByRole('button', { name: 'Resume', exact: true }).click()
+      await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+      await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Wait before deleting this session.')
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      const cards = page.getByRole('region', { name: 'Question from Claude', exact: true })
+      await expect(cards.last().getByRole('button', { name: 'Allow', exact: true })).toBeVisible()
+      if (narrow) { await cards.last().focus(); await page.getByRole('button', { name: 'Write a prompt', exact: true }).click() }
+      await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Erase this unsent message on deletion.')
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(page.getByRole('region', { name: 'Queued messages', exact: true }).getByRole('listitem')).toHaveCount(1)
+      const other = await page.context().newPage()
+      try {
+        await other.goto(page.url())
+        await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+        await page.getByRole('button', { name: 'Delete session', exact: true }).click()
+        await expect(page.getByRole('dialog', { name: 'Delete this session?', exact: true })).toContainText('1 unsent queued message and its images will also be deleted.')
+        await page.getByRole('dialog', { name: 'Delete this session?', exact: true }).getByRole('button', { name: 'Delete', exact: true }).click()
+        for (const window of [page, other]) {
+          await expect(window.getByRole('heading', { name: 'This session was deleted', exact: true })).toBeVisible()
+          await expect(window.getByText('Erase this unsent message on deletion.', { exact: true })).toHaveCount(0)
+          await expect(window.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveCount(0)
+          await expect(window.getByRole('region', { name: 'Queued messages', exact: true })).toHaveCount(0)
+        }
+        await page.reload()
+        await expect(page.getByText('Erase this unsent message on deletion.', { exact: true })).toHaveCount(0)
+        await expect(page.getByRole('heading', { name: 'This session was deleted', exact: true })).toBeVisible()
+      } finally { await other.close() }
+    })
+
     test('broke no Content-Security-Policy rule', async () => {
       expect(violations).toEqual([])
       const seen = await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? [])

@@ -289,7 +289,7 @@ describe('Composer: a turn in flight', () => {
 describe('Composer: prompt refusals keep the draft', () => {
   it.each([
     [409, 'host_offline', 'The host is offline; send again once it is back.'],
-    [409, 'turn_in_progress', 'The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.'],
+    [409, 'turn_in_progress', 'The agent is still working or waiting for your answer. Your draft is kept; try sending again.'],
     [409, 'images_unsupported', 'This host takes no images: remove them, then send again.'],
     [400, 'empty_prompt', 'There is nothing to send: write something, or attach an image.'],
     [400, 'invalid_content', 'This prompt holds something that cannot be sent (srv-x).'],
@@ -947,7 +947,7 @@ it('explains a raw busy-turn 409, preserves the draft and offers the open reques
   const view = mount(() => json({ code: 'conflict', message: 'wait for the current turn to end' }, 409), { onJumpToQuestion: jump })
   type('Keep my next prompt')
   fireEvent.click(sendButton())
-  expect(await screen.findByText('The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.', { exact: true })).toBeVisible()
+  expect(await screen.findByText('The agent is still working or waiting for your answer. Your draft is kept; try sending again.', { exact: true })).toBeVisible()
   expect(textarea()).toHaveValue('Keep my next prompt')
   expect(screen.queryByText('wait for the current turn to end', { exact: true })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Go to open request' }))

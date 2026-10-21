@@ -1940,3 +1940,81 @@ async fn cancelling_the_current_turn_delivers_the_queued_prompt_after_its_end() 
     let _ = host.await;
     collector.stop().await;
 }
+
+#[tokio::test]
+async fn deleting_a_session_scrubs_queued_text_images_and_transcript_routes() {
+    let dir = tempfile::tempdir().unwrap();
+    let collector = Collector::start(&dir.path().join("hennery.db"), None).await;
+    let hat = collector.state.hosts.host("host-1").unwrap().unwrap().default_hat_id;
+    collector
+        .state
+        .hosts
+        .record_hello("host-1", "fixture", &Capabilities(vec![Capability::Images]), 0)
+        .unwrap();
+    let store = &collector.state.store;
+    store
+        .create_session("saved", "host-1", "fake", "/fixture", &hat, None)
+        .unwrap();
+    store
+        .ingest(
+            "saved",
+            1,
+            &hennery_proto::frames::SessionBody::session_started("start", "agent"),
+        )
+        .unwrap();
+    store
+        .ingest(
+            "saved",
+            2,
+            &hennery_proto::frames::SessionBody::SessionParked {
+                reason: hennery_proto::frames::ParkReason::Idle,
+            },
+        )
+        .unwrap();
+    let c = client(&collector);
+    let (status, receipt) = post_json(&c, collector.url("/api/sessions/saved/prompt"), json!({"content":[
+        {"type":"text","text":"erase this unsent secret"},
+        {"type":"image","mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="}
+    ]})).await;
+    assert_eq!(status, 202, "{receipt}");
+    let queue: Vec<Value> = c
+        .get(collector.url("/api/sessions/saved/queue"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let sha = queue[0]["content"][1]["sha256"].as_str().unwrap();
+    let file = dir.path().join("attachments").join(sha);
+    assert!(file.exists());
+    let deleted = c.delete(collector.url("/api/sessions/saved")).send().await.unwrap();
+    assert_eq!(deleted.status(), 200, "{}", deleted.text().await.unwrap());
+    assert!(store.operator_prompt_queue("saved").unwrap().is_empty());
+    assert!(store.attachment(sha).unwrap().is_none());
+    assert!(!file.exists());
+    let conn = rusqlite::Connection::open(dir.path().join("hennery.db")).unwrap();
+    for sql in [
+        "SELECT COUNT(*) FROM session_dispatch_queue WHERE owner_id=?1 AND (source_id='saved' OR target_id='saved' OR payload LIKE '%erase this unsent secret%')",
+        "SELECT COUNT(*) FROM session_operations WHERE owner_id=?1 AND caller_id='saved'",
+        "SELECT COUNT(*) FROM prompt_queue_attachments WHERE owner_id=?1",
+    ] {
+        assert_eq!(
+            conn.query_row(sql, [store.owner_id()], |r| r.get::<_, i64>(0)).unwrap(),
+            0
+        );
+    }
+    for path in [
+        "/api/sessions/saved",
+        "/api/sessions/saved/events",
+        "/api/sessions/saved/catalog",
+        "/api/sessions/saved/view",
+        "/api/sessions/saved/view/stream",
+        "/api/stream/sessions/saved",
+        "/api/sessions/saved/queue",
+        &format!("/api/attachments/{sha}"),
+    ] {
+        assert_eq!(c.get(collector.url(path)).send().await.unwrap().status(), 404, "{path}");
+    }
+    collector.stop().await;
+}

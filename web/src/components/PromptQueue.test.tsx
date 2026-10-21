@@ -15,6 +15,13 @@ function mount(items: QueuedPrompt[], status = 200) {
   return { fetch, changed }
 }
 describe('durable prompt queue', () => {
+  it('offers the complete failed message for manual copy when the clipboard is unavailable', async () => {
+    Object.defineProperty(navigator,'clipboard',{configurable:true,value:undefined})
+    const text='Unsent message '.repeat(40)
+    mount([{...item,state:'failed',reason:'Deleted',content:[{type:'text',text}]}])
+    fireEvent.click(screen.getByRole('button',{name:'Copy'}))
+    expect(await screen.findByRole('textbox',{name:'Full text of queued message 1'})).toHaveValue(text)
+  })
   it('edits text without replacing image references or the ordinary composer draft', async () => {
     const m = mount([item])
     expect(screen.getByText('1 image', { exact: true })).toBeVisible()

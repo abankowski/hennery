@@ -544,6 +544,7 @@ fn a_failed_turn_stops_pending_operator_prompts_and_dismissal_cleans_their_image
     assert!(queue[0].reason.as_deref().unwrap().contains("previous turn failed"));
     assert!(w.store.remove_operator_prompt("session", &id).unwrap());
     assert!(w.store.attachment(&sha).unwrap().is_none());
+    assert!(!w.dir.path().join("attachments").join(&sha).exists());
 }
 
 #[tokio::test]
@@ -616,11 +617,14 @@ fn session_delete_scrubs_queued_text_and_removes_queue_only_images() {
     .unwrap();
     let sha = image.images[0].sha256.clone();
     w.store.enqueue_operator_prompt("session", &image).unwrap();
+    let file = w.dir.path().join("attachments").join(&sha);
+    assert!(file.exists());
     w.store.close_now("session").unwrap();
     let result = w.store.delete_session("session", None).unwrap();
     assert!(matches!(result, hennery_sessions::store::Deletion::Done { .. }));
     assert!(w.store.operator_prompt_queue("session").unwrap().is_empty());
     assert!(w.store.attachment(&sha).unwrap().is_none());
+    assert!(!file.exists());
     let conn = w.conn();
     let count: i64 = conn
         .query_row(
@@ -630,4 +634,12 @@ fn session_delete_scrubs_queued_text_and_removes_queue_only_images() {
         )
         .unwrap();
     assert_eq!(count, 0);
+    let retained: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM session_dispatch_queue WHERE owner_id=?1 AND (source_id='session' OR target_id='session' OR payload LIKE '%erase queued text%')",
+            [w.store.owner_id()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(retained, 0);
 }
