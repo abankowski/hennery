@@ -33,7 +33,7 @@
 .inline-form .field { margin:0; flex:1; min-width:180px; }
 .select-field { display:inline-flex; flex-direction:column; gap:4px; }
 .select-field .field-label { margin:0; font-size:12px; }
-.select-field select { min-height:36px; border:1.5px solid var(--border-strong); border-radius:var(--r-sm); background:var(--surface-2); color:var(--fg-1); padding:6px 8px; font:inherit; max-width:100%; }
+.select-field select { min-height:36px; border:1.5px solid var(--border-strong); border-radius:var(--r-sm); background:var(--surface-2); color:var(--fg-1); padding:6px 8px; font:inherit; font-family:var(--font-data); max-width:100%; }
 
 .command { background:var(--hn-term-bg); color:var(--hn-term-fg); border-radius:var(--r-sm); padding:12px 14px; margin:0 0 10px; overflow-x:auto; font-family:var(--font-mono); font-size:13px; }
 .pairing-code code { font-family:var(--font-mono); font-weight:700; }
@@ -116,7 +116,7 @@
 .manage h3 { font:500 13px/1.4 var(--font-display); }
 .manage .facts { font-size:13px; line-height:1.6; }
 .manage .btn { font-size:12px; min-height:32px; }
-.manage input:not([type=checkbox]):not([type=radio]):not([type=color]), .manage select, .manage textarea { min-width:0; max-width:100%; border:1px solid var(--hn-boundary); border-radius:6px; background:var(--hn-surface); color:var(--hn-fg-1); padding:7px 10px; font:inherit; }
+.manage input:not([type=checkbox]):not([type=radio]):not([type=color]), .manage select, .manage textarea { min-width:0; max-width:100%; border:1px solid var(--hn-boundary); border-radius:6px; background:var(--hn-surface); color:var(--hn-fg-1); padding:7px 10px; font:inherit; font-family:var(--font-data); }
 .manage input:not([type=checkbox]):not([type=radio]):not([type=color]), .manage textarea { width:100%; }
 .manage .inline-form .field, .manage .field-row .field, .manage .rule-prefix { min-width:min(180px, 100%); }
 .manage .field-label { color:var(--hn-fg-2); font:500 12px/1.4 var(--font-display); }
@@ -134,7 +134,7 @@
 .pairing { border:1px solid var(--hn-accent) !important; }
 .pair-steps { padding-left:20px; line-height:1.7; }
 .manage .stdio-servers { margin:0; padding:16px; border:1px solid var(--hn-line); border-radius:12px; background:var(--hn-panel); }
-.manage .stdio-servers select, .manage .stdio-servers textarea, .manage .stdio-servers input { font:inherit; }
+.manage .stdio-servers select, .manage .stdio-servers textarea, .manage .stdio-servers input { font:inherit; font-family:var(--font-data); }
 .manage .stdio-server { padding:12px; border:1px solid var(--hn-line); border-radius:8px; }
 .manage :is(pre,code) { max-width:100%; overflow-wrap:anywhere; }
 .device-settings { max-width:860px; }

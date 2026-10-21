@@ -12,12 +12,15 @@ The old googlefonts/roboto repository redirects to roboto-2; its README names
 roboto-3-classic as the continuing official project. This is that OFL release.
 Archive sha256: bee3e9334ea86dd63e184598f31fb16750881c2da1a6f097a66e0f66a95b3d54
 web/split/Roboto[wdth,wght].ttf sha256: d7598e12c5dbef095ff8272cfc55da0250bd07fbdecbac8a530b9b277872a134
+web/split/Roboto-Italic[wdth,wght].ttf sha256: 9725a847af6b460ffca162ae66d20dad48b01876137947180b42d7dcd7887182
 OFL source: https://raw.githubusercontent.com/googlefonts/roboto-3-classic/v3.015/OFL.txt
 
 Derived font files: latin and latin-ext, including Polish, variable weights 400–700.
-Inter optical size pinned at 14; Roboto width pinned at 100. Inter italic included.
+Inter optical size pinned at 14; Roboto width pinned at 100. Both italics included.
 Subsetting preserves the original family names and copyright; neither OFL
 reserves a font name. Exact subsetting commands are in the UI R1 plan.
+Roboto italic uses the same commands, Unicode ranges and SOURCE_DATE_EPOCH,
+with web/split/Roboto-Italic[wdth,wght].ttf and the Roboto-italic output stem.
 
 Inter-italic-latin-ext.woff2: 51744 bytes; sha256 e588010a7c49441d9f37eefb311255ffbe700fc6f753882f36fc6e74c727c42a
 Inter-italic-latin.woff2: 53612 bytes; sha256 936f815ca529d36d6a669971a4f912788860c315a6c24d3701078cc0c28ad96a
@@ -25,6 +28,8 @@ Inter-normal-latin-ext.woff2: 48972 bytes; sha256 3f8140c577138b00ac972a9b45490d
 Inter-normal-latin.woff2: 49456 bytes; sha256 0128ce03860bab4605049a6d38f9bfea2558690fa3e2263c9b9bb14726a7721f
 Roboto-normal-latin-ext.woff2: 28576 bytes; sha256 5217f6097814b1f0abbfde230ddef8d6918359b55d89db89fa6550f7d9328b11
 Roboto-normal-latin.woff2: 39796 bytes; sha256 1295cf18edcdcf0f7f3879f6aacdc5cb7d52316b9de83529c69bb02abe4c3fe8
+Roboto-italic-latin-ext.woff2: 30516 bytes; sha256 735ecb6c0fde118c3ee275149a4a1e4f95dd3040bc768d6fab44060c95c6bbe7
+Roboto-italic-latin.woff2: 43956 bytes; sha256 055d5e041d7dcca70e871c26bf655dfb1c93fc0363156f427676f5e6e3585ea0
 
 Heroicons 2.2.0 — MIT
 Source: https://github.com/tailwindlabs/heroicons/releases/tag/v2.2.0

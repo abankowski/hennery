@@ -13,8 +13,8 @@ body {
 }
 #root { height:100dvh; }
 ::selection { background:var(--accent-soft); }
-button { font-family:inherit; cursor:pointer; }
-input,textarea { font-family:inherit; }
+button { font-family:var(--font-display); cursor:pointer; }
+input,textarea,select,td { font-family:var(--font-data); }
 
 ::-webkit-scrollbar { width:10px; height:10px; }
 ::-webkit-scrollbar-thumb { background:var(--border-strong); border-radius:99px; border:3px solid transparent; background-clip:content-box; }
@@ -54,7 +54,7 @@ input,textarea { font-family:inherit; }
 
 /* ── Machine filter chips ── */
 .chip-row { display:flex; gap:7px; flex-wrap:wrap; }
-.chip { border:1.5px solid var(--border); background:var(--surface); color:var(--fg-2); font-family:var(--font-mono); font-size:12px; font-weight:500; padding:6px 12px; border-radius:var(--r-full); transition:all .12s; white-space:nowrap; flex:none; }
+.chip { border:1.5px solid var(--border); background:var(--surface); color:var(--fg-2); font-family:var(--font-display); font-size:12px; font-weight:500; padding:6px 12px; border-radius:var(--r-full); transition:all .12s; white-space:nowrap; flex:none; }
 .chip:hover { border-color:var(--border-strong); color:var(--fg-1); }
 .chip.on { border-color:var(--accent); background:var(--accent-wash); color:var(--accent); }
 

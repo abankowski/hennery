@@ -106,7 +106,7 @@
 .composer-inner { max-width:900px; margin:0 auto; position:relative; } /* positioning context for the slash menu */
 .composer-controls { display:flex; align-items:center; gap:14px; margin-bottom:10px; flex-wrap:wrap; row-gap:6px; }
 .switcher { display:flex; align-items:center; gap:6px; font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--fg-muted); }
-.switcher select { font-family:var(--font-body); font-weight:600; font-size:12px; text-transform:none; letter-spacing:0; color:var(--fg-1); background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-sm); padding:5px 8px; transition:border-color .15s; }
+.switcher select { font-family:var(--font-data); font-weight:600; font-size:12px; text-transform:none; letter-spacing:0; color:var(--fg-1); background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-sm); padding:5px 8px; transition:border-color .15s; }
 .switcher select:focus { outline:none; border-color:var(--accent); }
 .adv-axes { margin:8px 0; }
 .adv-axes summary { cursor:pointer; font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--fg-muted); }
@@ -119,7 +119,7 @@
 .slash-name { font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--accent); }
 .slash-desc { font-size:12px; color:var(--fg-quiet); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .composer-box:focus-within { border-color:var(--accent); box-shadow:0 0 0 4px var(--accent-wash); }
-.composer-box textarea { flex:1; border:none; outline:none; resize:none; background:none; font-size:15px; line-height:1.5; padding:10px 0; max-height:160px; color:var(--fg-1); font-family:var(--font-body); }
+.composer-box textarea { flex:1; border:none; outline:none; resize:none; background:none; font-size:15px; line-height:1.5; padding:10px 0; max-height:160px; color:var(--fg-1); font-family:var(--font-data); }
 .send-btn { width:40px; height:40px; flex:none; border:none; border-radius:var(--r-sm); background:var(--accent-grad); color:var(--on-accent); display:flex; align-items:center; justify-content:center; box-shadow:var(--sh-accent); transition:transform .15s var(--ease),opacity .15s; }
 .send-btn:hover:not(:disabled) { transform:translateY(-1px); }
 .send-btn:disabled { opacity:.4; box-shadow:none; transform:none; cursor:not-allowed; background:var(--border-strong); }
@@ -346,7 +346,7 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
 .session-title-button { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:0; background:transparent; color:inherit; font:inherit; text-align:left; padding:0; cursor:text; }
 .session-title-button:hover { text-decoration:underline; text-decoration-color:var(--hn-fg-3); text-underline-offset:4px; }
 .session-rename-form { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:0; }
-.session-rename-form input { flex:1; width:100px; min-width:0; min-height:32px; padding:5px 8px; font:400 14px var(--font-body); }
+.session-rename-form input { flex:1; width:100px; min-width:0; min-height:32px; padding:5px 8px; font:400 14px var(--font-data); }
 .session-rename-form .form-error { flex-basis:100%; margin:0; font:400 12px var(--font-body); }
 .session-head:has(.session-rename-form) .waiting-navigation { display:none; }
 @media(max-width:767px) { .session-title-button,.session-rename-form input,.session-rename-form button { min-height:44px; }.session-head:has(.session-rename-form) .badge,.session-head:has(.session-rename-form) .session-hat,.session-head:has(.session-rename-form) .session-details-toggle { display:none; } }

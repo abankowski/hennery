@@ -18,6 +18,9 @@
   drafts, and confirms before discarding unsent images or question input.
   First-install windows also reload; stalled activation releases the page
   for retry. Windows missed by coordination show an older-version notice.
+- Correct web typography to the design system: Roboto for headings, content,
+  buttons and labels; Inter for form values and table cells. Bundle Roboto
+  italic, including Polish glyphs, for online and offline use.
 
 ## 0.2.0
 

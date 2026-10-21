@@ -23,13 +23,15 @@ async function fixture(context: BrowserContext) {
     if (path === '/api/hosts') return json([{ host_id: 'visual-host', name: 'Development host', platform: 'linux', host_version: '0.1.4', capabilities: [], default_hat_id: 'visual-hat', workspace_roots: ['/srv/project'], connected: false, created_at: ts, last_seen_at: ts }])
     if (path === '/api/view/sessions') return json({ sessions: [summary], epoch: 'visual-list', revision: 1, waiting: 1 })
     if (path === '/api/sessions/visual-session') return json({ ...summary, pending: [] })
-    if (path === '/api/view/sessions/visual-session') return json({ items: [question], older: false, epoch: 'visual-items', revision: 1 })
+    if (path === '/api/view/sessions/visual-session') return json({ items: [{ id: 'message:typography', version: 1, ts, kind: 'message', text: 'Zażółć gęślą jaźń — parser review.\n\n*Emphasised content* and `parse(input)`.\n\n### Parser checks\n\n| Check | Result |\n| --- | --- |\n| Types | Preserved |' }, question], older: false, epoch: 'visual-items', revision: 1 })
     if (path === '/api/sessions/visual-session/catalog') return json({ session_id: summary.session_id, config_options: [], commands: [] })
     if (path === '/api/mcp/connections' || path === '/api/auth/sessions' || path.endsWith('/path-rules')) return json([])
     if (path === '/api/hosts/visual-host/agents') return json([])
     if (path === '/api/hosts/visual-host/recent-projects') return json([])
     if (path === '/api/hosts/visual-host' && route.request().method() === 'DELETE') return json({ code: 'step_up_required', message: 'Confirm it is you' }, 403)
     if (path === '/api/settings') return json({ public_url: collector.origin })
+    if (path.endsWith('/session-tools')) return json({ delegation_enabled: false, revision: 1 })
+    if (path.endsWith('/delegation-policy')) return json({ allowed: {}, revision: 1 })
     return json({ code: 'not_found', message: 'Unavailable in visual fixture' }, 404)
   })
   return async () => { for (const release of held) await release() }
@@ -37,7 +39,7 @@ async function fixture(context: BrowserContext) {
 async function readyFonts(page: Page) {
   await page.evaluate(async () => {
     for (const family of ['Inter', 'Roboto']) for (const weight of [400, 500, 600, 700]) await document.fonts.load(`${weight} 16px "${family}"`, 'Zażółć gęślą jaźń')
-    await document.fonts.load('italic 400 16px "Inter"', 'Zażółć gęślą jaźń')
+    for (const family of ['Inter', 'Roboto']) for (const weight of [400, 500, 600, 700]) await document.fonts.load(`italic ${weight} 16px "${family}"`, 'Zażółć gęślą jaźń')
     await document.fonts.ready
   })
 }
@@ -45,6 +47,7 @@ async function capture(page: Page, name: string, width: number, theme: string) {
   await readyFonts(page)
   if (captures) {
     mkdirSync(captures, { recursive: true })
+    if (name === 'settings') await page.getByRole('heading', { name: 'Delegation by hat', exact: true }).scrollIntoViewIfNeeded()
     await page.screenshot({ path: resolve(captures, `${name}-${width}-${theme}.png`), fullPage: true })
   }
 }
@@ -69,11 +72,12 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
       await readyFonts(page)
       const faces = await page.evaluate(() => [...document.fonts].filter(f => f.status === 'loaded').map(f => ({ family: f.family, style: f.style, weight: f.weight, display: f.display })))
       expect(faces.filter(f => f.family === 'Inter')).toHaveLength(4)
-      expect(faces.filter(f => f.family === 'Roboto')).toHaveLength(2)
+      expect(faces.filter(f => f.family === 'Roboto')).toHaveLength(4)
       expect(faces.every(f => f.weight === '400 700' && f.display === 'swap')).toBe(true)
       expect(faces.some(f => f.family === 'Inter' && f.style === 'italic')).toBe(true)
+      expect(faces.filter(f => f.family === 'Roboto' && f.style === 'italic')).toHaveLength(2)
       const fontRequests = requests.filter(url => url.endsWith('.woff2'))
-      for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal']) for (const subset of ['latin', 'latin-ext']) expect(fontRequests).toContain(`${collector.origin}/fonts/${face}-${subset}.woff2`)
+      for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal', 'Roboto-italic']) for (const subset of ['latin', 'latin-ext']) expect(fontRequests).toContain(`${collector.origin}/fonts/${face}-${subset}.woff2`)
       const statuses = await page.evaluate(() => {
         const rows: { fg: string; bg: string; surface: string }[] = []
         for (const role of ['wait', 'run', 'start', 'idle', 'park', 'fail', 'warn']) {
@@ -97,7 +101,8 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
         expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5)
       }
       expect(contrast(asHex(metrics.foreground), asHex(metrics.background))).toBeGreaterThanOrEqual(4.5)
-      expect(metrics.displayFont).toContain('Roboto'); expect(metrics.bodyFont).toContain('Inter')
+      expect(metrics.displayFont).toContain('Roboto'); expect(metrics.bodyFont).toContain('Roboto')
+      await expect(page.getByLabel('Password', { exact: true })).toHaveCSS('font-family', /Inter/)
       expect(metrics.height).toBeGreaterThanOrEqual(width === 390 ? 44 : 32)
       await page.getByRole('button', { name: 'Sign in', exact: true }).focus()
       expect(await page.getByRole('button', { name: 'Sign in', exact: true }).evaluate(el => getComputedStyle(el).outlineWidth)).toBe('2px')
@@ -113,7 +118,27 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
           await page.goto(collector.origin + route)
           await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
           await expect(page.locator('main')).toBeVisible()
-          if (name === 'session-permission') await expect(page.getByText('Read project files', { exact: true })).toBeVisible()
+          if (name === 'sessions') {
+            await expect(page.locator('.session-table td').first()).toHaveCSS('font-family', /Inter/)
+            await expect(page.locator('.session-table th').first()).toHaveCSS('font-family', /Roboto/)
+          }
+          if (name === 'session-permission') {
+            await expect(page.getByText('Read project files', { exact: true })).toBeVisible()
+            await expect(page.locator('.bubble')).toHaveCSS('font-family', /Roboto/)
+            await expect(page.locator('.bubble p').first()).toHaveCSS('font-family', /Roboto/)
+            await expect(page.locator('.bubble em')).toHaveCSS('font-family', /Roboto/)
+            await expect(page.locator('.bubble em')).toHaveCSS('font-style', 'italic')
+            await expect(page.locator('.bubble code')).toHaveCSS('font-family', /monospace/)
+            await expect(page.locator('.bubble h3')).toHaveCSS('font-family', /Roboto/)
+            await expect(page.locator('.bubble td').first()).toHaveCSS('font-family', /Inter/)
+            await expect(page.locator('.composer-box textarea')).toHaveCSS('font-family', /Inter/)
+          }
+          if (name === 'settings') {
+            await expect(page.getByRole('heading', { name: 'Delegation by hat', exact: true })).toHaveCSS('font-family', /Roboto/)
+            await expect(page.locator('.delegation-settings p').first()).toHaveCSS('font-family', /Roboto/)
+            await expect(page.getByRole('combobox', { name: 'Delegation hat', exact: true })).toHaveCSS('font-family', /Inter/)
+            await expect(page.getByRole('textbox', { name: 'Passkey label', exact: true })).toHaveCSS('font-family', /Inter/)
+          }
           await expect(page.getByText('Could not render this item', { exact: true })).toHaveCount(0)
           await capture(page, name, width, theme)
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -150,7 +175,7 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark'] as const)
       expect(requests.every(url => new URL(url).origin === collector.origin)).toBe(true)
       expect(await page.evaluate(() => (window as unknown as { violations?: string[] }).violations ?? [])).toEqual([])
       const worker = await (await context.request.get(collector.origin + '/sw.js')).text()
-      for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal']) for (const subset of ['latin', 'latin-ext']) expect(worker).toContain(`/fonts/${face}-${subset}.woff2`)
+      for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal', 'Roboto-italic']) for (const subset of ['latin', 'latin-ext']) expect(worker).toContain(`/fonts/${face}-${subset}.woff2`)
     } finally { await context.close() }
   })
 }
@@ -174,7 +199,7 @@ test('self-hosted font assets survive an offline PWA reload', async ({ browser }
     expect(controlled?.fromServiceWorker()).toBe(true)
     await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
     const cached = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async key => (await (await caches.open(key)).keys()).map(request => new URL(request.url).pathname)))).flat())
-    for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal']) for (const subset of ['latin', 'latin-ext']) expect(cached).toContain('/fonts/' + face + '-' + subset + '.woff2')
+    for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal', 'Roboto-italic']) for (const subset of ['latin', 'latin-ext']) expect(cached).toContain('/fonts/' + face + '-' + subset + '.woff2')
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
     await expect(page).toHaveURL(collector.origin + '/sessions')
     // Exclude the HTTP cache as a source of fonts after this document unloads.
@@ -199,10 +224,10 @@ test('self-hosted font assets survive an offline PWA reload', async ({ browser }
       }
     })
     await readyFonts(page)
-    for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal']) for (const subset of ['latin', 'latin-ext']) {
+    for (const face of ['Inter-normal', 'Inter-italic', 'Roboto-normal', 'Roboto-italic']) for (const subset of ['latin', 'latin-ext']) {
       expect(offlineFonts).toContainEqual({ path: '/fonts/' + face + '-' + subset + '.woff2', worker: true, status: 200 })
     }
-    expect(await page.evaluate(() => [...document.fonts].filter(face => face.status === 'loaded' && ['Inter', 'Roboto'].includes(face.family)).length)).toBe(6)
+    expect(await page.evaluate(() => [...document.fonts].filter(face => face.status === 'loaded' && ['Inter', 'Roboto'].includes(face.family)).length)).toBe(8)
     expect(await page.evaluate(() => document.fonts.check('400 16px Inter', 'Zażółć gęślą jaźń'))).toBe(true)
     expect(await page.evaluate(() => document.fonts.check('400 16px Roboto', 'Zażółć gęślą jaźń'))).toBe(true)
   } finally { await context.close() }
