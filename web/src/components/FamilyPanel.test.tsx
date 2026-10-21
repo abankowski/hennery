@@ -7,6 +7,17 @@ import FamilyPanel, { operationWords, operationName, routingWords, handlingWords
 import { parent, familyPage } from '../test-family'
 
 describe('FamilyPanel', () => {
+  it('explains an authentication failure on both a failed operation and its child notice', async () => {
+    const page = familyPage()
+    page.children[0].reason = 'auth_required'
+    page.children[0].operations = [{ operation_id: 'failed-spawn', tool: 'spawn', state: 'failed', code: 'auth_required' }]
+    const server = routed(() => json(page))
+    render(<FamilyPanel id="parent" summary={parent} hosts={new Map()} resync={0} />, { wrapper: server.wrapper })
+    expect(await screen.findByText('Start child: Failed · Runtime is not signed in on its host', { exact: true })).toBeVisible()
+    expect(screen.getByText('Runtime is not signed in on its host', { exact: true })).toBeVisible()
+    expect(screen.queryByText('Session needs your attention', { exact: true })).toBeNull()
+  })
+
   it('pages real child metadata and pending-card links without claiming accepted work succeeded', async () => {
     const s = routed(c => json(familyPage(c.path.includes('after=child') ? 'child2' : 'child')))
     render(<FamilyPanel id="parent" summary={parent} hosts={new Map([['h1', 'worker host']])} resync={0} />, { wrapper: s.wrapper })

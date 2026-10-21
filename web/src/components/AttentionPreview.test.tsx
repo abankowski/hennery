@@ -135,6 +135,13 @@ it('refreshes a real status-only reason when an immutable attention summary chan
 
 it.each([
   ['child_failed', 'Child session failed'],
+  ['auth_required', 'Runtime is not signed in on its host'],
+  ['runtime_unavailable', 'Runtime is not available on its host'],
+  ['adapter_failed', 'The runtime’s adapter failed'],
+  ['cwd_unavailable', 'Working directory is not available on the host'],
+  ['catalog_unavailable', 'Runtime settings could not be checked'],
+  ['busy', 'Runtime stayed busy while its settings were checked'],
+  ['timeout', 'Checking runtime settings timed out'],
   ['operator_takeover', 'You took over this session'],
   ['parent_unavailable', 'Parent session is unavailable'],
   ['parent_deleted', 'Parent session was deleted'],
