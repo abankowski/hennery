@@ -9,7 +9,7 @@
     "build": "vite build --config theme.config.ts && tsc -b && vite build && node --test scripts/*.test.mjs && node scripts/check-css-origins.mjs dist",
     "test": "vitest run",
     "typecheck": "tsc -b --noEmit && tsc -p tsconfig.node.json",
-    "e2e": "sh ../packaging/pwa-test-builds.sh && sh e2e/build-push-notice.sh && playwright test"
+    "e2e": "node --test scripts/e2e/pwa-test-builds.test.mjs && sh ../packaging/pwa-test-builds.sh && sh e2e/build-push-notice.sh && playwright test"
   },
   "dependencies": {
     "react": "19.3.1",
