@@ -3,6 +3,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { pwaBuild } from './pwa-build.ts'
+import webPackage from './package.json' with { type: 'json' }
 
 // Tests run in a zone with daylight saving time, so the session list's day
 // buckets are tested across a 23 h and a 25 h day (lib/time.test.ts). The
@@ -10,6 +11,7 @@ import { pwaBuild } from './pwa-build.ts'
 process.env.TZ = 'Europe/Warsaw'
 
 export default defineConfig({
+  define: { __PAGE_VERSION__: JSON.stringify(webPackage.version) },
   plugins: [react(), tailwindcss(), pwaBuild()],
   build: { outDir: 'dist', target: 'es2022' },
   test: {

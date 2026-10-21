@@ -82,7 +82,7 @@ export function titleOf(waiting: number): string {
   return waiting > 0 ? `(${waiting}) hennery` : 'hennery'
 }
 
-export default function SessionScope({ route, children }: { route: Route; desktop?: boolean; children: ReactNode }) {
+export default function SessionScope({ route, children, onReconnect }: { route: Route; desktop?: boolean; children: ReactNode; onReconnect?: () => void }) {
   const client = useClient()
   const { search } = useLocation()
   const [hat, setHat] = useState(() => route.name === 'sessions' && new URLSearchParams(search).has('hat') ? new URLSearchParams(search).get('hat')! : readHat())
@@ -104,6 +104,16 @@ export default function SessionScope({ route, children }: { route: Route; deskto
   const q = useDebounced(query, SEARCH_DEBOUNCE_MS)
   const attention = route.name === 'needs-you'
   const list = useSessionList({ pageScope: attention ? 'attention' : 'overview', hat: hat || null, hideClosed: attention ? false : hideClosed, lifecycle: !attention && lifecycle ? [lifecycle] : undefined, q: attention ? '' : q })
+  const recovering = useRef(false)
+  const previouslyResynced = useRef(false)
+  useEffect(() => {
+    if (list.stream === 'reconnecting' || (list.resynced && !previouslyResynced.current)) recovering.current = true
+    previouslyResynced.current = list.resynced
+    if (list.stream === 'open' && recovering.current) {
+      recovering.current = false
+      onReconnect?.()
+    }
+  }, [list.stream, list.resynced, onReconnect])
   const attentionRows = useAttentionSessions(list, hat)
   const dismissed = useDismissedAttention()
   const [attentionKeys, setAttentionKeys] = useState<ReadonlyMap<string, string>>(new Map())

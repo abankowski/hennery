@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Subtle version information in the sidebar footer, Settings and More shows
+  the collector release and recorded source commit, with a small page/server
+  hint when an older page is still open.
+
 ## 0.2.1
 
 - Delegation is strictly on or off per hat (#218). On means a child may use any

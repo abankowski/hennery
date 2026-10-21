@@ -869,7 +869,7 @@ learns no hennery path (the API design of plans 8e and 8f, S6).
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/capabilities` | `{mode: full \| gateway, features[]}` |
+| `GET /api/capabilities` | `{mode: full \| gateway, features[], collector_version, source_commit}`; authenticated build identity, commit null when unrecorded |
 | `POST /api/setup` | One-time owner setup |
 | `GET /setup`, `GET /setup.js` | Static setup page, until the frontend (§3.1) |
 | `POST /api/auth/login` / `logout` | Password login / logout |

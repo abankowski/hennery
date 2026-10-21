@@ -69,6 +69,19 @@ fn long_version_records_release_identity() {
 }
 
 #[test]
+fn long_version_has_exactly_one_source_line() {
+    let output = hennery().arg("--version").output().unwrap();
+    assert!(output.status.success());
+    let version = String::from_utf8(output.stdout).unwrap();
+    // Match the archive acceptance check's ^source: (.*)$ with MULTILINE.
+    assert_eq!(
+        version.split('\n').filter(|line| line.starts_with("source: ")).count(),
+        1,
+        "expected exactly one source identity line: {version}"
+    );
+}
+
+#[test]
 fn help_lists_the_skeleton_commands() {
     let out = hennery().arg("--help").output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout);

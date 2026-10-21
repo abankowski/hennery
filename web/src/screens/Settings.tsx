@@ -6,6 +6,7 @@ import NotificationSettings from '../components/NotificationSettings'
 import DelegationSettings from '../components/DelegationSettings'
 import { DefaultsSettings } from '../components/HatDefaultsSummary'
 import { useResource } from '../hooks/useResource'
+import VersionInfo from '../components/VersionInfo'
 import '../manage.css'
 
 export default function Settings({ push, sessions }: { push: boolean; sessions: boolean }) {
@@ -21,5 +22,6 @@ export default function Settings({ push, sessions }: { push: boolean; sessions: 
     {sessions && <DelegationSettings hats={hats.data} />}
     {sessions && <DefaultsSettings hats={hats.data} />}
     <AccountLogins />
+    <section className="about-version" aria-label="About"><h2>About</h2><VersionInfo /></section>
   </div>
 }

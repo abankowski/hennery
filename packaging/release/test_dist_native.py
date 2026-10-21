@@ -30,7 +30,9 @@ class NativeDist(unittest.TestCase):
             version = subprocess.check_output(['rustc', '-vV'], cwd=root, text=True)
             target = next(line.removeprefix('host: ') for line in version.splitlines() if line.startswith('host: '))
         (root / 'src').mkdir()
-        (root / 'src/main.rs').write_text('fn main() { println!("hennery 0.1.0-alpha.3"); }\n')
+        (root / 'src/main.rs').write_text(
+            'fn main() { println!("hennery 0.1.0-alpha.3\\nsource: {}", '
+            'option_env!("HENNERY_BUILD_SOURCE_SHA").unwrap_or("unrecorded")); }\n')
         (root / 'Cargo.toml').write_text(
             '[package]\nname="hennery"\nversion="0.1.0-alpha.3"\nedition="2024"\n'
             'repository="https://github.com/marcinwadon/hennery"\nlicense="AGPL-3.0-only"\n'

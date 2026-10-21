@@ -39,7 +39,15 @@ pub fn current() -> CapabilitiesResponse {
     CapabilitiesResponse {
         mode: mode(),
         features: features(),
+        collector_version: env!("CARGO_PKG_VERSION").to_owned(),
+        source_commit: source_commit(option_env!("HENNERY_BUILD_SOURCE_SHA")),
     }
+}
+
+fn source_commit(recorded: Option<&str>) -> Option<String> {
+    recorded
+        .filter(|sha| matches!(sha.len(), 40 | 64) && sha.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(str::to_owned)
 }
 
 /// The route, behind the browser rules and the session cookie.
@@ -56,9 +64,18 @@ mod tests {
 
     #[test]
     fn the_collector_is_the_whole_cockpit_with_the_gateways_connections() {
+        let mut body = serde_json::to_value(current()).unwrap();
+        let source = body.as_object_mut().unwrap().remove("source_commit").unwrap();
+        assert!(
+            source.is_null()
+                || source.as_str().is_some_and(|sha| {
+                    matches!(sha.len(), 40 | 64) && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+        );
         assert_eq!(
-            serde_json::to_value(current()).unwrap(),
-            serde_json::json!({"mode": "full", "features": ["mcp_connections", "mcp_stdio", "mcp_oauth", "web_push", "session_defaults"]})
+            body,
+            serde_json::json!({"mode": "full", "features": ["mcp_connections", "mcp_stdio", "mcp_oauth", "web_push", "session_defaults"],
+                "collector_version": env!("CARGO_PKG_VERSION")})
         );
     }
 
@@ -69,5 +86,23 @@ mod tests {
             serde_json::to_value(DeploymentMode::Gateway).unwrap(),
             serde_json::json!("gateway")
         );
+    }
+
+    #[test]
+    fn source_identity_is_only_a_recorded_commit() {
+        let sha = "abcdef1234567890abcdef1234567890abcdef12";
+        assert_eq!(source_commit(Some(sha)).as_deref(), Some(sha));
+        let sha256 = "a".repeat(64);
+        assert_eq!(source_commit(Some(&sha256)).as_deref(), Some(sha256.as_str()));
+        for value in [
+            None,
+            Some(""),
+            Some("unrecorded (development build)"),
+            Some("unrecorded (dirty source)"),
+            Some("/source/checkout"),
+            Some("not-a-commit00000000000000000000000000000"),
+        ] {
+            assert_eq!(source_commit(value), None);
+        }
     }
 }

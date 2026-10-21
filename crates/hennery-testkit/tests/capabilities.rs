@@ -8,7 +8,7 @@ use hennery_sessions::AppState;
 use hennery_sessions::store::Store;
 
 /// The signed-in owner learns the mode and the features switched on, and
-/// nothing else: today the whole cockpit, with the gateway's connections.
+/// its build identity: no source paths or host metadata.
 #[tokio::test]
 async fn the_owner_learns_the_mode_and_the_features() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -27,9 +27,19 @@ async fn the_owner_learns_the_mode_and_the_features() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
+    let source = body.get("source_commit").unwrap();
+    assert!(
+        source.is_null()
+            || source.as_str().is_some_and(|sha| {
+                matches!(sha.len(), 40 | 64) && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+    );
+    let mut metadata = body.clone();
+    metadata.as_object_mut().unwrap().remove("source_commit");
     assert_eq!(
-        body,
-        serde_json::json!({"mode": "full", "features": ["mcp_connections", "mcp_stdio", "mcp_oauth", "web_push", "session_defaults"]})
+        metadata,
+        serde_json::json!({"mode": "full", "features": ["mcp_connections", "mcp_stdio", "mcp_oauth", "web_push", "session_defaults"],
+            "collector_version": env!("CARGO_PKG_VERSION")})
     );
     let typed: CapabilitiesResponse = serde_json::from_value(body).unwrap();
     assert_eq!(typed.mode, DeploymentMode::Full);
