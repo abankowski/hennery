@@ -39,7 +39,7 @@ export async function mockPush(context: BrowserContext) {
   })
 }
 
-export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { origin?: string; clients?: Windows; pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void; skipWaiting?: () => Promise<void>; waiting?: boolean; ownWaiting?: boolean; workerIdentity?: boolean; caches?: Pick<CacheStorage, 'keys' | 'delete' | 'open'> } = {}) {
+export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { origin?: string; clients?: Windows; pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void; skipWaiting?: () => Promise<void>; claim?: () => Promise<void>; active?: boolean; caches?: Pick<CacheStorage, 'keys' | 'delete' | 'open'> } = {}) {
   type Event = { notification?: { data: { url: unknown }; close(): void }; data?: unknown; source?: { id: string }; ports?: MessagePort[]; oldSubscription?: PushSubscription | null; newSubscription?: PushSubscription | null; request?: Request; respondWith?(promise: Promise<Response>): void; waitUntil(promise: Promise<unknown>): void }
   const handlers = new Map<string, (event: Event) => void>()
   const notifications: { title: string; options: unknown }[] = [], fetches: string[] = []
@@ -62,11 +62,10 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
     queueMicrotask(() => { request.onupgradeneeded?.(); request.onsuccess?.() })
     return request
   } }
-  const serviceWorker = {}
-  runInNewContext(code, { self: { ...(dependencies.workerIdentity === false ? {} : { serviceWorker }), skipWaiting: dependencies.skipWaiting,
+  runInNewContext(code, { self: { skipWaiting: dependencies.skipWaiting ?? (async () => {}),
     addEventListener: (name: string, handler: typeof handlers extends Map<string, infer V> ? V : never) => handlers.set(name, handler),
-    clients: dependencies.clients ?? { matchAll: async () => [], openWindow: async () => null },
-    registration: { get waiting() { return dependencies.waiting === false ? null : dependencies.ownWaiting === false ? {} : serviceWorker }, pushManager: dependencies.pushManager, showNotification: async (title: string, options: unknown) => { notifications.push({ title, options }) } } },
+    clients: { ...(dependencies.clients ?? { matchAll: async () => [], openWindow: async () => null }), claim: dependencies.claim ?? (async () => {}) },
+    registration: { active: dependencies.active ? {} : null, pushManager: dependencies.pushManager, showNotification: async (title: string, options: unknown) => { notifications.push({ title, options }) } } },
     navigator: { locks: dependencies.locks ?? testLocks() },
     location: { origin: dependencies.origin ?? 'https://app.example' }, URL, Response, Request, TextEncoder, MessageChannel: WorkerMessageChannel, crypto: webcrypto, AbortController, setTimeout, clearTimeout, indexedDB, structuredClone, caches: dependencies.caches ?? { keys: async () => [] },
     fetch: async (url: string, init: RequestInit) => { fetches.push(url); attempts.push(init); return dependencies.fetch ? dependencies.fetch(url, init) : new Response(JSON.stringify({ id: persistence.row.id })) },
@@ -80,7 +79,6 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
   return { notifications, fetches, attempts,
     install: () => dispatch('install', {}),
     activate: () => dispatch('activate', {}),
-    message: (data: unknown, source: { id: string }, port: MessagePort) => dispatch('message', { data, source, ports: [port] }),
     click: (url: unknown, close = () => {}) => dispatch('notificationclick', { notification: { data: { url }, close } }),
     push: (text: string | null) => dispatch('push', text === null ? {} : { data: { text: () => text } }),
     change: (oldSubscription: PushSubscription | null, newSubscription: PushSubscription | null) => dispatch('pushsubscriptionchange', { oldSubscription, newSubscription }),

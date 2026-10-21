@@ -1,5 +1,6 @@
 import { notificationTarget } from './notification'
 import { appRoute } from './shell'
+import { updateRoute } from '../routes'
 
 const LEASE_MS = 2000
 type Lease = { id: string; target: string; until: number; navigating?: boolean }
@@ -26,13 +27,6 @@ export class NavigationGate {
     this.lease = { id, target, until }
     return true
   }
-  // Reload readiness checks draft durability separately from notification
-  // navigation's sticky dirty bit. Both operations share the mutation fence.
-  reserveUpdate(id: string, until: number, now = Date.now()): boolean {
-    if (this.mutations > 0 || this.frozen(now) || until <= now || until > now + LEASE_MS) return false
-    this.lease = { id, target: '', until }
-    return true
-  }
   release(id: string) { if (this.lease?.id === id) this.lease = null }
   begin(id: string, now = Date.now()): boolean {
     if (!this.lease || this.lease.id !== id || this.lease.until <= now) return false
@@ -47,7 +41,6 @@ export class NavigationGate {
     return true
   }
   blocked(now = Date.now()) { return this.frozen(now) }
-  hasMutations() { return this.mutations > 0 }
 }
 export const navigationGate = new NavigationGate()
 
@@ -59,6 +52,18 @@ export interface AppWindow {
 export interface Windows {
   matchAll(options: { type: 'window'; includeUncontrolled: boolean }): Promise<readonly AppWindow[]>
   openWindow(url: string): Promise<unknown>
+}
+
+/** Start every replacement without waiting for documents whose fetches may
+ * be queued until activation finishes. A closed/unsupported client is local
+ * to that navigation and never stops the other windows. */
+export async function replaceAppWindows(clients: Windows, origin: string, report = (error: unknown) => console.warn('PWA window reload failed.', error)): Promise<void> {
+  for (const client of await clients.matchAll({ type: 'window', includeUncontrolled: true })) {
+    let url: URL
+    try { url = new URL(client.url) } catch { continue }
+    if (url.origin !== origin || !updateRoute(url.pathname)) continue
+    try { void client.navigate(client.url).catch(report) } catch (error) { report(error) }
+  }
 }
 function appTarget(url: string, origin: string): string | null {
   try {

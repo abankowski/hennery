@@ -129,6 +129,57 @@ afterEach(() => {
 })
 
 describe('Composer: sending', () => {
+  it.each([
+    [409, 'turn_in_progress'], [409, 'not_attached'], [400, 'invalid'],
+  ])('a server refusal %i %s clears the uncertain-send warning after remount', async (status, code) => {
+    const c = mount(() => json({ code, message: 'refused' }, status))
+    type('keep these words')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
+    c.unmount()
+    mount()
+    expect(textarea()).toHaveValue('keep these words')
+    expect(screen.queryByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeNull()
+  })
+
+  it.each([
+    new TypeError('network failed'), new DOMException('timed out', 'TimeoutError'), new DOMException('aborted', 'AbortError'),
+  ])('an uncertain request failure $name preserves the warning after remount', async error => {
+    const c = mount(async () => { throw error })
+    type('possibly accepted')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
+    c.unmount()
+    mount()
+    expect(textarea()).toHaveValue('possibly accepted')
+    expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
+  })
+
+  it('warns after a reload interrupts a prompt request, and clears the warning after acceptance', async () => {
+    let finish!: (answer: Response) => void
+    const pending = new Promise<Response>(resolve => { finish = resolve })
+    const c = mount(() => pending)
+    type('possibly accepted')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
+    c.unmount()
+    // A fresh document keeps sessionStorage but loses the in-memory send.
+    forgetAllSends()
+    const restored = mount()
+    expect(textarea()).toHaveValue('possibly accepted')
+    expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
+    expect(screen.queryByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeNull()
+    restored.unmount()
+    await act(async () => { finish(json({ turn_id: 'old' }, 202)); await pending })
+    mount()
+    expect(textarea()).toHaveValue('')
+    expect(screen.queryByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeNull()
+  })
+
   it('Ctrl+Enter sends the prompt', async () => {
     const c = mount()
     type('hello')

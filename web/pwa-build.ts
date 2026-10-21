@@ -44,6 +44,10 @@ export function pwaBuild(): Plugin {
       for (const size of [180, 192, 512]) writeFileSync(resolve(out, `icon-${size}.png`), png(size))
       writeFileSync(resolve(out, 'icon-maskable.png'), png(512))
       const mime: Record<string, string> = { html: 'text/html', js: 'text/javascript', css: 'text/css', svg: 'image/svg+xml', png: 'image/png', webmanifest: 'application/manifest+json', woff2: 'font/woff2' }
+      // Exclude our previous marker when rebuilding a copied test variant.
+      const indexPath = resolve(out, 'index.html')
+      const html = readFileSync(indexPath, 'utf8').replace(/<meta name="hennery-build" content="[a-f0-9]+">\n?/, '')
+      writeFileSync(indexPath, html)
       const entries: { url: string; mime: string; digest: string }[] = []
       const visit = (dir: string, prefix: string) => {
         for (const file of readdirSync(dir, { withFileTypes: true })) {
@@ -53,8 +57,21 @@ export function pwaBuild(): Plugin {
       }
       visit(out, '/')
       entries.sort((a, b) => a.url.localeCompare(b.url))
-      await build({ configFile: false, publicDir: false, root, define: { __PRECACHE__: JSON.stringify(entries), __BUILD_ID__: JSON.stringify(hash(JSON.stringify(entries))) },
-        build: { outDir: out, emptyOutDir: false, target: 'es2022', lib: { entry: resolve(root, 'worker.js'), name: 'henneryWorker', formats: ['iife'], fileName: () => 'sw.js' } } })
+      const bundleWorker = (buildId: string, precache: typeof entries, write: boolean) => build({ configFile: false, publicDir: false, root,
+        define: { __PRECACHE__: JSON.stringify(precache), __BUILD_ID__: JSON.stringify(buildId) },
+        build: { outDir: out, emptyOutDir: false, write, target: 'es2022', lib: { entry: resolve(root, 'worker.js'), name: 'henneryWorker', formats: ['iife'], fileName: () => 'sw.js' } } })
+      // Bundle with fixed placeholders first: worker-only changes (including
+      // imported helpers) affect the ID without a circular HTML/worker hash.
+      const bundled = await bundleWorker('', [], false)
+      const workerHashes: string[] = []
+      for (const output of Array.isArray(bundled) ? bundled : [bundled]) {
+        if (!('output' in output)) throw new Error('Expected a completed worker build')
+        for (const chunk of output.output) workerHashes.push(hash(chunk.type === 'chunk' ? chunk.code : chunk.source))
+      }
+      const buildId = hash(JSON.stringify({ entries, workerHashes }))
+      writeFileSync(indexPath, html.replace('</head>', `<meta name="hennery-build" content="${buildId}">\n</head>`))
+      entries.find(entry => entry.url === '/index.html')!.digest = hash(readFileSync(indexPath))
+      await bundleWorker(buildId, entries, true)
     },
   }
 }
