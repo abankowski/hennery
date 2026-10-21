@@ -7,7 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 fn terminal(code: &str, operation: &str, now: i64, failures: &mut BTreeMap<String, i64>) -> bool {
     match code {
-        "auth_required" | "runtime_unavailable" | "configuration_unavailable" | "cwd_unavailable" => true,
+        "auth_required"
+        | "runtime_unavailable"
+        | "configuration_unavailable"
+        | "cwd_unavailable"
+        | "agent_has_no_record" => true,
         "busy" | "timeout" | "adapter_failed" | "catalog_unavailable" => {
             let first_failure = failures.entry(operation.into()).or_insert(now);
             now.saturating_sub(*first_failure) >= 30
@@ -35,6 +39,24 @@ fn prune_failures(tx: &Transaction<'_>, owner: &str, failures: &mut BTreeMap<Str
     Ok(())
 }
 impl Store {
+    /// An accepted fresh catalog ends the failed-probe streak for every
+    /// pending operation on that target, including work behind the head.
+    pub fn clear_delegation_catalog_failures(&self, target: &str) -> Result<()> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT operation_id FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id = ?2
+             AND state IN ('queued','waiting_config')",
+        )?;
+        let pending = statement
+            .query_map(params![self.owner_id(), target], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<BTreeSet<_>>>()?;
+        self.delegation_catalog_failures
+            .lock()
+            .expect("delegation catalog failures lock")
+            .retain(|operation, _| !pending.contains(operation));
+        Ok(())
+    }
+
     pub(crate) fn fail_delegation_catalog(&self, target: &str, code: &str, now: i64) -> Result<()> {
         self.fail_delegation_catalog_for(target, code, now, None)
     }
@@ -153,6 +175,7 @@ mod tests {
             "runtime_unavailable",
             "configuration_unavailable",
             "cwd_unavailable",
+            "agent_has_no_record",
         ] {
             assert!(terminal(code, code, 600, &mut failures));
         }
@@ -397,5 +420,199 @@ mod tests {
             state, "queued",
             "a refusal for captured A must not reject replacement B"
         );
+    }
+
+    #[test]
+    fn accepted_fresh_catalog_resets_all_pending_clocks_for_its_target() {
+        let (_dir, store, head) = queued();
+        let tail = "00000000-0000-7000-8000-000000000002";
+        let other = "00000000-0000-7000-8000-000000000003";
+        let hat = store.find_session("child").unwrap().unwrap().hat_id;
+        store
+            .create_session("other-child", "host", "claude", "/project", &hat, None)
+            .unwrap();
+        {
+            let conn = store.conn();
+            let owner = store.owner_id();
+            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='attached-before' WHERE owner_id=?1 AND id='child'", [owner]).unwrap();
+            conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,accepted_revision) VALUES(?1,'parent','tail',?2,'digest','session_send','child','queued',1)", rusqlite::params![owner,tail]).unwrap();
+            conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES(?1,?2,'parent','child',1,'later brief','{}')", rusqlite::params![owner,tail]).unwrap();
+            conn.execute("INSERT INTO session_families(owner_id,child_id,parent_id,root_id,hat_id,created_event_id) VALUES(?1,'other-child','parent','parent',?2,0)", rusqlite::params![owner,hat]).unwrap();
+            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='other-attached' WHERE owner_id=?1 AND id='other-child'", [owner]).unwrap();
+            conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,accepted_revision) VALUES(?1,'parent','other-operation',?2,'digest','session_send','other-child','queued',1)", rusqlite::params![owner,other]).unwrap();
+            conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES(?1,?2,'parent','other-child',1,'other brief','{}')", rusqlite::params![owner,other]).unwrap();
+        }
+        store.fail_delegation_catalog("other-child", "busy", 600).unwrap();
+        store
+            .conn()
+            .execute(
+                "UPDATE session_dispatch_queue SET state='waiting_config' WHERE owner_id=?1 AND operation_id=?2",
+                rusqlite::params![store.owner_id(), tail],
+            )
+            .unwrap();
+        store.fail_delegation_catalog("child", "busy", 600).unwrap();
+        assert_eq!(store.delegation_catalog_failures.lock().unwrap().len(), 3);
+        store.clear_delegation_catalog_failures("child").unwrap();
+        assert_eq!(store.delegation_catalog_failures.lock().unwrap().len(), 1);
+        assert_eq!(store.delegation_catalog_failures.lock().unwrap().get(other), Some(&600));
+        {
+            let conn = store.conn();
+            conn.execute(
+                "UPDATE session_operations SET state='completed' WHERE owner_id=?1 AND operation_id=?2",
+                rusqlite::params![store.owner_id(), head],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE session_dispatch_queue SET state='settled' WHERE owner_id=?1 AND operation_id=?2",
+                rusqlite::params![store.owner_id(), head],
+            )
+            .unwrap();
+        }
+        store.fail_delegation_catalog("child", "busy", 4200).unwrap();
+        let tail_state = || {
+            store
+                .conn()
+                .query_row(
+                    "SELECT state FROM session_operations WHERE owner_id=?1 AND operation_id=?2",
+                    rusqlite::params![store.owner_id(), tail],
+                    |r| r.get::<_, String>(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            tail_state(),
+            "queued",
+            "B receives a new retry window after A accepted a fresh catalog"
+        );
+        store.fail_delegation_catalog("child", "busy", 4229).unwrap();
+        assert_eq!(tail_state(), "queued");
+        store.fail_delegation_catalog("child", "busy", 4230).unwrap();
+        assert_eq!(tail_state(), "failed");
+    }
+
+    #[test]
+    fn missing_parked_agent_record_fails_immediately() {
+        let (_dir, store, _operation) = queued();
+        store
+            .conn()
+            .execute(
+                "UPDATE sessions SET lifecycle='parked' WHERE owner_id=?1 AND id='child'",
+                [store.owner_id()],
+            )
+            .unwrap();
+        store
+            .fail_delegation_catalog("child", "agent_has_no_record", 600)
+            .unwrap();
+        assert_eq!(
+            operation_state(&store),
+            ("failed".into(), Some("agent_has_no_record".into()))
+        );
+    }
+    #[tokio::test]
+    async fn worker_accepted_fresh_catalog_clears_failed_probe_clock() {
+        use hennery_proto::{
+            delegation_host::{CatalogFreshness, HostCatalog, SecurityClassification},
+            frames::{
+                AgentIsolation, Capabilities, Capability, CollectorFrame, HostFrame, McpIsolation, SessionConfig,
+            },
+        };
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let (dir, store, _operation) = queued();
+        store.fail_delegation_catalog("child", "busy", 600).unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = crate::AppState::new(
+            store,
+            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let registration = state
+            .hub
+            .register(
+                "host",
+                sender,
+                Capabilities(vec![
+                    Capability::ResolvePath,
+                    Capability::CatalogProbe,
+                    Capability::DelegationConfig,
+                    Capability::McpServers,
+                ]),
+                AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect()),
+            )
+            .unwrap();
+        state.hub.mark_ready("host", registration.conn_id);
+        let probes = Arc::new(AtomicUsize::new(0));
+        let replies = probes.clone();
+        let hub = state.hub.clone();
+        let host = tokio::spawn(async move {
+            while let Some(frame) = receiver.recv().await {
+                let reply = match frame {
+                    CollectorFrame::ResolvePath { request_id, path } => HostFrame::ResolvedPath {
+                        request_id,
+                        canonical: path,
+                        exists: true,
+                        is_dir: true,
+                    },
+                    CollectorFrame::ProbeCatalog { request_id, agent, .. } => {
+                        replies.fetch_add(1, Ordering::SeqCst);
+                        HostFrame::Catalog {
+                            request_id,
+                            catalog: HostCatalog {
+                                agent,
+                                adapter_revision: "fixture".into(),
+                                freshness: CatalogFreshness::Fresh,
+                                config_options: vec![],
+                                defaults: SessionConfig::default(),
+                                security: SecurityClassification {
+                                    known: true,
+                                    axes: Default::default(),
+                                },
+                            },
+                        }
+                    }
+                    _ => continue,
+                };
+                hub.probe_reply("host", registration.conn_id, reply);
+            }
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            crate::delegation_worker::drain(&state),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        host.abort();
+        let _ = host.await;
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
+        assert!(
+            state.store.delegation_catalog_failures.lock().unwrap().is_empty(),
+            "accepted fresh catalog ends the failed-probe streak"
+        );
+    }
+
+    #[test]
+    fn disconnected_host_has_no_delegated_attach_candidate() {
+        use hennery_proto::frames::{AgentIsolation, Capabilities, Capability};
+        let (_dir, store, _operation) = queued();
+        let hub = crate::hub::Hub::new();
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let registration = hub
+            .register(
+                "host",
+                sender,
+                Capabilities(vec![Capability::DelegationConfig]),
+                AgentIsolation::default(),
+            )
+            .unwrap();
+        hub.mark_ready("host", registration.conn_id);
+        assert!(hub.is_ready("host"));
+        assert!(store.delegated_attach_candidate("child", &hub).unwrap().is_some());
+        hub.unregister("host", registration.conn_id);
+        assert!(!hub.is_ready("host"));
+        assert!(store.delegated_attach_candidate("child", &hub).unwrap().is_none());
     }
 }
