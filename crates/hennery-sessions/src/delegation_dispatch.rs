@@ -505,3 +505,61 @@ impl Store {
         Ok(hub.notify_parent_transfer(host, &agent, isolated, frame))
     }
 }
+
+/// A read-only head snapshot. Attach repeats its transaction-bound predicates
+/// after I/O; a handed-off start is never a new catalog-discovery candidate.
+pub(crate) struct AttachCandidate {
+    pub operation: String,
+    pub required: SessionConfig,
+    pub possible: bool,
+}
+impl Store {
+    pub(crate) fn delegated_attach_candidate(&self, target: &str, hub: &Hub) -> Result<Option<AttachCandidate>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let head: Option<(String, String, i64, String)> = tx
+            .query_row(
+                "SELECT operation_id,source_id,accepted_revision,required_config FROM session_dispatch_queue
+             WHERE owner_id = ?1 AND target_id=?2 AND state IN ('queued','waiting_config') ORDER BY position LIMIT 1",
+                params![self.owner_id(), target],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        let Some((operation, source, revision, required)) = head else {
+            return Ok(None);
+        };
+        if !self.transfer_in(&tx, &source, target, revision)? {
+            return Ok(None);
+        }
+        let (lifecycle, host, hat, cwd, record): (String, String, String, String, Option<String>) = tx.query_row(
+            "SELECT lifecycle,host_id,hat_id,cwd,agent_session_id FROM sessions WHERE owner_id = ?1 AND id=?2",
+            params![self.owner_id(), target],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        if !same_hat_in(&tx, self.owner_id(), &host, &hat, &cwd)? {
+            return Ok(None);
+        }
+        let possible = match lifecycle.as_str() {
+            "parked" => record.is_some(),
+            "starting" => {
+                let sent: Option<bool> = tx
+                    .query_row(
+                        "SELECT launch_sent FROM session_attach_evidence WHERE owner_id = ?1 AND session_id=?2",
+                        params![self.owner_id(), target],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if sent != Some(false) || record.is_some() {
+                    return Ok(None);
+                }
+                true
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(AttachCandidate {
+            operation,
+            required: serde_json::from_str(&required)?,
+            possible: possible && hub.has_capability(&host, Capability::DelegationConfig),
+        }))
+    }
+}

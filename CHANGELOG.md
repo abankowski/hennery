@@ -10,6 +10,9 @@
   and include host/runtime context in catalog errors. Preserve operator session login instructions.
 - Refuse nested or over-budget starts before probing; isolate catalog probes by
   context, and settle accepted child work with a readable sign-in/runtime failure.
+- Avoid repeated catalog probes while child starts are in flight; reuse spawn
+  discovery for the first attach, report unavailable queued configurations, and
+  measure transient probe retries from their first failure rather than queue age.
 
 ## 0.2.0
 

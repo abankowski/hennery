@@ -378,6 +378,7 @@ describe('marker', () => {
     ['start_failed', 'agent_not_logged_in', 'the agent is not logged in on the host'],
     ['start_failed', 'load_unsupported', 'the agent cannot open an earlier session'],
     ['start_failed', 'start_failed', 'the agent could not start'],
+    ['start_failed', 'configuration_unavailable', 'the runtime no longer offers the required settings'],
     ['start_failed', 'runtime_unavailable', 'the runtime is not available on the host'],
     ['start_failed', 'adapter_failed', 'the agent’s adapter failed'],
     ['start_failed', 'cwd_unavailable', 'the working directory is not available on the host'],

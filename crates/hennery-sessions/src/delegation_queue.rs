@@ -63,6 +63,7 @@ fn receipt_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OperationReceipt> {
     })
 }
 struct QueuedInput<'a> {
+    operation: Option<&'a str>,
     key: &'a str,
     digest: &'a str,
     child: &'a str,
@@ -220,6 +221,7 @@ impl Store {
         input: QueuedInput<'_>,
     ) -> Result<OperationReceipt> {
         let QueuedInput {
+            operation,
             key,
             digest,
             child,
@@ -236,7 +238,7 @@ impl Store {
             count < MAX_QUEUE && bytes + text.len() as i64 <= MAX_QUEUE_BYTES,
             "queue_full"
         );
-        let operation = uuid();
+        let operation = operation.map(str::to_owned).unwrap_or_else(uuid);
         tx.execute(
             "INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state)
             VALUES (?1,?2,?3,?4,?5,?6,?7,'queued')",
@@ -286,6 +288,7 @@ impl Store {
             &tx,
             &caller,
             QueuedInput {
+                operation: None,
                 key,
                 digest,
                 child,
@@ -303,6 +306,26 @@ impl Store {
         revision: i64,
         digest: &str,
         launch: &DelegatedLaunch<'_>,
+    ) -> Result<OperationReceipt> {
+        self.queue_spawn_with_operation(identity, revision, digest, launch, None)
+    }
+    pub(crate) fn queue_spawn_admitted(
+        &self,
+        identity: &SessionIdentity,
+        revision: i64,
+        digest: &str,
+        launch: &DelegatedLaunch<'_>,
+        operation: &str,
+    ) -> Result<OperationReceipt> {
+        self.queue_spawn_with_operation(identity, revision, digest, launch, Some(operation))
+    }
+    fn queue_spawn_with_operation(
+        &self,
+        identity: &SessionIdentity,
+        revision: i64,
+        digest: &str,
+        launch: &DelegatedLaunch<'_>,
+        operation: Option<&str>,
     ) -> Result<OperationReceipt> {
         let DelegatedLaunch {
             key,
@@ -355,6 +378,7 @@ impl Store {
             &tx,
             &caller,
             QueuedInput {
+                operation,
                 key,
                 digest,
                 child: &child,

@@ -164,6 +164,7 @@ describe('SessionView: the footer of a session that is not running', () => {
 
   it.each([
     ['start_failed', 'This session failed: the agent could not start.'],
+    ['configuration_unavailable', 'This session failed: the runtime no longer offers the required settings.'],
     ['runtime_unavailable', 'This session failed: the runtime is not available on the host.'],
     ['adapter_failed', 'This session failed: the agent’s adapter failed.'],
     ['cwd_unavailable', 'This session failed: the working directory is not available on the host.'],

@@ -6096,3 +6096,244 @@ async fn independent_catalog_keys_probe_without_global_serialization() {
     );
     assert!(first.await.unwrap().is_ok());
 }
+
+fn worker_probe_fixture(
+    w: &World,
+) -> (
+    hennery_sessions::AppState,
+    tokio::sync::mpsc::UnboundedReceiver<CollectorFrame>,
+) {
+    let state = hennery_sessions::AppState::new(
+        Store::open(&w.db).unwrap(),
+        Hosts::open(&w.db).unwrap(),
+        Operator::open(&w.db).unwrap(),
+    );
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let reg = state
+        .hub
+        .register(
+            "host",
+            tx,
+            Capabilities(vec![
+                Capability::McpServers,
+                Capability::DelegationConfig,
+                Capability::CatalogProbe,
+                Capability::ResolvePath,
+            ]),
+            AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into()),
+        )
+        .unwrap();
+    state.hub.mark_ready("host", reg.conn_id);
+    (state, rx)
+}
+async fn drain_count_catalogs(
+    state: &hennery_sessions::AppState,
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<CollectorFrame>,
+    catalog: HostCatalog,
+) -> usize {
+    drain_catalogs_with_hook(state, rx, catalog, || {}).await
+}
+async fn drain_catalogs_with_hook(
+    state: &hennery_sessions::AppState,
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<CollectorFrame>,
+    catalog: HostCatalog,
+    mut hook: impl FnMut(),
+) -> usize {
+    let work = hennery_sessions::delegation_worker::drain(state);
+    tokio::pin!(work);
+    let mut probes = 0;
+    loop {
+        tokio::select! {
+            result=&mut work=>{result.unwrap();return probes;},
+            frame=rx.recv()=>{
+                let reply=match frame.unwrap() {
+                    CollectorFrame::ResolvePath{request_id,path}=>Some(hennery_proto::frames::HostFrame::ResolvedPath{request_id,canonical:path,exists:true,is_dir:true}),
+                    CollectorFrame::ProbeCatalog{request_id,..}=>{probes+=1;hook();Some(hennery_proto::frames::HostFrame::Catalog{request_id,catalog:catalog.clone()})},
+                    _=>None,
+                };
+                if let Some(reply)=reply {state.hub.probe_reply("host",state.hub.routable_conn("host").unwrap(),reply);}
+            }
+        }
+    }
+}
+#[tokio::test]
+async fn worker_launched_starting_child_never_probes_again() {
+    let (w, p) = pair();
+    ready(&w);
+    queue(&w, &p, "waiting-start");
+    raw(&w).execute_batch("UPDATE sessions SET lifecycle='starting' WHERE id='child'; UPDATE session_attach_evidence SET launch_sent=1 WHERE session_id='child'; UPDATE session_dispatch_queue SET state='waiting_config' WHERE target_id='child';").unwrap();
+    let (state, mut rx) = worker_probe_fixture(&w);
+    let mut probes = 0;
+    for _ in 0..4 {
+        probes += drain_count_catalogs(&state, &mut rx, catalog()).await;
+    }
+    assert_eq!(
+        probes, 0,
+        "a handed-off start must wait for host evidence without probing"
+    );
+    assert_eq!(
+        state.store.find_session("child").unwrap().unwrap().lifecycle,
+        "starting"
+    );
+}
+#[tokio::test]
+async fn worker_dropped_model_followup_fails_after_one_probe_and_stays_parked() {
+    let (w, p) = pair();
+    ready(&w);
+    queue(&w, &p, "dropped-model");
+    raw(&w)
+        .execute("UPDATE sessions SET lifecycle='parked' WHERE id='child'", [])
+        .unwrap();
+    let (state, mut rx) = worker_probe_fixture(&w);
+    let mut removed = catalog();
+    removed.config_options.retain(|o| o["id"] != "model");
+    assert_eq!(drain_count_catalogs(&state, &mut rx, removed.clone()).await, 1);
+    let op = w.store.delegation_receipt(&p, 1, "dropped-model").unwrap().unwrap();
+    assert_eq!(
+        op.state,
+        OperationState::Failed {
+            code: "configuration_unavailable".into()
+        }
+    );
+    assert_eq!(w.store.delegation_queue_depth("child").unwrap().0, 0);
+    assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "parked");
+    assert_eq!(
+        drain_count_catalogs(&state, &mut rx, removed).await,
+        0,
+        "settled work must leave the probe loop"
+    );
+}
+#[tokio::test]
+async fn worker_missing_resume_record_fails_without_a_catalog_probe() {
+    let (w, p) = pair();
+    ready(&w);
+    queue(&w, &p, "missing-record");
+    raw(&w)
+        .execute(
+            "UPDATE sessions SET lifecycle='parked',agent_session_id=NULL WHERE id='child'",
+            [],
+        )
+        .unwrap();
+    let (state, mut rx) = worker_probe_fixture(&w);
+    assert_eq!(drain_count_catalogs(&state, &mut rx, catalog()).await, 0);
+    assert_eq!(
+        w.store
+            .delegation_receipt(&p, 1, "missing-record")
+            .unwrap()
+            .unwrap()
+            .state,
+        OperationState::Failed {
+            code: "configuration_unavailable".into()
+        }
+    );
+    assert_eq!(w.store.find_session("child").unwrap().unwrap().lifecycle, "parked");
+}
+
+#[tokio::test]
+async fn worker_unsupported_attach_fails_without_a_catalog_probe() {
+    let (w, p) = pair();
+    ready(&w);
+    queue(&w, &p, "unsupported-attach");
+    raw(&w)
+        .execute("UPDATE sessions SET lifecycle='parked' WHERE id='child'", [])
+        .unwrap();
+    let (state, _rx) = worker_probe_fixture(&w);
+    state.hub.unregister("host", state.hub.routable_conn("host").unwrap());
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let reg = state
+        .hub
+        .register(
+            "host",
+            tx,
+            Capabilities(vec![
+                Capability::McpServers,
+                Capability::CatalogProbe,
+                Capability::ResolvePath,
+            ]),
+            AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into()),
+        )
+        .unwrap();
+    state.hub.mark_ready("host", reg.conn_id);
+    assert_eq!(drain_count_catalogs(&state, &mut rx, catalog()).await, 0);
+    assert_eq!(
+        w.store
+            .delegation_receipt(&p, 1, "unsupported-attach")
+            .unwrap()
+            .unwrap()
+            .state,
+        OperationState::Failed {
+            code: "configuration_unavailable".into()
+        }
+    );
+}
+
+#[tokio::test]
+async fn worker_notice_configuration_refusal_is_fenced_to_the_probed_head() {
+    let (w, _p) = pair();
+    ready_parent(&w);
+    raw(&w)
+        .execute("UPDATE sessions SET model='wanted' WHERE id='parent'", [])
+        .unwrap();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    raw(&w)
+        .execute("UPDATE sessions SET lifecycle='parked' WHERE id='parent'", [])
+        .unwrap();
+    let (state, mut rx) = worker_probe_fixture(&w);
+    let replacement = uuid::Uuid::now_v7().to_string();
+    let mut offered = catalog();
+    offered.config_options[0]["options"] = json!([{"value":"wrong"}]);
+    assert_eq!(
+        drain_catalogs_with_hook(&state, &mut rx, offered, || {
+            raw(&w)
+                .execute(
+                    "UPDATE delegation_notices SET delivery_id=?1,required_config=?2 WHERE parent_id='parent'",
+                    params![replacement, serde_json::to_string(&config("wrong")).unwrap()],
+                )
+                .unwrap();
+        })
+        .await,
+        1
+    );
+    let actual: (String, Option<String>) = raw(&w)
+        .query_row(
+            "SELECT state,reason FROM delegation_notices WHERE delivery_id=?1",
+            [replacement],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        actual,
+        ("parent_queued".into(), None),
+        "a probe for the replaced head cannot refuse its successor"
+    );
+    assert_eq!(w.store.find_session("parent").unwrap().unwrap().lifecycle, "parked");
+}
+#[tokio::test]
+async fn worker_notice_dropped_model_requires_operator_after_one_probe() {
+    let (w, _p) = pair();
+    ready_parent(&w);
+    raw(&w)
+        .execute("UPDATE sessions SET model='wanted' WHERE id='parent'", [])
+        .unwrap();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    raw(&w)
+        .execute("UPDATE sessions SET lifecycle='parked' WHERE id='parent'", [])
+        .unwrap();
+    let (state, mut rx) = worker_probe_fixture(&w);
+    let mut removed = catalog();
+    removed.config_options.retain(|o| o["id"] != "model");
+    assert_eq!(drain_count_catalogs(&state, &mut rx, removed.clone()).await, 1);
+    let actual: (String, Option<String>) = raw(&w)
+        .query_row(
+            "SELECT state,reason FROM delegation_notices WHERE parent_id='parent'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        actual,
+        ("operator_required".into(), Some("configuration_unavailable".into()))
+    );
+    assert_eq!(drain_count_catalogs(&state, &mut rx, removed).await, 0);
+    assert_eq!(w.store.find_session("parent").unwrap().unwrap().lifecycle, "parked");
+}

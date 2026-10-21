@@ -341,7 +341,23 @@ holding a collector-wide cache lock. At attach, `auth_required` and
 `runtime_unavailable` fail accepted work with that delegation result; new
 starts also record a visible session failure. Stored sign-in failures remain
 `agent_not_logged_in`, preserving adapter messages and login instructions.
-Busy/timeout probes retry for a bounded period; offline behavior is unchanged.
+Second operator review amendment, 2026-10-21: before any probe, read the
+eligible queue head and lifecycle. A handed-off start (`launch_sent=1`) waits
+for host evidence without catalog probes. Only unlaunched starts and attachable
+parked work discover catalogs. Reuse a fresh catalog captured after operation
+admission (including the tool's own spawn probe), within its freshness TTL;
+recheck all allocation/attach predicates transactionally. A fresh catalog that
+no longer offers the queued configuration, or a missing resume record, settles
+that head as `configuration_unavailable`; parked sessions remain parked and
+new starts record the failure. These pre-attach failures differ from applied
+configuration mismatches on an already attached child below.
+
+Busy, timeout, adapter and transient catalog failures retry for 30 seconds from the
+first failed probe for that pending operation, irrespective of how long it was
+queued beforehand. In-memory retry clocks may reset after collector restart.
+Authentication/runtime unavailability remain immediate, and offline behavior
+is unchanged. Concurrent catalog callers share success and failure results;
+workers back off shared failures briefly without blocking independent contexts.
 Evidence confirms requested keys plus catalog security axes, ignoring unrelated
 current settings outside the adapter's option list.
 

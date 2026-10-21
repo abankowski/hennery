@@ -136,6 +136,7 @@ it('refreshes a real status-only reason when an immutable attention summary chan
 it.each([
   ['child_failed', 'Child session failed'],
   ['auth_required', 'Runtime is not signed in on its host'],
+  ['configuration_unavailable', 'The runtime no longer offers the required settings'],
   ['runtime_unavailable', 'Runtime is not available on its host'],
   ['adapter_failed', 'The runtime’s adapter failed'],
   ['cwd_unavailable', 'Working directory is not available on the host'],

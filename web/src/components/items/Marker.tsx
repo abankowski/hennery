@@ -46,6 +46,7 @@ const REASON: Partial<Record<MarkerKind, Record<string, string>>> = {
     agent_not_logged_in: 'the agent is not logged in on the host',
     load_unsupported: 'the agent cannot open an earlier session',
     start_failed: 'the agent could not start',
+    configuration_unavailable: 'the runtime no longer offers the required settings',
     runtime_unavailable: 'the runtime is not available on the host',
     adapter_failed: 'the agent’s adapter failed',
     cwd_unavailable: 'the working directory is not available on the host',

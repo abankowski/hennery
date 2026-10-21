@@ -20,6 +20,34 @@ const HOST: &str = "delegation-host";
 const BOUND: Duration = Duration::from_secs(30);
 
 #[tokio::test]
+async fn spawn_admission_catalog_is_reused_for_the_first_attach() {
+    let h = Harness::with_worker(script(), None, false).await;
+    let receipt = h.spawn("reuse-admission", json!({})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    eventually("child attached from its admission catalog", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.lifecycle == "active")
+            .map(|_| ())
+    })
+    .await;
+    let log = std::fs::read_to_string(h.cwd.join("worker-sessions.jsonl")).unwrap();
+    let starts = log
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|row| row["method"] == "session/new")
+        .count();
+    assert_eq!(
+        starts, 2,
+        "one discovery process plus the actual child; no second probe"
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn nested_spawn_is_refused_before_any_runtime_probe() {
     let mut worker = script();
     worker.new_session_error = Some(-32000);
@@ -1872,6 +1900,17 @@ async fn accepted_start_signout_fails_operation_and_child_without_reprobing() {
     let child = receipt["child_id"].as_str().unwrap();
     std::fs::write(marker, "signed out").unwrap();
     hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    // Admission can supply the attach catalog. Sign-out is then reported by
+    // the actual child attach rather than an extra disposable probe.
+    eventually("accepted start sign-in refusal is ingested", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.lifecycle == "failed")
+            .map(|_| ())
+    })
+    .await;
     assert!(
         h.state.store.delegation_targets().unwrap().is_empty(),
         "failed queue cleared before any tool read"
@@ -2032,33 +2071,39 @@ async fn parent_notice_signout_requires_operator_without_failing_parent_session(
 }
 
 #[tokio::test]
-async fn accepted_start_catalog_becomes_unavailable_fails_with_readable_reason() {
-    let (h, _root, marker) = signout_worker().await;
+async fn transient_catalog_loss_retries_then_recovers_without_losing_the_start() {
+    let (mut h, _root, marker) = signout_worker().await;
     let receipt = h.spawn("lost-catalog", json!({})).await;
     let child = receipt["child_id"].as_str().unwrap();
-    std::fs::write(marker, "unknown").unwrap();
+    // A cold collector has no admission cache, as after a restart.
+    h.state.catalogs = Arc::default();
+    std::fs::write(&marker, "unknown").unwrap();
     hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    assert_eq!(
+        h.state.store.find_session(child).unwrap().unwrap().lifecycle,
+        "starting"
+    );
+    assert_eq!(h.state.store.delegation_queue_depth(child).unwrap().0, 1);
     let status = h
         .ok(
             "session_status",
             json!({"child_id":child,"operation_key":"lost-catalog"}),
         )
         .await;
-    assert_eq!(
-        status["operations"][0]["state"],
-        json!({"state":"failed","code":"catalog_unavailable"}),
-        "{status}"
-    );
-    assert_eq!(
-        h.state
-            .store
-            .find_session(child)
-            .unwrap()
-            .unwrap()
-            .failure_reason
-            .as_deref(),
-        Some("catalog_unavailable")
-    );
+    assert_eq!(status["operations"][0]["state"], json!({"state":"queued"}));
+    std::fs::remove_file(marker).unwrap();
+    eventually("transient catalog recovers and original brief completes", async || {
+        hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+        let status = h
+            .ok(
+                "session_status",
+                json!({"child_id":child,"operation_key":"lost-catalog"}),
+            )
+            .await;
+        (status["operations"][0]["state"]["state"] == "completed").then_some(())
+    })
+    .await;
+    assert_eq!(h.state.store.find_session(child).unwrap().unwrap().failure_reason, None);
     h.finish().await;
 }
 

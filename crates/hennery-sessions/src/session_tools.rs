@@ -97,6 +97,9 @@ pub async fn execute(
             );
             let cwd = checked_cwd(state, caller.host_id(), caller.hat_id(), &args.cwd).await?;
             state.store.precheck_spawn(identity, revision, Some(&cwd))?;
+            // Reserve admission before discovery so this fresh result can also
+            // authorize the first attach without another disposable process.
+            let operation = uuid::Uuid::now_v7().to_string();
             let catalog = state
                 .catalogs
                 .get_for_spawn(state, caller.host_id(), caller.hat_id(), &cwd, agent)
@@ -110,7 +113,7 @@ pub async fn execute(
             let required = crate::delegation_runtime::launch_configuration(&catalog, &args.config);
             ensure!(config_offered(&catalog, &required), "configuration_unavailable");
             let mcp = crate::api::mcp_context(state, caller.host_id(), agent)?;
-            Ok(serde_json::to_value(state.store.queue_spawn(
+            Ok(serde_json::to_value(state.store.queue_spawn_admitted(
                 identity,
                 revision,
                 &digest,
@@ -123,6 +126,7 @@ pub async fn execute(
                     config: &required,
                     mcp,
                 },
+                &operation,
             )?)?)
         }
         ToolCall::Send(args) => Ok(serde_json::to_value(state.store.queue_followup(
