@@ -968,8 +968,8 @@ fn current(catalog: &Value) -> (Value, Value, Value) {
 }
 
 /// Scenario 1: one request starts the session with model, mode and axes;
-/// the mode goes last, so the model's clamp cannot undo it, and the
-/// announced catalogue is the one after the switches.
+/// mode goes first, then model and dependent axes. A correction repairs
+/// the model's mode clamp before the final catalogue is announced.
 #[tokio::test]
 async fn a_start_with_model_mode_and_axes_announces_the_catalogue_after_the_switches() {
     let dir = tempfile::tempdir().unwrap();
@@ -991,7 +991,7 @@ async fn a_start_with_model_mode_and_axes_announces_the_catalogue_after_the_swit
     let session = body["session_id"].as_str().unwrap().to_string();
     assert_eq!(
         std::fs::read_to_string(&log).unwrap(),
-        "model=large\neffort=high\nmode=plan\n"
+        "mode=plan\nmodel=large\neffort=high\nmode=plan\n"
     );
     let catalog = catalog(&c, &collector, &session).await;
     assert_eq!(

@@ -206,6 +206,14 @@ fn tail(s: &str, max_json_bytes: usize) -> String {
     std::iter::once('…').chain(kept.into_iter().rev()).collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleSource {
+    Agent,
+    Operator,
+    Prompt,
+}
+
 /// One session as the session list shows it (ACP core §8, §9; frontend
 /// §5), read from `sessions` alone: never the catalogue, commands or plan
 /// (P-23). The detail serves it as stored; the list, `bounded`.
@@ -220,10 +228,13 @@ pub struct SessionItem {
     /// start: a hat's id, or empty for a session from before hats whose
     /// host and owner had no default hat to give it.
     pub hat_id: String,
-    /// The title the agent reported, on one line and capped.
+    /// The effective title, on one line and capped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(type = "string | undefined", optional)]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title_source: Option<TitleSource>,
     pub lifecycle: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(type = "string | undefined", optional)]
@@ -298,6 +309,10 @@ pub struct SessionPage {
 pub struct SessionDetail {
     #[serde(flatten)]
     pub session: SessionItem,
+    /// A bounded, readable requested-versus-actual configuration failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub configuration_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(type = "OpenTurn | undefined", optional)]
     pub open_turn: Option<OpenTurn>,
@@ -859,6 +874,14 @@ pub struct UpdateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(type = "string | undefined", optional)]
     pub hat_id: Option<String>,
+    /// Omitted: unchanged. Null: restore the agent or provisional title.
+    #[serde(default, deserialize_with = "present_title", skip_serializing_if = "Option::is_none")]
+    #[ts(type = "string | null", optional)]
+    pub title: Option<Option<String>>,
+}
+
+fn present_title<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(d).map(Some)
 }
 
 /// `GET /api/push/vapid` (kernel spec §6): the collector's VAPID public key,

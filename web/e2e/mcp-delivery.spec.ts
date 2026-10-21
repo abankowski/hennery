@@ -132,15 +132,20 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     await form.getByRole('button', { name: 'Session settings', exact: true }).click()
     await page.getByRole('dialog', { name: 'Session settings', exact: true }).getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
     await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
+    // Catalog discovery already wrote a disposable session/new with no MCP.
+    // Inspect the actual launch after that completed preview, including empty
+    // delivery for other hats below; never filter receipts by server count.
+    const beforeStart = records().length
     await form.getByRole('button', { name: 'Start session', exact: true }).click()
     await expect(page).toHaveURL(/\/sessions\/[^/?#]+$/, { timeout: 45_000 }); sessionUrl = page.url()
     await openReport()
     await expect(report()).toContainText('At the last start/resume:')
     await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
     await expect(report()).toContainText('Codex also loads your own ~/.codex MCP servers.')
-    expect(records()[0].method).toBe('session/new')
-    expect(records()[0].params.mcpServers.map((s: { name: string }) => s.name).sort()).toEqual(['hennery-docs', 'hennery-local'])
-    expect(JSON.stringify(records()[0].params.mcpServers).includes(ENV_VALUE)).toBe(true)
+    const started = records()[beforeStart]
+    expect(started.method).toBe('session/new')
+    expect(started.params.mcpServers.map((s: { name: string }) => s.name).sort()).toEqual(['hennery-docs', 'hennery-local'])
+    expect(JSON.stringify(started.params.mcpServers).includes(ENV_VALUE)).toBe(true)
     await closeReportOnPhone()
     await page.reload(); await openReport(); await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
   })

@@ -538,7 +538,12 @@ truncated: boolean, };
 /**
  * Collector -> host.
  */
-export type CollectorFrame = { "type": "probe_catalog", request_id: string, agent: string, cwd: string, } | { "type": "delegated_attach", request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue },
+export type CollectorFrame = { "type": "probe_catalog", request_id: string, agent: string, cwd: string,
+/**
+ * Operator previews use ordinary session path rules. Delegated probes
+ * retain the host workspace boundary. Set only by the collector.
+ */
+operator_initiated: boolean, } | { "type": "delegated_attach", request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue },
 /**
  * Passed in `session/new` / `session/load`. Only to a host that
  * announced `mcp_servers`.
@@ -703,9 +708,9 @@ cwd: string,
  */
 hat_id: string,
 /**
- * The title the agent reported, on one line and capped.
+ * The effective title, on one line and capped.
  */
-title?: string | undefined, lifecycle: string, activity?: string | undefined, failure_reason?: string | undefined,
+title?: string | undefined, title_source?: TitleSource, lifecycle: string, activity?: string | undefined, failure_reason?: string | undefined,
 /**
  * Parked only because its host has been offline past the threshold
  * (ACP core §5.3); the host may still be running it.
@@ -733,6 +738,8 @@ created_at: string,
  */
 last_event_at: string, };
 
+export type TitleSource = "agent" | "operator" | "prompt";
+
 /**
  * `GET /api/sessions` (ACP core §9): one page of the session list, newest
  * `last_event_at` first.
@@ -748,7 +755,11 @@ next_cursor?: string | undefined, };
  * `GET /api/sessions/{id}` (ACP core §9): the list item, as stored, the
  * open turn and the pending requests still open.
  */
-export type SessionDetail = { open_turn?: OpenTurn | undefined,
+export type SessionDetail = {
+/**
+ * A bounded, readable requested-versus-actual configuration failure.
+ */
+configuration_error?: string, open_turn?: OpenTurn | undefined,
 /**
  * Open pending requests, oldest first: what the operator can answer.
  */
@@ -769,9 +780,9 @@ cwd: string,
  */
 hat_id: string,
 /**
- * The title the agent reported, on one line and capped.
+ * The effective title, on one line and capped.
  */
-title?: string | undefined, lifecycle: string, activity?: string | undefined, failure_reason?: string | undefined,
+title?: string | undefined, title_source?: TitleSource, lifecycle: string, activity?: string | undefined, failure_reason?: string | undefined,
 /**
  * Parked only because its host has been offline past the threshold
  * (ACP core §5.3); the host may still be running it.
@@ -1269,7 +1280,11 @@ export type HatResolution = { canonical: string, exists: boolean, is_dir: boolea
  * `hat_id` re-assigns the session (ACP core §4.9): only with no running
  * adapter, and with a fresh step-up.
  */
-export type UpdateSessionRequest = { hat_id?: string | undefined, };
+export type UpdateSessionRequest = { hat_id?: string | undefined,
+/**
+ * Omitted: unchanged. Null: restore the agent or provisional title.
+ */
+title?: string | null, };
 
 /**
  * `GET /api/push/vapid` (kernel spec §6): the collector's VAPID public key,

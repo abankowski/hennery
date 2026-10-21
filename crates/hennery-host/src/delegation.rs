@@ -77,9 +77,44 @@ impl CatalogProbes {
         cwd: PathBuf,
         roots: Vec<PathBuf>,
     ) -> Result<HostCatalog> {
+        self.catalog_in(agent, command, profile, cwd, Some(roots)).await
+    }
+
+    pub async fn operator_catalog(
+        &self,
+        agent: &str,
+        command: AgentCommand,
+        profile: Profile,
+        cwd: PathBuf,
+    ) -> Result<HostCatalog> {
+        self.catalog_in(agent, command, profile, cwd, None).await
+    }
+
+    async fn catalog_in(
+        &self,
+        agent: &str,
+        command: AgentCommand,
+        profile: Profile,
+        cwd: PathBuf,
+        roots: Option<Vec<PathBuf>>,
+    ) -> Result<HostCatalog> {
         let _permit = self.slots.clone().try_acquire_owned().context("busy")?;
-        checked_cwd(cwd.to_str().context("cwd_unavailable")?, &roots)?;
-        let indexed = crate::session::probe_catalog(&command, cwd, profile, self.timeout).await?;
+        let path = cwd.to_str().context("cwd_unavailable")?;
+        if let Some(roots) = roots {
+            checked_cwd(path, &roots).map_err(|_| anyhow::anyhow!("cwd_unavailable"))?;
+        } else {
+            let resolved = crate::paths::resolve(path, None).map_err(|_| anyhow::anyhow!("cwd_unavailable"))?;
+            ensure!(resolved.is_dir && resolved.canonical == path, "cwd_unavailable");
+        }
+        let indexed = crate::session::probe_catalog(&command, cwd, profile, self.timeout)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(if error.to_string() == "catalog probe timed out" {
+                    "timeout"
+                } else {
+                    "adapter_failed"
+                })
+            })?;
         let config_options = indexed.config_options.clone().unwrap_or_default();
         let defaults = indexed.current_config().unwrap_or_default();
         // Neither command arguments nor environment values leave this host.

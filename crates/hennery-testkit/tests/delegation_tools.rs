@@ -20,6 +20,64 @@ const HOST: &str = "delegation-host";
 const BOUND: Duration = Duration::from_secs(30);
 
 #[tokio::test]
+async fn operator_catalog_preview_does_not_require_delegation_workspace_roots() {
+    let h = Harness::with_worker_options(script(), None, false, hennery_host::session::IDLE_TIMEOUT, false).await;
+    let response = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::OK,
+        "{}",
+        response.text().await.unwrap()
+    );
+    let error = h
+        .state
+        .catalogs
+        .get(
+            &h.state,
+            HOST,
+            &h.state.hosts.host(HOST).unwrap().unwrap().default_hat_id,
+            h.cwd.to_str().unwrap(),
+            "worker",
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "cwd_unavailable",
+        "operator cache cannot authorize a delegated probe"
+    );
+}
+
+#[tokio::test]
+async fn operator_catalog_preserves_adapter_failure_and_cwd_reason_codes() {
+    let mut broken = script();
+    broken.new_session_error = Some(-32001);
+    let h = Harness::with_worker_options(broken, None, false, hennery_host::session::IDLE_TIMEOUT, false).await;
+    let response = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.json::<Value>().await.unwrap()["code"], "adapter_failed");
+    let response = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.join("missing").to_str().unwrap())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.json::<Value>().await.unwrap()["code"], "cwd_unavailable");
+}
+
+#[tokio::test]
 async fn d3b_deadline_worker_exposes_durable_attention_and_opens_the_child_card() {
     let mut worker = script();
     worker.asks = vec![FakeAsk::Elicitation];
@@ -102,22 +160,16 @@ async fn d3b_deadline_worker_exposes_durable_attention_and_opens_the_child_card(
         !(notices.guard())(&notice),
         "operator answers withdraw queued notification attempts"
     );
-    let report = eventually("completed child report falls back after parent close", async || {
+    eventually("answered child finishes after parent close", async || {
         h.state
             .store
-            .operator_attention(None, "")
+            .events(child, 0, 100)
             .unwrap()
-            .into_iter()
-            .find(|a| a.pending_id.is_none())
+            .iter()
+            .any(|event| event.kind == "turn_ended")
+            .then_some(())
     })
     .await;
-    let acknowledged = h
-        .client
-        .post(format!("{}/api/delegation/attention/{}/acknowledge", h.url, report.id))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(acknowledged.status(), reqwest::StatusCode::NO_CONTENT);
     assert!(h.state.store.operator_attention(None, "").unwrap().is_empty());
     h.finish().await;
 }
@@ -432,9 +484,18 @@ impl Harness {
     }
     async fn with_worker_idle(
         worker: FakeScript,
+        pinned: Option<(AgentCommand, Profile)>,
+        dispatch: bool,
+        idle: Duration,
+    ) -> Self {
+        Self::with_worker_options(worker, pinned, dispatch, idle, true).await
+    }
+    async fn with_worker_options(
+        worker: FakeScript,
         mut pinned: Option<(AgentCommand, Profile)>,
         dispatch: bool,
         idle: Duration,
+        workspace_roots: bool,
     ) -> Self {
         hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
         let dir = tempfile::tempdir().unwrap();
@@ -541,7 +602,7 @@ impl Harness {
         }
         let mut cfg = HostConfig::new(format!("ws://{addr}/api/hosts/ws"), HOST, key, cwd.join("host-data"));
         cfg.idle_timeout = idle;
-        cfg.workspace_roots = vec![cwd.clone()];
+        cfg.workspace_roots = if workspace_roots { vec![cwd.clone()] } else { vec![] };
         cfg.git = None;
         for (runtime, s) in [("claude", script()), ("worker", worker)] {
             let (command, profile) = if runtime == "worker" {

@@ -529,6 +529,11 @@
             "cwd": {
               "type": "string"
             },
+            "operator_initiated": {
+              "default": false,
+              "description": "Operator previews use ordinary session path rules. Delegated probes\nretain the host workspace boundary. Set only by the collector.",
+              "type": "boolean"
+            },
             "request_id": {
               "type": "string"
             },
@@ -5414,6 +5419,13 @@
         "agent": {
           "type": "string"
         },
+        "configuration_error": {
+          "description": "A bounded, readable requested-versus-actual configuration failure.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "created_at": {
           "description": "RFC 3339, UTC.",
           "type": "string"
@@ -5506,10 +5518,20 @@
           "type": "string"
         },
         "title": {
-          "description": "The title the agent reported, on one line and capped.",
+          "description": "The effective title, on one line and capped.",
           "type": [
             "string",
             "null"
+          ]
+        },
+        "title_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleSource"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -5640,10 +5662,20 @@
           "type": "string"
         },
         "title": {
-          "description": "The title the agent reported, on one line and capped.",
+          "description": "The effective title, on one line and capped.",
           "type": [
             "string",
             "null"
+          ]
+        },
+        "title_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleSource"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -6125,6 +6157,14 @@
       ],
       "type": "string"
     },
+    "TitleSource": {
+      "enum": [
+        "agent",
+        "operator",
+        "prompt"
+      ],
+      "type": "string"
+    },
     "TranscriptRemoval": {
       "description": "The agent's own transcript of a deleted session on its host (plan 9d\ndecision 7): best effort. `notes` name what is never removed, whatever\nthe state.",
       "properties": {
@@ -6280,6 +6320,13 @@
       "description": "`PATCH /api/sessions/{id}` (ACP core §9): absent fields stay as they are.\n`hat_id` re-assigns the session (ACP core §4.9): only with no running\nadapter, and with a fresh step-up.",
       "properties": {
         "hat_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "Omitted: unchanged. Null: restore the agent or provisional title.",
           "type": [
             "string",
             "null"

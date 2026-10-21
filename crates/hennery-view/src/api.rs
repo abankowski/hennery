@@ -48,6 +48,9 @@ pub struct ItemPage {
 pub struct SessionSummary {
     #[serde(flatten)]
     pub session: SessionItem,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub configuration_error: Option<String>,
     /// An open question: the agent waits on it, in a turn or outside one,
     /// whether or not an answer is queued (a question outside a turn sets
     /// no `blocked` activity).
@@ -67,6 +70,9 @@ pub struct FamilyLink {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title_source: Option<hennery_proto::rest::TitleSource>,
     pub agent: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -251,6 +257,7 @@ mod tests {
             cwd: "/tmp".into(),
             hat_id: String::new(),
             title: None,
+            title_source: None,
             lifecycle: "active".into(),
             activity: None,
             failure_reason: None,
@@ -263,6 +270,7 @@ mod tests {
             last_event_at: "2026-10-02T08:00:00.000Z".into(),
         };
         let summary = SessionSummary {
+            configuration_error: None,
             session: session.clone(),
             question_waits: true,
             operator_attention: 1,

@@ -10,6 +10,24 @@ const path = '/api/sessions/s%2F1/events?after=0&limit=100'
 const event = (text: string) => ({ event_id: 2, kind: 'user_turn', body: { content: [{ type: 'text', text }] } })
 const clientFor = (fetch: typeof globalThis.fetch) => new Client({ fetch, navigate: vi.fn(), stepUp: async () => {}, here: () => ({ pathname: '/sessions', search: '' }) })
 const session = { session_id: 's/1', cwd: '/srv/project', last_event_at: 'now' }
+it.each([true, false])('honors server title provenance with a names provider: %s', async withProvider => {
+  const server = stubServer({}), client = clientFor(server.fetch)
+  const tree = (source: 'agent' | 'operator' | 'prompt') => {
+    const name = <SessionName session={{ ...session, title: 'Server supplied title', title_source: source }} />
+    return <ClientContext.Provider value={client}>{withProvider ? <SessionNamesProvider active>{name}</SessionNamesProvider> : name}</ClientContext.Provider>
+  }
+  const view = render(tree('agent'))
+  for (const source of ['agent', 'operator', 'prompt'] as const) {
+    view.rerender(tree(source))
+    const name = screen.getByText('Server supplied title', { exact: true })
+    if (source === 'prompt') {
+      expect(name).toHaveClass('session-name-provisional')
+      expect(name).toHaveAttribute('title', 'Provisional name from the first prompt')
+    } else expect(name).not.toHaveClass('session-name-provisional')
+  }
+  await act(async () => { await Promise.resolve() })
+  expect(server.sent).toHaveLength(0)
+})
 it('clips the first prompt line by characters without including later lines or splitting emoji', () => {
   expect(firstPromptName({ content: [{ type: 'text', text: 'First line\nSecret second line' }] })).toBe('First line')
   expect([...firstPromptName({ content: [{ type: 'text', text: '🌱'.repeat(100) }] })!]).toHaveLength(80)

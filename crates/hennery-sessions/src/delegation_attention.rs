@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use hennery_kernel::push::{Notice, Push, Urgency};
 use hennery_proto::{frames::Capability, plugin::InputOrigin, rest::EventDto};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -17,6 +17,47 @@ pub struct OperatorAttention {
     pub reason: String,
     pub pending_id: Option<String>,
 }
+
+pub(crate) fn child_needs_human(conn: &Connection, owner: &str, child: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sessions c WHERE c.owner_id = ?1 AND c.id=?2
+        AND c.close_requested=0 AND c.lifecycle IN ('starting','active','parked')
+        AND (c.configuration_error IS NOT NULL OR EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1
+          AND p.session_id=c.id AND p.state='open' AND NOT EXISTS(SELECT 1 FROM answer_queue a
+            WHERE a.owner_id = ?1 AND a.pending_id=p.pending_id))))",
+        params![owner, child],
+        |r| r.get(0),
+    )?)
+}
+
+/// Also repairs historical parent-closed status rows on their first read.
+pub(crate) fn reconcile_closed_attention(conn: &Connection, owner: &str) -> Result<()> {
+    let rows = {
+        let mut stmt=conn.prepare("SELECT DISTINCT a.child_id,
+            c.close_requested=1 OR c.lifecycle IN ('closed','deleted'),
+            c.delegated_child=1 AND (NOT EXISTS(SELECT 1 FROM session_families f WHERE f.owner_id = ?1 AND f.child_id=c.id)
+              OR EXISTS(SELECT 1 FROM session_families f JOIN sessions p ON p.owner_id = ?1 AND p.id=f.parent_id
+                WHERE f.owner_id = ?1 AND f.child_id=c.id AND (p.close_requested=1 OR p.lifecycle IN ('closed','deleted'))))
+            FROM delegation_attention a JOIN sessions c ON c.owner_id = ?1 AND c.id=a.child_id
+            WHERE a.owner_id = ?1 AND a.state IN ('open','standby')")?;
+        stmt.query_map([owner], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?, r.get::<_, bool>(2)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (child, closed, parent_closed) in rows {
+        if closed || (parent_closed && !child_needs_human(conn, owner, &child)?) {
+            conn.execute("UPDATE delegation_attention SET state='resolved' WHERE owner_id = ?1 AND child_id=?2 AND state IN ('open','standby')",params![owner,child])?;
+        } else if parent_closed {
+            conn.execute(
+                "UPDATE delegation_attention SET reason='parent_closed_child_needs_human'
+                WHERE owner_id = ?1 AND child_id=?2 AND state='open' AND reason<>'parent_closed_child_needs_human'",
+                params![owner, child],
+            )?;
+        }
+    }
+    Ok(())
+}
 impl Store {
     pub fn refresh_delegation_attention(&self, hub: &Hub, now: i64) -> Result<()> {
         self.refresh_attention_after(hub, now, "")?;
@@ -25,6 +66,7 @@ impl Store {
     pub(crate) fn refresh_attention_after(&self, hub: &Hub, now: i64, after: &str) -> Result<String> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.expire_configuration_waits_in(&tx, now)?;
         self.settle_notices_in(&tx)?;
         let rows = {
             let mut statement = tx.prepare(
@@ -76,12 +118,14 @@ impl Store {
                 )?;
             }
         }
+        reconcile_closed_attention(&tx, self.owner_id())?;
         tx.commit()?;
         Ok(cursor)
     }
     /// The factual pending counts remain separate; D4 consumes this projection.
     pub fn operator_attention(&self, hat: Option<&str>, after: &str) -> Result<Vec<OperatorAttention>> {
         let conn = self.conn();
+        reconcile_closed_attention(&conn, self.owner_id())?;
         let mut stmt = conn.prepare(
             "SELECT a.attention_id,a.child_id,a.hat_id,a.reason,a.pending_id
             FROM delegation_attention a JOIN sessions c ON c.owner_id = ?1 AND c.id = a.child_id AND c.hat_id = a.hat_id
@@ -107,8 +151,9 @@ impl Store {
     pub fn enqueue_delegation_attention(&self, push: &Push, run: &str, after: &str, now: i64) -> Result<String> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        reconcile_closed_attention(&tx, self.owner_id())?;
         let rows = {
-            let mut stmt=tx.prepare("SELECT a.attention_id,c.id,c.hat_id,c.title,c.cwd,a.pending_id,
+            let mut stmt=tx.prepare("SELECT a.attention_id,c.id,c.hat_id,CASE WHEN c.title_source='prompt' THEN NULL ELSE c.title END,c.cwd,a.pending_id,
                 json_extract(e.body,'$.indexed.pending.title')
                 FROM delegation_attention a JOIN sessions c ON c.owner_id = ?1 AND c.id = a.child_id AND c.hat_id = a.hat_id
                 LEFT JOIN pending p ON p.owner_id = ?1 AND p.session_id = c.id AND p.pending_id = a.pending_id
@@ -314,8 +359,9 @@ impl Store {
 }
 
 /// Parent deletion removes routing edges, but the immutable delegated identity
-/// survives. New facts still create operator work, coalesced with any incident
-/// preserved during deletion. No deleted parent id or payload is retained.
+/// survives. Live questions and configuration failures still create operator
+/// work; ordinary reports remain status only. No deleted parent id or payload
+/// is retained.
 pub(crate) fn record_orphan_in(
     tx: &Transaction<'_>,
     owner: &str,
@@ -324,9 +370,12 @@ pub(crate) fn record_orphan_in(
     incident: &str,
     pending: Option<&str>,
 ) -> Result<()> {
+    if !child_needs_human(tx, owner, &event.session_id)? {
+        return Ok(());
+    }
     tx.execute(
         "INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,pending_id,state,incident)
-        SELECT ?1,?2,s.id,s.hat_id,'parent_unavailable',CASE WHEN ?4 = 'question' THEN ?5 END,'open',?6
+        SELECT ?1,?2,s.id,s.hat_id,'parent_closed_child_needs_human',CASE WHEN ?4 = 'question' THEN ?5 END,'open',?6
         FROM sessions s WHERE s.owner_id = ?1 AND s.id = ?3 AND s.delegated_child = 1 AND s.lifecycle <> 'deleted'
         AND (?4 <> 'question' OR EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id = s.id
             AND p.pending_id = ?5 AND p.state = 'open' AND NOT EXISTS(SELECT 1 FROM answer_queue a

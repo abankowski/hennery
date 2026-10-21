@@ -106,6 +106,16 @@
             "string",
             "null"
           ]
+        },
+        "title_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -1138,6 +1148,12 @@
         "agent": {
           "type": "string"
         },
+        "configuration_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "created_at": {
           "description": "RFC 3339, UTC.",
           "type": "string"
@@ -1227,10 +1243,20 @@
           "type": "string"
         },
         "title": {
-          "description": "The title the agent reported, on one line and capped.",
+          "description": "The effective title, on one line and capped.",
           "type": [
             "string",
             "null"
+          ]
+        },
+        "title_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TitleSource"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -1457,6 +1483,14 @@
         "text"
       ],
       "type": "object"
+    },
+    "TitleSource": {
+      "enum": [
+        "agent",
+        "operator",
+        "prompt"
+      ],
+      "type": "string"
     },
     "ToolCall": {
       "description": "A tool call, merged from its `tool_call` and `tool_call_update`s.",

@@ -157,6 +157,162 @@ fn pair() -> (World, SessionIdentity) {
     (w, parent)
 }
 
+fn start_child_report(w: &World) {
+    assert!(
+        w.store
+            .open_turn("child", "report", &[json!({"type":"text","text":"work"})])
+            .unwrap()
+    );
+    w.store
+        .ingest(
+            "child",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "work".into(),
+                turn_id: "report".into(),
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn closed_attention_child_closed_by_parent_or_operator_suppresses_its_final_report() {
+    for parent_closes in [true, false] {
+        let (w, p) = pair();
+        start_child_report(&w);
+        let (hub, _rx) = connected();
+        if parent_closes {
+            w.store
+                .queue_child_close(&p, 1, "close", "close", "child", &hub)
+                .unwrap();
+        } else {
+            w.store.record_close_request("child").unwrap();
+        }
+        ended(&w, "child", 3, "report");
+        assert!(
+            attention(&w).is_empty(),
+            "close intent must suppress the final report: parent_closes={parent_closes}"
+        );
+        w.store.ingest("child", 4, &SessionBody::SessionClosed).unwrap();
+        assert!(attention(&w).is_empty());
+        assert_eq!(w.store.family_summary("child").unwrap().unwrap().operator_attention, 0);
+    }
+}
+
+#[test]
+fn closed_attention_parent_closed_with_open_or_closed_children_suppresses_status_reports() {
+    for report_first in [true, false] {
+        for close_child in [true, false] {
+            let (w, _) = pair();
+            start_child_report(&w);
+            if report_first {
+                ended(&w, "child", 3, "report");
+            }
+            w.store.close_now("parent").unwrap();
+            if !report_first {
+                ended(&w, "child", 3, "report");
+            }
+            if close_child {
+                w.store.close_now("child").unwrap();
+            }
+            assert!(
+                attention(&w).is_empty(),
+                "report_first={report_first}, close_child={close_child}"
+            );
+            assert_eq!(w.store.family_summary("child").unwrap().unwrap().operator_attention, 0);
+        }
+    }
+}
+
+#[test]
+fn closed_attention_parent_closed_keeps_only_a_live_child_needing_a_human() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Elicitation);
+    w.store.close_now("parent").unwrap();
+    let rows = attention(&w);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].reason, "parent_closed_child_needs_human");
+    assert_eq!(rows[0].pending_id.as_deref(), Some("question"));
+    w.store.close_now("child").unwrap();
+    assert!(attention(&w).is_empty());
+}
+
+#[test]
+fn closed_attention_deleted_child_resolves_its_attention() {
+    let (w, _) = pair();
+    pending(&w, "child", 2, "question", PendingKind::Permission);
+    assert!(!attention(&w).is_empty());
+    w.store.close_now("child").unwrap();
+    w.store.delete_session("child", None).unwrap();
+    assert!(attention(&w).is_empty());
+}
+
+#[test]
+fn closed_attention_migration_repairs_existing_closed_and_deleted_rows() {
+    for deleted in [false, true] {
+        let (w, _) = pair();
+        w.store.close_now("child").unwrap();
+        if deleted {
+            w.store.delete_session("child", None).unwrap();
+        }
+        let conn = raw(&w);
+        conn.execute_batch("DROP TRIGGER attention_terminal_session; DROP TRIGGER attention_terminal_insert; DROP TRIGGER attention_terminal_update;
+            PRAGMA user_version=24;").unwrap();
+        conn.execute(
+            "INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,state,incident)
+            VALUES (?1,'stale','child',?2,'endpoint_unavailable','open','stale')",
+            params![w.store.owner_id(), w.hat],
+        )
+        .unwrap();
+        drop(conn);
+        let migrated = Store::open(&w.db).unwrap();
+        assert!(migrated.operator_attention(None, "").unwrap().is_empty());
+        assert_eq!(
+            raw(&w)
+                .query_row(
+                    "SELECT state FROM delegation_attention WHERE attention_id='stale'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "resolved"
+        );
+    }
+}
+
+#[test]
+fn closed_attention_first_summary_read_repairs_stale_closed_parent_reports() {
+    let (w, _) = pair();
+    w.store.close_now("parent").unwrap();
+    raw(&w)
+        .execute(
+            "INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,state,incident)
+        VALUES (?1,'stale','child',?2,'endpoint_unavailable','open','stale')",
+            params![w.store.owner_id(), w.hat],
+        )
+        .unwrap();
+    assert_eq!(w.store.family_summary("child").unwrap().unwrap().operator_attention, 0);
+    assert!(attention(&w).is_empty());
+}
+
+#[test]
+fn attention_push_keeps_provisional_prompt_titles_private() {
+    let (w, _) = pair();
+    start_child_report(&w);
+    pending(&w, "child", 3, "permission", PendingKind::Permission);
+    let (push, mut notices) = hennery_kernel::push::Push::new();
+    w.store.enqueue_delegation_attention(&push, "prompt", "", 1000).unwrap();
+    assert_eq!(notices.try_recv().unwrap().title, "project");
+    w.store
+        .rename_session("child", Some("Operator title"))
+        .unwrap()
+        .unwrap();
+    w.store
+        .enqueue_delegation_attention(&push, "operator", "", 1000)
+        .unwrap();
+    assert_eq!(notices.try_recv().unwrap().title, "Operator title");
+}
+
 fn idle_connected(w: &World) -> (Arc<Hub>, tokio::sync::mpsc::UnboundedReceiver<CollectorFrame>) {
     let hub = Arc::new(Hub::new());
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2443,6 +2599,85 @@ fn required_model_mode_and_axes_hold_mismatch_then_current_repair_releases() {
         take_prompt(&mut rx);
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn configuration_mismatch_expires_visibly_after_a_bounded_wait() {
+    let (w, p) = pair();
+    let required = SessionConfig {
+        model: Some("wanted".into()),
+        mode: Some("plan".into()),
+        axes: BTreeMap::new(),
+    };
+    seed(&w, "child", &required, 5);
+    let mut wrong = required.clone();
+    wrong.model = Some("other".into());
+    proof(&w, "child", 2, 5, 10, ConfigCompleteness::Complete, wrong);
+    queue(&w, &p, "brief");
+    let (hub, mut rx) = connected();
+    assert!(!w.store.dispatch_delegated("child", &catalog(), &hub).unwrap());
+    let now = unix_now();
+    let started = tokio::time::Instant::now();
+    tokio::time::advance(std::time::Duration::from_secs(29)).await;
+    w.store
+        .refresh_delegation_attention(&hub, now + started.elapsed().as_secs() as i64)
+        .unwrap();
+    assert_eq!(receipt(&w, &p, "brief").state, OperationState::WaitingConfig);
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    w.store
+        .refresh_delegation_attention(&hub, now + started.elapsed().as_secs() as i64)
+        .unwrap();
+    assert_eq!(
+        receipt(&w, &p, "brief").state,
+        OperationState::Failed {
+            code: "configuration_mismatch".into()
+        }
+    );
+    assert!(rx.try_recv().is_err(), "a mismatched brief must never reach the child");
+    assert!(
+        w.store
+            .notice_parents_after("")
+            .unwrap()
+            .contains(&"parent".to_string())
+    );
+    seed(&w, "parent", &SessionConfig::default(), 1);
+    proof(
+        &w,
+        "parent",
+        2,
+        1,
+        1,
+        ConfigCompleteness::Complete,
+        SessionConfig::default(),
+    );
+    assert!(w.store.dispatch_child_notice("parent", &catalog(), &hub).unwrap());
+    let CollectorFrame::DelegatedPrompt { content, .. } = rx.try_recv().unwrap() else {
+        panic!("expected child failure report");
+    };
+    let report = serde_json::to_string(&content).unwrap();
+    assert!(report.contains("wanted") && report.contains("other") && report.contains("plan"));
+    assert_eq!(
+        w.store
+            .find_session("child")
+            .unwrap()
+            .unwrap()
+            .failure_reason
+            .as_deref(),
+        Some("configuration_mismatch")
+    );
+    assert!(w.store.events("child", 0, 100).unwrap().iter().any(|event| {
+        event.kind == "start_failed"
+            && event.body["message"]
+                .as_str()
+                .is_some_and(|s| s.contains("wanted") && s.contains("other") && s.contains("plan"))
+    }));
+    assert!(
+        w.store
+            .operator_attention(None, "")
+            .unwrap()
+            .iter()
+            .any(|a| a.child_id == "child")
+    );
+}
 #[test]
 fn stale_config_evidence_cannot_overwrite_current_proof_and_config_changes_clear_it() {
     let (w, p) = pair();
@@ -2463,6 +2698,34 @@ fn stale_config_evidence_cannot_overwrite_current_proof_and_config_changes_clear
     proof(&w, "child", 5, 5, 11, ConfigCompleteness::Complete, config("wanted"));
     assert!(w.store.dispatch_delegated("child", &catalog(), &h).unwrap());
     take_prompt(&mut rx);
+}
+
+#[tokio::test(start_paused = true)]
+async fn configuration_wait_renews_on_new_proof_and_unknown_values_do_not_fail() {
+    let (w, p) = pair();
+    ready(&w);
+    queue(&w, &p, "brief");
+    let (hub, _rx) = connected();
+    raw(&w)
+        .execute(
+            "UPDATE session_attach_evidence SET config_updated_at=?1 WHERE session_id='child'",
+            [unix_now() - 29],
+        )
+        .unwrap();
+    proof(&w, "child", 3, 5, 11, ConfigCompleteness::Complete, config("wrong"));
+    let at = unix_now();
+    let started = tokio::time::Instant::now();
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    w.store
+        .refresh_delegation_attention(&hub, at + started.elapsed().as_secs() as i64)
+        .unwrap();
+    assert!(!matches!(receipt(&w, &p, "brief").state, OperationState::Failed { .. }));
+    proof(&w, "child", 4, 5, 12, ConfigCompleteness::Unknown, config("wrong"));
+    tokio::time::advance(std::time::Duration::from_secs(60)).await;
+    w.store
+        .refresh_delegation_attention(&hub, at + started.elapsed().as_secs() as i64)
+        .unwrap();
+    assert!(!matches!(receipt(&w, &p, "brief").state, OperationState::Failed { .. }));
 }
 #[test]
 fn execution_policy_is_rechecked_and_current_revision_is_bound_to_dispatch() {
@@ -4709,7 +4972,7 @@ fn d3b_parent_delete_preserves_scrubbed_surviving_child_attention() {
     let rows = attention(&w);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].child_id, "child");
-    assert_eq!(rows[0].reason, "parent_deleted");
+    assert_eq!(rows[0].reason, "parent_closed_child_needs_human");
     assert!(w.store.find_session("child").unwrap().is_some());
     assert_eq!(
         raw(&w)
@@ -4932,7 +5195,8 @@ fn d3b_push_admission_checks_the_canonical_answer_queue() {
 fn d3b_reassignment_racing_enqueue_rejects_old_hat_payloads() {
     let (w, _) = pair();
     user_turn_with_origin(&w, "child", 2, "report", InputOrigin::Operator {});
-    w.store.record_close_request("parent").unwrap();
+    // A live endpoint whose grant changed still has status work to acknowledge.
+    w.gateway.set_session_tools(&w.hat, false).unwrap();
     w.store
         .ingest(
             "child",
@@ -5176,7 +5440,7 @@ fn d3b_automatic_report_completion_does_not_bypass_operator_push_routing() {
     assert_eq!(notices.try_recv().unwrap().tag, "parent");
 }
 #[test]
-fn d3b_new_completion_after_parent_delete_creates_durable_operator_work() {
+fn d3b_new_completion_after_parent_delete_is_status_only() {
     let (w, _) = pair();
     assert!(
         w.store
@@ -5209,16 +5473,22 @@ fn d3b_new_completion_after_parent_delete_creates_durable_operator_work() {
         )
         .unwrap();
     let rows = attention(&w);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].pending_id, None);
+    assert!(rows.is_empty());
+    assert!(
+        w.store
+            .events("child", 0, 100)
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "turn_ended")
+    );
     let (push, mut notices) = hennery_kernel::push::Push::new();
     w.store.route_push_edge(&ended.edge.unwrap(), &push).unwrap();
     assert!(notices.try_recv().is_none());
     w.store.enqueue_delegation_attention(&push, "run", "", 1000).unwrap();
-    assert!(notices.try_recv().unwrap().tag.starts_with("delegation:"));
+    assert!(notices.try_recv().is_none());
 }
 #[test]
-fn d3b_orphan_host_crash_coalesces_and_obsoletes_question_before_cancel_frame() {
+fn d3b_orphan_host_crash_resolves_attention_as_soon_as_question_is_cancelled() {
     let (w, _) = pair();
     assert!(w.store.open_turn("child", "ongoing", &[]).unwrap());
     w.store
@@ -5255,22 +5525,23 @@ fn d3b_orphan_host_crash_coalesces_and_obsoletes_question_before_cancel_frame() 
             reason: ParkReason::AdapterExited,
         },
     ];
-    let mut identity = None;
     for (i, frame) in frames.iter().enumerate() {
         w.store.ingest("child", 4 + i as u64, frame).unwrap();
         let rows = attention(&w);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].pending_id, None);
-        if let Some(id) = &identity {
-            assert_eq!(&rows[0].id, id);
+        if w.store.still_open("child", "question").unwrap() {
+            assert!(!rows.is_empty(), "live orphan question must remain visible");
+            assert!(rows.iter().all(|row| row.reason == "parent_closed_child_needs_human"));
         } else {
-            identity = Some(rows[0].id.clone());
+            assert!(
+                rows.is_empty(),
+                "no human work remains after cancellation: frame {i}, {rows:?}"
+            );
         }
     }
 }
 
 #[test]
-fn d3b_start_failure_after_parent_delete_remains_durable_operator_work() {
+fn d3b_start_failure_after_parent_delete_is_recorded_without_attention() {
     let (w, parent) = pair();
     w.start("starting", &w.hat, McpIsolation::ClaudeStrict).unwrap();
     {
@@ -5284,8 +5555,7 @@ fn d3b_start_failure_after_parent_delete_remains_durable_operator_work() {
     w.store.mark_failed_if_starting("starting", "late failure").unwrap();
     assert_eq!(w.store.find_session("starting").unwrap().unwrap().lifecycle, "failed");
     let rows = attention(&w);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].child_id, "starting");
+    assert!(rows.is_empty());
     assert!(
         w.store
             .events("starting", 0, 100)
@@ -5373,7 +5643,7 @@ fn reviewer_acknowledged_crash_does_not_reappear_after_parent_delete() {
             },
         )
         .unwrap();
-    w.store.record_close_request("parent").unwrap();
+    w.gateway.set_session_tools(&w.hat, false).unwrap();
     w.store
         .ingest(
             "child",
