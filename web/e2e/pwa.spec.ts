@@ -36,6 +36,55 @@ async function controlled(page: Page) {
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
 }
 
+for (const controlled of [false, true]) test(`Reload to update from a ${controlled ? 'controlled' : 'first-install'} tab preserves drafts and cleans caches`, async ({ browser }) => {
+  const a = await startCollector(resolve('../target/hennery-pwa-base'))
+  const b = await startCollector(resolve('../target/hennery-pwa-update'))
+  const proxy = await deployProxy(a, b)
+  const context = await browser.newContext({ serviceWorkers: 'allow' })
+  try {
+    await context.addInitScript(() => sessionStorage.setItem('update-loads', String(Number(sessionStorage.getItem('update-loads') ?? '0') + 1)))
+    expect((await context.request.post(proxy.origin + '/api/setup', { headers: { Origin: proxy.origin }, data: { token: new URL(a.setupLink).hash.slice(1), password: PASSWORD, public_url: proxy.origin, default_hat_name: 'Personal' } })).ok()).toBe(true)
+    const page = await context.newPage()
+    await page.goto(proxy.origin + '/settings')
+    await page.evaluate(async () => { await navigator.serviceWorker.ready })
+    expect(await page.evaluate(() => navigator.serviceWorker.controller)).toBeNull()
+    if (controlled) await page.reload()
+    const other = await context.newPage(); await other.goto(proxy.origin + '/settings')
+    await other.getByLabel('Push contact', { exact: true }).fill('keep@example.invalid')
+    proxy.use('b')
+    await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration('/'))!.update() })
+    const update = page.getByRole('button', { name: 'Reload to update', exact: true })
+    await expect(update).toBeVisible()
+    await update.click()
+    await expect(page.getByText('Another hennery window is busy — finish or close it, then retry.', { exact: true })).toBeVisible()
+    await expect(other.getByLabel('Push contact', { exact: true })).toHaveValue('keep@example.invalid')
+    expect(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration('/'))!.waiting)).toBe(true)
+    expect((await context.request.post(proxy.origin + '/api/auth/step-up/password', { headers: { Origin: proxy.origin }, data: { password: PASSWORD } })).ok()).toBe(true)
+    await other.getByRole('button', { name: 'Save contact', exact: true }).click()
+    await expect(other.getByText('Contact saved.', { exact: true })).toBeVisible()
+    const ready = other
+    const attachment = await context.newPage(); await attachment.goto(proxy.origin + '/api/attachments/missing')
+    await page.evaluate(() => sessionStorage.setItem('hennery.draft.update-test', 'Keep this composer draft'))
+    await ready.evaluate(() => sessionStorage.setItem('hennery.draft.peer-test', 'Keep the other draft'))
+    await page.getByLabel('Push contact', { exact: true }).fill('mailto:unsaved@example.invalid')
+    page.once('dialog', dialog => { expect(dialog.message()).toContain('question input'); void dialog.dismiss() })
+    await update.click()
+    await expect(page.getByText('Update postponed. Your unsent input is still here.', { exact: true })).toBeVisible()
+    const counts = await Promise.all([page, ready].map(p => p.evaluate(() => Number(sessionStorage.getItem('update-loads')))))
+    page.once('dialog', dialog => { void dialog.accept() })
+    await Promise.all([page.waitForEvent('domcontentloaded'), ready.waitForEvent('domcontentloaded'), update.click()])
+    for (const [index, p] of [page, ready].entries()) {
+      await expect(p.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+      expect(await p.evaluate(() => Number(sessionStorage.getItem('update-loads')))).toBe(counts[index] + 1)
+      expect(await p.evaluate(async () => (await (await fetch('/index.html')).text()).includes('pwa test build B'))).toBe(true)
+      expect(await p.getByRole('button', { name: 'Reload to update', exact: true }).count()).toBe(0)
+    }
+    await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('hennery-shell-')).length)).toBe(1)
+    expect(await page.evaluate(() => sessionStorage.getItem('hennery.draft.update-test'))).toBe('Keep this composer draft')
+    expect(await ready.evaluate(() => sessionStorage.getItem('hennery.draft.peer-test'))).toBe('Keep the other draft')
+  } finally { await context.close(); await proxy.stop(); await a.stop(); await b.stop() }
+})
+
 for (const width of [1280, 390]) test(`embedded PWA and gesture-safe device lifecycle at ${width}px`, async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width, height: 844 }, serviceWorkers: 'allow' })
   try {
@@ -155,7 +204,7 @@ test('mixed digest install fails, preserving the old offline shell; a complete n
     expect(await other.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true)
     await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration('/'))!.update() })
     await expect.poll(() => page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration('/'))?.waiting)).toBe(true)
-    await expect(page.getByText('Update available. Close all hennery windows and reopen to update.', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Reload to update', exact: true })).toBeVisible()
     await expect(page.getByLabel('Push contact', { exact: true })).toHaveValue('mailto:unsent@example.invalid')
     await expect(other.getByLabel('Push contact', { exact: true })).toHaveValue('mailto:other-unsent@example.invalid')
     expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistration('/'))!.active!.state)).toBe('activated')

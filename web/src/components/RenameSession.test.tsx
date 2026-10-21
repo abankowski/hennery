@@ -47,3 +47,21 @@ it('keeps a refused rename editable and cancels without mutating', async () => {
   fireEvent.keyDown(input, { key: 'Escape' })
   expect(cancel).toHaveBeenCalledOnce(); expect(server.calls).toHaveLength(1)
 })
+
+it.each(['save', 'reset', 'cancel'] as const)('a finished rename stops blocking coordinated updates: %s', async action => {
+  const { listenForUpdates, updateReadiness } = await import('../pwa/update-client')
+  const { discardUpdateInputs } = await import('../pwa/update-edits')
+  Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: Object.assign(new EventTarget(), { getRegistration: async () => undefined }) })
+  const stop = listenForUpdates(vi.fn())
+  const server = routed(() => json({ session_id: 's', title: 'Saved', title_source: 'operator' })), saved = vi.fn(), cancel = vi.fn()
+  const view = render(<RenameSession id="s" title="Before" canReset saved={saved} cancel={cancel} />, { wrapper: server.wrapper })
+  try {
+    const input = screen.getByRole('textbox', { name: 'Session name' })
+    await userEvent.clear(input); await userEvent.type(input, 'After')
+    expect(updateReadiness.losses()).toBe(true)
+    await userEvent.click(screen.getByRole('button', { name: action === 'save' ? 'Save' : action === 'reset' ? 'Reset to agent title' : 'Cancel rename' }))
+    if (action === 'cancel') expect(cancel).toHaveBeenCalledOnce()
+    else await waitFor(() => expect(saved).toHaveBeenCalledOnce())
+    expect(updateReadiness.losses()).toBe(false)
+  } finally { discardUpdateInputs(view.container); stop(); view.unmount() }
+})

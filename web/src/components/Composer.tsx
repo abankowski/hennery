@@ -45,6 +45,7 @@ import {
 import { commands, configOptions, matchCommands, type Command, type ConfigOption } from '../lib/catalog'
 import { loadDraft, saveDraft } from '../lib/drafts'
 import { sendingFor, track } from '../lib/sending'
+import { navigationGate } from '../pwa/navigation'
 import { undeliveredDraft, type DraftPart } from '../lib/sendAgain'
 import { Icon } from '../lib/ui'
 import SessionConfig from './SessionConfig'
@@ -226,6 +227,8 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   /** Add `parts` to the draft as one action: after the text there (or in
    *  place of a blank one), each image as a new marker. All or nothing. */
   function addToDraft(parts: DraftPart[], why: string | null) {
+    // A refill GET may settle after update readiness froze this document.
+    if (navigationGate.blocked()) return
     if (sendingNow.current) {
       setDraftError(STILL_SENDING)
       return
@@ -530,6 +533,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
             </ul>
           )}
           <textarea
+            data-persisted-draft
             ref={taRef}
             aria-label="Prompt"
             aria-autocomplete="list"

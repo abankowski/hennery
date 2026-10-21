@@ -4,6 +4,7 @@
 // read-only until it ends, and takes its outcome (a 202 clears the draft).
 
 const bySession = new Map<string, Promise<unknown>>()
+export const hasSends = () => bySession.size > 0
 
 /** The send in flight for `sessionId`, if any. */
 export function sendingFor<T>(sessionId: string): Promise<T> | undefined {
