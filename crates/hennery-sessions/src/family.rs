@@ -12,7 +12,7 @@ fn item(conn: &Connection, owner: &str, id: &str) -> Result<Option<SessionItem>>
     Ok(conn
         .query_row(
             "SELECT id,host_id,agent,cwd,title,lifecycle,activity,failure_reason,presumed_parked,
-                git_branch,git_dirty,model,mode,created_at,last_event_at,hat_id
+                git_branch,git_dirty,model,mode,created_at,last_event_at,hat_id,title_source
              FROM sessions WHERE owner_id = ?1 AND id = ?2 AND lifecycle<>'deleted'
         AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id=sessions.hat_id)",
             params![owner, id],
@@ -25,6 +25,7 @@ fn link(s: SessionItem) -> FamilyLink {
     FamilyLink {
         session_id: s.session_id,
         title: s.title,
+        title_source: s.title_source,
         agent: s.agent,
         model: s.model,
     }
@@ -89,6 +90,7 @@ fn attention(conn: &Connection, owner: &str, s: &SessionItem) -> Result<(bool, u
     Ok((pending > 0, operator, parent))
 }
 fn summary_in(conn: &Connection, owner: &str, s: SessionItem) -> Result<SessionSummary> {
+    crate::delegation_attention::reconcile_closed_attention(conn, owner)?;
     let (question_waits, operator_attention, parent_handled_questions) = attention(conn, owner, &s)?;
     let parent: Option<String> = conn
         .query_row(
@@ -146,6 +148,11 @@ fn summary_in(conn: &Connection, owner: &str, s: SessionItem) -> Result<SessionS
         attention: family_attention,
     });
     Ok(SessionSummary {
+        configuration_error: conn.query_row(
+            "SELECT configuration_error FROM sessions WHERE owner_id = ?1 AND id=?2",
+            params![owner, s.session_id],
+            |r| r.get(0),
+        )?,
         session: s,
         question_waits,
         operator_attention,

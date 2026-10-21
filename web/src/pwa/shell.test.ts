@@ -100,3 +100,13 @@ describe('verified static shell', () => {
   it.each(['/sessions', '/sessions/s-1', '/new', '/hosts', '/hats', '/settings', '/mcp'])('recognizes app route %s', (path) => expect(appRoute(path)).toBe(true))
   it.each(['/api', '/login', '/setup', '/mcp/', '/mcp/mount', '/sessions/a/b', '/sessions/%2f', '/sessions/..', '//sessions'])('bypasses %s', (path) => expect(appRoute(path)).toBe(false))
 })
+
+it('recognizes new app shell routes without widening notification receipt targets', async () => {
+  const { appRoute } = await import('./shell')
+  const { notificationTarget } = await import('./notification')
+  for (const route of ['/needs-you', '/more', '/defaults']) {
+    expect(appRoute(route)).toBe(true)
+    expect(notificationTarget(route)).toBe('/sessions')
+  }
+  expect(appRoute('/needs-you/arbitrary')).toBe(false)
+})

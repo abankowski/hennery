@@ -13,8 +13,14 @@ import type { HatItem, HostItem } from '../generated/protocol'
 import { usePersistentToggle } from '../hooks/usePersistentToggle'
 import { readHat, themeOf, writeHat } from '../lib/hats'
 import { saveTheme } from '../lib/theme'
-import { navigate, type Route } from '../router'
+import { navigate, useLocation, type Route } from '../router'
 import { useSessionList, type SessionList } from '../store/useSessionList'
+import type { StatusFilter } from '../lib/status'
+import { useRegisterContext } from '../app-actions'
+import type { SessionGrouping } from '../lib/sessionGroups'
+import { useDismissedAttention } from '../lib/dismissedAttention'
+import { useAttentionSessions } from '../hooks/useAttentionSessions'
+import type { SessionSummary } from '../generated/view'
 
 export const HIDE_CLOSED_KEY = 'hennery.hideClosed'
 /** How long typing rests before a search goes to the server. */
@@ -26,6 +32,9 @@ export const SEARCH_DEBOUNCE_MS = 250
 export const SEARCH_MAX_CHARS = 200
 
 export interface SessionScopeValue {
+  attentionRows: SessionSummary[]
+  isAttentionDismissed: (id: string) => boolean
+  reportAttentionKey: (id: string, key: string) => void
   list: SessionList
   /** The hats, or `null` until (or unless) they load. */
   hats: HatItem[] | null
@@ -34,6 +43,13 @@ export interface SessionScopeValue {
   chooseHat: (hat: string) => void
   /** Host names by host id, for the rows' second line. */
   hostNames: ReadonlyMap<string, string>
+  hosts: HostItem[] | null
+  host: string
+  setHost: (host: string) => void
+  status: StatusFilter
+  setStatus: (status: StatusFilter) => void
+  group: SessionGrouping
+  setGroup: (group: SessionGrouping) => void
   hideClosed: boolean
   setHideClosed: (on: boolean) => void
   /** One lifecycle, or `''` for any. */
@@ -66,17 +82,41 @@ export function titleOf(waiting: number): string {
   return waiting > 0 ? `(${waiting}) hennery` : 'hennery'
 }
 
-export default function SessionScope({ route, desktop, children }: { route: Route; desktop: boolean; children: ReactNode }) {
+export default function SessionScope({ route, children }: { route: Route; desktop?: boolean; children: ReactNode }) {
   const client = useClient()
-  const [hat, setHat] = useState(readHat)
+  const { search } = useLocation()
+  const [hat, setHat] = useState(() => route.name === 'sessions' && new URLSearchParams(search).has('hat') ? new URLSearchParams(search).get('hat')! : readHat())
   const [hats, setHats] = useState<HatItem[] | null>(null)
   const [hostNames, setHostNames] = useState<ReadonlyMap<string, string>>(new Map())
+  const [hosts, setHosts] = useState<HostItem[] | null>(null)
+  const [host, setHost] = useState('')
+  const [status, setStatus] = useState<StatusFilter>('all')
+  const [group, updateGroup] = useState<SessionGrouping>(() => {
+    try { const held = localStorage.getItem('hennery.group'); return held === 'host' || held === 'project' || held === 'time' ? held : 'hat' } catch { return 'hat' }
+  })
+  const setGroup = useCallback((next: SessionGrouping) => {
+    updateGroup(next)
+    try { localStorage.setItem('hennery.group', next) } catch { /* document only */ }
+  }, [])
   const [hideClosed, setHideClosed] = usePersistentToggle(HIDE_CLOSED_KEY, true)
   const [lifecycle, setLifecycle] = useState('')
   const [query, setQuery] = useState('')
   const q = useDebounced(query, SEARCH_DEBOUNCE_MS)
-  const list = useSessionList({ hat: hat || null, hideClosed, lifecycle: lifecycle ? [lifecycle] : undefined, q })
+  const attention = route.name === 'needs-you'
+  const list = useSessionList({ pageScope: attention ? 'attention' : 'overview', hat: hat || null, hideClosed: attention ? false : hideClosed, lifecycle: !attention && lifecycle ? [lifecycle] : undefined, q: attention ? '' : q })
+  const attentionRows = useAttentionSessions(list, hat)
+  const dismissed = useDismissedAttention()
+  const [attentionKeys, setAttentionKeys] = useState<ReadonlyMap<string, string>>(new Map())
+  const reportAttentionKey = useCallback((id: string, key: string) => setAttentionKeys(before => before.get(id) === key ? before : new Map(before).set(id, key)), [])
+  const isAttentionDismissed = useCallback((id: string) => Object.hasOwn(dismissed, id) && (!attentionKeys.has(id) || dismissed[id] === attentionKeys.get(id)), [dismissed, attentionKeys])
+  const visibleWaiting = attentionRows.filter(row => !isAttentionDismissed(row.session_id)).length
+  useRegisterContext({ loadedSessions: list.all, hats: hats ?? undefined, hosts: hosts ?? undefined })
   const selectedId = route.name === 'session' && route.id !== undefined ? route.id : null
+  useEffect(() => {
+    if (route.name !== 'sessions') return
+    const params = new URLSearchParams(search)
+    if (params.has('hat')) { const next = params.get('hat')!; setHat(next); writeHat(next) }
+  }, [route.name, search])
 
   // Hats and hosts: on mount, and again on leaving /hats or /hosts, the
   // screens that change them (a new or recoloured hat, a renamed or revoked
@@ -101,6 +141,7 @@ export default function SessionScope({ route, desktop, children }: { route: Rout
     client.request<HostItem[]>('GET', '/api/hosts').then(
       (items) => {
         if (!live || !Array.isArray(items)) return
+        setHosts(items)
         setHostNames(new Map(items.map((h) => [h.host_id, h.name])))
       },
       () => {
@@ -129,7 +170,7 @@ export default function SessionScope({ route, desktop, children }: { route: Rout
 
   // The hat's count, kept through a search or a lifecycle filter: the
   // server's, or the rows' that the list store carries (`waitingCount`).
-  const waiting = list.counts.waiting
+  const waiting = visibleWaiting
   useEffect(() => {
     document.title = titleOf(waiting)
   }, [waiting])
@@ -140,27 +181,22 @@ export default function SessionScope({ route, desktop, children }: { route: Rout
   const chooseHat = useCallback(
     (next: string) => {
       if (next === hat) return
-      if (selectedId !== null) navigate('/sessions')
+      if (selectedId !== null || (route.name === 'sessions' && new URLSearchParams(search).has('hat'))) navigate('/sessions')
       setHat(next)
       writeHat(next)
     },
-    [hat, selectedId],
+    [hat, selectedId, route.name, search],
   )
-
-  // Desktop auto-select: only on `/sessions` with no id, only a visible row.
-  const first = list.shown[0]?.session_id
-  useEffect(() => {
-    if (!desktop || route.name !== 'sessions' || first === undefined) return
-    navigate(`/sessions/${encodeURIComponent(first)}`, { replace: true })
-  }, [desktop, route.name, first])
 
   const value = useMemo<SessionScopeValue>(
     () => ({
-      list,
+      list: { ...list, counts: { waiting: visibleWaiting } },
+      attentionRows, isAttentionDismissed, reportAttentionKey,
       hats,
       hat,
       chooseHat,
       hostNames,
+      hosts, host, setHost, status, setStatus, group, setGroup,
       hideClosed,
       setHideClosed,
       lifecycle,
@@ -169,19 +205,19 @@ export default function SessionScope({ route, desktop, children }: { route: Rout
       setQuery,
       selectedId,
     }),
-    [list, hats, hat, chooseHat, hostNames, hideClosed, setHideClosed, lifecycle, query, selectedId],
+    [list, visibleWaiting, attentionRows, isAttentionDismissed, reportAttentionKey, hats, hat, chooseHat, hostNames, hosts, host, status, group, setGroup, hideClosed, setHideClosed, lifecycle, query, selectedId],
   )
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>
 }
 
 /** The rail's and the top bar's count of sessions waiting on you. */
-export function WaitingBadge() {
+export function WaitingBadge({ className = 'badge badge-attn' }: { className?: string } = {}) {
   const scope = useSessionScope()
   const n = scope?.list.counts.waiting ?? 0
   if (n === 0) return null
   const text = `${n} waiting on you`
   return (
-    <span className="badge badge-attn" role="status" aria-label={text} title={text}>
+    <span className={className} role="status" aria-label={text} title={text}>
       {n}
     </span>
   )

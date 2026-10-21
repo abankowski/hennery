@@ -318,8 +318,8 @@ impl Store {
         let child = uuid();
         let ts = now();
         tx.execute(
-            "INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,created_at,last_event_at,title)
-            VALUES (?1,?2,?3,?4,?5,?6,'starting',?7,?7,?8)",
+            "INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,created_at,last_event_at,title,agent_title,title_source)
+            VALUES (?1,?2,?3,?4,?5,?6,'starting',?7,?7,?8,?8,CASE WHEN ?8 IS NOT NULL THEN 'agent' END)",
             params![
                 child,
                 self.owner_id(),

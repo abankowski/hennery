@@ -9,14 +9,14 @@ import { Text, visible } from '../lib/text'
 import ConfirmDialog from './ConfirmDialog'
 import StdioServerForm from './StdioServerForm'
 
-interface Props { enabled: boolean; hosts: HostItem[] | null; hats: HatItem[] | null }
-export default function StdioServers({ enabled, hosts, hats }: Props) {
+interface Props { enabled: boolean; hosts: HostItem[] | null; hats: HatItem[] | null; compact?: boolean }
+export default function StdioServers({ enabled, hosts, hats, compact = false }: Props) {
   if (!enabled) return null
   if (!hosts || !hats) return <section aria-label="Local MCP servers"><p>Loading local server places…</p></section>
-  return <Places hosts={hosts} hats={hats.filter(h => !h.purging)} />
+  return <Places hosts={hosts} hats={hats.filter(h => !h.purging)} compact={compact} />
 }
 
-function Places({ hosts, hats }: { hosts: HostItem[]; hats: HatItem[] }) {
+function Places({ hosts, hats, compact }: { hosts: HostItem[]; hats: HatItem[]; compact: boolean }) {
   const [hostId, setHost] = useState((hosts.find(h => !h.revoked_at) ?? hosts[0])?.host_id ?? '')
   const chosen = hosts.find(h => h.host_id === hostId)
   const [hatId, setHat] = useState((hats.find(h => h.id === chosen?.default_hat_id) ?? hats[0])?.id ?? '')
@@ -36,11 +36,11 @@ function Places({ hosts, hats }: { hosts: HostItem[]; hats: HatItem[] }) {
       setHat((hats.find(h => h.id === next?.default_hat_id) ?? hats[0])?.id ?? '')
     }}><option value="">Choose a host</option>{hosts.map(h => <option key={h.host_id} value={h.host_id}>{visible(h.name)}</option>)}</select></label>
     <label>Hat<select value={hatId} aria-disabled={busy} onChange={event => { if (!blocked.current) setHat(event.target.value) }}><option value="">Choose a hat</option>{hats.map(h => <option key={h.id} value={h.id}>{visible(h.name)}</option>)}</select></label>
-    {host && hat ? <SetEditor key={JSON.stringify([hostId, hatId])} host={host} hat={hat} lock={lock} /> : <p>Choose a host and hat.</p>}
+    {host && hat ? <SetEditor key={JSON.stringify([hostId, hatId])} host={host} hat={hat} lock={lock} compact={compact} /> : <p>Choose a host and hat.</p>}
   </section>
 }
 
-function SetEditor({ host, hat, lock }: { host: HostItem; hat: HatItem; lock: (busy: boolean) => void }) {
+function SetEditor({ host, hat, lock, compact }: { host: HostItem; hat: HatItem; lock: (busy: boolean) => void; compact: boolean }) {
   const client = useClient()
   const [drafts, setDrafts] = useState<StdioDraft[] | null>(null)
   const originals = useRef(new Map<number, McpStdioServerItem>())
@@ -111,7 +111,7 @@ function SetEditor({ host, hat, lock }: { host: HostItem; hat: HatItem; lock: (b
     {host.revoked_at && <p>This host is revoked: its local MCP servers can be read, not changed.</p>}
     {error && <p role="alert" className="form-error"><Text>{error}</Text></p>}
     {drafts === null ? !error && <p>Reading local servers…</p> : <form aria-label="Local server set" method="post" onSubmit={review}>
-      {drafts.map(d => <StdioServerForm key={d.id} draft={d} original={originals.current.get(d.id)} locked={confirming || !!host.revoked_at} allocate={allocate}
+      {drafts.map(d => <StdioServerForm key={d.id} compact={compact} draft={d} original={originals.current.get(d.id)} locked={confirming || !!host.revoked_at} allocate={allocate}
         change={next => setDrafts(before => before?.map(entry => entry.id === d.id ? next : entry) ?? null)}
         remove={() => setDrafts(before => before?.filter(entry => entry.id !== d.id) ?? null)}
         input={(env, node) => { const key = `${d.id}:${env}`; if (node) fields.current.set(key, node); else fields.current.delete(key) }}

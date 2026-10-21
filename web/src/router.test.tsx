@@ -13,6 +13,9 @@ describe('match', () => {
     ['/sessions', 'sessions'],
     ['/sessions/', 'sessions'],
     ['/new', 'new'],
+    ['/needs-you', 'needs-you'],
+    ['/more', 'more'],
+    ['/defaults', 'defaults'],
     ['/hosts', 'hosts'],
     ['/mcp', 'mcp'],
     ['/hats', 'hats'],
@@ -49,4 +52,18 @@ describe('Link', () => {
     await userEvent.keyboard('{/Control}')
     expect(location.pathname).toBe('/')
   })
+})
+
+it('retains a known app return route for the launcher and refuses foreign/auth return state', async () => {
+  const { navigate, launcherReturn } = await import('./router')
+  history.replaceState(null, '', '/hosts?pair=1')
+  navigate('/new?host=h&cwd=%2Fproject')
+  expect(launcherReturn()).toBe('/hosts?pair=1')
+  expect(location.search).toBe('?host=h&cwd=%2Fproject')
+  for (const raw of ['https://example.invalid', '//example.invalid', '/login', '/new', '/missing']) {
+    history.replaceState({ launcherFrom: raw }, '', '/new')
+    expect(launcherReturn()).toBe('/sessions')
+  }
+  history.replaceState(null, '', '/new')
+  expect(launcherReturn()).toBe('/sessions')
 })

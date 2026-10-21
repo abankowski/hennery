@@ -141,7 +141,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
   const hatName = (id: string) => hats.data?.find((h) => h.id === id)?.name
 
   return (
-    <div className="manage">
+    <div className="manage mcp-screen">
       <header className="manage-head">
         <h1 id="mcp-heading" tabIndex={-1}>
           MCP
@@ -159,6 +159,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
           Add connection
         </button>
       </header>
+      <p className="manage-subtitle">Servers your sessions receive, by hat and host.</p>
       <section className="card notice" aria-label="How sessions get these">
         <p>
           A connection reaches the agent sessions in its hat on the hosts ticked below, as an MCP server named{' '}
@@ -166,7 +167,6 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
         </p>
         {hosts.data?.some(h => !h.mcp_delivery) && <p>Codex may also load your own ~/.codex MCP servers.</p>}
       </section>
-      <StdioServers enabled={stdio} hosts={hosts.data} hats={hats.data} />
       {[list.error, hats.error, hosts.error, redirect.error].map(
         (shown, i) =>
           shown && (
@@ -194,7 +194,9 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
         </section>
       )}
       {list.data && list.data.length === 0 && !adding && <p className="empty">No connection yet.</p>}
-      <ul className="cards" aria-label="Connections">
+      <h2 className="section-heading">Gateway connections</h2>
+      <div className="mcp-inventory-head" aria-hidden="true"><span>Connection</span><span>Auth</span><span>Status</span><span>Hat</span><span>Hosts whose sessions get it</span><span /></div>
+      <ul className="cards mcp-inventory" aria-label="Connections">
         {(list.data ?? []).map((connection) => (
           <ConnectionCard
             oauth={oauth}
@@ -225,6 +227,7 @@ export default function Mcp({ stdio = false, oauth = false }: { stdio?: boolean;
           />
         ))}
       </ul>
+      <StdioServers enabled={stdio} hosts={hosts.data} hats={hats.data} compact />
       {pending?.kind === 'delete' && (
         <ConfirmDialog
           title="Delete this connection?"
@@ -291,17 +294,24 @@ interface CardProps {
 
 function ConnectionCard(props: CardProps) {
   const [clientRevision, setClientRevision] = useState(0)
+  const [expanded, setExpanded] = useState(false)
   const { connection: c, hatName, hosts, editing } = props
   const id = titleId(c.id)
   const tools =
     c.tool_allowlist === null ? 'Every tool' : c.tool_allowlist.length === 0 ? 'None' : c.tool_allowlist.join(', ')
   return (
     <li className="card connection" aria-labelledby={id}>
-      <div className="card-head">
+      <div className="connection-summary">
+      <div className="connection-identity">
         <h2 className="card-title" id={id} tabIndex={-1}>
           <Text>{c.label}</Text>
         </h2>
+        <Text className="mono connection-url">{c.url}</Text>
+      </div>
+        <span className="connection-auth">{c.cred_kind === 'none' ? 'No auth' : kindLabel(c.cred_kind)}</span>
         <span className={`state mcp-${c.status}`}>{props.oauth && c.oauth && c.status === 'needs_auth' ? 'May need sign-in' : props.oauth && c.status === 'not_connected' && c.oauth ? 'Not connected' : statusLabel(c.status)}</span>
+        <span className="connection-hat"><Text>{hatName ?? c.hat_id}</Text></span>
+        <Mounts connection={c} hosts={hosts} onChanged={props.onChanged} compact />
       </div>
       {c.status_note && (
         <p className="hint">
@@ -314,17 +324,13 @@ function ConnectionCard(props: CardProps) {
       {c.status === 'needs_auth' && c.cred_kind === 'none' && (
         <p className="hint">The server asks for credentials: edit the connection to send a token.</p>
       )}
+      <details className="connection-settings" open={expanded || editing !== null} onToggle={event => setExpanded(event.currentTarget.open)}>
+      <summary>Connection settings</summary>
       <dl className="facts">
         <dt>Agents see</dt>
         <dd>
           <Text className="mono">{serverName(c.slug)}</Text>
         </dd>
-        <dt>Server URL</dt>
-        <dd>
-          <Text className="mono">{c.url}</Text>
-        </dd>
-        <dt>Hat</dt>
-        <dd>{hatName !== undefined ? <Text>{hatName}</Text> : <Text className="mono">{c.hat_id}</Text>}</dd>
         <dt>Authentication</dt>
         <dd>
           {c.cred_kind === 'static' ? (
@@ -397,7 +403,7 @@ function ConnectionCard(props: CardProps) {
       {props.oauth && c.cred_kind === 'oauth_client' && <OauthClientForm connection={c} onChanged={item => { setClientRevision(n => n + 1); props.onChanged(item) }} />}
       {props.oauth && (c.cred_kind === 'oauth_client' || c.cred_kind === 'oauth_dcr') && <OauthConnect key={clientRevision} connection={c} refresh={props.refresh} waiting={props.waiting} />}
       {props.oauth && <McpStatus connection={c} onChanged={props.onChanged} />}
-      <Mounts connection={c} hosts={hosts} onChanged={props.onChanged} />
+      </details>
     </li>
   )
 }

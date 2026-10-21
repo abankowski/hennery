@@ -239,7 +239,7 @@ describe('Composer: a turn in flight', () => {
 describe('Composer: prompt refusals keep the draft', () => {
   it.each([
     [409, 'host_offline', 'The host is offline; send again once it is back.'],
-    [409, 'turn_in_progress', 'A turn is still running: wait for it to end, or stop it, then send again.'],
+    [409, 'turn_in_progress', 'The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.'],
     [409, 'images_unsupported', 'This host takes no images: remove them, then send again.'],
     [400, 'empty_prompt', 'There is nothing to send: write something, or attach an image.'],
     [400, 'invalid_content', 'This prompt holds something that cannot be sent (srv-x).'],
@@ -591,6 +591,8 @@ describe('Composer: config bar', () => {
 
   it('shows one switcher per option: model, mode, then the rest', () => {
     mount(accepted, { initialCatalog: catalogOf() })
+    expect(screen.queryByRole('combobox', { name: 'Model' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Session settings' }))
     const bar = screen.getByRole('group', { name: 'Session settings' })
     expect(within(bar).getAllByRole('combobox').map((s) => s.getAttribute('aria-label'))).toEqual(['Model', 'Mode'])
     expect(within(bar).getByRole('checkbox', { name: 'Think' })).not.toBeChecked()
@@ -599,6 +601,7 @@ describe('Composer: config bar', () => {
   it('config success: shows the pick at once, then the catalogue the 202 returns', async () => {
     const answer = deferred()
     const c = mount(() => answer.promise, { initialCatalog: catalogOf('a') })
+    fireEvent.click(screen.getByRole('button', { name: 'Session settings' }))
     const model = screen.getByRole('combobox', { name: 'Model' })
     fireEvent.change(model, { target: { value: 'b' } })
     expect(model).toHaveValue('b')
@@ -609,11 +612,12 @@ describe('Composer: config bar', () => {
     await waitFor(() => expect(model).toHaveValue('c'), WAIT)
     expect(model).toBeEnabled()
     expect(screen.getByRole('combobox', { name: 'Mode' })).toHaveValue('edit')
-    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('alert')).toHaveTextContent('the agent kept c instead of b')
   })
 
   it('switches an on/off option', async () => {
     const c = mount(() => json(catalogOf(), 202), { initialCatalog: catalogOf() })
+    fireEvent.click(screen.getByRole('button', { name: 'Session settings' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Think' }))
     await waitFor(() => expect(c.posts).toEqual([{ path: '/api/sessions/s1/config', body: { config_id: 'think', value: true } }]), WAIT)
   })
@@ -626,6 +630,7 @@ describe('Composer: config bar', () => {
     [409, 'host_offline', 'Model: The host is offline: try again once it is back.'],
   ])('config rollback on %i %s, with the message', async (status, code, words) => {
     mount(() => json({ code, message: 'srv-x' }, status), { initialCatalog: catalogOf('a') })
+    fireEvent.click(screen.getByRole('button', { name: 'Session settings' }))
     const model = screen.getByRole('combobox', { name: 'Model' })
     fireEvent.change(model, { target: { value: 'b' } })
     expect(await screen.findByRole('alert', undefined, WAIT)).toHaveTextContent(words)
@@ -850,4 +855,52 @@ describe('Composer: work added while a prompt is being sent', () => {
     expect(textarea().value).toBe('[Image #1] ')
     expect(screen.queryByRole('alert')).toBeNull()
   })
+})
+
+it('keeps Send disabled while configuration is pending and explains a missing adapter read-back', async () => {
+  let finish!: (response: Response) => void
+  const result = new Promise<Response>(resolve => { finish = resolve })
+  const c = mount(() => result, { initialCatalog: catalogOf() })
+  fireEvent.click(screen.getByRole('button', { name: 'Session settings' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Keep this draft' } })
+  fireEvent.change(screen.getByRole('combobox', { name: 'Model' }), { target: { value: 'b' } })
+  expect(screen.getByText('Applying session settings…', { exact: true })).toBeInTheDocument()
+  expect(screen.getByRole('combobox', { name: 'Mode' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+  fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter', ctrlKey: true })
+  expect(c.prompts()).toHaveLength(0)
+  await act(async () => { finish(json({ session_id: 's1', config_options: [], commands: [] }, 202)); await result })
+  expect(screen.getByRole('alert')).toHaveTextContent('the agent did not confirm this setting')
+  expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this draft')
+  fireEvent.click(screen.getByRole('button', { name: 'Close session settings' }))
+  const trigger = screen.getByRole('button', { name: 'Session settings' })
+  expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  expect(within(trigger).getByRole('status')).toHaveTextContent('Check settings')
+  expect(screen.queryByRole('dialog', { name: 'Session settings' })).toBeNull()
+  expect(trigger).toHaveFocus()
+})
+
+it('renders every catalog effort choice as a native radio and sends its exact axis/value', async () => {
+  const catalog = catalogOf()
+  catalog.config_options.push({ id: 'reasoning_effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'balanced', options: [{ value: 'tiny', name: 'Brief' }, { value: 'balanced', name: 'Balanced' }, { value: 'deep', name: 'Thorough' }] })
+  const c = mount(() => json(catalog, 202), { initialCatalog: catalog })
+  fireEvent.click(screen.getByRole('button', { name: 'Session settings' }))
+  expect(screen.getByRole('radio', { name: 'Balanced' })).toBeChecked()
+  fireEvent.click(screen.getByRole('radio', { name: 'Thorough' }))
+  await waitFor(() => expect(c.posts).toEqual([{ path: '/api/sessions/s1/config', body: { config_id: 'reasoning_effort', value: 'deep' } }]))
+  await screen.findByRole('alert')
+  expect(screen.getByRole('radio', { name: 'Balanced' })).toBeChecked()
+})
+
+it('explains a raw busy-turn 409, preserves the draft and offers the open request', async () => {
+  const jump = vi.fn()
+  const view = mount(() => json({ code: 'conflict', message: 'wait for the current turn to end' }, 409), { onJumpToQuestion: jump })
+  type('Keep my next prompt')
+  fireEvent.click(sendButton())
+  expect(await screen.findByText('The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.', { exact: true })).toBeVisible()
+  expect(textarea()).toHaveValue('Keep my next prompt')
+  expect(screen.queryByText('wait for the current turn to end', { exact: true })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Go to open request' }))
+  expect(jump).toHaveBeenCalledOnce()
+  expect(view.prompts()).toHaveLength(1)
 })

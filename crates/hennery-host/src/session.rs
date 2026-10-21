@@ -2469,10 +2469,11 @@ struct Applied {
     hung: Option<Instant>,
 }
 
-/// Apply `wanted` to a new or loaded session (ACP core §4.3): the model
-/// first, then the other axes, then the mode, each with
-/// `session/set_config_option`, so a model that clamps the mode cannot undo
-/// the requested mode. A value already current in an authoritative
+/// Apply `wanted` to a new or loaded session (ACP core §4.3): mode first,
+/// model next, then model-dependent axes, each with
+/// `session/set_config_option`: Claude can reset the model when entering plan
+/// mode. One correction pass repairs explicit values a later switch changed.
+/// A value already current in an authoritative
 /// catalogue is not sent — a stale or seeded one (`catalogue.authoritative`
 /// false) never gates that decision, so its switch is sent regardless (a
 /// redundant switch is harmless; a wrongly skipped one lies). Each switch
@@ -2500,16 +2501,7 @@ async fn apply_config(
         hung: None,
     };
     let mut switches: Vec<(String, ConfigValue)> = Vec::new();
-    if let Some(model) = &wanted.model {
-        match axis_id(&applied.options, &SessionConfigOptionCategory::Model, "model") {
-            Some(id) => switches.push((id, ConfigValue::Id(model.clone()))),
-            None => applied
-                .failures
-                .push(format!("model={model}: the adapter offers no model option")),
-        }
-    }
-    switches.extend(wanted.axes.iter().map(|(id, value)| (id.clone(), value.clone())));
-    // Resolved now, and applied last: after the model and the other axes.
+    // Resolve from the announced catalogue; every response refreshes read-back.
     let mode = wanted.mode.as_ref().map(|mode| {
         (
             axis_id(&applied.options, &SessionConfigOptionCategory::Mode, "mode"),
@@ -2523,66 +2515,83 @@ async fn apply_config(
             .push(format!("mode={mode}: the adapter offers no mode option")),
         None => {}
     }
+    if let Some(model) = &wanted.model {
+        match axis_id(&applied.options, &SessionConfigOptionCategory::Model, "model") {
+            Some(id) => switches.push((id, ConfigValue::Id(model.clone()))),
+            None => applied
+                .failures
+                .push(format!("model={model}: the adapter offers no model option")),
+        }
+    }
+    switches.extend(wanted.axes.iter().map(|(id, value)| (id.clone(), value.clone())));
     // Requested values that already have their own line in `failures`.
     let mut reported: HashSet<String> = HashSet::new();
     let mut unanswered = false;
-    for (id, value) in &switches {
-        // Only an authoritative catalogue may decide "already current" or
-        // "no such option": a stale or seeded one is not proof of either, so
-        // its switch is sent regardless.
-        if applied.current {
-            match current_value(&applied.options, id) {
-                None => {
-                    applied
-                        .failures
-                        .push(format!("{id}: the adapter offers no such option"));
-                    reported.insert(id.clone());
-                    continue;
+    for attempt in 0..2 {
+        if attempt == 1 && (!applied.current || unanswered) {
+            break;
+        }
+        for (id, value) in &switches {
+            if attempt == 1 && reported.contains(id) {
+                continue;
+            }
+            // Only an authoritative catalogue may decide "already current" or
+            // "no such option": a stale or seeded one is not proof of either, so
+            // its switch is sent regardless.
+            if applied.current {
+                match current_value(&applied.options, id) {
+                    None => {
+                        applied
+                            .failures
+                            .push(format!("{id}: the adapter offers no such option"));
+                        reported.insert(id.clone());
+                        continue;
+                    }
+                    Some(current) if current == *value => continue,
+                    Some(_) => {}
                 }
-                Some(current) if current == *value => continue,
-                Some(_) => {}
             }
-        }
-        let now = Instant::now();
-        if unanswered || now >= deadline {
-            let why = if unanswered {
-                "an earlier switch did not answer"
-            } else {
-                "the start deadline passed"
-            };
-            applied.failures.push(format!("{id}={}: not sent: {why}", shown(value)));
-            reported.insert(id.clone());
-            continue;
-        }
-        let request = SetSessionConfigOptionRequest::new(session.clone(), id.clone(), acp_value(value));
-        let cut_short = now + timeout > deadline;
-        let until = (now + timeout).min(deadline);
-        match tokio::time::timeout_at(until, conn.send_request(request).block_task()).await {
-            // The catalogue of the last successful switch is the one kept,
-            // and it is a genuine, fresh read-back: authoritative again for
-            // whatever runs after it, even if an earlier switch in this same
-            // start was not (a seeded catalogue, or an earlier empty answer).
-            Ok(Ok(response)) if !response.config_options.is_empty() => {
-                applied.options = response.config_options;
-                applied.current = true;
-            }
-            // An empty answer is no read-back, not an adapter without options.
-            Ok(Ok(_)) => applied.current = false,
-            Ok(Err(err)) => {
-                applied.failures.push(format!("{id}={}: {err}", shown(value)));
-                reported.insert(id.clone());
-            }
-            Err(_) => {
-                applied.current = false;
-                unanswered = true;
-                applied.hung = Some(now);
-                let wait = if cut_short {
-                    "no answer before the start deadline".to_string()
+            let now = Instant::now();
+            if unanswered || now >= deadline {
+                let why = if unanswered {
+                    "an earlier switch did not answer"
                 } else {
-                    format!("no answer within {timeout:?}")
+                    "the start deadline passed"
                 };
-                applied.failures.push(format!("{id}={}: {wait}", shown(value)));
+                applied.failures.push(format!("{id}={}: not sent: {why}", shown(value)));
                 reported.insert(id.clone());
+                continue;
+            }
+            let request = SetSessionConfigOptionRequest::new(session.clone(), id.clone(), acp_value(value));
+            let cut_short = now + timeout > deadline;
+            let until = (now + timeout).min(deadline);
+            match tokio::time::timeout_at(until, conn.send_request(request).block_task()).await {
+                // The catalogue of the last successful switch is the one kept,
+                // and it is a genuine, fresh read-back: authoritative again for
+                // whatever runs after it, even if an earlier switch in this same
+                // start was not (a seeded catalogue, or an earlier empty answer).
+                Ok(Ok(response)) if !response.config_options.is_empty() => {
+                    applied.options = response.config_options;
+                    applied.current = true;
+                }
+                // An empty answer is no read-back, not an adapter without options.
+                Ok(Ok(_)) => applied.current = false,
+                Ok(Err(err)) => {
+                    applied.failures.push(format!("{id}={}: {err}", shown(value)));
+                    reported.insert(id.clone());
+                }
+                Err(_) => {
+                    applied.current = false;
+                    unanswered = true;
+                    applied.hung = Some(now);
+                    let wait = if cut_short {
+                        "no answer before the start deadline".to_string()
+                    } else {
+                        format!("no answer within {timeout:?}")
+                    };
+                    applied.failures.push(format!("{id}={}: {wait}", shown(value)));
+                    reported.insert(id.clone());
+                }
             }
         }
     }

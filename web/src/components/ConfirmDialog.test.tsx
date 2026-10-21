@@ -109,3 +109,11 @@ describe('the confirmation', () => {
     expect(screen.getByRole('heading', { name: 'Fallback' })).toHaveFocus()
   })
 })
+
+it('keeps background controls inert for the confirmation lifetime', async () => {
+  const { unmount } = render(<><button>Background</button><ConfirmDialog title="Confirm action" confirm="Run" action={async () => {}} onClose={() => {}}><p>Review this action.</p></ConfirmDialog></>)
+  const background = screen.getByRole('button', { name: 'Background', hidden: true })
+  expect(background.inert).toBe(true)
+  unmount()
+  expect(background.inert).toBe(false)
+})

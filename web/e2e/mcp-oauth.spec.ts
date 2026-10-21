@@ -1,3 +1,4 @@
+import { captureManagement } from './management-captures'
 import { expect, test, type Page } from '@playwright/test'
 import { startCollector, type Collector } from './collector'
 import { startVendor, type Vendor } from './oauth-vendor'
@@ -25,6 +26,7 @@ for (const width of [1280, 390]) test.describe(`OAuth at ${width} px`, () => {
     await form.getByRole('checkbox', { name: 'Internal network', exact: true }).check()
     await form.getByRole('button', { name: 'Create', exact: true }).click()
     await expect(card(name)).toBeVisible()
+    await card(name).locator('.connection-settings > summary').click()
   }
   async function popup(name = 'OAuth docs', button = 'Reconnect') {
     const opened = page.context().waitForEvent('page')
@@ -62,6 +64,7 @@ for (const width of [1280, 390]) test.describe(`OAuth at ${width} px`, () => {
     await add('OAuth docs', 'oauth-docs')
     expect((await listed()).has_credential).toBe(false)
     await allow(await popup('OAuth docs', 'Connect'))
+    await captureManagement(page, 'mcp-oauth', 'Desktop mcp / OAuth')
     expect((await listed()).has_credential).toBe(true); expect(vendor.counts.registrations).toBe(1); expect(vendor.counts.exchanges).toBe(1)
     const stored = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))
     expect(stored).not.toContain(vendor.origin); expect(stored).not.toContain('/authorize')
@@ -74,6 +77,7 @@ for (const width of [1280, 390]) test.describe(`OAuth at ${width} px`, () => {
     expect(await host.join(command, ['--name', 'OAuth test host', '--no-runtime'])).toBe(0)
     await expect(page.getByText('Paired: OAuth test host', { exact: true })).toBeVisible({ timeout: 15000 })
     await page.goto('/mcp')
+    await card().locator('.connection-settings > summary').click()
     const mounted = card().getByRole('checkbox', { name: 'OAuth test host', exact: true })
     await mounted.click(); await expect(mounted).toBeChecked()
     const mounts = (await listed()).mounts; expect(mounts).toHaveLength(1); mountedHost = mounts[0]
@@ -170,7 +174,7 @@ for (const width of [1280, 390]) test.describe(`OAuth at ${width} px`, () => {
     await card().getByRole('button', { name: 'Probe now', exact: true }).click()
     await expect(card().getByText('May need sign-in', { exact: true })).toBeVisible()
     const attention = page.locator(width === 390 ? '.mtopbar' : '.rail-nav').getByText('1 need attention', { exact: true })
-    await expect(attention).toBeVisible(); await expect(attention).toHaveCSS('color', 'rgb(178, 106, 0)')
+    await expect(attention).toBeVisible(); await expect(attention).toHaveCSS('color', 'rgb(122, 83, 0)')
     if (width === 390) expect((await page.locator('.mtopbar .mcp-attention-link').boundingBox())!.height).toBeGreaterThanOrEqual(44)
   })
   test('issuer changes require a deliberate client save and keep the old grant until consent', async () => {

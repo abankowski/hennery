@@ -104,6 +104,30 @@ describe('the host list', () => {
 })
 
 describe('adding a host', () => {
+  it('copies only the shown pairing command after an explicit click', async () => {
+    const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    try {
+      open({ 'GET /api/hosts': json(200, []), 'POST /api/hosts/pairing-codes': json(201, { code: 'ABCD-EFGH', expires_at: new Date(Date.now() + 600_000).toISOString() }) })
+      await userEvent.click(await screen.findByRole('button', { name: 'Add host' }))
+      const copy = await screen.findByRole('button', { name: 'Copy command' })
+      expect(writeText).not.toHaveBeenCalled()
+      await userEvent.click(copy)
+      expect(writeText).toHaveBeenCalledWith('hennery host join https://hennery.example.com ABCD-EFGH')
+      expect(await screen.findByText('Command copied.', { exact: true })).toBeVisible()
+    } finally {
+      if (original) Object.defineProperty(navigator, 'clipboard', original)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+    }
+  })
+  it('explains how to copy when the browser clipboard is unavailable', async () => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    open({ 'GET /api/hosts': json(200, []), 'POST /api/hosts/pairing-codes': json(201, { code: 'ABCD-EFGH', expires_at: new Date(Date.now() + 600_000).toISOString() }) })
+    await userEvent.click(await screen.findByRole('button', { name: 'Add host' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Copy command' }))
+    expect(await screen.findByText('Copy unavailable. Select the command above to copy it.', { exact: true })).toBeVisible()
+  })
   it('steps up, then shows the code and the exact command with the public URL', async () => {
     const expires = new Date(Date.now() + 600_000).toISOString()
     const server = open({

@@ -1,3 +1,4 @@
+import { captureManagement } from './management-captures'
 // Real dispatch receipts, not MCP tool execution: the Codex-named fake
 // records session/new and session/load under its own scratch directory.
 import { expect, test, type Page } from '@playwright/test'
@@ -27,6 +28,15 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
   const records = () => existsSync(receipt) ? readFileSync(receipt, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : []
   const local = () => page.getByRole('region', { name: 'Local MCP servers', exact: true })
   const report = () => page.getByRole('region', { name: 'MCP delivery', exact: true })
+  // R3 moves the last-start snapshot into the session's Details tab.
+  const openReport = async () => {
+    const toggle = page.getByRole('button', { name: 'Session details', exact: true })
+    if (await toggle.getAttribute('aria-pressed') !== 'true') await toggle.click()
+    if (width === 390) await page.getByRole('tab', { name: 'Details', exact: true }).click()
+  }
+  const closeReportOnPhone = async () => {
+    if (width === 390) await page.getByRole('button', { name: 'Close session details', exact: true }).click()
+  }
   test.beforeAll(async ({ browser }) => {
     sentinel = mkdtempSync(join(tmpdir(), 'hennery-e2e-sentinel-'))
     runnerLog = process.env.HENNERY_LOG_DIR; process.env.HENNERY_LOG_DIR = sentinel
@@ -88,6 +98,7 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     await local().getByRole('button', { name: 'Add environment variable', exact: true }).click()
     await local().getByRole('textbox', { name: 'Environment name', exact: true }).fill('TOKEN')
     await local().getByRole('textbox', { name: 'Value for TOKEN', exact: true }).fill(ENV_VALUE)
+    await captureManagement(page, 'mcp-stdio', 'Desktop mcp / local stdio')
     await local().getByRole('button', { name: 'Review local servers', exact: true }).click()
     await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(local().getByRole('textbox', { name: 'Value for TOKEN', exact: true })).toHaveValue('')
@@ -101,6 +112,7 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Save local servers', exact: true }).click()
     await expect(local().getByRole('textbox', { name: 'Value for TOKEN', exact: true })).toHaveValue('')
     await stepUp(page)
+    await local().locator('.stdio-server-disclosure > summary').click()
     await expect(local().getByRole('checkbox', { name: 'Keep stored value for TOKEN', exact: true })).toBeChecked()
     expect(refused).toBe(1); await page.unroute('**/api/mcp/stdio-servers?*')
     const listed = await page.request.get(`/api/mcp/stdio-servers?host_id=${hostId}&hat_id=${hatId}`)
@@ -112,32 +124,45 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     expect(await page.evaluate(value => JSON.stringify({ ...localStorage, ...sessionStorage }).includes(value), ENV_VALUE)).toBe(false)
     if (width === 390) expect((await local().getByRole('button', { name: 'Review local servers', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
     await page.goto('/new')
-    const form = page.getByRole('form', { name: 'New session', exact: true }); await form.getByRole('button', { name: 'Codex', exact: true }).click()
+    const form = page.getByRole('form', { name: 'New session', exact: true }); await form.getByRole('radio', { name: 'Codex', exact: true }).check()
     await form.getByRole('combobox').fill(project)
-    await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toContainText('not isolated per hat')
+    await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toHaveCount(0)
     await form.getByRole('textbox', { name: 'First prompt optional', exact: true }).fill('Show delivery.')
+    // This delivery/session fixture reports no settings catalog.
+    await form.getByRole('button', { name: 'Session settings', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Session settings', exact: true }).getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+    await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
+    // Catalog discovery already wrote a disposable session/new with no MCP.
+    // Inspect the actual launch after that completed preview, including empty
+    // delivery for other hats below; never filter receipts by server count.
+    const beforeStart = records().length
     await form.getByRole('button', { name: 'Start session', exact: true }).click()
     await expect(page).toHaveURL(/\/sessions\/[^/?#]+$/, { timeout: 45_000 }); sessionUrl = page.url()
+    await openReport()
     await expect(report()).toContainText('At the last start/resume:')
     await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
     await expect(report()).toContainText('Codex also loads your own ~/.codex MCP servers.')
-    expect(records()[0].method).toBe('session/new')
-    expect(records()[0].params.mcpServers.map((s: { name: string }) => s.name).sort()).toEqual(['hennery-docs', 'hennery-local'])
-    expect(JSON.stringify(records()[0].params.mcpServers).includes(ENV_VALUE)).toBe(true)
-    await page.reload(); await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
+    const started = records()[beforeStart]
+    expect(started.method).toBe('session/new')
+    expect(started.params.mcpServers.map((s: { name: string }) => s.name).sort()).toEqual(['hennery-docs', 'hennery-local'])
+    expect(JSON.stringify(started.params.mcpServers).includes(ENV_VALUE)).toBe(true)
+    await closeReportOnPhone()
+    await page.reload(); await openReport(); await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
   })
   test('keeps the last-start snapshot until resume, and delivers none for a different hat', async () => {
-    await page.goto('/mcp'); await local().getByRole('button', { name: 'Add local server', exact: true }).click()
+    await page.goto('/mcp'); await local().locator('.stdio-server-disclosure > summary').click(); await local().getByRole('button', { name: 'Add local server', exact: true }).click()
     await local().getByRole('textbox', { name: 'Server name', exact: true }).nth(1).fill('second')
     await local().getByRole('textbox', { name: 'Command', exact: true }).nth(1).fill('runner')
     await local().getByRole('button', { name: 'Review local servers', exact: true }).click()
     await page.getByRole('dialog', { name: 'Save these local MCP servers?', exact: true }).getByRole('button', { name: 'Save local servers', exact: true }).click()
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await page.goto(sessionUrl); await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
+    await page.goto(sessionUrl); await openReport(); await expect(report().getByText('2 MCP servers.', { exact: true })).toBeVisible()
     await expect(page.locator('.session-head .badge')).toHaveText('Idle')
     await host.crash(); host.run()
     await expect(page.locator('.session-head .badge')).toHaveText('Parked', { timeout: 20_000 })
+    await closeReportOnPhone()
     await page.getByRole('button', { name: 'Resume', exact: true }).click()
+    if (width === 390) await openReport()
     await expect(report()).toContainText('3 MCP servers.', { timeout: 20_000 })
     expect(records().at(-1).method).toBe('session/load'); expect(records().at(-1).params.mcpServers.length).toBe(3)
     const made = await page.request.post('/api/hats', { headers: { Origin: collector.origin }, data: { name: 'Other hat' } }); expect(made.status()).toBe(201)
@@ -145,9 +170,15 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     const path = join(project, 'other'); mkdirSync(path)
     const rules = await page.request.put(`/api/hosts/${hostId}/path-rules`, { headers: { Origin: collector.origin }, data: { rules: [{ prefix: path, hat_id: other.id }] } }); expect(rules.status()).toBe(200)
     await page.goto('/new')
-    const form = page.getByRole('form', { name: 'New session', exact: true }); await form.getByRole('button', { name: 'Codex', exact: true }).click(); await form.getByRole('combobox').fill(path)
-    await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toContainText('this hat is not the host’s default')
+    const form = page.getByRole('form', { name: 'New session', exact: true }); await form.getByRole('radio', { name: 'Codex', exact: true }).check(); await form.getByRole('combobox').fill(path)
+    await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toHaveCount(0)
+    // This delivery/session fixture reports no settings catalog.
+    await form.getByRole('button', { name: 'Session settings', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Session settings', exact: true }).getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+    await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
     await form.getByRole('button', { name: 'Start session', exact: true }).click()
+    await expect(page).toHaveURL(/\/sessions\/[^/?#]+$/, { timeout: 45_000 })
+    await openReport()
     await expect(report()).toContainText('this hat is not the host’s default', { timeout: 45_000 })
     await expect(report()).toContainText('0 MCP servers.')
     expect(records().at(-1).params.mcpServers).toEqual([])

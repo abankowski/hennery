@@ -105,7 +105,7 @@ describe('tool_call', () => {
     const { container } = show(item('tool_call', { ...base, input: { command: 'echo hi' }, output: 'hi\n' }))
     expect(screen.getByText('Run a command')).toBeInTheDocument()
     expect(screen.getByText('echo hi')).toBeInTheDocument()
-    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.getByText('Completed')).toBeInTheDocument()
     expect(container.querySelectorAll('.tool-io')).toHaveLength(0)
   })
 
@@ -449,6 +449,14 @@ describe('marker', () => {
 })
 
 describe('unrecognised', () => {
+  it('recognises session rename metadata while keeping the raw audit event available', () => {
+    const raw = '{"title":"Operator title","title_source":"operator"}'
+    const { container } = show(item('unrecognised', { update_kind: 'session_renamed', raw }))
+    const details = container.querySelector('details') as HTMLDetailsElement
+    expect(details.open).toBe(false)
+    expect(details.querySelector('summary')?.textContent).toBe('Session name changed')
+    expect(details.querySelector('pre')?.textContent).toBe(raw)
+  })
   it('is collapsed, naming its kind, with its raw JSON as text', () => {
     const { container } = show(item('unrecognised', { update_kind: 'acp_update/new_thing', raw: '{"a":"<b>x</b>"}', truncated: true }))
     const details = container.querySelector('details') as HTMLDetailsElement

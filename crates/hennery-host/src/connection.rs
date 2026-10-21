@@ -768,7 +768,12 @@ fn handle(
                 handle.send(SessionCmd::SetIdleHold { held });
             }
         }
-        CollectorFrame::ProbeCatalog { request_id, agent, cwd } => {
+        CollectorFrame::ProbeCatalog {
+            request_id,
+            agent,
+            cwd,
+            operator_initiated,
+        } => {
             let Some(command) = cfg.agents.get(&agent).cloned() else {
                 uplink.reply(HostFrame::Error {
                     request_id,
@@ -784,17 +789,24 @@ fn handle(
                 uplink.clone(),
             );
             tokio::spawn(async move {
-                let result = catalogs
-                    .catalog(&agent, command, profile, PathBuf::from(cwd), roots)
-                    .await;
+                let result = if operator_initiated {
+                    catalogs
+                        .operator_catalog(&agent, command, profile, PathBuf::from(cwd))
+                        .await
+                } else {
+                    catalogs
+                        .catalog(&agent, command, profile, PathBuf::from(cwd), roots)
+                        .await
+                };
                 uplink.reply(match result {
                     Ok(catalog) => HostFrame::Catalog { request_id, catalog },
                     Err(error) => HostFrame::Error {
                         request_id,
-                        code: if error.to_string() == "busy" {
-                            "busy"
-                        } else {
-                            "catalog_unavailable"
+                        code: match error.to_string().as_str() {
+                            "cwd_unavailable" => "cwd_unavailable",
+                            "busy" => "busy",
+                            "timeout" => "timeout",
+                            _ => "adapter_failed",
                         }
                         .into(),
                         message: "runtime catalog unavailable".into(),

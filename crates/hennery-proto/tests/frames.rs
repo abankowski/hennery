@@ -215,6 +215,7 @@ fn bare_item() -> hennery_proto::rest::SessionItem {
         cwd: "/tmp".into(),
         hat_id: "hat-1".into(),
         title: None,
+        title_source: None,
         lifecycle: "active".into(),
         activity: Some("running".into()),
         failure_reason: None,
@@ -232,6 +233,7 @@ fn bare_item() -> hennery_proto::rest::SessionItem {
 fn session_detail_leaves_out_absent_optionals() {
     use hennery_proto::rest::{OpenTurn, SessionDetail};
     let detail = SessionDetail {
+        configuration_error: None,
         session: bare_item(),
         open_turn: Some(OpenTurn {
             turn_id: "t".into(),
@@ -335,6 +337,7 @@ fn a_listed_item_stays_under_1_kib_with_every_field_at_its_worst() {
         cwd: format!("/{}", "\"\\😀".repeat(15)) + &"x".repeat(7),
         hat_id: "hat-0123456789abcdef".into(),
         title: Some("\"".repeat(500)),
+        title_source: Some(hennery_proto::rest::TitleSource::Operator),
         lifecycle: "starting".into(),
         activity: Some("blocked".into()),
         failure_reason: Some("\\".repeat(16)),

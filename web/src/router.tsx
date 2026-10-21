@@ -1,11 +1,15 @@
 // A small router for real links (frontend spec §2): a push or a reload opens
 // the view its URL names (F-19). History API only; no dependency.
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent, type Ref } from 'react'
+import { safeNext } from './api/next'
 
 export type RouteName =
   | 'setup'
   | 'login'
   | 'sessions'
+  | 'needs-you'
+  | 'more'
+  | 'defaults'
   | 'session'
   | 'new'
   | 'hosts'
@@ -24,6 +28,9 @@ const STATIC: Record<string, RouteName> = {
   '/setup': 'setup',
   '/login': 'login',
   '/sessions': 'sessions',
+  '/needs-you': 'needs-you',
+  '/more': 'more',
+  '/defaults': 'defaults',
   '/new': 'new',
   '/hosts': 'hosts',
   '/mcp': 'mcp',
@@ -53,9 +60,20 @@ const CHANGE = 'hennery:navigate'
 /** Go to `to`, a path of this app: a new history entry, or this one
  *  replaced. */
 export function navigate(to: string, options: { replace?: boolean } = {}): void {
-  if (options.replace) history.replaceState(null, '', to)
-  else history.pushState(null, '', to)
+  const before = location.pathname + location.search
+  const source = match(location.pathname).name
+  const state = to.split('?')[0] === '/new' && !['setup', 'login', 'new', 'not_found'].includes(source) ? { launcherFrom: before } : null
+  if (options.replace) history.replaceState(state, '', to)
+  else history.pushState(state, '', to)
   window.dispatchEvent(new Event(CHANGE))
+}
+
+/** R4's route frame consumes this safe return seam; never Back into a foreign site. */
+export function launcherReturn(): string {
+  const raw: unknown = history.state?.launcherFrom
+  const path = safeNext(typeof raw === 'string' ? raw : null, location.origin)
+  const name = match(path.split('?')[0]).name
+  return ['setup', 'login', 'new', 'not_found'].includes(name) ? '/sessions' : path
 }
 
 function subscribe(onChange: () => void): () => void {

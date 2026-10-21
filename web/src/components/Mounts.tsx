@@ -17,9 +17,10 @@ interface Props {
   /** `null` while they load or when they could not be read. */
   hosts: HostItem[] | null
   onChanged: (connection: McpConnectionItem) => void
+  compact?: boolean
 }
 
-export default function Mounts({ connection, hosts, onChanged }: Props) {
+export default function Mounts({ connection, hosts, onChanged, compact = false }: Props) {
   const client = useClient()
   // A ref, not state: two ticks in one frame both see the first.
   const running = useRef(false)
@@ -45,7 +46,7 @@ export default function Mounts({ connection, hosts, onChanged }: Props) {
   }
 
   return (
-    <fieldset className="mounts" disabled={hosts === null} aria-busy={busy}>
+    <fieldset className={`mounts${compact ? ' mounts-compact' : ''}`} disabled={hosts === null} aria-busy={busy}>
       <legend>Hosts whose sessions get it</legend>
       {hosts !== null && live.length === 0 && <p className="hint">No host is paired yet.</p>}
       {live.map((host) => (
@@ -58,11 +59,12 @@ export default function Mounts({ connection, hosts, onChanged }: Props) {
           />
           <Text>{host.name}</Text>
         </label>
+        <details className="mount-predictions" open={!compact || undefined}><summary>Delivery details for <Text>{host.name}</Text></summary>
         {Object.keys(host.mcp_delivery ?? {}).length === 0
           ? <p className="hint">MCP delivery is unknown for this host’s agents.</p>
           : Object.keys(host.mcp_delivery ?? {}).map((agent) => (
             <McpPrediction key={agent} host={host} agent={agent} hatId={connection.hat_id} />
-          ))}
+          ))}</details>
         </div>
       ))}
       {error && (

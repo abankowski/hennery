@@ -262,6 +262,7 @@ describe('SessionView', () => {
       resume: () => { count = 2; return json({ session_id: ID, lifecycle: 'active' }, 202) },
     })
     render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
+    await showDetailsTab('Details')
     await waitFor(() => expect(screen.getByRole('region', { name: 'MCP delivery' })).toHaveTextContent('1 MCP servers.'))
     fireEvent.click(screen.getByRole('button', { name: 'Resume' }))
     await waitFor(() => expect(screen.getByRole('region', { name: 'MCP delivery' })).toHaveTextContent('2 MCP servers.'))
@@ -325,6 +326,7 @@ describe('SessionView', () => {
     expect(screen.getByText('Waiting on a question')).toBeInTheDocument()
     await screen.findByText('t5-0')
     expect(s.of(DETAIL)).toHaveLength(1)
+    await showDetailsTab('Details')
     expect(screen.getByRole('region', { name: 'MCP delivery' })).toHaveTextContent('MCP delivery is unknown.')
   })
 
@@ -386,13 +388,14 @@ describe('SessionView', () => {
     }
   })
 
-  it('shows the newest plan’s steps in the header', async () => {
+  it('shows the newest plan’s steps in the Plan panel', async () => {
     const plan = (id: string, step: string) =>
       ({ id, version: 1, ts: '2026-10-02T10:00:00.000Z', turn_id: 't5', kind: 'plan', entries: [{ content: step, status: 'in_progress' }] }) as Item
     const s = server({ pages: [() => json(page([plan('p1', 'old step'), plan('p2', 'new step')]))] })
     const { container } = render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
     await screen.findAllByText('new step')
-    const header = container.querySelector('.session > .steps') as HTMLElement
+    await showDetailsTab('Plan')
+    const header = container.querySelector('.session-details .steps') as HTMLElement
     expect(within(header).getAllByText('new step').length).toBeGreaterThan(0)
     expect(within(header).queryByText('old step')).toBeNull()
   })
@@ -407,11 +410,11 @@ describe('SessionView', () => {
     await waitFor(() => expect(container.querySelector('.marker')?.textContent).toContain('from Work to Home'))
   })
 
-  it('fetches no hats when no item names one', async () => {
+  it('reads hats once for the actual session accent even without a reassignment', async () => {
     const s = server({ pages: [() => json(page(rows(1, 't5')))] })
     render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
     await screen.findByText('t5-0')
-    expect(s.of('/api/hats')).toHaveLength(0)
+    expect(s.of('/api/hats')).toHaveLength(1)
   })
 
   it('has a way back to the list', async () => {
@@ -420,7 +423,7 @@ describe('SessionView', () => {
     expect(await screen.findByRole('link', { name: 'Back to sessions' })).toHaveAttribute('href', '/sessions')
   })
 
-  it('starts the header’s steps closed on a phone', async () => {
+  it('keeps the phone details closed and the transcript plan reachable', async () => {
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: query === '(max-width: 767px)',
       addEventListener: () => {},
@@ -430,7 +433,8 @@ describe('SessionView', () => {
     const s = server({ pages: [() => json(page([plan]))] })
     const { container } = render(<SessionView id={ID} timing={FAST} />, { wrapper: s.wrapper })
     await screen.findAllByText('a')
-    expect((container.querySelector('.session > .steps') as HTMLDetailsElement).open).toBe(false)
+    expect(screen.getByRole('button', { name: 'Session details' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('tab', { name: 'Plan' })).not.toBeInTheDocument()
     expect((container.querySelector('.transcript .steps') as HTMLDetailsElement).open).toBe(true)
   })
 })
@@ -550,3 +554,10 @@ describe('the tail window', () => {
     expect(scroller().scrollTop).toBe(4 * ROW - VIEW)
   })
 })
+
+async function showDetailsTab(name: 'Family' | 'Plan' | 'Details') {
+  fireEvent.click(screen.getByRole('button', { name: 'Session details' }))
+  const tab = screen.queryByRole('tab', { name })
+  if (tab) fireEvent.click(tab)
+  else await screen.findByRole('region', { name })
+}

@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
 import App from '../App'
-import { hat, host, preview } from '../test-fixtures'
+import { connection, hat, host, preview } from '../test-fixtures'
 import { FULL, json, stubServer, type Answer } from '../test-server'
 import { loadManageCss, shortTargets } from '../test-targets'
 
@@ -18,6 +18,7 @@ function open(routes: Record<string, Answer | Answer[]> = {}) {
     'GET /api/capabilities': json(200, FULL),
     'GET /api/hats': json(200, [PERSONAL, WORK]),
     'GET /api/hosts': json(200, [host()]),
+    'GET /api/mcp/connections': json(200, []),
     'GET /api/hosts/host-1/path-rules': json(200, []),
     'POST /api/auth/step-up/password': new Response(null, { status: 204 }),
     ...routes,
@@ -36,6 +37,40 @@ const sent = (server: ReturnType<typeof stubServer>, method: string, path: strin
   server.sent.filter((s) => s.method === method && s.path === path)
 
 describe('the hats', () => {
+  it('shows saved overrides from the defaults API for configured agents on active hosts', async () => {
+    const server = open({
+      'GET /api/hosts': json(200, [host({ mcp_delivery: { custom: 'isolated' } }), host({ host_id: 'revoked', revoked_at: 'today', mcp_delivery: { removed: 'isolated' } })]),
+      'GET /api/hats/hat-a/session-defaults?agent=custom': json(200, { hat_id: 'hat-a', agent: 'custom', revision: 1, config: {} }),
+      'GET /api/hats/hat-b/session-defaults?agent=custom': json(200, { hat_id: 'hat-b', agent: 'custom', revision: 2, config: { model: 'stored-model', axes: { fast: false } } }),
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    expect(await within(work).findByText('stored-model', { exact: true })).toBeVisible()
+    expect(within(work).getByText('Off', { exact: true })).toBeVisible()
+    expect(within(work).queryByRole('option', { name: 'removed' })).toBeNull()
+    expect(within(work).getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat-b&agent=custom')
+    expect(server.sent.filter(row => row.path.includes('session-defaults')).every(row => row.method === 'GET')).toBe(true)
+  })
+  it('qualifies gateway connections by actual mounts on non-revoked hosts', async () => {
+    open({
+      'GET /api/hosts': json(200, [host(), host({ host_id: 'gone', name: 'Revoked machine', revoked_at: '2026-10-20' })]),
+      'GET /api/mcp/connections': json(200, [connection({ label: 'Project docs', hat_id: 'hat-b', mounts: ['host-1'] }), connection({ id: 'other', label: 'Archive docs', hat_id: 'hat-b', mounts: ['gone'] })]),
+    })
+    const work = await screen.findByRole('listitem', { name: 'Work' })
+    await waitFor(() => expect(within(work).getByText('Project docs — on laptop, Archive docs — not mounted on a paired host', { exact: true })).toBeVisible())
+    expect(work).not.toHaveTextContent('Revoked machine')
+  })
+  it('derives Default on from live owned hosts and links each hat to Defaults without rendering its logo', async () => {
+    open({
+      'GET /api/hats': json(200, [hat({ ...PERSONAL, logo: 'private-logo' }), WORK]),
+      'GET /api/hosts': json(200, [host(), host({ host_id: 'gone', name: 'Revoked machine', revoked_at: '2026-10-20' })]),
+    })
+    const personal = await screen.findByRole('listitem', { name: 'Personal' })
+    await waitFor(() => expect(within(personal).getByText('laptop', { exact: true })).toBeVisible())
+    expect(within(personal).queryByText('Revoked machine', { exact: true })).toBeNull()
+    expect(within(personal).getByRole('link', { name: 'Session defaults' })).toHaveAttribute('href', '/defaults?hat=hat-a')
+    expect(personal.querySelector('img')).toBeNull()
+    expect(within(screen.getByRole('listitem', { name: 'Work' })).getByText('No hosts', { exact: true })).toBeVisible()
+  })
   it('lists each hat with its colour, the default for new hosts marked', async () => {
     open()
     const personal = await screen.findByRole('listitem', { name: 'Personal' })
@@ -52,7 +87,7 @@ describe('the hats', () => {
   it('creates a hat with no step-up', async () => {
     const created = hat({ id: 'hat-c', name: 'Clients', colour: '#64748b' })
     const server = open({ 'POST /api/hats': json(201, created) })
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' })); await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     expect(await screen.findByRole('listitem', { name: 'Clients' })).toBeInTheDocument()
     expect(sent(server, 'POST', '/api/hats')[0].body).toEqual({ name: 'Clients', colour: '#64748b' })
@@ -60,7 +95,7 @@ describe('the hats', () => {
 
   it('asks for another name when it is taken', async () => {
     open({ 'POST /api/hats': json(409, { code: 'name_taken', message: 'm' }) })
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'work')
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' })); await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'work')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Another hat has this name.')
   })
@@ -103,6 +138,7 @@ describe('the hats', () => {
     })
     const work = await screen.findByRole('listitem', { name: 'Work' })
     await userEvent.click(within(work).getByRole('button', { name: 'Make default for new hosts' }))
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' }))
     await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Clients')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     expect(await screen.findByRole('listitem', { name: 'Clients' })).toBeInTheDocument()
@@ -118,7 +154,7 @@ describe('the hats', () => {
       'PATCH /api/hats/hat-b': json(200, hat({ default_for_new_hosts: true })),
       'POST /api/hats': () => new Promise<Response>((resolve) => (answerCreate = resolve)),
     })
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' })); await userEvent.type(await screen.findByRole('textbox', { name: 'Name' }), 'Clients')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     await userEvent.click(within(screen.getByRole('listitem', { name: 'Work' })).getByRole('button', { name: 'Make default for new hosts' }))
     await waitFor(() => expect(within(screen.getByRole('listitem', { name: 'Work' })).getByText('Default for new hosts')).toBeInTheDocument())
@@ -157,6 +193,7 @@ describe('the hats', () => {
 
   it('puts focus back in the name after a hat is created', async () => {
     open({ 'POST /api/hats': json(201, hat({ id: 'hat-c', name: 'Clients' })) })
+    await userEvent.click(await screen.findByRole('button', { name: '+ New hat' }))
     const name = await screen.findByRole('textbox', { name: 'Name' })
     await userEvent.type(name, 'Clients')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))

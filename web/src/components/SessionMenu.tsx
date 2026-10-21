@@ -1,3 +1,4 @@
+import SessionName from './SessionNames'
 // The session header's menu (frontend spec §6.6): Park, Close and "Delete
 // session".
 //
@@ -18,23 +19,27 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { ApiFailure } from '../api/errors'
 import { close, deleteSession, park } from '../api/turns'
 import { useClient } from '../app-client'
-import type { DeleteResult } from '../generated/protocol'
+import type { DeleteResult, IdleHoldState } from '../generated/protocol'
 import type { FamilySummary } from '../generated/view'
 import { Link } from '../router'
 import { agentLabel } from '../lib/agent'
 import { sessionPath } from './SessionRow'
-import { Icon } from '../lib/ui'
+import { Icon } from './ui'
 import ConfirmDialog from './ConfirmDialog'
 import { closeRefusal, deleteRefusal, parkRefusal } from './sessionWords'
 
 interface Props {
+  onRename?: () => void
   id: string
   /** The session's lifecycle; undefined while unknown (Delete only). */
-  lifecycle?: string
+  lifecycle: string | undefined
   /** Already owner/hat-filtered family metadata from the current view. */
   family?: FamilySummary
   /** The session's host announced the `park` capability. */
   canPark: boolean
+  /** Undefined until host metadata is known; the DTO records intent, not acknowledgement. */
+  supportsIdleHold?: boolean
+  hostConnected?: boolean
   /** The session was deleted (`undefined`: a server that answers 204, or
    *  a session already gone). */
   onDeleted: (result: DeleteResult | undefined) => void
@@ -43,18 +48,45 @@ interface Props {
   focusAfterDelete?: () => HTMLElement | null
 }
 
-export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted, focusAfterDelete }: Props) {
+export default function SessionMenu({ id, lifecycle, family, canPark, supportsIdleHold, hostConnected, onDeleted, focusAfterDelete, onRename }: Props) {
   const client = useClient()
   const menuId = useId()
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [hold, setHold] = useState<IdleHoldState | null>(null)
+  const [pinBusy, setPinBusy] = useState(false)
+  const pinGeneration = useRef(0)
   const trigger = useRef<HTMLButtonElement>(null)
   const box = useRef<HTMLDivElement>(null)
 
   const showPark = lifecycle === 'active' && canPark
   const showClose = lifecycle !== undefined && lifecycle !== 'closed'
+  const holdNote = !hold ? null : supportsIdleHold === false ? 'Parking hold saved; update the host to enforce it.' : hostConnected === false ? 'Parking hold saved; it applies after the host reconnects.' : supportsIdleHold === undefined || hostConnected === undefined ? 'Host enforcement of parking holds is unconfirmed.' : !hold.held ? null : hold.pinned ? 'You requested a parking hold.' : hold.family_active ? 'Family work requests a parking hold.' : 'Pending updates request a parking hold.'
+
+  useEffect(() => {
+    const current = ++pinGeneration.current
+    if (!open) return
+    setHold(null); setError(null); setPinBusy(true)
+    client.request<IdleHoldState>('GET', `/api/sessions/${encodeURIComponent(id)}/idle-hold`).then(value => {
+      if (pinGeneration.current === current) setHold(value)
+    }, () => { if (pinGeneration.current === current) setError('Automatic parking settings could not be read. Reopen this menu to retry.') })
+      .finally(() => { if (pinGeneration.current === current) setPinBusy(false) })
+    return () => { pinGeneration.current++ }
+  }, [client, id, open])
+
+  const togglePin = async () => {
+    if (!hold || pinBusy) return
+    const current = pinGeneration.current
+    setPinBusy(true); setError(null)
+    try {
+      const value = await client.request<IdleHoldState>('PATCH', `/api/sessions/${encodeURIComponent(id)}/idle-hold`, { pinned: !hold.pinned })
+      if (pinGeneration.current === current) setHold(value)
+    } catch {
+      if (pinGeneration.current === current) setError('Automatic parking settings could not be saved. Your previous preference is kept.')
+    } finally { if (pinGeneration.current === current) setPinBusy(false) }
+  }
 
   // A click anywhere outside closes the menu.
   useEffect(() => {
@@ -68,7 +100,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
 
   // Opened: focus its first entry.
   useEffect(() => {
-    if (open) box.current?.querySelector<HTMLElement>('.session-menu-list button')?.focus()
+    if (open) box.current?.querySelector<HTMLElement>('.session-menu-list button:not([disabled])')?.focus()
   }, [open])
 
   const dismiss = () => {
@@ -125,12 +157,15 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
         aria-controls={open ? menuId : undefined}
         onClick={() => setOpen((o) => !o)}
       >
-        <Icon.Menu size={18} />
+        <Icon name="ellipsis-horizontal" size={18} />
       </button>
       {open && (
         <div className="session-menu-list" id={menuId}>
+          {onRename && <button type="button" onClick={() => { setOpen(false); onRename() }}>Rename</button>}
+          <button type="button" role="switch" aria-label="Do not park" aria-checked={hold?.pinned ?? false} disabled={busy || pinBusy || hold === null} onClick={() => void togglePin()}><span>Do not park</span><span className="idle-hold-state" aria-hidden="true">{hold ? hold.pinned ? '✓ On' : 'Off' : '…'}</span></button>
+          {holdNote && <p className="idle-hold-note" role="status">{holdNote}</p>}
           {showPark && (
-            <button type="button" disabled={busy} onClick={() => void act(() => park(client, id), parkRefusal)}>
+            <button type="button" disabled={busy || hostConnected === false} title={hostConnected === false ? 'The host is offline' : undefined} onClick={() => void act(() => park(client, id), parkRefusal)}>
               Park
             </button>
           )}
@@ -139,6 +174,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
               Close
             </button>
           )}
+          <hr />
           <button
             type="button"
             className="danger"
@@ -178,7 +214,7 @@ export default function SessionMenu({ id, lifecycle, family, canPark, onDeleted,
           {family && <>
             <p>Copies already delivered to related sessions remain in their transcripts. Those sessions are kept.</p>
             <ul aria-label="Related sessions">
-              {[...(family.parent ? [family.parent] : []), ...family.children].map(related => <li key={related.session_id}><Link to={sessionPath(related.session_id)}><bdi>{related.title || agentLabel(related.agent)}</bdi></Link></li>)}
+              {[...(family.parent ? [family.parent] : []), ...family.children].map(related => <li key={related.session_id}><Link to={sessionPath(related.session_id)}><SessionName session={related} fallback={agentLabel(related.agent)} /></Link></li>)}
             </ul>
           </>}
           <p>The agent’s own transcript on the host is removed too, where the host can.</p>

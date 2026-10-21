@@ -80,6 +80,7 @@ const components: Components = {
       <a {...props} target="_blank" rel="noopener noreferrer" />
     ),
   img: MarkdownImage,
+  table: ({ node: _node, ...props }: ComponentProps<'table'> & { node?: unknown }) => <div className="md-table-scroll"><table {...props} /></div>,
 }
 
 export default function Markdown({ children }: { children: string }) {

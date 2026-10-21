@@ -6,11 +6,13 @@ import { navigate } from '../router'
 import { BrowserPush } from './device'
 import { pushJournal } from './journal'
 import { bounded, setCleanupWarning } from './lifecycle'
+import { clearDismissedAttention } from '../lib/dismissedAttention'
 
 // Called only after confirmed logout/current-login revocation, or its
 // same-origin broadcast. Expiry's 401 deliberately does not call this.
 export async function completeLogout(client: Client, broadcast = true): Promise<void> {
   forgetAllDrafts(); forgetAllAttachments(); forgetAllSends()
+  clearDismissedAttention()
   navigate('/login') // Unmount all authenticated stores and question inputs.
   if (broadcast && typeof BroadcastChannel !== 'undefined') {
     const channel = new BroadcastChannel('hennery-auth')

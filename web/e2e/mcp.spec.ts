@@ -1,3 +1,4 @@
+import { captureManagement } from './management-captures'
 // The MCP gateway's connections in a real browser, against the real binary
 // (plan 4e-i): a connection created with a step-up, its token set with a
 // step-up and gone from the page at once, and mounted on a host paired with
@@ -116,10 +117,12 @@ for (const width of [1280, 390]) {
       await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Docs')
       await form.getByRole('textbox', { name: 'Slug', exact: true }).fill('docs')
       await form.getByRole('textbox', { name: 'Server URL', exact: true }).fill('https://mcp.example.com/mcp')
+      await captureManagement(page, 'mcp-add', 'Desktop mcp / add connection')
       await form.getByRole('button', { name: 'Create', exact: true }).click()
       await stepUp(page)
       const card = page.getByRole('listitem', { name: 'Docs', exact: true })
       await expect(card.getByRole('heading', { name: 'Docs', exact: true })).toBeFocused()
+      await card.locator('.connection-settings > summary').click()
       await expect(card.getByText('hennery-docs', { exact: true })).toBeVisible()
       await expect(card.getByText('Not used yet', { exact: true })).toBeVisible()
       await expect(card.getByText('Not set yet', { exact: true })).toBeVisible()
@@ -158,6 +161,7 @@ for (const width of [1280, 390]) {
       await expect(tick).not.toBeChecked()
       // Ticked once the server's answer lands, not before: a click, not
       // check(), which wants the box ticked at once.
+      await captureManagement(page, 'mcp-token-mounts', 'Desktop mcp / gateway mounts')
       await tick.click()
       await expect(tick).toBeChecked()
       await expect(tick).toBeFocused()

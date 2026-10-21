@@ -33,6 +33,8 @@ pub fn render_schema() -> String {
         )*};
     }
     add!(
+        crate::session_defaults::HatSessionDefaults,
+        crate::session_defaults::PutHatSessionDefaults,
         rest::SetIdlePinRequest,
         rest::IdleHoldState,
         plugin_management::RegisterPluginRequest,
@@ -89,6 +91,7 @@ pub fn render_schema() -> String {
         rest::ApiError,
         rest::LifecycleResponse,
         rest::SessionItem,
+        rest::TitleSource,
         rest::SessionPage,
         rest::SessionDetail,
         rest::CancelResponse,
@@ -228,6 +231,8 @@ pub fn render_ts() -> String {
         )*};
     }
     add!(
+        crate::session_defaults::HatSessionDefaults,
+        crate::session_defaults::PutHatSessionDefaults,
         rest::SetIdlePinRequest,
         rest::IdleHoldState,
         plugin_management::RegisterPluginRequest,
@@ -322,6 +327,7 @@ pub fn render_ts() -> String {
         rest::LifecycleResponse,
         rest::OpenTurn,
         rest::SessionItem,
+        rest::TitleSource,
         rest::SessionPage,
         rest::SessionDetail,
         rest::CancelResponse,

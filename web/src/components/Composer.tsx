@@ -42,15 +42,19 @@ import {
   withoutMarker,
   type Attachment,
 } from '../lib/attachments'
-import { commands, configOptions, matchCommands, type Choice, type Command, type ConfigOption } from '../lib/catalog'
+import { commands, configOptions, matchCommands, type Command, type ConfigOption } from '../lib/catalog'
 import { loadDraft, saveDraft } from '../lib/drafts'
 import { sendingFor, track } from '../lib/sending'
 import { undeliveredDraft, type DraftPart } from '../lib/sendAgain'
 import { Icon } from '../lib/ui'
-import { CANCEL_OUTCOME, SEND_AGAIN_LABEL, cancelRefusal, configRefusal, promptRefusal } from './composerWords'
+import SessionConfig from './SessionConfig'
+import ComposerSettings, { SettingsSummary } from './ComposerSettings'
+import { modelLabel } from '../lib/agent'
+import { CANCEL_OUTCOME, SEND_AGAIN_LABEL, cancelRefusal, configRefusal, isBusyTurn, promptRefusal } from './composerWords'
 
 /** What the session screen may ask of its composer. */
 export interface ComposerHandle {
+  focus(): void
   /** Put `text` in the draft, after what is there (an empty draft is
    *  replaced), with `label` shown above it until it is sent; the cursor
    *  goes to its end. Sends nothing. */
@@ -84,6 +88,7 @@ export interface ComposerProps {
    *  rejects with the refusal to show. The view passes its one resume, the
    *  one its footer's Resume goes through. */
   onResume: () => Promise<unknown>
+  onJumpToQuestion?: () => void
   /** The handle above, bound to the composer of the session shown. */
   handle?: Ref<ComposerHandle>
 }
@@ -104,12 +109,13 @@ interface Notice {
   text: string
   /** Offer "Resume and send" (a prompt refused with `not_attached`). */
   resume?: boolean
+  busyTurn?: boolean
 }
 
 /** How a send ended: sent (a 202), or refused, saying why. */
 type Outcome = { sent: true } | { sent: false; notice: Notice }
 
-function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, handle }: ComposerProps) {
+function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, onJumpToQuestion, handle }: ComposerProps) {
   const client = useClient()
   const ids = useId()
   const [text, setText] = useState(() => loadDraft(sessionId))
@@ -136,8 +142,11 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   // until the next such action or the next send, never cleared by a send's
   // answer (a refusal made while it was in flight would vanish with it).
   const [draftError, setDraftError] = useState<string | null>(null)
+  const configNow = useRef(false)
   const [pendingConfig, setPendingConfig] = useState<Record<string, ConfigValue>>({})
   const [configError, setConfigError] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsTrigger = useRef<HTMLButtonElement>(null)
   const [sel, setSel] = useState(0)
   const [dismissed, setDismissed] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -148,6 +157,12 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   const cursor = useRef<number | null>(null)
 
   useEffect(() => saveDraft(sessionId, text), [sessionId, text])
+  useLayoutEffect(() => {
+    const ta = taRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = text ? `${Math.min(ta.scrollHeight, 160)}px` : ''
+  }, [text])
 
   // Put the cursor after markers just spliced in.
   useLayoutEffect(() => {
@@ -165,7 +180,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   const canResume = session?.lifecycle !== 'starting'
   // Nothing to send: Send and "Resume and send" both wait for words.
   const blank = text.trim() === ''
-  const canSend = !sending && !inFlight && !blank
+  const canSend = !sending && !inFlight && !blank && Object.keys(pendingConfig).length === 0
 
   // The draft as last rendered, for the handle and for a refill that
   // answers later.
@@ -185,6 +200,9 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   }, [])
 
   const options = configOptions(catalog)
+  const actualValue = (option: ConfigOption) => option.kind === 'boolean' ? `${option.name} ${option.current === true ? 'on' : 'off'}` : option.choices.find(choice => choice.value === option.current)?.name || String(option.current)
+  const summaryOptions = options.filter(option => ['model', 'mode', 'thought_level'].includes(option.category ?? '') || ['model', 'mode', 'effort', 'reasoning_effort'].includes(option.id))
+  const configSummary = summaryOptions.map(option => modelLabel(actualValue(option))).join(' · ') || 'Session settings'
   const cmds = commands(catalog)
   // The slash menu: the text starts with `/` and has no space yet.
   const query = !dismissed && /^\/\S*$/.test(text) ? text.slice(1) : null
@@ -258,6 +276,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   }
 
   useImperativeHandle(handle, () => ({
+    focus: () => taRef.current?.focus(),
     // Words an agent wrote never link a held image. A turn put back is the
     // operator's own, and goes back as it was sent.
     prefill: (words: string, why?: string) => addToDraft([{ type: 'text', text: inertMarkers(words) }], why ?? null),
@@ -308,7 +327,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
     } catch (err) {
       return {
         sent: false,
-        notice: { text: promptRefusal(err), resume: err instanceof ApiFailure && err.code === 'not_attached' },
+        notice: { text: promptRefusal(err), resume: err instanceof ApiFailure && err.code === 'not_attached', busyTurn: isBusyTurn(err) },
       }
     }
     saveDraft(sessionId, '')
@@ -348,7 +367,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   }
 
   function send() {
-    if (canSend) begin(deliver)
+    if (canSend && !configNow.current) begin(deliver)
   }
 
   /** Resume, then send; tracked as one send, so a composer mounted again
@@ -384,12 +403,16 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   /** Show the pick at once; the agent's answer replaces it, a refusal
    *  takes it back. */
   async function switchConfig(option: ConfigOption, value: ConfigValue) {
-    const settle = () =>
+    if (configNow.current) return
+    configNow.current = true
+    const settle = () => {
+      configNow.current = false
       setPendingConfig((p) => {
         const rest = { ...p }
         delete rest[option.id]
         return rest
       })
+    }
     setPendingConfig((p) => ({ ...p, [option.id]: value }))
     setConfigError(null)
     let answer: SessionCatalog
@@ -403,6 +426,8 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
     }
     // Replaced by what the agent now reports, which may differ from the pick.
     onCatalog(answer)
+    const actual = configOptions(answer).find(candidate => candidate.id === option.id)
+    if (!actual || actual.current !== value) setConfigError(actual ? `${option.name}: the agent kept ${String(actual.current)} instead of ${String(value)}. Review its current setting before sending.` : `${option.name}: the agent did not confirm this setting. Review the current settings before sending.`)
     settle()
   }
 
@@ -453,24 +478,12 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
             {label}
           </p>
         )}
-        {options.length > 0 && (
-          <div className="composer-controls" role="group" aria-label="Session settings">
-            {options.map((option) => (
-              <Switcher
-                key={option.id}
-                option={option}
-                value={Object.hasOwn(pendingConfig, option.id) ? pendingConfig[option.id] : option.current}
-                busy={Object.hasOwn(pendingConfig, option.id)}
-                onPick={(value) => void switchConfig(option, value)}
-              />
-            ))}
-          </div>
-        )}
-        {configError && (
-          <p className="form-error" role="alert">
-            <bdi>{configError}</bdi>
-          </p>
-        )}
+        {settingsOpen && <ComposerSettings trigger={settingsTrigger} close={() => setSettingsOpen(false)}>
+          <div className="composer-controls" role="group" aria-label="Session settings">{options.map(option => <SessionConfig key={option.id} option={option} value={Object.hasOwn(pendingConfig, option.id) ? pendingConfig[option.id] : option.current} busy={Object.keys(pendingConfig).length > 0} onPick={value => void switchConfig(option, value)} />)}</div>
+          <p className="config-readback">Agent reports: <bdi>{options.map(option => `${option.name}: ${actualValue(option)}`).join(' · ') || 'No settings reported'}</bdi></p>
+          {Object.keys(pendingConfig).length > 0 && <p className="config-pending" role="status">Applying session settings…</p>}
+          {configError && <p className="form-error" role="alert"><bdi>{configError}</bdi></p>}
+        </ComposerSettings>}
         <div
           className={'composer-box' + (dragging ? ' dragging' : '')}
           onDragOver={(e) => {
@@ -528,12 +541,11 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
             placeholder={cmds.length > 0 ? 'Write a prompt… (/ for commands)' : 'Write a prompt…'}
             onChange={(e) => {
               edit(e.target.value)
-              e.target.style.height = 'auto'
-              e.target.style.height = `${e.target.scrollHeight}px`
             }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
+          {(options.length > 0 || configError || Object.keys(pendingConfig).length > 0) && <SettingsSummary trigger={settingsTrigger} summary={configSummary} expanded={settingsOpen} open={() => setSettingsOpen(true)} pending={Object.keys(pendingConfig).length > 0} warning={!!configError} />}
           {hostImages && (
             <>
               <input
@@ -602,17 +614,9 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
                 Resume and send
               </button>
             )}
+            {notice.busyTurn && onJumpToQuestion && <button className="btn btn-ghost btn-sm" type="button" onClick={onJumpToQuestion}>Go to open request</button>}
           </div>
         )}
-        <div className="composer-hint">
-          <span>
-            <kbd>⌘</kbd>/<kbd>Ctrl</kbd> <kbd>↵</kbd> to send
-          </span>
-          <span>·</span>
-          <span>
-            <kbd>↵</kbd> for a new line
-          </span>
-        </div>
       </div>
     </div>
   )
@@ -628,58 +632,4 @@ function Thumb({ file, n }: { file: File; n: number }) {
     return () => URL.revokeObjectURL(made)
   }, [file])
   return url ? <img src={url} alt={`Image #${n}`} /> : null
-}
-
-/** One config option: a select of its values, or an on/off box. */
-function Switcher({
-  option,
-  value,
-  busy,
-  onPick,
-}: {
-  option: ConfigOption
-  value: ConfigValue
-  busy: boolean
-  onPick: (value: ConfigValue) => void
-}) {
-  if (option.kind === 'boolean') {
-    return (
-      <label className="switcher">
-        <input type="checkbox" checked={value === true} disabled={busy} onChange={(e) => onPick(e.target.checked)} />
-        <bdi>{option.name}</bdi>
-      </label>
-    )
-  }
-  const current = String(value)
-  // A value the adapter reports but does not list is still shown as held.
-  const listed: Choice[] = option.choices.some((c) => c.value === current)
-    ? option.choices
-    : [{ value: current, name: current }, ...option.choices]
-  const groups: { name?: string; choices: Choice[] }[] = []
-  for (const c of listed) {
-    const last = groups[groups.length - 1]
-    if (last && last.name === c.group) last.choices.push(c)
-    else groups.push({ name: c.group, choices: [c] })
-  }
-  const render = (c: Choice) => (
-    <option key={c.value} value={c.value} title={c.description}>
-      {c.name}
-    </option>
-  )
-  return (
-    <label className="switcher">
-      <bdi>{option.name}</bdi>
-      <select aria-label={option.name} value={current} disabled={busy} onChange={(e) => onPick(e.target.value)}>
-        {groups.map((g, i) =>
-          g.name === undefined ? (
-            g.choices.map(render)
-          ) : (
-            <optgroup key={`${i}-${g.name}`} label={g.name}>
-              {g.choices.map(render)}
-            </optgroup>
-          ),
-        )}
-      </select>
-    </label>
-  )
 }

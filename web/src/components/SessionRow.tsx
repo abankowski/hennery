@@ -6,12 +6,14 @@
 // parked session. The row is a link to the session, so a new tab works.
 // A failed session's reason is on the marker's hover, and a tap on "Why"
 // beside the link shows it (a button inside the link would open the session).
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { SessionSummary } from '../generated/view'
-import { agentLabel } from '../lib/agent'
+import { agentLabel, modelLabel } from '../lib/agent'
 import { statusOf } from '../lib/status'
 import { basename, relTime } from '../lib/time'
 import { Link } from '../router'
+import { Icon } from './ui'
+import { useSessionName } from './SessionNames'
 
 export function sessionPath(id: string): string {
   return `/sessions/${encodeURIComponent(id)}`
@@ -31,26 +33,36 @@ interface Props {
   hostName?: string
   /** The list's clock (`useNow`): the relative time moves with it. */
   now: number
+  table?: boolean
+  indent?: boolean
+  childrenCount?: number
+  childrenStatus?: string
+  expanded?: boolean
+  onToggleChildren?: (id: string) => void
 }
 
-export default function SessionRow({ session, selected, hostName, now }: Props) {
+function SessionRow({ session, selected, hostName, now, table, indent, childrenCount = 0, childrenStatus, expanded = false, onToggleChildren }: Props) {
   const [why, setWhy] = useState(false)
   const status = statusOf(session)
-  const { title, where } = rowText(session)
+  const name = useSessionName(session)
+  const title = name.text, place = session.git_branch || basename(session.cwd)
+  const where = place === title ? '' : place
   const reason = status.tone === 'fail' ? session.failure_reason : undefined
   const markerTitle = reason ? `${status.label}: ${reason}` : status.label
-  return (
-    <div className="sess-item">
+  const content = (
+    <div className={'sess-item' + (indent ? ' sess-child' : '')}>
       <Link
         to={sessionPath(session.session_id)}
+        data-session-link
         className={'sess' + (selected ? ' active' : '')}
         aria-current={selected ? 'page' : undefined}
       >
         <div className="sess-row1">
-          <span className={'sess-led led-' + status.tone} role="img" aria-label={status.label} title={markerTitle} />
+          {indent && <span className="sess-branch" aria-hidden="true">↳</span>}
+          <span className={'sess-led led-' + status.tone} role="img" aria-label={status.label} title={markerTitle}><Icon name={status.tone === 'attn' ? 'hand-raised' : status.tone === 'run' ? 'play-circle' : status.tone === 'fail' ? 'exclamation-circle' : 'clock'} size={14} /></span>
           <span className="sess-kind sess-agent">{agentLabel(session.agent)}</span>
           <span className="sess-name">
-            <bdi>{title}</bdi>
+            <bdi className={name.provisional ? 'session-name-provisional' : undefined}>{title}</bdi>
           </span>
           <span className="sess-time">{relTime(session.last_event_at, now)}</span>
         </div>
@@ -71,11 +83,7 @@ export default function SessionRow({ session, selected, hostName, now }: Props) 
           {status.resume && <span className="sess-resume">Resume</span>}
         </div>
       </Link>
-      {session.family && <div className="sess-family">
-        {session.family.parent && <Link to={sessionPath(session.family.parent.session_id)}>Parent: <bdi>{session.family.parent.title || agentLabel(session.family.parent.agent)}</bdi></Link>}
-        {session.family.children.map(child => <Link key={child.session_id} to={sessionPath(child.session_id)}>Child: <bdi>{child.title || agentLabel(child.agent)}</bdi></Link>)}
-        {session.family.child_counts.total > session.family.children.length && <span>{session.family.child_counts.total} children</span>}
-      </div>}
+      {childrenCount > 0 && <button type="button" className="sess-children" aria-expanded={expanded} aria-label={`↳ ${childrenCount} ${childrenCount === 1 ? 'child' : 'children'}`} aria-description={childrenStatus || undefined} title={childrenStatus || 'Open the family to review child sessions'} onClick={() => onToggleChildren?.(session.session_id)}><span>↳ {childrenCount} {childrenCount === 1 ? 'child' : 'children'}</span>{childrenStatus && <span className="sess-children-status">{childrenStatus}</span>}</button>}
       {reason && (
         <>
           <button type="button" className="sess-why" aria-expanded={why} onClick={() => setWhy((open) => !open)}>
@@ -90,4 +98,6 @@ export default function SessionRow({ session, selected, hostName, now }: Props) 
       )}
     </div>
   )
+  return table ? <tr data-session-id={session.session_id}><td data-label="Session">{content}</td><td data-label="Doing"><span className={'row-status row-status-' + status.tone}>{status.label}</span></td><td data-label="Host"><bdi className="sess-cell-truncate" title={hostName}>{hostName || 'Unknown host'}</bdi></td><td data-label="Agent / model"><bdi className="sess-cell-truncate" title={session.model}>{agentLabel(session.agent)}{session.model ? ` · ${modelLabel(session.model)}` : ''}</bdi></td><td data-label="Last">{relTime(session.last_event_at, now)}</td></tr> : content
 }
+export default memo(SessionRow)

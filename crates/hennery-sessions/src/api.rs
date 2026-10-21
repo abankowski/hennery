@@ -359,6 +359,9 @@ async fn start_session(State(state): State<AppState>, ApiJson(req): ApiJson<Star
         Err(err) => return internal(err),
     };
     let request_id = uuid::Uuid::now_v7().to_string();
+    if let Err(err) = state.store.expect_initial_configuration(&session_id, &req.config) {
+        return internal(err);
+    }
     let frame = CollectorFrame::StartSession {
         request_id: request_id.clone(),
         session_id: session_id.clone(),
@@ -604,6 +607,7 @@ async fn session_detail(State(state): State<AppState>, Path(id): Path<String>) -
         Err(err) => return internal(err),
     };
     Json(SessionDetail {
+        configuration_error: session.configuration_error,
         session: item,
         open_turn,
         pending,
@@ -644,47 +648,67 @@ async fn update_session(
     Path(id): Path<String>,
     ApiJson(req): ApiJson<UpdateSessionRequest>,
 ) -> Response {
-    let Some(hat_id) = req.hat_id else {
-        return session_detail(State(state), Path(id)).await;
-    };
-    if !operator_session.stepped_up(unix_now()) {
-        return hennery_kernel::auth::step_up_required();
+    if req.title.as_ref().and_then(|t| t.as_ref()).is_some_and(|t| {
+        crate::store::one_line(
+            t,
+            hennery_proto::rest::TITLE_MAX_CHARS,
+            hennery_proto::rest::TITLE_MAX_JSON_BYTES,
+        )
+        .is_none()
+    }) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "invalid",
+            "title must contain visible text; use null to reset it",
+        );
     }
-    match state.store.reassign_hat(&id, &hat_id) {
-        Ok(Reassign::Done(event)) => {
-            tracing::info!(session_id = %id, %hat_id, "session re-assigned");
-            state.hub.publish(event);
+    if let Some(hat_id) = req.hat_id {
+        if !operator_session.stepped_up(unix_now()) {
+            return hennery_kernel::auth::step_up_required();
         }
-        Ok(Reassign::Unchanged) => {}
-        Ok(Reassign::PluginExposure) => {
-            return error(
-                StatusCode::CONFLICT,
-                "plugin_exposure",
-                "start a clean session to change hats after plug-in exposure",
-            );
+        match state.store.reassign_hat(&id, &hat_id) {
+            Ok(Reassign::Done(event)) => {
+                tracing::info!(session_id = %id, %hat_id, "session re-assigned");
+                state.hub.publish(event);
+            }
+            Ok(Reassign::Unchanged) => {}
+            Ok(Reassign::PluginExposure) => {
+                return error(
+                    StatusCode::CONFLICT,
+                    "plugin_exposure",
+                    "start a clean session to change hats after plug-in exposure",
+                );
+            }
+            Ok(Reassign::Attached(lifecycle)) => {
+                return error(
+                    StatusCode::CONFLICT,
+                    &lifecycle,
+                    match lifecycle.as_str() {
+                        "presumed_parked" => {
+                            "its host has been away and may still run it: close the session first".to_string()
+                        }
+                        other => format!("the session is {other}: park or close it first"),
+                    },
+                );
+            }
+            Ok(Reassign::UnknownHat) => return error(StatusCode::BAD_REQUEST, "invalid", "no such hat"),
+            Ok(Reassign::HatPurging) => {
+                return error(
+                    StatusCode::CONFLICT,
+                    "hat_purging",
+                    "the session's hat or the one it would move to is being purged",
+                );
+            }
+            Ok(Reassign::NotFound) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+            Err(err) => return internal(err),
         }
-        Ok(Reassign::Attached(lifecycle)) => {
-            return error(
-                StatusCode::CONFLICT,
-                &lifecycle,
-                match lifecycle.as_str() {
-                    "presumed_parked" => {
-                        "its host has been away and may still run it: close the session first".to_string()
-                    }
-                    other => format!("the session is {other}: park or close it first"),
-                },
-            );
+    }
+    if let Some(title) = req.title {
+        match state.store.rename_session(&id, title.as_deref()) {
+            Ok(Some(event)) => state.hub.publish(event),
+            Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+            Err(err) => return internal(err),
         }
-        Ok(Reassign::UnknownHat) => return error(StatusCode::BAD_REQUEST, "invalid", "no such hat"),
-        Ok(Reassign::HatPurging) => {
-            return error(
-                StatusCode::CONFLICT,
-                "hat_purging",
-                "the session's hat or the one it would move to is being purged",
-            );
-        }
-        Ok(Reassign::NotFound) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
-        Err(err) => return internal(err),
     }
     session_detail(State(state), Path(id)).await
 }
@@ -840,6 +864,9 @@ async fn prompt(
     };
     if session.lifecycle != "active" {
         return error(StatusCode::CONFLICT, "not_attached", "resume the session first");
+    }
+    if let Some(reason) = session.configuration_error {
+        return error(StatusCode::CONFLICT, "configuration_mismatch", reason);
     }
     if !checked.images.is_empty() {
         // A host that is gone has no capabilities: it is offline, not one
@@ -1604,9 +1631,13 @@ async fn stream_session(
             state.operator.clone(),
             operator_session,
         ));
-    Sse::new(stream)
+    let mut response = Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
-        .into_response()
+        .into_response();
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
 }
 
 /// The event after which a session's stream ends: its tombstone (plan 9a
@@ -1625,6 +1656,36 @@ fn with_end_mark(messages: Vec<Result<Event, Infallible>>, ends: bool) -> Vec<Op
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn session_stream_disables_proxy_buffering() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let state = AppState::new(
+            Store::open(&db).unwrap(),
+            hennery_kernel::hosts::Hosts::open(&db).unwrap(),
+            hennery_kernel::operator::Operator::open(&db).unwrap(),
+        );
+        state.store.create_session("s", "h", "a", "/p", "hat", None).unwrap();
+        let authenticated = Authenticated {
+            session_id: "test".into(),
+            owner_id: state.store.owner_id().into(),
+            last_step_up_at: None,
+            expires_at: i64::MAX,
+            slid: false,
+        };
+        let response = stream_session(
+            State(state),
+            Extension(authenticated),
+            Path("s".into()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "text/event-stream");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+        assert_eq!(response.headers().get("x-accel-buffering").unwrap(), "no");
+    }
 
     #[tokio::test]
     async fn review_reopening_event_updates_the_legacy_pending_stream() {

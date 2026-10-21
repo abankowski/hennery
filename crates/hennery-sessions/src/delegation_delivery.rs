@@ -6,6 +6,15 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 /// Called for applied host facts and collector facts in their own transaction.
 pub(crate) fn record_in(tx: &Transaction<'_>, owner: &str, event: &EventDto) -> Result<()> {
+    let closing: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sessions WHERE owner_id = ?1 AND id=?2
+        AND (close_requested=1 OR lifecycle IN ('closed','deleted')))",
+        params![owner, event.session_id],
+        |r| r.get(0),
+    )?;
+    if closing {
+        return Ok(());
+    }
     let pending = event.body.get("pending_id").and_then(serde_json::Value::as_str);
     let reason = event.body.get("reason").and_then(serde_json::Value::as_str);
     let turn = event.body.get("turn_id").and_then(serde_json::Value::as_str);
@@ -73,9 +82,20 @@ pub(crate) fn record_in(tx: &Transaction<'_>, owner: &str, event: &EventDto) -> 
         crate::delegation_attention::record_orphan_in(tx, owner, event, kind, &incident, pending)?;
         return Ok(());
     };
+    let parent_closed: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sessions WHERE owner_id = ?1 AND id=?2
+        AND (close_requested=1 OR lifecycle IN ('closed','deleted')))",
+        params![owner, parent],
+        |r| r.get(0),
+    )?;
+    if parent_closed && !crate::delegation_attention::child_needs_human(tx, owner, &event.session_id)? {
+        return Ok(());
+    }
     let permission = kind == "question" && tx.query_row("SELECT EXISTS(SELECT 1 FROM pending WHERE owner_id = ?1 AND session_id = ?2 AND pending_id = ?3 AND kind = 'permission')",params![owner,event.session_id,pending],|r|r.get::<_,bool>(0))?;
     let queued:i64 = tx.query_row("SELECT COUNT(*) FROM delegation_notices WHERE owner_id = ?1 AND parent_id = ?2 AND state IN ('parent_queued','waiting_config')",params![owner,parent],|r|r.get(0))?;
-    let disposition = if !eligible {
+    let disposition = if parent_closed {
+        Some("parent_closed_child_needs_human")
+    } else if !eligible {
         Some("parent_unavailable")
     } else if permission {
         Some("operator_required")

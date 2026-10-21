@@ -29,6 +29,7 @@ pub mod projects;
 pub mod push;
 mod redact;
 mod resolve;
+mod session_defaults_api;
 pub mod session_tools;
 mod shared_files;
 pub mod startup;
@@ -196,6 +197,7 @@ pub fn router(state: AppState) -> Router {
         .merge(builtin::policy_router(state.clone()))
         .merge(hosts::router(state.clone()))
         .merge(hats::router(state.clone()))
+        .merge(session_defaults_api::router(state.clone()))
         .merge(projects::router(state.clone()))
         .merge(push::router(state.clone()))
         .merge(view::router(state.clone()))

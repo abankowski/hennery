@@ -29,7 +29,7 @@ async function show(detail: Partial<SessionDetail> = {}, opts: Opts = {}, onRemo
 
 const trigger = () => screen.getByRole('button', { name: 'Session actions' })
 const entries = () =>
-  [...(document.querySelector('.session-menu-list')?.querySelectorAll('button') ?? [])].map((b) => b.textContent)
+  [...(document.querySelector('.session-menu-list')?.querySelectorAll('button') ?? [])].map((b) => b.getAttribute('aria-label') || b.textContent)
 const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s+/g, ' ').trim()
 
 function openMenu() {
@@ -43,26 +43,35 @@ function pick(name: string) {
 }
 
 describe('SessionView: the header menu', () => {
+  it('passes an active list summary and connected host capabilities to the actual header menu', async () => {
+    const r = sessionServer({ hosts: PARK_HOST })
+    const summary = { session_id: 's1', host_id: 'h1', hat_id: 'hat1', agent: 'claude', cwd: '/srv/work/project', lifecycle: 'active', activity: 'idle', presumed_parked: false, created_at: '2026-10-01T00:00:00Z', last_event_at: '2026-10-02T00:00:00Z', question_waits: false, operator_attention: 0, parent_handled_questions: 0 }
+    render(<SessionView id="s1" summary={summary} awaitSummary timing={FAST} />, { wrapper: r.wrapper })
+    await screen.findByText('Online', { exact: true })
+    openMenu()
+    expect(screen.getByRole('button', { name: 'Park' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled()
+  })
   it('an active session on a host that parks offers Park, Close and Delete', async () => {
     await show()
     expect(trigger()).toHaveAttribute('aria-expanded', 'false')
     expect(document.querySelector('.session-menu-list')).toBeNull()
     openMenu()
-    expect(entries()).toEqual(['Park', 'Close', 'Delete session'])
+    expect(entries()).toEqual(['Rename', 'Do not park', 'Park', 'Close', 'Delete session'])
     // Opened from a click or a key, focus goes to its first entry.
-    expect(screen.getByRole('button', { name: 'Park' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Rename' })).toHaveFocus()
   })
 
   it('offers no Park when the host does not announce it', async () => {
     await show({}, { hosts: () => json([{ host_id: 'h1', name: 'build-box', capabilities: ['images'] }]) })
     openMenu()
-    expect(entries()).toEqual(['Close', 'Delete session'])
+    expect(entries()).toEqual(['Rename', 'Do not park', 'Close', 'Delete session'])
   })
 
   it('offers no Park while the host’s capabilities are unknown', async () => {
     await show({}, { hosts: () => json([{ host_id: 'h1', name: 'build-box' }]) })
     openMenu()
-    expect(entries()).toEqual(['Close', 'Delete session'])
+    expect(entries()).toEqual(['Rename', 'Do not park', 'Close', 'Delete session'])
   })
 
   it.each([
@@ -73,7 +82,7 @@ describe('SessionView: the header menu', () => {
   ])('a %s session offers no Park; a closed one no Close', async (lifecycle, offered) => {
     await show({ lifecycle })
     openMenu()
-    expect(entries()).toEqual(offered)
+    expect(entries()).toEqual(['Rename', 'Do not park', ...offered])
   })
 
   it('Park parks the session, and the menu closes with focus back on its button', async () => {
