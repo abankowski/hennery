@@ -43,6 +43,8 @@ pub enum Capability {
     McpServers,
     /// Disposable runtime catalog discovery without a user prompt.
     CatalogProbe,
+    /// Early cancellation of a disposable catalog probe by request id.
+    CatalogProbeCancel,
     /// Generation-bound evidence and serialized delegated prompt admission.
     DelegationConfig,
 }
@@ -587,6 +589,10 @@ impl SessionConfig {
 /// mode deltas are ignored.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Indexed {
+    /// Host-owned adapter identity for authoritative start/resume snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub catalog_identity: Option<Box<crate::delegation_host::CatalogIdentity>>,
     /// Fresh host-produced configuration proof, never retained collector values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_evidence: Option<Box<crate::delegation_host::ConfigEvidence>>,
@@ -924,6 +930,7 @@ impl CollectorFrame {
             // Not a probe of state, but carried as one (`session_forgotten`).
             Self::ForgetSession { .. } => Ok(Some(Capability::ForgetSession)),
             Self::HelloAck { .. }
+            | Self::CancelCatalogProbe { .. }
             | Self::HelloError { .. }
             | Self::StartSession { .. }
             | Self::ResumeSession { .. }
@@ -952,6 +959,7 @@ impl CollectorFrame {
                 Some(mcp)
             }
             Self::HelloAck { .. }
+            | Self::CancelCatalogProbe { .. }
             | Self::HelloError { .. }
             | Self::Prompt { .. }
             | Self::DelegatedPrompt { .. }
@@ -1003,6 +1011,9 @@ impl HostFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CollectorFrame {
+    CancelCatalogProbe {
+        request_id: String,
+    },
     ProbeCatalog {
         request_id: String,
         agent: String,

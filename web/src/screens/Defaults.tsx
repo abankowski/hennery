@@ -6,6 +6,7 @@ import { messageOf } from '../api/errors'
 import CatalogContext, { useLaunchContext } from '../components/CatalogContext'
 import DefaultsEditor from '../components/DefaultsEditor'
 import DefaultsMatrix from '../components/DefaultsMatrix'
+import { catalogAge } from '../components/LaunchConfig'
 import type { HatItem, HatResolution, HatSessionDefaults, HostItem, HostProjects } from '../generated/protocol'
 import { agentLabel } from '../lib/agent'
 import { Link, useLocation } from '../router'
@@ -80,7 +81,7 @@ export default function Defaults() {
     <div className="defaults-order"><span>1 · Agent default</span><span>2 · Hat override</span><span>3 · Your pick in New session</span><p>Later wins. A hat cell left on inherits follows the agent default when it changes.</p></div>
     <details className="catalog-options" open={!host}><summary>Preview host and project</summary><CatalogContext hosts={hosts} host={host} cwd={cwd} onHost={value => { generation.current++; setHost(value); setManualAgent(false); setAgent(''); setPreview(null); setCwd(''); setProbing(false) }} onCwd={value => { generation.current++; setCwd(value); setPreview(null); setProbing(false) }} onPreview={() => void loadPreview()} busy={probing} /></details>
     <details className="runtime-id"><summary>Other agent</summary><label>Configured agent name<input value={agent} onChange={event => { setManualAgent(true); setAgent(event.target.value) }} placeholder="Agent name on the host" /></label></details>
-    {preview && <p className="defaults-context-note" role="status">Preview: <bdi>{hosts.find(h => h.host_id === preview.host)?.name}</bdi> · <bdi>{preview.cwd}</bdi> · Resolves to <bdi>{hats.find(h => h.id === preview.hat)?.name}</bdi> · {context.catalog?.freshness === 'fresh' ? 'Up to date' : context.catalog?.freshness === 'stale' ? 'Out of date' : 'Not verified'}</p>}
+    {preview && <p className="defaults-context-note" role="status">Preview: <bdi>{hosts.find(h => h.host_id === preview.host)?.name}</bdi> · <bdi>{preview.cwd}</bdi> · Resolves to <bdi>{hats.find(h => h.id === preview.hat)?.name}</bdi> · {catalogAge(context.catalog?.saved_at) || (catalog ? 'Up to date' : 'Agent defaults')} <button className="btn btn-secondary" type="button" onClick={context.refresh}>Refresh</button></p>}
     {preview && context.state === 'unavailable' && <p role="alert">The settings preview is unavailable. <bdi>{context.error}</bdi> Existing overrides can still be inspected and reset. <button className="btn btn-secondary" type="button" onClick={() => void loadPreview()}>Retry preview</button></p>}
     {error && <p role="alert"><bdi>{error}</bdi><button className="btn btn-secondary" type="button" onClick={() => setRefresh(value => value + 1)}>Retry defaults</button></p>}
     <section id={`${tabBase}-panel`} role="tabpanel" aria-labelledby={agents.includes(agent) ? `${tabBase}-${agents.indexOf(agent)}` : undefined}>

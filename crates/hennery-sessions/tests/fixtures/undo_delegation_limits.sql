@@ -1,4 +1,5 @@
--- Test-only rollback of sessions migration 27: restore the v26 budget CHECK.
+-- Test-only rollback of sessions migrations 28/27: restore the v26 budget CHECK.
+DROP TABLE runtime_catalog;
 DROP TABLE delegation_limits;
 DROP TRIGGER notice_endpoint_end;
 ALTER TABLE delegation_budgets RENAME TO delegation_budgets_old;

@@ -16,6 +16,7 @@ use serde_json::Value;
 
 pub(crate) fn unknown_catalog(agent: String) -> HostCatalog {
     HostCatalog {
+        saved_at: None,
         agent,
         adapter_revision: String::new(),
         config_options: vec![],

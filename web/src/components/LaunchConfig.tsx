@@ -15,7 +15,7 @@ export function ConfigControl({ option, value, inherited, disabled, onChange }: 
     {option.choices.map(choice => <option key={choice.value} value={choice.value}>{choice.name}</option>)}
   </select></div>
 }
-export default function LaunchConfig({ context, picks, onPicks, optOut, onOptOut, retry, expanded, onExpanded }: {
+export default function LaunchConfig({ context, picks, onPicks, retry, expanded, onExpanded }: {
   context: LaunchContext; picks: Picks; onPicks: (picks: Picks) => void; optOut: boolean; onOptOut: (value: boolean) => void; retry: () => void; expanded: boolean; onExpanded: (value: boolean) => void
 }) {
   const trigger = useRef<HTMLButtonElement>(null)
@@ -24,11 +24,13 @@ export default function LaunchConfig({ context, picks, onPicks, optOut, onOptOut
   const requested = Object.keys(picks).filter(key => picks[key] !== null)
   const summaryFields = fieldsOf(context.catalog).filter(({ key, option }) => Object.hasOwn(effective, key) && (['model', 'mode', 'effort', 'reasoning_effort'].includes(key) || ['model', 'mode', 'thought_level'].includes(option.category ?? '')))
   const summary = summaryFields.map(({ key }) => modelLabel(valueLabel(context.catalog, key, effective[key]))).join(' · ')
-  const warning = context.state === 'unavailable' || !!result?.blocked || !!result?.notices.length || !!result?.warnings.length
+  const warning = !!context.error || context.state === 'unavailable' || !!result?.blocked || !!result?.notices.length || !!result?.warnings.length
   const mode = summaryFields.find(({ key, option }) => key === 'mode' || option.category === 'mode')
-  return <section className="launch-config" aria-label="Session settings"><SettingsSummary trigger={trigger} summary={context.state === 'loading' ? 'Loading…' : summary || 'Agent defaults'} expanded={expanded} open={() => onExpanded(true)} warning={warning} launch />
+  return <section className="launch-config" aria-label="Session settings"><SettingsSummary trigger={trigger} summary={summary || 'Agent defaults'} expanded={expanded} open={() => onExpanded(true)} warning={warning} launch />
+    <div className="catalog-age"><span>{catalogAge(context.catalog?.saved_at)}</span> <button type="button" className="btn btn-ghost" disabled={context.refreshing} onClick={context.refresh ?? retry}>{context.refreshing ? 'Refreshing…' : 'Refresh'}</button></div>
     {expanded && <ComposerSettings trigger={trigger} close={() => onExpanded(false)}>
-    {context.state === 'loading' ? <p role="status">Loading session settings…</p> : context.state !== 'ready' ? <><p role="alert">Settings are unavailable. {context.error}</p><button type="button" className="btn btn-secondary" onClick={retry}>Retry settings</button><label className="opt-out"><input type="checkbox" checked={optOut} onChange={e => onOptOut(e.target.checked)} />Use agent defaults for this start</label><p className="hint">No saved or chosen settings will be sent. The agent’s configuration will not be verified.</p></> : <>
+    {context.error && <p role="alert">{context.error}</p>}
+    {!context.catalog ? <p role="status">Agent defaults. No saved or chosen settings will be sent.</p> : <>
       <p className="config-readback">Requested for this start: <bdi>{summary || 'Agent defaults'}</bdi></p>
       {fieldsOf(context.catalog).length < (context.catalog?.config_options.length ?? 0) && <p className="hint">Some reported settings cannot be represented here. Review them in the agent.</p>}
       {expanded && <div className="config-fields">{fieldsOf(context.catalog).map(({ key, option }) => <div className="config-field" key={key}><ConfigControl option={option} value={effective[key]} inherited={!requested.includes(key)} onChange={value => onPicks({ ...picks, [key]: value })} /><span className="config-source">{result?.sources[key] ?? 'Agent default'}</span>{(requested.includes(key) || result?.sources[key] === 'Hat override') && <button type="button" className="btn btn-ghost" onClick={() => onPicks({ ...picks, [key]: null })}>Use agent default for {option.name}</button>}</div>)}</div>}
@@ -39,7 +41,13 @@ export default function LaunchConfig({ context, picks, onPicks, optOut, onOptOut
   </section>
 }
 export function requestFor(context: LaunchContext, picks: Picks, optOut: boolean): SessionConfig | null {
-  if (context.state !== 'ready' || !context.catalog) return optOut && context.state === 'unavailable' ? {} : null
+  if (optOut || !context.catalog) return {}
   const result = resolveDefaults(context.catalog, context.defaults?.config ?? {}, picks)
   return result.blocked ? null : result.config
+}
+
+export function catalogAge(savedAt: number | undefined): string {
+  if (savedAt === undefined) return ''
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - savedAt))
+  return seconds < 60 ? 'saved just now' : seconds < 3600 ? `saved ${Math.floor(seconds / 60)} min ago` : seconds < 86400 ? `saved ${Math.floor(seconds / 3600)} h ago` : `saved ${Math.floor(seconds / 86400)} d ago`
 }

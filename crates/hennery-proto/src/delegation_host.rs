@@ -37,6 +37,8 @@ pub struct ConfigEvidence {
 #[serde(rename_all = "snake_case")]
 pub enum CatalogFreshness {
     Fresh,
+    /// Persisted operator preview; never live delegation evidence.
+    Cached,
     Stale,
     Unknown,
 }
@@ -60,6 +62,16 @@ pub struct HostCatalog {
     pub defaults: SessionConfig,
     pub security: SecurityClassification,
     pub freshness: CatalogFreshness,
+    /// Collector observation time (Unix seconds), absent for a live host reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub saved_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct CatalogIdentity {
+    pub adapter_revision: String,
+    pub security: SecurityClassification,
 }
 
 /// Host-owned adapter identity for cross-runtime permission-mode inheritance.

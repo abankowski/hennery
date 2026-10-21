@@ -204,8 +204,12 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       const project = join(realpathSync(host.dir), 'synthetic-project'), secondProject = join(realpathSync(second.dir), 'synthetic-project')
       mkdirSync(project); mkdirSync(secondProject)
       const hats = await (await context.request.get('/api/hats')).json(), hat = hats[0]
-      const probe = await context.request.get(`/api/hosts/${hostId}/runtime-catalog?${new URLSearchParams({ agent: 'claude', cwd: project })}`)
+      const catalogPath = `/api/hosts/${hostId}/runtime-catalog?${new URLSearchParams({ agent: 'claude', cwd: project })}`
+      expect(await (await context.request.get(catalogPath)).json()).toMatchObject({ freshness: 'unknown' })
+      const probe = await context.request.post(catalogPath, { headers: { origin: collector.origin } })
       expect(await probe.json()).toMatchObject({ freshness: 'fresh' })
+      expect(await (await context.request.get(catalogPath)).json()).toMatchObject({ freshness: 'cached', saved_at: expect.any(Number) })
+      expect((await context.request.post(`/api/hosts/${secondId}/runtime-catalog?${new URLSearchParams({ agent: 'claude', cwd: secondProject })}`, { headers: { origin: collector.origin } })).ok()).toBe(true)
       const defaultsProbe = await context.request.get(`/api/hats/${hat.id}/session-defaults?agent=claude`)
       expect(defaultsProbe.ok()).toBe(true)
       await page.goto(`/defaults?${new URLSearchParams({ host: hostId, cwd: project, agent: 'claude', hat: hat.id })}`)
@@ -236,9 +240,8 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       await page.goto(`/new?${new URLSearchParams({ host: hostId, cwd: project })}`)
       const form = page.getByRole('form', { name: 'New session', exact: true })
       await form.getByRole('button', { name: 'Session settings', exact: true }).click()
-      const optOut = page.getByRole('dialog', { name: 'Session settings', exact: true }).getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true })
-      await optOut.check({ timeout: 3_000 })
-      await expect(optOut).toBeChecked()
+      await expect(form.getByRole('button', { name: 'Start session', exact: true })).toBeEnabled()
+      await expect(page.getByText('Agent defaults. No saved or chosen settings will be sent.', { exact: true })).toBeVisible()
       await capture(page, `launcher-unavailable-${width}-${appearance}`)
       await page.unroute(unavailableCatalog)
       await page.reload()
@@ -295,6 +298,14 @@ for (const width of [390, 1280]) for (const appearance of ['light', 'dark'] as c
       await recent.click()
       await form.getByRole('textbox', { name: /^First prompt/ }).fill('Retain this draft.')
       await expect(form.getByRole('button', { name: 'Start session', exact: true })).toBeEnabled()
+      // The real Sonnet start populated a Sonnet catalog without fast. An
+      // explicit Refresh observes the adapter's Opus baseline again, so this
+      // deliberately requested fast override exercises real post-start refusal.
+      const refreshed = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/runtime-catalog'))
+      await form.getByRole('button', { name: 'Refresh', exact: true }).click()
+      await expect(form.getByRole('button', { name: 'Start session', exact: true })).toBeEnabled()
+      expect(await (await refreshed).json()).toMatchObject({ freshness: 'fresh' })
+      await expect(form.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
       await form.getByRole('button', { name: 'Start session', exact: true }).click()
       await expect(page).toHaveURL(/\/sessions\/[^/?]+$/, { timeout: 45_000 })
       expect(starts.at(-1)).toMatchObject({ model: 'sonnet', axes: { fast: false } })

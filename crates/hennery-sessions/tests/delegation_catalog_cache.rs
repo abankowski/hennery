@@ -24,6 +24,13 @@ struct World {
 }
 impl World {
     fn new() -> Self {
+        Self::with_capabilities(Capabilities(vec![
+            Capability::CatalogProbe,
+            Capability::CatalogProbeCancel,
+        ]))
+    }
+
+    fn with_capabilities(capabilities: Capabilities) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("hennery.db");
         let hosts = Hosts::open(&db).unwrap();
@@ -51,7 +58,7 @@ impl World {
             .register(
                 "host",
                 sender,
-                Capabilities(vec![Capability::CatalogProbe]),
+                capabilities,
                 AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect()),
             )
             .unwrap();
@@ -67,6 +74,7 @@ impl World {
 }
 fn catalog() -> HostCatalog {
     HostCatalog {
+        saved_at: None,
         agent: "claude".into(),
         adapter_revision: "pin".into(),
         config_options: vec![],
@@ -77,6 +85,257 @@ fn catalog() -> HostCatalog {
         },
         freshness: CatalogFreshness::Fresh,
     }
+}
+
+#[tokio::test]
+async fn independent_catalog_keys_progress_while_another_probe_is_waiting() {
+    let mut world = World::new();
+    let state = world.state.clone();
+    let hat = world.hat.clone();
+    let first = tokio::spawn(async move {
+        state
+            .catalogs
+            .get_for_spawn(&state, "host", &hat, "/first", "claude")
+            .await
+    });
+    let CollectorFrame::ProbeCatalog {
+        request_id: first_id, ..
+    } = world.receiver.recv().await.unwrap()
+    else {
+        panic!("first probe")
+    };
+    let state = world.state.clone();
+    let hat = world.hat.clone();
+    let second = tokio::spawn(async move {
+        state
+            .catalogs
+            .get_for_spawn(&state, "host", &hat, "/second", "claude")
+            .await
+    });
+    let frame = tokio::time::timeout(Duration::from_secs(5), world.receiver.recv())
+        .await
+        .expect("independent key must not wait for first probe")
+        .unwrap();
+    let CollectorFrame::ProbeCatalog { request_id, .. } = frame else {
+        panic!("second probe")
+    };
+    world.state.hub.probe_reply(
+        "host",
+        world.connection,
+        HostFrame::Catalog {
+            request_id,
+            catalog: catalog(),
+        },
+    );
+    assert!(second.await.unwrap().is_ok());
+    world.state.hub.probe_reply(
+        "host",
+        world.connection,
+        HostFrame::Catalog {
+            request_id: first_id,
+            catalog: catalog(),
+        },
+    );
+    assert!(first.await.unwrap().is_ok());
+    assert!(
+        world.receiver.try_recv().is_err(),
+        "completed probes must not send cancellation"
+    );
+}
+
+#[tokio::test]
+async fn dropping_the_last_catalog_waiter_sends_cancel_on_its_connection() {
+    let mut world = World::new();
+    let state = world.state.clone();
+    let hat = world.hat.clone();
+    let request = tokio::spawn(async move {
+        state
+            .catalogs
+            .get_for_spawn(&state, "host", &hat, "/project", "claude")
+            .await
+    });
+    let CollectorFrame::ProbeCatalog { request_id, .. } = world.receiver.recv().await.unwrap() else {
+        panic!("probe")
+    };
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), world.receiver.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        CollectorFrame::CancelCatalogProbe { request_id },
+    );
+}
+
+#[tokio::test]
+async fn legacy_catalog_host_never_receives_an_unadvertised_cancel() {
+    let mut world = World::with_capabilities(Capabilities(vec![Capability::CatalogProbe]));
+    let state = world.state.clone();
+    let hat = world.hat.clone();
+    let request = tokio::spawn(async move {
+        state
+            .catalogs
+            .get_for_spawn(&state, "host", &hat, "/project", "claude")
+            .await
+    });
+    let CollectorFrame::ProbeCatalog { request_id, .. } = world.receiver.recv().await.unwrap() else {
+        panic!("legacy host still supports discovery")
+    };
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    assert!(world.receiver.try_recv().is_err(), "legacy host cannot cancel early");
+    // A legacy host may finish at its own timeout; its late response is harmless.
+    world.state.hub.probe_reply(
+        "host",
+        world.connection,
+        HostFrame::Catalog {
+            request_id,
+            catalog: catalog(),
+        },
+    );
+    assert!(world.receiver.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn dropping_one_shared_catalog_waiter_keeps_the_remaining_waiter_alive() {
+    let mut world = World::new();
+    let state = world.state.clone();
+    let hat = world.hat.clone();
+    let first = tokio::spawn(async move {
+        state
+            .catalogs
+            .get_for_spawn(&state, "host", &hat, "/project", "claude")
+            .await
+    });
+    let CollectorFrame::ProbeCatalog { request_id, .. } = world.receiver.recv().await.unwrap() else {
+        panic!("probe")
+    };
+    let state = world.state.clone();
+    let second = state
+        .catalogs
+        .get_for_spawn(&state, "host", &world.hat, "/project", "claude");
+    tokio::pin!(second);
+    // Poll the second real caller into the in-flight future before cancelling
+    // the first. No timing sleep stands in for the second waiter joining.
+    assert!(futures::poll!(second.as_mut()).is_pending());
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    assert!(
+        world.receiver.try_recv().is_err(),
+        "another caller still waits for this probe"
+    );
+    state.hub.probe_reply(
+        "host",
+        world.connection,
+        HostFrame::Catalog {
+            request_id,
+            catalog: catalog(),
+        },
+    );
+    assert_eq!(second.await.unwrap().freshness, CatalogFreshness::Fresh);
+    assert!(world.receiver.try_recv().is_err(), "shared discovery must not restart");
+}
+
+#[test]
+fn persistent_catalog_survives_restart_and_never_authorizes_delegation() {
+    let world = World::new();
+    let mut fresh = catalog();
+    fresh.config_options =
+        vec![serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"}]})];
+    fresh.defaults.model = Some("small".into());
+    world
+        .state
+        .store
+        .save_runtime_catalog("host", &world.hat, "/project", &fresh)
+        .unwrap();
+    let reopened = Store::open(&world._dir.path().join("hennery.db")).unwrap();
+    let saved = reopened
+        .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+        .unwrap();
+    assert_eq!(saved.freshness, CatalogFreshness::Cached);
+    assert!(saved.saved_at.is_some());
+    assert_eq!(saved.config_options, fresh.config_options);
+    assert!(hennery_sessions::delegation_runtime::config_offered(
+        &fresh,
+        &fresh.defaults
+    ));
+    assert!(!hennery_sessions::delegation_runtime::config_offered(
+        &saved,
+        &fresh.defaults
+    ));
+    let evidence = hennery_proto::delegation_host::ConfigEvidence {
+        attach_generation: 1,
+        config_revision: 1,
+        completeness: hennery_proto::delegation_host::ConfigCompleteness::Complete,
+        actual: fresh.defaults.clone(),
+    };
+    assert!(hennery_sessions::delegation_runtime::evidence_satisfies(
+        &evidence,
+        1,
+        &fresh.defaults,
+        &fresh
+    ));
+    assert!(!hennery_sessions::delegation_runtime::evidence_satisfies(
+        &evidence,
+        1,
+        &fresh.defaults,
+        &saved
+    ));
+    for (cwd, agent) in [("/another", "claude"), ("/project", "codex")] {
+        assert_eq!(
+            reopened
+                .saved_runtime_catalog("host", &world.hat, cwd, agent)
+                .unwrap()
+                .freshness,
+            CatalogFreshness::Unknown
+        );
+    }
+    assert!(
+        reopened
+            .saved_runtime_catalog("host", "another-hat", "/project", "claude")
+            .is_err()
+    );
+    let mut other_revision = fresh.clone();
+    other_revision.adapter_revision = "new-pin".into();
+    reopened
+        .save_runtime_catalog("host", &world.hat, "/project", &other_revision)
+        .unwrap();
+    reopened
+        .save_runtime_catalog("host", &world.hat, "/project", &fresh)
+        .unwrap();
+    assert_eq!(
+        reopened
+            .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+            .unwrap()
+            .adapter_revision,
+        "pin",
+        "latest observation wins even when an older revision returns in the same second"
+    );
+}
+
+#[test]
+fn cached_catalog_never_satisfies_current_attach_evidence() {
+    let mut snapshot = catalog();
+    let evidence = hennery_proto::delegation_host::ConfigEvidence {
+        attach_generation: 1,
+        config_revision: 1,
+        completeness: hennery_proto::delegation_host::ConfigCompleteness::Complete,
+        actual: SessionConfig::default(),
+    };
+    assert!(hennery_sessions::delegation_runtime::evidence_satisfies(
+        &evidence,
+        1,
+        &SessionConfig::default(),
+        &snapshot
+    ));
+    snapshot.freshness = CatalogFreshness::Cached;
+    assert!(!hennery_sessions::delegation_runtime::evidence_satisfies(
+        &evidence,
+        1,
+        &SessionConfig::default(),
+        &snapshot
+    ));
 }
 
 #[tokio::test]
@@ -519,4 +778,274 @@ async fn older_auth_failure_cannot_block_a_newly_admitted_attach_after_sign_in()
 #[tokio::test]
 async fn older_unknown_catalog_cannot_block_a_newly_admitted_attach() {
     earlier_failure_cannot_block_a_new_attach(false).await;
+}
+fn review_started(options: Vec<serde_json::Value>, identity: bool) -> hennery_proto::frames::SessionBody {
+    use hennery_proto::{
+        delegation_host::CatalogIdentity,
+        frames::{Indexed, SessionBody},
+    };
+    SessionBody::SessionStarted {
+        request_id: "start".into(),
+        agent_session_id: "agent-session".into(),
+        agent_home: None,
+        indexed: Indexed {
+            config_options: Some(options),
+            current_model: Some("small".into()),
+            catalog_identity: identity.then(|| {
+                Box::new(CatalogIdentity {
+                    adapter_revision: "pin".into(),
+                    security: SecurityClassification {
+                        known: false,
+                        axes: Default::default(),
+                    },
+                })
+            }),
+            ..Default::default()
+        },
+    }
+}
+
+#[test]
+fn review_preview_limits_must_not_reject_real_session_started() {
+    for large_description in [false, true] {
+        let world = World::new();
+        let option =
+            serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"}]});
+        let options = if large_description {
+            let mut option = option;
+            option["description"] = serde_json::json!("x".repeat(270_000));
+            vec![option]
+        } else {
+            vec![option; 129]
+        };
+        for (id, identity) in [("legacy", false), ("new", true)] {
+            world
+                .state
+                .store
+                .create_session(id, "host", "claude", "/project", &world.hat, None)
+                .unwrap();
+            let result = world
+                .state
+                .store
+                .ingest(id, 1, &review_started(options.clone(), identity));
+            assert!(
+                result.is_ok(),
+                "real session ingest rejected (identity={identity}, large_description={large_description}): {result:?}"
+            );
+            assert_eq!(
+                world.state.store.catalog(id).unwrap().unwrap().config_options.len(),
+                options.len()
+            );
+            assert_eq!(
+                world
+                    .state
+                    .store
+                    .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+                    .unwrap()
+                    .freshness,
+                CatalogFreshness::Unknown
+            );
+        }
+    }
+}
+
+#[test]
+fn oversized_preview_bytes_must_not_reject_real_session_started() {
+    let world = World::new();
+    world
+        .state
+        .store
+        .create_session("session", "host", "claude", "/project", &world.hat, None)
+        .unwrap();
+    let option = serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"}],"description":"x".repeat(270_000)});
+    let result = world
+        .state
+        .store
+        .ingest("session", 1, &review_started(vec![option], true));
+    assert!(
+        result.is_ok(),
+        "preview size must not reject a durable session: {result:?}"
+    );
+    assert_eq!(
+        world
+            .state
+            .store
+            .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+            .unwrap()
+            .freshness,
+        CatalogFreshness::Unknown
+    );
+}
+
+#[test]
+fn oversized_preview_revision_must_not_reject_real_session_started() {
+    let world = World::new();
+    world
+        .state
+        .store
+        .create_session("session", "host", "claude", "/project", &world.hat, None)
+        .unwrap();
+    let mut started = review_started(
+        vec![serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"}]})],
+        true,
+    );
+    if let hennery_proto::frames::SessionBody::SessionStarted { indexed, .. } = &mut started {
+        indexed.catalog_identity.as_mut().unwrap().adapter_revision = "x".repeat(257);
+    }
+    let result = world.state.store.ingest("session", 1, &started);
+    assert!(
+        result.is_ok(),
+        "preview revision must not reject a durable session: {result:?}"
+    );
+    assert_eq!(
+        world
+            .state
+            .store
+            .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+            .unwrap()
+            .freshness,
+        CatalogFreshness::Unknown
+    );
+}
+
+#[test]
+fn review_delete_must_remove_last_sessions_derived_catalog() {
+    let world = World::new();
+    world
+        .state
+        .store
+        .create_session("session", "host", "claude", "/project", &world.hat, None)
+        .unwrap();
+    world.state.store.ingest("session", 1, &review_started(vec![serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"}],"description":"private-project-config"})], true)).unwrap();
+    world.state.store.close_now("session").unwrap();
+    world.state.store.delete_session("session", None).unwrap();
+    let remaining = world
+        .state
+        .store
+        .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+        .unwrap();
+    assert_eq!(
+        remaining.freshness,
+        CatalogFreshness::Unknown,
+        "deleted session catalog remains: {remaining:?}"
+    );
+}
+
+#[test]
+fn deleting_a_session_invalidates_all_preview_revisions_only_in_its_scope() {
+    let world = World::new();
+    let hosts = Hosts::open(&world._dir.path().join("hennery.db")).unwrap();
+    hosts
+        .register(
+            "other-host",
+            &Enrollment {
+                public_key: "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c".into(),
+                name: "other".into(),
+                host_version: "0".into(),
+                platform: "linux".into(),
+            },
+            1,
+        )
+        .unwrap();
+    let hennery_kernel::hats::HatChange::Done(other) = hosts.create_hat("Other", None, 1).unwrap() else {
+        panic!("hat")
+    };
+    let mut fresh = catalog();
+    fresh.config_options =
+        vec![serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"}]})];
+    for revision in ["old-pin", "new-pin"] {
+        fresh.adapter_revision = revision.into();
+        for (cwd, agent) in [("/project", "claude"), ("/other", "claude"), ("/project", "codex")] {
+            fresh.agent = agent.into();
+            world
+                .state
+                .store
+                .save_runtime_catalog("host", &world.hat, cwd, &fresh)
+                .unwrap();
+        }
+        fresh.agent = "claude".into();
+        world
+            .state
+            .store
+            .save_runtime_catalog("other-host", &world.hat, "/project", &fresh)
+            .unwrap();
+        hosts.update_host("host", None, Some(&other.id)).unwrap();
+        world
+            .state
+            .store
+            .save_runtime_catalog("host", &other.id, "/project", &fresh)
+            .unwrap();
+        hosts.update_host("host", None, Some(&world.hat)).unwrap();
+    }
+    world
+        .state
+        .store
+        .create_session("session", "host", "claude", "/project", &world.hat, None)
+        .unwrap();
+    world.state.store.close_now("session").unwrap();
+    world.state.store.delete_session("session", None).unwrap();
+    let db = rusqlite::Connection::open(world._dir.path().join("hennery.db")).unwrap();
+    let rows: Vec<(String, String, String)> = db
+        .prepare("SELECT cwd,agent,adapter_revision FROM runtime_catalog WHERE host_id='host' AND hat_id=?1 ORDER BY cwd,agent,adapter_revision")
+        .unwrap()
+        .query_map([&world.hat], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("/other".into(), "claude".into(), "new-pin".into()),
+            ("/other".into(), "claude".into(), "old-pin".into()),
+            ("/project".into(), "codex".into(), "new-pin".into()),
+            ("/project".into(), "codex".into(), "old-pin".into())
+        ],
+        "no retained revision may survive; other scopes must remain"
+    );
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM runtime_catalog", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        8,
+        "other host and hat snapshots must remain too"
+    );
+}
+
+#[test]
+fn deleting_a_reassigned_session_also_removes_its_original_preview() {
+    let world = World::new();
+    // A real session must replace the provenance of an existing Refresh row,
+    // including when the revision stays the same.
+    let mut refreshed = catalog();
+    refreshed.config_options =
+        vec![serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"}]})];
+    world
+        .state
+        .store
+        .save_runtime_catalog("host", &world.hat, "/project", &refreshed)
+        .unwrap();
+    let hosts = Hosts::open(&world._dir.path().join("hennery.db")).unwrap();
+    let hennery_kernel::hats::HatChange::Done(other) = hosts.create_hat("Other", None, 1).unwrap() else {
+        panic!("hat")
+    };
+    world
+        .state
+        .store
+        .create_session("session", "host", "claude", "/project", &world.hat, None)
+        .unwrap();
+    world.state.store.ingest("session", 1, &review_started(vec![serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"}]})], true)).unwrap();
+    world.state.store.close_now("session").unwrap();
+    assert!(matches!(
+        world.state.store.reassign_hat("session", &other.id).unwrap(),
+        hennery_sessions::store::Reassign::Done(_)
+    ));
+    world.state.store.delete_session("session", None).unwrap();
+    assert_eq!(
+        world
+            .state
+            .store
+            .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+            .unwrap()
+            .freshness,
+        CatalogFreshness::Unknown
+    );
 }

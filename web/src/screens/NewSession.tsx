@@ -290,7 +290,7 @@ export default function NewSession() {
   }, [hostId, cwd, prompt, agent, otherName, picks, draftOwner, sameLogin])
   useEffect(() => { setOptOut(false) }, [context.key])
   function chooseAgent(next: string) { if (next !== agent) { setAgent(next); setPicks({}); setNotice('Agent changed. Session setting choices were reset.') } }
-  const canStart = !busy && host?.connected === true && agentName !== '' && current?.exists === true && current.is_dir && config !== null
+  const canStart = !busy && host?.connected === true && agentName !== '' && current?.exists === true && current.is_dir
   const canRequestStart = canStart || pendingStart !== null || (!busy && host?.connected === true && agentName !== '' && browsePath !== null)
   const form = useRef<HTMLFormElement>(null)
   function retainClosedStart(sessionId: string) {
@@ -321,6 +321,7 @@ export default function NewSession() {
 
   async function launch(form: HTMLFormElement) {
     if (!canStart || busyRef.current || !sameLogin()) return
+    if (config === null) { setError('Choose an available session setting before starting.'); return }
     busyRef.current = true
     setBusy(true)
     setExpanded(false)
@@ -347,12 +348,14 @@ export default function NewSession() {
     if (!liveRef.current) { retainClosedStart(sessionId); return }
     // A start acknowledgement alone cannot authorize the first prompt.
     {
-      // The opt-out skips configuration evidence, never the actual-hat check.
-      const confirmation = await confirmStart(client, sessionId, current!.hat_id, config!, 30_000, !optOut)
+      // A default start has no requested configuration to verify; still check
+      // the actual hat and successful attachment before releasing its prompt.
+      const verifyConfig = context.catalog !== null && !optOut
+      const confirmation = await confirmStart(client, sessionId, current!.hat_id, config, 30_000, verifyConfig)
       if (!sameLogin()) return
       if (!liveRef.current) { retainClosedStart(sessionId); return }
       if (confirmation !== 'confirmed') {
-        const code = optOut && confirmation === 'config_unconfirmed' ? 'start_unconfirmed' : confirmation
+        const code = !verifyConfig && confirmation === 'config_unconfirmed' ? 'start_unconfirmed' : confirmation
         keepDraft(sessionId, prompt)
         if (code === 'config_unconfirmed') rememberConfigurationReview(sessionId, context.catalog, config!)
         clearLauncherDraft(draftOwner)

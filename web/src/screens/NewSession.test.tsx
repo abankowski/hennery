@@ -123,9 +123,9 @@ it.each(['start', 'shortcut', 'edit', 'outside', 'failure', 'blocked', 'again', 
   if (action === 'edit') await user.type(screen.getByRole('textbox', { name: /^First prompt/ }), 'Changed')
   if (action === 'outside') fireEvent.pointerDown(document.body)
   await act(async () => { finish(action === 'failure' ? json(503, { message: 'Resolution unavailable' }) : json(200, { ...RESOLVED, canonical: path })) })
-  if (action === 'edit' || action === 'outside' || action === 'failure' || action === 'blocked' || action === 'submit-tab' || action === 'submit-escape') {
+  if (action === 'edit' || action === 'outside' || action === 'failure' || action === 'submit-tab' || action === 'submit-escape') {
     if (action === 'failure') await screen.findByRole('alert')
-    else if (action !== 'blocked') await waitFor(() => expect(startButton()).toBeEnabled())
+    else await waitFor(() => expect(startButton()).toBeEnabled())
     await waitFor(() => expect(screen.queryByText('Preparing session…', { exact: true })).toBeNull())
     expect(server.sent.filter(s => s.path === '/api/sessions')).toHaveLength(0)
     expect(screen.getByText('Start cancelled. Review your choices, then start again.', { exact: true })).toBeVisible()
@@ -749,15 +749,12 @@ describe('reviewed configuration', () => {
     expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep this prompt')
     expect(readStartNotice(location.search, 's-1')).toMatchObject({ message: expect.stringContaining('Fast: Off') })
   })
-  it('requires explicit opt-out when no catalog is available, then sends no unverified config', async () => {
+  it('starts with agent defaults when no catalog is available and sends no unverified config', async () => {
     const server = mount({ [`GET ${runtime}`]: json(409, { code: 'catalog_unavailable', message: 'Offline catalog' }) })
     const user = await fill('/srv/work/cat', 'Start deliberately')
     expect(await screen.findByLabelText('Settings need attention')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Session settings' })).toHaveAttribute('aria-expanded', 'false')
     await user.click(await screen.findByRole('button', { name: 'Session settings' }))
-    const optOut = await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' })
-    expect(startButton()).toBeDisabled()
-    await user.click(optOut)
     expect(startButton()).toBeEnabled()
     await user.click(screen.getByRole('button', { name: 'Close session settings' }))
     await user.click(startButton())
@@ -795,20 +792,35 @@ it('does not release a held first prompt after closing during configuration read
   expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
   expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep during review')
 })
-it('retains the prompt on a hat mismatch even after explicitly opting out of catalog verification', async () => {
+it('retains the prompt on a hat mismatch when starting without a saved catalog', async () => {
   const server = mount({
     'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat': json(409, { code: 'catalog_unavailable', message: 'No settings preview' }),
     'GET /api/sessions/s-1': json(200, { session_id: 's-1', hat_id: 'hat-b', lifecycle: 'active' }),
   })
   const user = await fill('/srv/work/cat', 'Check the hat first')
   await user.click(await screen.findByRole('button', { name: 'Session settings' }))
-  await user.click(await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' }))
   await user.click(screen.getByRole('button', { name: 'Close session settings' }))
   await user.click(startButton())
   await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
   expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
   expect(location.search).toContain('hat_changed')
   expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Check the hat first')
+})
+
+it('starts immediately with no picks while the saved catalog request is still pending', async () => {
+  let finish!: (response: Response) => void
+  const pending = new Promise<Response>(resolve => { finish = resolve })
+  const server = mount({
+    'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat': () => pending,
+  })
+  const user = await fill('/srv/work/cat', 'Start without waiting')
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  await user.click(startButton())
+  await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+  expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat' })
+  expect(server.sent.filter(s => s.path.includes('runtime-catalog')).every(s => s.method === 'GET')).toBe(true)
+  expect(posts(server.sent)).toContain('/api/sessions/s-1/prompt')
+  await act(async () => { finish(json(200, {})); await pending })
 })
 it('starts only on a deliberate local Mod+Enter, ignoring repeat, IME and extra modifiers', async () => {
   const server = mount()

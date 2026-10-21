@@ -617,8 +617,9 @@ impl Hub {
         timeout: Duration,
     ) -> Result<HostFrame, RequestError> {
         let (tx, rx) = oneshot::channel();
+        let cancel_catalog = matches!(&frame, CollectorFrame::ProbeCatalog { .. });
         // Lock order: hosts, then probes, as for the waiters (`wait`).
-        let conn_id = {
+        let (conn_id, cancel_tx) = {
             let hosts = self.hosts.lock().expect("hosts lock");
             let Some(host) = hosts.get(host_id).filter(|h| h.routable()) else {
                 return Err(RequestError::NotConnected);
@@ -655,12 +656,18 @@ impl Hub {
                 self.probes.lock().expect("probes lock").remove(request_id);
                 return Err(RequestError::NotConnected);
             }
-            host.conn_id
+            // Legacy CatalogProbe hosts finish at their own bounded timeout;
+            // never send them a frame they did not advertise.
+            (
+                host.conn_id,
+                (cancel_catalog && host.capabilities.has(Capability::CatalogProbeCancel)).then(|| host.tx.clone()),
+            )
         };
         let _gone = ProbeGuard {
             probes: &self.probes,
             request_id,
             conn_id,
+            cancel_tx,
         };
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(answer)) => answer,
@@ -792,6 +799,7 @@ struct ProbeGuard<'a> {
     probes: &'a Mutex<HashMap<String, Probe>>,
     request_id: &'a str,
     conn_id: u64,
+    cancel_tx: Option<mpsc::UnboundedSender<CollectorFrame>>,
 }
 
 impl Drop for ProbeGuard<'_> {
@@ -799,6 +807,11 @@ impl Drop for ProbeGuard<'_> {
         let mut probes = self.probes.lock().expect("probes lock");
         if probes.get(self.request_id).is_some_and(|p| p.conn_id == self.conn_id) {
             probes.remove(self.request_id);
+            if let Some(tx) = &self.cancel_tx {
+                let _ = tx.send(CollectorFrame::CancelCatalogProbe {
+                    request_id: self.request_id.into(),
+                });
+            }
         }
     }
 }

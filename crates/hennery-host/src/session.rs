@@ -432,6 +432,7 @@ fn launch_inner(
         Attach::New => None,
     }));
     let actor = Actor {
+        catalog_identity: crate::delegation::catalog_identity(&launch.agent, launch.profile),
         workspace_roots,
         attach_generation,
         config_revision: AtomicU64::new(1),
@@ -822,6 +823,7 @@ impl Drop for AcpTask {
 }
 
 struct Actor {
+    catalog_identity: hennery_proto::delegation_host::CatalogIdentity,
     workspace_roots: Option<Vec<PathBuf>>,
     attach_generation: Option<u64>,
     config_revision: AtomicU64,
@@ -932,10 +934,14 @@ impl Actor {
                 }
             }
         });
+        let mut indexed = self.catalogue_extracts();
+        if indexed.current_config().is_some() {
+            indexed.catalog_identity = Some(Box::new(self.catalog_identity.clone()));
+        }
         self.emit(SessionBody::SessionStarted {
             request_id,
             agent_session_id: agent_session.to_string(),
-            indexed: self.catalogue_extracts(),
+            indexed,
             agent_home,
         });
         if moved && loaded {

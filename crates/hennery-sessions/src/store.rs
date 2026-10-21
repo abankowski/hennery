@@ -439,6 +439,8 @@ BEGIN
       AND (child_id = NEW.id OR parent_id = NEW.id) AND NEW.lifecycle = 'deleted';
     DELETE FROM delegation_budgets WHERE owner_id = NEW.owner_id AND root_id = NEW.id AND NEW.lifecycle = 'deleted';
 END;",
+    // Persistent, exactly scoped operator previews (28).
+    include_str!("runtime_catalog.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -1255,6 +1257,11 @@ fn store_catalogue(tx: &Transaction<'_>, owner: &str, session_id: &str, indexed:
              WHERE session_catalog.owner_id = excluded.owner_id",
         params![session_id, serde_json::to_string(&options)?, ts, owner],
     )?;
+    if !indexed.early
+        && let Some(identity) = &indexed.catalog_identity
+    {
+        crate::delegation_runtime::save_session_catalog_in(tx, owner, session_id, indexed, identity)?;
+    }
     Ok(())
 }
 
@@ -3158,6 +3165,14 @@ impl Store {
         tx.execute(
             "DELETE FROM session_catalog WHERE session_id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
+        )?;
+        // Invalidate every retained revision in this exact preview scope,
+        // including Refresh snapshots, and copies this session supplied before
+        // a hat reassignment. Do this before scrubbing its scope below.
+        tx.execute(
+            "DELETE FROM runtime_catalog WHERE owner_id = ?1 AND
+             ((host_id = ?2 AND hat_id = ?3 AND cwd = ?4 AND agent = ?5) OR source_session_id = ?6)",
+            params![self.owner, host_id, hat_id, cwd, agent, session_id],
         )?;
         tx.execute(
             "DELETE FROM turns WHERE session_id = ?1 AND owner_id = ?2",
@@ -5633,6 +5648,39 @@ mod tests {
             )
             .unwrap(),
             0
+        );
+    }
+
+    #[test]
+    fn runtime_catalog_migration28_preserves_v27_session_catalogs_without_inventing_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let mut conn = hennery_kernel::db::open(&db).unwrap();
+        let owner = hennery_kernel::db::kernel_owner(&mut conn).unwrap();
+        hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..27]).unwrap();
+        conn.execute("INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,created_at,last_event_at) VALUES ('retained',?1,'host','hat','claude','/project','parked','t','t')",[&owner]).unwrap();
+        conn.execute("INSERT INTO session_catalog(session_id,owner_id,config_options,updated_at) VALUES ('retained',?1,'[{\"id\":\"model\"}]','t')",[&owner]).unwrap();
+        hennery_kernel::db::migrate(&mut conn, MIGRATIONS).unwrap();
+        let retained: String = conn
+            .query_row(
+                "SELECT config_options FROM session_catalog WHERE owner_id=?1 AND session_id='retained'",
+                [&owner],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, "[{\"id\":\"model\"}]");
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM runtime_catalog", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "old sessions have no host-owned adapter identity to backfill");
+        assert!(
+            conn.prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .query([])
+                .unwrap()
+                .next()
+                .unwrap()
+                .is_none()
         );
     }
 

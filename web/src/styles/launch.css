@@ -248,7 +248,10 @@
 .composer-settings-panel .config-field { padding:0; background:transparent; border:0; }.composer-settings-panel .config-select { display:flex; gap:12px; align-items:center; justify-content:space-between; }
 .composer-settings-panel .config-select select { min-width:0; max-width:65%; }.composer-settings-panel .config-source { font:400 10px var(--font-body); color:var(--hn-fg-3); }
 .launch-edit-defaults { font-size:12px; }.launcher-frame .modal-foot { align-items:center; gap:12px; }.launcher-frame .modal-foot .spacer { display:block; }
+.catalog-age { display:flex; align-items:center; gap:8px; color:var(--hn-fg-3); font:400 11px var(--font-body); }
+.catalog-age .btn { min-height:32px; }
 @media(max-width:767px) {
+  .catalog-age .btn { min-height:44px; }
   .launcher-frame .modal-head,.launcher-frame .modal-foot { padding:14px 16px; }.launch-subtitle { display:inline; font-size:10px; }
   .launcher-frame .field,.launcher-frame .launch-choice { grid-template-columns:64px minmax(0,1fr); gap:6px 10px; }
   .launcher-frame .field > .field-label,.launcher-frame .first-prompt .field-label { min-height:44px; font-size:11px; }

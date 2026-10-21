@@ -24,7 +24,7 @@ export function supports(option: ConfigOption, value: ConfigValue): boolean {
   return option.kind === 'boolean' ? typeof value === 'boolean' : typeof value === 'string' && option.choices.some(choice => choice.value === value)
 }
 export function usableCatalog(catalog: HostCatalog | null): catalog is HostCatalog {
-  if (catalog === null || catalog.freshness !== 'fresh' || catalog.adapter_revision === '') return false
+  if (catalog === null || !['fresh', 'cached'].includes(catalog.freshness) || catalog.adapter_revision === '') return false
   const fields = fieldsOf(catalog), defaults = flatConfig(catalog.defaults)
   const required = new Set([...Object.keys(catalog.security.axes), ...['model', 'mode'].filter(key => Object.hasOwn(defaults, key))])
   return fields.length > 0 && [...required].every(key => {

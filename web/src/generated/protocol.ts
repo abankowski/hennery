@@ -112,7 +112,7 @@ export type ConfigCompleteness = "complete" | "partial" | "unknown";
 
 export type ConfigEvidence = { attach_generation: number, config_revision: number, completeness: ConfigCompleteness, actual: SessionConfig, };
 
-export type CatalogFreshness = "fresh" | "stale" | "unknown";
+export type CatalogFreshness = "fresh" | "cached" | "stale" | "unknown";
 
 /**
  * Profile-owned security axes and their baseline values for operator warnings. `mode`
@@ -125,7 +125,13 @@ export type HostCatalog = { agent: string,
 /**
  * Opaque digest of the configured adapter command/environment and catalog.
  */
-adapter_revision: string, config_options: unknown[], defaults: SessionConfig, security: SecurityClassification, freshness: CatalogFreshness, };
+adapter_revision: string, config_options: unknown[], defaults: SessionConfig, security: SecurityClassification, freshness: CatalogFreshness,
+/**
+ * Collector observation time (Unix seconds), absent for a live host reply.
+ */
+saved_at?: number, };
+
+export type CatalogIdentity = { adapter_revision: string, security: SecurityClassification, };
 
 /**
  * Host-owned adapter identity for cross-runtime permission-mode inheritance.
@@ -228,7 +234,7 @@ export type SessionConfig = { model?: string | null, mode?: string | null, axes?
  * collector never sends a frame that needs a capability to a host that
  * lacks it.
  */
-export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "delegation_config";
+export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "catalog_probe_cancel" | "delegation_config";
 
 /**
  * `hello.capabilities`. Deserialized leniently: a capability this build
@@ -357,6 +363,10 @@ title?: string | null, };
  * mode deltas are ignored.
  */
 export type Indexed = {
+/**
+ * Host-owned adapter identity for authoritative start/resume snapshots.
+ */
+catalog_identity?: CatalogIdentity,
 /**
  * Fresh host-produced configuration proof, never retained collector values.
  */
@@ -556,7 +566,7 @@ truncated: boolean, };
 /**
  * Collector -> host.
  */
-export type CollectorFrame = { "type": "probe_catalog", request_id: string, agent: string, cwd: string,
+export type CollectorFrame = { "type": "cancel_catalog_probe", request_id: string, } | { "type": "probe_catalog", request_id: string, agent: string, cwd: string,
 /**
  * Operator previews use ordinary session path rules. Delegated probes
  * retain the host workspace boundary. Set only by the collector.
