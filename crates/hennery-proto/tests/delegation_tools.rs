@@ -2,6 +2,18 @@ use hennery_proto::delegation::{OperationReceipt, OperationState, argument_schem
 use serde_json::{Value, json};
 
 #[test]
+fn future_runtime_profile_does_not_break_hello_roundtrip() {
+    use hennery_proto::frames::HostFrame;
+    let wire = json!({"type":"hello","protocol_version":"1","host_version":"future",
+        "host_id":"host","proof":"proof","attached_sessions":[],
+        "runtime_profiles":{"worker":"future-installed-profile"}});
+    let hello: HostFrame = serde_json::from_value(wire).unwrap();
+    let canonical = serde_json::to_value(&hello).unwrap();
+    assert_eq!(canonical["runtime_profiles"]["worker"], "unknown");
+    assert_eq!(serde_json::from_value::<HostFrame>(canonical).unwrap(), hello);
+}
+
+#[test]
 fn discovery_schemas_reject_unknown_config_and_resolve_every_reference() {
     fn refs(value: &Value, root: &Value) {
         match value {

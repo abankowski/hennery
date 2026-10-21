@@ -11,6 +11,7 @@ fn delegation_wire_dependencies_are_exported_once() {
     for name in [
         "DelegationLimits",
         "CapabilitiesResult",
+        "CapabilityCatalog",
         "ChildQuestion",
         "ChildSummary",
         "ChildList",
@@ -21,10 +22,20 @@ fn delegation_wire_dependencies_are_exported_once() {
         "CatalogFreshness",
         "SecurityClassification",
         "HostCatalog",
+        "RuntimeProfile",
     ] {
         assert_eq!(ts.matches(&format!("export type {name} =")).count(), 1, "{name}");
         assert!(schema["$defs"].get(name).is_some(), "{name}");
     }
+    let model_catalog = &schema["$defs"]["CapabilityCatalog"]["properties"];
+    assert!(model_catalog.get("security").is_none());
+    assert!(model_catalog.get("profile").is_none());
+    assert!(schema["$defs"]["HostCatalog"]["properties"].get("security").is_some());
+    assert!(schema["$defs"]["HostCatalog"]["properties"].get("profile").is_none());
+    assert_eq!(
+        schema["$defs"]["CapabilitiesResult"]["properties"]["catalogs"]["items"]["$ref"],
+        "#/$defs/CapabilityCatalog"
+    );
 }
 
 /// The generated output must not depend on which packages this test binary

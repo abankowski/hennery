@@ -833,6 +833,7 @@ async fn real_http_prompt_and_socket_writer_recheck_revocation_after_commit() {
         .unwrap();
     let nonce = hex::decode(response.headers()[hennery_proto::HELLO_NONCE_HEADER].to_str().unwrap()).unwrap();
     let hello = HostFrame::Hello {
+        runtime_profiles: Default::default(),
         protocol_version: hennery_proto::PROTOCOL_VERSION.into(),
         host_version: "test".into(),
         host_id: "host".into(),

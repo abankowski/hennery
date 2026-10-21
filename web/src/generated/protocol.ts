@@ -79,7 +79,13 @@ export type SessionFamily = { child_id: string, parent_id: string, root_id: stri
 
 export type DelegationLimits = { children: number, starts_per_operator_epoch: number, queued_prompts: number, queued_bytes: number, message_bytes: number, };
 
-export type CapabilitiesResult = { runtimes: Array<string>, catalogs: Array<HostCatalog>, cwd: string, limits: DelegationLimits, };
+export type CapabilitiesResult = { runtimes: Array<string>, catalogs: Array<CapabilityCatalog>, cwd: string, limits: DelegationLimits, };
+
+/**
+ * Model-facing runtime choices. All offered values are selectable with
+ * Delegation on; internal security metadata is not an execution allowlist.
+ */
+export type CapabilityCatalog = { agent: string, adapter_revision: string, config_options: unknown[], defaults: SessionConfig, freshness: CatalogFreshness, };
 
 export type ChildQuestion = { pending_id: string, kind: PendingKind, operator_required: boolean, answered: boolean,
 /**
@@ -102,9 +108,9 @@ export type ConfigEvidence = { attach_generation: number, config_revision: numbe
 export type CatalogFreshness = "fresh" | "stale" | "unknown";
 
 /**
- * Profile-owned security axes and their baseline allowed values. `mode`
+ * Profile-owned security axes and their baseline values for operator warnings. `mode`
  * means `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.
- * Metadata supports defaults and operator warnings; it does not narrow an enabled hat.
+ * Evidence must confirm these axes were applied; baseline values never narrow delegation.
  */
 export type SecurityClassification = { known: boolean, axes: { [key in string]: Array<ConfigValue> }, };
 
@@ -113,6 +119,11 @@ export type HostCatalog = { agent: string,
  * Opaque digest of the configured adapter command/environment and catalog.
  */
 adapter_revision: string, config_options: unknown[], defaults: SessionConfig, security: SecurityClassification, freshness: CatalogFreshness, };
+
+/**
+ * Host-owned adapter identity for cross-runtime permission-mode inheritance.
+ */
+export type RuntimeProfile = "claude" | "codex" | "claude_own_cli" | "generic" | "unknown";
 
 /**
  * Caller-host capabilities, scoped to the caller's hat and validated cwd.
@@ -130,7 +141,8 @@ export type SpawnArgs = { operation_key: string, cwd: string, brief: string, nam
 export type SendArgs = { operation_key: string, child_id: string, text: string, };
 
 /**
- * Answer ordinary elicitation only. ACP permissions remain operator-only.
+ * Answer ordinary elicitation only. Permission requests raised by a child
+ * go to the operator; the parent cannot answer them.
  */
 export type AnswerArgs = { operation_key: string, child_id: string, pending_id: string, action: ElicitationAction,
 /**
@@ -333,7 +345,9 @@ title?: string | null, };
  * is present and not empty, the four are one snapshot of the adapter's
  * config. An absent or empty `config_options` means "no read-back", never
  * "the adapter has no config" (a response that failed to parse looks
- * empty).
+ * empty). A live `current_mode` without a snapshot is a mode-only delta;
+ * it never clears the model, other axes or option inventory. Early/replayed
+ * mode deltas are ignored.
  */
 export type Indexed = {
 /**
@@ -500,6 +514,11 @@ capabilities: Capabilities,
  * Absent means none is isolated (an older host).
  */
 mcp_isolation: AgentIsolation,
+/**
+ * Installed profiles for this connection's runtime ids. Missing or
+ * unknown profiles use runtime defaults for cross-runtime inheritance.
+ */
+runtime_profiles: { [key in string]: RuntimeProfile },
 /**
  * The workspace roots from the host's config (ACP core §7), as
  * configured. Absent means none (an older host).
@@ -1791,7 +1810,15 @@ export type DeploymentMode = "full" | "gateway";
  * on. `features` is an open list: a client ignores a name it does not
  * know.
  */
-export type CapabilitiesResponse = { mode: DeploymentMode, features: Array<string>, };
+export type CapabilitiesResponse = { mode: DeploymentMode, features: Array<string>,
+/**
+ * The running collector's release, from its crate version.
+ */
+collector_version: string,
+/**
+ * Release source revision, when recorded by the build; never a path.
+ */
+source_commit: string | null, };
 
 /**
  * Which hats' sessions on a host get gateway MCP servers for one agent

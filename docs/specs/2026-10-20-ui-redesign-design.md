@@ -915,7 +915,19 @@ the default for newly paired hosts comes from `HatItem.default_for_new_hosts`,
 not a nonexistent global default in `SettingsResponse`. “Default on” on a
 hat card is the list of hosts whose `default_hat_id` matches it; each host's
 default remains editable in Hosts. Show attachment usage and host-transcript
-cleanup only through their existing APIs. Do not invent a collector version,
+cleanup only through their existing APIs. Operator decision, 2026-10-21:
+show the actual collector release and short recorded source commit subtly in
+the expanded sidebar footer and an About line at the bottom of Settings,
+also at the bottom of More on phones. Read `collector_version` and `source_commit`
+from authenticated `GET /api/capabilities`; the loaded page's version is
+injected from the web package at build time. Refresh collector information
+on window focus, visibility, browser reconnect and session-stream resync or
+reconnection, coalescing paired focus/visibility events into one read.
+When releases differ, add a tiny
+muted `page 0.2.1 · server 0.2.2` hint; no banner or modal. Use small Roboto
+text and `--hn-fg-3` in both themes. Development builds omit an unrecorded
+commit; older collectors without identity show the page version and an
+unavailable server version. Do not invent an
 OS, password change date, doctor result, agent update/login result or cleanup
 receipt. Public URL remains read-only in this scope; retain the existing
 admin reset instructions and reset consequences where relevant.

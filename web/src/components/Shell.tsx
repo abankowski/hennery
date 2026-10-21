@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { capabilities } from '../api/auth'
 import { messageOf } from '../api/errors'
 import { useClient } from '../app-client'
@@ -19,6 +19,7 @@ import SessionScope, { useSessionScope, WaitingBadge } from './SessionScope'
 import McpScope, { McpBadge } from './McpScope'
 import NavigationRail from './NavigationRail'
 import BottomNavigation from './BottomNavigation'
+import { CollectorVersionContext } from './VersionInfo'
 import { usePersistentToggle } from '../hooks/usePersistentToggle'
 import '../styles/shell.css'
 const Settings = lazy(() => import('../screens/Settings'))
@@ -26,6 +27,7 @@ const Defaults = lazy(() => import('../screens/Defaults'))
 const NewSessionFrame = lazy(() => import('./NewSessionFrame'))
 const NewSession = lazy(() => import('../screens/NewSession'))
 export const DESKTOP = '(min-width: 768px)'
+export const COLLECTOR_REFRESH_MS = 150
 function SessionRoute({ id }: { id: string }) {
   const list = useSessionScope()?.list
   return <SessionView id={id} summary={list?.all.get(id)} awaitSummary={!!list && list.loading && !list.error} onRemoved={list?.remove} />
@@ -78,15 +80,31 @@ export default function Shell({ route }: { route: Route }) {
   const [caps, setCaps] = useState<CapabilitiesResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const refresh = useCallback(() => {
+    clearTimeout(refreshTimer.current)
+    refreshTimer.current = setTimeout(() => { refreshTimer.current = undefined; setAttempt(n => n + 1) }, COLLECTOR_REFRESH_MS)
+  }, [])
   useEffect(() => {
     let live = true; setError(null)
     capabilities(client).then(c => { if (live) setCaps(c) }, err => { if (live && !(err instanceof Error && err.name === 'Unauthenticated')) setError(messageOf(err)) })
     return () => { live = false }
   }, [client, attempt])
   useEffect(() => { if (caps?.mode === 'gateway' && route.name === 'sessions') navigate('/mcp', { replace: true }) }, [caps?.mode, route.name])
-  useEffect(() => { const online = () => { if (!caps) setAttempt(n => n + 1) }; window.addEventListener('online', online); return () => window.removeEventListener('online', online) }, [caps])
+  useEffect(() => {
+    const visible = () => { if (document.visibilityState === 'visible') refresh() }
+    window.addEventListener('online', refresh)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      window.removeEventListener('online', refresh)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', visible)
+      clearTimeout(refreshTimer.current)
+    }
+  }, [refresh])
   if (!caps) return <main className="auth"><div className="auth-card" role="status">{error ? <><p className="form-error"><bdi>{error}</bdi></p><button type="button" className="btn btn-ghost" onClick={() => setAttempt(n => n + 1)}>Try again</button></> : 'Loading…'}</div></main>
-  const frame = <Frame caps={caps} route={route} />
-  const scoped = caps.mode === 'full' ? <SessionScope route={route}>{frame}</SessionScope> : frame
+  const frame = <CollectorVersionContext.Provider value={caps}><Frame caps={caps} route={route} /></CollectorVersionContext.Provider>
+  const scoped = caps.mode === 'full' ? <SessionScope route={route} onReconnect={refresh}>{frame}</SessionScope> : frame
   return caps.features.includes('mcp_connections') && caps.features.includes('mcp_oauth') ? <McpScope active={route.name === 'mcp'}>{scoped}</McpScope> : scoped
 }
