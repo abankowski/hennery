@@ -277,9 +277,6 @@
         "limits": {
           "$ref": "#/$defs/DelegationLimits"
         },
-        "policy": {
-          "$ref": "#/$defs/ExecutionPolicy"
-        },
         "runtimes": {
           "items": {
             "type": "string"
@@ -291,7 +288,6 @@
         "runtimes",
         "catalogs",
         "cwd",
-        "policy",
         "limits"
       ],
       "type": "object"
@@ -1608,33 +1604,6 @@
       "required": [
         "role",
         "text"
-      ],
-      "type": "object"
-    },
-    "ExecutionPolicy": {
-      "additionalProperties": false,
-      "properties": {
-        "allowed": {
-          "additionalProperties": {
-            "additionalProperties": {
-              "items": {
-                "$ref": "#/$defs/ConfigValue"
-              },
-              "type": "array"
-            },
-            "type": "object"
-          },
-          "description": "Runtime -> profile security option id -> explicitly permitted values.",
-          "type": "object"
-        },
-        "revision": {
-          "format": "int64",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "revision",
-        "allowed"
       ],
       "type": "object"
     },
@@ -5711,27 +5680,6 @@
       },
       "required": [
         "sessions"
-      ],
-      "type": "object"
-    },
-    "SetExecutionPolicy": {
-      "additionalProperties": false,
-      "properties": {
-        "allowed": {
-          "additionalProperties": {
-            "additionalProperties": {
-              "items": {
-                "$ref": "#/$defs/ConfigValue"
-              },
-              "type": "array"
-            },
-            "type": "object"
-          },
-          "type": "object"
-        }
-      },
-      "required": [
-        "allowed"
       ],
       "type": "object"
     },

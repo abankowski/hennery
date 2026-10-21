@@ -236,13 +236,7 @@ impl Store {
             previous.map_or(1, |(g, _)| g + 1)
         };
         let config: SessionConfig = serde_json::from_str(&required)?;
-        if catalog.agent != agent
-            || !(new_start
-                && catalog.freshness != hennery_proto::delegation_host::CatalogFreshness::Fresh
-                && config.mode.is_none()
-                && config.axes.is_empty())
-                && !crate::delegation_runtime::security_allowed(catalog, &self.execution_policy_in(&tx, &hat)?, &config)
-        {
+        if catalog.agent != agent || !crate::delegation_runtime::config_offered(catalog, &config) {
             return Ok(false);
         }
         let changed = tx.execute(
@@ -333,8 +327,7 @@ impl Store {
         };
         let evidence: ConfigEvidence = serde_json::from_str(&evidence)?;
         let required: SessionConfig = serde_json::from_str(&required)?;
-        let policy = self.execution_policy_in(&tx, &hat)?;
-        if !evidence_satisfies(&evidence, u64::try_from(generation)?, &required, catalog, &policy) {
+        if !evidence_satisfies(&evidence, u64::try_from(generation)?, &required, catalog) {
             tx.execute(
                 "UPDATE session_operations SET state = 'waiting_config' WHERE owner_id = ?1 AND operation_id = ?2",
                 params![self.owner_id(), operation],
@@ -371,7 +364,7 @@ impl Store {
                 serde_json::to_string(&origin)?
             ],
         )?;
-        tx.execute("UPDATE session_operations SET turn_id = ?3,request_id = ?2,state = 'awaiting_reconciliation',validated_attach = ?4,validated_config = ?5,validated_policy = ?6 WHERE owner_id = ?1 AND operation_id = ?2",params![self.owner_id(),operation,turn,generation,i64::try_from(evidence.config_revision)?,policy.revision])?;
+        tx.execute("UPDATE session_operations SET turn_id = ?3,request_id = ?2,state = 'awaiting_reconciliation',validated_attach = ?4,validated_config = ?5 WHERE owner_id = ?1 AND operation_id = ?2",params![self.owner_id(),operation,turn,generation,i64::try_from(evidence.config_revision)?])?;
         tx.execute("UPDATE session_dispatch_queue SET state = 'awaiting_reconciliation' WHERE owner_id = ?1 AND operation_id = ?2",params![self.owner_id(),operation])?;
         let frame = CollectorFrame::DelegatedPrompt {
             request_id: request,

@@ -65,7 +65,7 @@ DROP TABLE session_dispatch_queue;
 DROP TABLE session_operations;
 DROP TABLE session_attach_evidence;
 DROP TABLE delegation_start_budgets;
-DROP TABLE delegation_execution_policy;
+DROP TABLE IF EXISTS delegation_execution_policy;
 ALTER TABLE sessions DROP COLUMN delegated_child;
 ALTER TABLE turns DROP COLUMN input_origin;
 ALTER TABLE answer_queue DROP COLUMN input_origin;

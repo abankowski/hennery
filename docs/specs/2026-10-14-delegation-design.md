@@ -1,6 +1,10 @@
 # hennery — parent/child sessions and the built-in session MCP
 
 - **Date:** 2026-10-14.
+- **Operator amendment, 2026-10-21:** Delegation is binary per hat. ON
+  permits every runtime/model/mode/option offered by the live, fresh catalog
+  at child spawn; OFF denies delegation. There is no execution-policy
+  snapshot, grant editor, allowlist or narrowing. Enabling never probes hosts.
 - **Status:** proposed design; needs parent review and the operator decisions
   in §12. No implementation or live acceptance is claimed.
 - **Review:** Codex gpt-6-astra, on the maintainer's behalf, reviewed
@@ -266,7 +270,7 @@ identifier already used by `StartSessionRequest`.
 
 | Tool | Typed arguments | Result and behavior |
 |---|---|---|
-| `session_capabilities` | `CapabilitiesArgs { agent: Option<String>, cwd: Option<String> }` | Caller-host runtimes, availability, config catalogs, catalog freshness, delivery modes, delegation policy and limits. Omitted cwd means caller cwd; supplied cwd is validated in the same hat. No other hats' paths, sessions or catalogs. |
+| `session_capabilities` | `CapabilitiesArgs { agent: Option<String>, cwd: Option<String> }` | Caller-host runtimes, availability, config catalogs, catalog freshness, delivery modes and limits. Omitted cwd means caller cwd; supplied cwd is validated in the same hat. No other hats' paths, sessions or catalogs. |
 | `session_spawn` | `SpawnArgs { operation_key: String, cwd: String, brief: String, name: Option<String>, agent: Option<String>, config: SessionConfig }` | `OperationReceipt` with a durable child id once allocated, launch/config state, and initial-brief delivery state. No caller/parent/host/hat argument. |
 | `session_send` | `SendArgs { operation_key: String, child_id: String, text: String }` | Accept a follow-up into the child's bounded durable queue. Resume a genuinely parked child first; never reopen a closed one. |
 | `session_answer` | `AnswerArgs { operation_key: String, child_id: String, pending_id: String, action: ElicitationAction, content: Option<Value> }` | Existing answer acceptance receipt plus delivery state, for direct-child elicitation only under Q1's default. `accept` content is an object; validate through the same answer service as the operator. |
@@ -304,9 +308,11 @@ catalog in the validated cwd without a user prompt. If discovery requires
 publish no user session, and release it on success, error or timeout. Agent
 hooks can still run: this is a trusted-host operation, not a side-effect-free
 filesystem read. Limit concurrent probes and deduplicate identical requests.
-If the adapter cannot safely supply a pre-start catalog, report it unavailable;
-an explicitly requested model can still be validated against the actual newly
-created child's catalog before the brief is sent. No silent defaulting.
+If the adapter cannot supply a fresh pre-start catalog, fail only that spawn
+with its readable reason. An unauthenticated runtime returns `auth_required`
+(not signed in), including when authentication fails during child attach.
+Offline, probe and authentication failures never block enabling the hat.
+Do not silently substitute a runtime or configuration.
 
 An omitted agent inherits the parent's agent. An omitted model inherits the
 parent's current model only for the same agent; otherwise use that agent's
@@ -316,13 +322,15 @@ inherited. Explicit values are checked against the target catalog and then
 against the newly started child's reported configuration. Apply model, axes,
 then mode, as ACP core §4.3 requires.
 
-Model/effort selection must not become a permission-policy bypass. Parent
-launches cannot select a sandbox/approval mode more permissive than the
-operator's granted execution policy for that hat. Adapter profiles must identify
-security-relevant axes rather than trusting model-provided labels; an unknown
-security mode requires operator configuration. Enabling delegation alone does
-not authorize disabling permission prompts. This leaves every offered runtime
-and model selectable within the operator's execution policy.
+Operator decision, 2026-10-21: the enabled flag is the entire delegation
+authorization. Every configuration offered by the current fresh catalog is
+allowed, including Generic and ClaudeOwnCli profiles with unknown security
+classification. Profile metadata remains useful for defaults and warnings,
+but cannot narrow delegation. No execution-policy table, API or grant snapshot
+is used. A runtime signed in later, or a newly offered model/mode/option,
+is usable without toggling again. This preserves 0.2.0 ON's union of all
+catalog values while making “all” current. Children cannot start children;
+permission requests still go to the operator.
 
 Start the child **without its brief**, wait for `session_started` and config
 read-back, then submit the brief through the normal turn path. A rejected or
@@ -345,13 +353,13 @@ sequenced session stream. No evidence, partial evidence, a stale generation,
 or a retained `sessions.model/mode/config_axes` value is proof of current config.
 
 Release queued work only after fresh complete evidence satisfies the saved
-required configuration and the operator's current execution policy, including
-security-relevant axes. On mismatch or unknown configuration hold it in
+required configuration and that configuration is offered by the fresh catalog.
+On mismatch or unknown configuration hold it in
 `waiting_config`, expose requested/actual/unknown values, and apply the normal
 attention deadline/fallback. A current-generation repair/read-back may release
 it after revalidation; never silently run under adapter defaults. Record the
-validated config and policy revisions on dispatch; invalidate eligibility on
-later relevant config/policy changes. The host's serialized prompt admission
+validated attach/config revisions on dispatch; invalidate eligibility on
+later relevant configuration changes or delegation disable. The host's serialized prompt admission
 checks the expected attach/config revision too, so a switch after collector
 validation cannot run the queued prompt under another configuration. Hosts
 without this evidence/fencing capability cannot auto-resume delegated work.
@@ -569,10 +577,10 @@ Existing sessions have no family edge and their existing turns default to
 |---|---|
 | `hat_session_tools` (kernel component) | Owner/hat, delegation enabled flag and grant revision. Disabled by default, changed only through stepped-up operator settings; feeds/plug-ins have separate explicit grants defined by the plug-in contract. |
 | Existing `gw_session_tokens` extension (gateway component) | Nullable `delivered_delegation_revision`, bound to the current token hash/generation; NULL unless the built-in entry was delivered, including for migrated rows. Mint/replacement updates it atomically; every built-in authorization compares it to the current enabled hat revision. |
-| Session dispatch evidence | Attach generation, fresh config evidence/revision and validated execution-policy revision; invalidate at automatic resume/config change. Existing `close_requested` participates in every acceptance/dispatch/automatic-resume compare-and-set and final handoff fence. |
+| Session dispatch evidence | Attach generation and fresh complete config evidence/revision; invalidate at automatic resume/config change. Existing `close_requested` participates in every acceptance/dispatch/automatic-resume compare-and-set and final handoff fence. |
 | `session_families` | `owner_id`, unique `child_id`, `parent_id`, `root_id`, `hat_id`, `created_event_id`, routing state/reason. Both sessions have the same owner/hat; no self-edge or cycle. Parent is assigned once at child creation; disabling an edge grants no new parent. |
 | `session_operations` | Owner, caller, operation key/digest, tool kind, target child, receipt state, linked request/turn/pending ids, timestamps. Unique owner/caller/key; no plaintext credentials. |
-| `session_dispatch_queue` | Owner, source/target sessions, origin, operation or delivery id, bounded content or source reference, accepted grant revision, queue order, claim lease, attach/config/policy revisions and receipt. One dispatch association per delivery; cancellation is explicit. |
+| `session_dispatch_queue` | Owner, source/target sessions, origin, operation or delivery id, bounded content or source reference, accepted enablement revision, queue order, claim lease, attach/config revisions and receipt. One dispatch association per delivery; cancellation is explicit. |
 | `delegation_notices` | Owner/hat/family ids, source events and kind, loss-incident identity, attention routing, destination turn, deadline and resolution. Unique source identity and coalesced loss incident; indexed by pending work/deadline and target. |
 | `delegation_budgets` | Owner/root id, operator-prompt epoch and reserved wake-ups. Durable across collector restarts and child replacement. |
 | Turn/answer provenance | Import C1's typed provenance (`Operator`, `Parent`, `ChildReport`) from the memory design; persist the corresponding server-verified source/operation/delivery references. Submitted answer origin is operator or parent. Never supplied in public prompt JSON; no independently defined delegation enum. |
@@ -741,8 +749,10 @@ replace live adapter checks.
    adapter override, unavailable model, and no brief before successful read-back.
    Test the same catalog service through tools and launcher-facing API.
    After automatic parent and child resume, test reapply failure, absent/partial
-   read-back with old stored values, late old-generation evidence, execution
-   policy changes and a config switch between validation and host admission.
+   read-back with old stored values, late old-generation evidence, delegation
+   disable and a config switch between validation and host admission. Cover
+   enabling with an unauthenticated runtime, sign-in and new catalog values
+   after enabling without re-toggling, and `auth_required` spawn refusal.
    No queued prompt runs until current-generation evidence proves eligibility.
 4. **Durability:** fault injection after every acceptance/source-event/claim/
    dispatch/ack transaction boundary; collector and host restart separately;

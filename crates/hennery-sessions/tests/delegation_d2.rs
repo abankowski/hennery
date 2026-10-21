@@ -248,6 +248,47 @@ fn closed_attention_deleted_child_resolves_its_attention() {
 }
 
 #[test]
+fn binary_delegation_migration_drops_old_grants_and_preserves_enabled_hat() {
+    let w = World::new();
+    let conn = raw(&w);
+    conn.execute_batch(
+        "CREATE TABLE delegation_execution_policy (
+        owner_id TEXT NOT NULL, hat_id TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
+        allowed TEXT NOT NULL DEFAULT '{}', configured INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(owner_id,hat_id)); PRAGMA user_version=25;",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO delegation_execution_policy(owner_id,hat_id,allowed) VALUES (?1,?2,?3)",
+        params![w.store.owner_id(), w.hat, r#"{"codex":{"mode":["read-only"]}}"#],
+    )
+    .unwrap();
+    drop(conn);
+    let reopened = Store::open(&w.db).unwrap();
+    let conn = raw(&w);
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    assert_eq!(version, 26);
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name='delegation_execution_policy'",
+            [],
+            |r| r.get::<_, u32>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert!(
+        conn.query_row(
+            "SELECT delegation_enabled FROM hat_session_tools WHERE owner_id=?1 AND hat_id=?2",
+            params![reopened.owner_id(), w.hat],
+            |r| r.get::<_, bool>(0)
+        )
+        .unwrap()
+    );
+    Store::open(&w.db).unwrap();
+}
+
+#[test]
 fn closed_attention_migration_repairs_existing_closed_and_deleted_rows() {
     for deleted in [false, true] {
         let (w, _) = pair();
@@ -1140,7 +1181,11 @@ fn catalog() -> HostCatalog {
     HostCatalog {
         agent: "claude".into(),
         adapter_revision: "pin".into(),
-        config_options: vec![],
+        config_options: vec![
+            json!({"id":"model","options":[{"value":"wanted"},{"value":"wrong"},{"value":"private-model"}]}),
+            json!({"id":"mode","options":[{"value":"default"},{"value":"plan"},{"value":"agent-full-access"}]}),
+            json!({"id":"effort","options":[{"value":"high"},{"value":"low"}]}),
+        ],
         defaults: SessionConfig::default(),
         security: SecurityClassification {
             known: true,
@@ -1168,21 +1213,15 @@ fn changed_model_does_not_inherit_another_models_nonsecurity_axes() {
     c.security
         .axes
         .insert("sandbox".into(), vec![ConfigValue::Id("safe".into())]);
-    let mut policy = hennery_proto::delegation_status::ExecutionPolicy {
-        revision: 1,
-        allowed: Default::default(),
-    };
-    policy
-        .allowed
-        .entry("claude".into())
-        .or_default()
+    c.security
+        .axes
         .insert("custom_security".into(), vec![ConfigValue::Bool(false)]);
     let wanted = SessionConfig {
         model: Some("sonnet".into()),
         axes: [("effort".into(), ConfigValue::Id("low".into()))].into(),
         ..Default::default()
     };
-    let actual = launch_configuration(&c, &wanted, &policy);
+    let actual = launch_configuration(&c, &wanted);
     assert!(
         !actual.axes.contains_key("fast"),
         "Opus fast-mode default must not become a Sonnet requirement"
@@ -1193,12 +1232,12 @@ fn changed_model_does_not_inherit_another_models_nonsecurity_axes() {
     let mut explicit = wanted.clone();
     explicit.axes.insert("fast".into(), ConfigValue::Bool(false));
     assert_eq!(
-        launch_configuration(&c, &explicit, &policy).axes["fast"],
+        launch_configuration(&c, &explicit).axes["fast"],
         ConfigValue::Bool(false),
         "never silently discard an explicit request"
     );
     assert_eq!(
-        launch_configuration(&c, &SessionConfig::default(), &policy),
+        launch_configuration(&c, &SessionConfig::default()),
         c.defaults,
         "unchanged model retains catalog defaults"
     );
@@ -2364,6 +2403,11 @@ fn d3_queue_overflow_has_a_durable_disposition_without_evicting_questions() {
 fn d3_automatic_parent_resume_requires_genuine_park_and_fresh_proof() {
     let (w, _) = pair();
     ready_parent(&w);
+    // Notices capture the session's current config, independently of attach
+    // evidence. Seed both, as a real host's configuration update does.
+    raw(&w)
+        .execute("UPDATE sessions SET model='wanted' WHERE id='parent'", [])
+        .unwrap();
     pending(&w, "child", 2, "question", PendingKind::Elicitation);
     w.store
         .ingest(
@@ -2380,6 +2424,14 @@ fn d3_automatic_parent_resume_requires_genuine_park_and_fresh_proof() {
         isolation: McpIsolation::ClaudeStrict,
         rules_name_other_hats: false,
     };
+    let mut unavailable = catalog();
+    unavailable.config_options.clear();
+    assert!(!w.store.attach_notice_parent("parent", mcp, &unavailable, &h).unwrap());
+    assert!(rx.try_recv().is_err());
+    unavailable = catalog();
+    unavailable.freshness = CatalogFreshness::Stale;
+    assert!(!w.store.attach_notice_parent("parent", mcp, &unavailable, &h).unwrap());
+    assert!(rx.try_recv().is_err());
     assert!(w.store.attach_notice_parent("parent", mcp, &catalog(), &h).unwrap());
     let generation = match rx.try_recv().unwrap() {
         CollectorFrame::DelegatedAttach { attach_generation, .. } => attach_generation,
@@ -2501,6 +2553,17 @@ fn automatic_resume_accepts_only_genuinely_parked_and_ready_host() {
             .unwrap();
         let old_watch = w.revocations.watch(&old_hash);
         assert!(!old_watch.token().is_cancelled());
+        if expected {
+            let mut unavailable = catalog();
+            unavailable.config_options.clear();
+            assert!(
+                !w.store
+                    .attach_delegated("child", McpContext::NONE, &unavailable, &h)
+                    .unwrap()
+            );
+            assert!(!old_watch.token().is_cancelled());
+            assert!(rx.try_recv().is_err());
+        }
         assert_eq!(
             w.store
                 .attach_delegated("child", McpContext::NONE, &catalog(), &h)
@@ -2728,42 +2791,30 @@ async fn configuration_wait_renews_on_new_proof_and_unknown_values_do_not_fail()
     assert!(!matches!(receipt(&w, &p, "brief").state, OperationState::Failed { .. }));
 }
 #[test]
-fn execution_policy_is_rechecked_and_current_revision_is_bound_to_dispatch() {
+fn fresh_catalog_is_rechecked_and_attach_config_revision_is_bound_to_dispatch() {
     let (w, p) = pair();
     let mut required = config("wanted");
-    required.mode = Some("default".into());
+    required.mode = Some("agent-full-access".into());
     seed(&w, "child", &required, 5);
     proof(&w, "child", 2, 5, 10, ConfigCompleteness::Complete, required);
     let q = queue(&w, &p, "followup");
     let (h, mut rx) = connected();
     let mut c = catalog();
-    c.security
-        .axes
-        .insert("mode".into(), vec![ConfigValue::Id("default".into())]);
-    let policy = BTreeMap::from([(
-        "claude".into(),
-        BTreeMap::from([("mode".into(), vec![ConfigValue::Id("plan".into())])]),
-    )]);
-    assert_eq!(w.store.set_execution_policy(&w.hat, &policy).unwrap().revision, 1);
+    c.freshness = CatalogFreshness::Stale;
     assert!(!w.store.dispatch_delegated("child", &c, &h).unwrap());
     assert!(rx.try_recv().is_err());
-    assert_eq!(
-        w.store
-            .set_execution_policy(&w.hat, &Default::default())
-            .unwrap()
-            .revision,
-        2
-    );
+    c.freshness = CatalogFreshness::Fresh;
+    c.security.known = false;
     assert!(w.store.dispatch_delegated("child", &c, &h).unwrap());
     take_prompt(&mut rx);
-    let validated: (i64, i64, i64) = raw(&w)
+    let validated: (i64, i64) = raw(&w)
         .query_row(
-            "SELECT validated_attach,validated_config,validated_policy FROM session_operations WHERE operation_id=?1",
+            "SELECT validated_attach,validated_config FROM session_operations WHERE operation_id=?1",
             [q.operation_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!(validated, (5, 10, 2));
+    assert_eq!(validated, (5, 10));
 }
 
 #[test]
@@ -3825,7 +3876,6 @@ fn current_path_rule_blocks_cross_hat_allocation_and_queued_dispatch() {
 
 #[test]
 fn evidence_validator_requires_each_independent_proof_field() {
-    use hennery_proto::delegation_status::ExecutionPolicy;
     use hennery_sessions::delegation_runtime::evidence_satisfies;
     let required = SessionConfig {
         model: Some("wanted".into()),
@@ -3837,17 +3887,25 @@ fn evidence_validator_requires_each_independent_proof_field() {
         "mode".into(),
         vec![ConfigValue::Id("default".into()), ConfigValue::Id("plan".into())],
     );
-    let policy = ExecutionPolicy {
-        revision: 2,
-        allowed: Default::default(),
-    };
     let good = ConfigEvidence {
         attach_generation: 7,
         config_revision: 2,
         completeness: ConfigCompleteness::Complete,
         actual: required.clone(),
     };
-    assert!(evidence_satisfies(&good, 7, &required, &c, &policy));
+    assert!(evidence_satisfies(&good, 7, &required, &c));
+    let mut unoffered = good.clone();
+    unoffered
+        .actual
+        .axes
+        .insert("not-offered".into(), ConfigValue::Bool(true));
+    assert!(!evidence_satisfies(&unoffered, 7, &required, &c));
+    let mut removed = c.clone();
+    removed.config_options.retain(|o| o["id"] != "mode");
+    assert!(!evidence_satisfies(&good, 7, &required, &removed));
+    let mut stale = c.clone();
+    stale.freshness = CatalogFreshness::Stale;
+    assert!(!evidence_satisfies(&good, 7, &required, &stale));
     for field in ["generation", "revision", "partial", "unknown", "model", "mode", "axis"] {
         let mut bad = good.clone();
         match field {
@@ -3861,7 +3919,7 @@ fn evidence_validator_requires_each_independent_proof_field() {
                 bad.actual.axes.insert("effort".into(), ConfigValue::Id("low".into()));
             }
         }
-        assert!(!evidence_satisfies(&bad, 7, &required, &c, &policy), "{field}");
+        assert!(!evidence_satisfies(&bad, 7, &required, &c), "{field}");
     }
     let mut unknown = c.clone();
     unknown.security.known = false;
@@ -3869,13 +3927,13 @@ fn evidence_validator_requires_each_independent_proof_field() {
         .security
         .axes
         .insert("effort".into(), vec![ConfigValue::Id("high".into())]);
-    assert!(!evidence_satisfies(&good, 7, &required, &unknown, &policy));
+    assert!(evidence_satisfies(&good, 7, &required, &unknown));
     let mut forbidden = c.clone();
     forbidden
         .security
         .axes
         .insert("mode".into(), vec![ConfigValue::Id("plan".into())]);
-    assert!(!evidence_satisfies(&good, 7, &required, &forbidden, &policy));
+    assert!(evidence_satisfies(&good, 7, &required, &forbidden));
 }
 
 #[test]

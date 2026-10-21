@@ -410,6 +410,8 @@ const MIGRATIONS: &[&str] = &[
      UPDATE delegation_attention SET state='resolved' WHERE EXISTS(SELECT 1 FROM sessions c
        WHERE c.owner_id=delegation_attention.owner_id AND c.id=delegation_attention.child_id
        AND (c.lifecycle IN ('closed','deleted') OR c.close_requested=1));",
+    // Binary delegation (26): ON follows the live catalog; no stored execution grants.
+    "DROP TABLE IF EXISTS delegation_execution_policy;",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records

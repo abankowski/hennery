@@ -4,7 +4,6 @@ use crate::AppState;
 use anyhow::{Result, ensure};
 use hennery_proto::{
     delegation_host::{CatalogFreshness, ConfigCompleteness, ConfigEvidence, HostCatalog},
-    delegation_status::ExecutionPolicy,
     frames::{Capability, CollectorFrame, ConfigValue, HostFrame, SessionConfig},
 };
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -26,9 +25,28 @@ type CatalogCache = BTreeMap<CatalogKey, (Instant, HostCatalog)>;
 pub struct Catalogs {
     cache: Mutex<CatalogCache>,
 }
+enum CatalogOrigin {
+    Operator,
+    Agent,
+    Spawn,
+}
 impl Catalogs {
     pub async fn get(&self, state: &AppState, host: &str, hat: &str, cwd: &str, agent: &str) -> Result<HostCatalog> {
-        self.get_for_origin(state, host, hat, cwd, agent, false).await
+        self.get_for_origin(state, host, hat, cwd, agent, CatalogOrigin::Agent)
+            .await
+    }
+    /// A spawn must see values currently offered, including changes since the
+    /// last preview or capability read. Never authorize from that cached view.
+    pub async fn get_for_spawn(
+        &self,
+        state: &AppState,
+        host: &str,
+        hat: &str,
+        cwd: &str,
+        agent: &str,
+    ) -> Result<HostCatalog> {
+        self.get_for_origin(state, host, hat, cwd, agent, CatalogOrigin::Spawn)
+            .await
     }
     pub async fn get_operator(
         &self,
@@ -38,7 +56,8 @@ impl Catalogs {
         cwd: &str,
         agent: &str,
     ) -> Result<HostCatalog> {
-        self.get_for_origin(state, host, hat, cwd, agent, true).await
+        self.get_for_origin(state, host, hat, cwd, agent, CatalogOrigin::Operator)
+            .await
     }
     async fn get_for_origin(
         &self,
@@ -47,17 +66,19 @@ impl Catalogs {
         hat: &str,
         cwd: &str,
         agent: &str,
-        operator_initiated: bool,
+        origin: CatalogOrigin,
     ) -> Result<HostCatalog> {
+        let operator_initiated = matches!(origin, CatalogOrigin::Operator);
+        let refresh = matches!(origin, CatalogOrigin::Spawn);
         state.store.catalog_scope(host, hat, cwd)?;
-        ensure!(
-            state.hub.has_capability(host, Capability::CatalogProbe),
-            "catalog_unavailable"
-        );
         let connection = state
             .hub
             .routable_conn(host)
             .ok_or_else(|| anyhow::anyhow!("host_offline"))?;
+        ensure!(
+            state.hub.has_capability(host, Capability::CatalogProbe),
+            "catalog_unavailable"
+        );
         ensure!(
             state.hub.runtime_ids(host).contains(&agent.to_string()),
             "runtime_unavailable"
@@ -82,10 +103,10 @@ impl Catalogs {
                     5
                 })
         });
-        if let Some((_, catalog)) = cache.get(&key) {
+        if !refresh && let Some((_, catalog)) = cache.get(&key) {
             return Ok(catalog.clone());
         }
-        ensure!(cache.len() < 128, "busy");
+        ensure!(cache.len() < 128 || cache.contains_key(&key), "busy");
         let request_id = uuid::Uuid::now_v7().to_string();
         let frame = CollectorFrame::ProbeCatalog {
             request_id: request_id.clone(),
@@ -103,6 +124,7 @@ impl Catalogs {
                         "cwd_unavailable" => "cwd_unavailable",
                         "busy" => "busy",
                         "timeout" => "timeout",
+                        "auth_required" => "auth_required",
                         _ => "adapter_failed",
                     },
                     crate::hub::RequestError::Busy => "busy",
@@ -181,43 +203,7 @@ pub fn config_offered(catalog: &HostCatalog, requested: &SessionConfig) -> bool 
             .is_none_or(|v| has("mode", &ConfigValue::Id(v.clone())))
         && requested.axes.iter().all(|(key, value)| has(key, value))
 }
-pub fn security_allowed(catalog: &HostCatalog, policy: &ExecutionPolicy, actual: &SessionConfig) -> bool {
-    let overrides = policy.allowed.get(&catalog.agent);
-    if !catalog.security.known && overrides.is_none() {
-        return false;
-    }
-    let mut axes = catalog.security.axes.clone();
-    if let Some(overrides) = overrides {
-        for (key, values) in overrides {
-            axes.insert(key.clone(), values.clone());
-        }
-    }
-    if !catalog.security.known {
-        if actual.mode.is_some() && !axes.contains_key("mode") {
-            return false;
-        }
-        if actual.axes.keys().any(|key| !axes.contains_key(key)) {
-            return false;
-        }
-        if actual.mode.is_none() && actual.axes.is_empty() {
-            return false;
-        }
-    }
-    axes.iter().all(|(key, permitted)| {
-        let actual = if key == "mode" {
-            actual.mode.clone().map(ConfigValue::Id)
-        } else {
-            actual.axes.get(key).cloned()
-        };
-        actual.is_some_and(|value| permitted.contains(&value))
-    })
-}
-
-pub fn launch_configuration(
-    catalog: &HostCatalog,
-    requested: &SessionConfig,
-    policy: &ExecutionPolicy,
-) -> SessionConfig {
+pub fn launch_configuration(catalog: &HostCatalog, requested: &SessionConfig) -> SessionConfig {
     let mut required = if catalog.freshness == CatalogFreshness::Fresh {
         catalog.defaults.clone()
     } else {
@@ -231,13 +217,7 @@ pub fn launch_configuration(
         // A cold probe describes its default model. Other models may remove
         // nonsecurity options (Claude Sonnet has effort, but no fast toggle).
         // Keep every security baseline, and every explicit request below.
-        required.axes.retain(|id, _| {
-            catalog.security.axes.contains_key(id)
-                || policy
-                    .allowed
-                    .get(&catalog.agent)
-                    .is_some_and(|axes| axes.contains_key(id))
-        });
+        required.axes.retain(|id, _| catalog.security.axes.contains_key(id));
     }
     if requested.model.is_some() {
         required.model.clone_from(&requested.model);
@@ -253,7 +233,6 @@ pub fn evidence_satisfies(
     generation: u64,
     required: &SessionConfig,
     catalog: &HostCatalog,
-    policy: &ExecutionPolicy,
 ) -> bool {
     catalog.freshness == CatalogFreshness::Fresh
         && evidence.attach_generation == generation
@@ -271,7 +250,8 @@ pub fn evidence_satisfies(
             .axes
             .iter()
             .all(|(key, value)| evidence.actual.axes.get(key) == Some(value))
-        && security_allowed(catalog, policy, &evidence.actual)
+        && config_offered(catalog, required)
+        && config_offered(catalog, &evidence.actual)
 }
 impl crate::store::Store {
     pub fn catalog_scope(&self, host: &str, hat: &str, cwd: &str) -> Result<()> {
@@ -288,57 +268,6 @@ impl crate::store::Store {
             "not_found"
         );
         Ok(())
-    }
-    pub fn execution_policy(&self, hat: &str) -> Result<ExecutionPolicy> {
-        let mut conn = self.conn();
-        let tx = conn.transaction()?;
-        self.execution_policy_in(&tx, hat)
-    }
-    pub(crate) fn execution_policy_in(&self, tx: &Transaction<'_>, hat: &str) -> Result<ExecutionPolicy> {
-        let stored: Option<(i64, String)> = tx
-            .query_row(
-                "SELECT revision,allowed FROM delegation_execution_policy WHERE owner_id = ?1 AND hat_id = ?2",
-                params![self.owner_id(), hat],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        match stored {
-            Some((revision, raw)) => Ok(ExecutionPolicy {
-                revision,
-                allowed: serde_json::from_str(&raw)?,
-            }),
-            None => Ok(ExecutionPolicy {
-                revision: 0,
-                allowed: Default::default(),
-            }),
-        }
-    }
-    pub fn set_execution_policy(
-        &self,
-        hat: &str,
-        allowed: &hennery_proto::delegation_status::ExecutionAllowlist,
-    ) -> Result<ExecutionPolicy> {
-        ensure!(serde_json::to_vec(allowed)?.len() <= 32 * 1024, "invalid_policy");
-        ensure!(
-            allowed.len() <= 32
-                && allowed.iter().all(|(agent, axes)| !agent.is_empty()
-                    && agent.len() <= 128
-                    && axes.len() <= 64
-                    && axes.iter().all(|(key, values)| key.len() <= 512 && values.len() <= 128)),
-            "invalid_policy"
-        );
-        let mut conn = self.conn();
-        let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO delegation_execution_policy(owner_id,hat_id,allowed,configured)
-            SELECT ?1,?2,?3,1 WHERE EXISTS (SELECT 1 FROM hats WHERE owner_id = ?1 AND id = ?2)
-            AND NOT EXISTS (SELECT 1 FROM purged_hats WHERE owner_id = ?1 AND hat_id = ?2)
-            ON CONFLICT(owner_id,hat_id) DO UPDATE SET allowed = excluded.allowed,revision = revision+1,configured = 1",
-            params![self.owner_id(), hat, serde_json::to_string(allowed)?],
-        )?;
-        let policy = self.execution_policy_in(&tx, hat)?;
-        tx.commit()?;
-        Ok(policy)
     }
 }
 

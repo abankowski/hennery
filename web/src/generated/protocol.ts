@@ -77,17 +77,9 @@ export type SetSessionTools = { delegation_enabled: boolean, };
 
 export type SessionFamily = { child_id: string, parent_id: string, root_id: string, hat_id: string, created_event_id: number, detached: boolean, reason: string | null, };
 
-export type ExecutionPolicy = { revision: number,
-/**
- * Runtime -> profile security option id -> explicitly permitted values.
- */
-allowed: { [key in string]: { [key in string]: Array<ConfigValue> } }, };
-
-export type SetExecutionPolicy = { allowed: { [key in string]: { [key in string]: Array<ConfigValue> } }, };
-
 export type DelegationLimits = { children: number, starts_per_operator_epoch: number, queued_prompts: number, queued_bytes: number, message_bytes: number, };
 
-export type CapabilitiesResult = { runtimes: Array<string>, catalogs: Array<HostCatalog>, cwd: string, policy: ExecutionPolicy, limits: DelegationLimits, };
+export type CapabilitiesResult = { runtimes: Array<string>, catalogs: Array<HostCatalog>, cwd: string, limits: DelegationLimits, };
 
 export type ChildQuestion = { pending_id: string, kind: PendingKind, operator_required: boolean, answered: boolean,
 /**

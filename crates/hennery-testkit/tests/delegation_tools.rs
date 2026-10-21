@@ -20,6 +20,106 @@ const HOST: &str = "delegation-host";
 const BOUND: Duration = Duration::from_secs(30);
 
 #[tokio::test]
+async fn binary_delegation_unauthenticated_spawn_returns_auth_required() {
+    let mut worker = script();
+    worker.new_session_error = Some(-32000);
+    let h = Harness::with_worker(worker, None, false).await;
+    let result = h
+        .call(
+            "session_spawn",
+            json!({"operation_key":"auth-required","cwd":h.cwd,"agent":"worker","brief":"must not run","config":{}}),
+        )
+        .await;
+    assert_eq!(result["isError"], true, "{result}");
+    assert_eq!(result["structuredContent"]["code"], "auth_required", "{result}");
+    assert!(
+        result["structuredContent"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not signed in")
+    );
+    let response = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+    let error: Value = response.json().await.unwrap();
+    assert_eq!(error["code"], "auth_required");
+    assert_eq!(error["message"], "worker on fixture: not signed in");
+    assert!(
+        h.state
+            .store
+            .family_page(&h.parent, "", 100)
+            .unwrap()
+            .unwrap()
+            .children
+            .is_empty()
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn binary_delegation_runtime_signed_in_after_enabling_uses_all_live_modes() {
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("signed-in");
+    let wrapper = root.path().join("auth.cjs");
+    std::fs::write(
+        &wrapper,
+        r#"
+const {spawn}=require('node:child_process');
+const fs=require('node:fs');
+const script=JSON.parse(process.env.HENNERY_FAKE_ACP_SCRIPT);
+if(!fs.existsSync(process.argv[3]))script.new_session_error=-32000;
+else if(fs.readFileSync(process.argv[3],'utf8')!=='full')script.config_options.find(o=>o.id==='mode').options=[{value:'read-only',name:'Read only'}];
+process.env.HENNERY_FAKE_ACP_SCRIPT=JSON.stringify(script);
+const child=spawn(process.argv[2],[],{env:process.env,stdio:'inherit'});
+child.on('exit',code=>process.exit(code??1));
+"#,
+    )
+    .unwrap();
+    let node = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|p| p.join("node"))
+        .find(|p| p.is_file())
+        .unwrap();
+    hennery_testkit::first_exec(node.to_str().unwrap());
+    let mut worker = script();
+    let mode = worker.config_options.iter_mut().find(|o| o["id"] == "mode").unwrap();
+    mode["currentValue"] = json!("read-only");
+    mode["options"] =
+        json!([{"value":"read-only","name":"Read only"},{"value":"agent-full-access","name":"Full access"}]);
+    let mut command = fake(root.path(), "late-auth", worker);
+    command.args = vec![
+        wrapper.display().to_string(),
+        command.program,
+        marker.display().to_string(),
+    ];
+    command.program = node.display().to_string();
+    let h = Harness::with_worker(script(), Some((command, Profile::Codex)), true).await;
+    let hat = h.state.store.find_session(&h.parent).unwrap().unwrap().hat_id;
+    let tools_url = format!("{}/api/hats/{hat}/session-tools", h.url);
+    let before: Value = h.client.get(&tools_url).send().await.unwrap().json().await.unwrap();
+    let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
+    assert_eq!(caps["catalogs"][0]["freshness"], "unknown");
+    std::fs::write(&marker, "signed in").unwrap();
+    let preview = h.ok("session_capabilities", json!({"agent":"worker"})).await;
+    assert_eq!(preview["catalogs"][0]["freshness"], "fresh");
+    assert!(!preview.to_string().contains("agent-full-access"));
+    // Simulate an adapter update after a successful cached preview. A spawn
+    // re-probes rather than making the preview into an authorization snapshot.
+    std::fs::write(&marker, "full").unwrap();
+    let receipt = h.spawn("late-auth", json!({"mode":"agent-full-access"})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    h.done(child, "late-auth").await;
+    assert_eq!(h.status(child).await["actual"]["mode"], "agent-full-access");
+    let after: Value = h.client.get(&tools_url).send().await.unwrap().json().await.unwrap();
+    assert_eq!(before, after, "no re-toggle or grant write");
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn operator_catalog_preview_does_not_require_delegation_workspace_roots() {
     let h = Harness::with_worker_options(script(), None, false, hennery_host::session::IDLE_TIMEOUT, false).await;
     let response = h
@@ -733,132 +833,23 @@ impl Harness {
 }
 
 #[tokio::test]
-async fn execution_policy_routes_require_operator_origin_and_step_up_and_preserve_strict_shape() {
-    use reqwest::StatusCode;
+async fn removed_execution_policy_routes_are_not_found() {
     let h = Harness::with_worker(script(), None, false).await;
     let hat = h.state.store.find_session(&h.parent).unwrap().unwrap().hat_id;
     let endpoint = format!("{}/api/hats/{hat}/delegation-policy", h.url);
-    let allowed = json!({"worker":{"mode":["default","plan"]}});
-    let request = json!({"allowed":allowed});
-    // Both reads and writes are covered by this route's own operator wrapper.
     assert_eq!(
-        h.raw.get(&endpoint).send().await.unwrap().status(),
-        StatusCode::UNAUTHORIZED
+        h.client.get(&endpoint).send().await.unwrap().status(),
+        reqwest::StatusCode::NOT_FOUND
     );
     assert_eq!(
-        h.raw
+        h.client
             .patch(&endpoint)
-            .header("origin", &h.url)
-            .json(&request)
+            .json(&json!({"allowed":{}}))
             .send()
             .await
             .unwrap()
             .status(),
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        h.raw
-            .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
-            .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::UNAUTHORIZED
-    );
-    let phc = h
-        .state
-        .operator
-        .verify_password(hennery_testkit::OWNER_PASSWORD)
-        .unwrap()
-        .unwrap();
-    let now = hennery_kernel::secret::unix_now();
-    let stale = h
-        .state
-        .operator
-        .open_session("policy-stale", &phc, now - 600)
-        .unwrap()
-        .unwrap();
-    let fresh = h
-        .state
-        .operator
-        .open_session("policy-fresh", &phc, now)
-        .unwrap()
-        .unwrap();
-    for (session, origin, code) in [
-        (&stale, Some(h.url.as_str()), "step_up_required"),
-        (&fresh, None, "origin_mismatch"),
-        (&fresh, Some("https://foreign.example"), "origin_mismatch"),
-    ] {
-        let mut r = h
-            .raw
-            .patch(&endpoint)
-            .header("cookie", format!("hennery_session={session}"))
-            .json(&request);
-        if let Some(origin) = origin {
-            r = r.header("origin", origin);
-        }
-        let response = r.send().await.unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{code}");
-        assert_eq!(response.json::<Value>().await.unwrap()["code"], code);
-    }
-    let bad_origin = h
-        .raw
-        .get(&endpoint)
-        .header("cookie", format!("hennery_session={fresh}"))
-        .header("origin", "https://foreign.example")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(bad_origin.status(), StatusCode::FORBIDDEN);
-    // Same-origin GET needs neither a recent step-up nor an Origin header.
-    let initial = h
-        .raw
-        .get(&endpoint)
-        .header("cookie", format!("hennery_session={stale}"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(initial.status(), StatusCode::OK);
-    assert_eq!(
-        initial.json::<Value>().await.unwrap(),
-        json!({"revision":0,"allowed":{}})
-    );
-    for body in [
-        r#"{"allowed":{},"owner_id":"foreign"}"#,
-        r#"{"allowed":{},"revision":999}"#,
-        r#"{"allowed":[]}"#,
-        "[]",
-        "null",
-        "{broken",
-    ] {
-        let response = h
-            .client
-            .patch(&endpoint)
-            .header("content-type", "application/json")
-            .body(body)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
-    }
-    for revision in 1..=2 {
-        let changed = h.client.patch(&endpoint).json(&request).send().await.unwrap();
-        assert_eq!(changed.status(), StatusCode::OK);
-        let expected = json!({"revision":revision,"allowed":allowed});
-        assert_eq!(changed.json::<Value>().await.unwrap(), expected);
-        let read = h.client.get(&endpoint).send().await.unwrap();
-        assert_eq!(read.status(), StatusCode::OK);
-        assert_eq!(read.json::<Value>().await.unwrap(), expected);
-    }
-    let absent = format!("{}/api/hats/absent-hat/delegation-policy", h.url);
-    assert_eq!(
-        h.client.get(&absent).send().await.unwrap().status(),
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        h.client.patch(&absent).json(&request).send().await.unwrap().status(),
-        StatusCode::NOT_FOUND
+        reqwest::StatusCode::NOT_FOUND
     );
     h.finish().await;
 }
@@ -1587,7 +1578,7 @@ child.on('exit',code=>process.exit(code??1));
 "#;
 
 #[tokio::test]
-async fn unavailable_prestart_catalog_validates_explicit_model_against_new_child_before_brief() {
+async fn unavailable_prestart_catalog_refuses_spawn_before_allocating_a_child() {
     for clamped in [false, true] {
         let root = tempfile::tempdir().unwrap();
         let wrapper = root.path().join("cold-catalog.cjs");
@@ -1608,41 +1599,18 @@ async fn unavailable_prestart_catalog_validates_explicit_model_against_new_child
         let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
         assert_eq!(caps["catalogs"][0]["freshness"], "unknown");
         assert!(caps["catalogs"][0]["defaults"].get("model").is_none());
-        let receipt = h.spawn("cold-explicit", json!({"model":"large"})).await;
-        let child = receipt["child_id"].as_str().unwrap();
-        if clamped {
-            eventually("cold catalog mismatch refused", async || {
-                let s = h.status(child).await;
-                (s["summary"]["lifecycle"] == "failed"
-                    && s["operations"][0]["state"]["state"] == "failed"
-                    && s["operations"][0]["state"]["code"] == "configuration_unavailable")
-                    .then_some(())
-            })
-            .await;
-            hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
-            assert!(
-                h.state
-                    .store
-                    .find_session(child)
-                    .unwrap()
-                    .unwrap()
-                    .open_turn_id
-                    .is_none()
-            );
-            assert!(h.status(child).await["last_outcome"].is_null());
-            assert_eq!(h.status(child).await["summary"]["queued"], 0);
-            assert!(
-                !h.state
-                    .store
-                    .events(child, 0, 1000)
-                    .unwrap()
-                    .iter()
-                    .any(|event| matches!(event.kind.as_str(), "user_turn" | "turn_started"))
-            );
-        } else {
-            h.done(child, "cold-explicit").await;
-            assert_eq!(h.status(child).await["actual"]["model"], "large");
-        }
+        let result = h.call("session_spawn",json!({"operation_key":"cold-explicit","cwd":h.cwd,"agent":"worker","brief":"must not run","config":{"model":"large"}})).await;
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"]["code"], "configuration_unavailable");
+        assert!(
+            h.state
+                .store
+                .family_page(&h.parent, "", 100)
+                .unwrap()
+                .unwrap()
+                .children
+                .is_empty()
+        );
         h.finish().await;
     }
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Make per-hat Delegation strictly ON/OFF: enabling never probes hosts, and
+  children can use every runtime configuration currently offered without
+  re-enabling after sign-in or adapter updates. Remove execution grants.
+- Report unauthenticated runtimes as “not signed in” with `auth_required`,
+  and include host/runtime context in catalog errors.
+
 ## 0.2.0
 
 - Redesigned web UI. Light and dark themes, the hat's colour as the accent, and

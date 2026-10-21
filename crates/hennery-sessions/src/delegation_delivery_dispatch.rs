@@ -83,7 +83,7 @@ impl Store {
             || !hub.is_ready(&host)
             || !hub.has_capability(&host, Capability::DelegationConfig)
             || !same_hat_in(&tx, self.owner_id(), &host, &n.hat, &cwd)?
-            || !crate::delegation_runtime::security_allowed(catalog, &self.execution_policy_in(&tx, &n.hat)?, &config)
+            || !crate::delegation_runtime::config_offered(catalog, &config)
         {
             tx.commit()?;
             return Ok(false);
@@ -200,13 +200,7 @@ impl Store {
         };
         let evidence: ConfigEvidence = serde_json::from_str(&proof)?;
         let required: SessionConfig = serde_json::from_str(&n.required)?;
-        if !evidence_satisfies(
-            &evidence,
-            u64::try_from(generation)?,
-            &required,
-            catalog,
-            &self.execution_policy_in(&tx, &n.hat)?,
-        ) {
+        if !evidence_satisfies(&evidence, u64::try_from(generation)?, &required, catalog) {
             tx.execute("UPDATE delegation_notices SET state = 'waiting_config',reason = 'config_unverified' WHERE owner_id = ?1 AND delivery_id = ?2",params![self.owner_id(),n.id])?;
             tx.commit()?;
             return Ok(false);
