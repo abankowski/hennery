@@ -852,8 +852,9 @@ catalog values and runtimes signed in later need no re-toggle.
 An unusable runtime fails only that child spawn. Catalog errors identify host,
 runtime and readable reason; `auth_required` is “not signed in”. Preserve
 model/mode/option read-back and complete current-generation evidence before
-brief delivery. Children cannot start children, and permission requests always
-come to the operator. This keeps 0.2.0 ON's all-values authorization while
+brief delivery. The switch help reads: “Sessions in this hat can start child sessions with any
+model and mode, including modes that don't ask for permission. Children cannot
+start their own children.” This keeps 0.2.0 ON's all-values authorization while
 making “all” current.
 
 Acceptance enables with an unauthenticated runtime present, signs it in later,

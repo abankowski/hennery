@@ -10,6 +10,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
+    sync::{Arc, Weak},
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
@@ -20,7 +21,11 @@ pub(crate) fn same_hat_in(tx: &Transaction<'_>, owner: &str, host: &str, hat: &s
     )
 }
 type CatalogKey = (String, String, String, String, String, u64, bool);
-type CatalogCache = BTreeMap<CatalogKey, (Instant, HostCatalog)>;
+#[derive(Default)]
+struct CatalogCache {
+    values: BTreeMap<CatalogKey, (Instant, HostCatalog)>,
+    probes: BTreeMap<CatalogKey, Weak<Mutex<()>>>,
+}
 #[derive(Default)]
 pub struct Catalogs {
     cache: Mutex<CatalogCache>,
@@ -68,6 +73,7 @@ impl Catalogs {
         agent: &str,
         origin: CatalogOrigin,
     ) -> Result<HostCatalog> {
+        let requested_at = Instant::now();
         let operator_initiated = matches!(origin, CatalogOrigin::Operator);
         let refresh = matches!(origin, CatalogOrigin::Spawn);
         state.store.catalog_scope(host, hat, cwd)?;
@@ -92,21 +98,48 @@ impl Catalogs {
             connection,
             operator_initiated,
         );
-        // A single bounded disposable probe at a time also deduplicates identical
-        // cold requests. The probe has its own timeout and the host its own cap.
-        let mut cache = self.cache.lock().await;
-        cache.retain(|_, (when, catalog)| {
-            when.elapsed()
-                < Duration::from_secs(if catalog.freshness == CatalogFreshness::Fresh {
-                    30
-                } else {
-                    5
-                })
-        });
-        if !refresh && let Some((_, catalog)) = cache.get(&key) {
-            return Ok(catalog.clone());
+        // Hold the global cache lock only for map access. Independent keys can
+        // probe concurrently; identical in-flight requests share a per-key lock.
+        let probe = {
+            let mut cache = self.cache.lock().await;
+            cache.values.retain(|_, (when, catalog)| {
+                when.elapsed()
+                    < Duration::from_secs(if catalog.freshness == CatalogFreshness::Fresh {
+                        30
+                    } else {
+                        5
+                    })
+            });
+            if !refresh && let Some((_, catalog)) = cache.values.get(&key) {
+                return Ok(catalog.clone());
+            }
+            cache.probes.retain(|_, probe| probe.strong_count() > 0);
+            ensure!(cache.values.len() < 128 || cache.values.contains_key(&key), "busy");
+            if let Some(probe) = cache.probes.get(&key).and_then(Weak::upgrade) {
+                probe
+            } else {
+                ensure!(cache.probes.len() < 128, "busy");
+                let probe = Arc::new(Mutex::new(()));
+                cache.probes.insert(key.clone(), Arc::downgrade(&probe));
+                probe
+            }
+        };
+        let _in_flight = probe.lock().await;
+        {
+            let cache = self.cache.lock().await;
+            if let Some((when, catalog)) = cache.values.get(&key)
+                && ((!refresh
+                    && when.elapsed()
+                        < Duration::from_secs(if catalog.freshness == CatalogFreshness::Fresh {
+                            30
+                        } else {
+                            5
+                        }))
+                    || *when >= requested_at)
+            {
+                return Ok(catalog.clone());
+            }
         }
-        ensure!(cache.len() < 128 || cache.contains_key(&key), "busy");
         let request_id = uuid::Uuid::now_v7().to_string();
         let frame = CollectorFrame::ProbeCatalog {
             request_id: request_id.clone(),
@@ -125,6 +158,7 @@ impl Catalogs {
                         "busy" => "busy",
                         "timeout" => "timeout",
                         "auth_required" => "auth_required",
+                        "unknown_agent" | "runtime_unavailable" => "runtime_unavailable",
                         _ => "adapter_failed",
                     },
                     crate::hub::RequestError::Busy => "busy",
@@ -148,7 +182,12 @@ impl Catalogs {
         let mut value = serde_json::to_value(catalog)?;
         hennery_kernel::redact::value(&mut value);
         let catalog: HostCatalog = serde_json::from_value(value)?;
-        cache.insert(key, (Instant::now(), catalog.clone()));
+        let mut cache = self.cache.lock().await;
+        // Concurrent different-key probes may fill the cache while we await I/O.
+        if cache.values.len() >= 128 && !cache.values.contains_key(&key) {
+            cache.values.pop_first();
+        }
+        cache.values.insert(key, (Instant::now(), catalog.clone()));
         Ok(catalog)
     }
 }
@@ -251,7 +290,29 @@ pub fn evidence_satisfies(
             .iter()
             .all(|(key, value)| evidence.actual.axes.get(key) == Some(value))
         && config_offered(catalog, required)
-        && config_offered(catalog, &evidence.actual)
+        && config_offered(
+            catalog,
+            &SessionConfig {
+                // Unrequested, nonsecurity settings may have current values outside
+                // an adapter's option list. They are not part of the release proof.
+                model: None,
+                mode: evidence.actual.mode.clone(),
+                axes: evidence
+                    .actual
+                    .axes
+                    .iter()
+                    .filter(|(key, _)| catalog.security.axes.contains_key(*key))
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
+            },
+        )
+        && catalog.security.axes.keys().all(|key| {
+            if key == "mode" {
+                evidence.actual.mode.is_some()
+            } else {
+                evidence.actual.axes.contains_key(key)
+            }
+        })
 }
 impl crate::store::Store {
     pub fn catalog_scope(&self, host: &str, hat: &str, cwd: &str) -> Result<()> {

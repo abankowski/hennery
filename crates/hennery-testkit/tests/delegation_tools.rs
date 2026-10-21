@@ -20,6 +20,24 @@ const HOST: &str = "delegation-host";
 const BOUND: Duration = Duration::from_secs(30);
 
 #[tokio::test]
+async fn nested_spawn_is_refused_before_any_runtime_probe() {
+    let mut worker = script();
+    worker.new_session_error = Some(-32000);
+    let h = Harness::with_worker(worker, None, false).await;
+    // A previously delivered tool identity must still obey the permanent child bit.
+    let conn = rusqlite::Connection::open(h.cwd.join("hennery.db")).unwrap();
+    conn.execute("UPDATE sessions SET delegated_child=1 WHERE id=?1", [&h.parent])
+        .unwrap();
+    let result = h.call("session_spawn", json!({"operation_key":"nested","cwd":h.cwd,"agent":"worker","brief":"refuse before discovery","config":{}})).await;
+    assert_eq!(result["structuredContent"]["code"], "generation_limit", "{result}");
+    assert!(
+        !h.cwd.join("worker-sessions.jsonl").exists(),
+        "nested caller reached the runtime"
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn binary_delegation_unauthenticated_spawn_returns_auth_required() {
     let mut worker = script();
     worker.new_session_error = Some(-32000);

@@ -329,8 +329,21 @@ classification. Profile metadata remains useful for defaults and warnings,
 but cannot narrow delegation. No execution-policy table, API or grant snapshot
 is used. A runtime signed in later, or a newly offered model/mode/option,
 is usable without toggling again. This preserves 0.2.0 ON's union of all
-catalog values while making “all” current. Children cannot start children;
-permission requests still go to the operator.
+catalog values while making “all” current. Narrowed v0.2.0 grants are dropped
+on upgrade without changing the enabled flag or its revision. Children cannot
+start children. Offered modes may run without asking for permission; when an
+adapter does ask, permission requests remain operator-owned.
+
+Operator review amendment, 2026-10-21: reject nested callers, child-count and
+start-budget excess, and other-hat paths before catalog probing; retain the
+transactional checks at allocation. Independent catalog contexts probe without
+holding a collector-wide cache lock. At attach, `auth_required` and
+`runtime_unavailable` fail accepted work with that delegation result; new
+starts also record a visible session failure. Stored sign-in failures remain
+`agent_not_logged_in`, preserving adapter messages and login instructions.
+Busy/timeout probes retry for a bounded period; offline behavior is unchanged.
+Evidence confirms requested keys plus catalog security axes, ignoring unrelated
+current settings outside the adapter's option list.
 
 Start the child **without its brief**, wait for `session_started` and config
 read-back, then submit the brief through the normal turn path. A rejected or

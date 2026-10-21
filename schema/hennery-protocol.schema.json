@@ -4904,7 +4904,7 @@
       "type": "string"
     },
     "SecurityClassification": {
-      "description": "Profile-owned security axes and their baseline allowed values. `mode`\nmeans `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.\nUnknown profiles require explicit operator configuration on the collector.",
+      "description": "Profile-owned security axes and their baseline allowed values. `mode`\nmeans `SessionConfig.mode`; other keys name `SessionConfig.axes` entries.\nMetadata supports defaults and operator warnings; it does not narrow an enabled hat.",
       "properties": {
         "axes": {
           "additionalProperties": {

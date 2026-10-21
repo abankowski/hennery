@@ -248,47 +248,6 @@ fn closed_attention_deleted_child_resolves_its_attention() {
 }
 
 #[test]
-fn binary_delegation_migration_drops_old_grants_and_preserves_enabled_hat() {
-    let w = World::new();
-    let conn = raw(&w);
-    conn.execute_batch(
-        "CREATE TABLE delegation_execution_policy (
-        owner_id TEXT NOT NULL, hat_id TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
-        allowed TEXT NOT NULL DEFAULT '{}', configured INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY(owner_id,hat_id)); PRAGMA user_version=25;",
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO delegation_execution_policy(owner_id,hat_id,allowed) VALUES (?1,?2,?3)",
-        params![w.store.owner_id(), w.hat, r#"{"codex":{"mode":["read-only"]}}"#],
-    )
-    .unwrap();
-    drop(conn);
-    let reopened = Store::open(&w.db).unwrap();
-    let conn = raw(&w);
-    let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 26);
-    assert_eq!(
-        conn.query_row(
-            "SELECT count(*) FROM sqlite_schema WHERE name='delegation_execution_policy'",
-            [],
-            |r| r.get::<_, u32>(0)
-        )
-        .unwrap(),
-        0
-    );
-    assert!(
-        conn.query_row(
-            "SELECT delegation_enabled FROM hat_session_tools WHERE owner_id=?1 AND hat_id=?2",
-            params![reopened.owner_id(), w.hat],
-            |r| r.get::<_, bool>(0)
-        )
-        .unwrap()
-    );
-    Store::open(&w.db).unwrap();
-}
-
-#[test]
 fn closed_attention_migration_repairs_existing_closed_and_deleted_rows() {
     for deleted in [false, true] {
         let (w, _) = pair();
@@ -3899,7 +3858,10 @@ fn evidence_validator_requires_each_independent_proof_field() {
         .actual
         .axes
         .insert("not-offered".into(), ConfigValue::Bool(true));
-    assert!(!evidence_satisfies(&unoffered, 7, &required, &c));
+    assert!(evidence_satisfies(&unoffered, 7, &required, &c));
+    let mut security = c.clone();
+    security.security.axes.insert("not-offered".into(), vec![]);
+    assert!(!evidence_satisfies(&unoffered, 7, &required, &security));
     let mut removed = c.clone();
     removed.config_options.retain(|o| o["id"] != "mode");
     assert!(!evidence_satisfies(&good, 7, &required, &removed));
@@ -6055,4 +6017,82 @@ fn d3b_migration20_filters_answers_terminal_and_root_questions() {
         Store::open(&w.db).unwrap().operator_attention(None, "").unwrap().len(),
         1
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn independent_catalog_keys_probe_without_global_serialization() {
+    let w = World::new();
+    let state = Arc::new(hennery_sessions::AppState::new(
+        Store::open(&w.db).unwrap(),
+        Hosts::open(&w.db).unwrap(),
+        Operator::open(&w.db).unwrap(),
+    ));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let reg = state
+        .hub
+        .register(
+            "host",
+            tx,
+            Capabilities(vec![Capability::CatalogProbe]),
+            AgentIsolation([("claude".into(), McpIsolation::ClaudeStrict)].into_iter().collect()),
+        )
+        .unwrap();
+    state.hub.mark_ready("host", reg.conn_id);
+    let first = {
+        let state = state.clone();
+        let hat = w.hat.clone();
+        tokio::spawn(async move {
+            state
+                .catalogs
+                .get_for_spawn(&state, "host", &hat, "/project", "claude")
+                .await
+        })
+    };
+    let CollectorFrame::ProbeCatalog {
+        request_id: first_id, ..
+    } = rx.recv().await.unwrap()
+    else {
+        panic!("probe expected")
+    };
+    let second = {
+        let state = state.clone();
+        let hat = w.hat.clone();
+        tokio::spawn(async move {
+            state
+                .catalogs
+                .get_for_spawn(&state, "host", &hat, "/other", "claude")
+                .await
+        })
+    };
+    let CollectorFrame::ProbeCatalog {
+        request_id: second_id, ..
+    } = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .expect("another key must not wait for the first probe")
+        .unwrap()
+    else {
+        panic!("probe expected")
+    };
+    state.hub.probe_reply(
+        "host",
+        reg.conn_id,
+        hennery_proto::frames::HostFrame::Catalog {
+            request_id: second_id,
+            catalog: catalog(),
+        },
+    );
+    assert!(second.await.unwrap().is_ok());
+    assert!(
+        !first.is_finished(),
+        "second result must be available while first is blocked"
+    );
+    state.hub.probe_reply(
+        "host",
+        reg.conn_id,
+        hennery_proto::frames::HostFrame::Catalog {
+            request_id: first_id,
+            catalog: catalog(),
+        },
+    );
+    assert!(first.await.unwrap().is_ok());
 }

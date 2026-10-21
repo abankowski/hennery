@@ -5,8 +5,11 @@
 - Make per-hat Delegation strictly ON/OFF: enabling never probes hosts, and
   children can use every runtime configuration currently offered without
   re-enabling after sign-in or adapter updates. Remove execution grants.
+- Hats with Delegation ON now allow every model and mode the runtime offers; any narrowed v0.2.0 grants are dropped.
 - Report unauthenticated runtimes as “not signed in” with `auth_required`,
-  and include host/runtime context in catalog errors.
+  and include host/runtime context in catalog errors. Preserve operator session login instructions.
+- Refuse nested or over-budget starts before probing; isolate catalog probes by
+  context, and settle accepted child work with a readable sign-in/runtime failure.
 
 ## 0.2.0
 

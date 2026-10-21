@@ -85,6 +85,7 @@ pub async fn execute(
             })?)
         }
         ToolCall::Spawn(mut args) => {
+            state.store.precheck_spawn(identity, revision, None)?;
             ensure!(
                 state.hub.has_capability(caller.host_id(), Capability::DelegationConfig),
                 "session_tools_unavailable"
@@ -95,6 +96,7 @@ pub async fn execute(
                 "runtime_unavailable"
             );
             let cwd = checked_cwd(state, caller.host_id(), caller.hat_id(), &args.cwd).await?;
+            state.store.precheck_spawn(identity, revision, Some(&cwd))?;
             let catalog = state
                 .catalogs
                 .get_for_spawn(state, caller.host_id(), caller.hat_id(), &cwd, agent)
