@@ -111,15 +111,16 @@ async fn drain_target(state: &AppState, target: &str) -> anyhow::Result<()> {
         let Some(_admission) = state.store.reserve_prompt(target) else {
             return Ok(());
         };
-        let Some(operation) = state.store.operator_dispatch_id(target)? else {
+        let Some(_operation) = state.store.operator_dispatch_id(target)? else {
             return Ok(());
         };
+        let request = uuid::Uuid::now_v7().to_string();
         let mut startup = state
             .store
             .mcp()
             .startup_context(
                 target,
-                &operation,
+                &request,
                 state
                     .hub
                     .has_capability(&session.host_id, hennery_proto::frames::Capability::PluginContext),
@@ -127,7 +128,7 @@ async fn drain_target(state: &AppState, target: &str) -> anyhow::Result<()> {
             .await;
         if state
             .store
-            .dispatch_operator_prompt(target, &state.hub, &mut startup, None)?
+            .dispatch_operator_prompt_with_request(target, &state.hub, &mut startup, None, &request)?
         {
             return Ok(());
         }

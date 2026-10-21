@@ -61,6 +61,15 @@ impl World {
     fn queue(&self, text: &str) -> String {
         self.store.enqueue_operator_prompt("session", &checked(text)).unwrap()
     }
+    fn operation(&self, request: &str) -> String {
+        self.conn()
+            .query_row(
+                "SELECT operation_id FROM session_operations WHERE owner_id=?1 AND request_id=?2",
+                params![self.store.owner_id(), request],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
     fn start(&self, request: &str, turn: &str) {
         self.emit(SessionBody::TurnStarted {
             request_id: request.into(),
@@ -119,7 +128,7 @@ fn queue_waits_for_turn_end_and_delivers_fifo_as_operator() {
     w.end("running", TurnOutcome::Completed);
     assert!(w.dispatch(&hub));
     let (request, turn, content) = prompt(&mut rx);
-    assert_eq!(request, head);
+    assert_eq!(w.operation(&request), head);
     assert_eq!(content[0]["text"], "second");
     assert!(!w.dispatch(&hub));
     w.start(&request, &turn);
@@ -128,7 +137,7 @@ fn queue_waits_for_turn_end_and_delivers_fifo_as_operator() {
     assert_eq!(user.body["origin"]["kind"], "operator");
     w.end(&turn, TurnOutcome::Completed);
     assert!(w.dispatch(&hub));
-    assert_eq!(prompt(&mut rx).0, tail);
+    assert_eq!(w.operation(&prompt(&mut rx).0), tail);
 }
 
 #[test]
@@ -158,7 +167,7 @@ fn pending_permission_never_consumes_queue_even_without_an_open_turn() {
         reason: None,
     });
     assert!(w.dispatch(&hub));
-    assert_eq!(prompt(&mut rx).0, id);
+    assert_eq!(w.operation(&prompt(&mut rx).0), id);
 }
 
 #[test]
@@ -186,7 +195,7 @@ fn cancelled_turn_keeps_and_delivers_the_next_message() {
     let queued = w.queue("next");
     w.end("running", TurnOutcome::Cancelled);
     assert!(w.dispatch(&hub));
-    assert_eq!(prompt(&mut rx).0, queued);
+    assert_eq!(w.operation(&prompt(&mut rx).0), queued);
 }
 
 #[test]
@@ -426,7 +435,7 @@ fn two_workers_dispatch_each_queue_head_exactly_once() {
         1
     );
     let (request, turn, _) = prompt(&mut rx);
-    assert_eq!(request, id);
+    assert_eq!(w.operation(&request), id);
     assert!(rx.try_recv().is_err());
     w.start(&request, &turn);
     w.end(&turn, TurnOutcome::Completed);
@@ -484,7 +493,7 @@ fn parked_operator_queue_uses_the_existing_attach_generation_and_confirmed_confi
             .dispatch_operator_prompt("session", &hub, &mut None, Some(&catalog))
             .unwrap()
     );
-    assert_eq!(prompt(&mut rx).0, id);
+    assert_eq!(w.operation(&prompt(&mut rx).0), id);
 }
 
 #[tokio::test]
@@ -522,7 +531,7 @@ async fn competing_workers_drain_after_turn_end_without_adapter_queueing_or_cata
         one.unwrap();
         two.unwrap();
         let (request, turn, _) = prompt(&mut rx);
-        assert_eq!(request, id);
+        assert_eq!(w.operation(&request), id);
         assert!(rx.try_recv().is_err());
         w.start(&request, &turn);
         w.end(&turn, TurnOutcome::Completed);
@@ -655,7 +664,7 @@ fn lost_head_is_retried_in_order(restarted: bool) {
     let (hub, mut rx) = host(vec![]);
     let ids = [w.queue("one"), w.queue("two"), w.queue("three")];
     assert!(w.dispatch(&hub));
-    assert_eq!(prompt(&mut rx).0, ids[0]);
+    assert_eq!(w.operation(&prompt(&mut rx).0), ids[0]);
     let listed = if restarted {
         vec![]
     } else {
@@ -680,7 +689,7 @@ fn lost_head_is_retried_in_order(restarted: bool) {
     for expected in ids {
         assert!(w.dispatch(&hub));
         let (request, turn, _) = prompt(&mut rx);
-        assert_eq!(request, expected);
+        assert_eq!(w.operation(&request), expected);
         w.start(&request, &turn);
         w.end(&turn, TurnOutcome::Completed);
     }
@@ -829,7 +838,118 @@ fn host_busy_refusal_requeues_the_head_without_failing_its_tail() {
     assert_eq!(q.iter().map(|q| q.id.clone()).collect::<Vec<_>>(), [one.clone(), two]);
     assert!(q.iter().all(|q| q.state == "queued"));
     assert!(w.dispatch(&hub));
-    assert_eq!(prompt(&mut rx).0, one);
+    assert_eq!(w.operation(&prompt(&mut rx).0), one);
+}
+
+#[test]
+fn a_stale_busy_error_cannot_reject_a_new_delivery_attempt() {
+    stale_error_does_not_reject_retry(false);
+}
+
+#[test]
+fn a_reconnected_error_for_a_lost_attempt_cannot_reject_its_retry() {
+    stale_error_does_not_reject_retry(true);
+}
+
+#[tokio::test]
+async fn the_worker_uses_a_fresh_attempt_request_instead_of_the_queue_receipt() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![]);
+    let operation = w.queue("one submit");
+    let db = w.dir.path().join("hennery.db");
+    let mut state = hennery_sessions::AppState::new(
+        Store::open(&db).unwrap(),
+        Hosts::open(&db).unwrap(),
+        hennery_kernel::operator::Operator::open(&db).unwrap(),
+    );
+    state.hub = hub;
+    hennery_sessions::delegation_worker::drain(&state).await.unwrap();
+    let (request, _, _) = prompt(&mut rx);
+    assert_ne!(request, operation);
+    assert_eq!(w.operation(&request), operation);
+}
+
+#[test]
+fn a_dispatch_attempt_preserves_the_request_id_used_to_prepare_its_startup_record() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![]);
+    let operation = w.queue("first prompt");
+    let request = uuid::Uuid::now_v7().to_string();
+    let mut startup = Some(hennery_proto::plugin::StartupRecord {
+        request_id: request.clone(),
+        status: hennery_proto::plugin::StartupStatus::Unavailable,
+        block: None,
+    });
+    assert!(
+        w.store
+            .dispatch_operator_prompt("session", &hub, &mut startup, None)
+            .unwrap()
+    );
+    let (sent_request, _, _) = prompt(&mut rx);
+    assert_eq!(sent_request, request);
+    assert_eq!(w.operation(&sent_request), operation);
+}
+
+fn stale_error_does_not_reject_retry(reconnected: bool) {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![]);
+    let head = w.queue("head");
+    let tail = w.queue("tail");
+    assert!(w.dispatch(&hub));
+    let (old_request, _, _) = prompt(&mut rx);
+    assert_eq!(w.operation(&old_request), head);
+    if reconnected {
+        w.store
+            .reconcile_host(
+                "host",
+                &[hennery_proto::frames::AttachedSession {
+                    session_id: "session".into(),
+                    last_seq: w.seq.get(),
+                    open_turn_id: None,
+                }],
+            )
+            .unwrap();
+    } else {
+        assert!(
+            w.store
+                .reject_operator_prompt("host", &old_request, "turn_in_progress")
+                .unwrap()
+        );
+    }
+    assert!(w.dispatch(&hub));
+    let (request, turn, _) = prompt(&mut rx);
+    assert_eq!(w.operation(&request), head);
+    assert!(
+        !w.store
+            .reject_operator_prompt("host", &old_request, "turn_in_progress")
+            .unwrap(),
+        "an error for the old attempt must not reject the handed-off retry"
+    );
+    assert_ne!(request, old_request);
+    assert_eq!(
+        w.store
+            .find_session("session")
+            .unwrap()
+            .unwrap()
+            .open_turn_id
+            .as_deref(),
+        Some(turn.as_str())
+    );
+    let queue = w.store.operator_prompt_queue("session").unwrap();
+    assert_eq!(
+        queue.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
+        [head, tail.clone()]
+    );
+    assert_eq!(queue[0].state, "delivering");
+    assert_eq!(queue[1].state, "queued");
+    w.start(&request, &turn);
+    w.end(&turn, TurnOutcome::Completed);
+    assert!(w.dispatch(&hub));
+    let (request, turn, _) = prompt(&mut rx);
+    assert_eq!(w.operation(&request), tail);
+    w.start(&request, &turn);
+    w.end(&turn, TurnOutcome::Completed);
+    assert!(w.store.operator_prompt_queue("session").unwrap().is_empty());
 }
 
 #[test]
@@ -966,7 +1086,8 @@ fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_pr
         let (hub, mut rx) = host(vec![]);
         let mut rng = seed;
         let mut order = Vec::new();
-        let mut current: Option<(String, String, bool)> = None;
+        let mut current: Option<(String, String, String, bool)> = None;
+        let mut stale_requests = Vec::new();
         let mut delivered = Vec::new();
         for step in 0..96 {
             rng ^= rng << 13;
@@ -984,27 +1105,28 @@ fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_pr
                 1 => {
                     if w.dispatch(&hub) {
                         assert!(current.is_none());
-                        let (id, turn, _) = prompt(&mut rx);
-                        current = Some((id, turn, false));
+                        let (request, turn, _) = prompt(&mut rx);
+                        let operation = w.operation(&request);
+                        current = Some((operation, request, turn, false));
                     }
                 }
                 2 => {
-                    if let Some((id, turn, started)) = &mut current {
+                    if let Some((operation, request, turn, started)) = &mut current {
                         if !*started {
-                            w.start(id, turn);
-                            delivered.push(id.clone());
+                            w.start(request, turn);
+                            delivered.push(operation.clone());
                             *started = true;
                         }
                     }
                 }
                 3 => {
-                    if current.as_ref().is_some_and(|(_, _, started)| *started) {
-                        let (_, turn, _) = current.take().unwrap();
+                    if current.as_ref().is_some_and(|(_, _, _, started)| *started) {
+                        let (_, _, turn, _) = current.take().unwrap();
                         w.end(&turn, TurnOutcome::Completed);
                     }
                 }
                 4 => {
-                    if current.as_ref().is_some_and(|(_, _, started)| !*started) {
+                    if current.as_ref().is_some_and(|(_, _, _, started)| !*started) {
                         let restarted = rng & 8 != 0;
                         let listed = if restarted {
                             vec![]
@@ -1016,6 +1138,7 @@ fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_pr
                             }]
                         };
                         w.store.reconcile_host("host", &listed).unwrap();
+                        stale_requests.push(current.as_ref().unwrap().1.clone());
                         current = None;
                         if restarted {
                             let hat = w.store.find_session("session").unwrap().unwrap().hat_id;
@@ -1036,8 +1159,16 @@ fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_pr
                     }
                 }
                 _ => {
-                    if let Some((id, turn, true)) = &current {
-                        w.start(id, turn);
+                    if let Some((_, request, turn, true)) = &current {
+                        w.start(request, turn);
+                    }
+                    if !stale_requests.is_empty() {
+                        let request = &stale_requests[(rng >> 8) as usize % stale_requests.len()];
+                        assert!(
+                            !w.store
+                                .reject_operator_prompt("host", request, "turn_in_progress")
+                                .unwrap()
+                        );
                     }
                 }
             }

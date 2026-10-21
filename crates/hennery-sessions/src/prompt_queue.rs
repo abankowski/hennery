@@ -296,6 +296,23 @@ impl Store {
         startup: &mut Option<hennery_proto::plugin::StartupRecord>,
         catalog: Option<&hennery_proto::delegation_host::HostCatalog>,
     ) -> Result<bool> {
+        let request = startup
+            .as_ref()
+            .map(|record| record.request_id.clone())
+            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        self.dispatch_operator_prompt_with_request(session, hub, startup, catalog, &request)
+    }
+
+    /// The worker allocates this attempt's request before fetching startup
+    /// context, so the context and host correlation name the same attempt.
+    pub fn dispatch_operator_prompt_with_request(
+        &self,
+        session: &str,
+        hub: &Hub,
+        startup: &mut Option<hennery_proto::plugin::StartupRecord>,
+        catalog: Option<&hennery_proto::delegation_host::HostCatalog>,
+        request: &str,
+    ) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         if self.operator_queue_fenced_in(&tx, session)? {
@@ -410,14 +427,14 @@ impl Store {
             params![self.owner_id(), session, turn, serde_json::to_string(&content)?, now()],
         )?;
         crate::store::link_turn_attachments(&tx, self.owner_id(), &turn, &content)?;
-        tx.execute("UPDATE session_operations SET state='awaiting_reconciliation',turn_id=?3,request_id=?2 WHERE owner_id = ?1 AND operation_id=?2",params![self.owner_id(),id,turn])?;
+        tx.execute("UPDATE session_operations SET state='awaiting_reconciliation',turn_id=?3,request_id=?4 WHERE owner_id = ?1 AND operation_id=?2",params![self.owner_id(),id,turn,request])?;
         tx.execute(
             "UPDATE session_dispatch_queue SET state='awaiting_reconciliation' WHERE owner_id = ?1 AND operation_id=?2",
             params![self.owner_id(), id],
         )?;
         tx.commit()?;
         let frame = CollectorFrame::Prompt {
-            request_id: id.clone(),
+            request_id: request.into(),
             session_id: session.into(),
             turn_id: turn.clone(),
             content: sent,
@@ -493,12 +510,14 @@ impl Store {
     pub fn reject_operator_prompt(&self, host: &str, request: &str, code: &str) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let row:Option<(String,String)>=tx.query_row(
-            "SELECT o.child_id,o.turn_id FROM session_operations o JOIN sessions s ON s.owner_id = ?1 AND s.id=o.child_id
+        let row:Option<(String,String,String)>=tx.query_row(
+            "SELECT o.operation_id,o.child_id,o.turn_id FROM session_operations o JOIN sessions s ON s.owner_id = ?1 AND s.id=o.child_id
              WHERE o.owner_id = ?1 AND o.tool='operator_prompt' AND o.request_id=?2 AND s.host_id=?3
-             AND o.state='awaiting_reconciliation' AND o.turn_id IS NOT NULL",params![self.owner_id(),request,host],|r|Ok((r.get(0)?,r.get(1)?)),
+             AND o.state='awaiting_reconciliation' AND o.turn_id IS NOT NULL",params![self.owner_id(),request,host],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
         ).optional()?;
-        let Some((session, turn)) = row else { return Ok(false) };
+        let Some((operation, session, turn)) = row else {
+            return Ok(false);
+        };
         tx.execute(
             "UPDATE turns SET state='not_delivered' WHERE owner_id = ?1 AND turn_id=?2 AND state='sent'",
             params![self.owner_id(), turn],
@@ -510,10 +529,10 @@ impl Store {
         if code == "turn_in_progress" {
             tx.execute(
                 "UPDATE session_operations SET state='not_delivered',code=?3 WHERE owner_id = ?1 AND operation_id=?2",
-                params![self.owner_id(), request, code],
+                params![self.owner_id(), operation, code],
             )?;
         } else {
-            self.fail_operator_item_in(&tx, request, code)?;
+            self.fail_operator_item_in(&tx, &operation, code)?;
             self.fail_operator_queue_in(&tx, &session, code)?;
         }
         self.settle_delegation_in(&tx)?;
