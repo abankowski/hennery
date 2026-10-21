@@ -297,6 +297,13 @@ it('a browser without the worker identity property can coordinate and activate',
   expect(await requestWorker(harness).result).toMatchObject({ ready: true })
   expect(skipWaiting).toHaveBeenCalledOnce()
 })
+it.each([true, false])('no waiting worker means no readiness or activation, identity supported=%s', async workerIdentity => {
+  const client = updateClient(), prepare = vi.spyOn(client, 'postMessage'), skipWaiting = vi.fn(async () => {})
+  const harness = workerHarness(readFileSync('dist/sw.js', 'utf8'), undefined, { clients: { matchAll: async () => [client], openWindow: vi.fn() }, waiting: false, workerIdentity, skipWaiting })
+  expect(await requestWorker(harness).result).toMatchObject({ ready: false })
+  expect(prepare).not.toHaveBeenCalled()
+  expect(skipWaiting).not.toHaveBeenCalled()
+})
 it('the emitted update handler holds updating until activation settles and then permits retry', async () => {
   const client = updateClient()
   let done!: () => void
@@ -322,7 +329,7 @@ it('a worker replaced during the handshake never calls skipWaiting', async () =>
   expect(skipWaiting).not.toHaveBeenCalled()
 })
 
-it('activation deletes completed older shells, retaining newer installs and incomplete or foreign caches', async () => {
+it('activation deletes all older shells including interrupted installs, retaining newer and foreign caches', async () => {
   const client = updateClient(), remove = vi.fn(async () => true)
   const data = new Map<string, Map<string, Response>>([
     ['hennery-shell-old-attempt', new Map([['/__hennery_shell_complete__', new Response('old')]])],
@@ -344,5 +351,7 @@ it('activation deletes completed older shells, retaining newer installs and inco
   data.set('hennery-shell-newer-install', new Map())
   data.set('hennery-shell-newer-waiting', new Map([['/__hennery_shell_complete__', new Response('newer')]]))
   await harness.activate()
-  expect(remove).toHaveBeenCalledExactlyOnceWith('hennery-shell-old-attempt')
+  expect(remove).toHaveBeenCalledTimes(2)
+  expect(remove).toHaveBeenNthCalledWith(1, 'hennery-shell-old-attempt')
+  expect(remove).toHaveBeenNthCalledWith(2, 'hennery-shell-older-partial')
 })

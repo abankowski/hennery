@@ -47,9 +47,7 @@ export async function cleanupShell(storage: CacheStorage, build: string): Promis
   const names = await storage.keys()
   const boundary = names.findIndex(name => name.startsWith(`${SHELL_PREFIX}${build}-`))
   for (const name of names.slice(0, Math.max(0, boundary))) {
-    if (!name.startsWith(SHELL_PREFIX)) continue
-    const completed = await (await (await storage.open(name)).match(COMPLETE))?.text()
-    if (completed && name.startsWith(`${SHELL_PREFIX}${completed}-`)) await storage.delete(name)
+    if (name.startsWith(SHELL_PREFIX)) await storage.delete(name)
   }
 }
 

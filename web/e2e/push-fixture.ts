@@ -39,7 +39,7 @@ export async function mockPush(context: BrowserContext) {
   })
 }
 
-export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { origin?: string; clients?: Windows; pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void; skipWaiting?: () => Promise<void>; ownWaiting?: boolean; workerIdentity?: boolean; caches?: Pick<CacheStorage, 'keys' | 'delete' | 'open'> } = {}) {
+export function workerHarness(code: string, persistence = { row: { generation: 0, enabled: false } as PushRecord }, dependencies: { origin?: string; clients?: Windows; pushManager?: PushManager; locks?: ReturnType<typeof testLocks>; fetch?: typeof fetch; onWrite?: (row: PushRecord) => void; skipWaiting?: () => Promise<void>; waiting?: boolean; ownWaiting?: boolean; workerIdentity?: boolean; caches?: Pick<CacheStorage, 'keys' | 'delete' | 'open'> } = {}) {
   type Event = { notification?: { data: { url: unknown }; close(): void }; data?: unknown; source?: { id: string }; ports?: MessagePort[]; oldSubscription?: PushSubscription | null; newSubscription?: PushSubscription | null; request?: Request; respondWith?(promise: Promise<Response>): void; waitUntil(promise: Promise<unknown>): void }
   const handlers = new Map<string, (event: Event) => void>()
   const notifications: { title: string; options: unknown }[] = [], fetches: string[] = []
@@ -66,7 +66,7 @@ export function workerHarness(code: string, persistence = { row: { generation: 0
   runInNewContext(code, { self: { ...(dependencies.workerIdentity === false ? {} : { serviceWorker }), skipWaiting: dependencies.skipWaiting,
     addEventListener: (name: string, handler: typeof handlers extends Map<string, infer V> ? V : never) => handlers.set(name, handler),
     clients: dependencies.clients ?? { matchAll: async () => [], openWindow: async () => null },
-    registration: { get waiting() { return dependencies.ownWaiting === false ? {} : serviceWorker }, pushManager: dependencies.pushManager, showNotification: async (title: string, options: unknown) => { notifications.push({ title, options }) } } },
+    registration: { get waiting() { return dependencies.waiting === false ? null : dependencies.ownWaiting === false ? {} : serviceWorker }, pushManager: dependencies.pushManager, showNotification: async (title: string, options: unknown) => { notifications.push({ title, options }) } } },
     navigator: { locks: dependencies.locks ?? testLocks() },
     location: { origin: dependencies.origin ?? 'https://app.example' }, URL, Response, Request, TextEncoder, MessageChannel: WorkerMessageChannel, crypto: webcrypto, AbortController, setTimeout, clearTimeout, indexedDB, structuredClone, caches: dependencies.caches ?? { keys: async () => [] },
     fetch: async (url: string, init: RequestInit) => { fetches.push(url); attempts.push(init); return dependencies.fetch ? dependencies.fetch(url, init) : new Response(JSON.stringify({ id: persistence.row.id })) },

@@ -11,7 +11,7 @@ self.addEventListener('message', (event) => {
   if (event.data?.version !== 1 || event.data.kind !== 'update_request' || !event.ports[0] || !event.source?.id) return
   event.waitUntil((async () => {
     let ready = false, reason = 'busy'
-    if (!updating && (self.serviceWorker === undefined || self.registration.waiting === self.serviceWorker)) {
+    if (!updating && self.registration.waiting && (self.serviceWorker === undefined || self.registration.waiting === self.serviceWorker)) {
       updating = true
       try { ready = await coordinateUpdate(self.clients, location.origin, event.source.id, () => {
         if (self.serviceWorker !== undefined && self.registration.waiting !== self.serviceWorker) { reason = 'replaced'; throw new Error('Update replaced') }

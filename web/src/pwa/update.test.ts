@@ -169,9 +169,9 @@ it('a previously controlled but unarmed document reports an older-version banner
     expect(page.reload).not.toHaveBeenCalled()
   } finally { page.close() }
 })
-it('non-app windows never participate in update readiness', async () => {
+it.each(['/api', '/api/', '/api/attachments/image', '/mcp/', '/mcp/mount'])('server-reserved windows never participate in update readiness: %s', async path => {
   const a = peer('a'), attachment = peer('image', 'silent')
-  attachment.client.url = 'https://app.example/api/attachments/image'
+  attachment.client.url = 'https://app.example' + path
   const activate = vi.fn(async () => {})
   expect(await coordinateUpdate({ matchAll: async () => [a.client, attachment.client], openWindow: vi.fn() }, 'https://app.example', 'a', activate)).toBe(true)
   expect(attachment.requests).toEqual([])

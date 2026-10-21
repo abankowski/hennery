@@ -52,5 +52,6 @@ export function match(pathname: string): Route {
 
 /** App documents that take part in coordinated updates. Auth pages have no app state. */
 export function updateRoute(pathname: string): boolean {
+  if (pathname === '/api' || pathname.startsWith('/api/') || pathname.startsWith('/mcp/')) return false
   return !['setup', 'login', 'not_found'].includes(match(pathname).name)
 }
