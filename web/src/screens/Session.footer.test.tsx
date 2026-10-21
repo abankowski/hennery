@@ -164,6 +164,12 @@ describe('SessionView: the footer of a session that is not running', () => {
 
   it.each([
     ['start_failed', 'This session failed: the agent could not start.'],
+    ['runtime_unavailable', 'This session failed: the runtime is not available on the host.'],
+    ['adapter_failed', 'This session failed: the agent’s adapter failed.'],
+    ['cwd_unavailable', 'This session failed: the working directory is not available on the host.'],
+    ['catalog_unavailable', 'This session failed: the runtime’s settings could not be checked.'],
+    ['busy', 'This session failed: the runtime stayed busy while its settings were checked.'],
+    ['timeout', 'This session failed: checking the runtime’s settings timed out.'],
     ['start_not_delivered', 'This session failed: the start never reached the host.'],
     ['some_new_reason', 'This session failed: some_new_reason.'],
     [undefined, 'This session failed.'],
