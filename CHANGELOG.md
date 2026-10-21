@@ -1,26 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
 
-- Make per-hat Delegation strictly ON/OFF: enabling never probes hosts, and
-  children can use every runtime configuration currently offered without
-  re-enabling after sign-in or adapter updates. Remove execution grants.
-- Hats with Delegation ON now allow every model and mode the runtime offers; any narrowed v0.2.0 grants are dropped.
-- Report unauthenticated runtimes as “not signed in” with `auth_required`,
-  and include host/runtime context in catalog errors. Preserve operator session login instructions.
-- Refuse nested or over-budget starts before probing; isolate catalog probes by
-  context, and settle accepted child work with a readable sign-in/runtime failure.
-- Avoid repeated catalog probes while child starts are in flight; reuse spawn
-  discovery for the first attach, report unavailable queued configurations, and
-  measure transient probe retries from their first failure rather than queue age.
-- The PWA's update banner offers "Reload to update". It checks every open app
-  window, defers while one is busy or unresponsive, preserves stored text
-  drafts, and confirms before discarding unsent images or question input.
-  First-install windows also reload; stalled activation releases the page
-  for retry. Windows missed by coordination show an older-version notice.
-- Correct web typography to the design system: Roboto for headings, content,
-  buttons and labels; Inter for form values and table cells. Bundle Roboto
-  italic, including Polish glyphs, for online and offline use.
+- Delegation is strictly on or off per hat (#218). On means a child may use any
+  model, mode and option its runtime offers at that moment: a runtime signed in
+  later, or models added by an adapter update, work without toggling again.
+  Enabling no longer probes hosts, so one signed-out runtime cannot block it.
+  - Upgrading drops the execution grants of 0.2.0: hats with Delegation on now
+    allow everything their runtimes offer.
+  - A runtime that cannot be used fails only that child, with a readable reason
+    (for example "codex on laptop: not signed in"). Your own sessions still
+    show the login steps.
+  - Cheaper and steadier child starts: limits are checked before any probe,
+    probes are shared, and queued work settles with a reason instead of waiting.
+- "Reload to update" in the update banner (#217). Every open hennery window is
+  asked first; a busy or silent window defers it, stored drafts survive, and
+  unsent images or answers need a confirmation. All windows reload once onto the
+  new version, and old offline caches are removed.
+- Typography follows the design system (#219): Roboto for headings, text,
+  buttons and labels; Inter for form values and table cells; paths stay
+  monospace. Roboto italic is bundled.
+- Database migration 26 runs on first start. An older binary cannot open the
+  upgraded database.
 
 ## 0.2.0
 
