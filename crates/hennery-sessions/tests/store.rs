@@ -2934,7 +2934,19 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
         store.submit_answer("s1", "p1", &choose("allow")).unwrap(),
         AnswerSubmission::Queued(_)
     ));
-    store.ingest("s1", 7, &ended("t1")).unwrap();
+    // Resolve the callback before admitting the next prompt, as a live host does.
+    store
+        .ingest(
+            "s1",
+            7,
+            &SessionBody::PendingResolved {
+                pending_id: "p1".into(),
+                resolution: hennery_proto::frames::PendingResolution::Delivered,
+                reason: None,
+            },
+        )
+        .unwrap();
+    store.ingest("s1", 8, &ended("t1")).unwrap();
     prompt_in(&store, "s1", "t2", vec![image(&b)]);
     prompt_in(&store, "s2", "t9", vec![image(&kept)]);
     store.ingest("s2", 5, &turn_started("t9")).unwrap();

@@ -48,27 +48,12 @@ describe('SessionView: the footer of a session that is not running', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('the composer’s Resume and send goes through the view’s resume, as the footer’s Resume does', async () => {
-    let attached = false
-    const r = await show(
-      { lifecycle: 'parked' },
-      {
-        prompt: () => (attached ? json({ turn_id: 'new' }, 202) : json({ code: 'not_attached', message: 'srv-x' }, 409)),
-        resume: () => {
-          attached = true
-          return json({ session_id: 's1', lifecycle: 'active' }, 202)
-        },
-      },
-    )
+  it('the composer’s Resume and send queues through one collector request', async () => {
+    const r = await show({ lifecycle: 'parked' }, { prompt: () => json({ queue_id: 'queued-resume' }, 202) })
     fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'later' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Resume and send' }, WAIT))
+    fireEvent.click(screen.getByRole('button', { name: 'Resume and send' }))
     await waitFor(() => expect((screen.getByLabelText('Prompt') as HTMLTextAreaElement).value).toBe(''), WAIT)
-    expect(r.changes()).toEqual([
-      'POST /api/sessions/s1/prompt',
-      'POST /api/sessions/s1/resume',
-      'POST /api/sessions/s1/prompt',
-    ])
+    expect(r.changes()).toEqual(['POST /api/sessions/s1/prompt'])
   })
 
   it('a closed session offers Resume', async () => {

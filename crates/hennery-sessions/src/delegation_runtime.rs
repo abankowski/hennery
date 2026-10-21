@@ -45,7 +45,9 @@ impl CachedCatalog {
         match origin {
             // Failures and non-fresh previews back off only operations admitted
             // before they were captured; newer operations must observe recovery.
-            CatalogOrigin::Attach(not_before) => self.captured >= *not_before,
+            CatalogOrigin::Attach(not_before) | CatalogOrigin::OperatorAttach(not_before) => {
+                self.captured >= *not_before
+            }
             CatalogOrigin::Spawn => self.received >= requested,
             // Independent tool retries can observe sign-in immediately, while
             // callers already waiting on the same probe share its failure.
@@ -66,6 +68,7 @@ enum CatalogOrigin {
     Agent,
     Spawn,
     Attach(SystemTime),
+    OperatorAttach(SystemTime),
 }
 impl CatalogOrigin {
     fn result(&self, result: Result<HostCatalog>) -> Result<HostCatalog> {
@@ -109,6 +112,18 @@ impl Catalogs {
         self.get_for_origin(state, host, hat, cwd, agent, CatalogOrigin::Attach(not_before))
             .await
     }
+    pub async fn get_for_operator_attach(
+        &self,
+        state: &AppState,
+        host: &str,
+        hat: &str,
+        cwd: &str,
+        agent: &str,
+        not_before: SystemTime,
+    ) -> Result<HostCatalog> {
+        self.get_for_origin(state, host, hat, cwd, agent, CatalogOrigin::OperatorAttach(not_before))
+            .await
+    }
     pub async fn get_operator(
         &self,
         state: &AppState,
@@ -130,7 +145,7 @@ impl Catalogs {
         origin: CatalogOrigin,
     ) -> Result<HostCatalog> {
         let requested_at = Instant::now();
-        let operator_initiated = matches!(origin, CatalogOrigin::Operator);
+        let operator_initiated = matches!(origin, CatalogOrigin::Operator | CatalogOrigin::OperatorAttach(_));
         state.store.catalog_scope(host, hat, cwd)?;
         let connection = state
             .hub

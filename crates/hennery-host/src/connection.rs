@@ -828,6 +828,7 @@ fn handle(
             });
         }
         CollectorFrame::DelegatedAttach {
+            operator_initiated,
             request_id,
             session_id,
             committed_seq,
@@ -845,7 +846,13 @@ fn handle(
             homes,
             AttachRequest {
                 generation: Some(attach_generation),
-                roots: cfg.workspace_roots.clone(),
+                // The collector has already authorized this existing operator
+                // session. Still require its exact canonical cwd at launch.
+                roots: if operator_initiated {
+                    vec![PathBuf::from(&cwd)]
+                } else {
+                    cfg.workspace_roots.clone()
+                },
                 request_id,
                 session_id,
                 committed_seq,

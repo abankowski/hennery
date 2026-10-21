@@ -207,8 +207,8 @@ impl Store {
     pub fn delegation_queue_depth(&self, child: &str) -> Result<(i64, i64)> {
         let conn = self.conn();
         Ok(conn.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(length(CAST(payload AS BLOB))),0) FROM session_dispatch_queue
-            WHERE owner_id = ?1 AND target_id = ?2 AND state IN ('queued','waiting_config')",
+            "SELECT COUNT(*), COALESCE(SUM(length(CAST(payload AS BLOB)) + image_bytes),0) FROM session_dispatch_queue
+            WHERE owner_id = ?1 AND target_id = ?2 AND (state IN ('queued','waiting_config') OR (origin='operator' AND state IN ('awaiting_reconciliation','failed')))",
             params![self.owner_id(), child],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?)
@@ -230,8 +230,8 @@ impl Store {
         } = input;
         ensure!(text.len() <= 65536, "invalid_arguments");
         let text = hennery_kernel::redact::text(text).unwrap_or_else(|| text.to_owned());
-        let (count,bytes):(i64,i64)=tx.query_row("SELECT COUNT(*), COALESCE(SUM(length(CAST(payload AS BLOB))),0)
-            FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id = ?2 AND state IN ('queued','waiting_config')",
+        let (count,bytes):(i64,i64)=tx.query_row("SELECT COUNT(*), COALESCE(SUM(length(CAST(payload AS BLOB)) + image_bytes),0)
+            FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id = ?2 AND (state IN ('queued','waiting_config') OR (origin='operator' AND state IN ('awaiting_reconciliation','failed')))",
             params![self.owner_id(),child],|r|Ok((r.get(0)?,r.get(1)?)))?;
         ensure!(
             count < MAX_QUEUE && bytes + text.len() as i64 <= MAX_QUEUE_BYTES,

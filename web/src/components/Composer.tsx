@@ -1,5 +1,5 @@
 // The composer (frontend spec §6.5): a prompt with images, slash commands,
-// the config bar, and Send, which a Cancel replaces while a turn runs.
+// the config bar, and Send beside Cancel while a turn runs.
 //
 // Mount it as `<Composer sessionId=… />`: the export is keyed by the
 // session id, so each session gets its own instance, and nothing typed or
@@ -26,7 +26,7 @@ import {
 import { useClient } from '../app-client'
 import { ApiFailure, messageOf } from '../api/errors'
 import { cancel, prompt, setConfig } from '../api/turns'
-import type { Capabilities, ConfigValue, SessionCatalog } from '../generated/protocol'
+import type { Capabilities, ConfigValue, QueuedPrompt, SessionCatalog } from '../generated/protocol'
 import type { SessionSummary } from '../generated/view'
 import {
   admit,
@@ -49,6 +49,7 @@ import { navigationGate } from '../pwa/navigation'
 import { undeliveredDraft, type DraftPart } from '../lib/sendAgain'
 import { Icon } from '../lib/ui'
 import SessionConfig from './SessionConfig'
+import PromptQueue from './PromptQueue'
 import ComposerSettings, { SettingsSummary } from './ComposerSettings'
 import { modelLabel } from '../lib/agent'
 import { CANCEL_OUTCOME, SEND_AGAIN_LABEL, cancelRefusal, configRefusal, isBusyTurn, promptRefusal } from './composerWords'
@@ -72,8 +73,8 @@ export interface ComposerProps {
   /** The session prompts go to. A new id is a new composer (see above). */
   sessionId: string
   /** The session as the list shows it, null while unknown. A turn in
-   *  flight (`activity` is `running` or `blocked`) disables Send and offers
-   *  Cancel instead; while `starting`, a refusal never offers a resume. */
+   *  flight (`activity` is `running` or `blocked`) offers Cancel alongside
+   *  Send, which queues input; while `starting`, a refusal never offers a resume. */
   session: Pick<SessionSummary, 'activity' | 'lifecycle'> | null
   /** The session's host's capabilities (`HostItem.capabilities`), null
    *  while unknown. Images are hidden only when they are known and lack
@@ -90,6 +91,8 @@ export interface ComposerProps {
    *  one its footer's Resume goes through. */
   onResume: () => Promise<unknown>
   onJumpToQuestion?: () => void
+  queue?: QueuedPrompt[]
+  onQueueChange?: () => Promise<void>
   /** The handle above, bound to the composer of the session shown. */
   handle?: Ref<ComposerHandle>
 }
@@ -116,7 +119,7 @@ interface Notice {
 /** How a send ended: sent (a 202), or refused, saying why. */
 type Outcome = { sent: true } | { sent: false; notice: Notice }
 
-function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, onJumpToQuestion, handle }: ComposerProps) {
+function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, onJumpToQuestion, handle, queue = [], onQueueChange }: ComposerProps) {
   const client = useClient()
   const ids = useId()
   const [text, setText] = useState(() => loadDraft(sessionId))
@@ -185,7 +188,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   const canResume = session?.lifecycle !== 'starting'
   // Nothing to send: Send and "Resume and send" both wait for words.
   const blank = text.trim() === ''
-  const canSend = !sending && !inFlight && !blank && Object.keys(pendingConfig).length === 0
+  const canSend = !sending && !blank && Object.keys(pendingConfig).length === 0
 
   // The draft as last rendered, for the handle and for a refill that
   // answers later.
@@ -333,6 +336,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
       const blocks = await promptBlocks(draft, images)
       markDraftSending(sessionId, draft)
       await prompt(client, sessionId, blocks)
+      void onQueueChange?.()
     } catch (err) {
       if (err instanceof ApiFailure) clearDraftSending(sessionId)
       return {
@@ -443,7 +447,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.nativeEvent.isComposing) return
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229 || e.repeat) return
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault()
       send()
@@ -578,7 +582,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
               </button>
             </>
           )}
-          {inFlight ? (
+          {inFlight && (
             <button
               className="btn btn-danger btn-sm"
               type="button"
@@ -587,11 +591,12 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
             >
               {cancelling ? 'Stopping…' : 'Cancel'}
             </button>
-          ) : (
-            <button className="send-btn" type="button" aria-label="Send" disabled={!canSend} onClick={send}>
+          )}
+          {
+            <button className="send-btn" type="button" aria-label={session?.lifecycle === 'parked' ? 'Resume and send' : 'Send'} title={session?.lifecycle === 'parked' ? 'Resume and send' : 'Send'} disabled={!canSend} onClick={send}>
               <Icon.ArrowUp size={18} />
             </button>
-          )}
+          }
         </div>
         {atts.length > 0 && (
           <ul className="att-strip" aria-label="Images">
@@ -610,6 +615,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
             ))}
           </ul>
         )}
+        <PromptQueue sessionId={sessionId} items={queue} changed={onQueueChange} />
         {draftError && (
           <p className="form-error" role="alert">
             <bdi>{draftError}</bdi>

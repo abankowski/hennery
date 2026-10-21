@@ -561,7 +561,12 @@ export type CollectorFrame = { "type": "probe_catalog", request_id: string, agen
  * Operator previews use ordinary session path rules. Delegated probes
  * retain the host workspace boundary. Set only by the collector.
  */
-operator_initiated: boolean, } | { "type": "delegated_attach", request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue },
+operator_initiated: boolean, } | { "type": "delegated_attach",
+/**
+ * A collector-accepted operator queue resume uses ordinary operator
+ * path authorization, while retaining the attach/configuration fence.
+ */
+operator_initiated?: boolean, request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue },
 /**
  * Passed in `session/new` / `session/load`. Only to a host that
  * announced `mcp_servers`.
@@ -650,6 +655,22 @@ export type StartSessionResponse = { session_id: string, };
 export type PromptRequest = { content: unknown[], };
 
 export type PromptResponse = { turn_id: string, };
+
+/**
+ * An accepted durable prompt, delivered after earlier turns finish.
+ */
+export type QueuedPromptResponse = { queue_id: string, };
+
+export type QueuedPrompt = { id: string, content: Array<StoredBlock>,
+/**
+ * queued, delivering, or failed. Only queued items can be edited.
+ */
+state: string, reason: string | null, };
+
+/**
+ * Replace a queued item's text while retaining its stored images.
+ */
+export type EditQueuedPrompt = { text: string, };
 
 /**
  * One block of a prompt as the collector stores it (ACP core §7, plan 6a):

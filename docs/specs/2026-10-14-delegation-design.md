@@ -495,8 +495,17 @@ Queue acceptance and the destination turn reservation are distinct. When
 dispatching, persist the operation-to-turn mapping and its reserved slot in
 one transaction. `turn_started` acknowledges delivery; `turn_ended` records the
 outcome. Never mark delivered from a socket write, MCP success or model prose.
-Operator prompts retain their current `turn_in_progress` response; whichever
-submission reserves the slot first wins. Queued work never interrupts a turn.
+Operator amendment (2026-10-21): operator prompts submitted while busy,
+waiting, parked or behind accepted work join this same FIFO, with typed
+`Operator` provenance and no delegation grant dependency. Both sources use
+one position order; an immediate operator prompt cannot overtake a queued
+head. Child notices drain only when this prompt FIFO has no ready head.
+Queued work never interrupts a turn. Operator items are editable/removable
+only before turn reservation; failed items retain their checked content until
+operator dismissal. Delegation grant changes do not cancel operator input.
+The shared 32-item / 1-MiB bound includes operator image bytes and retained
+failed operator items. ACP core §4.4 describes operator failure/cancel/restart
+semantics and the queue API; adapter promptQueueing remains unused.
 
 Acceptance and dispatch must test **close intent**, not just lifecycle. In the
 transaction that accepts a command, reserves a turn or begins an automatic

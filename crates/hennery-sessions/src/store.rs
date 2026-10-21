@@ -439,6 +439,8 @@ BEGIN
       AND (child_id = NEW.id OR parent_id = NEW.id) AND NEW.lifecycle = 'deleted';
     DELETE FROM delegation_budgets WHERE owner_id = NEW.owner_id AND root_id = NEW.id AND NEW.lifecycle = 'deleted';
 END;",
+    // Shared operator prompt FIFO (28).
+    include_str!("prompt_queue.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -827,7 +829,7 @@ pub struct Store {
     owner: String,
     /// Where the attachment files go: `attachments/` beside the database
     /// (kernel spec §1). An in-memory store has none.
-    attachments: Option<PathBuf>,
+    pub(crate) attachments: Option<PathBuf>,
     /// The checkpoint a delete owes (plan 9a A8); an in-memory store has
     /// none.
     checkpoints: Option<Arc<Checkpoints>>,
@@ -996,7 +998,7 @@ fn link_attachments(tx: &Transaction<'_>, owner: &str, event_id: i64, content: &
 /// Link a turn to the images its content shows (plan 9a decision 6), as
 /// `link_attachments` links its `user_turn`: an image a turn shows that
 /// never started is still referenced. The links go with the turn.
-fn link_turn_attachments(tx: &Transaction<'_>, owner: &str, turn_id: &str, content: &[Value]) -> Result<()> {
+pub(crate) fn link_turn_attachments(tx: &Transaction<'_>, owner: &str, turn_id: &str, content: &[Value]) -> Result<()> {
     for (position, sha256) in image_hashes(content) {
         tx.execute(
             "INSERT INTO turn_attachments(turn_id, sha256, position, owner_id)
@@ -1010,13 +1012,14 @@ fn link_turn_attachments(tx: &Transaction<'_>, owner: &str, turn_id: &str, conte
 /// Delete the owner's rows of those of `hashes` that nothing of theirs
 /// shows any more, no turn and no event (plan 9a decision 6); the hashes
 /// whose row went. Their files go after the commit (`Store::remove_files`).
-fn drop_unreferenced(tx: &Transaction<'_>, owner: &str, hashes: &BTreeSet<String>) -> Result<Vec<String>> {
+pub(crate) fn drop_unreferenced(tx: &Transaction<'_>, owner: &str, hashes: &BTreeSet<String>) -> Result<Vec<String>> {
     let mut dropped = Vec::new();
     for sha256 in hashes {
         let gone = tx.execute(
             "DELETE FROM attachments WHERE owner_id = ?1 AND sha256 = ?2
                  AND NOT EXISTS (SELECT 1 FROM turn_attachments WHERE owner_id = ?1 AND sha256 = ?2)
-                 AND NOT EXISTS (SELECT 1 FROM event_attachments WHERE owner_id = ?1 AND sha256 = ?2)",
+                 AND NOT EXISTS (SELECT 1 FROM event_attachments WHERE owner_id = ?1 AND sha256 = ?2)
+                 AND NOT EXISTS (SELECT 1 FROM prompt_queue_attachments WHERE owner_id = ?1 AND sha256 = ?2)",
             [owner, sha256],
         )?;
         if gone == 1 {
@@ -1464,7 +1467,7 @@ fn list_statement(by_hat: bool) -> String {
 type ConfigColumns = (Option<String>, Option<String>, Option<String>);
 
 /// A session's stored config, from its `model`, `mode` and `config_axes`.
-fn stored_config((model, mode, axes): ConfigColumns) -> Result<SessionConfig> {
+pub(crate) fn stored_config((model, mode, axes): ConfigColumns) -> Result<SessionConfig> {
     let axes: BTreeMap<String, ConfigValue> = match axes {
         Some(axes) => serde_json::from_str(&axes)?,
         None => BTreeMap::new(),
@@ -2808,7 +2811,9 @@ impl Store {
             "UPDATE sessions SET open_turn_id = ?2
              WHERE id = ?1 AND lifecycle = 'active' AND open_turn_id IS NULL AND owner_id = ?3
              AND close_requested = 0 AND NOT EXISTS(SELECT 1 FROM purged_hats p
-                WHERE p.owner_id = ?3 AND p.hat_id = sessions.hat_id)",
+                WHERE p.owner_id = ?3 AND p.hat_id = sessions.hat_id)
+             AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?3 AND q.target_id = ?1 AND q.state IN ('queued','waiting_config'))
+             AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?3 AND p.session_id = ?1 AND p.state='open')",
             params![session_id, turn_id, self.owner],
         )?;
         if changed == 1 {
@@ -2946,7 +2951,7 @@ impl Store {
     /// it, since files are shared by hash. A file gone already is fine. One
     /// that cannot be removed is logged and left: its rows are gone, and
     /// plan 9b's sweep removes a file no row names (decision 7).
-    fn remove_files(&self, conn: &Connection, dropped: &[String]) {
+    pub(crate) fn remove_files(&self, conn: &Connection, dropped: &[String]) {
         let Some(dir) = self.attachments.as_deref() else {
             return;
         };
@@ -2988,7 +2993,9 @@ impl Store {
                  AND NOT EXISTS (SELECT 1 FROM turn_attachments
                      WHERE turn_attachments.owner_id = ?1 AND turn_attachments.sha256 = attachments.sha256)
                  AND NOT EXISTS (SELECT 1 FROM event_attachments
-                     WHERE event_attachments.owner_id = ?1 AND event_attachments.sha256 = attachments.sha256)",
+                     WHERE event_attachments.owner_id = ?1 AND event_attachments.sha256 = attachments.sha256)
+                 AND NOT EXISTS (SELECT 1 FROM prompt_queue_attachments
+                     WHERE prompt_queue_attachments.owner_id = ?1 AND prompt_queue_attachments.sha256 = attachments.sha256)",
             [&self.owner],
         )?;
         let mut report = SweepReport {
@@ -3134,7 +3141,9 @@ impl Store {
                  WHERE owner_id = ?2 AND turn_id IN (SELECT turn_id FROM turns WHERE session_id = ?1 AND owner_id = ?2)
                  UNION
                  SELECT sha256 FROM event_attachments
-                 WHERE owner_id = ?2 AND event_id IN (SELECT event_id FROM events WHERE session_id = ?1 AND owner_id = ?2)",
+                 WHERE owner_id = ?2 AND event_id IN (SELECT event_id FROM events WHERE session_id = ?1 AND owner_id = ?2)
+                 UNION SELECT a.sha256 FROM prompt_queue_attachments a JOIN session_dispatch_queue q ON q.owner_id = ?2 AND q.operation_id=a.operation_id
+                 WHERE a.owner_id = ?2 AND q.target_id=?1",
             )?;
             let rows = stmt.query_map([session_id, &self.owner], |r| r.get(0))?;
             rows.collect::<rusqlite::Result<_>>()?
@@ -3179,6 +3188,10 @@ impl Store {
                          AND lifecycle <> 'deleted')",
             params![self.owner, host_id, hat_id, cwd, session_id],
         )?;
+        tx.execute(
+            "DELETE FROM session_dispatch_queue WHERE owner_id = ?1 AND (source_id=?2 OR target_id=?2)",
+            params![self.owner, session_id],
+        )?;
         let dropped = drop_unreferenced(&tx, &self.owner, &hashes)?;
         // What is left to remove on the host, before the scrub (plan 9d
         // decision 2): one record per pair the session used.
@@ -3202,7 +3215,7 @@ impl Store {
                  config_axes = NULL, agent_session_id = NULL, failure_reason = NULL, hat_rule_id = NULL,
                  open_turn_id = NULL, activity = NULL, presumed_parked = 0, close_requested = 0, agent_home = NULL,
                  mcp_delivery_mode = NULL, mcp_delivery_servers = NULL, mcp_delivery_at = NULL,
-                 idle_pinned = 0, idle_hold_dirty = 0
+                 idle_pinned = 0, idle_hold_dirty = 0, prompt_queue_dirty = 0
              WHERE id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
         )?;
@@ -5575,7 +5588,7 @@ mod tests {
             .unwrap();
         }
         assert!(
-            conn.execute("UPDATE delegation_budgets SET wakes=21 WHERE owner_id=?1", [&owner])
+            conn.execute("UPDATE delegation_budgets SET wakes=21 WHERE owner_id = ?1", [&owner])
                 .is_err()
         );
         let original: String = conn
@@ -5604,7 +5617,7 @@ mod tests {
             0
         );
         let rows: Vec<(i64, i64)> = conn
-            .prepare("SELECT epoch,wakes FROM delegation_budgets WHERE owner_id=?1 ORDER BY epoch")
+            .prepare("SELECT epoch,wakes FROM delegation_budgets WHERE owner_id = ?1 ORDER BY epoch")
             .unwrap()
             .query_map([&owner], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap()
@@ -5612,22 +5625,22 @@ mod tests {
             .collect();
         assert_eq!(rows, [(0, 20), (41, 20)]);
         assert_eq!(
-            conn.execute("UPDATE delegation_budgets SET wakes=64 WHERE owner_id=?1", [&owner])
+            conn.execute("UPDATE delegation_budgets SET wakes=64 WHERE owner_id = ?1", [&owner])
                 .unwrap(),
             2
         );
         assert!(
-            conn.execute("UPDATE delegation_budgets SET wakes=65 WHERE owner_id=?1", [&owner])
+            conn.execute("UPDATE delegation_budgets SET wakes=65 WHERE owner_id = ?1", [&owner])
                 .is_err()
         );
         conn.execute(
-            "UPDATE sessions SET lifecycle='deleted' WHERE owner_id=?1 AND id='root'",
+            "UPDATE sessions SET lifecycle='deleted' WHERE owner_id = ?1 AND id='root'",
             [&owner],
         )
         .unwrap();
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM delegation_budgets WHERE owner_id=?1",
+                "SELECT COUNT(*) FROM delegation_budgets WHERE owner_id = ?1",
                 [&owner],
                 |r| r.get::<_, i64>(0)
             )

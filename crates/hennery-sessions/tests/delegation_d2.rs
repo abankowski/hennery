@@ -4992,13 +4992,14 @@ fn reviewer_actual_host_crash_has_one_parent_delivery() {
 fn reviewer_out_of_turn_question_keeps_its_projection_after_later_operator_turn() {
     let (w, _) = pair();
     ready_parent(&w);
-    pending(&w, "child", 2, "early-question", PendingKind::Elicitation);
-    // An ordinary operator prompt may start while an out-of-turn callback remains open.
+    // A prompt reserved before an out-of-turn callback can be acknowledged
+    // after that callback. The projection must retain the earlier question.
     assert!(
         w.store
             .open_turn("child", "later-operator", &[json!({"type":"text","text":"continue"})])
             .unwrap()
     );
+    pending(&w, "child", 2, "early-question", PendingKind::Elicitation);
     w.store
         .ingest(
             "child",

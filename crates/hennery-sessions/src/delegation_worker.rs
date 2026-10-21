@@ -60,6 +60,7 @@ fn reconcile_page(state: &AppState, cursors: &mut Reconciliation) -> anyhow::Res
             .store
             .enqueue_delegation_attention(&state.push, &state.delegation_run, &cursors.notifications, now)?;
     state.store.flush_family_changes(&state.hub)?;
+    state.store.flush_prompt_queue_changes(&state.hub)?;
     Ok(())
 }
 async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<()> {
@@ -82,6 +83,34 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
             || !matches!(session.lifecycle.as_str(), "starting" | "active" | "parked")
         {
             continue;
+        }
+        if session.open_turn_id.is_some()
+            || session.activity.as_deref() == Some("blocked")
+            || !state.store.open_pending(&target)?.is_empty()
+        {
+            continue;
+        }
+        if session.lifecycle == "active" && state.store.operator_dispatch_ready(&target)? {
+            let Some(_admission) = state.store.reserve_prompt(&target) else {
+                continue;
+            };
+            let mut startup = state
+                .store
+                .mcp()
+                .startup_context(
+                    &target,
+                    &state.store.operator_dispatch_id(&target)?,
+                    state
+                        .hub
+                        .has_capability(&session.host_id, hennery_proto::frames::Capability::PluginContext),
+                )
+                .await;
+            if state
+                .store
+                .dispatch_operator_prompt(&target, &state.hub, &mut startup, None)?
+            {
+                continue;
+            }
         }
         let candidate = if session.lifecycle == "active" {
             None
@@ -114,68 +143,103 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
         let work = async {
             let cwd = checked_cwd(state, &session.host_id, &session.hat_id, &session.cwd).await?;
             anyhow::ensure!(cwd == session.cwd, "invalid_cwd");
-            let catalog = if session.lifecycle == "active" {
-                state
-                    .catalogs
-                    .get(state, &session.host_id, &session.hat_id, &cwd, &session.agent)
-                    .await
-                    .unwrap_or_else(|_| crate::session_tools::unknown_catalog(session.agent.clone()))
-            } else {
-                match state
-                    .catalogs
-                    .get_for_attach(
-                        state,
-                        &session.host_id,
-                        &session.hat_id,
-                        &cwd,
-                        &session.agent,
-                        candidate
-                            .as_ref()
-                            .and_then(|head| uuid::Uuid::parse_str(&head.operation).ok())
-                            .and_then(|id| id.get_timestamp())
-                            .map(|at| {
-                                let (seconds, nanos) = at.to_unix();
-                                std::time::UNIX_EPOCH + Duration::new(seconds, nanos)
-                            })
-                            .unwrap_or_else(std::time::SystemTime::now),
-                    )
-                    .await
-                    .and_then(|catalog| {
+            let catalog =
+                if session.lifecycle == "active" {
+                    let read = if state.store.operator_dispatch_ready(&target)? {
+                        state
+                            .catalogs
+                            .get_operator(state, &session.host_id, &session.hat_id, &cwd, &session.agent)
+                            .await
+                    } else {
+                        state
+                            .catalogs
+                            .get(state, &session.host_id, &session.hat_id, &cwd, &session.agent)
+                            .await
+                    };
+                    read.unwrap_or_else(|_| crate::session_tools::unknown_catalog(session.agent.clone()))
+                } else {
+                    let not_before = candidate
+                        .as_ref()
+                        .and_then(|head| uuid::Uuid::parse_str(&head.operation).ok())
+                        .and_then(|id| id.get_timestamp())
+                        .map(|at| {
+                            let (seconds, nanos) = at.to_unix();
+                            std::time::UNIX_EPOCH + Duration::new(seconds, nanos)
+                        })
+                        .unwrap_or_else(std::time::SystemTime::now);
+                    let catalog = if candidate.as_ref().is_some_and(|head| head.operator) {
+                        state
+                            .catalogs
+                            .get_for_operator_attach(
+                                state,
+                                &session.host_id,
+                                &session.hat_id,
+                                &cwd,
+                                &session.agent,
+                                not_before,
+                            )
+                            .await
+                    } else {
+                        state
+                            .catalogs
+                            .get_for_attach(
+                                state,
+                                &session.host_id,
+                                &session.hat_id,
+                                &cwd,
+                                &session.agent,
+                                not_before,
+                            )
+                            .await
+                    };
+                    match catalog.and_then(|catalog| {
                         anyhow::ensure!(
-                            catalog.freshness == hennery_proto::delegation_host::CatalogFreshness::Fresh,
+                            catalog.freshness == hennery_proto::delegation_host::CatalogFreshness::Fresh
+                                || candidate.as_ref().is_some_and(|head| head.operator
+                                    && head.required == hennery_proto::frames::SessionConfig::default()),
                             "catalog_unavailable"
                         );
                         state.store.clear_delegation_catalog_failures(&target)?;
                         anyhow::ensure!(
-                            config_offered(
-                                &catalog,
-                                &candidate.as_ref().expect("nonactive attach candidate").required
-                            ),
+                            candidate.as_ref().is_some_and(|head| head.operator
+                                && head.required == hennery_proto::frames::SessionConfig::default())
+                                || config_offered(
+                                    &catalog,
+                                    &candidate.as_ref().expect("nonactive attach candidate").required
+                                ),
                             "configuration_unavailable"
                         );
                         Ok(catalog)
                     }) {
-                    Ok(catalog) => catalog,
-                    Err(error) => {
-                        let code = crate::session_tools::error_code(&error);
-                        let now = hennery_kernel::secret::unix_now();
-                        if code == "configuration_unavailable" {
-                            refuse_configuration(
-                                state,
-                                &target,
-                                &candidate.as_ref().expect("attach candidate").operation,
-                                now,
-                            )?;
-                        } else {
-                            state.store.fail_delegation_catalog(&target, code, now)?;
-                            state.store.fail_notice_catalog(&target, code, now)?;
+                        Ok(catalog) => catalog,
+                        Err(error) => {
+                            let code = crate::session_tools::error_code(&error);
+                            let now = hennery_kernel::secret::unix_now();
+                            if code == "configuration_unavailable" {
+                                refuse_configuration(
+                                    state,
+                                    &target,
+                                    &candidate.as_ref().expect("attach candidate").operation,
+                                    now,
+                                )?;
+                            } else {
+                                state.store.fail_delegation_catalog(&target, code, now)?;
+                                state.store.fail_notice_catalog(&target, code, now)?;
+                            }
+                            return Ok(());
                         }
-                        return Ok(());
                     }
-                }
-            };
+                };
             if session.lifecycle == "active" {
                 let catalog = state.store.attached_delegation_catalog(&target, &catalog)?;
+                if state.store.operator_dispatch_ready(&target)? {
+                    let Some(_admission) = state.store.reserve_prompt(&target) else {
+                        return Ok(());
+                    };
+                    state
+                        .store
+                        .dispatch_operator_prompt(&target, &state.hub, &mut None, Some(&catalog))?;
+                }
                 state.store.dispatch_delegated(&target, &catalog, &state.hub)?;
                 state.store.dispatch_child_notice(&target, &catalog, &state.hub)?;
             } else {
@@ -187,6 +251,7 @@ async fn drain_page(state: &AppState, cursors: &mut Cursors) -> anyhow::Result<(
         };
         tokio::select! {biased; ()=state.shutdown.cancelled()=>return Ok(()),_ = work=>{}}
     }
+    state.store.flush_prompt_queue_changes(&state.hub)?;
     Ok(())
 }
 

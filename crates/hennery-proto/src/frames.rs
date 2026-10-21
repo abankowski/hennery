@@ -1015,6 +1015,10 @@ pub enum CollectorFrame {
     /// A delegated attach uses an independently allocated, nonzero generation.
     /// `agent_session_id` absent starts a new adapter session; present loads it.
     DelegatedAttach {
+        /// A collector-accepted operator queue resume uses ordinary operator
+        /// path authorization, while retaining the attach/configuration fence.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        operator_initiated: bool,
         request_id: String,
         session_id: String,
         #[ts(type = "number")]

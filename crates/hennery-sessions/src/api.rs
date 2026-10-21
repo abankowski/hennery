@@ -86,6 +86,11 @@ pub fn router(state: AppState) -> Router {
             "/api/sessions/{id}/prompt",
             post(prompt).layer(DefaultBodyLimit::max(content::PROMPT_BODY_LIMIT)),
         )
+        .route("/api/sessions/{id}/queue", get(prompt_queue))
+        .route(
+            "/api/sessions/{id}/queue/{queue_id}",
+            axum::routing::patch(edit_queued_prompt).delete(remove_queued_prompt),
+        )
         .route("/api/sessions/{id}/cancel", post(cancel))
         .route("/api/sessions/{id}/park", post(park))
         .route("/api/sessions/{id}/idle-hold", get(idle_hold).patch(set_idle_pin))
@@ -862,7 +867,7 @@ async fn prompt(
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
         Err(err) => return internal(err),
     };
-    if session.lifecycle != "active" {
+    if !matches!(session.lifecycle.as_str(), "active" | "parked") {
         return error(StatusCode::CONFLICT, "not_attached", "resume the session first");
     }
     if let Some(reason) = session.configuration_error {
@@ -871,33 +876,41 @@ async fn prompt(
     if !checked.images.is_empty() {
         // A host that is gone has no capabilities: it is offline, not one
         // without images.
-        if !state.hub.is_ready(&session.host_id) {
+        let offline_parked = session.lifecycle == "parked" && !state.hub.is_ready(&session.host_id);
+        if !state.hub.is_ready(&session.host_id) && !offline_parked {
             return request_failed(RequestError::NotConnected);
         }
         // Never an image to a host that did not announce it (ACP core §3.3).
-        if !state.hub.has_capability(&session.host_id, Capability::Images) {
+        // A parked offline prompt is stored, not handed off. Its last hello
+        // permits storage; dispatch rechecks the live capability on reconnect.
+        let images_supported = if offline_parked {
+            match state.hosts.host(&session.host_id) {
+                Ok(Some(host)) => host.capabilities.has(Capability::Images),
+                Ok(None) => false,
+                Err(err) => return internal(err),
+            }
+        } else {
+            state.hub.has_capability(&session.host_id, Capability::Images)
+        };
+        if !images_supported {
             return error(
                 StatusCode::CONFLICT,
                 "images_unsupported",
                 "this host cannot take images; send text only",
             );
         }
-        // Not to write files for a prompt `open_prompt` would refuse anyway;
-        // it still decides.
-        if session.open_turn_id.is_some() {
-            return error(
-                StatusCode::CONFLICT,
-                "turn_in_progress",
-                "wait for the current turn to end",
-            );
-        }
-        if let Err(err) = state.store.save_images(&checked.images) {
-            return internal(err);
-        }
+    }
+    match state.store.prompt_must_queue(&id) {
+        Ok(true) => return accept_queued_prompt(&state, &id, &checked),
+        Ok(false) => {}
+        Err(err) => return internal(err),
+    }
+    if let Err(err) = state.store.save_images(&checked.images) {
+        return internal(err);
     }
     let turn_id = uuid::Uuid::now_v7().to_string();
     let Some(_admission) = state.store.reserve_prompt(&id) else {
-        return error(StatusCode::CONFLICT, "turn_in_progress", "a prompt is being prepared");
+        return accept_queued_prompt(&state, &id, &checked);
     };
     let request_id = uuid::Uuid::now_v7().to_string();
     let mut startup = state
@@ -914,13 +927,7 @@ async fn prompt(
         .open_prompt_with_startup(&id, &turn_id, &checked, &mut startup)
     {
         Ok(true) => {}
-        Ok(false) => {
-            return error(
-                StatusCode::CONFLICT,
-                "turn_in_progress",
-                "wait for the current turn to end",
-            );
-        }
+        Ok(false) => return accept_queued_prompt(&state, &id, &checked),
         Err(err) => return internal(err),
     }
     drop(_admission);
@@ -953,6 +960,105 @@ async fn prompt(
         // The socket task has already removed the turn (`Undo::Prompt`).
         Err(err) => request_failed(err),
     }
+}
+
+fn queue_error(err: anyhow::Error) -> Response {
+    match err.to_string().as_str() {
+        "queue_full" => error(
+            StatusCode::CONFLICT,
+            "queue_full",
+            "The queue is full (32 messages or 1 MiB including images). Remove an item or wait for delivery.",
+        ),
+        "queue_unavailable" => error(
+            StatusCode::CONFLICT,
+            "queue_unavailable",
+            "The session cannot accept queued messages. Review its status before sending again.",
+        ),
+        "queue_item_unavailable" => error(
+            StatusCode::CONFLICT,
+            "queue_item_unavailable",
+            "This message is already being delivered or was removed. Refresh the queue.",
+        ),
+        "empty_prompt" => error(
+            StatusCode::BAD_REQUEST,
+            "empty_prompt",
+            "Write some text or keep an image.",
+        ),
+        "content_too_large" => error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "content_too_large",
+            "A prompt's text takes at most 2 MiB.",
+        ),
+        _ => internal(err),
+    }
+}
+fn accept_queued_prompt(state: &AppState, id: &str, checked: &content::Checked) -> Response {
+    match state.store.enqueue_operator_prompt(id, checked) {
+        Ok(queue_id) => {
+            if let Err(err) = state.store.flush_prompt_queue_changes(&state.hub) {
+                // Acceptance already committed. The durable dirty flag lets
+                // the worker repair publication without another operator send.
+                tracing::warn!(session_id = id, error = %err, "queued prompt notification deferred");
+            }
+            (
+                StatusCode::ACCEPTED,
+                Json(hennery_proto::rest::QueuedPromptResponse { queue_id }),
+            )
+                .into_response()
+        }
+        Err(err) => queue_error(err),
+    }
+}
+async fn prompt_queue(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match state.store.find_session(&id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+        Err(err) => return internal(err),
+    }
+    match state.store.operator_prompt_queue(&id) {
+        Ok(queue) => Json(queue).into_response(),
+        Err(err) => internal(err),
+    }
+}
+async fn edit_queued_prompt(
+    State(state): State<AppState>,
+    Path((id, queue_id)): Path<(String, String)>,
+    ApiJson(req): ApiJson<hennery_proto::rest::EditQueuedPrompt>,
+) -> Response {
+    match state.store.find_session(&id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+        Err(err) => return internal(err),
+    }
+    if let Err(err) = state.store.edit_operator_prompt(&id, &queue_id, &req.text) {
+        return queue_error(err);
+    }
+    if let Err(err) = state.store.flush_prompt_queue_changes(&state.hub) {
+        return internal(err);
+    }
+    prompt_queue(State(state), Path(id)).await
+}
+async fn remove_queued_prompt(State(state): State<AppState>, Path((id, queue_id)): Path<(String, String)>) -> Response {
+    match state.store.find_session(&id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+        Err(err) => return internal(err),
+    }
+    match state.store.remove_operator_prompt(&id, &queue_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            return error(
+                StatusCode::CONFLICT,
+                "queue_item_unavailable",
+                "This message is already being delivered or was removed.",
+            );
+        }
+        Err(err) => return internal(err),
+    }
+    if let Err(err) = state.store.flush_prompt_queue_changes(&state.hub) {
+        return internal(err);
+    }
+    prompt_queue(State(state), Path(id)).await
 }
 
 /// One of the owner's images (plan 6a), by its hash. Served as the type it
@@ -2101,6 +2207,36 @@ mod not_sent_tests {
         let status = response.status();
         let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    #[tokio::test]
+    async fn accepted_queue_receipt_survives_a_notification_failure_without_inviting_a_duplicate_send() {
+        let (_dir, state) = state();
+        state.store.create_session("s1", "h", "a", "/p", "hat", None).unwrap();
+        state
+            .store
+            .ingest("s1", 1, &SessionBody::session_started("start", "agent"))
+            .unwrap();
+        state.store.conn().execute_batch("CREATE TRIGGER refuse_queue_notification BEFORE INSERT ON events WHEN NEW.kind='queue_changed' BEGIN SELECT RAISE(ABORT,'notification unavailable'); END;").unwrap();
+        let checked = content::check(vec![serde_json::json!({"type":"text","text":"only once"})]).unwrap();
+        let (status, body) = answer(accept_queued_prompt(&state, "s1", &checked)).await;
+        let queue = state.store.operator_prompt_queue("s1").unwrap();
+        assert_eq!(queue.len(), 1, "the queue commit already succeeded");
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["queue_id"], queue[0].id);
+        state
+            .store
+            .conn()
+            .execute_batch("DROP TRIGGER refuse_queue_notification;")
+            .unwrap();
+        let mut events = state.hub.subscribe();
+        state.store.flush_prompt_queue_changes(&state.hub).unwrap();
+        assert_eq!(
+            events.try_recv().unwrap().kind,
+            "queue_changed",
+            "durable dirty state repairs publication"
+        );
+        assert_eq!(state.store.operator_prompt_queue("s1").unwrap().len(), 1);
     }
 
     fn failure(state: &AppState, id: &str) -> (String, Option<String>) {

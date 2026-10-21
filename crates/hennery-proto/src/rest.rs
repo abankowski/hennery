@@ -50,6 +50,28 @@ pub struct PromptResponse {
     pub turn_id: String,
 }
 
+/// An accepted durable prompt, delivered after earlier turns finish.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct QueuedPromptResponse {
+    pub queue_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct QueuedPrompt {
+    pub id: String,
+    pub content: Vec<StoredBlock>,
+    /// queued, delivering, or failed. Only queued items can be edited.
+    pub state: String,
+    pub reason: Option<String>,
+}
+
+/// Replace a queued item's text while retaining its stored images.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct EditQueuedPrompt {
+    pub text: String,
+}
+
 /// One block of a prompt as the collector stores it (ACP core §7, plan 6a):
 /// in `turns.content` and in the `user_turn` event's `content`. Text as it
 /// was sent; an image as the attachment it was stored as, never its bytes.

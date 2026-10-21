@@ -52,6 +52,7 @@ impl Collector {
         pair_host(&hosts);
         let mut state = AppState::new(Store::open(db).unwrap(), hosts, Operator::open(db).unwrap());
         state.offline_threshold = offline;
+        hennery_sessions::delegation_worker::after_startup(&state);
         let task = tokio::spawn(hennery_sessions::serve(listener, state.clone()));
         Self { addr, state, task }
     }
@@ -166,6 +167,23 @@ fn turn_ends(events: &[EventDto]) -> Vec<&EventDto> {
     events.iter().filter(|e| e.kind == "turn_ended").collect()
 }
 
+/// Production workers publish presentation invalidations independently of
+/// lifecycle facts. Validate those separately before asserting an exact fact
+/// sequence; every other event remains in the sequence under test.
+fn without_family_invalidations(events: &[EventDto]) -> Vec<&EventDto> {
+    events
+        .iter()
+        .filter(|event| {
+            if event.kind != "family_changed" {
+                return true;
+            }
+            assert_eq!(event.body, json!({}));
+            assert_eq!(event.host_seq, None);
+            false
+        })
+        .collect()
+}
+
 #[tokio::test]
 async fn a_prompt_streams_the_agents_reply_and_ends_the_turn_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -205,11 +223,21 @@ async fn a_prompt_streams_the_agents_reply_and_ends_the_turn_once() {
 }
 
 #[tokio::test]
-async fn empty_prompts_and_overlapping_prompts_are_refused() {
+async fn running_prompts_are_queued_for_a_claude_like_adapter() {
+    running_prompt_queue(true).await;
+}
+#[tokio::test]
+async fn running_prompts_are_queued_for_a_codex_like_adapter() {
+    running_prompt_queue(false).await;
+}
+
+async fn running_prompt_queue(prompt_queueing: bool) {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
     let dir = tempfile::tempdir().unwrap();
     let collector = Collector::start(&dir.path().join("hennery.db"), None).await;
     let slow = FakeScript {
         chunks: vec!["a".into(), "b".into(), "c".into()],
+        prompt_queueing,
         chunk_delay_ms: 300,
         ..FakeScript::default()
     };
@@ -240,8 +268,13 @@ async fn empty_prompts_and_overlapping_prompts_are_refused() {
         .send()
         .await
         .unwrap();
-    assert_eq!(second.status(), 409);
-    assert_eq!(second.json::<Value>().await.unwrap()["code"], "turn_in_progress");
+    assert_eq!(second.status(), 202);
+    assert!(second.json::<Value>().await.unwrap()["queue_id"].is_string());
+    wait_for("queued prompt delivered", || async {
+        let evs = events(&c, &collector, &session).await;
+        (evs.iter().filter(|e| e.kind == "user_turn").count() == 2).then_some(())
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -493,7 +526,17 @@ async fn an_adapter_crash_mid_turn_parks_the_session_with_a_scrubbed_stderr_tail
     );
     assert_eq!(of_kind(&evs, "session_parked")[0].body["reason"], "adapter_exited");
     let (status, body) = post_json(&c, prompt_url, json!({ "content": text("again") })).await;
-    assert_eq!((status, body["code"].as_str()), (409, Some("not_attached")));
+    assert_eq!(status, 202, "{body}");
+    assert!(body["queue_id"].is_string());
+    wait_for("queued prompt resumes after adapter crash", || async {
+        let evs = events(&c, &collector, &session).await;
+        let matching = evs
+            .iter()
+            .filter(|e| e.kind == "user_turn" && e.body["content"][0]["text"] == "again")
+            .count();
+        (matching == 1).then_some(())
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -523,10 +566,10 @@ async fn park_then_close_through_the_api_kill_the_adapters_whole_group() {
     // A parked session closes at once, collector-side.
     let (status, body) = post_json(&c, collector.url(&format!("/api/sessions/{session}/close")), json!({})).await;
     assert_eq!((status, body["lifecycle"].as_str()), (202, Some("closed")), "{body}");
-    let kinds: Vec<String> = events(&c, &collector, &session)
-        .await
+    let snapshot = events(&c, &collector, &session).await;
+    let kinds: Vec<String> = without_family_invalidations(&snapshot)
         .into_iter()
-        .map(|e| e.kind)
+        .map(|e| e.kind.clone())
         .collect();
     let tail: Vec<&str> = kinds.iter().rev().take(1).map(String::as_str).collect();
     assert_eq!(tail, ["operator_closed"], "{kinds:?}");
@@ -543,10 +586,10 @@ async fn closing_an_attached_session_waits_for_the_host_to_close_it() {
     let session = start_session(&c, &collector).await;
     let (status, body) = post_json(&c, collector.url(&format!("/api/sessions/{session}/close")), json!({})).await;
     assert_eq!((status, body["lifecycle"].as_str()), (202, Some("closed")), "{body}");
-    let kinds: Vec<String> = events(&c, &collector, &session)
-        .await
+    let snapshot = events(&c, &collector, &session).await;
+    let kinds: Vec<String> = without_family_invalidations(&snapshot)
         .into_iter()
-        .map(|e| e.kind)
+        .map(|e| e.kind.clone())
         .collect();
     assert!(
         kinds.ends_with(&["operator_closed".to_string(), "session_closed".to_string()]),
@@ -559,7 +602,9 @@ async fn a_host_restart_mid_turn_parks_and_interrupts_without_respawning() {
     let dir = tempfile::tempdir().unwrap();
     let collector = Collector::start(&dir.path().join("hennery.db"), None).await;
     let spawns = dir.path().join("spawns");
-    let script = slow_script(20);
+    let sessions = dir.path().join("sessions.jsonl");
+    let mut script = slow_script(20);
+    script.session_log = Some(sessions.to_string_lossy().into_owned());
     // Counts adapter launches, then becomes the fake adapter.
     let counting = AgentCommand {
         program: "sh".into(),
@@ -600,13 +645,43 @@ async fn a_host_restart_mid_turn_parks_and_interrupts_without_respawning() {
     assert_eq!(synthesized.len(), 1);
     assert_eq!(synthesized[0].body["outcome"], "interrupted");
     assert!(turn_ends(&evs).is_empty(), "the dead host cannot have ended the turn");
-    let (status, body) = post_json(&c, prompt_url, json!({ "content": text("again") })).await;
-    assert_eq!((status, body["code"].as_str()), (409, Some("not_attached")));
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         std::fs::read_to_string(&spawns).unwrap().lines().count(),
         1,
         "no eager re-spawn"
+    );
+    let (status, body) = post_json(&c, prompt_url, json!({ "content": text("again") })).await;
+    assert_eq!(status, 202, "{body}");
+    assert!(body["queue_id"].is_string());
+    wait_for("operator send resumes after host restart", || async {
+        let evs = events(&c, &collector, &session).await;
+        (evs.iter()
+            .filter(|e| e.kind == "user_turn" && e.body["content"][0]["text"] == "again")
+            .count()
+            == 1)
+            .then_some(())
+    })
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(&spawns).unwrap().lines().count(),
+        3,
+        "initial adapter, isolated catalog probe, and one operator resume"
+    );
+    let calls: Vec<Value> = std::fs::read_to_string(&sessions)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        calls.iter().filter(|call| call["method"] == "session/new").count(),
+        2,
+        "initial session and isolated catalog session"
+    );
+    assert_eq!(
+        calls.iter().filter(|call| call["method"] == "session/load").count(),
+        1,
+        "the parked session resumes exactly once"
     );
 }
 
@@ -778,12 +853,13 @@ async fn a_parked_session_resumes_without_replaying_its_history() {
     // The 202 fires once `session_started` is ingested (decision 3); the
     // trailing `available_commands_update` and `host_note` land afterward,
     // so wait for the last of the three before asserting on the sequence.
-    let evs = wait_for("post-resume host_note", || async {
+    let snapshot = wait_for("post-resume host_note", || async {
         let evs = events(&c, &collector, &session).await;
         let resumed = evs.iter().position(|e| e.kind == "operator_resumed")?;
         evs[resumed + 1..].iter().any(|e| e.kind == "host_note").then_some(evs)
     })
     .await;
+    let evs = without_family_invalidations(&snapshot);
     let resumed = evs.iter().position(|e| e.kind == "operator_resumed").unwrap();
     let after: Vec<String> = evs[resumed + 1..]
         .iter()
@@ -1202,7 +1278,8 @@ async fn an_adapter_crash_with_a_question_open_cancels_it_adapter_lost() {
     lifecycle_is(&collector, &session, "parked").await;
 
     let evs = events(&c, &collector, &session).await;
-    let kinds: Vec<&str> = evs.iter().map(|e| e.kind.as_str()).collect();
+    let transitions = without_family_invalidations(&evs);
+    let kinds: Vec<&str> = transitions.iter().map(|e| e.kind.as_str()).collect();
     let at = kinds
         .iter()
         .position(|k| *k == "pending_opened")
@@ -1217,8 +1294,8 @@ async fn an_adapter_crash_with_a_question_open_cancels_it_adapter_lost() {
             "session_parked"
         ]
     );
-    assert_eq!(evs[at + 2].body["reason"], "adapter_lost");
-    let pending = evs[at].body["pending_id"].as_str().unwrap();
+    assert_eq!(transitions[at + 2].body["reason"], "adapter_lost");
+    let pending = transitions[at].body["pending_id"].as_str().unwrap();
     let (status, body) = answer(&c, &collector, &session, pending, json!({"option_id": "allow"})).await;
     assert_eq!((status, body["code"].as_str()), (409, Some("not_open")));
 }
@@ -1697,5 +1774,169 @@ async fn real_proxy_outage(kind: &str) {
     stop.send(()).unwrap();
     host.await.unwrap().unwrap();
     wait_dead(pid).await;
+    collector.stop().await;
+}
+
+#[tokio::test]
+async fn queued_prompts_wait_for_permission_and_http_edits_and_removals_are_durable() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
+    let dir = tempfile::tempdir().unwrap();
+    let collector = Collector::start(&dir.path().join("hennery.db"), None).await;
+    let host = start_host(
+        collector.addr,
+        &dir.path().join("host"),
+        &asking(vec![hennery_testkit::FakeAsk::Permission]),
+    );
+    let c = client(&collector);
+    wait_host_connected(&c, &collector).await;
+    let session = start_session(&c, &collector).await;
+    prompt(&c, &collector, &session).await;
+    let pending = open_question(&c, &collector, &session).await;
+    let prompt_url = collector.url(&format!("/api/sessions/{session}/prompt"));
+    let queue_url = collector.url(&format!("/api/sessions/{session}/queue"));
+    let (status, queued) = post_json(&c, prompt_url.clone(), json!({"content":text("queued original")})).await;
+    assert_eq!(status, 202, "{queued}");
+    let id = queued["queue_id"].as_str().unwrap();
+    let (status, removed) = post_json(&c, prompt_url, json!({"content":text("remove this")})).await;
+    assert_eq!(status, 202, "{removed}");
+    let edit = c
+        .patch(format!("{queue_url}/{id}"))
+        .json(&json!({"text":"edited queued prompt"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(edit.status(), 200);
+    let remove = c
+        .delete(format!("{queue_url}/{}", removed["queue_id"].as_str().unwrap()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(remove.status(), 200);
+    // Explicit worker drain while the permission is still open proves the
+    // queue is not an answer to the pending request.
+    hennery_sessions::delegation_worker::drain(&collector.state)
+        .await
+        .unwrap();
+    let queue: Vec<Value> = c.get(&queue_url).send().await.unwrap().json().await.unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0]["content"][0]["text"], "edited queued prompt");
+    assert_eq!(
+        events(&c, &collector, &session)
+            .await
+            .iter()
+            .filter(|e| e.kind == "user_turn")
+            .count(),
+        1
+    );
+    assert_eq!(
+        answer(&c, &collector, &session, &pending, json!({"option_id":"allow"}))
+            .await
+            .0,
+        202
+    );
+    wait_for("edited queued prompt reaches adapter", || async {
+        let evs = events(&c, &collector, &session).await;
+        evs.iter()
+            .any(|e| e.kind == "user_turn" && e.body["content"][0]["text"] == "edited queued prompt")
+            .then_some(())
+    })
+    .await;
+    let pending = open_question(&c, &collector, &session).await;
+    answer(&c, &collector, &session, &pending, json!({"option_id":"allow"})).await;
+    host.abort();
+    let _ = host.await;
+    collector.stop().await;
+}
+
+#[tokio::test]
+async fn a_queued_prompt_resumes_a_parked_session_and_delivers_once() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
+    let dir = tempfile::tempdir().unwrap();
+    let collector = Collector::start(&dir.path().join("hennery.db"), None).await;
+    let script = FakeScript {
+        config_options: hennery_testkit::sample_config_options(),
+        ..Default::default()
+    };
+    let host = start_host(collector.addr, &dir.path().join("host"), &script);
+    let c = client(&collector);
+    wait_host_connected(&c, &collector).await;
+    let session = start_session(&c, &collector).await;
+    prompt(&c, &collector, &session).await;
+    wait_for("first turn ended", || async {
+        (!turn_ends(&events(&c, &collector, &session).await).is_empty()).then_some(())
+    })
+    .await;
+    let (status, body) = post_json(&c, collector.url(&format!("/api/sessions/{session}/park")), json!({})).await;
+    assert_eq!(status, 202, "{body}");
+    let (status, body) = post_json(
+        &c,
+        collector.url(&format!("/api/sessions/{session}/prompt")),
+        json!({"content":text("resume queued work")}),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    assert!(body["queue_id"].is_string());
+    wait_for("resumed queued turn ended", || async {
+        (turn_ends(&events(&c, &collector, &session).await).len() == 2).then_some(())
+    })
+    .await;
+    let evs = events(&c, &collector, &session).await;
+    assert_eq!(
+        evs.iter()
+            .filter(|e| e.kind == "user_turn" && e.body["content"][0]["text"] == "resume queued work")
+            .count(),
+        1
+    );
+    assert!(
+        collector
+            .state
+            .store
+            .operator_prompt_queue(&session)
+            .unwrap()
+            .is_empty()
+    );
+    host.abort();
+    let _ = host.await;
+    collector.stop().await;
+}
+
+#[tokio::test]
+async fn cancelling_the_current_turn_delivers_the_queued_prompt_after_its_end() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
+    let dir = tempfile::tempdir().unwrap();
+    let collector = Collector::start(&dir.path().join("hennery.db"), None).await;
+    let host = start_host(collector.addr, &dir.path().join("host"), &slow_script(8));
+    let c = client(&collector);
+    wait_host_connected(&c, &collector).await;
+    let session = start_session(&c, &collector).await;
+    prompt(&c, &collector, &session).await;
+    let (status, body) = post_json(
+        &c,
+        collector.url(&format!("/api/sessions/{session}/prompt")),
+        json!({"content":text("after cancellation")}),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    assert!(body["queue_id"].is_string());
+    let (status, body) = post_json(&c, collector.url(&format!("/api/sessions/{session}/cancel")), json!({})).await;
+    assert_eq!(status, 202, "{body}");
+    assert_eq!(body["outcome"], "cancelled");
+    wait_for("queued prompt after cancel", || async {
+        events(&c, &collector, &session)
+            .await
+            .iter()
+            .any(|e| e.kind == "user_turn" && e.body["content"][0]["text"] == "after cancellation")
+            .then_some(())
+    })
+    .await;
+    let evs = events(&c, &collector, &session).await;
+    let ended = evs.iter().position(|e| e.kind == "turn_ended").unwrap();
+    let next = evs
+        .iter()
+        .position(|e| e.kind == "user_turn" && e.body["content"][0]["text"] == "after cancellation")
+        .unwrap();
+    assert!(ended < next);
+    host.abort();
+    let _ = host.await;
     collector.stop().await;
 }

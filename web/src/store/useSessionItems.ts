@@ -20,7 +20,8 @@ import type { Client } from '../api/client'
 import { ApiFailure, Unauthenticated, messageOf } from '../api/errors'
 import { openStream, type Stream, type StreamEvent, type StreamState } from '../api/sse'
 import { anchorOf, catalog as fetchCatalog, itemPage, itemStreamPath, questionCard } from '../api/view'
-import type { SessionCatalog } from '../generated/protocol'
+import { promptQueue } from '../api/turns'
+import type { QueuedPrompt, SessionCatalog } from '../generated/protocol'
 import type { Item } from '../generated/view'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { EMPTY_ITEMS, beforeTurnOf, isItem, isItemPage, itemsReducer, type ItemsAction, type ItemsState } from './items'
@@ -102,6 +103,7 @@ export interface SessionItemsSnapshot {
   /** A resync replaced the items a moment ago. */
   resynced: boolean
   catalog: SessionCatalog | null
+  queue: QueuedPrompt[]
   /** First pages taken: bumped by the first load and by every resync (the
    *  items were replaced). */
   loads: number
@@ -117,6 +119,7 @@ const INITIAL: SessionItemsSnapshot = {
   stream: 'connecting',
   resynced: false,
   catalog: null,
+  queue: [],
   loads: 0,
   questionError: null,
 }
@@ -136,12 +139,17 @@ function isCatalog(value: unknown): value is SessionCatalog {
   return typeof v.session_id === 'string' && Array.isArray(v.config_options) && Array.isArray(v.commands)
 }
 
+function isQueue(value: unknown): value is QueuedPrompt[] {
+  return Array.isArray(value) && value.every(item => item && typeof item === 'object' && typeof item.id === 'string' && Array.isArray(item.content) && ['queued', 'delivering', 'failed'].includes(item.state) && (item.reason === null || typeof item.reason === 'string'))
+}
+
 export class SessionItemsController {
   private snapshot: SessionItemsSnapshot = INITIAL
   private readonly listeners = new Set<() => void>()
   /** Bumped by `start`, `stop`, a resync and `gone`: a continuation of
    *  another run is dropped. */
   private run = 0
+  private queueSeq = 0
   /** Bumped by each first page: an older page of the one before is dropped. */
   private generation = 0
   /** Bumped by each catalogue from the stream or a config answer: a fetch
@@ -270,6 +278,16 @@ export class SessionItemsController {
     }
   }
 
+  refreshQueue = async (): Promise<void> => { await this.loadQueue(this.run) }
+
+  private async loadQueue(run: number): Promise<void> {
+    const seq = ++this.queueSeq
+    try {
+      const queue = await promptQueue(this.client, this.id)
+      if (run === this.run && seq === this.queueSeq && isQueue(queue)) this.update({ queue })
+    } catch { /* Stream reconnect/resync restores the durable queue. */ }
+  }
+
   private async load(run: number, resync: boolean): Promise<void> {
     // Every (re)load: a gap may have hidden a `catalog_changed`.
     void this.loadCatalog(run)
@@ -277,6 +295,9 @@ export class SessionItemsController {
       const page = await itemPage(this.client, this.id, { limit: this.limit() })
       if (run !== this.run) return
       if (!isItemPage(page)) throw new Error('The session’s items could not be read.')
+      // Read after the page anchor: a change included in that anchor must
+      // already be reflected here; later stream snapshots fence this GET.
+      void this.loadQueue(run)
       this.generation++
       this.attempt = 0
       this.update({
@@ -336,6 +357,13 @@ export class SessionItemsController {
       }
       case 'session_removed':
         return this.gone()
+      case 'queue_changed': {
+        const queue = parse(event.data)
+        if (!isQueue(queue)) return this.resync()
+        ++this.queueSeq
+        this.update({ queue })
+        return
+      }
       case 'catalog_changed': {
         const catalog = parse(event.data)
         if (!isCatalog(catalog)) return this.resync()
@@ -380,6 +408,7 @@ export interface SessionItems extends Omit<SessionItemsSnapshot, 'store'> {
   older: boolean
   loadOlder: () => Promise<void>
   setCatalog: (catalog: SessionCatalog) => void
+  refreshQueue: () => Promise<void>
   markRemoved: () => void
   loadQuestion: (pending: string) => Promise<void>
   mergeQuestion: (item: Item) => void
@@ -403,5 +432,5 @@ export function useSessionItems(id: string, timing?: Partial<Timing>): SessionIt
   }, [controller])
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const { store, ...rest } = snapshot
-  return { ...rest, items: store.items, pinned: store.pinned, older: store.older, mergeQuestion: controller.mergeQuestion, loadQuestion: controller.loadQuestion, loadOlder: controller.loadOlder, setCatalog: controller.setCatalog, markRemoved: controller.markRemoved }
+  return { ...rest, items: store.items, pinned: store.pinned, older: store.older, mergeQuestion: controller.mergeQuestion, loadQuestion: controller.loadQuestion, loadOlder: controller.loadOlder, setCatalog: controller.setCatalog, refreshQueue: controller.refreshQueue, markRemoved: controller.markRemoved }
 }

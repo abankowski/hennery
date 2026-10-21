@@ -243,14 +243,13 @@ describe('Composer: sending', () => {
 })
 
 describe('Composer: a turn in flight', () => {
-  it.each(['running', 'blocked'])('Cancel replaces Send while the session is %s, and Ctrl+Enter sends nothing', async (activity) => {
+  it.each(['running', 'blocked'])('queues with Send beside Cancel while the session is %s', async (activity) => {
     const c = mount(accepted, { session: { lifecycle: 'active', activity } })
     type('queued')
-    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
     fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true })
-    await new Promise((r) => setTimeout(r, 30))
-    expect(c.prompts()).toEqual([])
+    await waitFor(() => expect(c.prompts()).toHaveLength(1))
   })
 
   it('offers Send, not Cancel, when idle', () => {
@@ -954,4 +953,38 @@ it('explains a raw busy-turn 409, preserves the draft and offers the open reques
   fireEvent.click(screen.getByRole('button', { name: 'Go to open request' }))
   expect(jump).toHaveBeenCalledOnce()
   expect(view.prompts()).toHaveLength(1)
+})
+
+it('labels a parked submission Resume and send and uses the single collector prompt path', async () => {
+  const c = mount(() => json({ queue_id: 'queued-resume' }, 202), { session: { lifecycle: 'parked', activity: undefined } })
+  type('resume with these words')
+  const button = screen.getByRole('button', { name: 'Resume and send' })
+  expect(button).toHaveAttribute('title', 'Resume and send')
+  fireEvent.click(button)
+  await waitFor(() => expect(c.prompts()).toHaveLength(1))
+  expect(c.posts.map(post => post.path)).toEqual(['/api/sessions/s1/prompt'])
+  await waitFor(() => expect(textarea().value).toBe(''))
+})
+
+for (const [lifecycle, activity] of [['active', 'idle'], ['active', 'running'], ['active', 'blocked'], ['parked', undefined]] as const) {
+  it.each(['Control', 'Meta'])(`${lifecycle}/${activity}: %s+Enter submits once through the prompt endpoint`, async key => {
+    const c = mount(() => json({ queue_id: 'q' }, 202), { session: { lifecycle, activity } })
+    type('shortcut message')
+    const button = screen.getByRole('button', { name: lifecycle === 'parked' ? 'Resume and send' : 'Send' })
+    expect(button).toBeEnabled()
+    fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: key === 'Control', metaKey: key === 'Meta' })
+    fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: key === 'Control', metaKey: key === 'Meta', repeat: true })
+    await waitFor(() => expect(c.prompts()).toHaveLength(1))
+    await waitFor(() => expect(textarea().value).toBe(''))
+    expect(c.posts.map(post => post.path)).toEqual(['/api/sessions/s1/prompt'])
+  })
+}
+
+it.each([{ isComposing: true }, { keyCode: 229 }, { repeat: true }])('does not send an IME or autorepeat shortcut: %j', async guard => {
+  const c = mount(accepted, { session: { lifecycle: 'parked', activity: undefined } })
+  type('keep this draft')
+  fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true, ...guard })
+  await new Promise(resolve => setTimeout(resolve, 30))
+  expect(c.prompts()).toEqual([])
+  expect(textarea().value).toBe('keep this draft')
 })

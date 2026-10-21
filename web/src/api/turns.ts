@@ -9,6 +9,8 @@ import type {
   DeleteResult,
   LifecycleResponse,
   PromptResponse,
+  QueuedPromptResponse,
+  QueuedPrompt,
   SessionCatalog,
 } from '../generated/protocol'
 
@@ -19,8 +21,8 @@ const enc = encodeURIComponent
 export type PromptBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
 
 /** `POST /api/sessions/{id}/prompt` → 202 `{turn_id}`. */
-export function prompt(client: Client, id: string, content: PromptBlock[]): Promise<PromptResponse> {
-  return client.request<PromptResponse>('POST', `/api/sessions/${enc(id)}/prompt`, { content })
+export function prompt(client: Client, id: string, content: PromptBlock[]): Promise<PromptResponse | QueuedPromptResponse> {
+  return client.request<PromptResponse | QueuedPromptResponse>('POST', `/api/sessions/${enc(id)}/prompt`, { content })
 }
 
 /** `POST /api/sessions/{id}/cancel` → 202 with the open turn's real outcome. */
@@ -53,4 +55,15 @@ export function close(client: Client, id: string): Promise<LifecycleResponse> {
  *  it answers 204: `undefined`). Step-up: the client asks for it. */
 export function deleteSession(client: Client, id: string): Promise<DeleteResult | undefined> {
   return client.request<DeleteResult | undefined>('DELETE', `/api/sessions/${enc(id)}`)
+}
+
+/** Durable collector queue; acceptance does not mean the agent has read it. */
+export function promptQueue(client: Client, id: string): Promise<QueuedPrompt[]> {
+  return client.request('GET', `/api/sessions/${enc(id)}/queue`)
+}
+export function editQueuedPrompt(client: Client, id: string, queueId: string, text: string): Promise<QueuedPrompt[]> {
+  return client.request('PATCH', `/api/sessions/${enc(id)}/queue/${enc(queueId)}`, { text })
+}
+export function removeQueuedPrompt(client: Client, id: string, queueId: string): Promise<QueuedPrompt[]> {
+  return client.request('DELETE', `/api/sessions/${enc(id)}/queue/${enc(queueId)}`)
 }

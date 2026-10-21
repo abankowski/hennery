@@ -111,7 +111,7 @@ impl Store {
             if code == "configuration_unavailable" && position > 0 {
                 break;
             }
-            if !self.transfer_in(&tx, &source, target, revision)? {
+            if !self.queue_transfer_in(&tx, &source, target, revision)? {
                 continue;
             }
             let (host, hat, cwd): (String, String, String) = tx.query_row(
@@ -130,6 +130,11 @@ impl Store {
                  AND state IN ('queued','waiting_config','awaiting_reconciliation') AND turn_id IS NULL",
                 params![self.owner_id(), operation, code],
             )? > 0;
+            if source == target && revision == 0 {
+                // An operator resume refusal stops its whole queue. Keep the
+                // text behind the head instead of attempting more prompts.
+                self.fail_operator_queue_in(&tx, target, code)?;
+            }
         }
         if failed {
             // Set operation codes before the lifecycle trigger: the session UI

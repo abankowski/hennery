@@ -74,6 +74,7 @@ async function fixture(context: BrowserContext, statusOnly = false) {
         if (stream) await stream.fulfill({ contentType: 'text/event-stream', body: `event: session_upsert\ndata: ${JSON.stringify(current('child'))}\nid: list1:2\n\nevent: waiting_changed\ndata: {"count":1}\nid: list1:3\n\n` })
         return route.fulfill({ status: 204 })
       }
+      if (suffix === '/queue') return json(route, [])
       if (suffix === '/catalog') return json(route, { session_id: id, config_options: [], commands: [] })
       if (suffix === '/questions/question1') return json(route, question)
       if (suffix === '/pending/question1/answer') { answers++; return json(route, { pending_id: 'question1', request_id: 'answer1' }, 202) }

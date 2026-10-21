@@ -757,6 +757,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
     send(
         &mut ws,
         CollectorFrame::DelegatedAttach {
+            operator_initiated: false,
             request_id: "signed-out-attach".into(),
             session_id: "signed-out-child".into(),
             committed_seq: 0,
@@ -787,6 +788,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
         matches!(read(&mut ws).await,HostFrame::Catalog{catalog,..} if catalog.defaults.model.as_deref()==Some("small"))
     );
     let attach = |generation| CollectorFrame::DelegatedAttach {
+        operator_initiated: false,
         request_id: format!("attach-{generation}"),
         session_id: "wire-child".into(),
         committed_seq: 0,

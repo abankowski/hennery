@@ -86,6 +86,7 @@ export function sessionServer(opts: Opts = {}) {
     const path = new URL(call.path, 'http://h').pathname
     let m: RegExpMatchArray | null
     if (path === '/api/hosts') return opts.hosts?.() ?? json([{ host_id: 'h1', name: 'build-box', capabilities: ['images'] }])
+    if (path.endsWith('/queue')) return json([])
     if (path.startsWith('/api/attachments/')) return opts.attachment?.() ?? json({ code: 'not_found', message: 'no' }, 404)
     if (opts.prompt && /^\/api\/sessions\/[^/]+\/prompt$/.test(path)) return opts.prompt()
     if ((m = path.match(/^\/api\/view\/sessions\/([^/]+)\/turns\/[^/]+$/))) {
