@@ -490,6 +490,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         menu={
           <SessionMenu
             queuedCount={s.queue.filter(item => item.state !== 'delivering').length}
+            sidebarPinned={info ? info.sidebar_pinned ?? false : undefined}
             onRename={info && !s.removed ? beginRename : undefined}
             id={id}
             lifecycle={info?.lifecycle}

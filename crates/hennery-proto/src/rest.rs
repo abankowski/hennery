@@ -264,6 +264,10 @@ pub enum TitleSource {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SessionItem {
     pub session_id: String,
+    /// An operator shortcut in navigation; independent of idle parking holds.
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub sidebar_pinned: bool,
     pub host_id: String,
     pub agent: String,
     /// Canonical on its host since hats (umbrella §8.2).
@@ -921,6 +925,9 @@ pub struct HatResolution {
 /// adapter, and with a fresh step-up.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct UpdateSessionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sidebar_pinned: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(type = "string | undefined", optional)]
     pub hat_id: Option<String>,

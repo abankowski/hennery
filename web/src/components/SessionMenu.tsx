@@ -26,10 +26,12 @@ import { agentLabel } from '../lib/agent'
 import { sessionPath } from './SessionRow'
 import { Icon } from './ui'
 import ConfirmDialog from './ConfirmDialog'
+import PinSessionAction from './PinSessionAction'
 import { closeRefusal, deleteRefusal, parkRefusal } from './sessionWords'
 import { useNewLikeThis } from '../hooks/useNewLikeThis'
 
 interface Props {
+  sidebarPinned?: boolean
   onRename?: () => void
   id: string
   /** The session's lifecycle; undefined while unknown (Delete only). */
@@ -51,7 +53,7 @@ interface Props {
   focusAfterDelete?: () => HTMLElement | null
 }
 
-export default function SessionMenu({ id, lifecycle, family, queuedCount = 0, canPark, supportsIdleHold, hostConnected, onDeleted, focusAfterDelete, onRename }: Props) {
+export default function SessionMenu({ id, lifecycle, family, queuedCount = 0, canPark, supportsIdleHold, hostConnected, onDeleted, focusAfterDelete, onRename, sidebarPinned }: Props) {
   const client = useClient()
   const menuId = useId()
   const [open, setOpen] = useState(false)
@@ -168,6 +170,7 @@ export default function SessionMenu({ id, lifecycle, family, queuedCount = 0, ca
         <div className="session-menu-list" id={menuId}>
           {onRename && <button type="button" onClick={() => { setOpen(false); onRename() }}>Rename</button>}
           <button type="button" disabled={busy || lifecycle === undefined || hostConnected === false} title={hostConnected === false ? 'The host is offline' : undefined} onClick={() => { dismiss(); setError(null); void like.start() }}>New like this</button>
+          {sidebarPinned !== undefined && <PinSessionAction key={id} id={id} pinned={sidebarPinned} disabled={busy} />}
           <button type="button" role="switch" aria-label="Do not park" aria-checked={hold?.pinned ?? false} disabled={busy || pinBusy || hold === null} onClick={() => void togglePin()}><span>Do not park</span><span className="idle-hold-state" aria-hidden="true">{hold ? hold.pinned ? '✓ On' : 'Off' : '…'}</span></button>
           {holdNote && <p className="idle-hold-note" role="status">{holdNote}</p>}
           {showPark && (

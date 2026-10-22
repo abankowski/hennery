@@ -780,6 +780,13 @@ async fn update_session(
             Err(err) => return internal(err),
         }
     }
+    if let Some(pinned) = req.sidebar_pinned {
+        match state.store.set_sidebar_pin(&id, pinned) {
+            Ok(Some(event)) => state.hub.publish(event),
+            Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+            Err(err) => return internal(err),
+        }
+    }
     if let Some(title) = req.title {
         match state.store.rename_session(&id, title.as_deref()) {
             Ok(Some(event)) => state.hub.publish(event),

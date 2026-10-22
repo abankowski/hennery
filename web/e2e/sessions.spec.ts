@@ -223,6 +223,34 @@ for (const width of [1280, 390]) {
       }
     })
 
+    test('pins a session to navigation, persists across reload and unpins independently of parking', async () => {
+      const trigger = () => page.getByRole('button', { name: 'Session actions', exact: true })
+      const sessionPath = new URL(page.url()).pathname
+      await trigger().click()
+      await page.getByRole('button', { name: 'Pin to sidebar', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Unpin from sidebar', exact: true })).toBeEnabled()
+      await expect(page.getByRole('switch', { name: 'Do not park', exact: true })).toHaveAttribute('aria-checked', 'false')
+      await page.keyboard.press('Escape')
+      await expect(trigger()).toHaveAttribute('aria-expanded', 'false')
+      const pins = page.getByRole('group', { name: 'Pinned sessions', exact: true })
+      if (!narrow) {
+        await expect(pins.getByRole('link', { name: PROMPT, exact: true })).toHaveAttribute('aria-current', 'page')
+        await expect(pins.getByRole('link', { name: PROMPT, exact: true })).toHaveAttribute('href', sessionPath)
+        await page.screenshot({ path: test.info().outputPath('pinned-expanded.png') })
+        await page.getByRole('button', { name: 'Collapse navigation', exact: true }).click()
+        await expect(pins.getByRole('link', { name: PROMPT, exact: true })).toBeVisible()
+        await page.screenshot({ path: test.info().outputPath('pinned-collapsed.png') })
+        await page.getByRole('button', { name: 'Expand navigation', exact: true }).click()
+      }
+      await page.reload()
+      await trigger().click()
+      await page.getByRole('button', { name: 'Unpin from sidebar', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Pin to sidebar', exact: true })).toBeEnabled()
+      await page.keyboard.press('Escape')
+      await expect(pins).toHaveCount(0)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    })
+
     test('renames from the title, menu and palette using the server title and source', async () => {
       const path = new URL(page.url()).pathname
       const read = async () => (await page.request.get('/api' + path)).json()
@@ -399,7 +427,7 @@ for (const width of [1280, 390]) {
       // An active session: Close, Delete, and Park if its host can park.
       const list = page.locator('.session-menu-list')
       const names = await list.getByRole('button').allTextContents()
-      expect(names.filter((n) => n !== 'Park')).toEqual(['Rename', 'New like this', 'Close', 'Delete session'])
+      expect(names.filter((n) => n !== 'Park')).toEqual(['Rename', 'New like this', 'Pin to sidebar', 'Close', 'Delete session'])
       expect((await list.getByRole('switch', { name: 'Do not park', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
       for (const name of names) {
         const box = await list.getByRole('button', { name, exact: true }).boundingBox()

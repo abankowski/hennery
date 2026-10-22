@@ -294,6 +294,17 @@ each header/control, preventing duplicate hidden keyboard targets.
 
 ## 4. Routes, overview and navigation
 
+Navigation shortcuts (operator request, 2026-10-22): a session's actions offer
+“Pin to sidebar” / “Unpin from sidebar”. Pins are persisted by the collector
+as `sidebar_pinned`, separately from the “Do not park” idle hold. The desktop
+rail shows a Pinned section above Hats, with session names, direct links and
+the current selection; compact navigation retains named icon links and tooltips.
+Pins span hats and lifecycles and survive overview filters and reloads. Deleting
+a session removes its shortcut. `PATCH /api/sessions/{id}` accepts
+`sidebar_pinned: boolean`; view list pages include `sidebar_pins` independently
+of their paged/filter result, sharing that page's stream anchor. The existing
+list stream updates names, pin state and removals without a separate subscription.
+
 ### 4.1 Routes and capability behavior
 
 | URL | Full mode | Gateway mode |

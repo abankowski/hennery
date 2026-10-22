@@ -5834,6 +5834,11 @@
         "session_id": {
           "type": "string"
         },
+        "sidebar_pinned": {
+          "default": false,
+          "description": "An operator shortcut in navigation; independent of idle parking holds.",
+          "type": "boolean"
+        },
         "title": {
           "description": "The effective title, on one line and capped.",
           "type": [
@@ -5984,6 +5989,11 @@
         },
         "session_id": {
           "type": "string"
+        },
+        "sidebar_pinned": {
+          "default": false,
+          "description": "An operator shortcut in navigation; independent of idle parking holds.",
+          "type": "boolean"
         },
         "title": {
           "description": "The effective title, on one line and capped.",
@@ -6625,6 +6635,12 @@
         "hat_id": {
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "sidebar_pinned": {
+          "type": [
+            "boolean",
             "null"
           ]
         },

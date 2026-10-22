@@ -1191,7 +1191,7 @@ async fn the_session_detail_shows_the_open_turn() {
     assert_eq!(
         body,
         json!({
-            "session_id": session, "host_id": HOST, "agent": "fake", "cwd": "/tmp", "hat_id": hat,
+            "session_id": session, "sidebar_pinned": false, "host_id": HOST, "agent": "fake", "cwd": "/tmp", "hat_id": hat,
             "title": "hi", "title_source": "prompt",
             "lifecycle": "active", "activity": "running", "presumed_parked": false,
             "created_at": item.created_at, "last_event_at": item.last_event_at,

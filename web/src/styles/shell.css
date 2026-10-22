@@ -178,6 +178,8 @@
 .rail-nav { gap:20px; }.rail-hats { margin-top:0; }
 .rail-nav .nav-section-label { margin:0 10px 8px; font:700 11px var(--font-display); letter-spacing:.08em; text-transform:uppercase; color:var(--hn-fg-3); }
 .rail-nav .nav-item:nth-child(4) { margin-top:0; }
+.rail-pin { min-width:0; }
+.rail-pin-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rail-hat { display:flex; align-items:center; gap:6px; min-height:32px; padding:4px 6px; border-radius:6px; text-decoration:none; color:var(--hn-fg-2); }
 .rail-hat.on { background:var(--hn-selected); }.rail-hat .ui-hat { border:0; background:transparent; padding:0; min-width:0; overflow:hidden; }
 .hat-loaded { margin-left:auto; font-size:10px; color:var(--hn-fg-3); white-space:nowrap; }.hat-attention { font-size:8px; color:var(--st-wait-fg); }

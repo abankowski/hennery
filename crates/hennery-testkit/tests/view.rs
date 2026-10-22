@@ -1491,6 +1491,87 @@ async fn the_list_stream_resumes_once_per_session_and_never_repeats_a_summary() 
 
 const LIST: &str = "/api/stream/sessions";
 
+#[tokio::test]
+async fn sidebar_pins_persist_across_filters_and_stream_without_changing_idle_holds() {
+    let c = Collector::start().await;
+    c.session(&c.owner(), "saved");
+    c.event("saved", "session_started", &json!({}));
+    c.other_owner("foreign-pin");
+    c.conn()
+        .execute("UPDATE sessions SET sidebar_pinned=1 WHERE owner_id=?1", [OTHER])
+        .unwrap();
+    let before = c.summaries("").await;
+    assert!(before.sidebar_pins.is_empty());
+    let anchor = format!("{}:{}", before.epoch, before.revision);
+    let mut stream = c.stream(LIST, Some(&anchor)).await;
+    stream.counted().await;
+    let response = c
+        .client()
+        .patch(c.url("/api/sessions/saved"))
+        .json(&json!({"sidebar_pinned":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.json::<Value>().await.unwrap()["sidebar_pinned"], true);
+    let changed = stream.message().await.summary();
+    assert!(changed.session.sidebar_pinned);
+    assert_eq!(changed.session.session_id, "saved");
+    assert!(!c.state.store.idle_hold("saved").unwrap().unwrap().pinned);
+    // A fresh connection sees the saved pin, even outside every overview filter.
+    let reopened = Store::open(&c.db).unwrap();
+    assert!(reopened.find_session_item("saved").unwrap().unwrap().sidebar_pinned);
+    let filtered = c.summaries("?q=does-not-match&hat=other-hat&limit=1").await;
+    assert!(filtered.sessions.is_empty());
+    assert_eq!(filtered.sidebar_pins.len(), 1);
+    assert_eq!(filtered.sidebar_pins[0].session.session_id, "saved");
+    assert!(
+        c.page("saved", "").await.items.is_empty(),
+        "pinning must not add transcript content"
+    );
+    for id in ["foreign-pin", "missing"] {
+        assert_eq!(
+            c.client()
+                .patch(c.url(&format!("/api/sessions/{id}")))
+                .json(&json!({"sidebar_pinned":true}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    assert_eq!(
+        c.client()
+            .patch(c.url("/api/sessions/saved"))
+            .json(&json!({"sidebar_pinned":"true"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        422
+    );
+    let response = c
+        .client()
+        .patch(c.url("/api/sessions/saved"))
+        .json(&json!({"sidebar_pinned":false}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(!stream.message().await.summary().session.sidebar_pinned);
+    assert!(c.summaries("").await.sidebar_pins.is_empty());
+    c.state.store.set_sidebar_pin("saved", true).unwrap();
+    c.state.store.close_now("saved").unwrap();
+    assert_eq!(c.summaries("").await.sidebar_pins[0].session.lifecycle, "closed");
+    assert!(matches!(
+        c.state.store.delete_session("saved", None).unwrap(),
+        Deletion::Done { .. }
+    ));
+    assert!(c.summaries("").await.sidebar_pins.is_empty());
+    assert!(c.state.store.set_sidebar_pin("saved", true).unwrap().is_none());
+}
+
 /// A session `a` of the owner's with one event, stamped long ago, and
 /// the list's epoch.
 async fn old_session(collector: &Collector) -> (EventDto, String) {

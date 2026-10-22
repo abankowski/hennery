@@ -455,6 +455,9 @@ END;",
         WHERE r.owner_id=sessions.owner_id AND r.session_id=sessions.id
           AND r.event_id>r.read_event_id),0)
      WHERE delegated_child=0 AND lifecycle<>'deleted';",
+    // Navigation shortcuts (33) are independent of the operator's idle hold.
+    "ALTER TABLE sessions ADD COLUMN sidebar_pinned INTEGER NOT NULL DEFAULT 0 CHECK(sidebar_pinned IN (0,1));
+     CREATE INDEX sessions_sidebar_pinned ON sessions(owner_id, sidebar_pinned) WHERE lifecycle <> 'deleted';",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -1342,12 +1345,13 @@ fn store_state(tx: &Transaction<'_>, owner: &str, session_id: &str, indexed: &In
 
 /// The columns of a list item, in `read_item`'s order.
 const SESSION_ITEM_COLUMNS: &str = "id, host_id, agent, cwd, title, lifecycle, activity, failure_reason,
-     presumed_parked, git_branch, git_dirty, model, mode, created_at, last_event_at, hat_id, title_source, project_root";
+     presumed_parked, git_branch, git_dirty, model, mode, created_at, last_event_at, hat_id, title_source, project_root, sidebar_pinned";
 
 /// A row of `SESSION_ITEM_COLUMNS` as a list item, as stored.
 pub(crate) fn read_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionItem> {
     Ok(SessionItem {
         session_id: r.get(0)?,
+        sidebar_pinned: r.get(18)?,
         host_id: r.get(1)?,
         agent: r.get(2)?,
         cwd: r.get(3)?,
@@ -2420,6 +2424,39 @@ impl Store {
             .optional()?)
     }
 
+    /// Navigation shortcuts across all hats and lifecycles, independent of list filters.
+    pub fn sidebar_pins(&self) -> Result<Vec<SessionItem>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SESSION_ITEM_COLUMNS} FROM sessions
+             WHERE owner_id = ?1 AND sidebar_pinned = 1 AND lifecycle <> 'deleted'
+             AND NOT EXISTS(SELECT 1 FROM purged_hats WHERE owner_id = ?1 AND hat_id=sessions.hat_id)
+             ORDER BY created_at, id"
+        ))?;
+        Ok(stmt
+            .query_map([&self.owner], read_item)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(SessionItem::bounded)
+            .collect())
+    }
+
+    pub fn set_sidebar_pin(&self, id: &str, pinned: bool) -> Result<Option<EventDto>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let changed = tx.execute(
+            "UPDATE sessions SET sidebar_pinned = ?3 WHERE owner_id = ?1 AND id = ?2 AND lifecycle <> 'deleted'
+             AND NOT EXISTS(SELECT 1 FROM purged_hats WHERE owner_id = ?1 AND hat_id=sessions.hat_id)",
+            params![self.owner, id, pinned],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        let event = collector_event(&tx, &self.owner, id, "sidebar_pin_changed", json!({}), &now())?;
+        tx.commit()?;
+        Ok(Some(event))
+    }
+
     /// Replace the operator override, or restore the latest agent/prompt title.
     pub fn rename_session(&self, id: &str, title: Option<&str>) -> Result<Option<EventDto>> {
         let title = title.and_then(|s| one_line(s, TITLE_MAX_CHARS, TITLE_MAX_JSON_BYTES));
@@ -3309,7 +3346,7 @@ impl Store {
                  config_axes = NULL, agent_session_id = NULL, failure_reason = NULL, hat_rule_id = NULL,
                  open_turn_id = NULL, activity = NULL, presumed_parked = 0, close_requested = 0, agent_home = NULL,
                  mcp_delivery_mode = NULL, mcp_delivery_servers = NULL, mcp_delivery_at = NULL,
-                 idle_pinned = 0, idle_hold_dirty = 0, prompt_queue_dirty = 0, prompt_queue_held = 0
+                 idle_pinned = 0, idle_hold_dirty = 0, prompt_queue_dirty = 0, prompt_queue_held = 0, sidebar_pinned = 0
              WHERE id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
         )?;

@@ -2214,6 +2214,7 @@ fn a_session_item_is_the_row_with_its_title_and_current_model_and_mode() {
     assert_eq!(
         item,
         hennery_proto::rest::SessionItem {
+            sidebar_pinned: false,
             session_id: "s1".into(),
             host_id: "h1".into(),
             agent: "fake".into(),
