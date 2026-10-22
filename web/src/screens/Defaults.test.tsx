@@ -4,6 +4,30 @@ import { Client } from '../api/client'
 import { ClientContext } from '../app-client'
 import { json, stubServer } from '../test-server'
 import Defaults from './Defaults'
+import { catalog } from '../test-launch-catalog'
+
+it('disables Refresh while pending and keeps the action outside its status announcement', async () => {
+  history.replaceState(null, '', '/defaults?host=h1&cwd=/project&agent=claude')
+  let finish!: (response: Response) => void
+  const pending = new Promise<Response>(resolve => { finish = resolve })
+  const hat = { id: 'hat-a', name: 'Personal', colour: '#64748b', created_at: '', default_for_new_hosts: false, purging: false }
+  const server = stubServer({
+    'GET /api/hosts': json(200, [{ host_id: 'h1', name: 'Synthetic host', mcp_delivery: { claude: 'isolated' }, connected: true }]),
+    'GET /api/hats': json(200, [hat]),
+    'POST /api/hats/resolve': json(200, { canonical: '/project', hat_id: 'hat-a', exists: true, is_dir: true }),
+    'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: hat.id, agent: 'claude', revision: 0, config: {} }),
+    'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fproject': json(200, catalog),
+    'POST /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fproject': () => pending,
+  })
+  const client = new Client({ fetch: server.fetch, navigate: vi.fn(), here: () => ({ pathname: location.pathname, search: location.search }), stepUp: vi.fn() })
+  render(<ClientContext.Provider value={client}><Defaults /></ClientContext.Provider>)
+  const refresh = await screen.findByRole('button', { name: 'Refresh' })
+  expect(refresh.closest('[role="status"]')).toBeNull()
+  fireEvent.click(refresh)
+  expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled()
+  finish(json(200, catalog))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled())
+})
 
 it('retains Other agent typing and loads and resets unavailable saved defaults without a catalog', async () => {
   history.replaceState(null, '', '/defaults?host=h1')

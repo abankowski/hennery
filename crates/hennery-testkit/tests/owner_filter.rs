@@ -88,7 +88,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-sessions/src/delegation_runtime.rs",
         include_str!("../../hennery-sessions/src/delegation_runtime.rs"),
-        1,
+        7,
     ),
     (
         "hennery-sessions/src/delegation_queue.rs",
@@ -179,7 +179,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-sessions/src/store.rs",
         include_str!("../../hennery-sessions/src/store.rs"),
-        157,
+        158,
     ),
     (
         "hennery-gateway/src/store.rs",

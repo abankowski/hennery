@@ -432,6 +432,7 @@ fn launch_inner(
         Attach::New => None,
     }));
     let actor = Actor {
+        catalog_identity: crate::delegation::catalog_identity(&launch.agent, launch.profile),
         workspace_roots,
         attach_generation,
         config_revision: AtomicU64::new(1),
@@ -822,6 +823,7 @@ impl Drop for AcpTask {
 }
 
 struct Actor {
+    catalog_identity: hennery_proto::delegation_host::CatalogIdentity,
     workspace_roots: Option<Vec<PathBuf>>,
     attach_generation: Option<u64>,
     config_revision: AtomicU64,
@@ -916,7 +918,14 @@ impl Actor {
     /// cannot be resolved or registered is left out, and the session
     /// records none. A load whose agent session was registered with other
     /// roots before gets a `host_note` after it: both stay registered (B8).
-    fn announce(&self, request_id: String, agent_session: &str, env: &[(String, String)], loaded: bool) {
+    fn announce(
+        &self,
+        request_id: String,
+        agent_session: &str,
+        env: &[(String, String)],
+        loaded: bool,
+        agent_defaults: Option<&SessionConfig>,
+    ) {
         *self.agent_session_id.lock().expect("agent session id lock") = Some(agent_session.to_string());
         let mut moved = false;
         let agent_home = self.options.home.as_ref().and_then(|recorder| {
@@ -932,10 +941,16 @@ impl Actor {
                 }
             }
         });
+        let mut indexed = self.catalogue_extracts();
+        if indexed.current_config().is_some() {
+            let mut identity = self.catalog_identity.clone();
+            identity.agent_defaults = agent_defaults.cloned();
+            indexed.catalog_identity = Some(Box::new(identity));
+        }
         self.emit(SessionBody::SessionStarted {
             request_id,
             agent_session_id: agent_session.to_string(),
-            indexed: self.catalogue_extracts(),
+            indexed,
             agent_home,
         });
         if moved && loaded {
@@ -1145,15 +1160,20 @@ impl Actor {
                             )));
                         }
                     };
+                let agent_defaults = if matches!(attach, Attach::New) && self.workspace_roots.is_none() && catalogue.authoritative {
+                    catalogue_extracts(&catalogue.options).current_config()
+                } else {
+                    None
+                };
                 let applied = apply_config(&conn, &session, catalogue, &config, self.options.config_timeout, deadline).await;
-                Ok((session, applied, images))
+                Ok((session, applied, images, agent_defaults))
             } => result,
             info = adapter.exited() => {
                 let tail = adapter.stderr_tail().await;
                 Err(StartError::other(format!("adapter exited during start ({}): {}", describe(info), last_lines(&tail, 5))))
             }
         };
-        let (agent_session, applied, images) = match started {
+        let (agent_session, applied, images, agent_defaults) = match started {
             Ok(started) => started,
             Err(error) => {
                 self.begin_ending();
@@ -1188,7 +1208,13 @@ impl Actor {
             current: applied.current,
         };
         // The catalogue after the switches, never the one before (P-13).
-        self.announce(request_id, &agent_session.to_string(), &agent_env, loaded);
+        self.announce(
+            request_id,
+            &agent_session.to_string(),
+            &agent_env,
+            loaded,
+            agent_defaults.as_ref(),
+        );
         // A load's state updates follow the start they belong to, and so do
         // updates the adapter sent while the start's switches ran. They are
         // older than the catalogue just announced, so they carry no
@@ -1391,7 +1417,7 @@ impl Actor {
                         _ => self.reject(request_id, "not_running", "that turn is not running".into()),
                     },
                     Some(SessionCmd::Restart { request_id }) => {
-                        self.announce(request_id, &agent_session.to_string(), &agent_env, loaded)
+                        self.announce(request_id, &agent_session.to_string(), &agent_env, loaded, None)
                     }
                     // A switch may run during a turn; it is answered in order.
                     Some(SessionCmd::SetConfig { request_id, config_id, value }) => {

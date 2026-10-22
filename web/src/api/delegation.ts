@@ -14,7 +14,7 @@ export function sessionTools(client: Client, hat: string): Promise<HatSessionToo
 export function setSessionTools(client: Client, hat: string, value: SetSessionTools, options?: RequestOptions): Promise<HatSessionTools> {
   return client.request('PATCH', `${hatPath(hat)}/session-tools`, value, options)
 }
-export function runtimeCatalog(client: Client, host: string, agent: string, cwd: string, signal?: AbortSignal): Promise<HostCatalog> {
+export function runtimeCatalog(client: Client, host: string, agent: string, cwd: string, signal?: AbortSignal, refresh = false): Promise<HostCatalog> {
   const query = new URLSearchParams({ agent, cwd })
-  return client.request('GET', `/api/hosts/${encodeURIComponent(host)}/runtime-catalog?${query}`, undefined, { signal })
+  return client.request(refresh ? 'POST' : 'GET', `/api/hosts/${encodeURIComponent(host)}/runtime-catalog?${query}`, undefined, { signal })
 }

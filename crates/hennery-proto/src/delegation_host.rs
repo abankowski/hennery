@@ -37,6 +37,8 @@ pub struct ConfigEvidence {
 #[serde(rename_all = "snake_case")]
 pub enum CatalogFreshness {
     Fresh,
+    /// Persisted operator preview; never live delegation evidence.
+    Cached,
     Stale,
     Unknown,
 }
@@ -53,13 +55,29 @@ pub struct SecurityClassification {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct HostCatalog {
     pub agent: String,
-    /// Opaque digest of the configured adapter command/environment and catalog.
+    /// Opaque digest of the configured adapter command/environment and security profile.
     pub adapter_revision: String,
     #[ts(type = "unknown[]")]
     pub config_options: Vec<Value>,
+    /// Adapter values before hennery switches. Empty when no baseline is known.
     pub defaults: SessionConfig,
     pub security: SecurityClassification,
     pub freshness: CatalogFreshness,
+    /// Collector observation time (Unix seconds), absent for a live host reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub saved_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct CatalogIdentity {
+    pub adapter_revision: String,
+    pub security: SecurityClassification,
+    /// Only an operator's new attachment carries session/new's pre-switch values.
+    /// Resume, restart and delegated attachments must leave this absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_defaults: Option<SessionConfig>,
 }
 
 /// Host-owned adapter identity for cross-runtime permission-mode inheritance.

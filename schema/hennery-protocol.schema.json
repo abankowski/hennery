@@ -353,6 +353,11 @@
           "type": "string"
         },
         {
+          "const": "catalog_probe_cancel",
+          "description": "Early cancellation of a disposable catalog probe by request id.",
+          "type": "string"
+        },
+        {
           "const": "delegation_config",
           "description": "Generation-bound evidence and serialized delegated prompt admission.",
           "type": "string"
@@ -389,12 +394,47 @@
       "type": "object"
     },
     "CatalogFreshness": {
-      "enum": [
-        "fresh",
-        "stale",
-        "unknown"
+      "oneOf": [
+        {
+          "enum": [
+            "fresh",
+            "stale",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "cached",
+          "description": "Persisted operator preview; never live delegation evidence.",
+          "type": "string"
+        }
+      ]
+    },
+    "CatalogIdentity": {
+      "properties": {
+        "adapter_revision": {
+          "type": "string"
+        },
+        "agent_defaults": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only an operator's new attachment carries session/new's pre-switch values.\nResume, restart and delegated attachments must leave this absent."
+        },
+        "security": {
+          "$ref": "#/$defs/SecurityClassification"
+        }
+      },
+      "required": [
+        "adapter_revision",
+        "security"
       ],
-      "type": "string"
+      "type": "object"
     },
     "ChildList": {
       "properties": {
@@ -558,6 +598,22 @@
     "CollectorFrame": {
       "description": "Collector -> host.",
       "oneOf": [
+        {
+          "properties": {
+            "request_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "cancel_catalog_probe",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id"
+          ],
+          "type": "object"
+        },
         {
           "properties": {
             "agent": {
@@ -2014,7 +2070,7 @@
     "HostCatalog": {
       "properties": {
         "adapter_revision": {
-          "description": "Opaque digest of the configured adapter command/environment and catalog.",
+          "description": "Opaque digest of the configured adapter command/environment and security profile.",
           "type": "string"
         },
         "agent": {
@@ -2025,10 +2081,20 @@
           "type": "array"
         },
         "defaults": {
-          "$ref": "#/$defs/SessionConfig"
+          "$ref": "#/$defs/SessionConfig",
+          "description": "Adapter values before hennery switches. Empty when no baseline is known."
         },
         "freshness": {
           "$ref": "#/$defs/CatalogFreshness"
+        },
+        "saved_at": {
+          "description": "Collector observation time (Unix seconds), absent for a live host reply.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "security": {
           "$ref": "#/$defs/SecurityClassification"
@@ -2575,6 +2641,17 @@
     "Indexed": {
       "description": "Fields the collector may read from a session event. Closed set (ACP core §3.2).\n\nThe catalogue extracts (`config_options`, `current_model`,\n`current_mode`, `current_axes`) travel together: when `config_options`\nis present and not empty, the four are one snapshot of the adapter's\nconfig. An absent or empty `config_options` means \"no read-back\", never\n\"the adapter has no config\" (a response that failed to parse looks\nempty). A live `current_mode` without a snapshot is a mode-only delta;\nit never clears the model, other axes or option inventory. Early/replayed\nmode deltas are ignored.",
       "properties": {
+        "catalog_identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Host-owned adapter identity for authoritative start/resume snapshots."
+        },
         "commands": {
           "description": "On an `available_commands_update`: the adapter's slash commands, the\nfull list (ACP `AvailableCommand` objects, those hennery can parse).\nAn empty list means the adapter has none, unlike an empty\n`config_options`. Never part of the catalogue snapshot.",
           "items": true,

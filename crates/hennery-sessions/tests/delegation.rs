@@ -717,6 +717,7 @@ fn d2_resume_and_dispatch_require_fresh_complete_generation_evidence() {
         .unwrap();
     hub.mark_ready("host", reg.conn_id);
     let catalog = HostCatalog {
+        saved_at: None,
         agent: "claude".into(),
         adapter_revision: "v1".into(),
         config_options: vec![],
