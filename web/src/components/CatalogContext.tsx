@@ -12,24 +12,38 @@ export interface LaunchContext {
   catalog: HostCatalog | null
   defaults: HatSessionDefaults | null
   error?: string
+  refresh?: () => void
+  refreshing?: boolean
 }
 /** Each response belongs to the whole canonical context, never the last probe. */
 export function useLaunchContext(host: string, agent: string, cwd: string, hat: string, generation = 0, hostName = host): LaunchContext {
   const client = useClient(), key = JSON.stringify([host, agent, cwd, hat, generation, hostName])
   // A → B → A is a new read, even when B never finished loading.
   const request = useMemo(() => ({}), [key])
-  const [result, setResult] = useState<(LaunchContext & { request: object }) | null>(null)
+  const [result, setResult] = useState<(Omit<LaunchContext, 'defaults'> & { request: object; serial: number }) | null>(null)
+  const [saved, setSaved] = useState<{ request: object; defaults: HatSessionDefaults } | null>(null)
+  const [refreshRequest, setRefreshRequest] = useState<{ request: object; serial: number } | null>(null)
+  const serial = refreshRequest?.request === request ? refreshRequest.serial : 0
+  const refresh = () => setRefreshRequest(previous => ({ request, serial: previous?.request === request ? previous.serial + 1 : 1 }))
+  const complete = !!host && !!agent && !!cwd && !!hat
+  useEffect(() => {
+    if (!complete) return
+    const abort = new AbortController()
+    let live = true
+    sessionDefaults(client, hat, agent, abort.signal).then(defaults => { if (live) setSaved({ request, defaults }) }, () => { /* Start retries this required read and reports any failure. */ })
+    return () => { live = false; abort.abort() }
+  }, [client, hat, agent, request, complete])
   useEffect(() => {
     if (!host || !agent || !cwd || !hat) return
     const abort = new AbortController()
     let live = true
-    Promise.all([runtimeCatalog(client, host, agent, cwd, abort.signal), sessionDefaults(client, hat, agent, abort.signal)]).then(
-      ([catalog, defaults]) => { if (live) setResult({ key, request, state: usableCatalog(catalog) ? 'ready' : 'unavailable', catalog, defaults, ...(!usableCatalog(catalog) ? { error: `${agent} on ${hostName}: settings preview is not fresh and complete. Retry or deliberately use agent defaults for this start.` } : {}) }) },
-      err => { if (live) setResult({ key, request, state: 'unavailable', catalog: null, defaults: null, error: catalogError(err, hostName, agent) }) },
+    runtimeCatalog(client, host, agent, cwd, abort.signal, serial > 0).then(
+      catalog => { if (live) setResult({ key, request, serial, state: catalog.freshness === 'unknown' || usableCatalog(catalog) ? 'ready' : 'unavailable', catalog: usableCatalog(catalog) ? catalog : null }) },
+      err => { if (live) setResult(previous => ({ key, request, serial, state: previous?.request === request && previous.catalog ? 'ready' : 'unavailable', catalog: previous?.request === request ? previous.catalog : null, error: catalogError(err, hostName, agent) })) },
     )
     return () => { live = false; abort.abort() }
-  }, [client, host, hostName, agent, cwd, hat, key, request])
-  return result?.request === request ? result : { key, state: 'loading', catalog: null, defaults: null }
+  }, [client, host, hostName, agent, cwd, hat, key, request, serial])
+  return { ...(result?.request === request ? result : { key, state: 'loading' as const, catalog: null }), defaults: saved?.request === request ? saved.defaults : null, refresh: complete ? refresh : undefined, refreshing: complete && serial > 0 && (result?.request !== request || result.serial !== serial) }
 }
 export default function CatalogContext({ hosts, host, cwd, onHost, onCwd, onPreview, busy }: {
   hosts: HostItem[]; host: string; cwd: string; onHost: (value: string) => void; onCwd: (value: string) => void; onPreview: () => void; busy: boolean

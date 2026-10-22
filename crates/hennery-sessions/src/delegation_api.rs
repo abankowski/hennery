@@ -23,7 +23,7 @@ pub fn router(state: AppState) -> Router {
             "/api/settings/delegation-limits",
             get(limits).patch(patch_limits.layer(middleware::from_fn(hennery_kernel::auth::require_step_up))),
         )
-        .route("/api/hosts/{id}/runtime-catalog", get(catalog))
+        .route("/api/hosts/{id}/runtime-catalog", get(catalog).post(refresh_catalog))
         .route("/api/delegation/attention", get(attention))
         .route("/api/delegation/attention/{id}/rearm", post(rearm))
         .route("/api/delegation/attention/{id}/acknowledge", post(acknowledge))
@@ -134,6 +134,16 @@ async fn catalog(
     Path(host): Path<String>,
     Query(query): Query<CatalogQuery>,
 ) -> Response {
+    catalog_in(state, host, query, false).await
+}
+async fn refresh_catalog(
+    State(state): State<AppState>,
+    Path(host): Path<String>,
+    Query(query): Query<CatalogQuery>,
+) -> Response {
+    catalog_in(state, host, query, true).await
+}
+async fn catalog_in(state: AppState, host: String, query: CatalogQuery, refresh: bool) -> Response {
     if query.agent.is_empty() || query.agent.len() > 128 || query.cwd.len() > 4096 {
         return error(StatusCode::BAD_REQUEST, "invalid_arguments", "invalid arguments");
     }
@@ -151,11 +161,17 @@ async fn catalog(
         Ok(Some(hennery_kernel::hats::SessionHat::Decided(r))) => r.hat_id,
         _ => return error(StatusCode::NOT_FOUND, "not_found", "not found"),
     };
-    match state
-        .catalogs
-        .get_operator(&state, &host, &hat, &resolved.canonical, &query.agent)
-        .await
-    {
+    let result = if refresh {
+        state
+            .catalogs
+            .get_operator(&state, &host, &hat, &resolved.canonical, &query.agent)
+            .await
+    } else {
+        state
+            .store
+            .saved_runtime_catalog(&host, &hat, &resolved.canonical, &query.agent)
+    };
+    match result {
         Ok(catalog) => Json(catalog).into_response(),
         Err(error_) => {
             let code = crate::session_tools::error_code(&error_);

@@ -3,17 +3,18 @@
 use crate::{AgentCommand, profile::Profile};
 use anyhow::{Context, Result, ensure};
 use hennery_proto::{
-    delegation_host::{CatalogFreshness, HostCatalog, SecurityClassification},
+    delegation_host::{CatalogFreshness, CatalogIdentity, HostCatalog, SecurityClassification},
     frames::ConfigValue,
 };
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 
 pub fn checked_cwd(cwd: &str, roots: &[PathBuf]) -> Result<PathBuf> {
     let resolved = crate::paths::resolve(cwd, None).map_err(anyhow::Error::msg)?;
@@ -49,10 +50,24 @@ pub fn security_classification(profile: Profile) -> SecurityClassification {
     }
 }
 
+pub(crate) fn catalog_identity(command: &AgentCommand, profile: Profile) -> CatalogIdentity {
+    let security = security_classification(profile);
+    // Never export command arguments or environment values. The digest is
+    // stable across reconnects, starts, and changes in the selected model.
+    let material = serde_json::to_vec(&(&command.program, &command.args, &command.env, &security))
+        .expect("serializable adapter identity");
+    CatalogIdentity {
+        adapter_revision: hex::encode(Sha256::digest(material)),
+        security,
+        agent_defaults: None,
+    }
+}
+
 #[derive(Clone)]
 pub struct CatalogProbes {
     slots: Arc<Semaphore>,
     timeout: Duration,
+    active: Arc<Mutex<BTreeMap<String, CancellationToken>>>,
 }
 
 impl Default for CatalogProbes {
@@ -66,6 +81,31 @@ impl CatalogProbes {
         Self {
             slots: Arc::new(Semaphore::new(capacity)),
             timeout,
+            active: Arc::default(),
+        }
+    }
+
+    pub(crate) fn begin(&self, request: &str) -> Result<CatalogProbeLease> {
+        let mut active = self.active.lock().expect("catalog probes");
+        ensure!(active.len() < 128 && !active.contains_key(request), "busy");
+        let token = CancellationToken::new();
+        active.insert(request.into(), token.clone());
+        Ok(CatalogProbeLease {
+            probes: self.clone(),
+            request: request.into(),
+            token,
+        })
+    }
+
+    pub(crate) fn cancel(&self, request: &str) {
+        if let Some(token) = self.active.lock().expect("catalog probes").get(request) {
+            token.cancel();
+        }
+    }
+
+    pub(crate) fn cancel_all(&self) {
+        for token in self.active.lock().expect("catalog probes").values() {
+            token.cancel();
         }
     }
 
@@ -123,10 +163,11 @@ impl CatalogProbes {
         let config_options = indexed.config_options.clone().unwrap_or_default();
         let defaults = indexed.current_config().unwrap_or_default();
         // Neither command arguments nor environment values leave this host.
-        let material = serde_json::to_vec(&(&command.program, &command.args, &command.env, &config_options))?;
+        let identity = catalog_identity(&command, profile);
         Ok(HostCatalog {
             agent: agent.into(),
-            adapter_revision: hex::encode(Sha256::digest(material)),
+            adapter_revision: identity.adapter_revision,
+            saved_at: None,
             freshness: if config_options.is_empty() {
                 CatalogFreshness::Unknown
             } else {
@@ -134,7 +175,18 @@ impl CatalogProbes {
             },
             config_options,
             defaults,
-            security: security_classification(profile),
+            security: identity.security,
         })
+    }
+}
+
+pub(crate) struct CatalogProbeLease {
+    probes: CatalogProbes,
+    request: String,
+    pub(crate) token: CancellationToken,
+}
+impl Drop for CatalogProbeLease {
+    fn drop(&mut self) {
+        self.probes.active.lock().expect("catalog probes").remove(&self.request);
     }
 }

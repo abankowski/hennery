@@ -123,9 +123,9 @@ it.each(['start', 'shortcut', 'edit', 'outside', 'failure', 'blocked', 'again', 
   if (action === 'edit') await user.type(screen.getByRole('textbox', { name: /^First prompt/ }), 'Changed')
   if (action === 'outside') fireEvent.pointerDown(document.body)
   await act(async () => { finish(action === 'failure' ? json(503, { message: 'Resolution unavailable' }) : json(200, { ...RESOLVED, canonical: path })) })
-  if (action === 'edit' || action === 'outside' || action === 'failure' || action === 'blocked' || action === 'submit-tab' || action === 'submit-escape') {
+  if (action === 'edit' || action === 'outside' || action === 'failure' || action === 'submit-tab' || action === 'submit-escape') {
     if (action === 'failure') await screen.findByRole('alert')
-    else if (action !== 'blocked') await waitFor(() => expect(startButton()).toBeEnabled())
+    else await waitFor(() => expect(startButton()).toBeEnabled())
     await waitFor(() => expect(screen.queryByText('Preparing session…', { exact: true })).toBeNull())
     expect(server.sent.filter(s => s.path === '/api/sessions')).toHaveLength(0)
     expect(screen.getByText('Start cancelled. Review your choices, then start again.', { exact: true })).toBeVisible()
@@ -716,6 +716,76 @@ describe('reviewed configuration', () => {
   ]
   const runtime = '/api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat'
   const catalog = { agent: 'claude', adapter_revision: 'pin-1', freshness: 'fresh', config_options: options, defaults: { model: 'opus', mode: 'default', axes: { fast: false } }, security: { known: true, axes: { mode: ['default'] } } }
+  it('offers a one-click retry for an unconfirmed nonsecurity override without a preview, retaining the prompt and security requirements', async () => {
+    const actual = { session_id: 's-1', commands: [], model: 'sonnet', mode: 'default', axes: { fast: true, sandbox: true }, config_options: [...options.map(option => ({ ...option, currentValue: option.id === 'model' ? 'sonnet' : option.id === 'fast' ? true : 'default' })), { id: 'sandbox', name: 'Sandbox', type: 'boolean', currentValue: true }] }
+    const server = mount({
+      [`GET ${runtime}`]: [json(409, { code: 'catalog_unavailable', message: 'No preview' }), json(200, { ...catalog, security: { known: true, axes: { mode: ['default'], sandbox: [true] } } })],
+      'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 1, config: { model: 'sonnet', mode: 'default', axes: { fast: false, sandbox: true } } }),
+      'POST /api/sessions': [json(202, { session_id: 's-1' }), json(202, { session_id: 's-2' })],
+      'GET /api/sessions/s-1/catalog': json(200, actual),
+      'GET /api/sessions/s-2': json(200, { hat_id: 'hat-a', lifecycle: 'active' }),
+      'GET /api/sessions/s-2/catalog': json(200, { ...actual, session_id: 's-2' }),
+      'GET /api/view/sessions/s-2?limit=1': json(200, { items: [] }),
+      'POST /api/sessions/s-2/prompt': json(202, { turn_id: 't-2' }),
+    })
+    const user = await fill('/srv/work/cat', 'Keep this prompt')
+    await waitFor(() => expect(startButton()).toBeEnabled())
+    await user.click(startButton())
+    expect(await screen.findByRole('alert')).toHaveTextContent('Fast: Off')
+    const retry = await screen.findByRole('button', { name: 'Start with agent default for Fast' })
+    expect(screen.queryByRole('button', { name: 'Start with agent default for Permission' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Start with agent default for Sandbox' })).toBeNull()
+    expect(server.sent.filter(s => s.path === '/api/sessions' && s.method === 'POST')).toHaveLength(1)
+    expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+    expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep this prompt')
+    expect(screen.getByRole('link', { name: 'Review started session' })).toHaveAttribute('href', '/sessions/s-1')
+    await user.click(retry)
+    await waitFor(() => expect(location.pathname).toBe('/sessions/s-2'))
+    expect(server.sent.filter(s => s.path === '/api/sessions' && s.method === 'POST').map(s => s.body)).toEqual([
+      { host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat', model: 'sonnet', mode: 'default', axes: { fast: false, sandbox: true } },
+      { host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat', model: 'sonnet', mode: 'default', axes: { sandbox: true } },
+    ])
+    expect(posts(server.sent)).toContain('/api/sessions/s-2/prompt')
+    expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+  })
+  it('does not offer default retries for unconfirmed profile security overrides without a preview', async () => {
+    const server = mount({
+      [`GET ${runtime}`]: [json(409, { code: 'catalog_unavailable', message: 'No preview' }), json(200, { ...catalog, security: { known: false, axes: { mode: ['safe'], sandbox: [true] } } })],
+      'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 1, config: { mode: 'safe', axes: { sandbox: true } } }),
+    })
+    const user = await fill('/srv/work/cat', 'Keep this prompt')
+    await waitFor(() => expect(startButton()).toBeEnabled())
+    await user.click(startButton())
+    await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+    expect(server.sent.find(s => s.method === 'POST' && s.path === '/api/sessions')?.body).toMatchObject({ mode: 'safe', axes: { sandbox: true } })
+    expect(screen.queryByRole('button', { name: /^Start with agent default/ })).toBeNull()
+    expect(location.search).toContain('config_unconfirmed')
+    expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+  })
+  it.each(['unknown', 'unavailable'])('offers a nonsecurity retry even when profile metadata is %s', async metadata => {
+    const server = mount({
+      [`GET ${runtime}`]: [json(409, { code: 'catalog_unavailable', message: 'No preview' }), metadata === 'unknown' ? json(200, { ...catalog, security: { known: false, axes: {} } }) : json(409, { code: 'catalog_unavailable', message: 'No profile' })],
+      'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 1, config: { axes: { fast: false } } }),
+    })
+    const user = await fill('/srv/work/cat', 'Keep this prompt')
+    await waitFor(() => expect(startButton()).toBeEnabled())
+    await user.click(startButton())
+    expect(await screen.findByRole('button', { name: 'Start with agent default for fast' })).toBeEnabled()
+    expect(posts(server.sent).filter(path => path === '/api/sessions')).toHaveLength(1)
+    expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+  })
+  it('can retry a model with agent default even when post-start profile metadata is unavailable', async () => {
+    const server = mount({
+      [`GET ${runtime}`]: json(409, { code: 'catalog_unavailable', message: 'No preview' }),
+      'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 1, config: { model: 'removed' } }),
+    })
+    const user = await fill('/srv/work/cat', 'Keep this prompt')
+    await waitFor(() => expect(startButton()).toBeEnabled())
+    await user.click(startButton())
+    expect(await screen.findByRole('button', { name: 'Start with agent default for Model' })).toBeEnabled()
+    expect(posts(server.sent).filter(path => path === '/api/sessions')).toHaveLength(1)
+    expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
+  })
   it('applies a saved Sonnet model, prunes inherited fast and confirms actual settings before the first prompt', async () => {
     const server = mount({
       [`GET ${runtime}`]: json(200, catalog),
@@ -749,15 +819,12 @@ describe('reviewed configuration', () => {
     expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep this prompt')
     expect(readStartNotice(location.search, 's-1')).toMatchObject({ message: expect.stringContaining('Fast: Off') })
   })
-  it('requires explicit opt-out when no catalog is available, then sends no unverified config', async () => {
+  it('starts with agent defaults when no catalog is available and sends no unverified config', async () => {
     const server = mount({ [`GET ${runtime}`]: json(409, { code: 'catalog_unavailable', message: 'Offline catalog' }) })
     const user = await fill('/srv/work/cat', 'Start deliberately')
     expect(await screen.findByLabelText('Settings need attention')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Session settings' })).toHaveAttribute('aria-expanded', 'false')
     await user.click(await screen.findByRole('button', { name: 'Session settings' }))
-    const optOut = await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' })
-    expect(startButton()).toBeDisabled()
-    await user.click(optOut)
     expect(startButton()).toBeEnabled()
     await user.click(screen.getByRole('button', { name: 'Close session settings' }))
     await user.click(startButton())
@@ -795,20 +862,49 @@ it('does not release a held first prompt after closing during configuration read
   expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
   expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Keep during review')
 })
-it('retains the prompt on a hat mismatch even after explicitly opting out of catalog verification', async () => {
+it('retains the prompt on a hat mismatch when starting without a saved catalog', async () => {
   const server = mount({
     'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat': json(409, { code: 'catalog_unavailable', message: 'No settings preview' }),
     'GET /api/sessions/s-1': json(200, { session_id: 's-1', hat_id: 'hat-b', lifecycle: 'active' }),
   })
   const user = await fill('/srv/work/cat', 'Check the hat first')
   await user.click(await screen.findByRole('button', { name: 'Session settings' }))
-  await user.click(await screen.findByRole('checkbox', { name: 'Use agent defaults for this start' }))
   await user.click(screen.getByRole('button', { name: 'Close session settings' }))
   await user.click(startButton())
   await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
   expect(posts(server.sent)).not.toContain('/api/sessions/s-1/prompt')
   expect(location.search).toContain('hat_changed')
   expect(sessionStorage.getItem('hennery.draft.s-1')).toBe('Check the hat first')
+})
+
+it('starts immediately with no picks while the saved catalog request is still pending', async () => {
+  let finish!: (response: Response) => void
+  const pending = new Promise<Response>(resolve => { finish = resolve })
+  const server = mount({
+    'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat': () => pending,
+  })
+  const user = await fill('/srv/work/cat', 'Start without waiting')
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  await user.click(startButton())
+  await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+  expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat' })
+  expect(server.sent.filter(s => s.path.includes('runtime-catalog')).every(s => s.method === 'GET')).toBe(true)
+  expect(posts(server.sent)).toContain('/api/sessions/s-1/prompt')
+  await act(async () => { finish(json(200, {})); await pending })
+})
+it.each(['unknown', 'pending'] as const)('sends the hat permission override on a first start with a %s preview', async state => {
+  const server = mount({
+    'GET /api/hosts/h1/runtime-catalog?agent=claude&cwd=%2Fsrv%2Fwork%2Fcat': state === 'pending' ? () => new Promise<Response>(() => {}) : json(200, { freshness: 'unknown' }),
+    'GET /api/hats/hat-a/session-defaults?agent=claude': json(200, { hat_id: 'hat-a', agent: 'claude', revision: 1, config: { mode: 'default' } }),
+    'GET /api/sessions/s-1/catalog': json(200, { session_id: 's-1', config_options: [{ id: 'mode', type: 'select', currentValue: 'default', options: [{ value: 'default' }] }], commands: [], mode: 'default' }),
+  })
+  const user = await fill('/srv/work/cat', 'Keep the permission requirement')
+  await waitFor(() => expect(startButton()).toBeEnabled())
+  await user.click(startButton())
+  await waitFor(() => expect(location.pathname).toBe('/sessions/s-1'))
+  expect(server.sent.find(s => s.path === '/api/sessions')?.body).toEqual({ host_id: 'h1', agent: 'claude', cwd: '/srv/work/cat', mode: 'default' })
+  expect(posts(server.sent)).toContain('/api/sessions/s-1/prompt')
+  expect(server.sent.some(s => s.path === '/api/sessions/s-1/catalog')).toBe(true)
 })
 it('starts only on a deliberate local Mod+Enter, ignoring repeat, IME and extra modifiers', async () => {
   const server = mount()

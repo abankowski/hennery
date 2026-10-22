@@ -130,11 +130,10 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     await form.getByRole('textbox', { name: 'First prompt optional', exact: true }).fill('Show delivery.')
     // This delivery/session fixture reports no settings catalog.
     await form.getByRole('button', { name: 'Session settings', exact: true }).click()
-    await page.getByRole('dialog', { name: 'Session settings', exact: true }).getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+    await expect(page.getByText('Agent defaults are unknown. Hat overrides and your choices will still be requested and checked after starting.', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
-    // Catalog discovery already wrote a disposable session/new with no MCP.
-    // Inspect the actual launch after that completed preview, including empty
-    // delivery for other hats below; never filter receipts by server count.
+    // Reading a missing preview starts no disposable adapter. Count every
+    // actual launch, including empty delivery for other hats below.
     const beforeStart = records().length
     await form.getByRole('button', { name: 'Start session', exact: true }).click()
     await expect(page).toHaveURL(/\/sessions\/[^/?#]+$/, { timeout: 45_000 }); sessionUrl = page.url()
@@ -174,7 +173,7 @@ for (const width of [1280, 390]) test.describe(`MCP delivery at ${width} px`, ()
     await expect(form.getByRole('region', { name: 'MCP prediction', exact: true })).toHaveCount(0)
     // This delivery/session fixture reports no settings catalog.
     await form.getByRole('button', { name: 'Session settings', exact: true }).click()
-    await page.getByRole('dialog', { name: 'Session settings', exact: true }).getByRole('checkbox', { name: 'Use agent defaults for this start', exact: true }).check()
+    await expect(page.getByText('Agent defaults are unknown. Hat overrides and your choices will still be requested and checked after starting.', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Close session settings', exact: true }).click()
     await form.getByRole('button', { name: 'Start session', exact: true }).click()
     await expect(page).toHaveURL(/\/sessions\/[^/?#]+$/, { timeout: 45_000 })

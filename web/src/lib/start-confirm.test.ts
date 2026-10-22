@@ -82,3 +82,12 @@ it('checks the actual hat even for a deliberate unverified agent-default start',
   expect(await confirmStart(sameHat.client, 's-1', 'hat-a', {}, 30_000, false)).toBe('confirmed')
   expect(sameHat.sent.map(sent => sent.path)).toEqual(['/api/sessions/s-1'])
 })
+
+it('labels configuration review from the real session first, then the cached catalog, then the id', async () => {
+  const { rememberConfigurationReview, readStartNotice } = await import('./start')
+  const { catalog } = await import('../test-launch-catalog')
+  const real = { session_id: 'labels', commands: [], config_options: [{ id: 'fast', name: 'Fast mode', type: 'boolean', currentValue: true }] }
+  rememberConfigurationReview('labels', catalog, { model: 'sonnet', axes: { fast: false, missing: true } }, real)
+  expect(readStartNotice('?notice=prompt_failed&code=config_unconfirmed', 'labels')?.kind).toBe('prompt_failed')
+  expect(sessionStorage.getItem('hennery.draft.__launch_review__.labels')).toContain('Fast mode: Off · missing: On · model: sonnet')
+})

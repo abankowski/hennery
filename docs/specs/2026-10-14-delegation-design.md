@@ -296,18 +296,65 @@ deduplication. Explain this retry contract in tool descriptions.
 ### 4.1 Catalogs and first prompt
 
 Use one runtime/config catalog service for this tool and the dashboard launcher.
-The current host `hello` runtime list and `session_catalog` are building blocks;
-a complete pre-start catalog service is additional work, not something plan
-8e already implemented. Cache by owner, host, hat, canonical cwd, runtime and
-adapter/config revision; never use another hat's last-started session as a
-catalog. Return `unknown`/`stale` honestly instead of inventing supported models.
+Operator previews persist in SQLite by owner, host, hat, canonical cwd, runtime
+and adapter revision, with the collector observation time. On insertion, prune
+older revisions in that exact scope in the same transaction. Authoritative
+real-session start/resume catalogs and explicit operator Refresh probes write
+through to it. Never borrow another host's, hat's, cwd's or runtime's catalog.
+The most recently observed revision is only a saved preview: reconnects and
+collector restarts retain it, and a later real session or Refresh replaces it.
+Return `cached` with its age, or `unknown` when no exact-context snapshot exists.
+`cached` never satisfies delegation's `Fresh` checks or configuration evidence.
+Preview admission limits (256 KiB, 128 options, 256-byte revision) skip only
+the saved preview; they never reject a valid durable session fact. An earlier
+snapshot keeps its original age. Deleting a session removes only previews
+sourced by that session, including copies supplied before a hat reassignment.
+A newer preview supplied by another session in the same scope, and an
+independent Refresh snapshot, remain intact. Track the baseline's source
+separately when its offered options come from a later attachment: deleting
+the baseline's session clears only those defaults, preserving another session's
+options. Hat purge, host forget and owner deletion still remove their scope.
+
+The operator preview's `defaults` are the adapter's own `session/new` values
+before hennery applies switches, carried by host identity metadata only for
+an operator new attachment, or the result of an explicit Refresh. Session
+write-through always updates offered options; resume/restart and delegated
+attachments preserve an existing baseline for the same adapter revision.
+Without such a baseline, defaults are empty and unknown, never copied from
+the session's current model/mode/axes. A revision change cannot borrow the
+previous revision's baseline. Delegation continues to use only fresh live
+catalogs, with its existing inheritance and configuration checks.
+
+Opening New session or Defaults only reads the saved preview; no automatic,
+background or timer-driven probe runs. Refresh is an explicit operator POST.
+No catalog means Agent defaults and an immediately enabled Start once host,
+runtime and canonical cwd are valid. Without a catalog, send every hat override
+and explicit pick, including while the preview loads. With a catalog, keep
+security overrides strict even when unsupported; unsupported nonsecurity
+overrides fall back visibly to the supported baseline or agent default
+(UI spec §6.3). Configuration refusals are readable and keep the first prompt;
+the no-preview flow offers an explicit new start omitting only a selected
+unconfirmed nonsecurity override. Saved choices remain subject to the real
+session's post-start verification. The collector independently ignores
+`agent_defaults` from any child with a delegation edge, even a detached one.
 
 For a cold catalog, a new capability-gated host probe obtains the adapter's
 catalog in the validated cwd without a user prompt. If discovery requires
 `session/new`, use a bounded disposable probe adapter with no MCP entries,
-publish no user session, and release it on success, error or timeout. Agent
+publish no user session, and release its whole process group on success, error,
+timeout or cancellation. A host advertises `catalog_probe_cancel` separately
+from `catalog_probe`. Dropping an unanswered collector waiter sends a
+connection-scoped cancel frame only to a host advertising cancellation; that
+host drops the probe's work and releases its permit. For a legacy host with
+only `catalog_probe`, the collector removes its waiter and ignores late
+responses; the host finishes at its own bounded timeout, without early
+cancellation. Connection loss also cancels disposable probes on new hosts. Agent
 hooks can still run: this is a trusted-host operation, not a side-effect-free
 filesystem read. Limit concurrent probes and deduplicate identical requests.
+Independent keys never hold a collector-wide mutex across I/O. Descendants
+that create another session with `setsid` escape process-group containment;
+the fake-agent regression documents this boundary. Cgroups and subreapers are
+outside this change.
 If the adapter cannot supply a fresh pre-start catalog, fail only that spawn
 with its readable reason. An unauthenticated runtime returns `auth_required`
 (not signed in), including when authentication fails during child attach.

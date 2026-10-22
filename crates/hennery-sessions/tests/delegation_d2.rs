@@ -1140,6 +1140,7 @@ fn connected() -> (Arc<Hub>, tokio::sync::mpsc::UnboundedReceiver<CollectorFrame
 }
 fn catalog() -> HostCatalog {
     HostCatalog {
+        saved_at: None,
         agent: "claude".into(),
         adapter_revision: "pin".into(),
         config_options: vec![
