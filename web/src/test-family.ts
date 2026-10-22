@@ -11,7 +11,7 @@ export function familyPage(id = 'child'): FamilyPage {
     summary: { ...parent, session_id: id, title: 'Review parser', agent: 'codex', model: 'reasoner', cwd: '/srv/worker',
       activity: 'blocked', question_waits: true, operator_attention: 0, parent_handled_questions: 1,
       family: { revision: 1, parent: { session_id: 'parent', agent: 'claude', title: 'Coordinator' }, child_counts: { total: 0, active: 0, waiting: 0 }, children: [], attention: 0 } },
-    routing: 'active', operations: [{ operation_id: 'op1', tool: 'spawn', state: 'accepted' }],
+    routing: 'active', operations: [{ operation_id: 'op1', tool: 'session_spawn', state: 'accepted' }],
     questions: [{ pending_id: 'q/1', kind: 'elicitation', handling: 'parent_queued' }],
   }], next_cursor: id === 'child' ? id : undefined }
 }
