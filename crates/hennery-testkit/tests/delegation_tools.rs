@@ -1995,6 +1995,53 @@ async fn busy_send_is_durable_and_parked_followup_resumes_with_fresh_readback() 
 }
 
 #[tokio::test]
+async fn idle_parked_delegated_followup_auto_resumes_with_fresh_model_readback() {
+    let h = Harness::with_worker_idle(script(), None, true, Duration::from_secs(1)).await;
+    // Keep the caller attached while the child parks through the real idle reaper.
+    let pinned = h
+        .client
+        .patch(format!("{}/api/sessions/{}/idle-hold", h.url, h.parent))
+        .json(&json!({"pinned":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pinned.status(), reqwest::StatusCode::OK);
+    let receipt = h.spawn("idle-park-start", json!({"model":"large"})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    h.done(child, "idle-park-start").await;
+    eventually("child idle parked", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.lifecycle == "parked" && !s.presumed_parked)
+            .map(|_| ())
+    })
+    .await;
+    assert!(
+        h.state
+            .store
+            .events(child, 0, 1000)
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "session_parked" && event.body["reason"] == "idle")
+    );
+    h.ok(
+        "session_send",
+        json!({"operation_key":"idle-resume-follow","child_id":child,"text":"continue after idle parking"}),
+    )
+    .await;
+    h.done(child, "idle-resume-follow").await;
+    assert_eq!(h.status(child).await["actual"]["model"], "large");
+    let log = std::fs::read_to_string(h.cwd.join("worker-sessions.jsonl")).unwrap();
+    assert!(
+        log.lines()
+            .any(|line| serde_json::from_str::<Value>(line).unwrap()["method"] == "session/load")
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn permission_questions_remain_operator_only_and_elicitation_has_one_answer_winner() {
     use hennery_proto::frames::PendingKind;
     let mut s = script();

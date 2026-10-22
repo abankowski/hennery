@@ -14,7 +14,6 @@
   inaccessible sessions and clears on sign-out. Expanding the hat scope checks
   cached entries for missed deletions; transient lookups retry once with backoff.
   Collapsed navigation uses icon buttons for appearance and sign-out.
-
 - Cache runtime models and options per host, project, hat and adapter revision,
   learning agent defaults from real sessions.
 - Send text and images while a turn is running: messages wait in a durable,
