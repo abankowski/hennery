@@ -1,45 +1,37 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
-- The MCP gateway accepts a body-less 202 or 204 that names a non-JSON
-  content type (e.g. `text/plain` on `notifications/initialized`) instead of
-  answering 502.
-- Recent sessions follow your visits in this browser, with up to six sidebar
-  entries, status icons, hat colours and the current session highlighted.
-  Option/Alt+1–5 opens the numbered entries; backtick returns to this window's
-  previous session. The command palette starts with Recent and preselects
-  that window's previous visit. Collapsed navigation keeps distinct status
-  icons with hat-colour badges. These shortcuts pause while typing, composing
-  text or using a dialog; help shows enabled keys and notes US-layout backtick.
-- The selected hat scopes sessions, Needs you, Recent and their counts.
-  All hats restores the full view. Visit history is bounded, prunes removed or
-  inaccessible sessions and clears on sign-out. Expanding the hat scope checks
-  cached entries for missed deletions; transient lookups retry once with backoff.
-  Collapsed navigation uses icon buttons for appearance and sign-out.
-- Cache runtime models and options per host, project, hat and adapter revision,
-  learning agent defaults from real sessions.
-- Send text and images while a turn is running: messages wait in a durable,
-  editable queue and are delivered in order. Parked sessions offer Resume and
-  send, including keyboard shortcuts. Failed messages stay available to copy;
-  deleting a session also deletes its unsent messages and images.
-- Sessions can group by Hat or Host, then by Project or Nothing. Project
-  sections remember their collapse state within the tab and show their path,
-  hosts, running count and sessions needing you;
-  parent and child sessions stay together across hosts and worktrees.
-- Choose Needs you first, Last activity or Started. Started keeps newest
-  sessions first without moving rows as agents work. Grouping and sorting
-  choices are remembered in this browser.
-- The overview header stays on one line at 1024 px with the sidebar open;
-  its session counter ellipsizes when space runs out.
-- Hosts report an optional repository root for project grouping, mapping
-  linked worktrees and subdirectories to their main repository. The UI falls
-  back to the working directory when no root is available. Bare repositories,
-  separate Git directories and submodules retain distinct project identities;
-  transient Git errors are retried after a short delay without persisting
-  their working-directory fallback.
-- Database migration 30 adds the stored project root. An older binary
-  cannot open the upgraded database.
+- Message queue (#233). Send while a turn is running: messages wait in a
+  durable, editable queue and go out in order when the turn ends; a pending
+  question or permission is never answered by a queued message. On a parked
+  session Send becomes "Resume and send" (keyboard shortcut too), and the
+  parked notice sits above the input. An explicit Park holds the queue until
+  you resume. Failed messages stay available to copy; deleting a session
+  deletes its unsent messages and images.
+- Session switching (#230). Recent in the sidebar (up to six visited sessions
+  with status and hat colour), Option/Alt+1–5 to open them, backtick for this
+  window's previous session, and Recent first in the command palette. The
+  selected hat now scopes everything: sessions, Needs you, Recent and counts.
+- Sessions overview (#235). Group by Hat or Host, then by Project or Nothing;
+  collapsible project sections with path, hosts, running count and sessions
+  needing you; families stay together. Sort by Needs you first, Last activity
+  or Started (stable). Hosts report a repository root, so worktrees and
+  subdirectories group with their repository. The header stays on one line at
+  1024 px.
+- Runtime catalog cache (#229). New session and Defaults show the last known
+  models and options instantly, with Refresh to probe again; Start no longer
+  waits for a preview. "Agent default" is the adapter's own default, never a
+  previous session's choice. Hat overrides on permission mode are always sent;
+  unavailable model/effort overrides fall back with a notice.
+- Local OAuth callback (#234). Connect an MCP server's OAuth when the collector
+  is remote: pick a local callback and run the shown `hennery oauth-callback`
+  command on the browser's computer. Tokens never pass through it.
+- The MCP gateway accepts a body-less 202/204 that names a non-JSON content
+  type, as some servers send for `notifications/initialized` (#231).
+- The project picker's outside-tap choice no longer races the listing (#232).
+- Database migrations 28–30 run on first start. An older binary cannot open
+  the upgraded database.
 
 ## 0.2.2
 
