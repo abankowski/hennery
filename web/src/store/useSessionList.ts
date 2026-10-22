@@ -185,7 +185,7 @@ export class SessionListController {
       // Summaries from the previous query bridge only the in-flight read.
       // Its new anchor skips changes excluded from this baseline, so retained
       // rows must not outrank fresh per-session detail after acceptance.
-      this.known = new Map()
+      this.known = new Map((page.sidebar_pins ?? []).filter(isSummary).map(row => [row.session_id, row]))
       this.attempt = 0
       this.apply({ type: 'first', page, search: this.search })
       this.update({

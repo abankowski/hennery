@@ -1280,6 +1280,11 @@
         "session_id": {
           "type": "string"
         },
+        "sidebar_pinned": {
+          "default": false,
+          "description": "An operator shortcut in navigation; independent of idle parking holds.",
+          "type": "boolean"
+        },
         "title": {
           "description": "The effective title, on one line and capped.",
           "type": [
@@ -1497,6 +1502,12 @@
           "type": "integer"
         },
         "sessions": {
+          "items": {
+            "$ref": "#/$defs/SessionSummary"
+          },
+          "type": "array"
+        },
+        "sidebar_pins": {
           "items": {
             "$ref": "#/$defs/SessionSummary"
           },

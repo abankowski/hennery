@@ -277,7 +277,11 @@ fn upgrading_from_v30_starts_empty_and_keeps_historical_transcripts() {
     drop(store);
     rusqlite::Connection::open(&db)
         .unwrap()
-        .execute_batch("DROP TRIGGER review_delete; DROP TABLE session_reviews; ALTER TABLE sessions DROP COLUMN unseen_event_id; ALTER TABLE sessions DROP COLUMN seen_event_id; PRAGMA user_version=30;")
+        .execute_batch(
+            "DROP INDEX sessions_sidebar_pinned; ALTER TABLE sessions DROP COLUMN sidebar_pinned;
+            ALTER TABLE sessions DROP COLUMN unseen_event_id; ALTER TABLE sessions DROP COLUMN seen_event_id;
+             DROP TRIGGER review_delete; DROP TABLE session_reviews; PRAGMA user_version=30;",
+        )
         .unwrap();
     let upgraded = Store::open(&db).unwrap();
     assert_eq!(upgraded.events("s", 0, 100).unwrap(), history);

@@ -62,6 +62,28 @@ function render(s: ReturnType<typeof server>, filters: ListFilters) {
 }
 
 describe('useSessionList', () => {
+  it('seeds pins outside the filtered page, streams changes and deletion, and replaces pins on resync', async () => {
+    const pin = summary('pinned', { sidebar_pinned: true, hat_id: 'other', lifecycle: 'closed', title: 'Saved session' })
+    const s = server([{ ...page([summary('shown')], 10), sidebar_pins: [pin] }, page([summary('shown')], 20)])
+    const h = render(s, { hat: 'hat-a', hideClosed: true, q: 'shown' })
+    await waitFor(() => expect(s.streams).toHaveLength(1))
+    expect(ids(h.result.current.shown)).toEqual(['shown'])
+    expect(h.result.current.all.get('pinned')?.sidebar_pinned).toBe(true)
+    act(() => s.streams[0].event('session_upsert', { ...pin, title: 'Renamed' }))
+    await waitFor(() => expect(h.result.current.all.get('pinned')?.title).toBe('Renamed'))
+    act(() => s.streams[0].event('session_upsert', { ...pin, sidebar_pinned: false }))
+    await waitFor(() => expect(h.result.current.all.get('pinned')?.sidebar_pinned).toBe(false))
+    act(() => s.streams[0].event('session_upsert', pin))
+    await waitFor(() => expect(h.result.current.all.get('pinned')?.sidebar_pinned).toBe(true))
+    act(() => s.streams[0].event('session_removed', { session_id: 'pinned' }))
+    await waitFor(() => expect(h.result.current.all.has('pinned')).toBe(false))
+    act(() => s.streams[0].event('session_upsert', pin))
+    await waitFor(() => expect(h.result.current.all.has('pinned')).toBe(true))
+    act(() => s.streams[0].event('resync_required', {}))
+    await waitFor(() => expect(s.streams).toHaveLength(2))
+    expect(h.result.current.all.has('pinned')).toBe(false)
+    h.unmount()
+  })
   it.each(['replay', 'resync'])('recovers waiting questions in the list after a silent gap via %s', async recovery => {
     vi.useFakeTimers()
     const waiting = summary('a', { question_waits: true, activity: 'blocked' })

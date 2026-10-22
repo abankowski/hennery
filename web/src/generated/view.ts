@@ -241,7 +241,7 @@ epoch: string,
  * or with an open question (`question_waits`). Within `hat` when one
  * is given; whatever the cursor, `q` and `lifecycle`.
  */
-waiting: number, };
+waiting: number, sidebar_pins?: Array<SessionSummary>, };
 
 export type ReviewResult = { event_id: number, turn_id: string, outcome: TurnOutcome, };
 

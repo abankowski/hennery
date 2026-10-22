@@ -7,7 +7,7 @@ import { McpBadge } from './McpScope'
 import SignOut from './SignOut'
 import VersionInfo from './VersionInfo'
 import { recentSessionTargets, sidebarSessions } from '../lib/sessionHistory'
-import { sessionName } from './SessionNames'
+import SessionName, { sessionName } from './SessionNames'
 import { sessionPath } from './SessionRow'
 import { recentStatus } from '../lib/recentStatus'
 import { DEFAULT_ACCENT, HEX } from '../lib/accent'
@@ -18,6 +18,7 @@ export default function NavigationRail({ views, current, collapsed, toggle }: { 
   const scope = useSessionScope()
   const narrowRail = useMediaQuery('(min-width: 768px) and (max-width: 1023px)')
   const compactFooter = collapsed || narrowRail
+  const pinned = [...(scope?.list.all.values() ?? [])].filter(s => s.sidebar_pinned).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.session_id.localeCompare(b.session_id))
   const hosts = scope?.hosts?.filter(h => h.revoked_at == null)
   const navigation = (view: View) => <Link key={view} to={PATH[view]} aria-label={LABEL[view]} title={LABEL[view]} className={'nav-item' + (current === view && !scope?.selectedId ? ' on' : '')} aria-current={current === view && !scope?.selectedId ? 'page' : undefined}><Icon name={NAV_ICON[view]} size={18} /><span className="nav-label">{view === 'sessions' ? 'All sessions' : LABEL[view]}</span>{view === 'needs-you' && <WaitingBadge />}{view === 'mcp' && <McpBadge />}</Link>
   const hatLinks = scope ? [{ id: '', name: 'All hats', colour: undefined }, ...(scope.hats ?? [])] : []
@@ -46,6 +47,7 @@ export default function NavigationRail({ views, current, collapsed, toggle }: { 
           </Link>
         })}
       </section>}
+      {pinned.length > 0 && <div className="rail-pins" role="group" aria-label="Pinned sessions"><div className="nav-label nav-section-label">Pinned</div>{pinned.map(session => <Link key={session.session_id} to={sessionPath(session.session_id)} className={'nav-item rail-pin' + (scope?.selectedId === session.session_id ? ' on' : '')} aria-label={sessionName(session).text} title={sessionName(session).text} aria-current={scope?.selectedId === session.session_id ? 'page' : undefined}><Icon name="bookmark" size={16} /><span className="nav-label rail-pin-name"><SessionName session={session} /></span></Link>)}</div>}
       {scope && <div className="rail-hats"><div className="nav-label nav-section-label">Hats</div>{hatLinks.map(hat => {
         const loaded = scope.list.shown.filter(s => !hat.id || s.hat_id === hat.id)
         const waiting = scope.attentionRows.filter(s => (!hat.id || s.hat_id === hat.id) && !scope.isAttentionDismissed(s.session_id)).length

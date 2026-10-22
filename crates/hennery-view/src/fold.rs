@@ -41,8 +41,9 @@ pub const SILENT_UPDATES: [&str; 5] = [
 
 /// Event kinds that make no item: the session's own state, shown by the
 /// session list and the header.
-pub const SILENT_EVENTS: [&str; 11] = [
+pub const SILENT_EVENTS: [&str; 12] = [
     "session_seen",
+    "sidebar_pin_changed",
     "family_changed",
     "queue_changed",
     "result_read",

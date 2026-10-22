@@ -134,6 +134,22 @@ afterEach(() => {
 })
 
 describe('group headings and clock', () => {
+  it('shows cross-hat pinned shortcuts, updates names, marks selection and removes deleted shortcuts', async () => {
+    width(true)
+    at('/sessions')
+    const pin = summary('saved/id', { sidebar_pinned: true, lifecycle: 'closed', hat_id: 'hat-b', title: 'Saved session' })
+    const s = server({ list: () => ({ ...page([summary('visible')]), sidebar_pins: [pin] }) })
+    render(<App fetchImpl={s.fetch} />)
+    const pins = await screen.findByRole('group', { name: 'Pinned sessions' })
+    expect(within(pins).getByRole('link', { name: 'Saved session' })).toHaveAttribute('href', '/sessions/saved%2Fid')
+    expect(names(await list())).toEqual(['visible'])
+    act(() => s.streams[0].event('session_upsert', { ...pin, title: 'New name' }))
+    await within(pins).findByRole('link', { name: 'New name' })
+    act(() => navigate('/sessions/saved%2Fid'))
+    await waitFor(() => expect(within(pins).getByRole('link', { name: 'New name' })).toHaveAttribute('aria-current', 'page'))
+    act(() => s.streams[0].event('session_removed', { session_id: 'saved/id' }))
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Pinned sessions' })).not.toBeInTheDocument())
+  })
   it('groups dates under the actual hat instead of day headings', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 9, 2, 12, 0))

@@ -196,6 +196,10 @@ pub struct SummaryPage {
     /// or with an open question (`question_waits`). Within `hat` when one
     /// is given; whatever the cursor, `q` and `lifecycle`.
     pub waiting: u32,
+    // Navigation shortcuts across hats and lifecycles, outside the paged result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<SessionSummary>>", optional)]
+    pub sidebar_pins: Vec<SessionSummary>,
 }
 
 /// SSE `waiting_changed`'s data, on the list stream: `SummaryPage`'s
@@ -274,6 +278,7 @@ mod tests {
     #[test]
     fn a_summary_is_the_list_item_flattened() {
         let session = SessionItem {
+            sidebar_pinned: false,
             session_id: "s".into(),
             host_id: "h".into(),
             agent: "fake".into(),

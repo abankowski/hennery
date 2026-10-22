@@ -1,3 +1,6 @@
+-- Test-only rollback of sessions migration 33: navigation shortcuts.
+DROP INDEX sessions_sidebar_pinned;
+ALTER TABLE sessions DROP COLUMN sidebar_pinned;
 -- Test-only rollback of sessions migration 32 before historical fixtures.
 ALTER TABLE sessions DROP COLUMN unseen_event_id;
 ALTER TABLE sessions DROP COLUMN seen_event_id;

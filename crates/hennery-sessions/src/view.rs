@@ -258,6 +258,15 @@ async fn summaries(State(state): State<AppState>, Query(params): Query<ListParam
         let revision = state.store.max_event_id()?;
         let page = state.store.list(&filter.query())?;
         Ok(SummaryPage {
+            sidebar_pins: state
+                .store
+                .sidebar_pins()?
+                .into_iter()
+                .map(|s| state.store.family_summary(&s.session_id))
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect(),
             sessions: page
                 .sessions
                 .into_iter()

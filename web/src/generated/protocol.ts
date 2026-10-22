@@ -768,7 +768,11 @@ state: string, };
  * §5), read from `sessions` alone: never the catalogue, commands or plan
  * (P-23). The detail serves it as stored; the list, `bounded`.
  */
-export type SessionItem = { session_id: string, host_id: string, agent: string,
+export type SessionItem = { session_id: string,
+/**
+ * An operator shortcut in navigation; independent of idle parking holds.
+ */
+sidebar_pinned?: boolean, host_id: string, agent: string,
 /**
  * Canonical on its host since hats (umbrella §8.2).
  */
@@ -845,7 +849,11 @@ pending: Array<PendingItem>,
  * What its latest start or resume was given (plan 8e decision E10);
  * absent for a session not started or resumed since plan 8e.
  */
-mcp_delivery?: McpSessionDelivery | undefined, session_id: string, host_id: string, agent: string,
+mcp_delivery?: McpSessionDelivery | undefined, session_id: string,
+/**
+ * An operator shortcut in navigation; independent of idle parking holds.
+ */
+sidebar_pinned?: boolean, host_id: string, agent: string,
 /**
  * Canonical on its host since hats (umbrella §8.2).
  */
@@ -1362,7 +1370,7 @@ export type HatResolution = { canonical: string, exists: boolean, is_dir: boolea
  * `hat_id` re-assigns the session (ACP core §4.9): only with no running
  * adapter, and with a fresh step-up.
  */
-export type UpdateSessionRequest = { hat_id?: string | undefined,
+export type UpdateSessionRequest = { sidebar_pinned?: boolean, hat_id?: string | undefined,
 /**
  * Omitted: unchanged. Null: restore the agent or provisional title.
  */

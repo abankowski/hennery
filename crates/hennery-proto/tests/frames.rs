@@ -221,6 +221,7 @@ fn resume_frames_and_host_notes_use_the_spec_field_names() {
 /// A list item with only what every session has.
 fn bare_item() -> hennery_proto::rest::SessionItem {
     hennery_proto::rest::SessionItem {
+        sidebar_pinned: false,
         session_id: "s".into(),
         host_id: "h".into(),
         agent: "claude".into(),
@@ -296,7 +297,7 @@ fn session_detail_leaves_out_absent_optionals() {
     assert_eq!(
         serde_json::to_value(&detail).unwrap(),
         json!({
-            "session_id": "s", "host_id": "h", "agent": "claude", "cwd": "/tmp", "hat_id": "hat-1",
+            "session_id": "s", "sidebar_pinned": false, "host_id": "h", "agent": "claude", "cwd": "/tmp", "hat_id": "hat-1",
             "lifecycle": "active", "activity": "running", "presumed_parked": false,
             "created_at": "2026-10-07T12:00:00.000Z", "last_event_at": "2026-10-07T12:00:01.000Z",
             "open_turn": {"turn_id": "t", "state": "started"}, "pending": []
@@ -380,6 +381,7 @@ fn a_listed_item_is_bounded_field_by_field() {
 #[test]
 fn a_listed_item_stays_under_1_kib_with_every_field_at_its_worst() {
     let item = hennery_proto::rest::SessionItem {
+        sidebar_pinned: true,
         session_id: "0199a4c2-7e1f-7c3a-9b2d-4f6e8a0c1d2e".into(),
         // Past their caps (an older row's): cut to 32 bytes each.
         host_id: "\"".repeat(40),
