@@ -4,6 +4,7 @@ import { useClient } from '../app-client'
 import type { NewLikeThisResponse } from '../generated/protocol'
 import { confirmStart, rememberConfigurationReview, sessionHref, startRefusal } from '../lib/start'
 import { navigate } from '../router'
+import { subscribeNavigation } from '../router-events'
 
 // Like launcher drafts, sign-out clears this operation's browser lifetime.
 const LOGIN = 'hennery.draft.__new_like_this_login__'
@@ -25,8 +26,10 @@ export function useNewLikeThis(id: string) {
       sessionStorage.setItem(LOGIN, token)
     } catch { token = null /* The mounted view still has its navigation lifetime. */ }
     const path = location.pathname + location.search
+    let navigated = false
+    const unsubscribe = subscribeNavigation(() => { navigated = true })
     const current = () => {
-      if (!live.current || path !== location.pathname + location.search) return false
+      if (!live.current || navigated || path !== location.pathname + location.search) return false
       if (token === null) return true
       try { return sessionStorage.getItem(LOGIN) === token } catch { return false }
     }
@@ -54,6 +57,7 @@ export function useNewLikeThis(id: string) {
         setError(err instanceof ApiFailure && Object.hasOwn(words, err.code) ? words[err.code] : startRefusal(err))
       }
     } finally {
+      unsubscribe()
       pending.current = false
       if (live.current) setBusy(false)
     }

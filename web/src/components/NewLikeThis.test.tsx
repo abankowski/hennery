@@ -135,6 +135,33 @@ describe('New like this', () => {
     await act(async () => finish(json({ session_id: 'new/a', hat_id: 'hat', config }, 202)))
     expect(location.pathname).toBe('/hosts')
   })
+  it.each([
+    ['start', 'app'], ['confirmation', 'app'], ['start', 'history'], ['confirmation', 'history'],
+  ])('does not revive a pending %s after leaving and returning through %s navigation', async (phase, navigation) => {
+    let finish!: (response: Response) => void
+    const delayed = new Promise<Response>(resolve => { finish = resolve })
+    const created = () => json({ session_id: 'new/a', hat_id: 'hat', config }, 202)
+    const catalog = () => json({ session_id: 'new/a', config_options: options, commands: [], ...config })
+    const s = routed(call => {
+      if (call.method === 'POST') return phase === 'start' ? delayed : created()
+      if (call.path.endsWith('/catalog')) return phase === 'confirmation' ? delayed : catalog()
+      if (call.path.startsWith('/api/view/')) return json({ items: [], older: false, epoch: 'e', revision: 0 })
+      return json({ session_id: 'new/a', hat_id: 'hat', lifecycle: 'active' })
+    })
+    const hook = renderHook(() => useNewLikeThis('source/a'), { wrapper: s.wrapper })
+    act(() => { void hook.result.current.start() })
+    await waitFor(() => expect(s.calls.some(call => phase === 'start' ? call.method === 'POST' : call.path.endsWith('/catalog'))).toBe(true))
+    act(() => {
+      for (const to of ['/sessions?search=1', '/sessions']) {
+        if (navigation === 'app') navigate(to)
+        else { history.replaceState(null, '', to); window.dispatchEvent(new PopStateEvent('popstate')) }
+      }
+    })
+    await act(async () => finish(phase === 'start' ? created() : catalog()))
+    await waitFor(() => expect(hook.result.current.busy).toBe(false))
+    expect(location.pathname + location.search).toBe('/sessions')
+    if (phase === 'start') expect(s.calls.filter(call => call.method === 'GET')).toHaveLength(0)
+  })
   it('does not navigate or confirm a session after signing out while start is pending', async () => {
     let finish!: (response: Response) => void
     const s = server(() => new Promise(resolve => { finish = resolve }))

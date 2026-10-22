@@ -8,9 +8,11 @@
 
 ## Execution status
 
-Built first in an isolated worktree. API and UI regressions were observed failing before implementation (four API tests; seven UI tests). A later host-refusal regression was RED before preserving the allocated session id. Targeted checks and real mobile/desktop browser checks pass. Replay, guard probes and final gates are recorded below. Independent review and platform CI are parent-owned; no deployed service was changed.
+Built first in an isolated worktree. API and UI regressions were observed failing before implementation (four API tests; seven UI tests). A later host-refusal regression was RED before preserving the allocated session id. Targeted checks and real mobile/desktop browser checks pass. Replay, guard probes and final gates are recorded below. Independent review approved the implementation after the navigation amendment. PR #245 carries CI and merge; no deployed service was changed.
 
 <!-- FINAL_EVIDENCE -->
+- Independent whole-branch review by `review_new_like_this` found one Medium navigation defect: leaving and returning to the same URL revived a pending redirect. A per-operation sticky flag now observes the existing app/history navigation subscription and is cleaned up in finally. Four regressions (POST/read-back waits × app/history navigation) were RED, then green; removing the guard reproduced all four assertion failures in a separate copy. Scoped re-review approved the exact hook/test delta over `b0b772b4`, with no further actionable findings.
+- After that amendment, typecheck, full web suite (**2,674 tests in 158 files**), build, embedded binary build and **2 real-browser cases** exited 0. The 17-test asynchronous UI set passed **4×3 load**, 204 executions and 12 suite invocations, all exit 0. Rust bytes are unchanged from the six successful replay gates; no redundant full workspace replay was run for this UI amendment. Total removal guards exercised: **13**.
 - Implementation committed as `6e640cccfcef27e0145afae451ea3427d6885fa9` and pushed over SSH on `feat/new-like-this`. The parent review request covers `7630ebc3..6e640cccfcef27e0145afae451ea3427d6885fa9`; the follow-up documentation commit records this execution evidence only.
 - All six Rust gates exited 0 in fresh replay 2: fmt, workspace/all-target clippy, production clippy, workspace tests, protocol generator and view generator. The workspace run passed **2,960 tests**, with **9 existing live/pinned tests ignored**, across 186 test-result summaries. It ran once; no full workspace run was spent on replay 1, which stopped at a needless borrow in the new test fixture.
 - Web typecheck, full suite (**2,670 tests in 158 files**) and build exited 0 after the viewport amendment. The final menu error reset then passed typecheck, **91 targeted tests**, build and the real-browser acceptance again. Replay 2's earlier full web suite had 2,669 tests before the new viewport regression.
@@ -20,7 +22,7 @@ Built first in an isolated worktree. API and UI regressions were observed failin
 - The final patch reconstructs the staged tree from the base using a separate Git index, with **20 extracted implementation files** and the plan copied as its input document. All **1,169 tracked files** are compared with the replay. Final Rust source bytes match the complete Rust gate run; the small UI amendment is replayed and checked separately as described above.
 - The viewport amendment was observed RED (Window is not a Node), fixed with a Node check and removal-probed. The source/header error is cleared when this new action starts, matching other menu actions.
 - Scratch trees retained for parent cleanup: new-like-this-replay-1, new-like-this-replay-2 and new-like-this-probes-1. Logs and screenshots are under .superpowers/sdd/new-like-this/ in the implementation/replay/probe trees.
-- Not run: unrelated Playwright suites, credentialed pinned/provider checks (the nine normal workspace skips), native Nix packaging/platform CI, independent review or deployment. No adapter/runtime or package/dependency input changed. Parent owns review, CI and release.
+- Not run locally: unrelated Playwright suites, credentialed pinned/provider checks (the nine normal workspace skips), native Nix packaging or deployment. No adapter/runtime or package/dependency input changed. The parent is driving PR #245 through CI and merge using the personal GitHub account; child-only GitHub restrictions do not apply to that role.
 <!-- END_FINAL_EVIDENCE -->
 
 ## Scope
@@ -39,7 +41,7 @@ One task: API response/action, shared UI action, header/list entry points, confi
 
 ## Global constraints
 
-Use the flake dev shell; keep targets separate and APFS-clone them into replay/probe trees. Do not edit another lane or real data. No GitHub API/CLI action. One full workspace test run and one fresh replay per plan; targeted timing/load checks for the asynchronous admission/navigation and HTTP start paths only. Parent owns independent review and merge. New docs carry the repository-required footer.
+Use the flake dev shell; keep targets separate and APFS-clone them into replay/probe trees. Do not edit another lane or real data. GitHub actions use the parent's verified personal account. One full workspace test run and one fresh replay per plan; targeted timing/load checks for the asynchronous admission/navigation and HTTP start paths only. Parent owns independent review and merge. New docs carry the repository-required footer.
 
 ## Review focus
 
@@ -79,8 +81,8 @@ Use the flake dev shell; keep targets separate and APFS-clone them into replay/p
 - [x] Extract and apply the exact patch below onto the base in a fresh worktree; copy this plan as the replay input document. Verify the extractor found 20 files and compare all tracked bytes, including generated artifacts.
 - [x] Run targeted removal probes in a separate cloned copy. Every mutation is restored only inside that disposable copy.
 - [x] Run the web gates and all six Rust gates on the replay. Record actual exit statuses and test totals.
-- [x] Commit and push the tested bytes; independent parent review is requested in the handoff.
-- [ ] Parent: independent review, platform CI, PR/merge and release.
+- [x] Commit and push the tested bytes; independent whole-branch review and scoped re-confirmation approved the final implementation.
+- [ ] Parent: finish PR #245 CI and merge. Deployment/release is separate.
 
 **Verification commands** (inside nix develop, from the replay root):
 
@@ -861,10 +863,10 @@ index 00000000..4d1539bc
 +}
 diff --git a/web/src/components/NewLikeThis.test.tsx b/web/src/components/NewLikeThis.test.tsx
 new file mode 100644
-index 00000000..626725a6
+index 00000000..7aa9d43f
 --- /dev/null
 +++ b/web/src/components/NewLikeThis.test.tsx
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,194 @@
 +import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 +import { beforeEach, describe, expect, it, vi } from 'vitest'
 +import { json, routed } from '../test-stream'
@@ -1001,6 +1003,33 @@ index 00000000..626725a6
 +    navigate('/hosts')
 +    await act(async () => finish(json({ session_id: 'new/a', hat_id: 'hat', config }, 202)))
 +    expect(location.pathname).toBe('/hosts')
++  })
++  it.each([
++    ['start', 'app'], ['confirmation', 'app'], ['start', 'history'], ['confirmation', 'history'],
++  ])('does not revive a pending %s after leaving and returning through %s navigation', async (phase, navigation) => {
++    let finish!: (response: Response) => void
++    const delayed = new Promise<Response>(resolve => { finish = resolve })
++    const created = () => json({ session_id: 'new/a', hat_id: 'hat', config }, 202)
++    const catalog = () => json({ session_id: 'new/a', config_options: options, commands: [], ...config })
++    const s = routed(call => {
++      if (call.method === 'POST') return phase === 'start' ? delayed : created()
++      if (call.path.endsWith('/catalog')) return phase === 'confirmation' ? delayed : catalog()
++      if (call.path.startsWith('/api/view/')) return json({ items: [], older: false, epoch: 'e', revision: 0 })
++      return json({ session_id: 'new/a', hat_id: 'hat', lifecycle: 'active' })
++    })
++    const hook = renderHook(() => useNewLikeThis('source/a'), { wrapper: s.wrapper })
++    act(() => { void hook.result.current.start() })
++    await waitFor(() => expect(s.calls.some(call => phase === 'start' ? call.method === 'POST' : call.path.endsWith('/catalog'))).toBe(true))
++    act(() => {
++      for (const to of ['/sessions?search=1', '/sessions']) {
++        if (navigation === 'app') navigate(to)
++        else { history.replaceState(null, '', to); window.dispatchEvent(new PopStateEvent('popstate')) }
++      }
++    })
++    await act(async () => finish(phase === 'start' ? created() : catalog()))
++    await waitFor(() => expect(hook.result.current.busy).toBe(false))
++    expect(location.pathname + location.search).toBe('/sessions')
++    if (phase === 'start') expect(s.calls.filter(call => call.method === 'GET')).toHaveLength(0)
 +  })
 +  it('does not navigate or confirm a session after signing out while start is pending', async () => {
 +    let finish!: (response: Response) => void
@@ -1200,16 +1229,17 @@ index 324f9c1b..32d4aad4 100644
   * Reuse for retries of the same submit, including a lost response.
 diff --git a/web/src/hooks/useNewLikeThis.ts b/web/src/hooks/useNewLikeThis.ts
 new file mode 100644
-index 00000000..2d970856
+index 00000000..501e0ad5
 --- /dev/null
 +++ b/web/src/hooks/useNewLikeThis.ts
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,66 @@
 +import { useEffect, useRef, useState } from 'react'
 +import { ApiFailure } from '../api/errors'
 +import { useClient } from '../app-client'
 +import type { NewLikeThisResponse } from '../generated/protocol'
 +import { confirmStart, rememberConfigurationReview, sessionHref, startRefusal } from '../lib/start'
 +import { navigate } from '../router'
++import { subscribeNavigation } from '../router-events'
 +
 +// Like launcher drafts, sign-out clears this operation's browser lifetime.
 +const LOGIN = 'hennery.draft.__new_like_this_login__'
@@ -1231,8 +1261,10 @@ index 00000000..2d970856
 +      sessionStorage.setItem(LOGIN, token)
 +    } catch { token = null /* The mounted view still has its navigation lifetime. */ }
 +    const path = location.pathname + location.search
++    let navigated = false
++    const unsubscribe = subscribeNavigation(() => { navigated = true })
 +    const current = () => {
-+      if (!live.current || path !== location.pathname + location.search) return false
++      if (!live.current || navigated || path !== location.pathname + location.search) return false
 +      if (token === null) return true
 +      try { return sessionStorage.getItem(LOGIN) === token } catch { return false }
 +    }
@@ -1260,6 +1292,7 @@ index 00000000..2d970856
 +        setError(err instanceof ApiFailure && Object.hasOwn(words, err.code) ? words[err.code] : startRefusal(err))
 +      }
 +    } finally {
++      unsubscribe()
 +      pending.current = false
 +      if (live.current) setBusy(false)
 +    }
@@ -1399,6 +1432,6 @@ index e8fab204..ab1838ea 100644
 
 ## After this plan
 
-The parent runs an independent review and Linux/macOS CI, opens/merges the PR and handles deployment/release. The feature requires no migration or new configuration. Scratch replay/probe directories are retained for parent cleanup. No lesson or project state is written into global assistant memory.
+PR #245 runs the repository's selected CI jobs before merge. Independent review is approved after the navigation amendment. The feature requires no migration or new configuration. Deployment/release is separate. Scratch replay/probe directories are retained for parent cleanup. No lesson or project state is written into global assistant memory.
 
 Generated with Claude AI — please review before distribution.
