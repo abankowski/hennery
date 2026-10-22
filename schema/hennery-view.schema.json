@@ -1124,6 +1124,26 @@
         }
       ]
     },
+    "ReviewResult": {
+      "properties": {
+        "event_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "outcome": {
+          "$ref": "#/$defs/TurnOutcome"
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "turn_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
     "SessionRemoved": {
       "description": "SSE `session_removed`'s data: the session was deleted (plan 9a). On the\nitem stream it is the last message, with no id; on the list stream it\ncarries `<epoch>:<cursor>` only when it ends a burst, as any message.",
       "properties": {
@@ -1245,6 +1265,17 @@
         "question_waits": {
           "description": "An open question: the agent waits on it, in a turn or outside one,\nwhether or not an answer is queued (a question outside a turn sets\nno `blocked` activity).",
           "type": "boolean"
+        },
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A completed or failed result the operator has not read. Reading it\nnever answers a permission or an elicitation."
         },
         "session_id": {
           "type": "string"
@@ -1687,6 +1718,16 @@
         "content"
       ],
       "type": "object"
+    },
+    "TurnOutcome": {
+      "description": "How a turn ended. Exactly one `turn_ended` per accepted turn (ACP core §4.4).",
+      "enum": [
+        "completed",
+        "cancelled",
+        "failed",
+        "interrupted"
+      ],
+      "type": "string"
     },
     "Unrecognised": {
       "description": "An update the fold could not place.",

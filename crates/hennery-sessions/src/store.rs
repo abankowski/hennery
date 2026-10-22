@@ -445,6 +445,8 @@ END;",
     include_str!("prompt_queue.sql"),
     // Repository grouping identity (30). Older hosts/rows retain NULL.
     "ALTER TABLE sessions ADD COLUMN project_root TEXT;",
+    // Durable result reviews (31).
+    include_str!("review.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -4194,6 +4196,9 @@ impl Store {
                     mark_unapplied(&tx, &self.owner, fact_id)?;
                 } else {
                     edge = Some(PushEdge::TurnEnded(*outcome));
+                    if matches!(outcome, TurnOutcome::Completed | TurnOutcome::Failed) {
+                        crate::review::record(&tx, &self.owner, session_id, fact_id)?;
+                    }
                 }
             }
             SessionBody::SessionParked { reason } => {

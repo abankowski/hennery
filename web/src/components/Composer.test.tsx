@@ -104,6 +104,28 @@ const textarea = () => screen.getByLabelText('Prompt') as HTMLTextAreaElement
 const type = (text: string) => fireEvent.change(textarea(), { target: { value: text } })
 const sendButton = () => screen.getByRole('button', { name: 'Send' })
 
+it('acknowledges only the displayed result captured when a successful send began', async () => {
+  let finish!: (response: Response) => void
+  const first = vi.fn(), newer = vi.fn()
+  const view = mount(() => new Promise<Response>(resolve => { finish = resolve }), { onSent: first })
+  type('Continue')
+  fireEvent.click(sendButton())
+  await waitFor(() => expect(view.prompts()).toHaveLength(1))
+  view.rerender({ onSent: newer })
+  await act(async () => { finish(json({ turn_id: 't-new' }, 202)) })
+  expect(first).toHaveBeenCalledOnce()
+  expect(newer).not.toHaveBeenCalled()
+})
+
+it('does not acknowledge a result when sending a prompt is refused', async () => {
+  const read = vi.fn()
+  mount(() => json({ code: 'turn_in_progress', message: 'Busy' }, 409), { onSent: read })
+  type('Continue')
+  fireEvent.click(sendButton())
+  await waitFor(() => expect(sendButton()).toBeEnabled())
+  expect(read).not.toHaveBeenCalled()
+})
+
 function png(name: string, body = name): File {
   return new File([body], name, { type: 'image/png' })
 }

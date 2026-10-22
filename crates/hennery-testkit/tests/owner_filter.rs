@@ -46,6 +46,11 @@ const SOURCES: &[(&str, &str, usize)] = &[
         30,
     ),
     (
+        "hennery-sessions/src/review.rs",
+        include_str!("../../hennery-sessions/src/review.rs"),
+        5,
+    ),
+    (
         "hennery-sessions/src/delegation_settings.rs",
         include_str!("../../hennery-sessions/src/delegation_settings.rs"),
         3,

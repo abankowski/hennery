@@ -1,4 +1,5 @@
 import { useSessionNames } from './SessionNames'
+import { needsOperator } from '../lib/status'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { AppActions } from '../app-actions'
 import { useClient } from '../app-client'
@@ -77,7 +78,7 @@ export default function CommandPalette({ actions, loaded, close }: {
     id: `session:${row.session_id}`, label: names(row, row.session_id).text, provisional: names(row).provisional,
     hint: '', detail: [row.cwd, row.git_branch].filter(Boolean).join(' · '),
     meta: [context.hats?.find(hat => hat.id === row.hat_id)?.name, context.hosts?.find(host => host.host_id === row.host_id)?.name].filter(Boolean).join(' · ') || row.cwd,
-    icon: (row.operator_attention > 0 ? 'hand-raised' : row.activity === 'running' ? 'play-circle' : 'clock') as IconName,
+    icon: (needsOperator(row) ? 'hand-raised' : row.activity === 'running' ? 'play-circle' : 'clock') as IconName,
     run: () => navigate(`/sessions/${encodeURIComponent(row.session_id)}`),
   })
   const primary = new Set(['new-session', 'rename-session', 'add-host', 'open-defaults'])
@@ -88,9 +89,9 @@ export default function CommandPalette({ actions, loaded, close }: {
   const commands = registeredCommands(actions, desktop).map(action => ({ ...action, label: action.id === 'open-defaults' ? 'Edit defaults' : action.label })).filter(action => q || primary.has(action.id)).filter(action => action.label.toLocaleLowerCase().includes(q.toLocaleLowerCase()))
   const groups = [
     { label: 'Recent', results: q ? [] : previous.map(row => ({ ...sessionResult(row), hint: row.session_id === context.previousSessionId ? '↵' : '' })) },
-    { label: 'Needs you', results: rows.filter(row => row.operator_attention > 0 && (q || !recentIds.has(row.session_id))).map(sessionResult) },
+    { label: 'Needs you', results: rows.filter(row => needsOperator(row) && (q || !recentIds.has(row.session_id))).map(sessionResult) },
     { label: 'Actions', results: commands.map(action => ({ id: `action:${action.id}`, label: action.id === 'open-defaults' ? 'Edit defaults' : action.label, hint: commandHint(action.id, match(pathname).name, desktop), detail: '', meta: '', provisional: false, icon: (action.id === 'add-host' ? 'server-stack' : action.id === 'new-session' ? 'plus-circle' : action.id === 'open-defaults' ? 'adjustments-horizontal' : 'arrow-right') as IconName, run: () => { actions.dispatch(action.id) } })) },
-    { label: q ? 'Matching sessions' : 'Sessions', results: rows.filter(row => row.operator_attention === 0 && (q || !recentIds.has(row.session_id))).map(sessionResult) },
+    { label: q ? 'Matching sessions' : 'Sessions', results: rows.filter(row => !needsOperator(row) && (q || !recentIds.has(row.session_id))).map(sessionResult) },
   ]
   const results = groups.flatMap(group => group.results)
   const preferred = results.findIndex(result => result.id === `session:${context.previousSessionId}`)

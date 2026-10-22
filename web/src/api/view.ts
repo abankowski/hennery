@@ -38,6 +38,20 @@ export function itemPage(client: Client, id: string, q: ItemPageQuery = {}): Pro
   )
 }
 
+/** The items of one turn, walking back past turns that started after it (a
+ *  queued prompt or a wake can start the next turn at once). `revision` is the
+ *  newest page's. Empty when the turn is not within `pages` groups. */
+export async function turnItems(client: Client, id: string, turnId: string, pages = 6): Promise<{ items: Item[]; revision: number }> {
+  let page = await itemPage(client, id, { limit: 1 })
+  const revision = page.revision
+  for (let i = 1; ; i++) {
+    const items = page.items.filter(item => item.turn_id === turnId)
+    const first = page.items[0]?.turn_id
+    if (items.length || !page.older || !first || i >= pages) return { items, revision }
+    page = await itemPage(client, id, { beforeTurn: first, limit: 1 })
+  }
+}
+
 export interface SummaryQuery {
   cursor?: string
   limit?: number
@@ -112,4 +126,9 @@ export function familyPage(client: Client, id: string, after?: string): Promise<
 
 export function takeOver(client: Client, id: string): Promise<void> {
   return client.request<void>('POST', `/api/view/sessions/${enc(id)}/takeover`, {})
+}
+
+/** A captured result only; a stale browser cannot acknowledge newer work. */
+export function markResultRead(client: Client, id: string, eventId: number): Promise<void> {
+  return client.request<void>('POST', `/api/view/sessions/${enc(id)}/read`, { event_id: eventId })
 }

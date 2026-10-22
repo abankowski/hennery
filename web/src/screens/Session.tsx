@@ -1,4 +1,5 @@
 import SessionName from '../components/SessionNames'
+import ResultReview, { useReadResult } from '../components/ResultReview'
 import { useTurnEnds } from '../hooks/useTurnEnds'
 import '../styles/session.css'
 // One session (frontend spec §6): its header, its transcript, whose question
@@ -263,6 +264,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   const onFamilyPage = useCallback((page: FamilyPage) => setFamilyRead({ id, page }), [id])
   const family = familyRead?.id === id && (!summary || (summary.hat_id === familyRead.page.summary.hat_id && summary.family?.revision === familyRead.page.summary.family?.revision)) ? familyRead.page : null
   const info = useHeaderInfo(id, summary ?? family?.summary, awaitSummary, mcp.detail)
+  const { read: acknowledgeResult } = useReadResult(id, info?.review)
   const { search } = useLocation()
   useEffect(() => { if (new URLSearchParams(search).get('family') === '1') openFamily() }, [search, openFamily])
   const requested = new URLSearchParams(search).get('pending')
@@ -487,6 +489,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
           />
         }
       />
+      {info?.review && <ResultReview key={info.review.event_id} id={id} review={info.review} />}
       {info?.family?.parent && family?.routing === 'active' && <div className="parent-banner" role="region" aria-label="Parent-driven session"><p>Driven by <Link to={`/sessions/${encodeURIComponent(info.family.parent.session_id)}`}><SessionName session={info.family.parent} fallback="parent session" /></Link>. Answers go to this child. A prompt from you takes over this session.</p><button type="button" className="btn btn-ghost btn-sm" disabled={taking} onClick={() => void takeover()}>{taking ? 'Taking over…' : 'Take over'}</button>{takeError && <p role="alert">{takeError}</p>}</div>}
       <div className="session-workspace">
       <div className="session-conversation">
@@ -517,7 +520,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
       >
         {s.loading ? <p className="transcript-empty">Loading…</p> : <>
           {s.pinned.length > 0 && <div className="pinned-questions" aria-label="Earlier questions"><Transcript items={s.pinned} env={env} /></div>}
-          <Transcript items={win.visible} env={env} turnEnds={turnEnds} waiting={info?.lifecycle === 'active' && info.activity === 'idle' && !info.question_waits && !info.family?.child_counts.active} />
+          <Transcript items={win.visible} env={env} review={info?.review} turnEnds={turnEnds} waiting={info?.lifecycle === 'active' && info.activity === 'idle' && !info.question_waits && !info.family?.child_counts.active} />
         </>}
       </Scroller>
       {startNotice && (
@@ -527,6 +530,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
       )}
       {info?.lifecycle === 'parked' && sessionFooter}
       <Composer
+        onSent={info?.review ? () => void acknowledgeResult() : undefined}
         handle={composer}
         sessionId={id}
         session={info ? { activity: info.activity, lifecycle: info.lifecycle } : null}

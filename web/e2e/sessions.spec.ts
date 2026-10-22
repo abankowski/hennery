@@ -22,6 +22,17 @@ import type { Item, SessionSummary } from '../src/generated/view'
 const PASSWORD = 'correct horse battery staple'
 const PROMPT = 'Write the notes, please.'
 
+/** A finished turn is a result to review until its end has been in view (result
+ *  inbox): scroll there when an answered card above it took the view. */
+async function seeResult(page: Page) {
+  const badge = page.locator('.session-head .badge')
+  // A queued turn ending meanwhile re-keys the end marker: retry until read.
+  await expect(async () => {
+    if (await badge.textContent() === 'To review') await page.locator('.result-read-sentinel').last().scrollIntoViewIfNeeded({ timeout: 1000 }).catch(() => {})
+    await expect(badge).toHaveText('Idle', { timeout: 1000 })
+  }).toPass({ timeout: 15_000 })
+}
+
 // Every prompt: one permission ask, then a short Markdown message after the
 // echo of its answer (`permission:selected:<option>`, no newline of its own).
 const SCRIPT = {
@@ -306,6 +317,7 @@ for (const width of [1280, 390]) {
       // The reply opens with what the agent got this time.
       const reply = page.locator('.bubble', { has: page.getByText('permission:selected:reject', { exact: true }) })
       await expect(reply.getByRole('listitem')).toHaveText(['first step', 'second step'])
+      await seeResult(page)
       await expect(page.locator('.session-head .badge')).toHaveText('Idle')
       await expect(page.locator('.bubble.user').getByText('And the second part.', { exact: true })).toHaveCount(1)
     })
@@ -364,6 +376,7 @@ for (const width of [1280, 390]) {
         await expect(cards).toHaveCount(4, { timeout: 15000 })
         await expect(page.locator('.bubble.user').last()).toContainText('Then focus on the tests.')
         await cards.nth(3).getByRole('button', { name: 'Allow', exact: true }).click()
+        await seeResult(page)
         await expect(page.locator('.session-head .badge')).toHaveText('Idle')
         await expect(remote).toHaveCount(0)
       } finally { await other.close() }
@@ -426,6 +439,7 @@ for (const width of [1280, 390]) {
       await expect(page.locator('.bubble.user').getByText('This new send releases the park hold.', { exact: true })).toHaveCount(1)
       await expect(cards.last().getByRole('button', { name: 'Allow', exact: true })).toBeVisible()
       await cards.last().getByRole('button', { name: 'Allow', exact: true }).click()
+      await seeResult(page)
       await expect(page.locator('.session-head .badge')).toHaveText('Idle')
       await expect(queue).toHaveCount(0)
       await expect(page.locator('.bubble.user').getByText('This queued head waits for Resume.', { exact: true })).toHaveCount(1)

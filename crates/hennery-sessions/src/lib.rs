@@ -42,6 +42,7 @@ mod prompt_queue_head_tests {
 pub mod push;
 mod redact;
 mod resolve;
+pub mod review;
 mod session_defaults_api;
 pub mod session_tools;
 mod shared_files;
