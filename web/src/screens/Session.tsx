@@ -188,7 +188,9 @@ function useStartNotice(id: string): string | null {
   useEffect(() => {
     if (fromLink === null) return
     setHeld({ id, text: fromLink })
-    navigate(pathname, { replace: true })
+    const query = new URLSearchParams(location.search)
+    query.delete('notice'); query.delete('code')
+    navigate(pathname + (query.size ? `?${query}` : ''), { replace: true })
   }, [fromLink, id, pathname])
   return fromLink ?? (held && held.id === id ? held.text : null)
 }
@@ -336,6 +338,15 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   // The composer's handle: the item seams reach the draft through it, and
   // stay the same functions for as long as the view is shown.
   const composer = useRef<ComposerHandle>(null)
+  const focusNew = useRef(new URLSearchParams(search).get('focus') === 'prompt')
+  useEffect(() => {
+    if (!focusNew.current || s.loading || s.removed || !info || !composer.current) return
+    focusNew.current = false
+    composer.current.focus()
+    const query = new URLSearchParams(location.search)
+    query.delete('focus')
+    navigate(location.pathname + (query.size ? `?${query}` : ''), { replace: true })
+  }, [s.loading, s.removed, info])
   const focusComposer = useCallback(() => {
     setSelectedQuestion(null)
     setTimeout(() => composer.current?.focus(), 0)

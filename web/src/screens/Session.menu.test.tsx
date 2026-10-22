@@ -57,7 +57,7 @@ describe('SessionView: the header menu', () => {
     expect(trigger()).toHaveAttribute('aria-expanded', 'false')
     expect(document.querySelector('.session-menu-list')).toBeNull()
     openMenu()
-    expect(entries()).toEqual(['Rename', 'Do not park', 'Park', 'Close', 'Delete session'])
+    expect(entries()).toEqual(['Rename', 'New like this', 'Do not park', 'Park', 'Close', 'Delete session'])
     // Opened from a click or a key, focus goes to its first entry.
     expect(screen.getByRole('button', { name: 'Rename' })).toHaveFocus()
   })
@@ -65,13 +65,13 @@ describe('SessionView: the header menu', () => {
   it('offers no Park when the host does not announce it', async () => {
     await show({}, { hosts: () => json([{ host_id: 'h1', name: 'build-box', capabilities: ['images'] }]) })
     openMenu()
-    expect(entries()).toEqual(['Rename', 'Do not park', 'Close', 'Delete session'])
+    expect(entries()).toEqual(['Rename', 'New like this', 'Do not park', 'Close', 'Delete session'])
   })
 
   it('offers no Park while the host’s capabilities are unknown', async () => {
     await show({}, { hosts: () => json([{ host_id: 'h1', name: 'build-box' }]) })
     openMenu()
-    expect(entries()).toEqual(['Rename', 'Do not park', 'Close', 'Delete session'])
+    expect(entries()).toEqual(['Rename', 'New like this', 'Do not park', 'Close', 'Delete session'])
   })
 
   it.each([
@@ -82,7 +82,7 @@ describe('SessionView: the header menu', () => {
   ])('a %s session offers no Park; a closed one no Close', async (lifecycle, offered) => {
     await show({ lifecycle })
     openMenu()
-    expect(entries()).toEqual(['Rename', 'Do not park', ...offered])
+    expect(entries()).toEqual(['Rename', 'New like this', 'Do not park', ...offered])
   })
 
   it('Park parks the session, and the menu closes with focus back on its button', async () => {

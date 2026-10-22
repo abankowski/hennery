@@ -399,7 +399,7 @@ for (const width of [1280, 390]) {
       // An active session: Close, Delete, and Park if its host can park.
       const list = page.locator('.session-menu-list')
       const names = await list.getByRole('button').allTextContents()
-      expect(names.filter((n) => n !== 'Park')).toEqual(['Rename', 'Close', 'Delete session'])
+      expect(names.filter((n) => n !== 'Park')).toEqual(['Rename', 'New like this', 'Close', 'Delete session'])
       expect((await list.getByRole('switch', { name: 'Do not park', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
       for (const name of names) {
         const box = await list.getByRole('button', { name, exact: true }).boundingBox()

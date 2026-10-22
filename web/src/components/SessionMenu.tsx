@@ -27,6 +27,7 @@ import { sessionPath } from './SessionRow'
 import { Icon } from './ui'
 import ConfirmDialog from './ConfirmDialog'
 import { closeRefusal, deleteRefusal, parkRefusal } from './sessionWords'
+import { useNewLikeThis } from '../hooks/useNewLikeThis'
 
 interface Props {
   onRename?: () => void
@@ -55,7 +56,9 @@ export default function SessionMenu({ id, lifecycle, family, queuedCount = 0, ca
   const menuId = useId()
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [actionBusy, setBusy] = useState(false)
+  const like = useNewLikeThis(id)
+  const busy = actionBusy || like.busy
   const [error, setError] = useState<string | null>(null)
   const [hold, setHold] = useState<IdleHoldState | null>(null)
   const [pinBusy, setPinBusy] = useState(false)
@@ -164,6 +167,7 @@ export default function SessionMenu({ id, lifecycle, family, queuedCount = 0, ca
       {open && (
         <div className="session-menu-list" id={menuId}>
           {onRename && <button type="button" onClick={() => { setOpen(false); onRename() }}>Rename</button>}
+          <button type="button" disabled={busy || lifecycle === undefined || hostConnected === false} title={hostConnected === false ? 'The host is offline' : undefined} onClick={() => { dismiss(); setError(null); void like.start() }}>New like this</button>
           <button type="button" role="switch" aria-label="Do not park" aria-checked={hold?.pinned ?? false} disabled={busy || pinBusy || hold === null} onClick={() => void togglePin()}><span>Do not park</span><span className="idle-hold-state" aria-hidden="true">{hold ? hold.pinned ? '✓ On' : 'Off' : '…'}</span></button>
           {holdNote && <p className="idle-hold-note" role="status">{holdNote}</p>}
           {showPark && (
@@ -191,9 +195,10 @@ export default function SessionMenu({ id, lifecycle, family, queuedCount = 0, ca
           </button>
         </div>
       )}
-      {error && (
+      {like.busy && <span className="session-like-pending" role="status">Starting session…</span>}
+      {(error || like.error) && (
         <p className="form-error session-menu-error" role="alert">
-          <bdi>{error}</bdi>
+          <bdi>{error || like.error}</bdi>
         </p>
       )}
       {/* The page behind this dialog is not made inert (as on Hosts and Hats;

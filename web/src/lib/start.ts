@@ -37,7 +37,7 @@ export function startRefusal(err: unknown): string {
  *    prompt was typed, and waits as the session's draft;
  *  - `prompt_failed`: the session started, but the first prompt was
  *    refused (its code travels as `code`). */
-export type StartNotice = { kind: 'start_unknown'; kept: boolean } | { kind: 'prompt_failed'; code: string; message: string }
+export type StartNotice = { kind: 'start_unknown'; kept: boolean } | { kind: 'prompt_failed'; code: string; message: string } | { kind: 'settings_unconfirmed'; message: string }
 
 /** `/sessions/<id>`, with the notice as a query flag.
  *
@@ -50,7 +50,7 @@ export type StartNotice = { kind: 'start_unknown'; kept: boolean } | { kind: 'pr
  *  words it. */
 export function sessionHref(
   id: string,
-  notice?: { kind: 'start_unknown'; kept: boolean } | { kind: 'prompt_failed'; code: string },
+  notice?: { kind: 'start_unknown'; kept: boolean } | { kind: 'prompt_failed'; code: string } | { kind: 'settings_unconfirmed' },
 ): string {
   const path = `/sessions/${encodeURIComponent(id)}`
   if (!notice) return path
@@ -82,6 +82,7 @@ export function readStartNotice(search: string, sessionId = currentSessionId()):
   const kind = query.get('notice')
   if (kind === 'start_unknown') return { kind, kept: false }
   if (kind === 'start_unknown_draft') return { kind: 'start_unknown', kept: true }
+  if (kind === 'settings_unconfirmed') return { kind, message: configurationReview(sessionId) ?? PROMPT_REFUSED.config_unconfirmed }
   if (kind === 'prompt_failed') {
     // A link is anyone's to write: only a code's shape is shown, never
     // free text, and only the table's own keys pick a wording.
@@ -118,6 +119,7 @@ export function rememberConfigurationReview(id: string, catalog: import('../gene
 
 /** A notice in words, for the session view. */
 export function startNoticeText(notice: StartNotice): string {
+  if (notice.kind === 'settings_unconfirmed') return notice.message
   if (notice.kind === 'start_unknown') {
     const started = 'The host went away while this session was starting: it may still start, and shows here when the host reconnects.'
     return notice.kept ? `${started} A first prompt was not sent: it waits as this session’s draft.` : started

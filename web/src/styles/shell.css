@@ -86,6 +86,18 @@
 .session-table .sess-time,.session-table .sess-agent,.session-table .sess-machine,.session-table .sess-flag { display:none; }
 .sess-resume { font-size:10px; color:var(--hn-accent-fg); }
 .sess-item { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:6px; }
+.sess-item:has(>.sess-children) { grid-template-columns:minmax(0,1fr) auto auto; }
+.session-row-actions { grid-column:-2; grid-row:1; position:relative; align-self:start; padding-top:6px; }
+.session-menu-list.session-row-menu { position:fixed; width:210px; right:auto; z-index:80; }
+.session-row-error { max-width:240px; overflow-wrap:anywhere; font-size:12px; }
+.session-like-pending { display:block; font-size:11px; color:var(--hn-fg-3); }
+.sess-children { grid-column:2; grid-row:1; }
+@media (max-width:767px) {
+  .session-row-actions { padding-top:0; }
+  .session-row-actions .session-menu-btn { width:44px; height:44px; }
+  .session-table .sess-item .sess-time { position:static; flex:none; }
+  .session-table .sess-row1 { padding-right:0; }
+}
 .sess-children { max-width:160px; display:flex; align-items:center; gap:5px; border:1px solid var(--hn-line); border-radius:4px; padding:3px 5px; background:var(--hn-sunken); color:var(--hn-fg-3); font:400 10px var(--font-body); white-space:nowrap; }
 .sess-children > span:first-child { flex:none; }.sess-children-status { overflow:hidden; text-overflow:ellipsis; }
 .sess-children[aria-expanded=true] { background:var(--hn-accent-wash); color:var(--hn-accent-fg); }
