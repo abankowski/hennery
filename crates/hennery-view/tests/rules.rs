@@ -340,6 +340,11 @@ fn every_collector_and_host_divider_is_a_marker() {
         // A turn id past its cap names no turn.
         (
             "turn_not_delivered",
+            json!({"turn_id": "queue-owned", "operator_queued": true}),
+            marker(MarkerKind::TurnNotDelivered, None, None),
+        ),
+        (
+            "turn_not_delivered",
             json!({"turn_id": "t".repeat(ID_MAX_BYTES + 1)}),
             marker(MarkerKind::TurnNotDelivered, None, None),
         ),

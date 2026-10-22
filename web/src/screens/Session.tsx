@@ -451,6 +451,8 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
     )
   }
 
+  const sessionFooter = info && <SessionFooter key={info.lifecycle} info={info} hostName={hosts.get(info.host_id)} hostAway={hostAway} queuedCount={s.queue.filter(item => item.state === 'queued').length} onResume={onResume} />
+
   return (
     <QuestionPresentationContext.Provider value={presentation}>
     <div className={'session hn-accent-scope' + (narrow && selectedQuestion ? ' has-question-actions' : '')} style={accent} ref={questionRegion}>
@@ -472,6 +474,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         detailsTrigger={detailsTrigger}
         menu={
           <SessionMenu
+            queuedCount={s.queue.filter(item => item.state !== 'delivering').length}
             onRename={info && !s.removed ? beginRename : undefined}
             id={id}
             lifecycle={info?.lifecycle}
@@ -522,11 +525,14 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
           {startNotice}
         </p>
       )}
+      {info?.lifecycle === 'parked' && sessionFooter}
       <Composer
         handle={composer}
         sessionId={id}
         session={info ? { activity: info.activity, lifecycle: info.lifecycle } : null}
         capabilities={capabilities}
+        queue={s.queue}
+        onQueueChange={s.refreshQueue}
         catalog={s.catalog}
         onCatalog={s.setCatalog}
         onResume={onResume}
@@ -536,15 +542,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
           void s.loadQuestion(openPending)
         } : undefined}
       />
-      {info && (
-        <SessionFooter
-          key={info.lifecycle}
-          info={info}
-          hostName={hosts.get(info.host_id)}
-          hostAway={hostAway}
-          onResume={onResume}
-        />
-      )}
+      {info?.lifecycle !== 'parked' && sessionFooter}
       </div>
       <SessionDetails open={detailsOpen} tab={detailsTab} onTab={setDetailsTab} onClose={closeDetails} trigger={detailsTrigger} info={info} hostName={info ? hosts.get(info.host_id) : undefined} hatName={actualHat?.name} plan={plan} delivery={mcp.detail?.mcp_delivery}>
         <FamilyPanel key={id} id={id} summary={summary} hosts={hosts} resync={Math.max(0, s.loads - 1) + familyRefresh} onPage={onFamilyPage} />

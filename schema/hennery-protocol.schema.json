@@ -124,6 +124,13 @@
     "AttachedSession": {
       "description": "A session that a host still has an adapter for, reported in `hello`.",
       "properties": {
+        "ending": {
+          "description": "The actor is shutting down and still appears attached until its final fact is outboxed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "last_seq": {
           "format": "uint64",
           "minimum": 0,
@@ -360,6 +367,16 @@
         {
           "const": "delegation_config",
           "description": "Generation-bound evidence and serialized delegated prompt admission.",
+          "type": "string"
+        },
+        {
+          "const": "operator_resume",
+          "description": "Collector-owned operator queue resume with operator authority (hennery 0.3.0).",
+          "type": "string"
+        },
+        {
+          "const": "prompt_mailbox_snapshot",
+          "description": "Reconnect snapshots include unread prompt commands as well as running turns.",
           "type": "string"
         }
       ]
@@ -699,6 +716,10 @@
                 "string",
                 "null"
               ]
+            },
+            "operator_initiated": {
+              "description": "A collector-accepted operator queue resume uses ordinary operator\npath authorization, while retaining the attach/configuration fence.",
+              "type": "boolean"
             },
             "request_id": {
               "type": "string"
@@ -1607,6 +1628,19 @@
         "path",
         "entries",
         "truncated"
+      ],
+      "type": "object"
+    },
+    "EditQueuedPrompt": {
+      "additionalProperties": false,
+      "description": "Replace a queued item's text while retaining its stored images.",
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
       ],
       "type": "object"
     },
@@ -4525,6 +4559,13 @@
         "content": {
           "items": true,
           "type": "array"
+        },
+        "request_key": {
+          "description": "Reuse for retries of the same submit, including a lost response.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -4920,6 +4961,47 @@
       "required": [
         "revision",
         "config"
+      ],
+      "type": "object"
+    },
+    "QueuedPrompt": {
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/StoredBlock"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "description": "queued, delivering, or failed. Only queued items can be edited.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content",
+        "state"
+      ],
+      "type": "object"
+    },
+    "QueuedPromptResponse": {
+      "description": "An accepted durable prompt, delivered after earlier turns finish.",
+      "properties": {
+        "queue_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "queue_id"
       ],
       "type": "object"
     },

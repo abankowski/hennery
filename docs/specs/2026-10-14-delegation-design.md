@@ -542,8 +542,19 @@ Queue acceptance and the destination turn reservation are distinct. When
 dispatching, persist the operation-to-turn mapping and its reserved slot in
 one transaction. `turn_started` acknowledges delivery; `turn_ended` records the
 outcome. Never mark delivered from a socket write, MCP success or model prose.
-Operator prompts retain their current `turn_in_progress` response; whichever
-submission reserves the slot first wins. Queued work never interrupts a turn.
+Operator amendment (2026-10-21, sessions migration 29): operator prompts submitted while busy,
+waiting, parked or behind accepted work join this same FIFO, with typed
+`Operator` provenance and no delegation grant dependency. Both sources use
+one position order; an immediate operator prompt cannot overtake a queued
+head. Child notices drain only when this prompt FIFO has no ready head.
+Queued work never interrupts a turn. Operator items are editable/removable
+only before turn reservation; failed items retain their checked content until
+operator dismissal or seven-day expiry; deletion and hat purge scrub them with
+the transcript, including optional prompt request-key receipts.
+Delegation grant changes do not cancel operator input.
+The shared 32-active-item / 1-MiB bound includes operator image bytes and excludes
+retained failed operator items. ACP core §4.4 describes operator failure/cancel/restart
+semantics and the queue API; adapter promptQueueing remains unused.
 
 Acceptance and dispatch must test **close intent**, not just lifecycle. In the
 transaction that accepts a command, reserves a turn or begins an automatic
@@ -565,6 +576,21 @@ failed sessions and clears close intent. A presumed park first reconciles;
 confirmed attachment uses that actor, confirmed loss may enter the genuinely
 parked path. Automatic resume never clears close intent. After resume, §4.1's
 fresh generation-bound configuration gate precedes every queued prompt.
+An explicit operator Park sets a durable hold across both FIFO sources; only
+operator Resume or a new operator Send clears it. Idle and host-restart parking
+do not set a hold; an existing explicit hold survives host restart. A reconciled
+attached session releases an ambiguous Park request that did not detach it.
+Operator automatic resumes require `operator_resume` and
+`delegation_config`, with an explicit hennery 0.3.0 upgrade reason on older hosts.
+Adapter exit fails unsent operator input with a retained readable reason;
+parked offline/revoked hosts also fail waiting operator input readably.
+Awaiting operator reconciliation fences both FIFO sources. Reconciliation
+settles the receipt before commit; a proven unsent operator head returns to
+the same queue position only with the independent `prompt_mailbox_snapshot`
+capability; legacy-host uncertain delivery fails readably with input retained.
+Host `turn_in_progress` refusals also requeue the head, remove the unsent turn
+and image links, and persist exponential backoff capped at ten seconds. Each
+session's worker error is contained so it cannot starve later sessions.
 Closed, deleted, failed-to-resume or hat-mismatched destinations stop dispatch
 and cause the visible fallback below. Pending questions in the destination
 prevent report prompts, even when asked outside a turn.
@@ -654,7 +680,7 @@ may have executed. After the host's outbox resend and reconciliation:
 
 - An ingested start/turn fact settles the existing receipt.
 - A proven undispatched queue item can be sent normally.
-- A dispatched turn that becomes `not_delivered` stays visible and requires an
+- A dispatched delegated turn that becomes `not_delivered` stays visible and requires an
   explicit retry, as ACP core §4.4 does; notify the parent or operator. Late
   `turn_started` can still win. Do not create a replacement turn automatically.
 - A started interrupted turn is a report of partial work; it is never replayed

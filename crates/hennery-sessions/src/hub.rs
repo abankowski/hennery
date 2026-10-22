@@ -364,6 +364,16 @@ impl Hub {
             .is_some_and(HostConn::routable)
     }
 
+    /// A live connection exists, including while its resend is reconciling.
+    /// This is presence only; dispatch must still require `is_ready`.
+    pub fn has_connection(&self, host_id: &str) -> bool {
+        self.hosts
+            .lock()
+            .expect("hosts lock")
+            .get(host_id)
+            .is_some_and(|host| !host.kicked.is_cancelled() && !host.tx.is_closed())
+    }
+
     /// The host's current connection announced `capability`. A host that is
     /// not connected has none.
     pub fn has_capability(&self, host_id: &str, capability: Capability) -> bool {

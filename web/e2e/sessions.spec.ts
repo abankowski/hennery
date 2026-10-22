@@ -277,16 +277,27 @@ for (const width of [1280, 390]) {
       await expect(page.locator('.session-head .badge')).toHaveText('Parked')
     })
 
-    test('the footer’s Resume runs the session again, and it answers a second prompt', async () => {
+    test('Resume and send uses the shortcut and shows the parked notice above the input', async () => {
       const resume = page.getByRole('button', { name: 'Resume', exact: true })
       await expect(resume).toBeVisible()
       if (narrow) expect((await resume.boundingBox())!.height).toBeGreaterThanOrEqual(44)
-      await resume.click()
-      await expect(page.locator('.session-head .badge')).toHaveText('Idle', { timeout: 20_000 })
-      await expect(resume).toHaveCount(0)
+      const input = page.getByRole('textbox', { name: 'Prompt', exact: true })
+      await input.fill('And the second part.')
+      const send = page.getByRole('button', { name: 'Resume and send', exact: true })
+      await expect(send).toBeEnabled()
+      const notice = page.getByText('This session is parked.', { exact: true })
+      expect((await notice.boundingBox())!.y).toBeLessThan((await input.boundingBox())!.y)
+      for (const theme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: theme })
+        await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+        const directory = process.env.HENNERY_QUEUE_SCREENSHOTS
+        if (directory) mkdirSync(directory, { recursive: true })
+        await page.screenshot({ path: directory ? join(directory, `parked-${width}-${theme}.png`) : test.info().outputPath(`parked-${theme}.png`) })
+      }
+      await page.emulateMedia({ colorScheme: 'light' })
+      await input.press(narrow ? 'Control+Enter' : 'Meta+Enter')
+      await expect(resume).toHaveCount(0, { timeout: 20000 })
       // The fake asks on every prompt: a second card, answered like the first.
-      await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('And the second part.')
-      await page.getByRole('button', { name: 'Send', exact: true }).click()
       const cards = page.getByRole('region', { name: 'Question from Claude', exact: true })
       await expect(cards).toHaveCount(2, { timeout: 15_000 })
       const second = cards.nth(1)
@@ -296,6 +307,66 @@ for (const width of [1280, 390]) {
       const reply = page.locator('.bubble', { has: page.getByText('permission:selected:reject', { exact: true }) })
       await expect(reply.getByRole('listitem')).toHaveText(['first step', 'second step'])
       await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+      await expect(page.locator('.bubble.user').getByText('And the second part.', { exact: true })).toHaveCount(1)
+    })
+
+    test('durable queued messages edit, remove, sync between windows and drain after permission', async () => {
+      await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Check the implementation first.')
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      const cards = page.getByRole('region', { name: 'Question from Claude', exact: true })
+      await expect(cards).toHaveCount(3, { timeout: 15000 })
+      if (narrow) {
+        await cards.nth(2).focus()
+        await page.getByRole('button', { name: 'Write a prompt', exact: true }).click()
+      }
+      await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Then review the tests.')
+      await page.getByTestId('image-input').setInputFiles({ name: 'note.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64') })
+      await page.getByRole('textbox', { name: 'Prompt', exact: true }).press(narrow ? 'Control+Enter' : 'Meta+Enter')
+      const queue = page.getByRole('region', { name: 'Queued messages', exact: true })
+      await expect(queue.getByText('1 image', { exact: true })).toBeVisible()
+      await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('A removable follow-up.')
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(queue.getByRole('listitem')).toHaveCount(2)
+      const other = await page.context().newPage()
+      try {
+        await other.goto(page.url())
+        if (narrow) {
+          await other.getByRole('region', { name: 'Question from Claude', exact: true }).nth(2).focus()
+          await other.getByRole('button', { name: 'Write a prompt', exact: true }).click()
+        }
+        const remote = other.getByRole('region', { name: 'Queued messages', exact: true })
+        await expect(remote.getByRole('listitem')).toHaveCount(2)
+        await queue.getByRole('button', { name: 'Edit queued message 1', exact: true }).click()
+        await queue.getByRole('textbox', { name: 'Edit queued message 1', exact: true }).fill('Then focus on the tests.')
+        await queue.getByRole('button', { name: 'Save', exact: true }).click()
+        await expect(remote.getByText('Then focus on the tests.', { exact: true })).toBeVisible()
+        await queue.getByRole('button', { name: 'Remove queued message 2', exact: true }).click()
+        await expect(remote.getByRole('listitem')).toHaveCount(1)
+        await page.reload()
+        if (narrow) {
+          await cards.nth(2).focus()
+          await page.getByRole('button', { name: 'Write a prompt', exact: true }).click()
+        }
+        await expect(queue.getByText('Then focus on the tests.', { exact: true })).toBeVisible()
+        await expect(queue.getByText('1 image', { exact: true })).toBeVisible()
+        await expect(cards).toHaveCount(3)
+        for (const theme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: theme })
+          await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+          await page.evaluate(async () => { await document.fonts.ready })
+          const directory = process.env.HENNERY_QUEUE_SCREENSHOTS
+          if (directory) mkdirSync(directory, { recursive: true })
+          await page.screenshot({ path: directory ? join(directory, `queued-${width}-${theme}.png`) : test.info().outputPath(`queued-${theme}.png`) })
+          await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeInViewport()
+        }
+        await page.emulateMedia({ colorScheme: 'light' })
+        await cards.nth(2).getByRole('button', { name: 'Allow', exact: true }).click()
+        await expect(cards).toHaveCount(4, { timeout: 15000 })
+        await expect(page.locator('.bubble.user').last()).toContainText('Then focus on the tests.')
+        await cards.nth(3).getByRole('button', { name: 'Allow', exact: true }).click()
+        await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+        await expect(remote).toHaveCount(0)
+      } finally { await other.close() }
     })
 
     test('the session menu’s controls are big enough to tap on a phone', async () => {
@@ -317,6 +388,50 @@ for (const width of [1280, 390]) {
       await expect(trigger).toHaveAttribute('aria-expanded', 'false')
     })
 
+    test('explicit Park holds queued input until Resume and send releases it', async () => {
+      const input = page.getByRole('textbox', { name: 'Prompt', exact: true })
+      await input.fill('Pause before delivering queued work.')
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      const cards = page.getByRole('region', { name: 'Question from Claude', exact: true })
+      await expect(cards.last().getByRole('button', { name: 'Allow', exact: true })).toBeVisible()
+      if (narrow) { await cards.last().focus(); await page.getByRole('button', { name: 'Write a prompt', exact: true }).click() }
+      await input.fill('This queued head waits for Resume.')
+      await input.press(narrow ? 'Control+Enter' : 'Meta+Enter')
+      const queue = page.getByRole('region', { name: 'Queued messages', exact: true })
+      await expect(queue.getByRole('listitem')).toHaveCount(1)
+      await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+      await page.getByRole('button', { name: 'Park', exact: true }).click()
+      await expect(page.locator('.session-head .badge')).toHaveText('Parked')
+      const notice = page.getByText('1 queued message will be sent when you resume.', { exact: true })
+      await expect(notice).toBeVisible()
+      expect((await notice.boundingBox())!.y).toBeLessThan((await input.boundingBox())!.y)
+      await page.reload()
+      await expect(notice).toBeVisible()
+      await expect(queue.getByText('This queued head waits for Resume.', { exact: true })).toBeVisible()
+      await expect(page.locator('.bubble.user').getByText('This queued head waits for Resume.', { exact: true })).toHaveCount(0)
+      await input.fill('This new send releases the park hold.')
+      for (const theme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: theme })
+        await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+        await page.evaluate(async () => { await document.fonts.ready })
+        const directory = process.env.HENNERY_QUEUE_SCREENSHOTS
+        if (directory) mkdirSync(directory, { recursive: true })
+        await page.screenshot({ path: directory ? join(directory, `park-hold-${width}-${theme}.png`) : test.info().outputPath(`park-hold-${theme}.png`) })
+      }
+      await page.emulateMedia({ colorScheme: 'light' })
+      await page.getByRole('button', { name: 'Resume and send', exact: true }).click()
+      await expect(page.locator('.bubble.user').getByText('This queued head waits for Resume.', { exact: true })).toHaveCount(1)
+      await expect(cards.last().getByRole('button', { name: 'Allow', exact: true })).toBeVisible()
+      await cards.last().getByRole('button', { name: 'Allow', exact: true }).click()
+      await expect(page.locator('.bubble.user').getByText('This new send releases the park hold.', { exact: true })).toHaveCount(1)
+      await expect(cards.last().getByRole('button', { name: 'Allow', exact: true })).toBeVisible()
+      await cards.last().getByRole('button', { name: 'Allow', exact: true }).click()
+      await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+      await expect(queue).toHaveCount(0)
+      await expect(page.locator('.bubble.user').getByText('This queued head waits for Resume.', { exact: true })).toHaveCount(1)
+      await expect(page.locator('.bubble.user').getByText('This new send releases the park hold.', { exact: true })).toHaveCount(1)
+    })
+
     test('closes an active session from its header menu', async () => {
       await expect(page.locator('.session-head .badge')).toHaveText('Idle')
       const trigger = page.getByRole('button', { name: 'Session actions', exact: true })
@@ -328,6 +443,36 @@ for (const width of [1280, 390]) {
       await expect(page.getByRole('button', { name: 'Close', exact: true })).toHaveCount(0)
       await expect(page.getByRole('button', { name: 'Park', exact: true })).toHaveCount(0)
       await page.keyboard.press('Escape')
+    })
+
+    test('deleting a session warns about unsent messages and scrubs them in every window', async () => {
+      await page.getByRole('button', { name: 'Resume', exact: true }).click()
+      await expect(page.locator('.session-head .badge')).toHaveText('Idle')
+      await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Wait before deleting this session.')
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      const cards = page.getByRole('region', { name: 'Question from Claude', exact: true })
+      await expect(cards.last().getByRole('button', { name: 'Allow', exact: true })).toBeVisible()
+      if (narrow) { await cards.last().focus(); await page.getByRole('button', { name: 'Write a prompt', exact: true }).click() }
+      await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Erase this unsent message on deletion.')
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(page.getByRole('region', { name: 'Queued messages', exact: true }).getByRole('listitem')).toHaveCount(1)
+      const other = await page.context().newPage()
+      try {
+        await other.goto(page.url())
+        await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+        await page.getByRole('button', { name: 'Delete session', exact: true }).click()
+        await expect(page.getByRole('dialog', { name: 'Delete this session?', exact: true })).toContainText('1 unsent queued message and its images will also be deleted.')
+        await page.getByRole('dialog', { name: 'Delete this session?', exact: true }).getByRole('button', { name: 'Delete', exact: true }).click()
+        for (const window of [page, other]) {
+          await expect(window.getByRole('heading', { name: 'This session was deleted', exact: true })).toBeVisible()
+          await expect(window.getByText('Erase this unsent message on deletion.', { exact: true })).toHaveCount(0)
+          await expect(window.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveCount(0)
+          await expect(window.getByRole('region', { name: 'Queued messages', exact: true })).toHaveCount(0)
+        }
+        await page.reload()
+        await expect(page.getByText('Erase this unsent message on deletion.', { exact: true })).toHaveCount(0)
+        await expect(page.getByRole('heading', { name: 'This session was deleted', exact: true })).toBeVisible()
+      } finally { await other.close() }
     })
 
     test('broke no Content-Security-Policy rule', async () => {
@@ -382,6 +527,7 @@ test.describe('redesigned session', () => {
         if (path.startsWith('/api/stream/')) { held.push(route); return }
         if (path === '/api/view/sessions/worker') return json({ items, epoch: 'items', revision: 1, older: false })
         if (path === '/api/sessions/worker') return json({ ...info, pending: [], mcp_delivery: { mode: 'unisolated', servers: 2, at: now } })
+        if (path.endsWith('/queue')) return json([])
         if (path.endsWith('/catalog')) return json(catalog())
         if (path.endsWith('/family')) return json({ summary: info, children: [], questions: [], routing: taken ? 'detached' : 'active' })
         if (path.includes('/questions/')) return json(path.endsWith('/permission') ? question : form)

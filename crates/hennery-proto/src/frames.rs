@@ -12,6 +12,9 @@ pub struct AttachedSession {
     pub last_seq: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_turn_id: Option<String>,
+    /// The actor is shutting down and still appears attached until its final fact is outboxed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ending: Option<bool>,
 }
 
 /// A feature a host implements, announced in `hello` (ACP core §3.3). The
@@ -47,6 +50,10 @@ pub enum Capability {
     CatalogProbeCancel,
     /// Generation-bound evidence and serialized delegated prompt admission.
     DelegationConfig,
+    /// Collector-owned operator queue resume with operator authority (hennery 0.3.0).
+    OperatorResume,
+    /// Reconnect snapshots include unread prompt commands as well as running turns.
+    PromptMailboxSnapshot,
 }
 
 /// The longest agent data root a host may report (plan 9d, O12's shape
@@ -1026,6 +1033,10 @@ pub enum CollectorFrame {
     /// A delegated attach uses an independently allocated, nonzero generation.
     /// `agent_session_id` absent starts a new adapter session; present loads it.
     DelegatedAttach {
+        /// A collector-accepted operator queue resume uses ordinary operator
+        /// path authorization, while retaining the attach/configuration fence.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        operator_initiated: bool,
         request_id: String,
         session_id: String,
         #[ts(type = "number")]

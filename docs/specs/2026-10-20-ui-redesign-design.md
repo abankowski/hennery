@@ -528,6 +528,43 @@ the honest replacement instead of quietly adding another backend feature.
 | Parked/closed/failed/starting/offline footer, Resume/send-again/new-project flow | Restyle existing behavior; still reachable without the panel | `SessionFooter.tsx`, `items/Marker.tsx`, `Composer.tsx` |
 | Unsupported update, plugin context, boundaries, reconnect/load-earlier controls | Restyle; retain content, provenance, truncation and visible failures | `items/Unrecognised.tsx`, `ItemBoundary.tsx`, `Transcript.tsx` |
 
+**Operator prompt queue (2026-10-21; sessions migration 29).** Send remains available beside Cancel
+while a session is running or waiting. On a parked session its label, tooltip
+and accessible name are "Resume and send"; this submits one collector queue
+request, and the collector owns resume/delivery. Keep standalone Resume and
+show the parked notice above the input, including "N queued messages will be
+sent when you resume" when applicable. Explicit Park holds existing queued
+work; Resume or a new Send releases it. Ctrl+Enter and Cmd+Enter use the same
+submission handler in every state; ignore IME composition/keyCode 229 and
+autorepeat. Plain Enter retains its existing newline behavior. Accepted messages appear in a bounded
+"Queued" list under the composer, with a text preview, image count, Edit and
+Remove. Editing uses a separate inline draft and retains images; FIFO order
+cannot be changed. Once delivering, an item is immutable. If delivery wins
+while editing, keep the textarea visible with "Already sending; your edit
+wasn’t applied" and Copy edit/Dismiss edit actions, including a manual copy
+fallback. Failed items retain text/images for seven days, explain why, and
+offer Copy/Dismiss. Each submission carries one client request key, retained
+for retries of the same checked content so an uncertain response cannot duplicate it.
+The uncertain-send marker persists this key across page reload; an unchanged
+draft reuses it after network failures or 5xx. A receipt conflict releases that
+key for the next explicit submission, preserving a visible warning that the
+earlier submission may already have been sent. Editing or a
+definite refusal resolves that marker. A parked offline session's notice says
+to resume and send once the host is back; the API refuses new offline sends
+with `host_offline` and retains the draft. Queue-owned not-delivered transcript
+markers offer no separate Send again action.
+Deleting the session or purging its hat scrubs queued text and images with
+the transcript; the delete confirmation names the number of unsent messages
+that will also be deleted, excluding items already delivering. No recovery
+list remains after deletion.
+Queue state comes from the
+collector and its existing session view stream (`queue_changed` snapshots),
+so reload and multiple windows converge on one list; ordinary unsent drafts
+remain per-window. A pending permission is answered on its canonical card,
+never by a queued prompt. On a phone, "Write a prompt" exposes the composer
+without resolving that pending request. Both themes and phone/desktop widths
+keep Send reachable with the list visible.
+
 The mobile bottom action region is a presentation of the focused live
 question's existing controls, not a second independent form. Mount one
 interactive action set, associate it with that card, and return to the

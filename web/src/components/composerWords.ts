@@ -12,7 +12,9 @@ type Wording = string | ((serverMessage: string) => string)
 const PROMPT: Record<string, Wording> = {
   not_attached: 'The session is not running: resume it to send this.',
   host_offline: 'The host is offline; send again once it is back.',
-  turn_in_progress: 'The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.',
+  turn_in_progress: 'The agent is still working or waiting for your answer. Your draft is kept; try sending again.',
+  queue_full: 'The queue is full (32 messages or 1 MiB including images). Remove a queued message or wait for delivery.',
+  queue_unavailable: 'The session cannot accept queued messages. Review its status before sending again.',
   images_unsupported: 'This host takes no images: remove them, then send again.',
   empty_prompt: 'There is nothing to send: write something, or attach an image.',
   invalid_content: (why) => `This prompt holds something that cannot be sent (${why}).`,

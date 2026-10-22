@@ -316,6 +316,7 @@ fn another_owners_sessions_are_invisible_to_the_store() {
     // untouched, and the owner's is reconciled as one the host no longer has.
     let theirs = all_rows(&conn, Some(OTHER));
     let attached = [AttachedSession {
+        ending: None,
         session_id: "session-b".into(),
         last_seq: 1,
         open_turn_id: Some("turn-b".into()),

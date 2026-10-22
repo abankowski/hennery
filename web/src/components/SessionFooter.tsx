@@ -1,4 +1,4 @@
-// The footer of a session that is not running (frontend spec §6.6), under
+// The notice of a session that is not running (frontend spec §6.6), above
 // its composer. The composer stays: a draft put there ("Answer as a new
 // message", "Send again") is sent once the session runs again, and a prompt
 // refused as `not_attached` offers its own "Resume and send".
@@ -44,11 +44,12 @@ interface Props {
   /** Whether the host is away: the view's answer book says it, as it says
    *  it to the question cards. */
   hostAway?: boolean
+  queuedCount?: number
   /** `POST …/resume`; rejects with the refusal. */
   onResume: () => Promise<unknown>
 }
 
-export default function SessionFooter({ info, hostName, hostAway = false, onResume }: Props) {
+export default function SessionFooter({ info, hostName, hostAway = false, queuedCount = 0, onResume }: Props) {
   const [busy, setBusy] = useState(false)
   const [refusal, setRefusal] = useState<unknown>(null)
   const lifecycle = info.lifecycle
@@ -89,11 +90,12 @@ export default function SessionFooter({ info, hostName, hostAway = false, onResu
               ? 'This session is closed.'
               : <FailureText reason={reason} />}
         </p>
+        {lifecycle === 'parked' && queuedCount > 0 && <p className="txt">{queuedCount} queued {queuedCount === 1 ? 'message' : 'messages'} will be sent when you resume.</p>}
         {hostAway && (
           <p className="txt session-footer-offline">
             {info.presumed_parked
-              ? 'The host is offline: it has been away, and may still be running this session.'
-              : 'The host is offline: resume once it is back.'}
+              ? 'The host is offline: it has been away, and may still be running this session. Resume and send once it is back.'
+              : 'The host is offline: resume and send once it is back.'}
           </p>
         )}
         {reason === 'agent_not_logged_in' && <LoginSteps agent={info.agent} host={host} />}

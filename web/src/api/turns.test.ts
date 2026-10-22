@@ -3,6 +3,11 @@ import { json, routed } from '../test-stream'
 import { cancel, close, deleteSession, park, prompt, resume, setConfig } from './turns'
 
 describe('turn routes', () => {
+  it('keeps an optional request key on the prompt receipt request', async () => {
+    const t = routed(() => json({ queue_id: 'q1' }, 202))
+    await prompt(t.client, 's1', [{ type: 'text', text: 'queued once' }], 'submit-one')
+    expect(JSON.parse(String(t.fetch.mock.calls[0][1]?.body))).toEqual({ content: [{ type: 'text', text: 'queued once' }], request_key: 'submit-one' })
+  })
   it('posts the prompt, cancel, config and resume of a session, its id encoded', async () => {
     const t = routed(() => json({ turn_id: 't1' }, 202))
     await prompt(t.client, 'a/b?c', [{ type: 'text', text: 'hi' }])

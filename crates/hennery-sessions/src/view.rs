@@ -664,6 +664,7 @@ struct ItemStream {
     /// The catalogue changed since the last send (`changes_catalogue`):
     /// `catalog_changed` ends the next burst (frontend §4.1).
     catalog: bool,
+    queue: bool,
     /// More questions of earlier groups changed since the last send than
     /// `GROUP_MAX_QUESTIONS`: the stream resyncs rather than leave any out
     /// (the security review's B-2).
@@ -684,6 +685,7 @@ impl ItemStream {
             held: None,
             deleted: false,
             catalog: false,
+            queue: false,
             overflow: false,
         }
     }
@@ -801,6 +803,7 @@ impl ItemStream {
                     continue;
                 }
                 self.catalog |= event.event_id > after && changes_catalogue(event);
+                self.queue |= event.event_id > after && event.kind == "queue_changed";
                 if event.kind == "user_turn" {
                     let ended = self.fold.take().into_iter().filter(|item| item.version > after);
                     if !burst.add(self.messages(ended.collect())?) {
@@ -843,7 +846,17 @@ impl ItemStream {
         {
             return Ok(None);
         }
+        if std::mem::take(&mut self.queue) && !burst.add(vec![self.queue_changed()?]) {
+            return Ok(None);
+        }
         Ok(Some(burst.messages))
+    }
+
+    fn queue_changed(&self) -> Result<Out> {
+        Ok(Out::new(
+            "queue_changed",
+            serde_json::to_string(&self.store.operator_prompt_queue(&self.id)?)?,
+        ))
     }
 
     /// SSE `catalog_changed`: the session's whole catalogue as it stands
@@ -897,6 +910,10 @@ impl ItemStream {
         }
         let changed = self.fold.apply(event, &unanswerable);
         self.cursor = event.event_id;
+        if event.kind == "queue_changed" {
+            self.queue = true;
+            self.urgent = true;
+        }
         if changes_catalogue(event) {
             self.catalog = true;
             self.urgent = true;
@@ -954,6 +971,9 @@ impl ItemStream {
             && let Some(message) = self.catalog_changed()?
         {
             messages.push(message);
+        }
+        if std::mem::take(&mut self.queue) {
+            messages.push(self.queue_changed()?);
         }
         if messages.is_empty() {
             return Ok(true);

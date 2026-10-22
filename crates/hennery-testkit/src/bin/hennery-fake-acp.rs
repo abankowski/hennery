@@ -67,6 +67,7 @@ async fn main() -> agent_client_protocol::Result<()> {
             .expect("write adapter group");
     }
 
+    let prompt_queueing = script.prompt_queueing;
     let load_session = !script.no_load_session;
     let images = !script.no_images;
     let catalogue: Catalogue = Arc::new(Mutex::new(
@@ -123,6 +124,11 @@ async fn main() -> agent_client_protocol::Result<()> {
                     responder.respond(
                         InitializeResponse::new(req.protocol_version).agent_capabilities(
                             AgentCapabilities::new()
+                                .meta(prompt_queueing.then(|| {
+                                    [("promptQueueing".into(), serde_json::json!(true))]
+                                        .into_iter()
+                                        .collect::<serde_json::Map<String, serde_json::Value>>()
+                                }))
                                 .load_session(load_session)
                                 .session_capabilities(
                                     SessionCapabilities::new().delete(SessionDeleteCapabilities::new()),

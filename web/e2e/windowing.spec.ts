@@ -107,6 +107,7 @@ async function serve(page: Page, items: Raw[]): Promise<Served> {
   await page.route(`${ORIGIN}/**`, async (route) => {
     const { pathname } = new URL(route.request().url())
     if (pathname.startsWith('/api/')) {
+      if (pathname === `/api/sessions/${ID}/queue`) return json(route, [])
       if (pathname === '/api/capabilities') return json(route, { mode: 'full', features: [] })
       if (pathname === `/api/view/sessions/${ID}`)
         return route.fulfill({ status: 200, contentType: 'application/json', body: page_ })

@@ -482,9 +482,9 @@ async fn only_the_prompt_route_takes_a_large_body_and_its_limit_holds() {
     host.nothing_more().await;
 }
 
-/// A prompt while a turn is open writes no file for its images.
+/// Images queued during a turn are durably stored without starting a new turn.
 #[tokio::test]
-async fn an_image_prompt_during_a_turn_writes_no_file() {
+async fn an_image_prompt_during_a_turn_is_queued_with_its_file() {
     let collector = Collector::start().await;
     let mut host = ScriptedHost::connect(&collector, Capabilities(vec![Capability::Images])).await;
     let session = started_session(&collector, &mut host).await;
@@ -497,12 +497,15 @@ async fn an_image_prompt_during_a_turn_writes_no_file() {
     assert_eq!(call.await.unwrap().0, 202);
     let body = json!({ "content": [image("image/png", &png(1, 64))] });
     let (status, answer) = post(&c, prompt_url(&collector, &session), &body).await;
-    assert_eq!(
-        (status, answer["code"].as_str()),
-        (409, Some("turn_in_progress")),
-        "{answer}"
-    );
-    assert!(collector.files().is_empty());
+    assert_eq!(status, 202, "{answer}");
+    assert!(answer["queue_id"].is_string());
+    assert_eq!(collector.files().len(), 1);
+    let queue = collector.state.store.operator_prompt_queue(&session).unwrap();
+    assert_eq!(queue.len(), 1);
+    assert!(matches!(
+        queue[0].content[0],
+        hennery_proto::rest::StoredBlock::Image { .. }
+    ));
 }
 
 /// The host refuses images its agent cannot take (decision 2): 409

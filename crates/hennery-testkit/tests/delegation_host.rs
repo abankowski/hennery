@@ -829,6 +829,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
                 "new host must advertise early cancellation"
             );
             assert!(capabilities.has(Capability::DelegationConfig));
+            assert!(capabilities.has(Capability::OperatorResume));
             assert!(mcp_isolation.0.contains_key("chosen"));
             assert_eq!(
                 runtime_profiles["chosen"],
@@ -865,6 +866,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
     send(
         &mut ws,
         CollectorFrame::DelegatedAttach {
+            operator_initiated: false,
             request_id: "signed-out-attach".into(),
             session_id: "signed-out-child".into(),
             committed_seq: 0,
@@ -942,6 +944,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
     .await;
     assert!(matches!(read(&mut ws).await, HostFrame::Catalog { request_id, .. } if request_id == "after-cancel"));
     let attach = |generation| CollectorFrame::DelegatedAttach {
+        operator_initiated: false,
         request_id: format!("attach-{generation}"),
         session_id: "wire-child".into(),
         committed_seq: 0,

@@ -12,6 +12,9 @@ pub struct FakeScript {
     /// Delay before each chunk, in milliseconds.
     #[serde(default)]
     pub chunk_delay_ms: u64,
+    /// Advertise the Claude-like promptQueueing extension; collector queues must not depend on it.
+    #[serde(default)]
+    pub prompt_queueing: bool,
     /// Crash mid-turn: after sending this many chunks of a prompt, write a
     /// line to stderr and exit with status 3 without answering the prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -298,6 +301,7 @@ impl Default for FakeScript {
         Self {
             chunks: vec!["Hello".into(), " world".into()],
             chunk_delay_ms: 0,
+            prompt_queueing: false,
             exit_after_chunks: None,
             stderr_lines: Vec::new(),
             stdout_lines: Vec::new(),

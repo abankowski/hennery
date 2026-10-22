@@ -187,18 +187,18 @@ impl Store {
     pub fn attach_delegated(&self, target: &str, mcp: McpContext, catalog: &HostCatalog, hub: &Hub) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let queue: Option<(String, i64, String)> = tx
+        let queue: Option<(String, i64, String, bool)> = tx
             .query_row(
-                "SELECT source_id,accepted_revision,required_config FROM session_dispatch_queue
+                "SELECT source_id,accepted_revision,required_config,origin='operator' FROM session_dispatch_queue
             WHERE owner_id = ?1 AND target_id = ?2 AND state IN ('queued','waiting_config') ORDER BY position LIMIT 1",
                 params![self.owner_id(), target],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()?;
-        let Some((source, revision, required)) = queue else {
+        let Some((source, revision, required, operator)) = queue else {
             return Ok(false);
         };
-        if !self.transfer_in(&tx, &source, target, revision)? {
+        if !self.queue_transfer_in(&tx, &source, target, revision, operator)? {
             return Ok(false);
         }
         let (lifecycle, host, hat, agent, cwd, agent_session): (
@@ -213,6 +213,15 @@ impl Store {
             params![self.owner_id(), target],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
         )?;
+        if operator
+            && hub.is_ready(&host)
+            && (!hub.has_capability(&host, Capability::OperatorResume)
+                || !hub.has_capability(&host, Capability::DelegationConfig))
+        {
+            self.fail_operator_queue_in(&tx, target, "operator_resume_unsupported")?;
+            tx.commit()?;
+            return Ok(false);
+        }
         if !hub.is_ready(&host)
             || !hub.has_capability(&host, Capability::DelegationConfig)
             || !same_hat_in(&tx, self.owner_id(), &host, &hat, &cwd)?
@@ -236,7 +245,10 @@ impl Store {
             previous.map_or(1, |(g, _)| g + 1)
         };
         let config: SessionConfig = serde_json::from_str(&required)?;
-        if catalog.agent != agent || !crate::delegation_runtime::config_offered(catalog, &config) {
+        if catalog.agent != agent
+            || !(operator && config == SessionConfig::default()
+                || crate::delegation_runtime::config_offered(catalog, &config))
+        {
             return Ok(false);
         }
         let changed = tx.execute(
@@ -252,7 +264,7 @@ impl Store {
             VALUES (?1,?2,?3,?4,1) ON CONFLICT(owner_id,session_id) DO UPDATE SET attach_generation = excluded.attach_generation,
             config_revision = 0,evidence = NULL,launch_sent = 1",params![self.owner_id(),target,generation,required])?;
         tx.execute("UPDATE session_dispatch_queue SET state = 'waiting_config' WHERE owner_id = ?1 AND target_id = ?2 AND state IN ('queued','waiting_config')",params![self.owner_id(),target])?;
-        tx.execute("UPDATE session_operations SET state = 'awaiting_reconciliation' WHERE owner_id = ?1 AND child_id = ?2 AND state IN ('queued','waiting_config')",params![self.owner_id(),target])?;
+        tx.execute("UPDATE session_operations SET state = 'awaiting_reconciliation' WHERE owner_id = ?1 AND child_id = ?2 AND tool<>'operator_prompt' AND state IN ('queued','waiting_config')",params![self.owner_id(),target])?;
         let committed: i64 = tx.query_row(
             "SELECT COALESCE(MAX(host_seq),0) FROM events WHERE owner_id = ?1 AND session_id = ?2",
             params![self.owner_id(), target],
@@ -265,6 +277,7 @@ impl Store {
             params![self.owner_id(), target, request_id],
         )?;
         let frame = CollectorFrame::DelegatedAttach {
+            operator_initiated: operator,
             request_id,
             session_id: target.into(),
             committed_seq: u64::try_from(committed)?,
@@ -278,7 +291,11 @@ impl Store {
         };
         crate::store::commit_then_cut(tx, self.mcp().as_ref(), cut)?;
         // conn owns the shared gate here: close cannot commit in this gap.
-        if !self.handoff_delegated(&conn, &source, &host, frame, hub)? {
+        if !(if operator {
+            hub.notify(&host, frame)
+        } else {
+            self.handoff_delegated(&conn, &source, &host, frame, hub)?
+        }) {
             conn.execute("UPDATE session_operations SET state = 'waiting_config' WHERE owner_id = ?1 AND child_id = ?2 AND turn_id IS NULL AND tool IN ('session_spawn','session_send') AND state = 'awaiting_reconciliation'",params![self.owner_id(),target])?;
             // Proven unsent, so allowing a later attempt cannot duplicate work.
             conn.execute(
@@ -296,18 +313,21 @@ impl Store {
     pub fn dispatch_delegated(&self, target: &str, catalog: &HostCatalog, hub: &Hub) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let queue: Option<(String, String, i64, String, String)> = tx
+        let queue: Option<(String, String, i64, String, String,bool)> = tx
             .query_row(
-                "SELECT operation_id,source_id,accepted_revision,payload,required_config FROM session_dispatch_queue
+                "SELECT operation_id,source_id,accepted_revision,payload,required_config,origin='operator' FROM session_dispatch_queue
             WHERE owner_id = ?1 AND target_id = ?2 AND state IN ('queued','waiting_config') ORDER BY position LIMIT 1",
                 params![self.owner_id(), target],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?,r.get(5)?)),
             )
             .optional()?;
-        let Some((operation, source, revision, payload, required)) = queue else {
+        let Some((operation, source, revision, payload, required, operator)) = queue else {
             return Ok(false);
         };
-        if !self.transfer_in(&tx, &source, target, revision)? {
+        if operator {
+            return Ok(false);
+        }
+        if !self.queue_transfer_in(&tx, &source, target, revision, false)? {
             return Ok(false);
         }
         let (host,hat,agent,cwd,eligible):(String,String,String,String,bool)=tx.query_row("SELECT host_id,hat_id,agent,cwd,lifecycle = 'active' AND open_turn_id IS NULL AND activity <> 'blocked'
@@ -399,6 +419,18 @@ impl Store {
         Ok(true)
     }
     pub(crate) fn ingest_delegation_in(&self, tx: &Transaction<'_>, session: &str, body: &SessionBody) -> Result<()> {
+        if matches!(
+            body,
+            SessionBody::TurnEnded {
+                outcome: hennery_proto::frames::TurnOutcome::Failed,
+                ..
+            }
+        ) {
+            self.fail_operator_queue_in(tx, session, "previous_turn_failed")?;
+        }
+        if matches!(body, SessionBody::AdapterExited { .. }) {
+            self.fail_operator_queue_in(tx, session, "runtime_unavailable")?;
+        }
         if matches!(body, SessionBody::SessionStarted { .. }) {
             tx.execute("UPDATE session_operations SET state = 'waiting_config' WHERE owner_id = ?1 AND child_id = ?2 AND turn_id IS NULL AND tool IN ('session_spawn','session_send') AND state = 'awaiting_reconciliation'",params![self.owner_id(),session])?;
         }
@@ -436,6 +468,11 @@ impl Store {
     pub(crate) fn settle_delegation_in(&self, tx: &Transaction<'_>) -> Result<()> {
         self.settle_notices_in(tx)?;
         crate::delegation_attention::reconcile_closed_attention(tx, self.owner_id())?;
+        // A terminal lifecycle can race the acknowledgement of a prompt that
+        // the adapter actually accepted. Delivery truth wins over the guess.
+        tx.execute("UPDATE session_operations SET state=CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.owner_id = ?1 AND t.turn_id=session_operations.turn_id AND t.state='ended') THEN 'completed' ELSE 'delivered' END,code=NULL
+            WHERE owner_id = ?1 AND tool='operator_prompt' AND state='failed'
+            AND EXISTS(SELECT 1 FROM turns t WHERE t.owner_id = ?1 AND t.turn_id=session_operations.turn_id AND t.state IN ('started','ended'))",[self.owner_id()])?;
         tx.execute("UPDATE session_operations SET state = 'completed' WHERE owner_id = ?1 AND tool = 'session_close' AND state = 'awaiting_reconciliation' AND EXISTS (SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = session_operations.child_id AND lifecycle = 'closed')",[self.owner_id()])?;
         tx.execute("UPDATE session_operations SET state = CASE
             WHEN EXISTS (SELECT 1 FROM turns t WHERE t.owner_id = ?1 AND t.turn_id = session_operations.turn_id AND t.state = 'ended') THEN 'completed'
@@ -444,8 +481,58 @@ impl Store {
             WHEN pending_id IS NOT NULL AND EXISTS (SELECT 1 FROM answer_queue a WHERE a.owner_id = ?1 AND a.pending_id = session_operations.pending_id AND a.delivered = 1) THEN 'delivered'
             WHEN pending_id IS NOT NULL AND EXISTS (SELECT 1 FROM answer_queue a WHERE a.owner_id = ?1 AND a.pending_id = session_operations.pending_id AND a.delivered = 0) THEN 'not_delivered'
             ELSE state END WHERE owner_id = ?1 AND state IN ('awaiting_reconciliation','delivered','not_delivered')",[self.owner_id()])?;
-        tx.execute("UPDATE session_dispatch_queue SET payload = '',state = 'settled' WHERE owner_id = ?1 AND operation_id IN
+        tx.execute("UPDATE session_dispatch_queue SET payload = '',state = 'settled' WHERE origin <> 'operator' AND owner_id = ?1 AND operation_id IN
             (SELECT operation_id FROM session_operations WHERE owner_id = ?1 AND state IN ('completed','delivered','not_delivered','failed','cancelled'))",[self.owner_id()])?;
+        // Only hosts promising a complete actor-mailbox snapshot can prove
+        // non-admission by absence. Older hosts may still hold this prompt.
+        let candidates = {
+            let mut statement = tx.prepare("SELECT o.operation_id,h.capabilities FROM session_operations o
+                JOIN sessions s ON s.owner_id = ?1 AND s.id=o.child_id
+                JOIN hosts h ON h.owner_id = ?1 AND h.id=s.host_id
+                WHERE o.owner_id = ?1 AND o.tool='operator_prompt' AND o.state='not_delivered'
+                AND EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.operation_id=o.operation_id
+                    AND q.origin='operator' AND q.state='awaiting_reconciliation')")?;
+            statement
+                .query_map([self.owner_id()], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (operation, capabilities) in candidates {
+            if serde_json::from_str::<hennery_proto::frames::Capabilities>(&capabilities)
+                .is_ok_and(|capabilities| capabilities.has(Capability::PromptMailboxSnapshot))
+            {
+                tx.execute("UPDATE session_dispatch_queue SET state='queued' WHERE owner_id = ?1 AND operation_id=?2 AND origin='operator' AND state='awaiting_reconciliation'",params![self.owner_id(),operation])?;
+            }
+        }
+        // Preserve the fence before releasing the current attempt association.
+        tx.execute("UPDATE turns SET queue_retry_released=1 WHERE owner_id = ?1 AND operator_queued=1 AND state='not_delivered'
+            AND turn_id IN (SELECT o.turn_id FROM session_operations o JOIN session_dispatch_queue q
+                ON q.owner_id = ?1 AND q.operation_id=o.operation_id
+                WHERE o.owner_id = ?1 AND o.tool='operator_prompt' AND o.state='not_delivered' AND q.state='queued')",[self.owner_id()])?;
+        tx.execute("UPDATE session_operations SET state='failed',code='not_delivered' WHERE owner_id = ?1 AND tool='operator_prompt' AND state='not_delivered'
+            AND operation_id IN (SELECT operation_id FROM session_dispatch_queue WHERE owner_id = ?1 AND origin='operator' AND state='awaiting_reconciliation')",[self.owner_id()])?;
+        tx.execute("UPDATE session_operations SET state='queued',turn_id=NULL,request_id=NULL,code=NULL WHERE owner_id = ?1 AND tool='operator_prompt' AND state='not_delivered'
+            AND operation_id IN (SELECT operation_id FROM session_dispatch_queue WHERE owner_id = ?1 AND origin='operator' AND state='queued')",[self.owner_id()])?;
+        // Permanent failures retain their text/images until dismissal or expiry.
+        tx.execute("UPDATE session_operations SET state='failed',code='not_delivered' WHERE owner_id = ?1 AND tool='operator_prompt'
+            AND state IN ('queued','waiting_config') AND child_id IN
+            (SELECT q.target_id FROM session_dispatch_queue q JOIN session_operations o ON o.owner_id = ?1 AND o.operation_id=q.operation_id
+             WHERE q.owner_id = ?1 AND q.origin='operator' AND q.state='awaiting_reconciliation' AND o.state='failed')",[self.owner_id()])?;
+        tx.execute(
+            "UPDATE session_dispatch_queue SET state='failed' WHERE owner_id = ?1 AND origin='operator'
+            AND state IN ('queued','waiting_config','awaiting_reconciliation') AND operation_id IN
+            (SELECT operation_id FROM session_operations WHERE owner_id = ?1 AND state IN ('failed','cancelled'))",
+            [self.owner_id()],
+        )?;
+        tx.execute("UPDATE session_dispatch_queue SET state='settled',payload='',image_bytes=0 WHERE owner_id = ?1 AND origin='operator'
+            AND state<>'settled' AND operation_id IN
+            (SELECT operation_id FROM session_operations WHERE owner_id = ?1 AND state IN ('delivered','completed'))",[self.owner_id()])?;
+        tx.execute(
+            "DELETE FROM prompt_queue_attachments WHERE owner_id = ?1 AND operation_id IN
+            (SELECT operation_id FROM session_dispatch_queue WHERE owner_id = ?1 AND state='settled')",
+            [self.owner_id()],
+        )?;
         Ok(())
     }
 }
@@ -510,6 +597,7 @@ impl Store {
 /// after I/O; a handed-off start is never a new catalog-discovery candidate.
 pub(crate) struct AttachCandidate {
     pub operation: String,
+    pub operator: bool,
     pub required: SessionConfig,
     pub refusal: Option<&'static str>,
 }
@@ -530,18 +618,18 @@ impl Store {
     pub(crate) fn delegated_attach_candidate(&self, target: &str, hub: &Hub) -> Result<Option<AttachCandidate>> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let head: Option<(String, String, i64, String)> = tx
+        let head: Option<(String, String, i64, String,bool)> = tx
             .query_row(
-                "SELECT operation_id,source_id,accepted_revision,required_config FROM session_dispatch_queue
+                "SELECT operation_id,source_id,accepted_revision,required_config,origin='operator' FROM session_dispatch_queue
              WHERE owner_id = ?1 AND target_id=?2 AND state IN ('queued','waiting_config') ORDER BY position LIMIT 1",
                 params![self.owner_id(), target],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,r.get(4)?)),
             )
             .optional()?;
-        let Some((operation, source, revision, required)) = head else {
+        let Some((operation, source, revision, required, operator)) = head else {
             return Ok(None);
         };
-        if !self.transfer_in(&tx, &source, target, revision)? {
+        if !self.queue_transfer_in(&tx, &source, target, revision, operator)? {
             return Ok(None);
         }
         let (lifecycle, host, hat, cwd, record): (String, String, String, String, Option<String>) = tx.query_row(
@@ -569,10 +657,17 @@ impl Store {
             }
             _ => return Ok(None),
         };
-        let Some(refusal) = attach_availability(hub, &host, possible) else {
+        let Some(mut refusal) = attach_availability(hub, &host, possible) else {
             return Ok(None);
         };
+        if operator
+            && (!hub.has_capability(&host, Capability::OperatorResume)
+                || !hub.has_capability(&host, Capability::DelegationConfig))
+        {
+            refusal = Some("operator_resume_unsupported");
+        }
         Ok(Some(AttachCandidate {
+            operator,
             operation,
             required: serde_json::from_str(&required)?,
             refusal,

@@ -1970,7 +1970,68 @@ async fn busy_send_is_durable_and_parked_followup_resumes_with_fresh_readback() 
         json!({"operation_key":"resume-follow","child_id":child,"text":"continue after parking"}),
     )
     .await;
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    assert_eq!(h.state.store.find_session(child).unwrap().unwrap().lifecycle, "parked");
+    let held = h
+        .ok(
+            "session_status",
+            json!({"child_id":child,"operation_key":"resume-follow"}),
+        )
+        .await;
+    assert_eq!(
+        held["operations"][0]["state"]["state"], "queued",
+        "operator Park holds delegated follow-ups too"
+    );
+    let (status, body) = h.post(&format!("/api/sessions/{child}/resume"), json!({})).await;
+    assert!(status.is_success(), "{body}");
     h.done(child, "resume-follow").await;
+    assert_eq!(h.status(child).await["actual"]["model"], "large");
+    let log = std::fs::read_to_string(h.cwd.join("worker-sessions.jsonl")).unwrap();
+    assert!(
+        log.lines()
+            .any(|line| serde_json::from_str::<Value>(line).unwrap()["method"] == "session/load")
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn idle_parked_delegated_followup_auto_resumes_with_fresh_model_readback() {
+    let h = Harness::with_worker_idle(script(), None, true, Duration::from_secs(1)).await;
+    // Keep the caller attached while the child parks through the real idle reaper.
+    let pinned = h
+        .client
+        .patch(format!("{}/api/sessions/{}/idle-hold", h.url, h.parent))
+        .json(&json!({"pinned":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pinned.status(), reqwest::StatusCode::OK);
+    let receipt = h.spawn("idle-park-start", json!({"model":"large"})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    h.done(child, "idle-park-start").await;
+    eventually("child idle parked", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.lifecycle == "parked" && !s.presumed_parked)
+            .map(|_| ())
+    })
+    .await;
+    assert!(
+        h.state
+            .store
+            .events(child, 0, 1000)
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "session_parked" && event.body["reason"] == "idle")
+    );
+    h.ok(
+        "session_send",
+        json!({"operation_key":"idle-resume-follow","child_id":child,"text":"continue after idle parking"}),
+    )
+    .await;
+    h.done(child, "idle-resume-follow").await;
     assert_eq!(h.status(child).await["actual"]["model"], "large");
     let log = std::fs::read_to_string(h.cwd.join("worker-sessions.jsonl")).unwrap();
     assert!(
@@ -2556,6 +2617,10 @@ async fn background_answer_worker_advances_past_held_page_and_wraps_to_repaired_
 }
 
 async fn signout_worker() -> (Harness, tempfile::TempDir, PathBuf) {
+    signout_worker_with_idle(hennery_host::session::IDLE_TIMEOUT).await
+}
+
+async fn signout_worker_with_idle(idle: Duration) -> (Harness, tempfile::TempDir, PathBuf) {
     let root = tempfile::tempdir().unwrap();
     let marker = root.path().join("signed-out");
     let wrapper = root.path().join("auth.cjs");
@@ -2584,7 +2649,7 @@ child.on('exit',code=>process.exit(code??1));
         marker.display().to_string(),
     ];
     command.program = node.display().to_string();
-    let h = Harness::with_worker(script(), Some((command, Profile::Claude)), false).await;
+    let h = Harness::with_worker_idle(script(), Some((command, Profile::Claude)), false, idle).await;
     (h, root, marker)
 }
 
@@ -2644,7 +2709,16 @@ async fn accepted_start_signout_fails_operation_and_child_without_reprobing() {
 
 #[tokio::test]
 async fn parked_followup_signout_fails_operation_without_failing_existing_session() {
-    let (h, _root, marker) = signout_worker().await;
+    let (h, _root, marker) = signout_worker_with_idle(Duration::from_secs(1)).await;
+    // Keep the caller attached while waiting for the child's real idle park.
+    let pinned = h
+        .client
+        .patch(format!("{}/api/sessions/{}/idle-hold", h.url, h.parent))
+        .json(&json!({"pinned":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pinned.status(), reqwest::StatusCode::OK);
     let receipt = h.spawn("before-signout", json!({})).await;
     let child = receipt["child_id"].as_str().unwrap();
     eventually("initial child completes", async || {
@@ -2658,9 +2732,9 @@ async fn parked_followup_signout_fails_operation_without_failing_existing_sessio
         (status["operations"][0]["state"]["state"] == "completed").then_some(())
     })
     .await;
-    let (status, body) = h.post(&format!("/api/sessions/{child}/park"), json!({})).await;
-    assert!(status.is_success(), "{body}");
-    eventually("child parked", async || {
+    // Automatic parking allows background follow-ups; explicit operator Park
+    // instead holds the shared FIFO until Resume or a new operator Send.
+    eventually("child idle parked", async || {
         h.state
             .store
             .find_session(child)
@@ -2669,6 +2743,14 @@ async fn parked_followup_signout_fails_operation_without_failing_existing_sessio
             .map(|_| ())
     })
     .await;
+    assert!(
+        h.state
+            .store
+            .events(child, 0, 1000)
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "session_parked" && event.body["reason"] == "idle")
+    );
     h.ok(
         "session_send",
         json!({"operation_key":"after-signout","child_id":child,"text":"continue"}),

@@ -4,6 +4,18 @@ use hennery_proto::frames::{
 use serde_json::json;
 
 #[test]
+fn attached_session_ending_is_optional_and_round_trips_when_reported() {
+    for ending in [None, Some(false), Some(true)] {
+        let mut wire = json!({"session_id":"s1", "last_seq":0});
+        if let Some(ending) = ending {
+            wire["ending"] = json!(ending);
+        }
+        let snapshot: hennery_proto::frames::AttachedSession = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(snapshot).unwrap(), wire);
+    }
+}
+
+#[test]
 fn host_frames_use_snake_case_type_tags() {
     let frame = HostFrame::Session {
         session_id: "s1".into(),

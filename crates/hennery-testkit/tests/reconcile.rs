@@ -329,9 +329,58 @@ fn client(collector: &Collector) -> reqwest::Client {
 
 fn attached(session_id: &str, last_seq: u64) -> AttachedSession {
     AttachedSession {
+        ending: None,
         session_id: session_id.into(),
         last_seq,
         open_turn_id: None,
+    }
+}
+
+#[tokio::test]
+async fn reconnect_during_explicit_park_retains_the_hold_until_operator_resume() {
+    for ending in [true, false] {
+        let collector = Collector::start().await;
+        let mut host = ScriptedHost::connect(&collector, vec![], 0).await;
+        let session = started_session(&collector, &mut host).await;
+        collector.state.store.record_park_request(&session).unwrap();
+        let seq = host.seq;
+        host.drop_connection(&collector).await;
+        let listed = serde_json::from_value(json!({
+            "session_id":session, "last_seq":seq, "ending":ending
+        }))
+        .unwrap();
+        let mut host = ScriptedHost::connect(&collector, vec![listed], seq).await;
+        let held = || -> bool {
+            rusqlite::Connection::open(collector._dir.path().join("hennery.db"))
+                .unwrap()
+                .query_row(
+                    "SELECT prompt_queue_held=1 FROM sessions WHERE owner_id=?1 AND id=?2",
+                    rusqlite::params![collector.state.store.owner_id(), session],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(held(), ending, "only an actor continuing normally disproves Park");
+        if ending {
+            host.emit(
+                &session,
+                SessionBody::SessionParked {
+                    reason: hennery_proto::frames::ParkReason::Operator,
+                },
+            )
+            .await;
+            wait_for("parked", || async {
+                (collector.lifecycle(&session) == "parked").then_some(())
+            })
+            .await;
+            assert!(
+                held(),
+                "the in-flight explicit Park must retain its hold after completion"
+            );
+            let hat = collector.state.store.find_session(&session).unwrap().unwrap().hat_id;
+            collector.state.store.request_resume(&session, &hat).unwrap();
+            assert!(!held(), "operator Resume releases the hold");
+        }
     }
 }
 
@@ -473,11 +522,12 @@ async fn a_prompt_lost_in_a_drop_is_released_and_the_next_prompt_runs() {
     let seq = host.seq;
     host.drop_connection(&collector).await; // the prompt never reached the adapter
     assert_eq!(call.await.unwrap().0, 503);
-    // Still wedged until the host is back: one turn at a time.
-    assert_eq!(
-        post(&client(&collector), prompt_url.clone(), prompt_body()).await.0,
-        409
-    );
+    // The next operator message is durable while reconciliation still owns
+    // the old slot; it cannot reach the adapter yet.
+    let (status, queued) = post(&client(&collector), prompt_url.clone(), prompt_body()).await;
+    assert_eq!(status, 202);
+    let queue_id = queued["queue_id"].as_str().unwrap().to_string();
+    assert_eq!(collector.state.store.operator_prompt_queue(&session).unwrap().len(), 1);
 
     let mut host = ScriptedHost::connect(&collector, vec![attached(&session, seq)], seq).await;
     assert!(
@@ -485,18 +535,37 @@ async fn a_prompt_lost_in_a_drop_is_released_and_the_next_prompt_runs() {
             .event_kinds(&session)
             .contains(&"turn_not_delivered".to_string())
     );
-    let c = client(&collector);
-    let url = prompt_url.clone();
-    let call = tokio::spawn(async move { post(&c, url, prompt_body()).await });
+    hennery_sessions::delegation_worker::drain(&collector.state)
+        .await
+        .unwrap();
     let CollectorFrame::Prompt {
         request_id, turn_id, ..
     } = host.next().await
     else {
         panic!("expected the next prompt");
     };
+    assert_ne!(request_id, queue_id);
+    let association: (String, String) = rusqlite::Connection::open(collector._dir.path().join("hennery.db"))
+        .unwrap()
+        .query_row(
+            "SELECT request_id,turn_id FROM session_operations WHERE owner_id = ?1 AND operation_id=?2",
+            rusqlite::params![collector.state.store.owner_id(), queue_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(association, (request_id.clone(), turn_id.clone()));
     host.emit(&session, SessionBody::TurnStarted { request_id, turn_id })
         .await;
-    assert_eq!(call.await.unwrap().0, 202);
+    wait_for("queued prompt acknowledged", || async {
+        collector
+            .state
+            .store
+            .operator_prompt_queue(&session)
+            .unwrap()
+            .is_empty()
+            .then_some(())
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -539,7 +608,9 @@ async fn a_restarted_host_parks_its_sessions_and_interrupts_the_open_turn_only_a
         prompt_body(),
     )
     .await;
-    assert_eq!((status, body["code"].as_str()), (409, Some("not_attached")));
+    assert_eq!(status, 202, "{body}");
+    assert!(body["queue_id"].is_string());
+    assert_eq!(collector.state.store.operator_prompt_queue(&session).unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -744,10 +815,20 @@ async fn a_host_offline_past_the_threshold_is_presumed_parked_and_reattached_on_
         prompt_body(),
     )
     .await;
-    assert_eq!((status, body["code"].as_str()), (409, Some("not_attached")));
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(body["code"], "host_offline");
+    assert!(
+        collector
+            .state
+            .store
+            .operator_prompt_queue(&session)
+            .unwrap()
+            .is_empty()
+    );
 
     // The host comes back; its adapter is still running the turn.
     let listed = AttachedSession {
+        ending: None,
         open_turn_id: Some(turn.clone()),
         ..attached(&session, seq)
     };
@@ -1869,6 +1950,7 @@ async fn an_answer_given_while_the_host_is_offline_is_sent_after_its_next_handsh
 
     let listed = || {
         vec![AttachedSession {
+            ending: None,
             session_id: session.clone(),
             last_seq: seq,
             open_turn_id: Some(turn.clone()),
@@ -2771,6 +2853,7 @@ async fn a_resent_question_still_open_notifies_after_reconciliation() {
     let mut host = ScriptedHost::hello(
         &collector,
         vec![AttachedSession {
+            ending: None,
             session_id: session.clone(),
             last_seq: seq,
             open_turn_id: Some(turn.clone()),
@@ -2940,6 +3023,7 @@ async fn a_session_deleted_while_its_host_was_away_is_closed_and_never_comes_bac
     // The host comes back with the session still attached, and resends
     // what its outbox holds for it.
     let listed = AttachedSession {
+        ending: None,
         open_turn_id: Some(turn.clone()),
         ..attached(&session, seq)
     };

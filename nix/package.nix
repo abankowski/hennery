@@ -23,6 +23,7 @@ let
       ../crates/hennery-sessions/src/family.sql
       ../crates/hennery-sessions/src/idle_hold.sql
       ../crates/hennery-sessions/src/runtime_catalog.sql
+      ../crates/hennery-sessions/src/prompt_queue.sql
       ../crates/hennery-sessions/tests/fixtures/undo_family.sql
       ../crates/hennery-sessions/tests/fixtures/session_tool_contract.json
       ../crates/hennery-memory/src/schema.sql
