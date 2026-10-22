@@ -48,8 +48,9 @@ pub struct GatewayState {
 }
 
 impl GatewayState {
-    /// The redirect URI to register at a vendor (gateway spec §4.2):
-    /// `<public_url>/api/mcp/oauth/callback`. `None` before setup.
+    /// The collector's callback and default vendor redirect (gateway spec
+    /// §4.2). A flow may use a local vendor redirect without changing this
+    /// address or the cookie path. `None` before setup.
     pub fn redirect_uri(&self) -> Option<String> {
         self.operator
             .public_url()

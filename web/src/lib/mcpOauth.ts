@@ -1,4 +1,26 @@
 import type { McpConnectionItem, McpOauthClientRequest } from '../generated/protocol'
+
+export const DEFAULT_LOCAL_CALLBACK = 'http://localhost:8976/callback'
+
+/** The API repeats this check. Keep the original string for exact OAuth matching. */
+export function localCallback(input: string): boolean {
+  try {
+    if (input.length > 2048 || /[\s\\]/u.test(input) || /[\u0000-\u001f\u007f]/u.test(input)) return false
+    const u = new URL(input)
+    return u.protocol === 'http:' && !u.username && !u.password && !input.includes('?') && !input.includes('#') && u.port !== '0' &&
+      (u.hostname === 'localhost' || u.hostname === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(u.hostname))
+  } catch { return false }
+}
+
+export function callbackCommand(collectorCallback: string, local: string): string | null {
+  if (!localCallback(local)) return null
+  try {
+    const collector = new URL(collectorCallback)
+    if (!consentUrl(collector.origin) || collector.username || collector.password) return null
+    const quote = (s: string) => "'" + s.replaceAll("'", "'\"'\"'") + "'"
+    return `hennery oauth-callback --collector ${quote(collector.origin)} --redirect-uri ${quote(local)}`
+  } catch { return null }
+}
 /** A local wait bound, not authorization validity. No client clock enters
  *  the duration; without a collector Date header use its 15-minute TTL.
  *  Even an elapsed/unreadable stamp permits navigation: the server expires flows. */
@@ -51,6 +73,7 @@ export function oauthAction(item: McpConnectionItem): 'connect' | 'reconnect' | 
 /** Code only: vendor text never selects a recovery action. */
 export function oauthGuidance(code: string): string {
   const words: Record<string, string> = {
+    invalid_local_redirect_uri: 'Enter an http callback on localhost or a loopback IP, without credentials, query or fragment.',
     issuer_changed: 'The authorization server changed. Review and save the vendor client again before connecting.',
     resource_mismatch: 'Compare the server URL with the advertised resource before accepting it.',
     resource_foreign: 'The advertised resource cannot be accepted. Check the server URL.',

@@ -655,10 +655,10 @@ supports dynamic registration, or **OAuth: pre-registered client** if you
 register the client yourself. Press **Create**. OAuth addresses must use
 HTTPS, or HTTP to this machine.
 
-The vendor must allow hennery's redirect URI:
+By default, the vendor must allow hennery's redirect URI:
 `<public_url>/api/mcp/oauth/callback`, using the collector's configured
 browser origin as `public_url`. The exact URI is shown in the pre-registered
-add/edit form and client settings beside **Register this redirect URI at the vendor:**
+add/edit form and client settings beside **Collector redirect URI to register at the vendor:**
 For a pre-registered client, enter **Client ID**, then choose
 **Public client (no secret)** or **Set a new secret** under **Client secret action**.
 Enter **Client secret** if you chose **Set a new secret**. Press **Save client**.
@@ -671,6 +671,30 @@ the popup closes and you confirm your password in the main window (or use
 **Confirm with passkey** if offered). Then follow the card and click
 **Connect** or **Reconnect** again if offered; authorization is not retried
 automatically.
+
+If the vendor permits only a local redirect, select **Localhost callback on
+this computer** under **OAuth callback** in the connection's settings.
+Enter the exact **Local redirect URI** the vendor permits, including host,
+port and path (default `http://localhost:8976/callback`). Run the displayed
+command on the computer running the browser, then click **Connect** or
+**Reconnect**. For example, for collector `https://hennery.example`, the
+command is `hennery oauth-callback --collector 'https://hennery.example'
+--redirect-uri 'http://localhost:8976/callback'` (one line).
+Use the same browser profile that started Connect. The receiver sends the
+browser back to the collector, where its flow cookie, PKCE, exchange and
+grant storage are checked as usual. Login, passkeys and MCP URLs still use
+the existing public URL.
+
+Keep the receiver terminal open. It listens only on loopback and stops after
+15 minutes or Ctrl+C; `--timeout-secs` changes that lifetime (1–86400).
+After a timeout, restart the command and start Connect again. For an occupied
+port, stop the other receiver or choose another vendor-permitted port in both
+the UI and the command. A denial is shown by the collector; reconnect to try
+again. **Stop waiting** ends the UI wait; it does not revoke an existing grant.
+A manually registered client must already permit the selected local URI.
+This option cannot bypass the provider's redirect policy or add permission to
+an existing client. Automatic registration uses the selected callback and
+reuses a client only when its redirect URI matches.
 
 The card shows the gateway's last report, with **Status recorded** and
 **Last checked**. **Probe now** requests a report;

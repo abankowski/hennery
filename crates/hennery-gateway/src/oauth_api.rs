@@ -134,6 +134,19 @@ pub(crate) async fn authorize(
     let Some(redirect_uri) = state.redirect_uri() else {
         return internal(anyhow::anyhow!("no public_url"));
     };
+    let redirect_uri = match req.local_redirect_uri {
+        Some(local) => match crate::local_callback::LocalCallback::parse(&local) {
+            Ok(_) => local,
+            Err(_) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_local_redirect_uri",
+                    "Use an http callback on localhost or a loopback IP, without credentials, query or fragment.",
+                );
+            }
+        },
+        None => redirect_uri,
+    };
     // The latest Connect's failure is cleared by the next authorize, and
     // each failure from here on is kept.
     if let Err(err) = runtime.store.set_oauth_error(&id, None, now) {

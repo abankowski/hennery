@@ -30,6 +30,14 @@ function setup(answer: Response = json(200, response), popup: object | null = { 
   const finish = () => act(async () => resolve(answer.clone()))
   return { ...hook, opened, fetch, stepUp, refresh, waiting, popup, start, finish }
 }
+it('sends the exact local redirect with resource acceptance on an explicit Connect', async () => {
+  const s = setup()
+  const local = 'http://localhost:80/custom/callback'
+  act(() => s.result.current.connect('https://resource.example/mcp', local))
+  expect(JSON.parse((s.fetch.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({ accept_resource: 'https://resource.example/mcp', local_redirect_uri: local })
+  await s.finish()
+  expect(s.popup).toMatchObject({ location: { href: response.consent_url } })
+})
 it('opens blank on the click, nulls opener before awaiting, navigates only after authorize and guards duplicate clicks', async () => {
   const s = setup(); s.start()
   expect(channelName).toBe('hennery-mcp-oauth')

@@ -2177,6 +2177,12 @@ client_secret?: string | null | undefined, };
  */
 export type McpAuthorizeRequest = {
 /**
+ * Optional local browser relay, `http://localhost:<port>/<path>` or
+ * an HTTP loopback IP. The collector callback and public URL stay fixed.
+ * The vendor must permit this exact URI for the selected client.
+ */
+local_redirect_uri?: string | undefined,
+/**
  * The mismatching `resource` the operator accepts, exactly as
  * `oauth.resource_mismatch` showed it (gateway spec §4.1, G-4).
  */

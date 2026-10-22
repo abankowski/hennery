@@ -37,7 +37,8 @@ export default function OauthClientForm({ connection: c, onChanged }: OauthClien
     finally { running.current = false; setBusy(false) }
   }
   return <section aria-label="Pre-registered OAuth client" className="oauth-client">
-    <p>Register this redirect URI at the vendor: <Text className="mono">{c.oauth?.redirect_uri ?? ''}</Text></p>
+    <p>Collector redirect URI to register at the vendor: <Text className="mono">{c.oauth?.redirect_uri ?? ''}</Text></p>
+    <p className="hint">For a localhost callback, select it below before Connect. This client must already permit the exact local redirect URI.</p>
     {c.oauth?.client_id && <p>Active client: <Text className="mono">{c.oauth.client_id}</Text>. Active secret: {c.oauth.has_client_secret ? 'stored' : 'none'}.</p>}
     {c.oauth?.pending_client && <p>Pending client: <Text className="mono">{c.oauth.pending_client.client_id}</Text>. Pending secret: {c.oauth.pending_client.has_client_secret ? 'stored' : 'none'}.</p>}
     {c.oauth?.pending_client && <p>Saved settings take effect after a successful Connect. The current grant stays in use meanwhile. The pending client uses the vendor token endpoint it is pinned to at the next Connect.</p>}

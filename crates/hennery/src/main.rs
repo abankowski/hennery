@@ -11,6 +11,7 @@ mod healthcheck;
 mod inherit;
 mod lock;
 mod log;
+mod oauth_callback;
 mod revoked;
 mod runtime;
 mod service;
@@ -38,6 +39,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Relay a local OAuth callback back to a fixed remote collector through the browser.
+    OauthCallback(oauth_callback::CallbackArgs),
     /// Run only the collector: the server that stores sessions and serves the browser UI.
     Collector(CollectorCli),
     /// Host commands.
@@ -348,6 +351,7 @@ async fn main() -> std::process::ExitCode {
     // and drop normally first, exactly like a plain `Ok(())` return always
     // did; only then does the process actually exit with that code.
     let result = async { match cli.command {
+        Command::OauthCallback(args) => oauth_callback::run(args).await.map(|()| std::process::ExitCode::SUCCESS),
         Command::Collector(CollectorCli {
             command: Some(CollectorCommand::Healthcheck(args)),
             ..
