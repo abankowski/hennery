@@ -1120,9 +1120,13 @@ fn body_kind(response: &reqwest::Response) -> Result<BodyKind, &'static str> {
     let bodiless = matches!(response.status(), StatusCode::ACCEPTED | StatusCode::NO_CONTENT)
         || response.content_length() == Some(0);
     match content_type.as_deref() {
+        // JSON and event streams are judged whatever the status.
         Some("application/json") => Ok(BodyKind::Json),
         Some("text/event-stream") => Ok(BodyKind::EventStream),
-        None if bodiless => Ok(BodyKind::Empty),
+        // A body-less answer under any other type passes empty: some
+        // upstreams send `202` with `Content-Type: text/plain` for a
+        // notification. The body is dropped and its type never goes down.
+        _ if bodiless => Ok(BodyKind::Empty),
         None => Err("a body of no content type"),
         Some(_) => Err("a content type other than JSON or an event stream"),
     }
