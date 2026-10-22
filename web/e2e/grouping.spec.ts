@@ -67,6 +67,12 @@ for (const width of [1280, 1024, 390]) for (const theme of ['light', 'dark'] as 
         return [range.getBoundingClientRect().left, document.querySelector('.session-table:not(.session-columns) .sess-name')!.getBoundingClientRect().left]
       })
       expect(Math.abs(nameEdges[0] - nameEdges[1])).toBeLessThanOrEqual(2)
+      // Rows under a project heading are indented: status under the folder icon, name under the project name.
+      const indent = await page.evaluate(() => {
+        const left = (selector: string) => document.querySelector(selector)!.getBoundingClientRect().left
+        return [left('.project-toggle > svg'), left('.project-rows .sess-led'), left('.project-toggle .project-name'), left('.project-rows .sess-name')]
+      })
+      expect(Math.abs(indent[0] - indent[1])).toBeLessThanOrEqual(2); expect(Math.abs(indent[2] - indent[3])).toBeLessThanOrEqual(2)
       const metrics = await page.locator('.overview-head').first().evaluate(header => {
         const parts = [header.querySelector('h1')!, header.querySelector('.overview-counter')!, header.querySelector('.grouping-controls')!, header.querySelector('.btn-primary')!]
         return { centers: parts.map(el => { const rect = el.getBoundingClientRect(); return rect.top + rect.height / 2 }), height: header.getBoundingClientRect().height, overflow: header.scrollWidth > header.clientWidth }

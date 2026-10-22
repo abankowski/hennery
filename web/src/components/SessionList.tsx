@@ -121,7 +121,7 @@ export default function SessionList({ screen = false, attentionOnly = false }: {
           {project.waiting > 0 && <span className="project-waiting" aria-label={`${project.waiting} ${project.waiting === 1 ? 'session needs' : 'sessions need'} you`}>{project.waiting} {project.waiting === 1 ? 'needs' : 'need'} you</span>}
           <span className="project-summary">{project.running > 0 && `${project.running} running · `}{project.count}{list.hasMore ? ' shown' : ''} {project.count === 1 ? 'session' : 'sessions'}</span><span className="grp-host" title={project.hosts.map(id => hostNames.get(id) ?? 'Unknown host').join(', ')}><bdi>{project.hosts.map(id => hostNames.get(id) ?? 'Unknown host').join(', ')}</bdi></span>
         </button></h3>}
-        {!collapsedProjects.has(project.id) && <table className="session-table"><colgroup>{COLUMNS.map(label => <col key={label} />)}</colgroup><thead className="table-head-only"><tr>{COLUMNS.map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{project.families.map(family => {
+        {!collapsedProjects.has(project.id) && <table className={project.path !== null ? 'session-table project-rows' : 'session-table'}><colgroup>{COLUMNS.map(label => <col key={label} />)}</colgroup><thead className="table-head-only"><tr>{COLUMNS.map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{project.families.map(family => {
         const s = family.root, children = family.members.filter(child => child.family?.parent?.session_id === s.session_id)
         const knownClosed = [...list.all.values()].filter(child => child.family?.parent?.session_id === s.session_id && child.lifecycle === 'closed').length
         const hideClosed = scope.hideClosed && !list.searching && !scope.lifecycle
