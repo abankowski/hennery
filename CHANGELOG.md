@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The MCP gateway accepts a body-less 202 or 204 that names a non-JSON
+  content type (e.g. `text/plain` on `notifications/initialized`) instead of
+  answering 502.
 - Recent sessions follow your visits in this browser, with up to six sidebar
   entries, status icons, hat colours and the current session highlighted.
   Option/Alt+1–5 opens the numbered entries; backtick returns to this window's
