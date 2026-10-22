@@ -228,7 +228,7 @@ export type SessionConfig = { model?: string | null, mode?: string | null, axes?
  * collector never sends a frame that needs a capability to a host that
  * lacks it.
  */
-export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "delegation_config" | "operator_resume";
+export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "delegation_config" | "operator_resume" | "prompt_mailbox_snapshot";
 
 /**
  * `hello.capabilities`. Deserialized leniently: a capability this build

@@ -916,8 +916,10 @@ leaves the session `failed` like a failed start, and `failed` is resumable.
   Revoked hosts reject new prompts; revoked or offline hosts fail queued
   parked input with readable reasons. A connected host still resending or
   reconciling defers the queue; lack of readiness is not proof of being offline.
-  A `turn_in_progress` host refusal proves
-  non-admission and requeues the same head to wait for that turn's end.
+  New parked-session prompts are refused with 409 `host_offline` before
+  acceptance while the host is offline. A `turn_in_progress` host refusal proves
+  non-admission and requeues the same head with persistent exponential backoff
+  (1, 2, 4, 8, then 10 seconds); its unsent turn and image links are removed.
   Awaiting reconciliation fences every immediate, operator and delegated
   head path; reconciliation settles its receipt in the same transaction.
   Queue receipts stay stable while each delivery attempt receives a fresh
@@ -927,6 +929,16 @@ leaves the session `failed` like a failed start, and `failed` is resumable.
   falling back to the running turn. Its marker remains until rejection or
   an outboxed `turn_started`; this makes absent-turn reconciliation a valid
   non-admission proof even when the actor has not read its command channel.
+  Hosts announce this guarantee separately as `prompt_mailbox_snapshot`;
+  `operator_resume` alone does not imply it. Only complete snapshots permit
+  automatic retry of a reconciled not-delivered operator head. Legacy hosts
+  instead fail it and the waiting queue with retained input and a readable
+  delivery warning. A superseded attempt's late start is stored unapplied;
+  queue-owned not-delivered turns never offer transcript Send again or its
+  content endpoint. An actual admission racing session close/failure corrects
+  the queued item's disposition to delivered without reopening the session.
+  Explicit Park holds survive host restart. Reconciliation clears a Park hold
+  left by an ambiguous request when the host reports the session still attached.
   One session's preparation failure does not abort other sessions' dispatch.
   Session deletion and hat purge scrub queued content and attachments under
   §4.10; deleted queue/transcript routes answer 404. The delete confirmation
@@ -936,10 +948,13 @@ leaves the session `failed` like a failed start, and `failed` is resumable.
   The composer generates one per submission. An owner/session-scoped receipt
   is committed atomically with either immediate admission or queue insertion;
   retrying identical content returns the original `{turn_id}` or `{queue_id}`
-  across delivery, edits, removal, restart and lifecycle changes. Reusing a key
+  across delivery, edits, restart and lifecycle changes while its queue item
+  exists. Dismissal/removal/expiry prunes that item's receipt. Reusing a key
   for different checked content (including image hashes) is an operation conflict.
   A proven unsent immediate admission refusal releases its receipt; an uncertain
-  or accepted delivery retains it. Deletion and hat purge scrub receipts too.
+  or accepted delivery retains it. The browser stores the key with its uncertain
+  send marker and reuses it for an unchanged draft after reload. Deletion and
+  hat purge scrub receipts too.
   Queue edit/remove return success after commit even if publication fails;
   the existing dirty flag repairs the event snapshot.
 - **Empty prompts are rejected at the API** (400): no image, and no text

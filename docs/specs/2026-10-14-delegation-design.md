@@ -531,13 +531,18 @@ parked path. Automatic resume never clears close intent. After resume, §4.1's
 fresh generation-bound configuration gate precedes every queued prompt.
 An explicit operator Park sets a durable hold across both FIFO sources; only
 operator Resume or a new operator Send clears it. Idle and host-restart parking
-do not set a hold. Operator automatic resumes require `operator_resume` and
+do not set a hold; an existing explicit hold survives host restart. A reconciled
+attached session releases an ambiguous Park request that did not detach it.
+Operator automatic resumes require `operator_resume` and
 `delegation_config`, with an explicit hennery 0.3.0 upgrade reason on older hosts.
 Adapter exit fails unsent operator input with a retained readable reason;
 parked offline/revoked hosts also fail waiting operator input readably.
 Awaiting operator reconciliation fences both FIFO sources. Reconciliation
 settles the receipt before commit; a proven unsent operator head returns to
-the same queue position, including host `turn_in_progress` refusals. Each
+the same queue position only with the independent `prompt_mailbox_snapshot`
+capability; legacy-host uncertain delivery fails readably with input retained.
+Host `turn_in_progress` refusals also requeue the head, remove the unsent turn
+and image links, and persist exponential backoff capped at ten seconds. Each
 session's worker error is contained so it cannot starve later sessions.
 Closed, deleted, failed-to-resume or hat-mismatched destinations stop dispatch
 and cause the visible fallback below. Pending questions in the destination

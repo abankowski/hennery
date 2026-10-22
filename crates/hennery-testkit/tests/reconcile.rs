@@ -766,9 +766,16 @@ async fn a_host_offline_past_the_threshold_is_presumed_parked_and_reattached_on_
         prompt_body(),
     )
     .await;
-    assert_eq!(status, 202, "{body}");
-    assert!(body["queue_id"].is_string());
-    assert_eq!(collector.state.store.operator_prompt_queue(&session).unwrap().len(), 1);
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(body["code"], "host_offline");
+    assert!(
+        collector
+            .state
+            .store
+            .operator_prompt_queue(&session)
+            .unwrap()
+            .is_empty()
+    );
 
     // The host comes back; its adapter is still running the turn.
     let listed = AttachedSession {
@@ -780,11 +787,7 @@ async fn a_host_offline_past_the_threshold_is_presumed_parked_and_reattached_on_
     assert!(!presumed(&collector, &session));
     let kinds = collector.event_kinds(&session);
     assert!(
-        kinds.ends_with(&[
-            "presumed_parked".to_string(),
-            "queue_changed".to_string(),
-            "reattached".to_string()
-        ]),
+        kinds.ends_with(&["presumed_parked".to_string(), "reattached".to_string()]),
         "{kinds:?}"
     );
     assert_eq!(

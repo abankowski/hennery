@@ -47,6 +47,8 @@ pub enum Capability {
     DelegationConfig,
     /// Collector-owned operator queue resume with operator authority (hennery 0.3.0).
     OperatorResume,
+    /// Reconnect snapshots include unread prompt commands as well as running turns.
+    PromptMailboxSnapshot,
 }
 
 /// The longest agent data root a host may report (plan 9d, O12's shape

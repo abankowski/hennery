@@ -65,6 +65,33 @@ async fn a_request_key_reuses_a_queue_receipt_and_rejects_changed_content() {
 }
 
 #[tokio::test]
+async fn a_parked_offline_host_refuses_input_before_allocating_a_queue_or_receipt() {
+    for image in [false, true] {
+        let (_dir, state) = fixture();
+        state
+            .store
+            .ingest(
+                "s",
+                2,
+                &SessionBody::SessionParked {
+                    reason: hennery_proto::frames::ParkReason::Idle,
+                },
+            )
+            .unwrap();
+        let (status, body) = if image {
+            let request = serde_json::from_value(json!({"request_key":"offline-key","content":[{"type":"image","mimeType":"image/png","data":"iVBORw0KGgo="}]})).unwrap();
+            answer(prompt(State(state.clone()), Path("s".into()), ApiJson(request)).await).await
+        } else {
+            send(&state, "offline-key", "keep my draft").await
+        };
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "host_offline");
+        assert!(body["message"].as_str().unwrap().contains("host"));
+        assert!(state.store.operator_prompt_queue("s").unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn revoked_hosts_refuse_new_prompts_without_allocating_input() {
     for (running, with_image) in [(false, false), (true, false), (false, true), (true, true)] {
         let (_dir, state) = fixture();
@@ -195,7 +222,7 @@ async fn a_request_key_reuses_an_immediate_turn_without_sending_again() {
 }
 
 #[tokio::test]
-async fn a_queued_request_receipt_survives_edit_remove_restart_and_close() {
+async fn a_queued_request_receipt_survives_edit_but_is_pruned_with_its_item() {
     let (dir, mut state) = fixture();
     busy(&state);
     let accepted = send(&state, "durable-key", "original").await;
@@ -205,10 +232,15 @@ async fn a_queued_request_receipt_survives_edit_remove_restart_and_close() {
     assert_eq!(send(&state, "durable-key", "original").await, accepted);
     assert!(state.store.remove_operator_prompt("s", queue_id).unwrap());
     state.store = Arc::new(Store::open(&dir.path().join("hennery.db")).unwrap());
-    assert_eq!(send(&state, "durable-key", "original").await, accepted);
     assert!(state.store.operator_prompt_queue("s").unwrap().is_empty());
+    let checked = content::check(vec![json!({"type":"text","text":"original"})]).unwrap();
+    let key = PromptRequestKey::new("durable-key", &checked).unwrap();
+    assert!(state.store.prompt_receipt("s", &key).unwrap().is_none());
+    let retry = send(&state, "durable-key", "original").await;
+    assert_eq!(retry.0, StatusCode::ACCEPTED);
+    assert_ne!(retry.1, accepted.1);
     state.store.close_now("s").unwrap();
-    assert_eq!(send(&state, "durable-key", "original").await, accepted);
+    assert_eq!(send(&state, "durable-key", "original").await, retry);
     assert_eq!(send(&state, "new-key", "original").await.0, StatusCode::CONFLICT);
 }
 

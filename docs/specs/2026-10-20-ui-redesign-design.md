@@ -545,6 +545,12 @@ wasn’t applied" and Copy edit/Dismiss edit actions, including a manual copy
 fallback. Failed items retain text/images for seven days, explain why, and
 offer Copy/Dismiss. Each submission carries one client request key, retained
 for retries of the same checked content so an uncertain response cannot duplicate it.
+The uncertain-send marker persists this key across page reload; an unchanged
+draft reuses it after network failures, 5xx or a receipt conflict. Editing or a
+definite refusal resolves that marker. A parked offline session's notice says
+to resume and send once the host is back; the API refuses new offline sends
+with `host_offline` and retains the draft. Queue-owned not-delivered transcript
+markers offer no separate Send again action.
 Deleting the session or purging its hat scrubs queued text and images with
 the transcript; the delete confirmation names the number of unsent messages
 that will also be deleted, excluding items already delivering. No recovery

@@ -899,25 +899,17 @@ async fn prompt(
     if let Some(reason) = session.configuration_error {
         return error(StatusCode::CONFLICT, "configuration_mismatch", reason);
     }
+    if session.lifecycle == "parked" && !state.hub.has_connection(&session.host_id) {
+        return request_failed(RequestError::NotConnected);
+    }
     if !checked.images.is_empty() {
         // A host that is gone has no capabilities: it is offline, not one
         // without images.
-        let offline_parked = session.lifecycle == "parked" && !state.hub.is_ready(&session.host_id);
-        if !state.hub.is_ready(&session.host_id) && !offline_parked {
+        if !state.hub.is_ready(&session.host_id) {
             return request_failed(RequestError::NotConnected);
         }
         // Never an image to a host that did not announce it (ACP core §3.3).
-        // A parked offline prompt is stored, not handed off. Its last hello
-        // permits storage; dispatch rechecks the live capability on reconnect.
-        let images_supported = if offline_parked {
-            match state.hosts.host(&session.host_id) {
-                Ok(Some(host)) => host.capabilities.has(Capability::Images),
-                Ok(None) => false,
-                Err(err) => return internal(err),
-            }
-        } else {
-            state.hub.has_capability(&session.host_id, Capability::Images)
-        };
+        let images_supported = state.hub.has_capability(&session.host_id, Capability::Images);
         if !images_supported {
             return error(
                 StatusCode::CONFLICT,

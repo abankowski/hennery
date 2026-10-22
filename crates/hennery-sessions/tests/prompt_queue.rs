@@ -22,6 +22,14 @@ struct World {
     seq: Cell<u64>,
 }
 impl World {
+    fn complete_mailbox(&self) {
+        self.conn()
+            .execute(
+                "UPDATE hosts SET capabilities='[\"prompt_mailbox_snapshot\"]' WHERE id='host' AND owner_id=?1",
+                [self.store.owner_id()],
+            )
+            .unwrap();
+    }
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("hennery.db");
@@ -701,6 +709,205 @@ fn reconnect_requeues_a_proven_unsent_head_before_any_later_prompt() {
 }
 
 #[test]
+fn legacy_mailbox_snapshots_never_auto_retry_an_unreported_prompt() {
+    randomized_legacy_mailbox_interleaving(1);
+}
+
+fn randomized_legacy_mailbox_interleaving(seed: u64) {
+    let w = World::new();
+    // v0.2.2 can advertise operator resume without reporting its mailbox.
+    w.conn()
+        .execute(
+            "UPDATE hosts SET capabilities='[\"operator_resume\",\"delegation_config\"]' WHERE owner_id=?1",
+            [w.store.owner_id()],
+        )
+        .unwrap();
+    let (hub, mut rx) = host(vec![]);
+    let id = w.queue("original still in the old host mailbox");
+    assert!(w.dispatch(&hub));
+    let (request, turn, _) = prompt(&mut rx);
+    let mut rng = seed;
+    for step in 0..12 {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        let tail = w.queue(&format!("seed {seed} step {step}"));
+        if rng & 1 == 0 {
+            w.store.edit_operator_prompt("session", &tail, "edited tail").unwrap();
+        }
+        if rng & 2 != 0 {
+            w.store.remove_operator_prompt("session", &tail).unwrap();
+        }
+    }
+    w.store
+        .reconcile_host(
+            "host",
+            &[hennery_proto::frames::AttachedSession {
+                session_id: "session".into(),
+                last_seq: w.seq.get(),
+                open_turn_id: None,
+            }],
+        )
+        .unwrap();
+    let q = w.store.operator_prompt_queue("session").unwrap();
+    assert_eq!(q[0].id, id);
+    assert!(
+        q.iter().all(|q| q.state == "failed"),
+        "legacy snapshot must not authorize retries: {q:?}"
+    );
+    assert!(q[0].reason.as_deref().unwrap().contains("did not confirm delivery"));
+    assert!(!w.dispatch(&hub));
+    assert!(rx.try_recv().is_err(), "old mailbox plus retry would deliver twice");
+    // Its actor can still admit the original after reconnect.
+    w.start(&request, &turn);
+    w.start(&request, &turn);
+    w.end(&turn, TurnOutcome::Completed);
+    let users: Vec<_> = w
+        .store
+        .events("session", 0, 1000)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.kind == "user_turn")
+        .collect();
+    assert_eq!(users.len(), 1, "seed {seed}");
+    assert_eq!(users[0].body["turn_id"], turn);
+    assert!(!w.dispatch(&hub));
+}
+
+#[test]
+fn a_superseded_queue_attempt_cannot_be_revived_by_a_late_turn_started() {
+    let w = World::new();
+    w.complete_mailbox();
+    let (hub, mut rx) = host(vec![]);
+    w.queue("retry once");
+    assert!(w.dispatch(&hub));
+    let (old_request, old_turn, _) = prompt(&mut rx);
+    w.store
+        .reconcile_host(
+            "host",
+            &[hennery_proto::frames::AttachedSession {
+                session_id: "session".into(),
+                last_seq: w.seq.get(),
+                open_turn_id: None,
+            }],
+        )
+        .unwrap();
+    w.start(&old_request, &old_turn);
+    let ignored: i64 = w.conn().query_row(
+        "SELECT COUNT(*) FROM events WHERE owner_id=?1 AND session_id='session' AND kind='turn_started' AND applied=0 AND json_extract(body,'$.turn_id')=?2",
+        params![w.store.owner_id(),old_turn], |r|r.get(0),
+    ).unwrap();
+    assert_eq!(ignored, 1, "a superseded fact is retained as unapplied");
+    assert!(
+        w.store
+            .events("session", 0, 100)
+            .unwrap()
+            .iter()
+            .all(|e| e.kind != "user_turn")
+    );
+    let slot: Option<String> = w
+        .conn()
+        .query_row(
+            "SELECT open_turn_id FROM sessions WHERE owner_id=?1 AND id='session'",
+            [w.store.owner_id()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(slot.is_none());
+    assert!(w.dispatch(&hub));
+    let (request, turn, _) = prompt(&mut rx);
+    w.start(&old_request, &old_turn);
+    w.start(&request, &turn);
+    let users: Vec<_> = w
+        .store
+        .events("session", 0, 100)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.kind == "user_turn")
+        .collect();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].body["turn_id"], turn);
+}
+
+#[test]
+fn queue_owned_not_delivered_turns_never_offer_a_parallel_send_again_path() {
+    for complete in [false, true] {
+        let w = World::new();
+        if complete {
+            w.complete_mailbox();
+        }
+        let (hub, mut rx) = host(vec![]);
+        w.queue("owned by FIFO");
+        assert!(w.dispatch(&hub));
+        let (_, turn, _) = prompt(&mut rx);
+        let reconciliation = w
+            .store
+            .reconcile_host(
+                "host",
+                &[hennery_proto::frames::AttachedSession {
+                    session_id: "session".into(),
+                    last_seq: w.seq.get(),
+                    open_turn_id: None,
+                }],
+            )
+            .unwrap();
+        let marker = reconciliation
+            .events
+            .iter()
+            .find(|e| e.kind == "turn_not_delivered")
+            .unwrap();
+        assert_eq!(marker.body["operator_queued"], true);
+        assert!(w.store.undelivered_turn("session", &turn).unwrap().is_none());
+    }
+}
+
+#[test]
+fn reconciliation_releases_an_unapplied_park_hold_when_the_host_remains_attached() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![]);
+    w.queue("waiting on ambiguous park");
+    w.store.record_park_request("session").unwrap();
+    assert!(!w.dispatch(&hub));
+    w.store
+        .reconcile_host(
+            "host",
+            &[hennery_proto::frames::AttachedSession {
+                session_id: "session".into(),
+                last_seq: w.seq.get(),
+                open_turn_id: None,
+            }],
+        )
+        .unwrap();
+    assert!(w.dispatch(&hub));
+    assert_eq!(prompt(&mut rx).2[0]["text"], "waiting on ambiguous park");
+}
+
+#[test]
+fn host_restart_preserves_an_explicit_park_hold_until_operator_resume() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![]);
+    w.queue("held across host restart");
+    w.store.record_park_request("session").unwrap();
+    w.store.reconcile_host("host", &[]).unwrap();
+    let held: bool = w
+        .conn()
+        .query_row(
+            "SELECT prompt_queue_held=1 FROM sessions WHERE owner_id=?1 AND id='session'",
+            [w.store.owner_id()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(held);
+    assert!(!w.dispatch(&hub));
+    assert!(rx.try_recv().is_err());
+    let hat = w.store.find_session("session").unwrap().unwrap().hat_id;
+    w.store.request_resume("session", &hat).unwrap();
+    w.emit(SessionBody::session_started("resume", "agent-session"));
+    assert!(w.dispatch(&hub));
+    assert_eq!(prompt(&mut rx).2[0]["text"], "held across host restart");
+}
+
+#[test]
 fn an_unresolved_operator_receipt_fences_typed_input_even_without_a_turn_slot() {
     let w = World::new();
     let (hub, mut rx) = host(vec![Capability::DelegationConfig, Capability::OperatorResume]);
@@ -773,6 +980,7 @@ fn host_restart_requeues_a_proven_unsent_head_before_resuming_later_work() {
 
 fn lost_head_is_retried_in_order(restarted: bool) {
     let w = World::new();
+    w.complete_mailbox();
     let (hub, mut rx) = host(vec![]);
     let ids = [w.queue("one"), w.queue("two"), w.queue("three")];
     assert!(w.dispatch(&hub));
@@ -954,8 +1162,98 @@ fn host_busy_refusal_requeues_the_head_without_failing_its_tail() {
     let q = w.store.operator_prompt_queue("session").unwrap();
     assert_eq!(q.iter().map(|q| q.id.clone()).collect::<Vec<_>>(), [one.clone(), two]);
     assert!(q.iter().all(|q| q.state == "queued"));
+    assert!(
+        !w.store.operator_dispatch_ready("session").unwrap(),
+        "busy retry must back off"
+    );
+    assert!(!w.dispatch(&hub), "the delayed head must also fence its tail");
+    w.conn()
+        .execute(
+            "UPDATE session_dispatch_queue SET retry_after=0 WHERE owner_id=?1 AND operation_id=?2",
+            params![w.store.owner_id(), one],
+        )
+        .unwrap();
     assert!(w.dispatch(&hub));
     assert_eq!(w.operation(&prompt(&mut rx).0), one);
+}
+
+#[test]
+fn busy_retries_back_off_and_delete_unsent_turns_and_image_links() {
+    let millis = || {
+        i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap()
+    };
+    let w = World::new();
+    let (hub, mut rx) = host(vec![Capability::Images]);
+    let image = content::check(vec![
+        json!({"type":"image","mimeType":"image/png","data":STANDARD.encode(b"\x89PNG\r\n\x1a\nretry")}),
+    ])
+    .unwrap();
+    let id = w.store.enqueue_operator_prompt("session", &image).unwrap();
+    for (attempt, delay) in [1, 2, 4, 8, 10, 10].into_iter().enumerate() {
+        assert!(w.dispatch(&hub));
+        let (request, turn, _) = prompt(&mut rx);
+        let before = millis();
+        assert!(
+            w.store
+                .reject_operator_prompt("host", &request, "turn_in_progress")
+                .unwrap()
+        );
+        assert!(
+            w.store.turn_state(&turn).unwrap().is_none(),
+            "refused turn must be deleted"
+        );
+        let links: i64 = w
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM turn_attachments WHERE owner_id=?1 AND turn_id=?2",
+                params![w.store.owner_id(), turn],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(links, 0);
+        assert!(!w.store.operator_dispatch_ready("session").unwrap());
+        assert!(!w.dispatch(&hub));
+        let reopened = Store::open(&w.dir.path().join("hennery.db")).unwrap();
+        assert!(
+            !reopened.operator_dispatch_ready("session").unwrap(),
+            "the backoff must survive collector restart"
+        );
+        assert!(
+            !reopened
+                .dispatch_operator_prompt("session", &hub, &mut None, None)
+                .unwrap()
+        );
+        let (count, deadline): (i64, i64) = w
+            .conn()
+            .query_row(
+                "SELECT busy_refusals,retry_after FROM session_dispatch_queue WHERE owner_id=?1 AND operation_id=?2",
+                params![w.store.owner_id(), id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(count, ((attempt + 1) as i64).min(5));
+        assert!(
+            deadline >= before + delay * 1000 && deadline <= millis() + delay * 1000,
+            "backoff must cover the full interval, including a fractional second"
+        );
+        assert!(w.store.attachment(&image.images[0].sha256).unwrap().is_some());
+        w.conn()
+            .execute(
+                "UPDATE session_dispatch_queue SET retry_after=?3 WHERE owner_id=?1 AND operation_id=?2",
+                params![w.store.owner_id(), id, millis() - 1000],
+            )
+            .unwrap();
+        assert!(
+            w.store.operator_dispatch_ready("session").unwrap(),
+            "an expired millisecond deadline must release the head"
+        );
+    }
 }
 
 #[test]
@@ -1009,6 +1307,7 @@ fn a_dispatch_attempt_preserves_the_request_id_used_to_prepare_its_startup_recor
 
 fn stale_error_does_not_reject_retry(reconnected: bool) {
     let w = World::new();
+    w.complete_mailbox();
     let (hub, mut rx) = host(vec![]);
     let head = w.queue("head");
     let tail = w.queue("tail");
@@ -1033,6 +1332,12 @@ fn stale_error_does_not_reject_retry(reconnected: bool) {
                 .unwrap()
         );
     }
+    w.conn()
+        .execute(
+            "UPDATE session_dispatch_queue SET retry_after=0 WHERE owner_id=?1",
+            [w.store.owner_id()],
+        )
+        .unwrap();
     assert!(w.dispatch(&hub));
     let (request, turn, _) = prompt(&mut rx);
     assert_eq!(w.operation(&request), head);
@@ -1240,7 +1545,14 @@ async fn failed_items_expire_after_seven_days_and_remove_only_their_images() {
     ])
     .unwrap();
     let sha = image.images[0].sha256.clone();
-    let old = w.store.enqueue_operator_prompt("session", &image).unwrap();
+    let key = hennery_sessions::prompt_receipts::PromptRequestKey::new("expired-image", &image).unwrap();
+    let hennery_sessions::prompt_receipts::PromptReceipt::Queued { queue_id: old } = w
+        .store
+        .enqueue_operator_prompt_with_key("session", &image, Some(&key))
+        .unwrap()
+    else {
+        panic!("queued receipt")
+    };
     let fresh = w.queue("recent failure");
     let failed_after = hennery_kernel::secret::unix_now();
     w.end("running", TurnOutcome::Failed);
@@ -1277,13 +1589,16 @@ async fn failed_items_expire_after_seven_days_and_remove_only_their_images() {
     assert_eq!(q[0].id, fresh);
     assert!(w.store.attachment(&sha).unwrap().is_none());
     assert!(!w.dir.path().join("attachments").join(sha).exists());
+    assert!(w.store.prompt_receipt("session", &key).unwrap().is_none());
     state.shutdown.cancel();
 }
 
 #[test]
 fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_prefix() {
     for seed in 1_u64..=32 {
+        randomized_legacy_mailbox_interleaving(seed);
         let w = World::new();
+        w.complete_mailbox();
         let (hub, mut rx) = host(vec![]);
         let mut rng = seed;
         let mut order = Vec::new();
@@ -1339,7 +1654,8 @@ fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_pr
                             }]
                         };
                         w.store.reconcile_host("host", &listed).unwrap();
-                        stale_requests.push(current.as_ref().unwrap().1.clone());
+                        let (_, request, turn, _) = current.as_ref().unwrap();
+                        stale_requests.push((request.clone(), turn.clone()));
                         current = None;
                         if restarted {
                             let hat = w.store.find_session("session").unwrap().unwrap().hat_id;
@@ -1364,7 +1680,8 @@ fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_pr
                         w.start(request, turn);
                     }
                     if !stale_requests.is_empty() {
-                        let request = &stale_requests[(rng >> 8) as usize % stale_requests.len()];
+                        let (request, turn) = &stale_requests[(rng >> 8) as usize % stale_requests.len()];
+                        w.start(request, turn);
                         assert!(
                             !w.store
                                 .reject_operator_prompt("host", request, "turn_in_progress")

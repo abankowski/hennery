@@ -394,7 +394,9 @@ impl Fold {
             "turn_ended_synthesized" => (MarkerKind::TurnInterrupted, None, None, None, None),
             "turn_not_delivered" => {
                 // Past its cap it names no turn a client could send again.
-                about_turn = text("turn_id").filter(|t| !t.is_empty() && t.len() <= ID_MAX_BYTES);
+                if body.get("operator_queued").and_then(Value::as_bool) != Some(true) {
+                    about_turn = text("turn_id").filter(|t| !t.is_empty() && t.len() <= ID_MAX_BYTES);
+                }
                 (MarkerKind::TurnNotDelivered, None, None, None, None)
             }
             "start_not_delivered" => (MarkerKind::StartNotDelivered, None, None, None, None),

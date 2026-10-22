@@ -468,6 +468,11 @@ impl Store {
     pub(crate) fn settle_delegation_in(&self, tx: &Transaction<'_>) -> Result<()> {
         self.settle_notices_in(tx)?;
         crate::delegation_attention::reconcile_closed_attention(tx, self.owner_id())?;
+        // A terminal lifecycle can race the acknowledgement of a prompt that
+        // the adapter actually accepted. Delivery truth wins over the guess.
+        tx.execute("UPDATE session_operations SET state=CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.owner_id = ?1 AND t.turn_id=session_operations.turn_id AND t.state='ended') THEN 'completed' ELSE 'delivered' END,code=NULL
+            WHERE owner_id = ?1 AND tool='operator_prompt' AND state='failed'
+            AND EXISTS(SELECT 1 FROM turns t WHERE t.owner_id = ?1 AND t.turn_id=session_operations.turn_id AND t.state IN ('started','ended'))",[self.owner_id()])?;
         tx.execute("UPDATE session_operations SET state = 'completed' WHERE owner_id = ?1 AND tool = 'session_close' AND state = 'awaiting_reconciliation' AND EXISTS (SELECT 1 FROM sessions WHERE owner_id = ?1 AND id = session_operations.child_id AND lifecycle = 'closed')",[self.owner_id()])?;
         tx.execute("UPDATE session_operations SET state = CASE
             WHEN EXISTS (SELECT 1 FROM turns t WHERE t.owner_id = ?1 AND t.turn_id = session_operations.turn_id AND t.state = 'ended') THEN 'completed'
@@ -478,10 +483,35 @@ impl Store {
             ELSE state END WHERE owner_id = ?1 AND state IN ('awaiting_reconciliation','delivered','not_delivered')",[self.owner_id()])?;
         tx.execute("UPDATE session_dispatch_queue SET payload = '',state = 'settled' WHERE origin <> 'operator' AND owner_id = ?1 AND operation_id IN
             (SELECT operation_id FROM session_operations WHERE owner_id = ?1 AND state IN ('completed','delivered','not_delivered','failed','cancelled'))",[self.owner_id()])?;
-        // A reconciled non-admission proves the head never reached the adapter.
-        // Keep its original position, release its old association, then allow a retry.
-        tx.execute("UPDATE session_dispatch_queue SET state='queued' WHERE owner_id = ?1 AND origin='operator' AND state='awaiting_reconciliation'
-            AND operation_id IN (SELECT operation_id FROM session_operations WHERE owner_id = ?1 AND tool='operator_prompt' AND state='not_delivered')",[self.owner_id()])?;
+        // Only hosts promising a complete actor-mailbox snapshot can prove
+        // non-admission by absence. Older hosts may still hold this prompt.
+        let candidates = {
+            let mut statement = tx.prepare("SELECT o.operation_id,h.capabilities FROM session_operations o
+                JOIN sessions s ON s.owner_id = ?1 AND s.id=o.child_id
+                JOIN hosts h ON h.owner_id = ?1 AND h.id=s.host_id
+                WHERE o.owner_id = ?1 AND o.tool='operator_prompt' AND o.state='not_delivered'
+                AND EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.operation_id=o.operation_id
+                    AND q.origin='operator' AND q.state='awaiting_reconciliation')")?;
+            statement
+                .query_map([self.owner_id()], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (operation, capabilities) in candidates {
+            if serde_json::from_str::<hennery_proto::frames::Capabilities>(&capabilities)
+                .is_ok_and(|capabilities| capabilities.has(Capability::PromptMailboxSnapshot))
+            {
+                tx.execute("UPDATE session_dispatch_queue SET state='queued' WHERE owner_id = ?1 AND operation_id=?2 AND origin='operator' AND state='awaiting_reconciliation'",params![self.owner_id(),operation])?;
+            }
+        }
+        // Preserve the fence before releasing the current attempt association.
+        tx.execute("UPDATE turns SET queue_retry_released=1 WHERE owner_id = ?1 AND operator_queued=1 AND state='not_delivered'
+            AND turn_id IN (SELECT o.turn_id FROM session_operations o JOIN session_dispatch_queue q
+                ON q.owner_id = ?1 AND q.operation_id=o.operation_id
+                WHERE o.owner_id = ?1 AND o.tool='operator_prompt' AND o.state='not_delivered' AND q.state='queued')",[self.owner_id()])?;
+        tx.execute("UPDATE session_operations SET state='failed',code='not_delivered' WHERE owner_id = ?1 AND tool='operator_prompt' AND state='not_delivered'
+            AND operation_id IN (SELECT operation_id FROM session_dispatch_queue WHERE owner_id = ?1 AND origin='operator' AND state='awaiting_reconciliation')",[self.owner_id()])?;
         tx.execute("UPDATE session_operations SET state='queued',turn_id=NULL,request_id=NULL,code=NULL WHERE owner_id = ?1 AND tool='operator_prompt' AND state='not_delivered'
             AND operation_id IN (SELECT operation_id FROM session_dispatch_queue WHERE owner_id = ?1 AND origin='operator' AND state='queued')",[self.owner_id()])?;
         // Permanent failures retain their text/images until dismissal or expiry.

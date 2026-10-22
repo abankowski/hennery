@@ -361,6 +361,11 @@
           "const": "operator_resume",
           "description": "Collector-owned operator queue resume with operator authority (hennery 0.3.0).",
           "type": "string"
+        },
+        {
+          "const": "prompt_mailbox_snapshot",
+          "description": "Reconnect snapshots include unread prompt commands as well as running turns.",
+          "type": "string"
         }
       ]
     },

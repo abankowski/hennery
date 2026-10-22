@@ -1070,6 +1070,11 @@ fn turn_not_delivered(
     turn_id: &str,
     ts: &str,
 ) -> Result<EventDto> {
+    let queued: bool = tx.query_row(
+        "SELECT operator_queued FROM turns WHERE owner_id = ?1 AND turn_id=?2",
+        [owner, turn_id],
+        |r| r.get(0),
+    )?;
     tx.execute(
         "UPDATE turns SET state = 'not_delivered' WHERE turn_id = ?1 AND owner_id = ?2",
         [turn_id, owner],
@@ -1079,14 +1084,11 @@ fn turn_not_delivered(
          WHERE id = ?1 AND open_turn_id = ?2 AND owner_id = ?3",
         params![session_id, turn_id, owner],
     )?;
-    collector_event(
-        tx,
-        owner,
-        session_id,
-        "turn_not_delivered",
-        json!({ "turn_id": turn_id }),
-        ts,
-    )
+    let mut body = json!({ "turn_id": turn_id });
+    if queued {
+        body["operator_queued"] = json!(true);
+    }
+    collector_event(tx, owner, session_id, "turn_not_delivered", body, ts)
 }
 
 /// Resolve an open turn the host will never end: `interrupted` if the
@@ -4009,6 +4011,16 @@ impl Store {
                 }
             }
             SessionBody::TurnStarted { turn_id, .. } => {
+                // A released queue attempt has a replacement at the same FIFO
+                // position. Its late fact is kept unapplied, never revived.
+                let retry_released: bool = tx
+                    .query_row(
+                        "SELECT queue_retry_released FROM turns WHERE owner_id = ?1 AND turn_id=?2",
+                        [&self.owner, turn_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                    .unwrap_or(false);
                 // The fact wins over reconciliation, but never over a fact
                 // already resolved (fix round 1, ruling A, extending
                 // decision 2): a late `turn_started` applies only when the
@@ -4029,42 +4041,50 @@ impl Store {
                 )?;
                 // A presumed-parked session is still attached as far as its
                 // host's facts go (ACP core §5.3).
-                let applies = (lifecycle == "active" || presumed)
+                let terminal_operator: bool = matches!(lifecycle.as_str(), "closed" | "failed") && tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM session_operations WHERE owner_id = ?1 AND child_id=?2 AND turn_id=?3 AND tool='operator_prompt' AND state='failed')",
+                    params![self.owner_id(), session_id, turn_id], |r| r.get(0),
+                )?;
+                let applies = !retry_released
+                    && (lifecycle == "active" || presumed || terminal_operator)
                     && matches!(turn_state.as_deref(), Some("sent") | Some("not_delivered"));
                 let mut takes_slot = false;
                 if applies {
-                    takes_slot = match slot.as_deref() {
-                        None => true,
-                        Some(t) if t == turn_id => true,
-                        Some(other) => {
-                            // The host serialises turns: if the one holding
-                            // the slot never started, `turn_id`'s late fact
-                            // takes the slot back and that turn is released
-                            // as `turn_not_delivered` — before `turn_id`'s
-                            // own `user_turn` (timeline order).
-                            let other_state: Option<String> = tx
-                                .query_row(
-                                    "SELECT state FROM turns WHERE turn_id = ?1 AND owner_id = ?2",
-                                    [other, &self.owner],
-                                    |r| r.get(0),
-                                )
-                                .optional()?;
-                            if other_state.as_deref() == Some("sent") {
-                                created.push(turn_not_delivered(&tx, &self.owner, session_id, other, &ts)?);
-                                true
-                            } else {
-                                // The slot holds a turn already `started`:
-                                // store the fact, apply nothing.
-                                false
+                    takes_slot = terminal_operator
+                        || match slot.as_deref() {
+                            None => true,
+                            Some(t) if t == turn_id => true,
+                            Some(other) => {
+                                // The host serialises turns: if the one holding
+                                // the slot never started, `turn_id`'s late fact
+                                // takes the slot back and that turn is released
+                                // as `turn_not_delivered` — before `turn_id`'s
+                                // own `user_turn` (timeline order).
+                                let other_state: Option<String> = tx
+                                    .query_row(
+                                        "SELECT state FROM turns WHERE turn_id = ?1 AND owner_id = ?2",
+                                        [other, &self.owner],
+                                        |r| r.get(0),
+                                    )
+                                    .optional()?;
+                                if other_state.as_deref() == Some("sent") {
+                                    created.push(turn_not_delivered(&tx, &self.owner, session_id, other, &ts)?);
+                                    true
+                                } else {
+                                    // The slot holds a turn already `started`:
+                                    // store the fact, apply nothing.
+                                    false
+                                }
                             }
-                        }
-                    };
+                        };
                 }
                 if takes_slot {
-                    tx.execute(
+                    if !terminal_operator {
+                        tx.execute(
                         "UPDATE sessions SET activity = 'running', open_turn_id = ?2 WHERE id = ?1 AND owner_id = ?3",
                         params![session_id, turn_id, self.owner],
                     )?;
+                    }
                     tx.execute(
                         "UPDATE turns SET state = 'started' WHERE turn_id = ?1 AND owner_id = ?2",
                         [turn_id, &self.owner],
@@ -4596,14 +4616,23 @@ impl Store {
                         tx.execute(
                             "UPDATE sessions SET
                                  lifecycle = CASE WHEN close_requested = 1 THEN 'closed' ELSE 'parked' END,
-                                 activity = NULL, open_turn_id = NULL, close_requested = 0, presumed_parked = 0, prompt_queue_held = 0
+                                 activity = NULL, open_turn_id = NULL, close_requested = 0, presumed_parked = 0,
+                                 prompt_queue_held = CASE WHEN prompt_queue_held=1 THEN 1 ELSE 0 END
                              WHERE id = ?1 AND owner_id = ?2",
                             [&id, &self.owner],
                         )?;
                         // The restarted host runs no adapter of it (lane L4).
                         cut = cut.and(mcp.revoke_in(&tx, &id)?);
                     } else if close_requested {
-                        out.close.push(id);
+                        out.close.push(id.clone());
+                    }
+                    if host.is_some() {
+                        // Resend is complete and the adapter remains attached:
+                        // an ambiguous Park did not apply. Release its hold.
+                        tx.execute(
+                            "UPDATE sessions SET prompt_queue_held=0 WHERE owner_id = ?1 AND id=?2",
+                            [&self.owner, &id],
+                        )?;
                     }
                 }
                 // Nothing is written for a tombstone (plan 9a decision 4): its
@@ -4974,7 +5003,7 @@ impl Store {
             .view_conn()
             .query_row(
                 "SELECT content FROM turns
-                 WHERE turn_id = ?1 AND session_id = ?2 AND state = 'not_delivered' AND owner_id = ?3",
+                 WHERE turn_id = ?1 AND session_id = ?2 AND state = 'not_delivered' AND operator_queued=0 AND owner_id = ?3",
                 [turn_id, session_id, &self.owner],
                 |r| r.get(0),
             )

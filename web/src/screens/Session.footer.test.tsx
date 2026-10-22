@@ -85,7 +85,7 @@ describe('SessionView: the footer of a session that is not running', () => {
   it('a presumed parked session says its host is offline, and still offers Resume', async () => {
     const r = await show({ lifecycle: 'parked', presumed_parked: true })
     expect(text(r.container.querySelector('.session-footer-offline'))).toBe(
-      'The host is offline: it has been away, and may still be running this session.',
+      'The host is offline: it has been away, and may still be running this session. Resume and send once it is back.',
     )
     expect(resumeButton()).toBeEnabled()
   })
@@ -95,7 +95,7 @@ describe('SessionView: the footer of a session that is not running', () => {
       { lifecycle: 'parked' },
       { hosts: () => json([{ host_id: 'h1', name: 'build-box', capabilities: [], connected: false }]) },
     )
-    expect(text(r.container.querySelector('.session-footer-offline'))).toBe('The host is offline: resume once it is back.')
+    expect(text(r.container.querySelector('.session-footer-offline'))).toBe('The host is offline: resume and send once it is back.')
   })
 
   it('a parked session on a connected host says nothing of it', async () => {
@@ -119,7 +119,7 @@ describe('SessionView: the footer of a session that is not running', () => {
 
     act(() => r.streams[0].event('item', mark('host_offline', '2026-10-02T10:05:00.000Z')))
     await waitFor(
-      () => expect(text(r.container.querySelector('.session-footer-offline'))).toBe('The host is offline: resume once it is back.'),
+      () => expect(text(r.container.querySelector('.session-footer-offline'))).toBe('The host is offline: resume and send once it is back.'),
       WAIT,
     )
 

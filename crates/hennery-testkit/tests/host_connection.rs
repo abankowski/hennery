@@ -815,6 +815,14 @@ async fn a_host_announces_that_it_can_park_take_images_and_serve_projects() {
         panic!("expected hello");
     };
     use hennery_proto::frames::{Capabilities, Capability};
+    assert!(
+        serde_json::to_value(&capabilities)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c == "prompt_mailbox_snapshot")
+    );
     assert_eq!(
         capabilities,
         Capabilities(vec![
@@ -828,6 +836,7 @@ async fn a_host_announces_that_it_can_park_take_images_and_serve_projects() {
             Capability::CatalogProbe,
             Capability::DelegationConfig,
             Capability::OperatorResume,
+            Capability::PromptMailboxSnapshot,
             Capability::PluginContext,
         ])
     );

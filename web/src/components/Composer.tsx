@@ -43,7 +43,7 @@ import {
   type Attachment,
 } from '../lib/attachments'
 import { commands, configOptions, matchCommands, type Command, type ConfigOption } from '../lib/catalog'
-import { clearDraftSending, draftMayHaveBeenSent, loadDraft, markDraftSending, saveDraft } from '../lib/drafts'
+import { clearDraftSending, draftMayHaveBeenSent, draftSendingRequestKey, loadDraft, markDraftSending, saveDraft } from '../lib/drafts'
 import { sendingFor, track } from '../lib/sending'
 import { navigationGate } from '../pwa/navigation'
 import { undeliveredDraft, type DraftPart } from '../lib/sendAgain'
@@ -334,11 +334,11 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
   async function deliver(draft: string, images: Attachment[], requestKey: string): Promise<Outcome> {
     try {
       const blocks = await promptBlocks(draft, images)
-      markDraftSending(sessionId, draft)
+      markDraftSending(sessionId, draft, requestKey)
       await prompt(client, sessionId, blocks, requestKey)
       void onQueueChange?.()
     } catch (err) {
-      if (err instanceof ApiFailure) clearDraftSending(sessionId)
+      if (err instanceof ApiFailure && err.status < 500 && err.code !== 'delivery_unknown' && err.code !== 'request_key_conflict') clearDraftSending(sessionId)
       return {
         sent: false,
         notice: { text: promptRefusal(err), resume: err instanceof ApiFailure && err.code === 'not_attached', busyTurn: isBusyTurn(err) },
@@ -377,8 +377,8 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
     const draft = text
     const images = atts
     // The Client may retry after step-up. One submission keeps one key,
-    // including while its tracked send outlives this composer instance.
-    const requestKey = crypto.randomUUID()
+    // including after a reload left the previous response uncertain.
+    const requestKey = draftSendingRequestKey(sessionId) ?? crypto.randomUUID()
     // Every path of `work` ends in an outcome; a throw is worded all the same.
     const thrown = (err: unknown): Outcome => ({ sent: false, notice: { text: messageOf(err) } })
     void follow(track(sessionId, () => work(draft, images, requestKey), thrown))

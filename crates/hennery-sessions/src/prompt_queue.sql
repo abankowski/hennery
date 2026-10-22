@@ -1,4 +1,7 @@
 -- Sessions migration 29: shared durable operator/delegation prompt FIFO.
+-- Attempt ownership survives an operation's reassociation to a retry.
+ALTER TABLE turns ADD COLUMN operator_queued INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE turns ADD COLUMN queue_retry_released INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE prompt_receipts (
     owner_id TEXT NOT NULL, session_id TEXT NOT NULL, request_key TEXT NOT NULL,
     digest TEXT NOT NULL, receipt_kind TEXT NOT NULL CHECK(receipt_kind IN ('turn','queue')),
@@ -11,6 +14,9 @@ ALTER TABLE sessions ADD COLUMN prompt_queue_dirty INTEGER NOT NULL DEFAULT 0;
 -- 0: runnable; 1: explicit operator hold; 2: Send releases after park acknowledgement.
 ALTER TABLE sessions ADD COLUMN prompt_queue_held INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE session_dispatch_queue ADD COLUMN failed_at INTEGER;
+ALTER TABLE session_dispatch_queue ADD COLUMN busy_refusals INTEGER NOT NULL DEFAULT 0;
+-- Unix epoch milliseconds: whole-second rounding could immediately expire a retry.
+ALTER TABLE session_dispatch_queue ADD COLUMN retry_after INTEGER NOT NULL DEFAULT 0;
 CREATE TRIGGER prompt_queue_failed AFTER UPDATE OF state ON session_dispatch_queue
 WHEN NEW.origin='operator' AND NEW.state='failed' AND OLD.state<>'failed'
 BEGIN UPDATE session_dispatch_queue SET failed_at=unixepoch() WHERE owner_id=NEW.owner_id AND operation_id=NEW.operation_id; END;
@@ -25,7 +31,10 @@ BEGIN UPDATE sessions SET prompt_queue_dirty=1 WHERE owner_id=NEW.owner_id AND i
 CREATE TRIGGER prompt_queue_update AFTER UPDATE OF state,payload ON session_dispatch_queue WHEN NEW.origin='operator'
 BEGIN UPDATE sessions SET prompt_queue_dirty=1 WHERE owner_id=NEW.owner_id AND id=NEW.target_id; END;
 CREATE TRIGGER prompt_queue_delete AFTER DELETE ON session_dispatch_queue WHEN OLD.origin='operator'
-BEGIN UPDATE sessions SET prompt_queue_dirty=1 WHERE owner_id=OLD.owner_id AND id=OLD.target_id; END;
+BEGIN
+    UPDATE sessions SET prompt_queue_dirty=1 WHERE owner_id=OLD.owner_id AND id=OLD.target_id;
+    DELETE FROM prompt_receipts WHERE owner_id = OLD.owner_id AND session_id=OLD.target_id AND receipt_kind='queue' AND receipt_id=OLD.operation_id;
+END;
 DROP TRIGGER delegation_endpoint_end;
 CREATE TRIGGER delegation_endpoint_end AFTER UPDATE OF close_requested,lifecycle,hat_id ON sessions
 WHEN NEW.close_requested = 1 OR NEW.lifecycle IN ('closed','deleted','failed') OR NEW.hat_id <> OLD.hat_id

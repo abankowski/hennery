@@ -1,4 +1,6 @@
 -- Test-only rollback of sessions migration 29 before historical fixtures.
+ALTER TABLE turns DROP COLUMN operator_queued;
+ALTER TABLE turns DROP COLUMN queue_retry_released;
 DROP TRIGGER prompt_queue_failed;
 DROP TRIGGER prompt_queue_insert;
 DROP TRIGGER prompt_queue_update;
@@ -12,6 +14,8 @@ ALTER TABLE session_dispatch_queue DROP COLUMN image_bytes;
 ALTER TABLE sessions DROP COLUMN prompt_queue_dirty;
 ALTER TABLE sessions DROP COLUMN prompt_queue_held;
 ALTER TABLE session_dispatch_queue DROP COLUMN failed_at;
+ALTER TABLE session_dispatch_queue DROP COLUMN busy_refusals;
+ALTER TABLE session_dispatch_queue DROP COLUMN retry_after;
 CREATE TRIGGER delegation_endpoint_end AFTER UPDATE OF close_requested,lifecycle,hat_id ON sessions
 WHEN NEW.close_requested = 1 OR NEW.lifecycle IN ('closed','deleted','failed') OR NEW.hat_id <> OLD.hat_id
 BEGIN

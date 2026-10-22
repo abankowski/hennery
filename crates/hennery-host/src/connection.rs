@@ -388,6 +388,7 @@ async fn handshake(
                 Capability::CatalogProbe,
                 Capability::DelegationConfig,
                 Capability::OperatorResume,
+                Capability::PromptMailboxSnapshot,
                 Capability::PluginContext,
             ]),
             mcp_isolation: announce.mcp_isolation,

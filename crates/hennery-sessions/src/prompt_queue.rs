@@ -283,7 +283,9 @@ impl Store {
              AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.origin='operator' AND q.state='awaiting_reconciliation')
              AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=?2 AND p.state='open')
              AND (SELECT origin FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2
-                 AND q.state IN ('queued','waiting_config') ORDER BY position LIMIT 1)='operator')",
+                 AND q.state IN ('queued','waiting_config') ORDER BY position LIMIT 1)='operator'
+             AND (SELECT retry_after FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2
+                 AND q.state IN ('queued','waiting_config') ORDER BY position LIMIT 1)<=CAST(round(unixepoch('subsec')*1000) AS INTEGER))",
             params![self.owner_id(), session],
             |r| r.get(0),
         )?)
@@ -324,7 +326,7 @@ impl Store {
             .query_row(
                 "SELECT q.operation_id,q.payload,s.host_id,q.state,
              s.lifecycle='active' AND s.open_turn_id IS NULL AND COALESCE(s.activity,'idle')<>'blocked'
-             AND s.close_requested=0 AND s.presumed_parked=0 AND s.configuration_error IS NULL AND s.prompt_queue_held=0
+             AND s.close_requested=0 AND s.presumed_parked=0 AND s.configuration_error IS NULL AND s.prompt_queue_held=0 AND q.retry_after<=CAST(round(unixepoch('subsec')*1000) AS INTEGER)
              AND NOT EXISTS(SELECT 1 FROM hosts h WHERE h.owner_id = ?1 AND h.id=s.host_id AND h.revoked_at IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=s.id AND p.state='open')
              AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id=s.hat_id)
@@ -426,7 +428,7 @@ impl Store {
             );
         }
         tx.execute(
-            "INSERT INTO turns(owner_id,session_id,turn_id,content,created_at) VALUES (?1,?2,?3,?4,?5)",
+            "INSERT INTO turns(owner_id,session_id,turn_id,content,created_at,operator_queued) VALUES (?1,?2,?3,?4,?5,1)",
             params![self.owner_id(), session, turn, serde_json::to_string(&content)?, now()],
         )?;
         crate::store::link_turn_attachments(&tx, self.owner_id(), &turn, &content)?;
@@ -531,8 +533,20 @@ impl Store {
         )?;
         if code == "turn_in_progress" {
             tx.execute(
-                "UPDATE session_operations SET state='not_delivered',code=?3 WHERE owner_id = ?1 AND operation_id=?2",
-                params![self.owner_id(), operation, code],
+                "UPDATE session_dispatch_queue SET state='queued',busy_refusals=MIN(busy_refusals+1,5),
+                 retry_after=CAST(round(unixepoch('subsec')*1000) AS INTEGER)+1000*MIN(1 << MIN(busy_refusals,4),10)
+                 WHERE owner_id = ?1 AND operation_id=?2 AND origin='operator'",
+                params![self.owner_id(), operation],
+            )?;
+            tx.execute(
+                "UPDATE session_operations SET state='queued',turn_id=NULL,request_id=NULL,code=NULL WHERE owner_id = ?1 AND operation_id=?2",
+                params![self.owner_id(), operation],
+            )?;
+            // This explicit refusal proves no adapter admission. Unlike a
+            // disconnected delivery, the unsent turn and image links can go.
+            tx.execute(
+                "DELETE FROM turns WHERE owner_id = ?1 AND turn_id=?2 AND state='not_delivered'",
+                params![self.owner_id(), turn],
             )?;
         } else {
             self.fail_operator_item_in(&tx, &operation, code)?;

@@ -1,4 +1,4 @@
-// The footer of a session that is not running (frontend spec §6.6), under
+// The notice of a session that is not running (frontend spec §6.6), above
 // its composer. The composer stays: a draft put there ("Answer as a new
 // message", "Send again") is sent once the session runs again, and a prompt
 // refused as `not_attached` offers its own "Resume and send".
@@ -94,8 +94,8 @@ export default function SessionFooter({ info, hostName, hostAway = false, queued
         {hostAway && (
           <p className="txt session-footer-offline">
             {info.presumed_parked
-              ? 'The host is offline: it has been away, and may still be running this session.'
-              : 'The host is offline: resume once it is back.'}
+              ? 'The host is offline: it has been away, and may still be running this session. Resume and send once it is back.'
+              : 'The host is offline: resume and send once it is back.'}
           </p>
         )}
         {reason === 'agent_not_logged_in' && <LoginSteps agent={info.agent} host={host} />}
