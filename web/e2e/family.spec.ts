@@ -41,7 +41,7 @@ async function fixture(context: BrowserContext, statusOnly = false) {
     reason: detached && id === 'child' ? 'operator_takeover' : undefined,
     children: id === 'parent' ? [{ summary: { ...current('child'), session_id: more ? 'child2' : 'child', title: more ? 'Second worker' : 'Parser worker' },
       routing: detached ? 'detached' : 'active', reason: detached ? 'operator_takeover' : undefined,
-      operations: [{ operation_id: 'operation1', tool: 'spawn', state: 'accepted' }], questions: more ? [] : questions() }] : [],
+      operations: [{ operation_id: 'operation1', tool: 'session_spawn', state: 'accepted' }], questions: more ? [] : questions() }] : [],
     next_cursor: id === 'parent' && !more ? 'child' : undefined,
   })
   const question: Item = { id: 'question:question1', version: 1, ts: '2026-10-02T10:00:00Z', kind: 'question', pending_id: 'question1', question_kind: 'elicitation',

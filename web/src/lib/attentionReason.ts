@@ -29,6 +29,12 @@ const labels = new Map([
   ['session_unavailable', 'The child session is unavailable'],
   ['question_unavailable', 'The child question is unavailable'],
   ['question_resolved', 'The child question has been resolved'],
+  ['parent_closed_child_needs_human', 'The parent closed while this child needs you'],
+  ['start_not_delivered', 'The child could not be started'],
+  ['configuration_mismatch', "The child's settings no longer match"],
+  ['agent_withdrew', 'The agent withdrew this request'],
+  ['host_revoked', 'Host was revoked'],
+  ['host_offline', 'Host is offline'],
 ])
 export function attentionReason(reason: string): string {
   return labels.get(reason) ?? 'Session needs your attention'

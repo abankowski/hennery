@@ -10,7 +10,7 @@ describe('FamilyPanel', () => {
   it('explains an authentication failure on both a failed operation and its child notice', async () => {
     const page = familyPage()
     page.children[0].reason = 'auth_required'
-    page.children[0].operations = [{ operation_id: 'failed-spawn', tool: 'spawn', state: 'failed', code: 'auth_required' }]
+    page.children[0].operations = [{ operation_id: 'failed-spawn', tool: 'session_spawn', state: 'failed', code: 'auth_required' }]
     const server = routed(() => json(page))
     render(<FamilyPanel id="parent" summary={parent} hosts={new Map()} resync={0} />, { wrapper: server.wrapper })
     expect(await screen.findByText('Start child: Failed · Runtime is not signed in on its host', { exact: true })).toBeVisible()
@@ -99,12 +99,12 @@ it('names queued answers and unknown routing states without claiming delivery', 
 
 it('labels the saturated receipt history as latest 16 and preserves truthful receipt states', async () => {
   const page = familyPage()
-  const states = ['accepted', 'waiting_config', 'dispatching', 'delivered', 'done', 'failed', 'cancelled', 'future_state']
+  const states = ['accepted', 'queued', 'waiting_config', 'awaiting_reconciliation', 'not_delivered', 'completed', 'failed', 'future_state']
   page.children[0].operations = Array.from({ length: 16 }, (_, i) => ({ operation_id: `op${i}`, tool: `tool${i}`, state: states[i % states.length] }))
   const s = routed(() => json(page))
   render(<FamilyPanel id="parent" summary={parent} hosts={new Map()} resync={0} />, { wrapper: s.wrapper })
   expect(await screen.findByText('Latest 16 operations', { exact: true })).toBeInTheDocument()
-  const labels = ['Accepted', 'Checking configuration', 'Sending', 'Delivered', 'Done', 'Failed', 'Cancelled', 'Operation status unavailable']
+  const labels = ['Accepted', 'Queued', 'Checking configuration', 'Confirming', 'Not delivered yet', 'Done', 'Failed', 'Operation status unavailable']
   for (let i = 0; i < labels.length; i++) expect(screen.getAllByText(`Session operation: ${labels[i]}`, { exact: true })).toHaveLength(2)
 })
 
@@ -128,9 +128,10 @@ it('loads the parent’s other children only on request, uses the encoded parent
 
 
 it('uses readable words for every operation and routing outcome, including unknown future codes', () => {
-  for (const [value, label] of [['accepted', 'Accepted'], ['waiting_config', 'Checking configuration'], ['dispatching', 'Sending'], ['delivered', 'Delivered'], ['done', 'Done'], ['failed', 'Failed'], ['cancelled', 'Cancelled'], ['future', 'Operation status unavailable']]) expect(operationWords(value)).toBe(label)
-  for (const [value, label] of [['spawn', 'Start child'], ['prompt', 'Prompt'], ['resume', 'Resume'], ['cancel', 'Cancel'], ['close', 'Close'], ['answer', 'Answer'], ['future', 'Session operation']]) expect(operationName(value)).toBe(label)
+  for (const [value, label] of [['accepted', 'Accepted'], ['queued', 'Queued'], ['waiting_config', 'Checking configuration'], ['awaiting_reconciliation', 'Confirming'], ['not_delivered', 'Not delivered yet'], ['completed', 'Done'], ['failed', 'Failed'], ['cancelled', 'Cancelled'], ['future', 'Operation status unavailable']]) expect(operationWords(value)).toBe(label)
+  for (const [value, label] of [['session_spawn', 'Start child'], ['session_send', 'Message'], ['session_close', 'Close'], ['session_answer', 'Answer'], ['operator_prompt', 'Your message'], ['future', 'Session operation']]) expect(operationName(value)).toBe(label)
   for (const [value, label] of [['active', 'Parent-driven'], ['detached', 'Operator-driven'], ['suspended', 'Delegation paused'], ['future', 'Routing unavailable']]) expect(routingWords(value)).toBe(label)
+  expect(routingWords('detached', 'closed')).toBe('Closed')
   expect(handlingWords('future')).toBe('Question routing is unavailable')
 })
 
@@ -156,4 +157,16 @@ it('does not publish an old parent-page error into a new selected session', asyn
   await act(async () => { finish(json({ code: 'unavailable', message: 'Old parent read failed' }, 503)); await late })
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   expect(screen.queryByRole('link', { name: 'Root' })).not.toBeInTheDocument()
+})
+
+it('shows a closed child as closed, not as handed to the operator or needing attention', async () => {
+  const page = familyPage()
+  page.children[0] = { ...page.children[0], routing: 'detached', reason: 'closed', summary: { ...page.children[0].summary, lifecycle: 'closed', activity: undefined },
+    operations: [{ operation_id: 'a', tool: 'session_spawn', state: 'completed' }, { operation_id: 'b', tool: 'session_close', state: 'completed' }], questions: [] }
+  const s = routed(() => json(page))
+  render(<FamilyPanel id="parent" summary={parent} hosts={new Map()} resync={0} />, { wrapper: s.wrapper })
+  expect(await screen.findByText('Start child: Done', { exact: true })).toBeVisible()
+  expect(screen.getByText('Close: Done', { exact: true })).toBeVisible()
+  expect(screen.getByText('Closed', { exact: true })).toBeVisible()
+  for (const text of ['Operator-driven', 'Session needs your attention', 'Session operation: Operation status unavailable']) expect(screen.queryByText(text, { exact: true })).toBeNull()
 })

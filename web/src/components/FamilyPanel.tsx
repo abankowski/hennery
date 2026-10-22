@@ -30,15 +30,17 @@ export function handlingWords(handling: string): string {
   }
 }
 
-export function routingWords(routing: string): string {
+export function routingWords(routing: string, reason?: string): string {
+  // Closing a child detaches it with reason `closed`: finished, not handed to the operator.
+  if (routing === 'detached' && reason === 'closed') return 'Closed'
   return routing === 'active' ? 'Parent-driven' : routing === 'detached' ? 'Operator-driven' : routing === 'suspended' ? 'Delegation paused' : 'Routing unavailable'
 }
 export function operationWords(state: string): string {
-  const labels = new Map([['accepted', 'Accepted'], ['waiting_config', 'Checking configuration'], ['dispatching', 'Sending'], ['delivered', 'Delivered'], ['done', 'Done'], ['failed', 'Failed'], ['cancelled', 'Cancelled']])
+  const labels = new Map([['accepted', 'Accepted'], ['queued', 'Queued'], ['waiting_config', 'Checking configuration'], ['awaiting_reconciliation', 'Confirming'], ['not_delivered', 'Not delivered yet'], ['completed', 'Done'], ['failed', 'Failed'], ['cancelled', 'Cancelled']])
   return labels.get(state) ?? 'Operation status unavailable'
 }
 export function operationName(tool: string): string {
-  return new Map([['spawn', 'Start child'], ['prompt', 'Prompt'], ['resume', 'Resume'], ['cancel', 'Cancel'], ['close', 'Close'], ['answer', 'Answer']]).get(tool) ?? 'Session operation'
+  return new Map([['session_spawn', 'Start child'], ['session_send', 'Message'], ['session_close', 'Close'], ['session_answer', 'Answer'], ['operator_prompt', 'Your message']]).get(tool) ?? 'Session operation'
 }
 
 export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Props) {
@@ -119,7 +121,7 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
       {selected && <StatusAttention session={selected} children={page?.children.map(child => child.summary) ?? []} enabled={hasAttention && page !== null} refreshKey={`${familyKey}:${resync}:${refresh}`} onAcknowledged={() => setRefresh(n => n + 1)} />}
       {selected && <article className="family-child family-current" aria-label="Current session"><span className="item-note">Current session</span><h3><SessionName session={selected} fallback={agentLabel(selected.agent)} /></h3><p>{statusOf(selected).label}</p></article>}
       {family?.parent && <p>Parent: <Link to={sessionPath(family.parent.session_id)}><SessionName session={family.parent} fallback={agentLabel(family.parent.agent)} /></Link></p>}
-      {page?.routing && <p>{routingWords(page.routing)}{page.reason && <> · {attentionReason(page.reason)}</>}</p>}
+      {page?.routing && <p>{routingWords(page.routing, page.reason)}{page.reason && page.reason !== 'closed' && <> · {attentionReason(page.reason)}</>}</p>}
       {family?.parent && page?.routing === 'active' && <button type="button" className="btn btn-ghost btn-sm" disabled={taking !== null} onClick={() => void takeover({ summary: page.summary })}>{taking === id ? 'Taking over…' : 'Take over'}</button>}
       {page?.children.map(child => {
         const s = child.summary
@@ -130,9 +132,9 @@ export default function FamilyPanel({ id, summary, hosts, resync, onPage }: Prop
             <span>{agentLabel(s.agent)}</span>{s.model && <bdi>{s.model}</bdi>}
             <bdi>{hosts.get(s.host_id) || s.host_id}</bdi><bdi>{s.cwd}</bdi>
             <span>{s.lifecycle}</span>{s.activity && <span>{s.activity}</span>}
-            <span>{routingWords(child.routing)}</span>
+            <span>{routingWords(child.routing, child.reason)}</span>
           </div>
-          {child.reason && <p>{attentionReason(child.reason)}</p>}
+          {child.reason && child.reason !== 'closed' && <p>{attentionReason(child.reason)}</p>}
           {child.operations.length >= 16 && <p className="item-note">Latest 16 operations</p>}
           {child.operations.map(op => <p key={op.operation_id} className="family-operation">{operationName(op.tool)}: {operationWords(op.state)}{op.code && <> · {attentionReason(op.code)}</>}</p>)}
           {child.questions.map(question => <p key={question.pending_id}>
