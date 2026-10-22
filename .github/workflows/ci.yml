@@ -18,7 +18,8 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
       macos: ${{ steps.paths.outputs.macos }}
@@ -44,10 +45,10 @@ jobs:
         github_access_token: ${{ github.token }}
     - name: Workflow and shell lint
       run: |
-        nix develop .#release -c actionlint .github/workflows/*.yml
-        nix develop .#release -c shellcheck packaging/ci-*.sh packaging/image-build.sh packaging/image-ci.sh packaging/test-image-registry.sh packaging/smoke-image.sh
+        nix develop .#image -c actionlint .github/workflows/*.yml
+        nix develop .#image -c shellcheck packaging/ci-*.sh packaging/image-build.sh packaging/image-ci.sh packaging/test-image-registry.sh packaging/smoke-image.sh
     - name: Git path classification regressions
-      run: nix develop .#release -c python3 -m unittest discover -s packaging -p test_ci_paths.py
+      run: nix develop .#image -c python3 -m unittest discover -s packaging -p test_ci_paths.py
     - name: Execute the exact README bootstrap against signed offline releases
       run: |
         sh packaging/readme-blocks.sh README.md release-bootstrap > "$RUNNER_TEMP/release-bootstrap.sh"
@@ -105,7 +106,8 @@ jobs:
       run: nix develop -c cargo run -p hennery-view --bin gen-view --locked -- --check
     needs: checks
     if: needs.checks.outputs.rust == 'true'
-    timeout-minutes: 60
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
 
   macos:
     runs-on: macos-15
@@ -146,11 +148,13 @@ jobs:
       run: sh packaging/ci-macos-smoke.sh
     needs: checks
     if: needs.checks.outputs.macos == 'true'
-    timeout-minutes: 60
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
 
   web:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     env:
       HENNERY_WEB_REQUIRE: '1'
     steps:
@@ -197,7 +201,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.checks.outputs.nix_matrix) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -227,7 +232,8 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.checks.outputs.recipe_matrix) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -281,7 +287,7 @@ jobs:
           toolchain: stable
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: '>=24.22.1 <25'
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: native-release-vendored

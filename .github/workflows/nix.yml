@@ -13,7 +13,8 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -109,7 +110,8 @@ jobs:
         - ubuntu-latest
         - macos-latest
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -157,7 +159,7 @@ jobs:
         toolchain: stable
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
-        node-version: 24
+        node-version: '>=24.22.1 <25'
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       with:
         shared-key: native-release-vendored
@@ -183,7 +185,8 @@ jobs:
   crates:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 4 * * 1'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     env:
       R3_EXTENDED: 'true'
       R3_TARGET_DIR: ${{ github.workspace }}/target/crates-acceptance

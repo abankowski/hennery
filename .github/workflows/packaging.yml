@@ -72,7 +72,8 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     permissions:
       contents: read
       actions: read
@@ -134,7 +135,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.archive_matrix) }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -226,7 +228,8 @@ jobs:
     needs:
     - prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -292,7 +295,8 @@ jobs:
     - archive
     - crates
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     outputs:
       artifact_id: ${{ steps.payload.outputs.artifact-id }}
     steps:
@@ -342,7 +346,8 @@ jobs:
     - assemble
     - crates
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.native_matrix) }}

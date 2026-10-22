@@ -22,7 +22,8 @@ jobs:
     - packaging
     if: ${{ !cancelled() && needs.packaging.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     permissions:
       contents: read
       id-token: write
@@ -169,7 +170,8 @@ jobs:
     if: ${{ !cancelled() && needs.attest.result == 'success' }}
     environment: release
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    # The patched Nix Node runtime is built from source on a cold runner.
+    timeout-minutes: 150
     permissions:
       contents: write
       actions: read
