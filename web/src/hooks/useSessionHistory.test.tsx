@@ -108,7 +108,7 @@ it('records route visits once and ignores summary/activity updates and hat chang
   view.rerender({ loaded, selectedId: null, hat: '' })
   expect(view.result.current.map(s => s.session_id)).toEqual(['019a0180-1234-7000-8000-000000000002', '019a0180-1234-7000-8000-000000000001'])
   view.rerender({ loaded, selectedId: '019a0180-1234-7000-8000-000000000001', hat: '' })
-  await waitFor(() => expect(view.result.current.map(s => s.session_id)).toEqual(['019a0180-1234-7000-8000-000000000001', '019a0180-1234-7000-8000-000000000002']))
+  await waitFor(() => expect(view.result.current.map(s => s.session_id)).toEqual(['019a0180-1234-7000-8000-000000000002', '019a0180-1234-7000-8000-000000000001']))
   expect(fetchImpl).not.toHaveBeenCalled()
 })
 it('records direct links only after an authorized exact-id read; cancels stale reads on unmount', async () => {
@@ -232,16 +232,34 @@ it('keeps an in-flight lookup alive across a hat switch', async () => {
   await act(async () => finish(page([row(id, 'work')])))
   await waitFor(() => expect(view.result.current).toHaveLength(1))
 })
-it('does not restart pending reads when another visit only reorders shared history', async () => {
+it('does not restart pending reads when another window changes shared history order', async () => {
   const a = '019a0180-1234-7000-8000-000000000001', b = '019a0180-1234-7000-8000-000000000002'
   visitSession(a); visitSession(b)
   const finish: ((response: Response) => void)[] = []
   const signals: (AbortSignal | null | undefined)[] = []
   const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => { signals.push(init?.signal); return new Promise<Response>(resolve => finish.push(resolve)) })
   const view = setup(fetchImpl)
-  act(() => visitSession(a))
+  act(() => {
+    localStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify([a, b]))
+    window.dispatchEvent(new StorageEvent('storage', { key: SESSION_HISTORY_KEY }))
+  })
   expect(fetchImpl).toHaveBeenCalledTimes(2)
   expect(signals.every(signal => !signal?.aborted)).toBe(true)
   await act(async () => { for (const resolve of finish) resolve(page([row(a), row(b)])) })
   await waitFor(() => expect(view.result.current.map(row => row.session_id)).toEqual([a, b]))
+})
+
+it('preserves visible slots after hat filtering, and promotes visits outside the six visible rows', async () => {
+  const work = Array.from({ length: 7 }, (_, n) => row(`019a0180-1234-7000-8000-${String(n).padStart(12, '0')}`, 'work'))
+  const home = Array.from({ length: 7 }, (_, n) => row(`019a0180-1234-7000-9000-${String(n).padStart(12, '0')}`, 'home'))
+  const all = [...home, ...work], loaded = new Map(all.map(row => [row.session_id, row]))
+  localStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(all.map(row => row.session_id)))
+  const fetchImpl = vi.fn(async () => page([])), view = setup(fetchImpl, loaded)
+  view.rerender({ loaded, selectedId: work[4].session_id, hat: 'work' })
+  await waitFor(() => expect(JSON.parse(sessionStorage.getItem('hennery.windowSessions')!)[0]).toBe(work[4].session_id))
+  expect(view.result.current).toEqual(work)
+  expect(JSON.parse(localStorage.getItem(SESSION_HISTORY_KEY)!)).toEqual(all.map(row => row.session_id))
+  view.rerender({ loaded, selectedId: work[6].session_id, hat: 'work' })
+  await waitFor(() => expect(view.result.current).toEqual([work[6], ...work.slice(0, 6)]))
+  expect(fetchImpl).not.toHaveBeenCalled()
 })

@@ -245,7 +245,7 @@ export default function SessionScope({ route, children, onReconnect }: { route: 
     }),
     [list, recentSessions, visibleWaiting, attentionRows, isAttentionDismissed, reportAttentionKey, hats, hat, chooseHat, hostNames, hosts, host, status, group, setGroup, subgroup, setSubgroup, sort, setSort, hideClosed, setHideClosed, lifecycle, query, selectedId],
   )
-  const targets = recentSessionTargets(recentSessions, selectedId)
+  const targets = recentSessionTargets(recentSessions)
   return <ScopeContext.Provider value={value}>
     <SessionJumpAction id="previous-session" target={recentSessions.find(row => row.session_id === previousSessionId)} />
     {([1, 2, 3, 4, 5] as const).map((n) => <SessionJumpAction key={n} id={`recent-session-${n}`} target={targets[n - 1]} />)}

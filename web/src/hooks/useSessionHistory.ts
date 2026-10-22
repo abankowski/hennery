@@ -3,7 +3,7 @@ import { useClient } from '../app-client'
 import { summaries } from '../api/view'
 import { ApiFailure } from '../api/errors'
 import type { SessionSummary } from '../generated/view'
-import { forgetVisitedSession, useVisitedSessionIds, visitSession, visitedSessions } from '../lib/sessionHistory'
+import { forgetVisitedSession, RECENT_SESSION_LIMIT, useVisitedSessionIds, visitSession, visitedSessions } from '../lib/sessionHistory'
 
 function retryDelay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise(resolve => {
@@ -37,7 +37,7 @@ export function useSessionHistory(loaded: ReadonlyMap<string, SessionSummary>, s
   cached.current = resolved
   const wanted = [...new Set([...ids, ...(selectedId ? [selectedId] : [])])].sort()
   const heldCandidates = useRef(wanted)
-  // Only membership changes restart reads. MRU reordering from another
+  // Only membership changes restart reads. Shared reordering from another
   // window, or leaving an already visited session, keeps pending reads alive.
   if (wanted.length !== heldCandidates.current.length || wanted.some((id, index) => id !== heldCandidates.current[index])) heldCandidates.current = wanted
   const candidates = heldCandidates.current
@@ -138,14 +138,15 @@ export function useSessionHistory(loaded: ReadonlyMap<string, SessionSummary>, s
     }
     return merged
   }, [loaded, resolved])
+  const recent = useMemo(() => visitedSessions(ids, rows, hat), [ids, rows, hat])
   const visitedRoute = useRef<string | null>(null)
   const selected = selectedId ? rows.get(selectedId) : undefined
   useEffect(() => {
     if (!selectedId) { visitedRoute.current = null; return }
     if (selected && visitedRoute.current !== selectedId) {
       visitedRoute.current = selectedId
-      visitSession(selectedId)
+      visitSession(selectedId, recent.slice(0, RECENT_SESSION_LIMIT).map(row => row.session_id))
     }
-  }, [selectedId, selected])
-  return useMemo(() => visitedSessions(ids, rows, hat), [ids, rows, hat])
+  }, [selectedId, selected, recent])
+  return recent
 }

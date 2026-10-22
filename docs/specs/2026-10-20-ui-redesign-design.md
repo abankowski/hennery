@@ -1340,7 +1340,7 @@ operator-level product question is introduced by this specification.
 ## 12. Redesign v2 — session switching and hat scope (2026-10-21)
 
 The operator's local Desktop v2 prototype defines session switching. The
-sidebar has up to six most recently **visited** sessions, independent of
+sidebar has up to six recently **visited** sessions, independent of
 agent activity. Each row has a status icon, an 8 px hat-colour dot before the
 title (hat name in its tooltip), and a highlight for the current session.
 Collapsed navigation retains 18 px status icons with a hat-colour badge,
@@ -1361,12 +1361,18 @@ attention without a pending question uses the permission hand. Distinguishing
 permission requests from other pending questions requires a future summary
 contract addition; this UI lane does not add backend requests or fields.
 
-The current session stays pinned first and unnumbered, even when another
-window changes this browser's visit order. The other visible Recent entries are
-numbered Option/Alt+1–5 in visit order, as in the prototype. Backtick opens
+Operator amendment (2026-10-22): visible Recent entries keep their positions
+when opened, renamed or updated. Selection only changes the highlight. Opening
+a session outside the six visible entries inserts it first; the oldest slot
+leaves the visible set but remains in the bounded history. Determine visibility
+after hat filtering and authorized hydration. Existing persisted history is
+used in place, without a reset or a new storage format. Other windows share
+this order; new entries from either window can change the visible set.
+Option/Alt+1–5 target the first five visible positions, including the current
+session; the sixth entry remains clickable. Backtick opens
 this window's previous visited session, using a two-id sessionStorage history.
 Other windows share only the browser-wide Recent order and numbered targets.
-The command palette puts **Recent** first in shared visit order and
+The command palette puts **Recent** first in shared Recent order and
 preselects that previous visit, so Command/Ctrl+K followed by Enter also goes
 back. Searching still searches authorized sessions through the existing API;
 unvisited loaded sessions are labelled Sessions rather than Recent. The
