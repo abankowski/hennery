@@ -15,7 +15,7 @@ to each agent CLI on your own machines; hennery only drives the sessions.
 
 ## Status
 
-**Early testing.** v0.2.2 is published on GitHub Releases, Homebrew,
+**Early testing.** v0.3.0 is published on GitHub Releases, Homebrew,
 crates.io and GHCR.
 Stored data may not survive an upgrade: expect things to change.
 
@@ -119,7 +119,7 @@ permission requests still require the operator's answer in hennery.
 
 ## Verify a release installer before running it
 
-This procedure targets the published 0.2.2 stable release. You need trusted, already installed
+This procedure targets the published 0.3.0 stable release. You need trusted, already installed
 `curl`, Git, GnuPG, `jq`, `gh`, and either `sha256sum` or `shasum`.
 
 The release signing subkey's **full fingerprint** is
@@ -153,7 +153,7 @@ printed directory for inspection. Only the authenticated installer is executed.
 (
 set -eu
 release_fingerprint=F26C7F594DFE84D131703AFC23E5A318AE8D2861
-release_tag=v0.2.2
+release_tag=v0.3.0
 release_dir=$(mktemp -d "${TMPDIR:-/tmp}/hennery-release.XXXXXXXX") || exit 1
 printf 'Release verification directory: %s\n' "$release_dir"
 mkdir "$release_dir/keyring" || exit 1
@@ -270,14 +270,14 @@ sh "$release_dir/hennery-installer.sh"
 
 ## Installing
 
-**v0.2.2 is published on all four channels below.** Use the
+**v0.3.0 is published on all four channels below.** Use the
 verification procedure above for GitHub downloads:
 
 | Channel | Install |
 |---|---|
-| Homebrew | `brew install marcinwadon/tap/hennery` (0.2.2) from the project's tap. |
-| crates.io | `cargo install hennery --version 0.2.2`; the `hennery` crate installs the binary with its embedded UI. |
-| GHCR | `docker pull ghcr.io/marcinwadon/hennery:0.2.2`; the collector-only image. Agent hosts run separately on your machines. |
+| Homebrew | `brew install marcinwadon/tap/hennery` (0.3.0) from the project's tap. |
+| crates.io | `cargo install hennery --version 0.3.0`; the `hennery` crate installs the binary with its embedded UI. |
+| GHCR | `docker pull ghcr.io/marcinwadon/hennery:0.3.0`; the collector-only image. Agent hosts run separately on your machines. |
 | GitHub Releases | Platform archives and `hennery-installer.sh` on the [Releases page](https://github.com/marcinwadon/hennery/releases), with `SHA256SUMS`, one combined SBOM. Attestations are stored on GitHub. Use the verification procedure above before running the installer. |
 
 Stable releases receive their version tag and `latest`
