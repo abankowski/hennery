@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.1
+
+- Results to review (#241). A finished operator-driven turn stays in Needs
+  you as "To review" until you read it: Mark as read, or it is read once the
+  result's end has been in view in a focused window. A prompt you send
+  acknowledges the result shown when you began; delegated children's
+  completions never enter the inbox. Queued prompts and wakes that start the
+  next turn at once no longer hide the result.
+- Security: Node 24.22.1 for ACP adapters (the managed runtime) and in the Nix
+  toolchain, fixing CVE-2026-111497 in the bundled Brotli decoder (#242).
+- Child sessions in the family panel show what happened ("Start child: Done",
+  "Close: Done"); a child its parent closed reads Closed, not
+  operator-driven and needing attention (#239).
+- Sessions in a project section are indented under its heading (#238).
+- Database migration 31 runs on first start. An older binary cannot open the
+  upgraded database: back it up before upgrading if you may roll back.
+
 ## 0.3.0
 
 - Message queue (#233). Send while a turn is running: messages wait in a
