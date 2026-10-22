@@ -384,6 +384,30 @@ rejected — a grant that "refreshes fine and never works".)*
 
 ### 4.2 Registration
 
+- **Optional local callback (2026-10-22):** authorize accepts
+  `local_redirect_uri`, an HTTP URL on `localhost` or a loopback IP, without
+  credentials, query or fragment. Omission keeps the collector callback.
+  The exact input is the provider redirect in DCR, consent, the flow snapshot
+  and code exchange. Both the active and pending DCR registration must match
+  that redirect before reuse; changing it never overwrites an existing grant
+  before successful consent. A manual client still needs the provider's
+  permission for the selected redirect; there is no policy bypass.
+  `public_url`, login, passkeys, MCP URLs and the collector callback remain
+  unchanged. The operator starts `hennery oauth-callback` on the browser's
+  computer, with a fixed collector origin and the same local redirect. It
+  binds loopback literals only (both address families for `localhost` when
+  available), and answers GETs on its configured host/port/path with a 302
+  to that collector's `/api/mcp/oauth/callback`, copying the response query
+  verbatim. Callback parameters cannot select the destination. This browser
+  navigation sends the collector's Lax flow cookie; the helper never sends
+  an OAuth request or handles PKCE, token exchange, storage or refresh.
+  All existing callback guards and grant fences apply unchanged. Every relay
+  response has `Cache-Control: no-store` and `Referrer-Policy: no-referrer`;
+  requests and response parameters are not logged. The helper stays available
+  for repeated Connect attempts for 900 seconds (configurable), or until
+  Ctrl+C. Occupied ports and timeout fail with actionable terminal messages;
+  authorization refusal is rendered by the collector's existing callback.
+
 - `oauth_dcr`: RFC 7591 registration as a public client
   (`token_endpoint_auth_method: none`, grant types `authorization_code` and
   `refresh_token`, redirect `<public_url>/api/mcp/oauth/callback`).

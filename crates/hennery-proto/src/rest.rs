@@ -1376,6 +1376,12 @@ impl std::fmt::Debug for McpOauthClientRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
 pub struct McpAuthorizeRequest {
+    /// Optional local browser relay, `http://localhost:<port>/<path>` or
+    /// an HTTP loopback IP. The collector callback and public URL stay fixed.
+    /// The vendor must permit this exact URI for the selected client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "string | undefined", optional)]
+    pub local_redirect_uri: Option<String>,
     /// The mismatching `resource` the operator accepts, exactly as
     /// `oauth.resource_mismatch` showed it (gateway spec §4.1, G-4).
     #[serde(default, skip_serializing_if = "Option::is_none")]

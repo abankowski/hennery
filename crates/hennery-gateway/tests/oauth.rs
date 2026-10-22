@@ -26,6 +26,256 @@ const ORIGIN: &str = "https://hennery.example";
 const PASSWORD: &str = "correct horse battery";
 const CALLBACK: &str = "https://hennery.example/api/mcp/oauth/callback";
 
+#[tokio::test]
+async fn local_callback_uses_exact_redirect_for_dcr_consent_exchange_and_reuse() {
+    let h = Harness::new();
+    let fake = FakeAs::start(Config::default()).await;
+    let id = h.connection("local", &fake.mcp_url(), CredKind::OauthDcr);
+    // Explicit default port deliberately stays verbatim in the OAuth contract.
+    let local = "http://localhost:80/custom/callback";
+    let relay = hennery_gateway::local_callback::LocalCallback::parse(local)
+        .unwrap()
+        .router(ORIGIN)
+        .unwrap();
+    for (redirect, registrations) in [(local, 1), (local, 1), ("http://localhost:8977/other", 2)] {
+        let (status, headers, answer) = h.authorize(&id, json!({ "local_redirect_uri": redirect })).await;
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        let consent = answer["consent_url"].as_str().unwrap();
+        let q: std::collections::HashMap<_, _> = url::Url::parse(consent).unwrap().query_pairs().into_owned().collect();
+        assert_eq!(q["redirect_uri"], redirect);
+        let location = fake.consent(consent).await;
+        let local_url = url::Url::parse(&location).unwrap();
+        // Use the real relay router for the first address. Subsequent addresses
+        // exercise the same collector callback, independent of its public URL.
+        let forwarded = if redirect == local {
+            let response = relay
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("{}?{}", local_url.path(), local_url.query().unwrap()))
+                        .header("host", "localhost")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FOUND);
+            response.headers()[header::LOCATION].to_str().unwrap().to_string()
+        } else {
+            format!("{CALLBACK}?{}", local_url.query().unwrap())
+        };
+        let cookie = flow_cookie(&headers);
+        let page = h
+            .callback(&forwarded, Some(&cookie), &[("sec-fetch-site", "cross-site")])
+            .await;
+        assert_eq!(page.result(), "connected", "{}", page.html);
+        assert_eq!(
+            h.callback(&forwarded, Some(&cookie), &[]).await.result(),
+            "flow_unknown"
+        );
+        assert_eq!(fake.with(|r| r.registered.len()), registrations);
+        assert_eq!(
+            fake.with(|r| r.registered_redirects.last().cloned()),
+            Some(json!([redirect]))
+        );
+        assert_eq!(
+            h.item(&id).await["oauth"]["redirect_uri"],
+            CALLBACK,
+            "the collector callback stays fixed"
+        );
+    }
+    assert_eq!(fake.with(|r| r.exchanges), 3);
+    assert_eq!(h.connect(&id, &fake).await.result(), "connected");
+    assert_eq!(
+        fake.with(|r| r.registered.len()),
+        3,
+        "switching back to the collector requires another DCR client"
+    );
+}
+
+#[tokio::test]
+async fn local_callback_preserves_cookie_issuer_denial_and_session_guards() {
+    let h = Harness::new();
+    let fake = FakeAs::start(Config::default()).await;
+    let id = h.connection("local-guards", &fake.mcp_url(), CredKind::OauthDcr);
+    for mode in ["cookie", "issuer", "denied", "session", "state", "duplicate"] {
+        fake.configure(|c| c.deny = (mode == "denied").then(|| "No thanks".into()));
+        let session = h.session(0);
+        let (status, headers, answer) = h
+            .send(
+                &session,
+                "POST",
+                &format!("/api/mcp/connections/{id}/authorize"),
+                Some(json!({ "local_redirect_uri": "http://127.0.0.1:8976/callback" })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        let location = fake.consent(answer["consent_url"].as_str().unwrap()).await;
+        let mut returned = url::Url::parse(&location).unwrap();
+        if mode == "issuer" {
+            let pairs: Vec<_> = returned
+                .query_pairs()
+                .into_owned()
+                .filter(|(k, _)| k != "iss")
+                .collect();
+            returned.set_query(None);
+            returned
+                .query_pairs_mut()
+                .extend_pairs(pairs)
+                .append_pair("iss", "https://wrong.example");
+        }
+        if mode == "state" {
+            returned.set_query(Some("state=unknown&code=unused"));
+        }
+        if mode == "duplicate" {
+            returned.query_pairs_mut().append_pair("state", "other");
+        }
+        if mode == "session" {
+            let auth = h.operator.authenticate(&session, unix_now()).unwrap().unwrap();
+            h.operator.revoke_session(&auth.session_id, unix_now()).unwrap();
+        }
+        let forwarded = format!("{CALLBACK}?{}", returned.query().unwrap());
+        let cookie = flow_cookie(&headers);
+        let page = h
+            .callback(&forwarded, (mode != "cookie").then_some(cookie.as_str()), &[])
+            .await;
+        let expected = match mode {
+            "cookie" => "flow_mismatch",
+            "issuer" => "issuer_mismatch",
+            "denied" => "consent_denied",
+            "session" => "session_ended",
+            _ => "flow_unknown",
+        };
+        assert_eq!(page.result(), expected, "{mode}: {}", page.html);
+        assert!(!h.item(&id).await["has_credential"].as_bool().unwrap());
+    }
+    assert_eq!(fake.with(|r| r.exchanges), 0);
+}
+
+#[tokio::test]
+async fn local_redirect_rejects_non_loopback_before_discovery() {
+    let h = Harness::new();
+    let fake = FakeAs::start(Config::default()).await;
+    let id = h.connection("bad-local", &fake.mcp_url(), CredKind::OauthDcr);
+    for url in [
+        "https://foreign.example/cb",
+        "http://0.0.0.0:8976/cb",
+        "http://localhost.evil:8976/cb",
+        "http://localhost:8976/cb?state=x",
+    ] {
+        let (status, _, answer) = h.authorize(&id, json!({ "local_redirect_uri": url })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(answer["code"], "invalid_local_redirect_uri");
+    }
+    assert!(fake.paths().is_empty());
+}
+
+#[tokio::test]
+async fn local_callback_keeps_manual_client_and_surfaces_provider_policy_refusal() {
+    let h = Harness::new();
+    let fake = FakeAs::start(Config {
+        registration: false,
+        deny: Some("This client does not allow this redirect URI".into()),
+        ..Config::default()
+    })
+    .await;
+    let id = h.connection("local-manual", &fake.mcp_url(), CredKind::OauthClient);
+    let (status, _, _) = h
+        .send(
+            &h.session(0),
+            "PUT",
+            &format!("/api/mcp/connections/{id}/oauth-client"),
+            Some(json!({"client_id": "pre-manual", "client_secret": null})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    for allowed in [false, true] {
+        if allowed {
+            fake.configure(|c| c.deny = None);
+        }
+        let (status, headers, answer) = h
+            .authorize(&id, json!({"local_redirect_uri": "http://localhost:8976/callback"}))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        let consent = answer["consent_url"].as_str().unwrap();
+        assert!(
+            url::Url::parse(consent)
+                .unwrap()
+                .query_pairs()
+                .any(|(k, v)| k == "client_id" && v == "pre-manual")
+        );
+        let local = fake.consent(consent).await;
+        let page = h
+            .callback(
+                &format!("{CALLBACK}?{}", url::Url::parse(&local).unwrap().query().unwrap()),
+                Some(&flow_cookie(&headers)),
+                &[],
+            )
+            .await;
+        assert_eq!(page.result(), if allowed { "connected" } else { "consent_denied" });
+        if !allowed {
+            assert!(page.html.contains("does not allow this redirect URI"));
+        }
+    }
+    assert_eq!(fake.with(|r| r.exchanges), 1);
+    assert!(
+        fake.with(|r| r.registered.is_empty()),
+        "manual clients never fall back to DCR"
+    );
+}
+
+#[tokio::test]
+async fn local_callback_pending_registration_and_expired_flow_are_not_reused() {
+    let h = Harness::new();
+    let fake = FakeAs::start(Config::default()).await;
+    let id = h.connection("local-pending", &fake.mcp_url(), CredKind::OauthDcr);
+    for (local, expected) in [
+        ("http://localhost:8976/a", 1),
+        ("http://localhost:8976/a", 1),
+        ("http://localhost:8976/b", 2),
+    ] {
+        let (status, headers, answer) = h.authorize(&id, json!({ "local_redirect_uri": local })).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(fake.with(|r| r.registered.len()), expected);
+        assert_eq!(
+            fake.with(|r| r.registered_redirects.last().cloned()),
+            Some(json!([local]))
+        );
+        let consent = answer["consent_url"].as_str().unwrap();
+        let state = url::Url::parse(consent)
+            .unwrap()
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        let cookie = flow_cookie(&headers);
+        let value = cookie.split_once('=').unwrap().1;
+        let hennery_gateway::flows::Taken::Taken(snapshot) = h.runtime.flows.take(&state, &[value], unix_now()) else {
+            panic!("live snapshot");
+        };
+        let expired = h
+            .runtime
+            .flows
+            .start(*snapshot, unix_now() - hennery_gateway::flows::FLOW_TTL - 1)
+            .unwrap();
+        let expired_cookie = format!(
+            "{}={}",
+            hennery_gateway::flows::cookie_name(&expired.state),
+            expired.cookie.as_str()
+        );
+        let page = h
+            .callback(
+                &format!("{CALLBACK}?state={}&code=unused", expired.state),
+                Some(&expired_cookie),
+                &[],
+            )
+            .await;
+        assert_eq!(page.result(), "flow_unknown");
+    }
+    assert_eq!(fake.with(|r| r.exchanges), 0);
+}
+
 struct Harness {
     world: World,
     app: Router,

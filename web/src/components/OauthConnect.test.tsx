@@ -5,6 +5,18 @@ import OauthConnect from './OauthConnect'
 import type { OauthState } from '../hooks/useMcpOauth'
 
 const control = vi.hoisted(() => ({ state: { phase: 'idle' } as OauthState, connect: vi.fn(), cancel: vi.fn() }))
+it('shows the exact local callback and shell-safe receiver command before connecting', () => {
+  render(<OauthConnect connection={connection({ cred_kind: 'oauth_client', oauth: { client_id: 'manual', redirect_uri: 'https://collector.example/api/mcp/oauth/callback', has_client_secret: false } })} refresh={vi.fn()} />)
+  fireEvent.change(screen.getByRole('combobox', { name: 'OAuth callback' }), { target: { value: 'local' } })
+  const input = screen.getByRole('textbox', { name: 'Local redirect URI' })
+  fireEvent.change(input, { target: { value: "http://127.0.0.1:12345/vendor'callback" } })
+  expect(screen.getByLabelText('Local callback command', { exact: true })).toHaveTextContent("hennery oauth-callback --collector 'https://collector.example' --redirect-uri 'http://127.0.0.1:12345/vendor'\"'\"'callback'")
+  expect(screen.getByText(/A pre-registered client must already permit it/)).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+  expect(control.connect).toHaveBeenCalledWith(undefined, "http://127.0.0.1:12345/vendor'callback")
+  fireEvent.change(input, { target: { value: 'http://evil.example/callback' } })
+  expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled()
+})
 vi.mock('../hooks/useMcpOauth', () => ({ useMcpOauth: () => control }))
 afterEach(() => { cleanup(); control.state = { phase: 'idle' }; vi.clearAllMocks() })
 it('a recovered gateway report does not assert sign-in completion', () => {
