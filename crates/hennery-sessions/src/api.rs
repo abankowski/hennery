@@ -24,8 +24,8 @@ use hennery_kernel::secret::unix_now;
 use hennery_proto::frames::{Capability, CollectorFrame, Indexed, SessionBody};
 use hennery_proto::rest::{
     AGENT_MAX_JSON_BYTES, AnswerRequest, AnswerResponse, ApiError, CancelResponse, ConfigRequest, DeleteResult,
-    EventDto, HostRemovalItem, LifecycleResponse, OpenTurn, PendingItem, PromptRequest, PromptResponse, SessionDetail,
-    StartSessionRequest, StartSessionResponse, UpdateSessionRequest, json_width,
+    EventDto, HostRemovalItem, LifecycleResponse, NewLikeThisResponse, OpenTurn, PendingItem, PromptRequest,
+    PromptResponse, SessionDetail, StartSessionRequest, StartSessionResponse, UpdateSessionRequest, json_width,
 };
 use serde::Deserialize;
 use std::convert::Infallible;
@@ -86,6 +86,7 @@ pub fn router(state: AppState) -> Router {
                 .delete(delete_session.layer(middleware::from_fn(hennery_kernel::auth::require_step_up))),
         )
         .route("/api/sessions/{id}/resume", post(resume))
+        .route("/api/sessions/{id}/new-like-this", post(new_like_this))
         // The one route that reads more than axum's default 2 MB (plan 6a).
         .route(
             "/api/sessions/{id}/prompt",
@@ -177,8 +178,16 @@ pub(crate) fn internal(err: anyhow::Error) -> Response {
 }
 
 fn request_failed(err: RequestError) -> Response {
+    request_failed_for_session(err, None)
+}
+
+fn request_failed_for_session(err: RequestError, session_id: Option<String>) -> Response {
+    let refuse = |status, code: &str, message: &str| match &session_id {
+        Some(id) => error_with_session(status, code, message, id.clone()),
+        None => error(status, code, message),
+    };
     match err {
-        RequestError::NotConnected => error(StatusCode::CONFLICT, "host_offline", "the host is not connected"),
+        RequestError::NotConnected => refuse(StatusCode::CONFLICT, "host_offline", "the host is not connected"),
         RequestError::Rejected { code, message } => {
             let status = match code.as_str() {
                 "not_attached" | "turn_in_progress" | "not_running" | "unknown_option" | "images_unsupported" => {
@@ -194,20 +203,20 @@ fn request_failed(err: RequestError) -> Response {
             };
             // The host's words, which can quote what the agent printed
             // (plan 8e decision 11).
-            error(status, &code, crate::redact::shown(&message))
+            refuse(status, &code, &crate::redact::shown(&message))
         }
-        RequestError::DeliveryUnknown => error(
+        RequestError::DeliveryUnknown => refuse(
             StatusCode::SERVICE_UNAVAILABLE,
             "delivery_unknown",
             "host disconnected; delivery unknown",
         ),
         // Probes only (`Hub::probe`), which the probe routes answer
         // themselves (`projects::probe_failed`): unreachable here.
-        RequestError::Unsupported => error(StatusCode::CONFLICT, "unsupported", "the host does not support this"),
-        RequestError::Busy => error(StatusCode::SERVICE_UNAVAILABLE, "busy", "the host is busy; try again"),
+        RequestError::Unsupported => refuse(StatusCode::CONFLICT, "unsupported", "the host does not support this"),
+        RequestError::Busy => refuse(StatusCode::SERVICE_UNAVAILABLE, "busy", "the host is busy; try again"),
         // The hub refused to send a start or resume its servers; the
         // route has failed the session it left `starting` (plan 8e).
-        RequestError::McpUndeliverable => error(
+        RequestError::McpUndeliverable => refuse(
             StatusCode::CONFLICT,
             "mcp_isolation_unavailable",
             "the host cannot keep this agent's session to its MCP servers",
@@ -306,6 +315,38 @@ const NEVER_CONNECTED: &str = "the host has not connected since it was paired; o
      connected";
 
 async fn start_session(State(state): State<AppState>, ApiJson(req): ApiJson<StartSessionRequest>) -> Response {
+    start_in_hat(state, req, None).await
+}
+
+/// Copy only the last reported launch settings. Normal creation gives this
+/// session its own history, family identity, MCP delivery, title and idle hold.
+async fn new_like_this(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let source = match state.store.find_session(&id) {
+        Ok(Some(source)) => source,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+        Err(err) => return internal(err),
+    };
+    if source.agent_session_id.is_none() || source.config == Default::default() {
+        return error(
+            StatusCode::CONFLICT,
+            "configuration_unavailable",
+            "the source session has no reported configuration to copy; start a session with reviewed settings instead",
+        );
+    }
+    start_in_hat(
+        state,
+        StartSessionRequest {
+            host_id: source.host_id,
+            agent: source.agent,
+            cwd: source.cwd,
+            config: source.config,
+        },
+        Some(source.hat_id),
+    )
+    .await
+}
+
+async fn start_in_hat(state: AppState, req: StartSessionRequest, expected_hat: Option<String>) -> Response {
     // What a list item shows must be bounded (plan 6b, the review's A1): a
     // paired host's id, and an agent's name within its cap. Refused before
     // any session exists.
@@ -349,6 +390,13 @@ async fn start_session(State(state): State<AppState>, ApiJson(req): ApiJson<Star
         }
         Err(why) => return why.into_response(),
     };
+    if expected_hat.as_ref().is_some_and(|expected| *expected != hat.hat_id) {
+        return error(
+            StatusCode::CONFLICT,
+            "hat_mismatch",
+            "the project now belongs to a different hat; review its path rules before starting a session like this one",
+        );
+    }
     let mcp_context = match mcp_context(&state, &req.host_id, &req.agent) {
         Ok(context) => context,
         Err(err) => return internal(err),
@@ -372,6 +420,7 @@ async fn start_session(State(state): State<AppState>, ApiJson(req): ApiJson<Star
     if let Err(err) = state.store.expect_initial_configuration(&session_id, &req.config) {
         return internal(err);
     }
+    let copied_config = expected_hat.as_ref().map(|_| req.config.clone());
     let frame = CollectorFrame::StartSession {
         request_id: request_id.clone(),
         session_id: session_id.clone(),
@@ -392,7 +441,18 @@ async fn start_session(State(state): State<AppState>, ApiJson(req): ApiJson<Star
         .request_with_undo(&req.host_id, &request_id, frame, START_TIMEOUT, undo)
         .await
     {
-        Ok(_) => (StatusCode::ACCEPTED, Json(StartSessionResponse { session_id })).into_response(),
+        Ok(_) => match copied_config {
+            Some(config) => (
+                StatusCode::ACCEPTED,
+                Json(NewLikeThisResponse {
+                    session_id,
+                    hat_id: hat.hat_id,
+                    config,
+                }),
+            )
+                .into_response(),
+            None => (StatusCode::ACCEPTED, Json(StartSessionResponse { session_id })).into_response(),
+        },
         // The session was created and may still start; without its id here,
         // the caller would have no way to look it up (ACP core §3.4).
         Err(RequestError::DeliveryUnknown) => error_with_session(
@@ -403,11 +463,18 @@ async fn start_session(State(state): State<AppState>, ApiJson(req): ApiJson<Star
         ),
         // Never sent.
         Err(err @ (RequestError::NotConnected | RequestError::McpUndeliverable)) => {
-            start_not_sent(&state, &session_id, err)
+            if expected_hat.is_some() {
+                if let Err(e) = state.store.mark_failed(&session_id, not_sent_reason(&err)) {
+                    return internal(e);
+                }
+                request_failed_for_session(err, Some(session_id))
+            } else {
+                start_not_sent(&state, &session_id, err)
+            }
         }
         // The socket task has already failed the session with the host's
         // code (`Undo::Start`).
-        Err(err) => request_failed(err),
+        Err(err) => request_failed_for_session(err, expected_hat.map(|_| session_id)),
     }
 }
 

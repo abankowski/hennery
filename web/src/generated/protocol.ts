@@ -675,6 +675,12 @@ export type StartSessionRequest = { host_id: string, agent: string, cwd: string,
 
 export type StartSessionResponse = { session_id: string, };
 
+/**
+ * `POST /api/sessions/{id}/new-like-this`: a fresh session and the exact
+ * source snapshot requested at its start, for the client's read-back check.
+ */
+export type NewLikeThisResponse = { session_id: string, hat_id: string, config: SessionConfig, };
+
 export type PromptRequest = { content: unknown[],
 /**
  * Reuse for retries of the same submit, including a lost response.

@@ -1,8 +1,11 @@
-import { render, screen, within } from '@testing-library/react'
+import { render as renderView, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { SessionSummary } from '../generated/view'
 import SessionRow, { rowText } from './SessionRow'
+import { json, routed } from '../test-stream'
+const rowServer = routed(() => json({ code: 'not_found', message: 'no' }, 404))
+const render = (ui: React.ReactNode) => renderView(ui, { wrapper: rowServer.wrapper })
 
 /** The list's clock, 15 minutes after the fixture's last event. */
 const NOW = Date.parse('2026-10-02T10:15:00.000Z')
@@ -111,7 +114,7 @@ describe('SessionRow', () => {
 
   it('shows no reason control on a session that did not fail', () => {
     render(<SessionRow now={NOW} session={summary({ failure_reason: 'left over' })} selected={false} />)
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Why it failed' })).not.toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'Idle' })).toHaveAttribute('title', 'Idle')
   })
 })

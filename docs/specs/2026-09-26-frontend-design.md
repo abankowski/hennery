@@ -312,6 +312,16 @@ needed and sends "You asked: …. My answer: …" as a new turn, labelled as suc
 - Failed: the reason and, for `agent_has_no_record`, "Start a new session in
   this project"; for `agent_not_logged_in`, the host's login instructions.
 - "Delete session" in the header menu (confirmation plus step-up).
+- "New like this" in the header and each session row's ellipsis menu
+  creates a standalone empty session with the source's last reported host,
+  agent, cwd, model, mode and axes, including settings changed after launch.
+  A row's context click opens the same disclosure; ordinary clicks remain
+  session links. Hat defaults do not replace copied settings. The action
+  checks the created session's actual configuration, opens it and focuses
+  its empty composer. An unconfirmed setting is explained without claiming
+  that a prompt was saved. A known failed or uncertain start opens that
+  session without retrying. A changed hat or unavailable source configuration
+  is refused visibly. History, title, family, queue and idle pin are fresh.
 
 ---
 

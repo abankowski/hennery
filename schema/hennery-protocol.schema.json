@@ -3607,6 +3607,26 @@
       ],
       "type": "object"
     },
+    "NewLikeThisResponse": {
+      "description": "`POST /api/sessions/{id}/new-like-this`: a fresh session and the exact\nsource snapshot requested at its start, for the client's read-back check.",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/SessionConfig"
+        },
+        "hat_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "hat_id",
+        "config"
+      ],
+      "type": "object"
+    },
     "OpenTurn": {
       "description": "A session's open turn, for the detail view.",
       "properties": {

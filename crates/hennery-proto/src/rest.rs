@@ -38,6 +38,15 @@ pub struct StartSessionResponse {
     pub session_id: String,
 }
 
+/// `POST /api/sessions/{id}/new-like-this`: a fresh session and the exact
+/// source snapshot requested at its start, for the client's read-back check.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct NewLikeThisResponse {
+    pub session_id: String,
+    pub hat_id: String,
+    pub config: SessionConfig,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
 pub struct PromptRequest {

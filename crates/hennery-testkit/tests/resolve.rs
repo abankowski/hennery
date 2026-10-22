@@ -69,6 +69,350 @@ impl Collector {
 
 type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+fn like_source(collector: &Collector, hat: &str) {
+    like_source_with_family(collector, hat, false);
+}
+
+fn like_source_with_family(collector: &Collector, hat: &str, family: bool) {
+    use hennery_proto::frames::{Indexed, SessionBody};
+    assert!(
+        collector
+            .state
+            .store
+            .create_session("like-source", HOST, "fake", "/work/project", hat, None)
+            .unwrap()
+    );
+    if family {
+        assert!(
+            collector
+                .state
+                .store
+                .create_session("like-parent", HOST, "fake", "/work/project", hat, None)
+                .unwrap()
+        );
+        collector
+            .state
+            .store
+            .ingest(
+                "like-parent",
+                1,
+                &SessionBody::session_started("parent-start", "agent-parent"),
+            )
+            .unwrap();
+        {
+            let conn = rusqlite::Connection::open(collector._dir.path().join("hennery.db")).unwrap();
+            conn.execute("INSERT INTO session_families(owner_id,child_id,parent_id,root_id,hat_id,created_event_id) VALUES (?1,'like-source','like-parent','like-parent',?2,1)", rusqlite::params![collector.state.store.owner_id(), hat]).unwrap();
+        }
+    }
+    collector
+        .state
+        .store
+        .ingest(
+            "like-source",
+            1,
+            &SessionBody::session_started("original", "agent-source"),
+        )
+        .unwrap();
+    let options = json!([
+        {"id":"model","category":"model","type":"select","currentValue":"chosen-model","options":[{"value":"chosen-model","name":"Chosen"}]},
+        {"id":"mode","category":"mode","type":"select","currentValue":"plan","options":[{"value":"plan","name":"Plan"}]},
+        {"id":"effort","category":"thought_level","type":"select","currentValue":"high","options":[{"value":"high","name":"High"}]},
+        {"id":"fast","type":"boolean","currentValue":false}
+    ]);
+    collector
+        .state
+        .store
+        .ingest(
+            "like-source",
+            2,
+            &SessionBody::ConfigApplied {
+                request_id: "changed-after-start".into(),
+                indexed: Indexed {
+                    config_options: Some(options.as_array().unwrap().clone()),
+                    current_model: Some("chosen-model".into()),
+                    current_mode: Some("plan".into()),
+                    current_axes: Some(
+                        [
+                            ("effort".into(), hennery_proto::frames::ConfigValue::Id("high".into())),
+                            ("fast".into(), hennery_proto::frames::ConfigValue::Bool(false)),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    collector.state.store.set_idle_pin("like-source", true).unwrap();
+}
+
+#[tokio::test]
+async fn new_like_this_copies_reported_configuration_into_a_fresh_empty_session() {
+    use hennery_proto::frames::SessionBody;
+    let collector = Collector::start().await;
+    let hat = collector.hat("Project");
+    rule(&collector, "/work", &hat, true);
+    like_source_with_family(&collector, &hat, true);
+    assert!(
+        collector
+            .state
+            .store
+            .family_summary("like-source")
+            .unwrap()
+            .unwrap()
+            .family
+            .unwrap()
+            .parent
+            .is_some()
+    );
+    let mut host = ScriptedHost::connect(&collector).await;
+    let source = collector.state.store.find_session("like-source").unwrap().unwrap();
+    let call = send(
+        &collector,
+        "POST",
+        "/api/sessions/like-source/new-like-this",
+        json!({"model":"ignored","cwd":"/elsewhere"}),
+    );
+    assert_eq!(host.answer("/work/project", true).await, "/work/project");
+    let CollectorFrame::StartSession {
+        request_id,
+        session_id,
+        agent,
+        cwd,
+        config,
+        hat_id,
+        committed_seq,
+        ..
+    } = host.next().await
+    else {
+        panic!("expected a fresh start");
+    };
+    assert_ne!(session_id, "like-source");
+    assert_eq!(
+        (agent.as_str(), cwd.as_str(), hat_id.as_str(), committed_seq),
+        ("fake", "/work/project", hat.as_str(), 0)
+    );
+    assert_eq!(config, source.config);
+    assert_eq!(
+        config.axes.get("fast"),
+        Some(&hennery_proto::frames::ConfigValue::Bool(false))
+    );
+    let mut body = SessionBody::session_started(request_id, "agent-new");
+    if let SessionBody::SessionStarted { indexed, .. } = &mut body {
+        indexed.config_options = collector
+            .state
+            .store
+            .catalog("like-source")
+            .unwrap()
+            .unwrap()
+            .config_options
+            .into();
+        indexed.current_model = source.config.model.clone();
+        indexed.current_mode = source.config.mode.clone();
+        indexed.current_axes = Some(source.config.axes.clone());
+    }
+    host.emit(&session_id, body).await;
+    let (status, body) = call.await.unwrap();
+    assert_eq!(status, 202, "{body}");
+    assert_eq!(body["session_id"], session_id);
+    assert_eq!(body["hat_id"], hat);
+    assert_eq!(body["config"], serde_json::to_value(&source.config).unwrap());
+    let row = collector.state.store.find_session(&session_id).unwrap().unwrap();
+    assert_eq!(row.config, source.config);
+    assert_eq!(row.open_turn_id, None);
+    assert_eq!(row.title, None);
+    assert!(
+        collector
+            .state
+            .store
+            .family_summary(&session_id)
+            .unwrap()
+            .unwrap()
+            .family
+            .is_none()
+    );
+    assert!(!collector.state.store.idle_hold(&session_id).unwrap().unwrap().pinned);
+    assert!(
+        collector
+            .state
+            .store
+            .operator_prompt_queue(&session_id)
+            .unwrap()
+            .is_empty()
+    );
+    let conn = rusqlite::Connection::open(collector._dir.path().join("hennery.db")).unwrap();
+    let turns: i64 = conn
+        .query_row("SELECT count(*) FROM turns WHERE session_id = ?1", [&session_id], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(turns, 0, "creating a session must not manufacture a first prompt");
+    assert_eq!(
+        collector.state.store.find_session("like-source").unwrap().unwrap(),
+        source
+    );
+}
+
+#[tokio::test]
+async fn new_like_this_refuses_a_changed_hat_before_creating_any_session() {
+    let collector = Collector::start().await;
+    let original = collector.hat("Original");
+    let replacement = collector.hat("Replacement");
+    like_source(&collector, &original);
+    rule(&collector, "/work", &replacement, true);
+    let mut host = ScriptedHost::connect(&collector).await;
+    let call = send(
+        &collector,
+        "POST",
+        "/api/sessions/like-source/new-like-this",
+        Value::Null,
+    );
+    host.answer("/work/project", true).await;
+    let (status, body) = call.await.unwrap();
+    assert_eq!((status, body["code"].as_str()), (409, Some("hat_mismatch")), "{body}");
+    assert_eq!(session_count(&collector), 1);
+}
+
+#[tokio::test]
+async fn new_like_this_refuses_missing_foreign_deleted_and_unconfigured_sources() {
+    let collector = Collector::start().await;
+    let hat = collector.hat("Project");
+    for (id, state) in [
+        ("unconfigured", "starting"),
+        ("foreign", "active"),
+        ("deleted", "deleted"),
+    ] {
+        assert!(
+            collector
+                .state
+                .store
+                .create_session(id, HOST, "fake", "/work/project", &hat, None)
+                .unwrap()
+        );
+        let conn = rusqlite::Connection::open(collector._dir.path().join("hennery.db")).unwrap();
+        conn.execute("UPDATE sessions SET lifecycle=?2 WHERE id=?1", [id, state])
+            .unwrap();
+        if id == "foreign" {
+            conn.execute("UPDATE sessions SET owner_id='other-owner' WHERE id=?1", [id])
+                .unwrap();
+        }
+    }
+    for (id, expected_status, expected_code) in [
+        ("missing", 404, "not_found"),
+        ("foreign", 404, "not_found"),
+        ("deleted", 404, "not_found"),
+        ("unconfigured", 409, "configuration_unavailable"),
+    ] {
+        let (status, body) = send(
+            &collector,
+            "POST",
+            &format!("/api/sessions/{id}/new-like-this"),
+            Value::Null,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (expected_status, Some(expected_code)),
+            "{id}: {body}"
+        );
+    }
+    assert_eq!(session_count(&collector), 3);
+}
+
+#[tokio::test]
+async fn new_like_this_requires_the_operator() {
+    let collector = Collector::start().await;
+    let _operator = hennery_testkit::operator_client(&collector.state.operator);
+    let response = reqwest::Client::new()
+        .post(collector.url("/api/sessions/missing/new-like-this"))
+        .header("Origin", collector.state.operator.public_url().unwrap().origin())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(session_count(&collector), 0);
+}
+
+#[tokio::test]
+async fn new_like_this_returns_the_created_id_when_the_host_refuses_copied_settings() {
+    let collector = Collector::start().await;
+    let hat = collector.hat("Project");
+    rule(&collector, "/work", &hat, true);
+    like_source(&collector, &hat);
+    let mut host = ScriptedHost::connect(&collector).await;
+    let call = send(
+        &collector,
+        "POST",
+        "/api/sessions/like-source/new-like-this",
+        Value::Null,
+    );
+    host.answer("/work/project", true).await;
+    let CollectorFrame::StartSession {
+        request_id, session_id, ..
+    } = host.next().await
+    else {
+        panic!("expected start");
+    };
+    host.send(&HostFrame::Error {
+        request_id,
+        code: "config_failed".into(),
+        message: "copied model is no longer offered".into(),
+    })
+    .await;
+    let (status, body) = call.await.unwrap();
+    assert_eq!(status, 502, "{body}");
+    assert_eq!(body["code"], "config_failed");
+    assert_eq!(body["session_id"], session_id);
+    assert_eq!(
+        collector
+            .state
+            .store
+            .find_session(&session_id)
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        "failed"
+    );
+    assert_eq!(session_count(&collector), 2);
+}
+
+#[tokio::test]
+async fn new_like_this_refuses_an_offline_host_without_allocating() {
+    let collector = Collector::start().await;
+    let hat = collector.hat("Project");
+    like_source(&collector, &hat);
+    let (status, body) = send(
+        &collector,
+        "POST",
+        "/api/sessions/like-source/new-like-this",
+        Value::Null,
+    )
+    .await
+    .unwrap();
+    assert_eq!((status, body["code"].as_str()), (409, Some("host_offline")), "{body}");
+    assert_eq!(session_count(&collector), 1);
+}
+
+#[tokio::test]
+async fn new_like_this_refuses_a_missing_workdir_without_allocating() {
+    let collector = Collector::start().await;
+    let hat = collector.hat("Project");
+    like_source(&collector, &hat);
+    let mut host = ScriptedHost::connect(&collector).await;
+    let call = send(
+        &collector,
+        "POST",
+        "/api/sessions/like-source/new-like-this",
+        Value::Null,
+    );
+    host.answer("/work/project", false).await;
+    let (status, body) = call.await.unwrap();
+    assert_eq!((status, body["code"].as_str()), (400, Some("invalid_cwd")), "{body}");
+    assert_eq!(session_count(&collector), 1);
+}
+
 /// The test playing the host.
 struct ScriptedHost {
     ws: Ws,
