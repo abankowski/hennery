@@ -179,9 +179,21 @@ async fn drain_target(state: &AppState, target: &str) -> anyhow::Result<()> {
         anyhow::ensure!(cwd == session.cwd, "invalid_cwd");
         let catalog = if session.lifecycle == "active" {
             let read = if state.store.operator_dispatch_ready(target)? {
+                let Some(operation) = state.store.operator_dispatch_id(target)? else {
+                    return Ok(());
+                };
+                // Post-resume validation reuses the catalog captured after
+                // queue admission, rather than requesting an explicit Refresh.
                 state
                     .catalogs
-                    .get_operator(state, &session.host_id, &session.hat_id, &cwd, &session.agent)
+                    .get_for_operator_attach(
+                        state,
+                        &session.host_id,
+                        &session.hat_id,
+                        &cwd,
+                        &session.agent,
+                        operation_not_before(&operation),
+                    )
                     .await
             } else {
                 state
@@ -191,15 +203,7 @@ async fn drain_target(state: &AppState, target: &str) -> anyhow::Result<()> {
             };
             read.unwrap_or_else(|_| crate::session_tools::unknown_catalog(session.agent.clone()))
         } else {
-            let not_before = candidate
-                .as_ref()
-                .and_then(|head| uuid::Uuid::parse_str(&head.operation).ok())
-                .and_then(|id| id.get_timestamp())
-                .map(|at| {
-                    let (seconds, nanos) = at.to_unix();
-                    std::time::UNIX_EPOCH + Duration::new(seconds, nanos)
-                })
-                .unwrap_or_else(std::time::SystemTime::now);
+            let not_before = operation_not_before(&candidate.as_ref().expect("nonactive attach candidate").operation);
             let catalog = if candidate.as_ref().is_some_and(|head| head.operator) {
                 state
                     .catalogs
@@ -290,4 +294,15 @@ async fn drain_target(state: &AppState, target: &str) -> anyhow::Result<()> {
 fn refuse_configuration(state: &AppState, target: &str, operation: &str, now: i64) -> anyhow::Result<()> {
     state.store.fail_delegation_configuration(target, operation, now)?;
     state.store.fail_notice_configuration(target, operation, now)
+}
+
+fn operation_not_before(operation: &str) -> std::time::SystemTime {
+    uuid::Uuid::parse_str(operation)
+        .ok()
+        .and_then(|id| id.get_timestamp())
+        .map(|at| {
+            let (seconds, nanos) = at.to_unix();
+            std::time::UNIX_EPOCH + Duration::new(seconds, nanos)
+        })
+        .unwrap_or_else(std::time::SystemTime::now)
 }

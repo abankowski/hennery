@@ -663,25 +663,26 @@ async fn a_host_restart_mid_turn_parks_and_interrupts_without_respawning() {
             .then_some(())
     })
     .await;
-    assert_eq!(
-        std::fs::read_to_string(&spawns).unwrap().lines().count(),
-        3,
-        "initial adapter, isolated catalog probe, and one operator resume"
-    );
     let calls: Vec<Value> = std::fs::read_to_string(&sessions)
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     assert_eq!(
-        calls.iter().filter(|call| call["method"] == "session/new").count(),
-        2,
-        "initial session and isolated catalog session"
-    );
-    assert_eq!(
         calls.iter().filter(|call| call["method"] == "session/load").count(),
         1,
         "the parked session resumes exactly once"
+    );
+    assert_eq!(
+        calls.iter().filter(|call| call["method"] == "session/new").count(),
+        2,
+        "initial session and isolated catalog session: {:?}",
+        calls.iter().map(|call| &call["method"]).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&spawns).unwrap().lines().count(),
+        3,
+        "initial adapter, isolated catalog probe, and one operator resume"
     );
 }
 
@@ -1951,6 +1952,15 @@ async fn deleting_a_session_scrubs_queued_text_images_and_transcript_routes() {
         .hosts
         .record_hello("host-1", "fixture", &Capabilities(vec![Capability::Images]), 0)
         .unwrap();
+    // Image admission requires a ready connection advertising image support.
+    // This scripted host cannot resume, so the item remains unsent for deletion.
+    let (tx, _host_frames) = tokio::sync::mpsc::unbounded_channel();
+    let connection = collector
+        .state
+        .hub
+        .register("host-1", tx, Capabilities(vec![Capability::Images]), Default::default())
+        .unwrap();
+    collector.state.hub.mark_ready("host-1", connection.conn_id);
     let store = &collector.state.store;
     store
         .create_session("saved", "host-1", "fake", "/fixture", &hat, None)

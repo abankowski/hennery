@@ -1263,4 +1263,75 @@ parallel ownership seams. Record approval/amendments and scoped
 re-confirmation before writing R1's executable plan. No unresolved
 operator-level product question is introduced by this specification.
 
+## 12. Redesign v2 — session switching and hat scope (2026-10-21)
+
+The operator's local Desktop v2 prototype defines session switching. The
+sidebar has up to six most recently **visited** sessions, independent of
+agent activity. Each row has a status icon, an 8 px hat-colour dot before the
+title (hat name in its tooltip), and a highlight for the current session.
+Collapsed navigation retains 18 px status icons with a hat-colour badge,
+accessible names and full tooltips. Distinct glyphs and semantic foregrounds
+identify question, permission, reply, running, idle, parked, offline, failed,
+closed, starting, parent handling and waiting on children states. Phone uses
+the existing Jump to palette rather than a
+sidebar.
+
+The collapsed rail footer uses icon buttons for appearance and sign-out, with
+accessible names and tooltips; its version line is hidden. The automatic
+narrow desktop rail follows the same rules. Answer pending delivery uses a
+question bubble in the starting foreground, distinct from operator work.
+
+The existing summary contract exposes a pending-question flag but not its
+kind. An open pending question therefore uses the question bubble; blocked
+attention without a pending question uses the permission hand. Distinguishing
+permission requests from other pending questions requires a future summary
+contract addition; this UI lane does not add backend requests or fields.
+
+The current session stays pinned first and unnumbered, even when another
+window changes this browser's visit order. The other visible Recent entries are
+numbered Option/Alt+1–5 in visit order, as in the prototype. Backtick opens
+this window's previous visited session, using a two-id sessionStorage history.
+Other windows share only the browser-wide Recent order and numbered targets.
+The command palette puts **Recent** first in shared visit order and
+preselects that previous visit, so Command/Ctrl+K followed by Enter also goes
+back. Searching still searches authorized sessions through the existing API;
+unvisited loaded sessions are labelled Sessions rather than Recent. The
+shortcut help lists only enabled bindings, hides numbered shortcuts on touch
+layouts and labels backtick as US-layout only (dead keys do not fire it).
+Global shortcuts do not fire inside
+inputs, textareas, selects, editable content, active dialogs, during IME
+composition (including key code 229), on repeat or after preventDefault.
+
+The selected hat is shared browse scope: it filters the sessions list,
+Needs you, sidebar Recent, palette Recent/search and displayed counts.
+**All hats** restores all authorized sessions. A session opened by a direct
+link may be outside the browse scope; its session-local action context must
+not override that scope. Overview grouping, sorting and project subgroups
+are implemented independently and consume the same scope.
+
+Visit history is per browser in localStorage, bounded to 50 unique ids and
+never synced to the collector. The server creates UUIDv7 session ids; history
+validates UUID shape while retaining older/imported UUID versions. Summaries
+are rehydrated through authorized id searches and reconciled with the existing
+list stream; list filters and pagination cannot themselves prune a visit.
+Exact-id misses on an exhausted search, authorization/not-found refusals,
+stream removals and session deletion prune history. Transient read failures
+retain ids and retry once after a 500 ms backoff; they never mark an id as
+authoritatively checked. The retry resumes the failed page and preserves the
+pagination budget. Further attempts wait for reconnect/resync or targeted scope
+revalidation. Reads run on mount and after a
+resync/reconnect, with at most four in flight and three pages per id; a capped
+search does not prove deletion. Search, hat and Needs you query changes retain
+checked state and cached hats; known sessions outside the selected hat are
+skipped. The hat-scoped stream broadcasts removals for other hats as well.
+A new query anchor can still miss an outside-hat deletion: when a scope
+expands, absent cached entries that the old hat excluded are hidden and
+revalidated through exact-id lookup. A filtered/page miss cannot itself delete
+history, and entries included by the old scope are not needlessly reread.
+Storage ids are not owner-scoped: sign-out clears them and a new
+owner's authorized lookups prune inaccessible ids. Confirmed sign-out (including cross-tab
+sign-out) clears history with other local authenticated state; ordinary
+authentication expiry preserves it. Switching and scope need no backend addition;
+the pending-question-kind icon limitation is recorded above.
+
 Generated with Claude AI — please review before distribution.

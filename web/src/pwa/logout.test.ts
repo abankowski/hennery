@@ -6,6 +6,7 @@ import * as journals from './journal'
 import * as lifecycle from './lifecycle'
 import { Journal, type PushRecord, type PushStore } from './journal'
 import { deferred, testLocks } from '../test-locks'
+import { SESSION_HISTORY_KEY, visitSession } from '../lib/sessionHistory'
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); sessionStorage.clear(); forgetAllAttachments(); history.replaceState(null, '', '/') })
 const client = () => new Client({ fetch: vi.fn(), here: () => ({ pathname: '/settings', search: '' }), navigate: vi.fn(), stepUp: vi.fn() })
@@ -54,6 +55,7 @@ it('overlapping confirmed logouts leave no warning after both local cleanups fin
   expect(sessionStorage.getItem('hennery.logout-cleanup')).toBeNull()
 })
 it('confirmed logout clears drafts and images, broadcasts and goes to login even if worker cleanup fails', async () => {
+  visitSession('019a0180-1234-7000-8000-000000000001')
   sessionStorage.setItem('hennery.draft.s1', 'draft')
   hold('s1', { attachments: [{ n: 1, file: new File(['a'], 'a.png', { type: 'image/png' }) }], nextN: 2 })
   const postMessage = vi.fn(), close = vi.fn()
@@ -61,6 +63,7 @@ it('confirmed logout clears drafts and images, broadcasts and goes to login even
   Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { getRegistration: vi.fn().mockRejectedValue(new Error('storage')) } })
   await completeLogout(client())
   expect(location.pathname).toBe('/login')
+  expect(localStorage.getItem(SESSION_HISTORY_KEY)).toBeNull()
   expect(sessionStorage.getItem('hennery.draft.s1')).toBeNull()
   expect(heldFor('s1').attachments).toEqual([])
   expect(postMessage).toHaveBeenCalledWith({ version: 1, kind: 'logout' })

@@ -23,6 +23,19 @@ function signedIn(logout: Response | (() => Response | Promise<Response>)) {
 }
 
 describe('signing out', () => {
+  it('uses an accessible icon-only footer button when the rail is collapsed', async () => {
+    signedIn(new Response(null, { status: 204 }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Collapse navigation' }))
+    const button = screen.getByRole('button', { name: 'Sign out' })
+    expect(button.textContent).toBe('')
+    expect(button).toHaveAttribute('title', 'Sign out')
+    expect(button.querySelector('svg')).not.toBeNull()
+    const appearance = screen.getByRole('button', { name: /^Appearance:/ })
+    expect(appearance.textContent).toBe('')
+    expect(appearance).toHaveAttribute('title', appearance.getAttribute('aria-label'))
+    await userEvent.click(button)
+    await waitFor(() => expect(location.pathname).toBe('/login'))
+  })
   it('goes to the login screen once the server has ended the session', async () => {
     signedIn(new Response(null, { status: 204 }))
     await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }))

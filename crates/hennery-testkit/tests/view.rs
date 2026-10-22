@@ -25,6 +25,37 @@ const OTHER: &str = "owner-00000000000000b2";
 const WAIT: Duration = Duration::from_secs(20);
 
 #[tokio::test]
+async fn history_id_search_finds_closed_and_failed_sessions_and_is_owner_scoped() {
+    let c = Collector::start().await;
+    let owner = c.owner();
+    for (id, lifecycle) in [
+        ("019a0180-1234-7000-8000-000000000001", "closed"),
+        ("019a0180-1234-7000-8000-000000000002", "failed"),
+    ] {
+        c.session(&owner, id);
+        c.write(&owner, id, "user_turn", &turn("history"));
+        c.conn()
+            .execute("UPDATE sessions SET lifecycle=?2 WHERE id=?1", params![id, lifecycle])
+            .unwrap();
+        let page = c.summaries(&format!("?q={id}&limit=100")).await;
+        assert_eq!(page.sessions.len(), 1);
+        assert_eq!(page.sessions[0].session.session_id, id);
+        assert_eq!(page.sessions[0].session.lifecycle, lifecycle);
+    }
+    let foreign = "019a0180-1234-7000-8000-000000000003";
+    c.other_owner(foreign);
+    c.conn()
+        .execute("UPDATE sessions SET lifecycle='closed' WHERE id=?1", [foreign])
+        .unwrap();
+    assert!(
+        c.summaries(&format!("?q={foreign}&limit=100"))
+            .await
+            .sessions
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn family_pages_are_operator_only_scoped_and_paginated() {
     let c = Collector::start().await;
     let owner = c.owner();
@@ -2258,6 +2289,21 @@ async fn the_list_stream_counts_the_sessions_waiting_within_its_hat() {
     assert_eq!(
         (message.summary().session.session_id, message.id),
         ("b".to_string(), at(&event))
+    );
+    // Outside-hat tombstones are broadcast too, without changing this hat's
+    // waiting count. Clients can prune Recent even when the row is filtered.
+    collector
+        .conn()
+        .execute("UPDATE sessions SET lifecycle='closed' WHERE id='b'", [])
+        .unwrap();
+    let Deletion::Done { event: deleted, .. } = collector.state.store.delete_session("b", None).unwrap() else {
+        panic!("not deleted");
+    };
+    collector.state.hub.publish(deleted.clone());
+    let removed = stream.message().await;
+    assert_eq!(
+        (removed.event.as_str(), removed.data.as_str(), removed.id),
+        ("session_removed", r#"{"session_id":"b"}"#, at(&deleted))
     );
     // Within it: the upsert, then the count.
     block(&collector, "a");

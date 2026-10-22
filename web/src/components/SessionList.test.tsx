@@ -535,7 +535,10 @@ describe('route selection and overview', () => {
   it.each(['/sessions/b', '/sessions/unknown', '/sessions/x%2Fy%20z'])('honours %s outside the selected hat without a side list', async path => {
     localStorage.setItem('hennery.hat', 'hat-a'); at(path); const s = server({ list: rows }); render(<App fetchImpl={s.fetch} />)
     const rail = await screen.findByRole('complementary', { name: 'Views' }); await within(rail).findByRole('link', { name: 'Work' })
-    await waitFor(() => expect(s.of(LIST)).toHaveLength(1)); expect(location.pathname).toBe(path)
+    await waitFor(() => expect(s.of(LIST).filter(url => !url.searchParams.has('q'))).toHaveLength(1)); expect(location.pathname).toBe(path)
+    // Direct links outside the baseline may resolve their visit by exact id;
+    // they never mount another list/stream or change the selected browse hat.
+    expect(s.of(LIST).filter(url => url.searchParams.has('q')).every(url => url.searchParams.get('q') === decodeURIComponent(path.slice('/sessions/'.length)))).toBe(true)
     expect(screen.queryByRole('region', { name: 'Session list' })).toBeNull()
   })
   it.each([['', 'Home', 'hat-b'], ['', 'Work', 'hat-a'], ['hat-a', 'All hats', '']])('hat switch %s → %s clears selection and returns to overview', async (before, name, next) => {
@@ -887,4 +890,76 @@ it('keeps the shared attention count reachable on a phone session while its tab 
   await waitFor(() => expect(s.streams).toHaveLength(1))
   act(() => s.streams[0].event('waiting_changed', { count: 0 }))
   await waitFor(() => expect(container.querySelector('.session-scope-status')).toBeNull())
+})
+
+it('scopes Recent, list and attention counts together, restores All hats, and prunes stream deletions', async () => {
+  width(true); at('/sessions')
+  const a = summary('019a0180-1234-7000-8000-000000000001', { title: 'Work visit', operator_attention: 1 }), b = summary('019a0180-1234-7000-8000-000000000002', { title: 'Home visit', hat_id: 'hat-b', operator_attention: 1 })
+  const s = server({ list: params => page([a, b].filter(row => !params.has('hat') || row.hat_id === params.get('hat'))) })
+  render(<App fetchImpl={s.fetch} />)
+  await list()
+  await act(async () => navigate('/sessions/019a0180-1234-7000-8000-000000000001'))
+  const recent = await screen.findByRole('region', { name: 'Recent sessions' })
+  await waitFor(() => expect(within(recent).getAllByRole('link')).toHaveLength(1))
+  await act(async () => navigate('/sessions/019a0180-1234-7000-8000-000000000002'))
+  await waitFor(() => expect(within(recent).getAllByRole('link')).toHaveLength(2))
+  expect(within(recent).getAllByRole('link')[0]).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByRole('navigation', { name: 'Main navigation' }).querySelectorAll('[aria-current="page"]')).toHaveLength(1)
+  expect(within(recent).getByRole('heading', { name: 'Recent sessions', level: 2 })).toBeInTheDocument()
+  expect([...recent.querySelectorAll('kbd')].every(key => key.textContent?.trim())).toBe(true)
+  await act(async () => navigate('/sessions'))
+  const hatSwitch = screen.getByRole('group', { name: 'Hat' })
+  await userEvent.click(within(hatSwitch).getByRole('button', { name: 'Work' }))
+  await waitFor(() => expect(names(screen.getByRole('region', { name: 'Session list' }))).toEqual(['Work visit']))
+  expect(within(recent).getAllByRole('link')).toHaveLength(1)
+  expect(within(recent).getByRole('link')).toHaveTextContent('Work visit')
+  await waitFor(() => expect(document.title).toBe('(1) hennery'))
+  await userEvent.click(within(hatSwitch).getByRole('button', { name: 'All hats' }))
+  await waitFor(() => expect(within(recent).getAllByRole('link')).toHaveLength(2))
+  await waitFor(() => expect(document.title).toBe('(2) hennery'))
+  act(() => s.streams.at(-1)!.send('event: session_removed\nid: e1:2\ndata: {"session_id":"019a0180-1234-7000-8000-000000000002"}\n\n'))
+  await waitFor(() => expect(within(recent).getAllByRole('link')).toHaveLength(1))
+  expect(localStorage.getItem('hennery.visitedSessions')).not.toContain('019a0180-1234-7000-8000-000000000002')
+})
+
+it('does not repeat history id lookups for search keystrokes or hat switches', async () => {
+  width(true); at('/sessions')
+  const id = '019a0180-1234-7000-8000-000000000001'
+  localStorage.setItem('hennery.visitedSessions', JSON.stringify([id]))
+  const s = server({ list: params => params.get('q') === id ? page([summary(id, { hat_id: 'hat-b' })]) : page([]) })
+  render(<App fetchImpl={s.fetch} />)
+  await list()
+  const lookups = () => s.of(LIST).filter(url => url.searchParams.get('q') === id).length
+  await waitFor(() => expect(lookups()).toBeGreaterThan(0))
+  await userEvent.type(screen.getByRole('searchbox'), 'parser')
+  await waitFor(() => expect(s.of(LIST).some(url => url.searchParams.get('q') === 'parser')).toBe(true))
+  await userEvent.click(within(screen.getByRole('group', { name: 'Hat' })).getByRole('button', { name: 'Work' }))
+  await waitFor(() => expect(s.of(LIST).some(url => url.searchParams.get('hat') === 'hat-a')).toBe(true))
+  expect(lookups()).toBe(1)
+})
+
+it.each([true, false])('never restores an outside-hat deleted Recent after All hats, live removal=%s', async liveRemoval => {
+  width(true); at('/sessions')
+  const id = '019a0180-1234-7000-8000-000000000002'
+  const home = summary(id, { title: 'Home visit', hat_id: 'hat-b' })
+  let removed = false
+  const s = server({ list: params => page(!removed && (!params.has('hat') || params.get('hat') === home.hat_id) ? [home] : []) })
+  render(<App fetchImpl={s.fetch} />)
+  await list()
+  await act(async () => navigate(`/sessions/${id}`))
+  const recent = await screen.findByRole('region', { name: 'Recent sessions' })
+  await waitFor(() => expect(within(recent).getAllByRole('link')).toHaveLength(1))
+  await act(async () => navigate('/sessions'))
+  const hats = screen.getByRole('group', { name: 'Hat' })
+  await userEvent.click(within(hats).getByRole('button', { name: 'Work' }))
+  await waitFor(() => expect(s.of(STREAM).at(-1)?.searchParams.get('hat')).toBe('hat-a'))
+  removed = true
+  if (liveRemoval) {
+    act(() => s.streams.at(-1)!.event('session_removed', { session_id: id }))
+    await waitFor(() => expect(localStorage.getItem('hennery.visitedSessions')).not.toContain(id))
+  }
+  await userEvent.click(within(hats).getByRole('button', { name: 'All hats' }))
+  await waitFor(() => expect(s.of(STREAM).at(-1)?.searchParams.has('hat')).toBe(false))
+  await waitFor(() => expect(within(recent).queryAllByRole('link')).toHaveLength(0))
+  await waitFor(() => expect(localStorage.getItem('hennery.visitedSessions')).not.toContain(id))
 })

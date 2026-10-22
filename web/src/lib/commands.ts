@@ -29,7 +29,10 @@ export function isEditing(event: KeyboardEvent) {
 export function isMac() { return /Mac|iPhone|iPad/.test(navigator.platform) }
 export const modLabel = () => isMac() ? '⌘' : 'Ctrl'
 export function shortcutAction(event: KeyboardEvent, route: string, desktop: boolean): AppActionId | 'theme' | 'help' | null {
-  if (event.defaultPrevented || event.repeat || event.isComposing || event.altKey || isEditing(event)) return null
+  if (event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 || isEditing(event)) return null
+  // Physical codes work with Option's alternate characters on macOS.
+  if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && /^Digit[1-5]$/.test(event.code)) return `recent-session-${Number(event.code.slice(-1)) as 1 | 2 | 3 | 4 | 5}`
+  if (event.altKey) return null
   const key = event.key.toLowerCase()
   const mod = isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
   if (mod && !event.shiftKey && key === 'k') return 'open-commands'
@@ -37,6 +40,7 @@ export function shortcutAction(event: KeyboardEvent, route: string, desktop: boo
   if (event.metaKey || event.ctrlKey) return null
   if (event.key === '?') return 'help'
   if (event.shiftKey) return null
+  if (key === '`') return 'previous-session'
   if (key === 'n') return 'new-session'
   if (key === '[' && desktop) return 'toggle-rail'
   if (key === ']' && route === 'session') return 'toggle-details'
