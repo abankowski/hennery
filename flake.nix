@@ -21,8 +21,8 @@
     # The v1 platforms (distribution spec §1): Intel Macs are not one.
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
-        pkgs = import nixpkgs { inherit system; };
-        web = import nixpkgs-web { inherit system; };
+        pkgs = import nixpkgs { inherit system; overlays = [ (import ./nix/node-security-overlay.nix) ]; };
+        web = import nixpkgs-web { inherit system; overlays = [ (import ./nix/node-security-overlay.nix) ]; };
         # The web UI (plan 7e-ii-b), built with nixpkgs-web's Node and pnpm.
         webUi = import ./nix/web.nix { pkgs = web; };
         hennery = import ./nix/package.nix {
