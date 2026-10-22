@@ -132,3 +132,7 @@ export function takeOver(client: Client, id: string): Promise<void> {
 export function markResultRead(client: Client, id: string, eventId: number): Promise<void> {
   return client.request<void>('POST', `/api/view/sessions/${enc(id)}/read`, { event_id: eventId })
 }
+
+export function markSessionSeen(client: Client, id: string, eventId: number): Promise<void> {
+  return client.request<void>('POST', `/api/view/sessions/${enc(id)}/seen`, { event_id: eventId })
+}

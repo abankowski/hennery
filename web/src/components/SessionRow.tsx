@@ -56,7 +56,7 @@ function SessionRow({ session, selected, hostName, now, table, indent, childrenC
       <Link
         to={sessionPath(session.session_id)}
         data-session-link
-        className={'sess' + (selected ? ' active' : '')}
+        className={'sess' + (selected ? ' active' : '') + (session.unseen ? ' session-unseen' : '')}
         aria-current={selected ? 'page' : undefined}
       >
         <div className="sess-row1">
@@ -64,6 +64,7 @@ function SessionRow({ session, selected, hostName, now, table, indent, childrenC
           <span className={'sess-led led-' + status.tone} role="img" aria-label={status.label} title={markerTitle}><Icon name={status.tone === 'attn' ? 'hand-raised' : status.tone === 'run' ? 'play-circle' : status.tone === 'fail' ? 'exclamation-circle' : 'clock'} size={14} /></span>
           <span className="sess-kind sess-agent">{agentLabel(session.agent)}</span>
           <span className="sess-name">
+            {session.unseen && <span className="unseen-dot" role="img" aria-label="Unseen" title="New activity you have not seen" />}
             <bdi className={name.provisional ? 'session-name-provisional' : undefined}>{title}</bdi>
           </span>
           <span className="sess-time">{relTime(session.last_event_at, now)}</span>

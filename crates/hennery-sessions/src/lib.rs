@@ -50,6 +50,7 @@ pub mod startup;
 pub mod store;
 pub mod sweep;
 pub mod tool_args;
+pub mod unseen;
 pub mod view;
 pub mod ws;
 

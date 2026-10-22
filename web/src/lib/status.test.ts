@@ -80,4 +80,11 @@ it('filters only actual operator work and keeps lifecycle/status predicates sepa
   expect(matchesStatus(base, 'parked')).toBe(false)
   expect(matchesStatus({ ...base, lifecycle: 'failed' }, 'failed')).toBe(true)
   expect(matchesStatus(base, 'failed')).toBe(false)
+  const unseen = { ...base, unseen: { event_id: 10 }, review: { event_id: 10 } }
+  expect(needsOperator(unseen)).toBe(false)
+  expect(matchesStatus(unseen, 'attention')).toBe(false)
+  expect(matchesStatus(unseen, 'unseen')).toBe(true)
+  expect(matchesStatus(base, 'unseen')).toBe(false)
+  expect(statusOf({ ...unseen, question_waits: false, parent_handled_questions: 0, lifecycle: 'active', activity: 'running' }).label).toBe('Running')
+  expect(needsOperator({ ...unseen, operator_attention: 1 })).toBe(true)
 })

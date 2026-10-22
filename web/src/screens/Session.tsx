@@ -51,6 +51,7 @@ import { Composer, type ComposerHandle } from '../components/Composer'
 import { ANSWER_LABEL, answerAsMessage } from '../components/composerWords'
 import SessionFooter from '../components/SessionFooter'
 import SessionHeader, { type HeaderInfo } from '../components/SessionHeader'
+import UnseenObserver from '../components/UnseenObserver'
 import FamilyPanel from '../components/FamilyPanel'
 import SessionDetails, { type SessionDetailsTab } from '../components/SessionDetails'
 import { useSessionScope } from '../components/SessionScope'
@@ -265,6 +266,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
   const [familyRead, setFamilyRead] = useState<{ id: string; page: FamilyPage } | null>(null)
   const onFamilyPage = useCallback((page: FamilyPage) => setFamilyRead({ id, page }), [id])
   const family = familyRead?.id === id && (!summary || (summary.hat_id === familyRead.page.summary.hat_id && summary.family?.revision === familyRead.page.summary.family?.revision)) ? familyRead.page : null
+  const unseen = (summary ?? family?.summary)?.unseen
   const info = useHeaderInfo(id, summary ?? family?.summary, awaitSummary, mcp.detail)
   const { read: acknowledgeResult } = useReadResult(id, info?.review)
   const { search } = useLocation()
@@ -532,6 +534,7 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
         {s.loading ? <p className="transcript-empty">Loading…</p> : <>
           {s.pinned.length > 0 && <div className="pinned-questions" aria-label="Earlier questions"><Transcript items={s.pinned} env={env} /></div>}
           <Transcript items={win.visible} env={env} review={info?.review} turnEnds={turnEnds} waiting={info?.lifecycle === 'active' && info.activity === 'idle' && !info.question_waits && !info.family?.child_counts.active} />
+          {unseen && <UnseenObserver id={id} eventId={unseen.event_id} revision={s.revision} />}
         </>}
       </Scroller>
       {startNotice && (

@@ -22,7 +22,7 @@ for (const width of [1280, 390]) test(`durable review action and visible-result 
     if (path === '/api/capabilities') return json({ mode: 'full', features: [] })
     if (path === '/api/hats') return json([{ id: 'hat', name: 'Personal', colour: '#8050d0', created_at: ts, purging: false, default_for_new_hosts: false }])
     if (path === '/api/hosts') return json([{ host_id: 'host', name: 'Test workstation', connected: true, capabilities: [] }])
-    if (path === '/api/view/sessions') return json({ sessions: [row(), child], waiting: readId < eventId ? 1 : 0, epoch: 'list', revision: eventId })
+    if (path === '/api/view/sessions') return json({ sessions: [row(), child], waiting: 0, epoch: 'list', revision: eventId })
     if (path.startsWith('/api/stream/')) { held.push(route); return }
     if (path === '/api/view/sessions/root/read') { const token = request.postDataJSON().event_id as number; reads.push(token); readId = Math.max(readId, token); return route.fulfill({ status: 204 }) }
     if (path === '/api/view/sessions/root') {
@@ -38,16 +38,18 @@ for (const width of [1280, 390]) test(`durable review action and visible-result 
   try {
     const a = await contexts[0].newPage(), b = await contexts[1].newPage()
     await a.goto(collector.origin + '/needs-you')
-    await expect(a.getByRole('article', { name: 'Review coordinator', exact: true })).toBeVisible()
+    await expect(a.getByRole('article', { name: 'Review coordinator', exact: true })).toHaveCount(0)
     await expect(a.getByRole('article', { name: 'Parent handled worker', exact: true })).toHaveCount(0)
-    await b.goto(collector.origin + '/needs-you')
+    holdSnapshot = true
+    await b.goto(collector.origin + '/sessions/root')
     await b.getByRole('button', { name: 'Mark as read', exact: true }).click()
     expect(reads).toEqual([10])
+    await b.goto(collector.origin + '/needs-you')
     await a.reload()
     await expect(a.getByText('Nothing needs you', { exact: true })).toBeVisible()
     eventId = 20
     await a.reload()
-    await expect(a.getByRole('button', { name: 'Mark as read', exact: true })).toBeVisible()
+    await expect(a.getByRole('article', { name: 'Review coordinator', exact: true })).toHaveCount(0)
     holdSnapshot = true
     await a.goto(collector.origin + '/sessions/root')
     await expect(a.locator('.result-read-sentinel')).toHaveCount(1)

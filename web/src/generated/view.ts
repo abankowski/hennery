@@ -219,7 +219,7 @@ export type SessionSummary = SessionItem & {
  * whether or not an answer is queued (a question outside a turn sets
  * no `blocked` activity).
  */
-question_waits: boolean, operator_attention: number, review?: ReviewResult, parent_handled_questions: number, family?: FamilySummary, configuration_error?: string, };
+question_waits: boolean, operator_attention: number, review?: ReviewResult, unseen?: UnseenActivity, parent_handled_questions: number, family?: FamilySummary, configuration_error?: string, };
 
 export type SummaryPage = { sessions: Array<SessionSummary>, 
 /**
@@ -244,6 +244,8 @@ epoch: string,
 waiting: number, };
 
 export type ReviewResult = { event_id: number, turn_id: string, outcome: TurnOutcome, };
+
+export type UnseenActivity = { event_id: number, };
 
 export type ItemRemoved = { id: string, };
 

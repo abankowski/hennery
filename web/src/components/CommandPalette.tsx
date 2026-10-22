@@ -76,7 +76,7 @@ export default function CommandPalette({ actions, loaded, close }: {
   const run = (action: () => void) => { close(); requestAnimationFrame(action) }
   const sessionResult = (row: SessionSummary) => ({
     id: `session:${row.session_id}`, label: names(row, row.session_id).text, provisional: names(row).provisional,
-    hint: '', detail: [row.cwd, row.git_branch].filter(Boolean).join(' · '),
+    unseen: !!row.unseen, hint: '', detail: [row.cwd, row.git_branch].filter(Boolean).join(' · '),
     meta: [context.hats?.find(hat => hat.id === row.hat_id)?.name, context.hosts?.find(host => host.host_id === row.host_id)?.name].filter(Boolean).join(' · ') || row.cwd,
     icon: (needsOperator(row) ? 'hand-raised' : row.activity === 'running' ? 'play-circle' : 'clock') as IconName,
     run: () => navigate(`/sessions/${encodeURIComponent(row.session_id)}`),
@@ -90,7 +90,7 @@ export default function CommandPalette({ actions, loaded, close }: {
   const groups = [
     { label: 'Recent', results: q ? [] : previous.map(row => ({ ...sessionResult(row), hint: row.session_id === context.previousSessionId ? '↵' : '' })) },
     { label: 'Needs you', results: rows.filter(row => needsOperator(row) && (q || !recentIds.has(row.session_id))).map(sessionResult) },
-    { label: 'Actions', results: commands.map(action => ({ id: `action:${action.id}`, label: action.id === 'open-defaults' ? 'Edit defaults' : action.label, hint: commandHint(action.id, match(pathname).name, desktop), detail: '', meta: '', provisional: false, icon: (action.id === 'add-host' ? 'server-stack' : action.id === 'new-session' ? 'plus-circle' : action.id === 'open-defaults' ? 'adjustments-horizontal' : 'arrow-right') as IconName, run: () => { actions.dispatch(action.id) } })) },
+    { label: 'Actions', results: commands.map(action => ({ id: `action:${action.id}`, label: action.id === 'open-defaults' ? 'Edit defaults' : action.label, hint: commandHint(action.id, match(pathname).name, desktop), detail: '', meta: '', provisional: false, unseen: false, icon: (action.id === 'add-host' ? 'server-stack' : action.id === 'new-session' ? 'plus-circle' : action.id === 'open-defaults' ? 'adjustments-horizontal' : 'arrow-right') as IconName, run: () => { actions.dispatch(action.id) } })) },
     { label: q ? 'Matching sessions' : 'Sessions', results: rows.filter(row => !needsOperator(row) && (q || !recentIds.has(row.session_id))).map(sessionResult) },
   ]
   const results = groups.flatMap(group => group.results)
@@ -122,9 +122,9 @@ export default function CommandPalette({ actions, loaded, close }: {
       <div className="command-results" id={listId} role="listbox" aria-label="Sessions and actions">
         {groups.map(group => {
           const start = offset; offset += group.results.length
-          return group.results.length > 0 && <div role="group" aria-label={group.label} key={group.label}><div className="command-group" aria-hidden="true">{group.label}</div>{group.results.map((result, index) => <div role="option" aria-label={[result.label, result.detail].filter(Boolean).join(" ")} id={`${listId}-${start + index}`} aria-selected={active === start + index} className="command-option" key={result.id} onMouseDown={event => event.preventDefault()} onClick={() => choose(start + index)}>
+          return group.results.length > 0 && <div role="group" aria-label={group.label} key={group.label}><div className="command-group" aria-hidden="true">{group.label}</div>{group.results.map((result, index) => <div role="option" aria-label={[result.label, result.detail].filter(Boolean).join(" ")} id={`${listId}-${start + index}`} aria-selected={active === start + index} className={'command-option' + (result.unseen ? ' session-unseen' : '')} key={result.id} onMouseDown={event => event.preventDefault()} onClick={() => choose(start + index)}>
             <Icon name={result.icon} size={16} />
-            <span className={'command-label' + (result.provisional ? ' session-name-provisional' : '')}><bdi>{result.label}</bdi></span>{result.meta && <small className="command-meta"><bdi>{result.meta}</bdi></small>}{result.hint && <Keycap>{result.hint}</Keycap>}
+            {result.unseen && <span className="unseen-dot" role="img" aria-label="Unseen" />}<span className={'command-label' + (result.provisional ? ' session-name-provisional' : '')}><bdi>{result.label}</bdi></span>{result.meta && <small className="command-meta"><bdi>{result.meta}</bdi></small>}{result.hint && <Keycap>{result.hint}</Keycap>}
           </div>)}</div>
         })}
       </div>

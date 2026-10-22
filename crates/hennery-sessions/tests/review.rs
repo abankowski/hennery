@@ -60,7 +60,7 @@ fn completed_and_failed_results_wait_until_read_without_a_reply() {
         let review = summary.review.unwrap();
         assert_eq!((review.event_id, review.outcome), (event, outcome));
         assert_eq!(summary.operator_attention, 0);
-        assert_eq!(store.operator_waiting_count(None).unwrap(), 1);
+        assert_eq!(store.operator_waiting_count(None).unwrap(), 0);
         assert_eq!(store.operator_waiting_count(Some("different-hat")).unwrap(), 0);
         assert_eq!(store.mark_result_read("s", event, &hub).unwrap(), Some(true));
         assert!(store.family_summary("s").unwrap().unwrap().review.is_none());
@@ -243,7 +243,7 @@ fn another_owners_session_and_event_are_not_readable_or_acknowledgeable() {
         store.family_summary("s").unwrap().unwrap().review.unwrap().event_id,
         event
     );
-    assert_eq!(store.operator_waiting_count(None).unwrap(), 1);
+    assert_eq!(store.operator_waiting_count(None).unwrap(), 0);
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn upgrading_from_v30_starts_empty_and_keeps_historical_transcripts() {
     drop(store);
     rusqlite::Connection::open(&db)
         .unwrap()
-        .execute_batch("DROP TRIGGER review_delete; DROP TABLE session_reviews; PRAGMA user_version=30;")
+        .execute_batch("DROP TRIGGER review_delete; DROP TABLE session_reviews; ALTER TABLE sessions DROP COLUMN unseen_event_id; ALTER TABLE sessions DROP COLUMN seen_event_id; PRAGMA user_version=30;")
         .unwrap();
     let upgraded = Store::open(&db).unwrap();
     assert_eq!(upgraded.events("s", 0, 100).unwrap(), history);

@@ -402,6 +402,8 @@ export class SessionItemsController {
 }
 
 export interface SessionItems extends Omit<SessionItemsSnapshot, 'store'> {
+  /** Loaded page cursor or latest rendered item version, never a list cursor. */
+  revision: number
   items: Item[]
   pinned: Item[]
   /** Groups exist before the first loaded one. */
@@ -432,5 +434,5 @@ export function useSessionItems(id: string, timing?: Partial<Timing>): SessionIt
   }, [controller])
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const { store, ...rest } = snapshot
-  return { ...rest, items: store.items, pinned: store.pinned, older: store.older, mergeQuestion: controller.mergeQuestion, loadQuestion: controller.loadQuestion, loadOlder: controller.loadOlder, setCatalog: controller.setCatalog, refreshQueue: controller.refreshQueue, markRemoved: controller.markRemoved }
+  return { ...rest, revision: store.items.reduce((max, item) => Math.max(max, item.version), store.revision), items: store.items, pinned: store.pinned, older: store.older, mergeQuestion: controller.mergeQuestion, loadQuestion: controller.loadQuestion, loadOlder: controller.loadOlder, setCatalog: controller.setCatalog, refreshQueue: controller.refreshQueue, markRemoved: controller.markRemoved }
 }

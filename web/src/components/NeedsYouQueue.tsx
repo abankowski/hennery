@@ -30,7 +30,7 @@ export default function NeedsYouQueue({ embedded = false }: { embedded?: boolean
   const total = list.counts.waiting
   const complete = !list.loading && !list.hasMore && !list.error
   return <section className={'needs-queue' + (embedded ? ' queue-embedded' : '')} aria-label="Attention queue" onKeyDown={moveListFocus}>
-    {embedded && <h2 className="queue-title">Needs you <span>Questions, permissions, and results to review</span></h2>}
+    {embedded && <h2 className="queue-title">Needs you <span>Questions and permissions waiting for your response</span></h2>}
     <div className="queue-heading"><span>{list.loading ? 'Checking attention…' : complete ? `${total} ${total === 1 ? 'session needs' : 'sessions need'} you` : `${total} sessions needing you shown`}</span><span>Most recent first</span></div>
     {list.error && <p role="alert" className="form-error"><bdi>{list.error}</bdi></p>}
     {list.stream === 'reconnecting' && <p role="status">Reconnecting…</p>}
@@ -39,7 +39,7 @@ export default function NeedsYouQueue({ embedded = false }: { embedded?: boolean
     <div className="attention-grid"><AttentionPreviews>{rows.map(session => {
       const hat = scope.hats?.find(h => h.id === session.hat_id)
       const dismissed = scope.isAttentionDismissed(session.session_id)
-      return <article key={session.session_id} className={'attention-card' + (dismissed ? ' attention-dismissed' : '')} hidden={dismissed && !showDismissed} aria-label={names(session).text}>
+      return <article key={session.session_id} className={'attention-card' + (dismissed ? ' attention-dismissed' : '') + (session.unseen ? ' session-unseen' : '')} hidden={dismissed && !showDismissed} aria-label={names(session).text}>
         <div className="attention-card-meta"><span className="attention-status">{statusOf(session).label}</span>{session.lifecycle === 'closed' && <span className="attention-closed">Closed</span>}<span>{relTime(session.last_event_at, now)}</span></div>
         <h2><SessionName session={session} /></h2>
         <div className="attention-origin"><HatChip colour={hat?.colour}><bdi>{hat?.name || 'Unknown hat'}</bdi></HatChip><bdi>{scope.hostNames.get(session.host_id) || 'Unknown host'}</bdi><bdi>{agentLabel(session.agent)}</bdi></div>
