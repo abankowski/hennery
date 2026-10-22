@@ -24,6 +24,143 @@ const OTHER: &str = "owner-00000000000000b2";
 /// How long a test waits for anything the collector sends.
 const WAIT: Duration = Duration::from_secs(20);
 
+fn complete_review_turn(c: &Collector, session: &str, name: &str, seq: u64) -> i64 {
+    use hennery_proto::frames::{SessionBody, TurnOutcome};
+    assert!(
+        c.state
+            .store
+            .open_turn(session, name, &[json!({"type":"text","text":"work"})])
+            .unwrap()
+    );
+    for (n, body) in [
+        SessionBody::TurnStarted {
+            request_id: name.into(),
+            turn_id: name.into(),
+        },
+        SessionBody::TurnEnded {
+            turn_id: name.into(),
+            outcome: TurnOutcome::Completed,
+            stop_reason: None,
+            error: None,
+        },
+    ]
+    .iter()
+    .enumerate()
+    {
+        for event in c.state.store.ingest(session, seq + n as u64, body).unwrap() {
+            c.state.hub.publish(event);
+        }
+    }
+    c.state
+        .store
+        .family_summary(session)
+        .unwrap()
+        .unwrap()
+        .review
+        .unwrap()
+        .event_id
+}
+
+#[tokio::test]
+async fn reading_a_result_updates_another_devices_list_and_does_not_hide_a_newer_completion() {
+    let c = Collector::start().await;
+    c.session(&c.owner(), "result");
+    let first = complete_review_turn(&c, "result", "one", 1);
+    let page = c.summaries("").await;
+    assert_eq!(page.waiting, 1);
+    let mut other_device = c
+        .stream(
+            "/api/stream/sessions",
+            Some(&format!("{}:{}", page.epoch, page.revision)),
+        )
+        .await;
+    assert_eq!(other_device.counted().await.0, 1);
+    let reader = c.client();
+    let response = reader
+        .post(c.url("/api/view/sessions/result/read"))
+        .json(&json!({"event_id":first}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert!(other_device.message().await.summary().review.is_none());
+    assert_eq!(other_device.counted().await.0, 0);
+    let second = complete_review_turn(&c, "result", "two", 3);
+    assert_eq!(
+        reader
+            .post(c.url("/api/view/sessions/result/read"))
+            .json(&json!({"event_id":first}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    let page = c.summaries("").await;
+    assert_eq!(page.waiting, 1);
+    assert_eq!(page.sessions[0].review.as_ref().unwrap().event_id, second);
+    let items = c.page("result", "").await;
+    assert!(
+        items
+            .items
+            .iter()
+            .all(|item| !matches!(&item.body, Body::Unrecognised(u) if u.update_kind == "result_read"))
+    );
+}
+
+#[tokio::test]
+async fn result_read_route_is_operator_only_scoped_and_rejects_invalid_event_ids() {
+    let c = Collector::start().await;
+    c.session(&c.owner(), "result");
+    c.other_owner("foreign");
+    let event = complete_review_turn(&c, "result", "one", 1);
+    let path = "/api/view/sessions/result/read";
+    assert!(
+        !reqwest::Client::new()
+            .post(c.url(path))
+            .json(&json!({"event_id":event}))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    for id in ["foreign", "missing"] {
+        assert_eq!(
+            c.client()
+                .post(c.url(&format!("/api/view/sessions/{id}/read")))
+                .json(&json!({"event_id":event}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    for body in [
+        json!({"event_id":0}),
+        json!({"event_id":-1}),
+        json!({"event_id":event,"extra":true}),
+        json!({"event_id":"1"}),
+    ] {
+        assert_eq!(
+            c.client().post(c.url(path)).json(&body).send().await.unwrap().status(),
+            400
+        );
+    }
+    assert_eq!(
+        c.client()
+            .post(c.url(path))
+            .json(&json!({"event_id":event+100}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    assert_eq!(c.summaries("").await.waiting, 1);
+}
+
 #[tokio::test]
 async fn history_id_search_finds_closed_and_failed_sessions_and_is_owner_scoped() {
     let c = Collector::start().await;

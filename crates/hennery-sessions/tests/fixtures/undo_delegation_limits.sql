@@ -1,3 +1,6 @@
+-- Test-only rollback of sessions migration 31 before historical fixtures.
+DROP TRIGGER review_delete;
+DROP TABLE session_reviews;
 -- Test-only rollback of sessions migration 30 before historical fixtures.
 ALTER TABLE sessions DROP COLUMN project_root;
 -- Test-only rollback of sessions migration 29 before historical fixtures.

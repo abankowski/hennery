@@ -393,10 +393,30 @@ applies. A scoped search must not make a push-selected session disappear.
 
 Only the server's waiting count is a complete attention total before all
 pages load; never display prototype fixture totals as real counts.
-Needs you selects summaries with `operator_attention > 0`. Preserve
+Needs you selects summaries with `operator_attention > 0` or an unread
+`review` result. **Operator amendment, 2026-10-22; target v0.3.1, after v0.3.0
+is live:** completed and failed turns of non-delegated sessions create durable
+"To review" work, independently of pending permissions and questions. The
+queue and session offer "Mark as read" without requiring a reply. The server
+acknowledges a specific completion event monotonically; stale clients cannot
+consume a newer result. The state survives restart and synchronizes through
+ordinary list SSE. Automatic reading requires the actual final result's end
+to be visible in the focused, visible tab; queue previews never acknowledge.
+A successful operator prompt acknowledges only the result captured when the
+send began. Reading never answers a formal pending request. Migration starts
+with an empty review inbox, avoiding a flood of historical results.
+
+Delegated children never produce operator review work, even after their
+parent or family edge disappears. Their ordinary completion pushes remain
+suppressed. Existing explicit operator-required questions and escalation
+records remain authoritative; this amendment does not grant parents approval
+authority. No version bump, tag, publication or deployment belongs to this
+feature branch.
+
+Preserve
 `parent_handled_questions` and answer-pending-delivery distinctions; neither
-becomes operator work. Do not regex assistant prose for a final question
-or create a read/unread state. A factual `question_waits` alone does not
+becomes operator work. Do not regex assistant prose for a final question.
+Read/unread applies only to completed results. A factual `question_waits` alone does not
 override modern operator-attention routing.
 
 **Needs you has its own effective page query:** the selected `hat` only,
@@ -413,7 +433,7 @@ query and its cursor with a distinct query key when entering/leaving Needs
 you; abort/fence responses from the previous query while preserving summary
 upserts and the hat-scoped waiting count. The queue is complete only after
 this all-lifecycle query is exhausted, not after an overview-filtered cursor
-ends. Its session predicate remains `operator_attention > 0`, so a closed
+ends. Its session predicate is `operator_attention > 0 || review != null`, so a closed
 session with real status-only attention is reachable and parent-handled or
 already-queued answers remain excluded as before.
 

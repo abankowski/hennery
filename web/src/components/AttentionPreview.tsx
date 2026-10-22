@@ -2,7 +2,8 @@ import { useSessionName } from './SessionNames'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { acknowledgeAttention, attentionPage, type OperatorAttention } from '../api/attention'
 import { messageOf } from '../api/errors'
-import { questionCard, sessionDetail } from '../api/view'
+import { questionCard, sessionDetail, turnItems } from '../api/view'
+import ResultReview from './ResultReview'
 import { useClient } from '../app-client'
 import type { Client } from '../api/client'
 import type { Item, SessionSummary } from '../generated/view'
@@ -37,7 +38,7 @@ function InlinePermission({ question, session }: { question: Extract<Item, { kin
   return <PermissionChoices question={current} book={book} />
 }
 
-type Preview = { question?: Extract<Item, { kind: 'question' }>; attention?: OperatorAttention; partial?: boolean }
+type Preview = { question?: Extract<Item, { kind: 'question' }>; attention?: OperatorAttention; partial?: boolean; result?: string }
 /** One scheduler per visit, including detail, question and attention reads. */
 export class PreviewReader {
   private active = 0
@@ -45,9 +46,10 @@ export class PreviewReader {
   private stopped = false
   private abort = new AbortController()
   private cache = new WeakMap<SessionSummary, Promise<Preview>>()
+  private results = new Map<string, Promise<Preview>>()
   private questions = new Map<string, Extract<Item, { kind: 'question' }>>()
   constructor(private client: Client) {}
-  stop() { this.stopped = true; this.abort.abort(); this.queue = []; this.cache = new WeakMap(); this.questions.clear() }
+  stop() { this.stopped = true; this.abort.abort(); this.queue = []; this.cache = new WeakMap(); this.results.clear(); this.questions.clear() }
   private task<T>(read: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const begin = () => {
@@ -59,6 +61,16 @@ export class PreviewReader {
     })
   }
   read(session: SessionSummary): Promise<Preview> {
+    if (session.review && session.operator_attention === 0) {
+      const key = JSON.stringify([session.session_id, session.review.event_id])
+      let result = this.results.get(key)
+      if (!result) {
+        result = this.load(session)
+        if (this.results.size >= 256) this.results.delete(this.results.keys().next().value!)
+        this.results.set(key, result)
+      }
+      return result
+    }
     // Every immutable summary upsert can change which pending id is live,
     // even when its timestamp/count ties. Focus creates a new visit reader.
     let held = this.cache.get(session)
@@ -68,6 +80,12 @@ export class PreviewReader {
     return held
   }
   private async load(session: SessionSummary): Promise<Preview> {
+    if (session.review && session.operator_attention === 0) {
+      const turn = session.review.turn_id
+      const page = await this.task(() => turnItems(this.client, session.session_id, turn))
+      const message = [...page.items].reverse().find(item => item.kind === 'message')
+      return { result: message?.kind === 'message' ? message.text.slice(0, 400) : undefined }
+    }
     const detail = await this.task(() => sessionDetail(this.client, session.session_id, this.abort.signal))
     if (this.stopped) return {}
     const pending = detail.pending?.find(p => p.state === 'open' && !p.answered && !p.delivered)
@@ -142,7 +160,8 @@ export default function AttentionPreview({ session }: { session: SessionSummary 
   }
   const target = question ? `${sessionPath(session.session_id)}?pending=${encodeURIComponent(question.pending_id)}` : sessionPath(session.session_id)
   return <div ref={box} className="attention-preview">
-    <button type="button" className="attention-dismiss" aria-label={dismissed ? 'Restore' : 'Dismiss'} title={attention ? 'Acknowledge this attention' : 'Dismiss in this browser'} disabled={!key || dismissing} onClick={() => void dismiss()}>{dismissed ? '↶' : '×'}</button>
+    {!(session.review && session.operator_attention === 0) && <button type="button" className="attention-dismiss" aria-label={dismissed ? 'Restore' : 'Dismiss'} title={attention ? 'Acknowledge this attention' : 'Dismiss in this browser'} disabled={!key || dismissing} onClick={() => void dismiss()}>{dismissed ? '↶' : '×'}</button>}
+    {session.review && <><p className="preview-result-label">{session.review.outcome === 'failed' ? 'Turn failed · To review' : 'Result to review'}</p>{held?.value?.result && <p className="preview-question"><bdi>{held.value.result}</bdi></p>}<ResultReview key={session.review.event_id} id={session.session_id} review={session.review} /></>}
     {question && request?.type === 'permission' ? <InlinePermission key={question.pending_id} question={question} session={session} /> : title && <p className="preview-question preview-elicitation"><bdi>{title}</bdi></p>}
     {held?.value?.attention && <p><bdi>{attentionReason(held.value.attention.reason)}</bdi></p>}
     {held?.value?.partial && !held.value.attention && <p>More attention records are available in the session.</p>}
