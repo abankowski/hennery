@@ -37,6 +37,26 @@ async function refused(answer: Response, detail: Partial<SessionDetail> = { life
 }
 
 describe('SessionView: the footer of a session that is not running', () => {
+  it.each([1, 2])('explains that %s queued messages wait for Resume, excluding delivering and failed items', async count => {
+    await show({ lifecycle: 'parked' }, { queue: () => json([
+      ...Array.from({ length: count }, (_, index) => ({ id: `q${index}`, state: 'queued', reason: null, content: [{ type: 'text', text: 'later' }] })),
+      { id: 'sending', state: 'delivering', reason: null, content: [{ type: 'text', text: 'sending' }] },
+      { id: 'failed', state: 'failed', reason: 'Closed', content: [{ type: 'text', text: 'failed' }] },
+    ]) })
+    const notice = await screen.findByText(`${count} queued ${count === 1 ? 'message' : 'messages'} will be sent when you resume.`, { exact: true })
+    expect(notice.compareDocumentPosition(screen.getByLabelText('Prompt')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('excludes a delivering message from the deletion warning count', async () => {
+    await show({ lifecycle: 'active' }, { queue: () => json([
+      { id: 'queued', state: 'queued', reason: null, content: [{ type: 'text', text: 'later' }] },
+      { id: 'sending', state: 'delivering', reason: null, content: [{ type: 'text', text: 'sending' }] },
+    ]) })
+    await screen.findByText('later', { exact: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete session' }))
+    expect(await screen.findByRole('dialog', { name: 'Delete this session?' })).toHaveTextContent('1 unsent queued message and its images will also be deleted.')
+  })
   it('a parked session offers Resume, which resumes it; the composer stays', async () => {
     const r = await show({ lifecycle: 'parked' })
     expect(text(footer(r)?.querySelector('.txt'))).toBe('This session is parked.')
@@ -48,27 +68,12 @@ describe('SessionView: the footer of a session that is not running', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('the composer’s Resume and send goes through the view’s resume, as the footer’s Resume does', async () => {
-    let attached = false
-    const r = await show(
-      { lifecycle: 'parked' },
-      {
-        prompt: () => (attached ? json({ turn_id: 'new' }, 202) : json({ code: 'not_attached', message: 'srv-x' }, 409)),
-        resume: () => {
-          attached = true
-          return json({ session_id: 's1', lifecycle: 'active' }, 202)
-        },
-      },
-    )
+  it('the composer’s Resume and send queues through one collector request', async () => {
+    const r = await show({ lifecycle: 'parked' }, { prompt: () => json({ queue_id: 'queued-resume' }, 202) })
     fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'later' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Resume and send' }, WAIT))
+    fireEvent.click(screen.getByRole('button', { name: 'Resume and send' }))
     await waitFor(() => expect((screen.getByLabelText('Prompt') as HTMLTextAreaElement).value).toBe(''), WAIT)
-    expect(r.changes()).toEqual([
-      'POST /api/sessions/s1/prompt',
-      'POST /api/sessions/s1/resume',
-      'POST /api/sessions/s1/prompt',
-    ])
+    expect(r.changes()).toEqual(['POST /api/sessions/s1/prompt'])
   })
 
   it('a closed session offers Resume', async () => {
@@ -80,7 +85,7 @@ describe('SessionView: the footer of a session that is not running', () => {
   it('a presumed parked session says its host is offline, and still offers Resume', async () => {
     const r = await show({ lifecycle: 'parked', presumed_parked: true })
     expect(text(r.container.querySelector('.session-footer-offline'))).toBe(
-      'The host is offline: it has been away, and may still be running this session.',
+      'The host is offline: it has been away, and may still be running this session. Resume and send once it is back.',
     )
     expect(resumeButton()).toBeEnabled()
   })
@@ -90,7 +95,7 @@ describe('SessionView: the footer of a session that is not running', () => {
       { lifecycle: 'parked' },
       { hosts: () => json([{ host_id: 'h1', name: 'build-box', capabilities: [], connected: false }]) },
     )
-    expect(text(r.container.querySelector('.session-footer-offline'))).toBe('The host is offline: resume once it is back.')
+    expect(text(r.container.querySelector('.session-footer-offline'))).toBe('The host is offline: resume and send once it is back.')
   })
 
   it('a parked session on a connected host says nothing of it', async () => {
@@ -114,7 +119,7 @@ describe('SessionView: the footer of a session that is not running', () => {
 
     act(() => r.streams[0].event('item', mark('host_offline', '2026-10-02T10:05:00.000Z')))
     await waitFor(
-      () => expect(text(r.container.querySelector('.session-footer-offline'))).toBe('The host is offline: resume once it is back.'),
+      () => expect(text(r.container.querySelector('.session-footer-offline'))).toBe('The host is offline: resume and send once it is back.'),
       WAIT,
     )
 

@@ -12,6 +12,7 @@ pub mod identity;
 mod jsonrpc;
 pub use jsonrpc::decode_once as decode_json_once;
 pub mod key;
+pub mod local_callback;
 pub mod model;
 pub mod notify;
 pub mod oauth;

@@ -43,11 +43,37 @@ pub struct StartSessionResponse {
 pub struct PromptRequest {
     #[ts(type = "unknown[]")]
     pub content: Vec<Value>,
+    /// Reuse for retries of the same submit, including a lost response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "string | undefined", optional)]
+    pub request_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct PromptResponse {
     pub turn_id: String,
+}
+
+/// An accepted durable prompt, delivered after earlier turns finish.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct QueuedPromptResponse {
+    pub queue_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct QueuedPrompt {
+    pub id: String,
+    pub content: Vec<StoredBlock>,
+    /// queued, delivering, or failed. Only queued items can be edited.
+    pub state: String,
+    pub reason: Option<String>,
+}
+
+/// Replace a queued item's text while retaining its stored images.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct EditQueuedPrompt {
+    pub text: String,
 }
 
 /// One block of a prompt as the collector stores it (ACP core §7, plan 6a):
@@ -1391,6 +1417,12 @@ impl std::fmt::Debug for McpOauthClientRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
 pub struct McpAuthorizeRequest {
+    /// Optional local browser relay, `http://localhost:<port>/<path>` or
+    /// an HTTP loopback IP. The collector callback and public URL stay fixed.
+    /// The vendor must permit this exact URI for the selected client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "string | undefined", optional)]
+    pub local_redirect_uri: Option<String>,
     /// The mismatching `resource` the operator accepts, exactly as
     /// `oauth.resource_mismatch` showed it (gateway spec §4.1, G-4).
     #[serde(default, skip_serializing_if = "Option::is_none")]

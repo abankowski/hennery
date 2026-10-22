@@ -129,6 +129,21 @@ afterEach(() => {
 })
 
 describe('Composer: sending', () => {
+  it.each(['button', 'meta', 'ctrl'])('reuses one request key through a client retry submitted by %s', async via => {
+    let attempts = 0
+    const c = mount(() => ++attempts === 1 ? json({ code: 'step_up_required', message: 'Confirm' }, 403) : json({ queue_id: 'q1' }, 202))
+    type('one submission')
+    if (via === 'button') fireEvent.click(sendButton())
+    else fireEvent.keyDown(textarea(), { key: 'Enter', metaKey: via === 'meta', ctrlKey: via === 'ctrl' })
+    await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
+    const first = c.prompts()[0].body as { request_key: string }
+    expect(first.request_key).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i)
+    expect(c.prompts().map(p => p.body)).toEqual(Array.from({ length: 2 }, () => ({ request_key: first.request_key, content: [{ type: 'text', text: 'one submission' }] })))
+    type('another submission')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(c.prompts()).toHaveLength(3), WAIT)
+    expect((c.prompts()[2].body as { request_key: string }).request_key).not.toBe(first.request_key)
+  })
   it.each([
     [409, 'turn_in_progress'], [409, 'not_attached'], [400, 'invalid'],
   ])('a server refusal %i %s clears the uncertain-send warning after remount', async (status, code) => {
@@ -138,9 +153,12 @@ describe('Composer: sending', () => {
     await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
     await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
     c.unmount()
-    mount()
+    const restored = mount()
     expect(textarea()).toHaveValue('keep these words')
     expect(screen.queryByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeNull()
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(restored.prompts()).toHaveLength(1), WAIT)
+    expect((restored.prompts()[0].body as { request_key: string }).request_key).not.toBe((c.prompts()[0].body as { request_key: string }).request_key)
   })
 
   it.each([
@@ -152,8 +170,90 @@ describe('Composer: sending', () => {
     await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
     await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
     c.unmount()
-    mount()
+    const restored = mount()
     expect(textarea()).toHaveValue('possibly accepted')
+    expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
+    expect(restored.prompts()[0].body).toEqual(c.prompts()[0].body)
+  })
+
+  it('an edited uncertain draft starts a new submission after reload', async () => {
+    const c = mount(async () => { throw new TypeError('network failed') })
+    type('possibly accepted')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
+    c.unmount()
+    const restored = mount()
+    type('a deliberate new submission')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
+    expect((restored.prompts()[0].body as { request_key: string }).request_key).not.toBe((c.prompts()[0].body as { request_key: string }).request_key)
+  })
+
+  it.each([[503, 'delivery_unknown'], [500, 'internal']])('an unresolved %i %s keeps the retry key after reload', async (status, code) => {
+    const c = mount(() => json({ code, message: 'not resolved' }, Number(status)))
+    type('possibly accepted')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
+    c.unmount()
+    const restored = mount()
+    expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
+    expect(restored.prompts()[0].body).toEqual(c.prompts()[0].body)
+  })
+
+  it.each(['same page', 'reload'])('a receipt conflict after image loss preserves the warning but releases the key for a %s retry', async via => {
+    const original = mount(async () => { throw new TypeError('response lost') })
+    type('inspect ')
+    paste(png('a.png', 'ONE'))
+    await screen.findByRole('img', { name: 'Image #1' }, WAIT)
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(original.prompts()).toHaveLength(1), WAIT)
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
+    const first = original.prompts()[0].body as { request_key: string, content: { type: string }[] }
+    expect(first.content.some(block => block.type === 'image')).toBe(true)
+    original.unmount()
+    // A document reload keeps the marker text/key but loses its image files.
+    forgetAllAttachments()
+    forgetAllSends()
+    let attempts = 0
+    const conflicted = mount(() => ++attempts === 1
+      ? json({ code: 'request_key_conflict', message: 'The previous submission has different content' }, 409)
+      : json({ queue_id: 'q1' }, 202))
+    expect(screen.queryByRole('img')).toBeNull()
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(conflicted.prompts()).toHaveLength(1), WAIT)
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
+    const conflict = conflicted.prompts()[0].body as { request_key: string, content: { type: string }[] }
+    expect(conflict.request_key).toBe(first.request_key)
+    expect(conflict.content.every(block => block.type !== 'image')).toBe(true)
+    expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
+    expect(JSON.parse(sessionStorage.getItem('hennery.draft-send.s1')!)).toEqual({ text: textarea().value })
+    let retry = conflicted
+    if (via === 'reload') {
+      conflicted.unmount()
+      forgetAllSends()
+      retry = mount()
+      expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
+    }
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
+    const last = retry.prompts().at(-1)!.body as { request_key: string, content: unknown }
+    expect(last.request_key).not.toBe(first.request_key)
+    expect(last.content).toEqual(conflict.content)
+    expect(sessionStorage.getItem('hennery.draft-send.s1')).toBeNull()
+    expect(screen.queryByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeNull()
+  })
+
+  it('shows the uncertainty warning immediately after a receipt conflict', async () => {
+    mount(() => json({ code: 'request_key_conflict', message: 'Different content' }, 409))
+    type('possibly accepted')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
     expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
   })
 
@@ -172,6 +272,7 @@ describe('Composer: sending', () => {
     expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
     fireEvent.click(sendButton())
     await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
+    expect(restored.prompts()[0].body).toEqual(c.prompts()[0].body)
     expect(screen.queryByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeNull()
     restored.unmount()
     await act(async () => { finish(json({ turn_id: 'old' }, 202)); await pending })
@@ -184,7 +285,7 @@ describe('Composer: sending', () => {
     const c = mount()
     type('hello')
     fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true })
-    await waitFor(() => expect(c.prompts()).toEqual([{ path: '/api/sessions/s1/prompt', body: { content: [{ type: 'text', text: 'hello' }] } }]), WAIT)
+    await waitFor(() => expect(c.prompts()).toEqual([{ path: '/api/sessions/s1/prompt', body: { request_key: expect.any(String), content: [{ type: 'text', text: 'hello' }] } }]), WAIT)
   })
 
   it('Cmd+Enter sends the prompt', async () => {
@@ -212,6 +313,7 @@ describe('Composer: sending', () => {
     fireEvent.click(sendButton())
     await waitFor(() => expect(textarea().value).toBe(''), WAIT)
     expect(c.prompts()[0].body).toEqual({
+      request_key: expect.any(String),
       content: [
         { type: 'text', text: 'see ' },
         { type: 'image', mimeType: 'image/png', data: btoa('ONE') },
@@ -243,14 +345,13 @@ describe('Composer: sending', () => {
 })
 
 describe('Composer: a turn in flight', () => {
-  it.each(['running', 'blocked'])('Cancel replaces Send while the session is %s, and Ctrl+Enter sends nothing', async (activity) => {
+  it.each(['running', 'blocked'])('queues with Send beside Cancel while the session is %s', async (activity) => {
     const c = mount(accepted, { session: { lifecycle: 'active', activity } })
     type('queued')
-    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
     fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true })
-    await new Promise((r) => setTimeout(r, 30))
-    expect(c.prompts()).toEqual([])
+    await waitFor(() => expect(c.prompts()).toHaveLength(1))
   })
 
   it('offers Send, not Cancel, when idle', () => {
@@ -290,7 +391,7 @@ describe('Composer: a turn in flight', () => {
 describe('Composer: prompt refusals keep the draft', () => {
   it.each([
     [409, 'host_offline', 'The host is offline; send again once it is back.'],
-    [409, 'turn_in_progress', 'The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.'],
+    [409, 'turn_in_progress', 'The agent is still working or waiting for your answer. Your draft is kept; try sending again.'],
     [409, 'images_unsupported', 'This host takes no images: remove them, then send again.'],
     [400, 'empty_prompt', 'There is nothing to send: write something, or attach an image.'],
     [400, 'invalid_content', 'This prompt holds something that cannot be sent (srv-x).'],
@@ -513,6 +614,7 @@ describe('Composer: images', () => {
     fireEvent.click(sendButton())
     await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
     expect(c.prompts()[0].body).toEqual({
+      request_key: expect.any(String),
       content: [
         { type: 'image', mimeType: 'image/png', data: btoa('B') },
         { type: 'text', text: ' only' },
@@ -704,7 +806,7 @@ describe('Composer: per session', () => {
     type('for b')
     fireEvent.click(sendButton())
     await waitFor(() => expect(c.prompts()).toHaveLength(1), WAIT)
-    expect(c.prompts()[0]).toEqual({ path: '/api/sessions/s2/prompt', body: { content: [{ type: 'text', text: 'for b' }] } })
+    expect(c.prompts()[0]).toEqual({ path: '/api/sessions/s2/prompt', body: { request_key: expect.any(String), content: [{ type: 'text', text: 'for b' }] } })
     await waitFor(() => expect(textarea().value).toBe(''), WAIT)
 
     c.rerender({ sessionId: 's1' })
@@ -829,7 +931,7 @@ describe('Composer: work added while a prompt is being sent', () => {
     // Still said once the send has gone: the operator adds the image again.
     expect(refusal()).toBe(STILL_SENDING)
     expect(heldFor('s1').attachments).toEqual([])
-    expect(c.prompts()[0].body).toEqual({ content: [{ type: 'text', text: 'first ' }] })
+    expect(c.prompts()[0].body).toEqual({ request_key: expect.any(String), content: [{ type: 'text', text: 'first ' }] })
   })
 
   it('refuses an answer as a new message, saying why, and the 202 clears the draft that was sent', async () => {
@@ -948,10 +1050,44 @@ it('explains a raw busy-turn 409, preserves the draft and offers the open reques
   const view = mount(() => json({ code: 'conflict', message: 'wait for the current turn to end' }, 409), { onJumpToQuestion: jump })
   type('Keep my next prompt')
   fireEvent.click(sendButton())
-  expect(await screen.findByText('The agent is still working or waiting for your answer. Finish the current turn before sending another prompt.', { exact: true })).toBeVisible()
+  expect(await screen.findByText('The agent is still working or waiting for your answer. Your draft is kept; try sending again.', { exact: true })).toBeVisible()
   expect(textarea()).toHaveValue('Keep my next prompt')
   expect(screen.queryByText('wait for the current turn to end', { exact: true })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Go to open request' }))
   expect(jump).toHaveBeenCalledOnce()
   expect(view.prompts()).toHaveLength(1)
+})
+
+it('labels a parked submission Resume and send and uses the single collector prompt path', async () => {
+  const c = mount(() => json({ queue_id: 'queued-resume' }, 202), { session: { lifecycle: 'parked', activity: undefined } })
+  type('resume with these words')
+  const button = screen.getByRole('button', { name: 'Resume and send' })
+  expect(button).toHaveAttribute('title', 'Resume and send')
+  fireEvent.click(button)
+  await waitFor(() => expect(c.prompts()).toHaveLength(1))
+  expect(c.posts.map(post => post.path)).toEqual(['/api/sessions/s1/prompt'])
+  await waitFor(() => expect(textarea().value).toBe(''))
+})
+
+for (const [lifecycle, activity] of [['active', 'idle'], ['active', 'running'], ['active', 'blocked'], ['parked', undefined]] as const) {
+  it.each(['Control', 'Meta'])(`${lifecycle}/${activity}: %s+Enter submits once through the prompt endpoint`, async key => {
+    const c = mount(() => json({ queue_id: 'q' }, 202), { session: { lifecycle, activity } })
+    type('shortcut message')
+    const button = screen.getByRole('button', { name: lifecycle === 'parked' ? 'Resume and send' : 'Send' })
+    expect(button).toBeEnabled()
+    fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: key === 'Control', metaKey: key === 'Meta' })
+    fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: key === 'Control', metaKey: key === 'Meta', repeat: true })
+    await waitFor(() => expect(c.prompts()).toHaveLength(1))
+    await waitFor(() => expect(textarea().value).toBe(''))
+    expect(c.posts.map(post => post.path)).toEqual(['/api/sessions/s1/prompt'])
+  })
+}
+
+it.each([{ isComposing: true }, { keyCode: 229 }, { repeat: true }])('does not send an IME or autorepeat shortcut: %j', async guard => {
+  const c = mount(accepted, { session: { lifecycle: 'parked', activity: undefined } })
+  type('keep this draft')
+  fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true, ...guard })
+  await new Promise(resolve => setTimeout(resolve, 30))
+  expect(c.prompts()).toEqual([])
+  expect(textarea().value).toBe('keep this draft')
 })

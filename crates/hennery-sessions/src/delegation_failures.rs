@@ -83,7 +83,7 @@ impl Store {
         prune_failures(&tx, self.owner_id(), &mut failures)?;
         let operations = {
             let mut statement = tx.prepare(
-                "SELECT q.operation_id,q.source_id,q.accepted_revision FROM session_dispatch_queue q
+                "SELECT q.operation_id,q.source_id,q.accepted_revision,q.origin='operator' FROM session_dispatch_queue q
                  JOIN sessions s ON s.owner_id = ?1 AND s.id=q.target_id
                  JOIN session_operations o ON o.owner_id = ?1 AND o.operation_id=q.operation_id
                  WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.state IN ('queued','waiting_config')
@@ -94,24 +94,31 @@ impl Store {
             )?;
             statement
                 .query_map(params![self.owner_id(), target], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, bool>(3)?,
+                    ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
-        if expected_operation
-            .is_some_and(|expected| operations.first().is_none_or(|(operation, _, _)| operation != expected))
-        {
+        if expected_operation.is_some_and(|expected| {
+            operations
+                .first()
+                .is_none_or(|(operation, _, _, _)| operation != expected)
+        }) {
             tx.commit()?;
             return Ok(());
         }
         let mut failed = false;
-        for (position, (operation, source, revision)) in operations.into_iter().enumerate() {
+        for (position, (operation, source, revision, operator)) in operations.into_iter().enumerate() {
             // A missing requested value applies to the selected queue head,
             // while a runtime failure affects every unsent operation.
             if code == "configuration_unavailable" && position > 0 {
                 break;
             }
-            if !self.transfer_in(&tx, &source, target, revision)? {
+            if !self.queue_transfer_in(&tx, &source, target, revision, operator)? {
                 continue;
             }
             let (host, hat, cwd): (String, String, String) = tx.query_row(
@@ -130,6 +137,11 @@ impl Store {
                  AND state IN ('queued','waiting_config','awaiting_reconciliation') AND turn_id IS NULL",
                 params![self.owner_id(), operation, code],
             )? > 0;
+            if operator {
+                // An operator resume refusal stops its whole queue. Keep the
+                // text behind the head instead of attempting more prompts.
+                self.fail_operator_queue_in(&tx, target, code)?;
+            }
         }
         if failed {
             // Set operation codes before the lifecycle trigger: the session UI
@@ -237,7 +249,7 @@ mod tests {
             )
             .unwrap();
             conn.execute(
-                "UPDATE sessions SET lifecycle='active',mcp_delivery_mode='isolated' WHERE owner_id=?1 AND id='parent'",
+                "UPDATE sessions SET lifecycle='active',mcp_delivery_mode='isolated' WHERE owner_id = ?1 AND id='parent'",
                 [owner],
             )
             .unwrap();
@@ -252,7 +264,7 @@ mod tests {
         store
             .conn()
             .query_row(
-                "SELECT state,code FROM session_operations WHERE owner_id=?1 AND child_id='child'",
+                "SELECT state,code FROM session_operations WHERE owner_id = ?1 AND child_id='child'",
                 [store.owner_id()],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
@@ -316,7 +328,7 @@ mod tests {
             store
                 .conn()
                 .query_row(
-                    "SELECT revoked_at IS NOT NULL FROM gw_session_tokens WHERE owner_id=?1 AND session_id='child'",
+                    "SELECT revoked_at IS NOT NULL FROM gw_session_tokens WHERE owner_id = ?1 AND session_id='child'",
                     [store.owner_id()],
                     |r| r.get::<_, bool>(0)
                 )
@@ -330,7 +342,7 @@ mod tests {
         {
             let conn = store.conn();
             let owner = store.owner_id();
-            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='attached-before' WHERE owner_id=?1 AND id='child'", [owner]).unwrap();
+            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='attached-before' WHERE owner_id = ?1 AND id='child'", [owner]).unwrap();
             conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,accepted_revision) VALUES(?1,'parent','tail',?2,'digest','session_send','child','queued',1)", rusqlite::params![owner,tail]).unwrap();
             conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES(?1,?2,'parent','child',1,'later brief','{}')", rusqlite::params![owner,tail]).unwrap();
         }
@@ -339,7 +351,7 @@ mod tests {
         for (operation, wanted) in [(head.as_str(), "failed"), (tail, "queued")] {
             let state: String = conn
                 .query_row(
-                    "SELECT state FROM session_operations WHERE owner_id=?1 AND operation_id=?2",
+                    "SELECT state FROM session_operations WHERE owner_id = ?1 AND operation_id=?2",
                     rusqlite::params![store.owner_id(), operation],
                     |r| r.get(0),
                 )
@@ -360,7 +372,7 @@ mod tests {
         store
             .conn()
             .execute(
-                "UPDATE session_operations SET state='completed' WHERE owner_id=?1 AND operation_id=?2",
+                "UPDATE session_operations SET state='completed' WHERE owner_id = ?1 AND operation_id=?2",
                 rusqlite::params![store.owner_id(), operation],
             )
             .unwrap();
@@ -391,14 +403,14 @@ mod tests {
         {
             let conn = store.conn();
             let owner = store.owner_id();
-            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='attached-before' WHERE owner_id=?1 AND id='child'", [owner]).unwrap();
+            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='attached-before' WHERE owner_id = ?1 AND id='child'", [owner]).unwrap();
             conn.execute(
-                "UPDATE session_operations SET state='completed' WHERE owner_id=?1 AND operation_id=?2",
+                "UPDATE session_operations SET state='completed' WHERE owner_id = ?1 AND operation_id=?2",
                 rusqlite::params![owner, captured_head],
             )
             .unwrap();
             conn.execute(
-                "UPDATE session_dispatch_queue SET state='settled' WHERE owner_id=?1 AND operation_id=?2",
+                "UPDATE session_dispatch_queue SET state='settled' WHERE owner_id = ?1 AND operation_id=?2",
                 rusqlite::params![owner, captured_head],
             )
             .unwrap();
@@ -411,7 +423,7 @@ mod tests {
         let state: String = store
             .conn()
             .query_row(
-                "SELECT state FROM session_operations WHERE owner_id=?1 AND operation_id=?2",
+                "SELECT state FROM session_operations WHERE owner_id = ?1 AND operation_id=?2",
                 rusqlite::params![store.owner_id(), tail],
                 |r| r.get(0),
             )
@@ -434,11 +446,11 @@ mod tests {
         {
             let conn = store.conn();
             let owner = store.owner_id();
-            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='attached-before' WHERE owner_id=?1 AND id='child'", [owner]).unwrap();
+            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='attached-before' WHERE owner_id = ?1 AND id='child'", [owner]).unwrap();
             conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,accepted_revision) VALUES(?1,'parent','tail',?2,'digest','session_send','child','queued',1)", rusqlite::params![owner,tail]).unwrap();
             conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES(?1,?2,'parent','child',1,'later brief','{}')", rusqlite::params![owner,tail]).unwrap();
             conn.execute("INSERT INTO session_families(owner_id,child_id,parent_id,root_id,hat_id,created_event_id) VALUES(?1,'other-child','parent','parent',?2,0)", rusqlite::params![owner,hat]).unwrap();
-            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='other-attached' WHERE owner_id=?1 AND id='other-child'", [owner]).unwrap();
+            conn.execute("UPDATE sessions SET lifecycle='parked',agent_session_id='other-attached' WHERE owner_id = ?1 AND id='other-child'", [owner]).unwrap();
             conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state,accepted_revision) VALUES(?1,'parent','other-operation',?2,'digest','session_send','other-child','queued',1)", rusqlite::params![owner,other]).unwrap();
             conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES(?1,?2,'parent','other-child',1,'other brief','{}')", rusqlite::params![owner,other]).unwrap();
         }
@@ -446,7 +458,7 @@ mod tests {
         store
             .conn()
             .execute(
-                "UPDATE session_dispatch_queue SET state='waiting_config' WHERE owner_id=?1 AND operation_id=?2",
+                "UPDATE session_dispatch_queue SET state='waiting_config' WHERE owner_id = ?1 AND operation_id=?2",
                 rusqlite::params![store.owner_id(), tail],
             )
             .unwrap();
@@ -458,12 +470,12 @@ mod tests {
         {
             let conn = store.conn();
             conn.execute(
-                "UPDATE session_operations SET state='completed' WHERE owner_id=?1 AND operation_id=?2",
+                "UPDATE session_operations SET state='completed' WHERE owner_id = ?1 AND operation_id=?2",
                 rusqlite::params![store.owner_id(), head],
             )
             .unwrap();
             conn.execute(
-                "UPDATE session_dispatch_queue SET state='settled' WHERE owner_id=?1 AND operation_id=?2",
+                "UPDATE session_dispatch_queue SET state='settled' WHERE owner_id = ?1 AND operation_id=?2",
                 rusqlite::params![store.owner_id(), head],
             )
             .unwrap();
@@ -473,7 +485,7 @@ mod tests {
             store
                 .conn()
                 .query_row(
-                    "SELECT state FROM session_operations WHERE owner_id=?1 AND operation_id=?2",
+                    "SELECT state FROM session_operations WHERE owner_id = ?1 AND operation_id=?2",
                     rusqlite::params![store.owner_id(), tail],
                     |r| r.get::<_, String>(0),
                 )
@@ -496,7 +508,7 @@ mod tests {
         store
             .conn()
             .execute(
-                "UPDATE sessions SET lifecycle='parked' WHERE owner_id=?1 AND id='child'",
+                "UPDATE sessions SET lifecycle='parked' WHERE owner_id = ?1 AND id='child'",
                 [store.owner_id()],
             )
             .unwrap();
@@ -561,6 +573,7 @@ mod tests {
                         HostFrame::Catalog {
                             request_id,
                             catalog: HostCatalog {
+                                saved_at: None,
                                 agent,
                                 adapter_revision: "fixture".into(),
                                 freshness: CatalogFreshness::Fresh,

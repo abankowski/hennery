@@ -23,7 +23,7 @@ export function saveDraft(sessionId: string, text: string): void {
   try {
     if (text === '') sessionStorage.removeItem(draftKey(sessionId))
     else sessionStorage.setItem(draftKey(sessionId), text)
-    if (!text || sessionStorage.getItem(SENDING_PREFIX + sessionId) !== text) sessionStorage.removeItem(SENDING_PREFIX + sessionId)
+    if (!draftMayHaveBeenSent(sessionId)) sessionStorage.removeItem(SENDING_PREFIX + sessionId)
   } catch {
     // As above: the draft stays in the page only.
   }
@@ -31,19 +31,46 @@ export function saveDraft(sessionId: string, text: string): void {
 
 /** Persist before POSTing: losing the response on a reload leaves the send's
  * outcome unknown. A 202 or a changed/emptied draft clears this marker. */
-export function markDraftSending(sessionId: string, text: string): void {
+export function markDraftSending(sessionId: string, text: string, requestKey: string): void {
+  persistSendingDraft(sessionId, text, requestKey)
+}
+
+/** A receipt conflict proves this key cannot submit the current content,
+ * but the earlier message may have been accepted. Warn without reusing it. */
+export function markDraftConflicted(sessionId: string, text: string): void {
+  persistSendingDraft(sessionId, text)
+}
+
+function persistSendingDraft(sessionId: string, text: string, requestKey?: string): void {
   try {
     // Image preparation may finish after sign-out or a draft replacement.
     // Never recreate text that the operator already cleared.
-    if (text && sessionStorage.getItem(draftKey(sessionId)) === text) sessionStorage.setItem(SENDING_PREFIX + sessionId, text)
+    if (text && sessionStorage.getItem(draftKey(sessionId)) === text) sessionStorage.setItem(SENDING_PREFIX + sessionId, JSON.stringify({ text, requestKey }))
   } catch { /* Page-only draft. */ }
 }
 
-export function draftMayHaveBeenSent(sessionId: string): boolean {
+function sendingDraft(sessionId: string): { requestKey?: string } | undefined {
   try {
     const text = loadDraft(sessionId)
-    return !!text && sessionStorage.getItem(SENDING_PREFIX + sessionId) === text
-  } catch { return false }
+    const marker = sessionStorage.getItem(SENDING_PREFIX + sessionId)
+    if (!text || !marker) return undefined
+    // Older pages stored only text. Keep their warning after an update.
+    if (marker === text) return {}
+    const saved: unknown = JSON.parse(marker)
+    if (typeof saved !== 'object' || saved === null || !('text' in saved) || saved.text !== text) return undefined
+    if (!('requestKey' in saved)) return {}
+    if (typeof saved.requestKey !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(saved.requestKey)) return undefined
+    return { requestKey: saved.requestKey }
+  } catch { return undefined }
+}
+
+export function draftMayHaveBeenSent(sessionId: string): boolean {
+  return sendingDraft(sessionId) !== undefined
+}
+
+/** Reuse the uncertain submission's key, including after a document reload. */
+export function draftSendingRequestKey(sessionId: string): string | undefined {
+  return sendingDraft(sessionId)?.requestKey
 }
 
 /** A server refusal resolves the uncertainty without discarding the draft. */

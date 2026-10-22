@@ -267,7 +267,7 @@ pub struct Launch {
 pub struct SessionHandle {
     attach_generation: Option<u64>,
     commands: mpsc::UnboundedSender<SessionCmd>,
-    open_turn: Arc<Mutex<Option<String>>>,
+    turns: Arc<Mutex<PromptTurns>>,
     /// Cancelled when the actor's task has finished (its adapter is gone).
     done: CancellationToken,
     /// This actor will serve no further start or resume: a park or close
@@ -277,6 +277,65 @@ pub struct SessionHandle {
     /// The agent's own session id, once known: at launch for a load, once
     /// `session/new` answered for a new session (plan 9d B7).
     agent_session_id: Arc<Mutex<Option<String>>>,
+}
+
+#[derive(Default)]
+struct PromptTurns {
+    running: Option<String>,
+    pending: VecDeque<PendingPrompt>,
+}
+
+struct PendingPrompt {
+    marker: Arc<()>,
+    request_id: String,
+    turn_id: String,
+}
+
+fn prompt_ids(command: &SessionCmd) -> Option<(&str, &str)> {
+    match command {
+        SessionCmd::Prompt {
+            request_id, turn_id, ..
+        }
+        | SessionCmd::FencedPrompt {
+            request_id, turn_id, ..
+        } => Some((request_id, turn_id)),
+        _ => None,
+    }
+}
+
+/// Retain mailbox admission through every actor rejection/continue path, or
+/// until the actual running turn and its turn_started fact have been set.
+struct PendingPromptGuard {
+    turns: Arc<Mutex<PromptTurns>>,
+    marker: Arc<()>,
+}
+
+impl PendingPromptGuard {
+    fn for_command(turns: &Arc<Mutex<PromptTurns>>, command: &SessionCmd) -> Option<Self> {
+        let (request_id, turn_id) = prompt_ids(command)?;
+        let marker = turns
+            .lock()
+            .expect("prompt turns lock")
+            .pending
+            .iter()
+            .find(|pending| pending.request_id == request_id && pending.turn_id == turn_id)?
+            .marker
+            .clone();
+        Some(Self {
+            turns: turns.clone(),
+            marker,
+        })
+    }
+}
+
+impl Drop for PendingPromptGuard {
+    fn drop(&mut self) {
+        self.turns
+            .lock()
+            .expect("prompt turns lock")
+            .pending
+            .retain(|pending| !Arc::ptr_eq(&pending.marker, &self.marker));
+    }
 }
 
 impl SessionHandle {
@@ -292,7 +351,23 @@ impl SessionHandle {
     /// Queue a command. `false` if the actor has ended.
     pub fn send(&self, cmd: SessionCmd) -> bool {
         let ends = matches!(cmd, SessionCmd::Park { .. } | SessionCmd::Close { .. });
+        // Register before handing off to the actor. Holding this lock through
+        // send also keeps pending FIFO order equal to mailbox order when
+        // cloned handles send concurrently.
+        let mut turns = self.turns.lock().expect("prompt turns lock");
+        let marker = prompt_ids(&cmd).map(|(request_id, turn_id)| {
+            let marker = Arc::new(());
+            turns.pending.push_back(PendingPrompt {
+                marker: marker.clone(),
+                request_id: request_id.into(),
+                turn_id: turn_id.into(),
+            });
+            marker
+        });
         let sent = self.commands.send(cmd).is_ok();
+        if !sent && let Some(marker) = marker {
+            turns.pending.retain(|pending| !Arc::ptr_eq(&pending.marker, &marker));
+        }
         if sent && ends {
             self.ending.store(true, Ordering::SeqCst);
         }
@@ -314,11 +389,18 @@ impl SessionHandle {
         self.commands.is_closed()
     }
 
-    /// The turn in flight, for `hello.attached_sessions` (ACP core §5.1).
-    /// Set before `turn_started` is emitted and cleared after `turn_ended`,
-    /// so `None` means every emitted turn has also been ended.
+    /// The oldest prompt accepted into the actor's mailbox, otherwise the
+    /// actual running turn, for `hello.attached_sessions` (ACP core §5.1).
+    /// A queued prompt must not look undelivered merely because the actor
+    /// has not read it yet. Admission sets running before removing pending;
+    /// rejection removes pending only after its reply has been emitted.
     pub fn open_turn_id(&self) -> Option<String> {
-        self.open_turn.lock().expect("open turn lock").clone()
+        let turns = self.turns.lock().expect("prompt turns lock");
+        turns
+            .pending
+            .front()
+            .map(|pending| pending.turn_id.clone())
+            .or_else(|| turns.running.clone())
     }
 
     /// Resolves once the actor's task has finished — after its adapter has
@@ -428,20 +510,21 @@ fn launch_inner(
     workspace_roots: Option<Vec<PathBuf>>,
 ) -> SessionHandle {
     let (tx, rx) = mpsc::unbounded_channel();
-    let open_turn = Arc::new(Mutex::new(None));
+    let turns = Arc::new(Mutex::new(PromptTurns::default()));
     let ending = Arc::new(AtomicBool::new(false));
     let agent_session_id = Arc::new(Mutex::new(match &launch.attach {
         Attach::Load { agent_session_id } => Some(agent_session_id.clone()),
         Attach::New => None,
     }));
     let actor = Actor {
+        catalog_identity: crate::delegation::catalog_identity(&launch.agent, launch.profile),
         workspace_roots,
         attach_generation,
         config_revision: AtomicU64::new(1),
         agent_session_id: agent_session_id.clone(),
         uplink,
         session_id: launch.session_id.clone(),
-        open_turn: open_turn.clone(),
+        turns: turns.clone(),
         options,
         catalogue: Mutex::new(Catalogue::default()),
         questions: Mutex::new(Questions::default()),
@@ -461,7 +544,7 @@ fn launch_inner(
     SessionHandle {
         attach_generation,
         commands: tx,
-        open_turn,
+        turns,
         done,
         ending,
         agent_session_id,
@@ -830,12 +913,13 @@ impl Drop for AcpTask {
 }
 
 struct Actor {
+    catalog_identity: hennery_proto::delegation_host::CatalogIdentity,
     workspace_roots: Option<Vec<PathBuf>>,
     attach_generation: Option<u64>,
     config_revision: AtomicU64,
     uplink: Uplink,
     session_id: String,
-    open_turn: Arc<Mutex<Option<String>>>,
+    turns: Arc<Mutex<PromptTurns>>,
     options: SessionOptions,
     /// The adapter's config options as last reported.
     catalogue: Mutex<Catalogue>,
@@ -926,7 +1010,14 @@ impl Actor {
     /// cannot be resolved or registered is left out, and the session
     /// records none. A load whose agent session was registered with other
     /// roots before gets a `host_note` after it: both stay registered (B8).
-    fn announce(&self, request_id: String, agent_session: &str, env: &[(String, String)], loaded: bool) {
+    fn announce(
+        &self,
+        request_id: String,
+        agent_session: &str,
+        env: &[(String, String)],
+        loaded: bool,
+        agent_defaults: Option<&SessionConfig>,
+    ) {
         *self.agent_session_id.lock().expect("agent session id lock") = Some(agent_session.to_string());
         let mut moved = false;
         let agent_home = self.options.home.as_ref().and_then(|recorder| {
@@ -942,10 +1033,16 @@ impl Actor {
                 }
             }
         });
+        let mut indexed = self.catalogue_extracts();
+        if indexed.current_config().is_some() {
+            let mut identity = self.catalog_identity.clone();
+            identity.agent_defaults = agent_defaults.cloned();
+            indexed.catalog_identity = Some(Box::new(identity));
+        }
         self.emit(SessionBody::SessionStarted {
             request_id,
             agent_session_id: agent_session.to_string(),
-            indexed: self.catalogue_extracts(),
+            indexed,
             agent_home,
         });
         if moved && loaded {
@@ -957,7 +1054,7 @@ impl Actor {
     }
 
     fn set_open_turn(&self, turn_id: Option<String>) {
-        *self.open_turn.lock().expect("open turn lock") = turn_id;
+        self.turns.lock().expect("prompt turns lock").running = turn_id;
     }
 
     fn start_failed(&self, request_id: String, error: StartError) {
@@ -1019,6 +1116,7 @@ impl Actor {
         // yielding `None`, so nothing sent before `close()` is lost.
         commands.close();
         while let Some(cmd) = commands.recv().await {
+            let _pending_prompt = PendingPromptGuard::for_command(&self.turns, &cmd);
             match cmd {
                 SessionCmd::SetIdleHold { .. } => {}
                 SessionCmd::Prompt { request_id, .. }
@@ -1184,15 +1282,20 @@ impl Actor {
                             )));
                         }
                     };
+                let agent_defaults = if matches!(attach, Attach::New) && self.workspace_roots.is_none() && catalogue.authoritative {
+                    catalogue_extracts(&catalogue.options).current_config()
+                } else {
+                    None
+                };
                 let applied = apply_config(&conn, &session, catalogue, &config, self.options.config_timeout, deadline).await;
-                Ok((session, applied, images))
+                Ok((session, applied, images, agent_defaults))
             } => result,
             info = adapter.exited() => {
                 let tail = adapter.stderr_tail().await;
                 Err(StartError::other(format!("adapter exited during start ({}): {}", describe(info), last_lines(&tail, 5))))
             }
         };
-        let (agent_session, applied, images) = match started {
+        let (agent_session, applied, images, agent_defaults) = match started {
             Ok(started) => started,
             Err(error) => {
                 self.begin_ending();
@@ -1227,7 +1330,13 @@ impl Actor {
             current: applied.current,
         };
         // The catalogue after the switches, never the one before (P-13).
-        self.announce(request_id, &agent_session.to_string(), &agent_env, loaded);
+        self.announce(
+            request_id,
+            &agent_session.to_string(),
+            &agent_env,
+            loaded,
+            agent_defaults.as_ref(),
+        );
         // A load's state updates follow the start they belong to, and so do
         // updates the adapter sent while the start's switches ran. They are
         // older than the catalogue just announced, so they carry no
@@ -1352,6 +1461,7 @@ impl Actor {
                         return;
                     }
                     Some(command @ SessionCmd::Prompt { .. }) | Some(command @ SessionCmd::FencedPrompt { .. }) => {
+                        let _pending_prompt = PendingPromptGuard::for_command(&self.turns, &command);
                         let (request_id, turn_id, content, expected, plugin_context) = match command {
                             SessionCmd::Prompt {request_id,turn_id,content,plugin_context} => (request_id,turn_id,content,None,plugin_context),
                             SessionCmd::FencedPrompt {request_id,turn_id,content,expected} => (request_id,turn_id,content,Some(expected),None),
@@ -1436,7 +1546,7 @@ impl Actor {
                         _ => self.reject(request_id, "not_running", "that turn is not running".into()),
                     },
                     Some(SessionCmd::Restart { request_id }) => {
-                        self.announce(request_id, &agent_session.to_string(), &agent_env, loaded)
+                        self.announce(request_id, &agent_session.to_string(), &agent_env, loaded, None)
                     }
                     // A switch may run during a turn; it is answered in order.
                     Some(SessionCmd::SetConfig { request_id, config_id, value }) => {
@@ -2916,6 +3026,145 @@ fn parse_prompt(content: Vec<Value>) -> Result<Vec<ContentBlock>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn prompt_mailbox() -> (SessionHandle, mpsc::UnboundedReceiver<SessionCmd>) {
+        let (commands, receiver) = mpsc::unbounded_channel();
+        (
+            SessionHandle {
+                attach_generation: Some(1),
+                commands,
+                turns: Arc::new(Mutex::new(PromptTurns::default())),
+                done: CancellationToken::new(),
+                ending: Arc::new(AtomicBool::new(false)),
+                agent_session_id: Arc::new(Mutex::new(Some("agent-session".into()))),
+            },
+            receiver,
+        )
+    }
+
+    fn queued_prompt(turn: &str) -> SessionCmd {
+        SessionCmd::Prompt {
+            request_id: format!("request-{turn}"),
+            turn_id: turn.into(),
+            content: vec![serde_json::json!({"type": "text", "text": "prompt"})],
+            plugin_context: None,
+        }
+    }
+
+    #[test]
+    fn pending_prompt_is_in_the_snapshot_before_the_actor_reads_its_mailbox() {
+        let (handle, commands) = prompt_mailbox();
+        assert!(handle.send(queued_prompt("q1")));
+        assert_eq!(commands.len(), 1);
+        assert_eq!(handle.open_turn_id().as_deref(), Some("q1"));
+    }
+
+    #[test]
+    fn pending_prompt_fence_is_in_the_snapshot_before_the_actor_reads_it() {
+        let (handle, commands) = prompt_mailbox();
+        assert!(handle.send(SessionCmd::FencedPrompt {
+            request_id: "request-q1".into(),
+            turn_id: "q1".into(),
+            content: vec![serde_json::json!({"type": "text", "text": "prompt"})],
+            expected: PromptFence {
+                attach_generation: 1,
+                config_revision: 1
+            },
+        }));
+        assert_eq!(commands.len(), 1);
+        assert_eq!(handle.open_turn_id().as_deref(), Some("q1"));
+    }
+
+    #[test]
+    fn pending_prompt_snapshot_prefers_the_oldest_mailbox_entry_over_a_running_turn() {
+        let (handle, mut commands) = prompt_mailbox();
+        handle.turns.lock().unwrap().running = Some("running".into());
+        assert!(handle.send(queued_prompt("q1")));
+        // Repeated physical deliveries have separate mailbox registrations.
+        assert!(handle.send(queued_prompt("q1")));
+        assert!(handle.send(queued_prompt("q2")));
+        assert_eq!(handle.open_turn_id().as_deref(), Some("q1"));
+        for expected in ["q1", "q1", "q2"] {
+            let command = commands.try_recv().unwrap();
+            let pending = PendingPromptGuard::for_command(&handle.turns, &command).unwrap();
+            // Reading is not a rejection/admission: retain the marker until
+            // the decision is complete, including every early continue.
+            assert_eq!(handle.open_turn_id().as_deref(), Some(expected));
+            if expected == "q2" {
+                handle.turns.lock().unwrap().running = Some("admitted".into());
+            }
+            drop(pending);
+        }
+        assert!(handle.turns.lock().unwrap().pending.is_empty());
+        assert_eq!(handle.open_turn_id().as_deref(), Some("admitted"));
+        handle.turns.lock().unwrap().running = None;
+        assert_eq!(handle.open_turn_id(), None);
+    }
+
+    #[test]
+    fn pending_prompt_send_failure_leaves_no_snapshot_turn() {
+        let (handle, commands) = prompt_mailbox();
+        drop(commands);
+        assert!(!handle.send(queued_prompt("q1")));
+        assert_eq!(handle.open_turn_id(), None);
+    }
+
+    #[test]
+    fn pending_prompt_snapshot_falls_back_to_the_actual_running_turn() {
+        let (handle, _commands) = prompt_mailbox();
+        handle.turns.lock().unwrap().running = Some("running".into());
+        assert!(handle.send(SessionCmd::SetIdleHold { held: true }));
+        assert_eq!(handle.open_turn_id().as_deref(), Some("running"));
+        handle.turns.lock().unwrap().running = None;
+        assert_eq!(handle.open_turn_id(), None);
+    }
+
+    #[tokio::test]
+    async fn pending_prompt_ending_drain_releases_commands_after_rejection() {
+        let dir = tempfile::tempdir().unwrap();
+        let (uplink, mut replies) = Uplink::new(crate::outbox::Outbox::open_in_memory().unwrap());
+        // Empty workspace roots reject the attach before any process starts.
+        let handle = launch_delegated_in(
+            uplink.clone(),
+            Launch {
+                request_id: "start".into(),
+                session_id: "snapshot-test".into(),
+                attach: Attach::New,
+                config: SessionConfig::default(),
+                agent: AgentCommand::parse("adapter-must-not-start").unwrap(),
+                cwd: dir.path().canonicalize().unwrap(),
+                profile: Profile::Generic,
+                mcp_servers: vec![],
+            },
+            SessionOptions::default(),
+            1,
+            vec![],
+        );
+        assert!(handle.send(queued_prompt("q1")));
+        assert!(handle.send(SessionCmd::FencedPrompt {
+            request_id: "request-q2".into(),
+            turn_id: "q2".into(),
+            content: vec![serde_json::json!({"type": "text", "text": "prompt"})],
+            expected: PromptFence {
+                attach_generation: 1,
+                config_revision: 1
+            },
+        }));
+        tokio::time::timeout(Duration::from_secs(3), handle.finished())
+            .await
+            .unwrap();
+        assert!(handle.is_ended());
+        assert_eq!(handle.open_turn_id(), None);
+        for expected in ["request-q1", "request-q2"] {
+            assert!(
+                matches!(replies.try_recv().unwrap(), HostFrame::Error { request_id, code, .. }
+                if request_id == expected && code == "not_attached")
+            );
+        }
+        assert!(uplink.pending().unwrap().iter().any(|frame| matches!(frame,
+            HostFrame::Session { body: SessionBody::StartFailed { code, .. }, .. }
+            if code == "cwd_unavailable")));
+    }
 
     /// Plan 10b: what a question is about, for a push under `details`.
     #[test]

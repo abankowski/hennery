@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react'
 import type { AppActionId, AppActions } from '../app-actions'
-import { modLabel } from '../lib/commands'
+import { isMac, modLabel } from '../lib/commands'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { restoreCommandFocus } from '../hooks/useShortcuts'
 import { Keycap, useModalLayer } from './ui'
 
 export default function ShortcutHelp({ actions, route, close }: { actions: AppActions | null; route: string; close: () => void }) {
   const desktop = useMediaQuery('(min-width: 768px)')
+  const touch = useMediaQuery('(pointer: coarse)')
   const ref = useRef<HTMLDivElement>(null), { trap, holdFocus } = useModalLayer(ref)
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null
@@ -16,6 +17,8 @@ export default function ShortcutHelp({ actions, route, close }: { actions: AppAc
   const enabled = (id: AppActionId) => actions?.get(id)?.enabled
   const bindings = [
     ...(enabled('open-commands') ? [[`${modLabel()}+K`, 'Jump to a session or command']] : []),
+    ...(desktop && !touch && ([1, 2, 3, 4, 5] as const).some(n => enabled(`recent-session-${n}`)) ? [[`${isMac() ? '⌥' : 'Alt'}+1–5`, 'Open numbered Recent session']] : []),
+    ...(enabled('previous-session') ? [['`', 'Back to the previous session (backtick: US layouts)']] : []),
     ...(enabled('new-session') ? [['N', actions!.get('new-session')!.label]] : []),
     ...(desktop && enabled('toggle-rail') ? [['[', 'Collapse or expand navigation']] : []),
     ...(route === 'session' && enabled('toggle-details') ? [[']', 'Toggle session details']] : []),

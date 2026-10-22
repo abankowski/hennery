@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- The MCP gateway accepts a body-less 202 or 204 that names a non-JSON
+  content type (e.g. `text/plain` on `notifications/initialized`) instead of
+  answering 502.
+- Recent sessions follow your visits in this browser, with up to six sidebar
+  entries, status icons, hat colours and the current session highlighted.
+  Option/Alt+1–5 opens the numbered entries; backtick returns to this window's
+  previous session. The command palette starts with Recent and preselects
+  that window's previous visit. Collapsed navigation keeps distinct status
+  icons with hat-colour badges. These shortcuts pause while typing, composing
+  text or using a dialog; help shows enabled keys and notes US-layout backtick.
+- The selected hat scopes sessions, Needs you, Recent and their counts.
+  All hats restores the full view. Visit history is bounded, prunes removed or
+  inaccessible sessions and clears on sign-out. Expanding the hat scope checks
+  cached entries for missed deletions; transient lookups retry once with backoff.
+  Collapsed navigation uses icon buttons for appearance and sign-out.
+- Cache runtime models and options per host, project, hat and adapter revision,
+  learning agent defaults from real sessions.
+- Send text and images while a turn is running: messages wait in a durable,
+  editable queue and are delivered in order. Parked sessions offer Resume and
+  send, including keyboard shortcuts. Failed messages stay available to copy;
+  deleting a session also deletes its unsent messages and images.
 - Sessions can group by Hat or Host, then by Project or Nothing. Project
   sections remember their collapse state within the tab and show their path,
   hosts, running count and sessions needing you;

@@ -262,6 +262,7 @@ describe('useSessionItems', () => {
   it('a 404 from the stream marks the session removed', async () => {
     const t = routed((call) => {
       if (call.path.startsWith('/api/stream/')) return json({ code: 'not_found', message: 'no' }, 404)
+      if (call.path.endsWith('/queue')) return json([])
       if (call.path.endsWith('/catalog')) return json(catalog('m1'))
       return json(page([message('a', 't1')], 10))
     })
@@ -273,6 +274,7 @@ describe('useSessionItems', () => {
   it('another refusal from the stream ends it with an error, not removed', async () => {
     const t = routed((call) => {
       if (call.path.startsWith('/api/stream/')) return json({ code: 'invalid', message: 'no' }, 400)
+      if (call.path.endsWith('/queue')) return json([])
       if (call.path.endsWith('/catalog')) return json(catalog('m1'))
       return json(page([], 10))
     })
@@ -334,6 +336,7 @@ describe('useSessionItems', () => {
     const streams: LiveStream[] = []
     const t = routed((call) => {
       if (call.path.includes('before_turn')) return new Promise<Response>((r) => (release = r))
+      if (call.path.endsWith('/queue')) return json([])
       if (call.path.endsWith('/catalog')) return json(catalog('m1'))
       if (call.path.startsWith('/api/stream/')) {
         const live = liveStream()
@@ -387,6 +390,7 @@ describe('useSessionItems', () => {
   it('a first page that is not a page is fetched again', async () => {
     let n = 0
     const t = routed((call) => {
+      if (call.path.endsWith('/queue')) return json([])
       if (call.path.endsWith('/catalog')) return json(catalog('m1'))
       if (call.path.startsWith('/api/stream/')) return liveStream().response
       return json(n++ === 0 ? { nope: true } : page([message('a', 't1')], 10))
@@ -433,6 +437,7 @@ describe('useSessionItems', () => {
     let firstPages = 0
     const t = routed((call) => {
       if (call.path.includes('before_turn')) return new Promise<Response>((r) => older.push(r))
+      if (call.path.endsWith('/queue')) return json([])
       if (call.path.endsWith('/catalog')) return json(catalog('m1'))
       if (call.path.startsWith('/api/stream/')) {
         const live = liveStream()
@@ -509,6 +514,7 @@ describe('useSessionItems', () => {
     const streams: LiveStream[] = []
     const t = routed((call) => {
       if (call.path.includes('before_turn')) return json({ code: 'invalid', message: 'gone' }, 400)
+      if (call.path.endsWith('/queue')) return json([])
       if (call.path.endsWith('/catalog')) return json(catalog('m1'))
       if (call.path.startsWith('/api/stream/')) {
         const live = liveStream()
@@ -533,4 +539,32 @@ describe('useSessionItems', () => {
     await act(() => new Promise((r) => setTimeout(r, 1200)))
     expect(n).toBe(3)
   })
+})
+
+it('a queue stream snapshot wins over a delayed initial GET and reaches both windows', async () => {
+  const pending = deferred<Response>()
+  const streams: LiveStream[] = []
+  const fixture = routed(call => {
+    if (call.path.endsWith('/queue')) return pending.promise
+    if (call.path.endsWith('/catalog')) return json(catalog('model'))
+    if (call.path.includes('/api/stream/')) { const live = liveStream(); streams.push(live); return live.response }
+    return json(page([], 1))
+  })
+  const one = new SessionItemsController(fixture.client, ID, () => undefined)
+  const two = new SessionItemsController(fixture.client, ID, () => undefined)
+  one.start(); two.start()
+  try {
+    await waitFor(() => expect(streams).toHaveLength(2))
+    const queued = [{ id: 'q', state: 'queued', reason: null, content: [{ type: 'text', text: 'From another window' }] }]
+    for (const stream of streams) stream.event('queue_changed', queued, 'e1:2')
+    await waitFor(() => expect(one.getSnapshot().queue).toEqual(queued))
+    await waitFor(() => expect(two.getSnapshot().queue).toEqual(queued))
+    pending.resolve(json([]))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(one.getSnapshot().queue).toEqual(queued)
+    expect(two.getSnapshot().queue).toEqual(queued)
+    for (const stream of streams) stream.event('queue_changed', [], 'e1:3')
+    await waitFor(() => expect(one.getSnapshot().queue).toEqual([]))
+    await waitFor(() => expect(two.getSnapshot().queue).toEqual([]))
+  } finally { one.stop(); two.stop() }
 })

@@ -1,15 +1,23 @@
 -- Test-only rollback of sessions migration 30 before historical fixtures.
 ALTER TABLE sessions DROP COLUMN project_root;
 -- Test-only rollback of sessions migration 29 before historical fixtures.
+ALTER TABLE turns DROP COLUMN operator_queued;
+ALTER TABLE turns DROP COLUMN queue_retry_released;
+DROP TRIGGER prompt_queue_failed;
 DROP TRIGGER prompt_queue_insert;
 DROP TRIGGER prompt_queue_update;
 DROP TRIGGER prompt_queue_delete;
 DROP TRIGGER delegation_endpoint_end;
 DROP TRIGGER delegation_grant_end;
 DROP TABLE prompt_queue_attachments;
+DROP TABLE prompt_receipts;
 ALTER TABLE session_dispatch_queue DROP COLUMN origin;
 ALTER TABLE session_dispatch_queue DROP COLUMN image_bytes;
 ALTER TABLE sessions DROP COLUMN prompt_queue_dirty;
+ALTER TABLE sessions DROP COLUMN prompt_queue_held;
+ALTER TABLE session_dispatch_queue DROP COLUMN failed_at;
+ALTER TABLE session_dispatch_queue DROP COLUMN busy_refusals;
+ALTER TABLE session_dispatch_queue DROP COLUMN retry_after;
 CREATE TRIGGER delegation_endpoint_end AFTER UPDATE OF close_requested,lifecycle,hat_id ON sessions
 WHEN NEW.close_requested = 1 OR NEW.lifecycle IN ('closed','deleted','failed') OR NEW.hat_id <> OLD.hat_id
 BEGIN
@@ -44,9 +52,8 @@ BEGIN
       AND source_id IN (SELECT id FROM sessions WHERE owner_id = NEW.owner_id AND hat_id = NEW.hat_id)
       AND state IN ('queued','waiting_config');
 END;
--- Test-only rollback of sessions migration 28: runtime catalog cache.
+-- Test-only rollback of sessions migrations 28/27: restore the v26 budget CHECK.
 DROP TABLE runtime_catalog;
--- Test-only rollback of sessions migration 27: restore the v26 budget CHECK.
 DROP TABLE delegation_limits;
 DROP TRIGGER notice_endpoint_end;
 ALTER TABLE delegation_budgets RENAME TO delegation_budgets_old;

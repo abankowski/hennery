@@ -477,6 +477,22 @@ async fn only_json_and_event_streams_pass() {
     let note = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
     let resp = s.h.post("linear", &s.token, &note).await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    // Some upstreams name a type on a body-less 202 (seen: `text/plain`
+    // with an empty body). It passes empty; a body and its type never go
+    // down.
+    for body in ["", "Accepted"] {
+        s.upstream.reply(move |_, _| {
+            Response::builder()
+                .status(StatusCode::ACCEPTED)
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(Body::from(body))
+                .unwrap()
+        });
+        let resp = s.h.post("linear", &s.token, &note).await;
+        assert_eq!(resp.status(), StatusCode::ACCEPTED, "{body:?}");
+        assert!(resp.headers().get("content-type").is_none(), "{body:?}");
+        assert_eq!(resp.bytes().await.unwrap().len(), 0, "{body:?}");
+    }
     // A `DELETE` ends the upstream session (G-16): forwarded, 204 back,
     // its id unwrapped (plan 8e decision 13).
     let session =

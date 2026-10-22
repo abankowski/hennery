@@ -439,8 +439,9 @@ BEGIN
       AND (child_id = NEW.id OR parent_id = NEW.id) AND NEW.lifecycle = 'deleted';
     DELETE FROM delegation_budgets WHERE owner_id = NEW.owner_id AND root_id = NEW.id AND NEW.lifecycle = 'deleted';
 END;",
-    // Exact prerequisite schemas from prompt-queue c2d253e2 (28, 29).
+    // Persistent, exactly scoped operator previews (28).
     include_str!("runtime_catalog.sql"),
+    // Shared operator prompt FIFO (29).
     include_str!("prompt_queue.sql"),
     // Repository grouping identity (30). Older hosts/rows retain NULL.
     "ALTER TABLE sessions ADD COLUMN project_root TEXT;",
@@ -832,7 +833,7 @@ pub struct Store {
     owner: String,
     /// Where the attachment files go: `attachments/` beside the database
     /// (kernel spec §1). An in-memory store has none.
-    attachments: Option<PathBuf>,
+    pub(crate) attachments: Option<PathBuf>,
     /// The checkpoint a delete owes (plan 9a A8); an in-memory store has
     /// none.
     checkpoints: Option<Arc<Checkpoints>>,
@@ -1001,7 +1002,7 @@ fn link_attachments(tx: &Transaction<'_>, owner: &str, event_id: i64, content: &
 /// Link a turn to the images its content shows (plan 9a decision 6), as
 /// `link_attachments` links its `user_turn`: an image a turn shows that
 /// never started is still referenced. The links go with the turn.
-fn link_turn_attachments(tx: &Transaction<'_>, owner: &str, turn_id: &str, content: &[Value]) -> Result<()> {
+pub(crate) fn link_turn_attachments(tx: &Transaction<'_>, owner: &str, turn_id: &str, content: &[Value]) -> Result<()> {
     for (position, sha256) in image_hashes(content) {
         tx.execute(
             "INSERT INTO turn_attachments(turn_id, sha256, position, owner_id)
@@ -1015,13 +1016,14 @@ fn link_turn_attachments(tx: &Transaction<'_>, owner: &str, turn_id: &str, conte
 /// Delete the owner's rows of those of `hashes` that nothing of theirs
 /// shows any more, no turn and no event (plan 9a decision 6); the hashes
 /// whose row went. Their files go after the commit (`Store::remove_files`).
-fn drop_unreferenced(tx: &Transaction<'_>, owner: &str, hashes: &BTreeSet<String>) -> Result<Vec<String>> {
+pub(crate) fn drop_unreferenced(tx: &Transaction<'_>, owner: &str, hashes: &BTreeSet<String>) -> Result<Vec<String>> {
     let mut dropped = Vec::new();
     for sha256 in hashes {
         let gone = tx.execute(
             "DELETE FROM attachments WHERE owner_id = ?1 AND sha256 = ?2
                  AND NOT EXISTS (SELECT 1 FROM turn_attachments WHERE owner_id = ?1 AND sha256 = ?2)
-                 AND NOT EXISTS (SELECT 1 FROM event_attachments WHERE owner_id = ?1 AND sha256 = ?2)",
+                 AND NOT EXISTS (SELECT 1 FROM event_attachments WHERE owner_id = ?1 AND sha256 = ?2)
+                 AND NOT EXISTS (SELECT 1 FROM prompt_queue_attachments WHERE owner_id = ?1 AND sha256 = ?2)",
             [owner, sha256],
         )?;
         if gone == 1 {
@@ -1070,6 +1072,11 @@ fn turn_not_delivered(
     turn_id: &str,
     ts: &str,
 ) -> Result<EventDto> {
+    let queued: bool = tx.query_row(
+        "SELECT operator_queued FROM turns WHERE owner_id = ?1 AND turn_id=?2",
+        [owner, turn_id],
+        |r| r.get(0),
+    )?;
     tx.execute(
         "UPDATE turns SET state = 'not_delivered' WHERE turn_id = ?1 AND owner_id = ?2",
         [turn_id, owner],
@@ -1079,14 +1086,11 @@ fn turn_not_delivered(
          WHERE id = ?1 AND open_turn_id = ?2 AND owner_id = ?3",
         params![session_id, turn_id, owner],
     )?;
-    collector_event(
-        tx,
-        owner,
-        session_id,
-        "turn_not_delivered",
-        json!({ "turn_id": turn_id }),
-        ts,
-    )
+    let mut body = json!({ "turn_id": turn_id });
+    if queued {
+        body["operator_queued"] = json!(true);
+    }
+    collector_event(tx, owner, session_id, "turn_not_delivered", body, ts)
 }
 
 /// Resolve an open turn the host will never end: `interrupted` if the
@@ -1260,6 +1264,11 @@ fn store_catalogue(tx: &Transaction<'_>, owner: &str, session_id: &str, indexed:
              WHERE session_catalog.owner_id = excluded.owner_id",
         params![session_id, serde_json::to_string(&options)?, ts, owner],
     )?;
+    if !indexed.early
+        && let Some(identity) = &indexed.catalog_identity
+    {
+        crate::delegation_runtime::save_session_catalog_in(tx, owner, session_id, indexed, identity)?;
+    }
     Ok(())
 }
 
@@ -1470,7 +1479,7 @@ fn list_statement(by_hat: bool) -> String {
 type ConfigColumns = (Option<String>, Option<String>, Option<String>);
 
 /// A session's stored config, from its `model`, `mode` and `config_axes`.
-fn stored_config((model, mode, axes): ConfigColumns) -> Result<SessionConfig> {
+pub(crate) fn stored_config((model, mode, axes): ConfigColumns) -> Result<SessionConfig> {
     let axes: BTreeMap<String, ConfigValue> = match axes {
         Some(axes) => serde_json::from_str(&axes)?,
         None => BTreeMap::new(),
@@ -2796,6 +2805,17 @@ impl Store {
         self.open_turn_with_startup(session_id, turn_id, &prompt.stored_json(), &prompt.images, startup)
     }
 
+    pub fn open_prompt_with_startup_and_key(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        prompt: &Checked,
+        startup: &mut Option<hennery_proto::plugin::StartupRecord>,
+        key: Option<&crate::prompt_receipts::PromptRequestKey>,
+    ) -> Result<crate::prompt_receipts::PromptAdmission> {
+        self.open_turn_with_startup_and_key(session_id, turn_id, &prompt.stored_json(), &prompt.images, startup, key)
+    }
+
     fn open_turn_with(&self, session_id: &str, turn_id: &str, content: &[Value], images: &[Image]) -> Result<bool> {
         self.open_turn_with_startup(session_id, turn_id, content, images, &mut None)
     }
@@ -2808,13 +2828,36 @@ impl Store {
         images: &[Image],
         startup: &mut Option<hennery_proto::plugin::StartupRecord>,
     ) -> Result<bool> {
+        match self.open_turn_with_startup_and_key(session_id, turn_id, content, images, startup, None)? {
+            crate::prompt_receipts::PromptAdmission::Opened => Ok(true),
+            crate::prompt_receipts::PromptAdmission::MustQueue => Ok(false),
+            crate::prompt_receipts::PromptAdmission::Existing(_) => anyhow::bail!("unexpected keyed receipt"),
+        }
+    }
+
+    fn open_turn_with_startup_and_key(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        content: &[Value],
+        images: &[Image],
+        startup: &mut Option<hennery_proto::plugin::StartupRecord>,
+        key: Option<&crate::prompt_receipts::PromptRequestKey>,
+    ) -> Result<crate::prompt_receipts::PromptAdmission> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        if let Some(receipt) = crate::prompt_receipts::lookup_in(&tx, &self.owner, session_id, key)? {
+            return Ok(crate::prompt_receipts::PromptAdmission::Existing(receipt));
+        }
         let changed = tx.execute(
             "UPDATE sessions SET open_turn_id = ?2
              WHERE id = ?1 AND lifecycle = 'active' AND open_turn_id IS NULL AND owner_id = ?3
-             AND close_requested = 0 AND NOT EXISTS(SELECT 1 FROM purged_hats p
-                WHERE p.owner_id = ?3 AND p.hat_id = sessions.hat_id)",
+             AND close_requested = 0 AND prompt_queue_held=0
+             AND NOT EXISTS(SELECT 1 FROM hosts h WHERE h.owner_id = ?3 AND h.id=sessions.host_id AND h.revoked_at IS NOT NULL)
+             AND NOT EXISTS(SELECT 1 FROM purged_hats p
+                WHERE p.owner_id = ?3 AND p.hat_id = sessions.hat_id)
+             AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?3 AND q.target_id = ?1 AND q.state IN ('queued','waiting_config','awaiting_reconciliation'))
+             AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?3 AND p.session_id = ?1 AND p.state='open')",
             params![session_id, turn_id, self.owner],
         )?;
         if changed == 1 {
@@ -2851,9 +2894,22 @@ impl Store {
                 }
             }
             link_turn_attachments(&tx, &self.owner, turn_id, &content)?;
+            crate::prompt_receipts::record_in(
+                &tx,
+                &self.owner,
+                session_id,
+                key,
+                &crate::prompt_receipts::PromptReceipt::Turn {
+                    turn_id: turn_id.into(),
+                },
+            )?;
         }
         tx.commit()?;
-        Ok(changed == 1)
+        Ok(if changed == 1 {
+            crate::prompt_receipts::PromptAdmission::Opened
+        } else {
+            crate::prompt_receipts::PromptAdmission::MustQueue
+        })
     }
 
     /// Save each image's file (plan 6a), before `open_prompt` records it.
@@ -2926,6 +2982,14 @@ impl Store {
     pub fn abandon_turn(&self, session_id: &str, turn_id: &str) -> Result<()> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let unsent: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM turns WHERE owner_id = ?1 AND session_id=?2 AND turn_id=?3 AND state='sent')",
+            params![self.owner, session_id, turn_id],
+            |r| r.get(0),
+        )?;
+        if !unsent {
+            return Ok(());
+        }
         tx.execute(
             "UPDATE sessions SET open_turn_id = NULL WHERE id = ?1 AND open_turn_id = ?2 AND owner_id = ?3",
             params![session_id, turn_id, self.owner],
@@ -2940,6 +3004,12 @@ impl Store {
             "DELETE FROM turns WHERE turn_id = ?1 AND owner_id = ?2",
             [turn_id, &self.owner],
         )?;
+        // This path proves the host never accepted the still-sent turn.
+        // Accepted/uncertain turns are reconciled elsewhere and retain keys.
+        tx.execute(
+            "DELETE FROM prompt_receipts WHERE owner_id = ?1 AND session_id=?2 AND receipt_kind='turn' AND receipt_id=?3",
+            params![self.owner, session_id, turn_id],
+        )?;
         let dropped = drop_unreferenced(&tx, &self.owner, &hashes)?;
         tx.commit()?;
         self.remove_files(&conn, &dropped);
@@ -2952,7 +3022,7 @@ impl Store {
     /// it, since files are shared by hash. A file gone already is fine. One
     /// that cannot be removed is logged and left: its rows are gone, and
     /// plan 9b's sweep removes a file no row names (decision 7).
-    fn remove_files(&self, conn: &Connection, dropped: &[String]) {
+    pub(crate) fn remove_files(&self, conn: &Connection, dropped: &[String]) {
         let Some(dir) = self.attachments.as_deref() else {
             return;
         };
@@ -2994,7 +3064,9 @@ impl Store {
                  AND NOT EXISTS (SELECT 1 FROM turn_attachments
                      WHERE turn_attachments.owner_id = ?1 AND turn_attachments.sha256 = attachments.sha256)
                  AND NOT EXISTS (SELECT 1 FROM event_attachments
-                     WHERE event_attachments.owner_id = ?1 AND event_attachments.sha256 = attachments.sha256)",
+                     WHERE event_attachments.owner_id = ?1 AND event_attachments.sha256 = attachments.sha256)
+                 AND NOT EXISTS (SELECT 1 FROM prompt_queue_attachments
+                     WHERE prompt_queue_attachments.owner_id = ?1 AND prompt_queue_attachments.sha256 = attachments.sha256)",
             [&self.owner],
         )?;
         let mut report = SweepReport {
@@ -3140,7 +3212,9 @@ impl Store {
                  WHERE owner_id = ?2 AND turn_id IN (SELECT turn_id FROM turns WHERE session_id = ?1 AND owner_id = ?2)
                  UNION
                  SELECT sha256 FROM event_attachments
-                 WHERE owner_id = ?2 AND event_id IN (SELECT event_id FROM events WHERE session_id = ?1 AND owner_id = ?2)",
+                 WHERE owner_id = ?2 AND event_id IN (SELECT event_id FROM events WHERE session_id = ?1 AND owner_id = ?2)
+                 UNION SELECT a.sha256 FROM prompt_queue_attachments a JOIN session_dispatch_queue q ON q.owner_id = ?2 AND q.operation_id=a.operation_id
+                 WHERE a.owner_id = ?2 AND q.target_id=?1",
             )?;
             let rows = stmt.query_map([session_id, &self.owner], |r| r.get(0))?;
             rows.collect::<rusqlite::Result<_>>()?
@@ -3165,6 +3239,19 @@ impl Store {
             "DELETE FROM session_catalog WHERE session_id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
         )?;
+        // A later attachment can own the options while retaining an earlier
+        // session's agent baseline. Forget only that baseline, not its options.
+        tx.execute(
+            "UPDATE runtime_catalog SET catalog=json_set(catalog,'$.defaults',json_object()),defaults_source_session_id=NULL
+             WHERE owner_id = ?1 AND defaults_source_session_id=?2 AND source_session_id IS NOT ?2",
+            params![self.owner, session_id],
+        )?;
+        // Includes previews supplied before a hat reassignment, without
+        // touching a newer preview from another session or an explicit Refresh.
+        tx.execute(
+            "DELETE FROM runtime_catalog WHERE owner_id = ?1 AND source_session_id=?2",
+            params![self.owner, session_id],
+        )?;
         tx.execute(
             "DELETE FROM turns WHERE session_id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
@@ -3184,6 +3271,10 @@ impl Store {
                      WHERE owner_id = ?1 AND host_id = ?2 AND hat_id = ?3 AND cwd = ?4 AND id <> ?5
                          AND lifecycle <> 'deleted')",
             params![self.owner, host_id, hat_id, cwd, session_id],
+        )?;
+        tx.execute(
+            "DELETE FROM session_dispatch_queue WHERE owner_id = ?1 AND (source_id=?2 OR target_id=?2)",
+            params![self.owner, session_id],
         )?;
         let dropped = drop_unreferenced(&tx, &self.owner, &hashes)?;
         // What is left to remove on the host, before the scrub (plan 9d
@@ -3208,7 +3299,7 @@ impl Store {
                  config_axes = NULL, agent_session_id = NULL, failure_reason = NULL, hat_rule_id = NULL,
                  open_turn_id = NULL, activity = NULL, presumed_parked = 0, close_requested = 0, agent_home = NULL,
                  mcp_delivery_mode = NULL, mcp_delivery_servers = NULL, mcp_delivery_at = NULL,
-                 idle_pinned = 0, idle_hold_dirty = 0
+                 idle_pinned = 0, idle_hold_dirty = 0, prompt_queue_dirty = 0, prompt_queue_held = 0
              WHERE id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
         )?;
@@ -3323,8 +3414,23 @@ impl Store {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let event = collector_event(&tx, &self.owner, session_id, "operator_parked", json!({}), &now())?;
+        tx.execute(
+            "UPDATE sessions SET prompt_queue_held=1 WHERE owner_id = ?1 AND id=?2 AND lifecycle<>'deleted'",
+            params![self.owner_id(), session_id],
+        )?;
         tx.commit()?;
         Ok(event)
+    }
+
+    /// A proven-unsent/rejected Park cannot leave a handshake hold behind.
+    /// A later Park has its own event and retains its newer operator intent.
+    pub fn release_rejected_park(&self, session: &str, event: i64) -> Result<()> {
+        self.conn().execute(
+            "UPDATE sessions SET prompt_queue_held=0 WHERE owner_id = ?1 AND id=?2 AND lifecycle='active'
+             AND ?3=(SELECT MAX(e.event_id) FROM events e WHERE e.owner_id = ?1 AND e.session_id=?2 AND e.kind='operator_parked')",
+            params![self.owner_id(),session,event],
+        )?;
+        Ok(())
     }
 
     /// Record an operator close of an attached session before
@@ -3474,7 +3580,7 @@ impl Store {
         )?);
         tx.execute(
             "UPDATE sessions SET lifecycle = 'starting', activity = NULL, failure_reason = NULL,
-                 close_requested = 0, open_turn_id = NULL, presumed_parked = 0
+                 close_requested = 0, open_turn_id = NULL, presumed_parked = 0, prompt_queue_held = 0
              WHERE id = ?1 AND owner_id = ?2",
             [session_id, &self.owner],
         )?;
@@ -3926,6 +4032,16 @@ impl Store {
                 }
             }
             SessionBody::TurnStarted { turn_id, .. } => {
+                // A released queue attempt has a replacement at the same FIFO
+                // position. Its late fact is kept unapplied, never revived.
+                let retry_released: bool = tx
+                    .query_row(
+                        "SELECT queue_retry_released FROM turns WHERE owner_id = ?1 AND turn_id=?2",
+                        [&self.owner, turn_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                    .unwrap_or(false);
                 // The fact wins over reconciliation, but never over a fact
                 // already resolved (fix round 1, ruling A, extending
                 // decision 2): a late `turn_started` applies only when the
@@ -3946,42 +4062,64 @@ impl Store {
                 )?;
                 // A presumed-parked session is still attached as far as its
                 // host's facts go (ACP core §5.3).
-                let applies = (lifecycle == "active" || presumed)
+                let terminal_operator: bool = matches!(lifecycle.as_str(), "closed" | "failed") && tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM session_operations WHERE owner_id = ?1 AND child_id=?2 AND turn_id=?3 AND tool='operator_prompt' AND state='failed')",
+                    params![self.owner_id(), session_id, turn_id], |r| r.get(0),
+                )?;
+                let applies = !retry_released
+                    && (lifecycle == "active" || presumed || terminal_operator)
                     && matches!(turn_state.as_deref(), Some("sent") | Some("not_delivered"));
                 let mut takes_slot = false;
                 if applies {
-                    takes_slot = match slot.as_deref() {
-                        None => true,
-                        Some(t) if t == turn_id => true,
-                        Some(other) => {
-                            // The host serialises turns: if the one holding
-                            // the slot never started, `turn_id`'s late fact
-                            // takes the slot back and that turn is released
-                            // as `turn_not_delivered` — before `turn_id`'s
-                            // own `user_turn` (timeline order).
-                            let other_state: Option<String> = tx
-                                .query_row(
-                                    "SELECT state FROM turns WHERE turn_id = ?1 AND owner_id = ?2",
-                                    [other, &self.owner],
-                                    |r| r.get(0),
-                                )
-                                .optional()?;
-                            if other_state.as_deref() == Some("sent") {
-                                created.push(turn_not_delivered(&tx, &self.owner, session_id, other, &ts)?);
-                                true
-                            } else {
-                                // The slot holds a turn already `started`:
-                                // store the fact, apply nothing.
-                                false
+                    takes_slot = terminal_operator
+                        || match slot.as_deref() {
+                            None => true,
+                            Some(t) if t == turn_id => true,
+                            Some(other) => {
+                                // The host serialises turns: if the one holding
+                                // the slot never started, `turn_id`'s late fact
+                                // takes the slot back and that turn is released
+                                // as `turn_not_delivered` — before `turn_id`'s
+                                // own `user_turn` (timeline order).
+                                let other_state: Option<String> = tx
+                                    .query_row(
+                                        "SELECT state FROM turns WHERE turn_id = ?1 AND owner_id = ?2",
+                                        [other, &self.owner],
+                                        |r| r.get(0),
+                                    )
+                                    .optional()?;
+                                if other_state.as_deref() == Some("sent") {
+                                    // Slot takeover is not a reconnect snapshot:
+                                    // the displaced command may still be in the
+                                    // actor's mailbox. Even a snapshot-capable host
+                                    // supplies no non-admission proof here. Fail
+                                    // operator Q before settlement can requeue it;
+                                    // a real later start still repairs its state.
+                                    tx.execute(
+                                        "UPDATE session_operations SET state='failed',code='not_delivered'
+                                         WHERE owner_id = ?1 AND child_id=?2 AND turn_id=?3 AND tool='operator_prompt'
+                                         AND state='awaiting_reconciliation'
+                                         AND operation_id IN (SELECT operation_id FROM session_dispatch_queue
+                                             WHERE owner_id = ?1 AND target_id=?2 AND origin='operator' AND state='awaiting_reconciliation')",
+                                        params![self.owner_id(),session_id,other],
+                                    )?;
+                                    created.push(turn_not_delivered(&tx, &self.owner, session_id, other, &ts)?);
+                                    true
+                                } else {
+                                    // The slot holds a turn already `started`:
+                                    // store the fact, apply nothing.
+                                    false
+                                }
                             }
-                        }
-                    };
+                        };
                 }
                 if takes_slot {
-                    tx.execute(
+                    if !terminal_operator {
+                        tx.execute(
                         "UPDATE sessions SET activity = 'running', open_turn_id = ?2 WHERE id = ?1 AND owner_id = ?3",
                         params![session_id, turn_id, self.owner],
                     )?;
+                    }
                     tx.execute(
                         "UPDATE turns SET state = 'started' WHERE turn_id = ?1 AND owner_id = ?2",
                         [turn_id, &self.owner],
@@ -4065,9 +4203,10 @@ impl Store {
                 let changed = tx.execute(
                     "UPDATE sessions SET
                          lifecycle = CASE WHEN close_requested = 1 THEN 'closed' ELSE 'parked' END,
-                         activity = NULL, close_requested = 0, presumed_parked = 0
+                         activity = NULL, close_requested = 0, presumed_parked = 0,
+                         prompt_queue_held = CASE WHEN prompt_queue_held=1 THEN 1 ELSE 0 END
                      WHERE id = ?1 AND owner_id = ?2 AND (lifecycle = 'active' OR presumed_parked = 1)",
-                    [session_id, &self.owner],
+                    params![session_id, self.owner],
                 )?;
                 if changed == 0 {
                     created.clear();
@@ -4534,14 +4673,24 @@ impl Store {
                         tx.execute(
                             "UPDATE sessions SET
                                  lifecycle = CASE WHEN close_requested = 1 THEN 'closed' ELSE 'parked' END,
-                                 activity = NULL, open_turn_id = NULL, close_requested = 0, presumed_parked = 0
+                                 activity = NULL, open_turn_id = NULL, close_requested = 0, presumed_parked = 0,
+                                 prompt_queue_held = CASE WHEN prompt_queue_held=1 THEN 1 ELSE 0 END
                              WHERE id = ?1 AND owner_id = ?2",
                             [&id, &self.owner],
                         )?;
                         // The restarted host runs no adapter of it (lane L4).
                         cut = cut.and(mcp.revoke_in(&tx, &id)?);
                     } else if close_requested {
-                        out.close.push(id);
+                        out.close.push(id.clone());
+                    }
+                    if host.is_some_and(|attached| attached.ending != Some(true)) {
+                        // An ending actor remains attached until its last fact
+                        // is outboxed. Only a continuing actor disproves Park.
+                        // Legacy snapshots omit ending and retain their prior semantics.
+                        tx.execute(
+                            "UPDATE sessions SET prompt_queue_held=0 WHERE owner_id = ?1 AND id=?2",
+                            [&self.owner, &id],
+                        )?;
                     }
                 }
                 // Nothing is written for a tombstone (plan 9a decision 4): its
@@ -4551,7 +4700,7 @@ impl Store {
                 _ => {}
             }
         }
-        self.settle_notices_in(&tx)?;
+        self.settle_delegation_in(&tx)?;
         commit_then_cut(tx, mcp.as_ref(), cut)?;
         Ok(out)
     }
@@ -4912,7 +5061,7 @@ impl Store {
             .view_conn()
             .query_row(
                 "SELECT content FROM turns
-                 WHERE turn_id = ?1 AND session_id = ?2 AND state = 'not_delivered' AND owner_id = ?3",
+                 WHERE turn_id = ?1 AND session_id = ?2 AND state = 'not_delivered' AND operator_queued=0 AND owner_id = ?3",
                 [turn_id, session_id, &self.owner],
                 |r| r.get(0),
             )
@@ -5589,6 +5738,67 @@ mod tests {
     }
 
     #[test]
+    fn operator_queue_migration29_preserves_v28_catalog_schema_and_delegated_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let mut conn = hennery_kernel::db::open(&db).unwrap();
+        let owner = hennery_kernel::db::kernel_owner(&mut conn).unwrap();
+        hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..28]).unwrap();
+        for column in ["source_session_id", "defaults_source_session_id"] {
+            let present: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('runtime_catalog') WHERE name=?1)",
+                    [column],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(
+                present,
+                "migration 29 must upgrade main's final migration 28, including {column}"
+            );
+        }
+        assert!(
+            !conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('session_dispatch_queue') WHERE name='origin')",
+                    [],
+                    |r| r.get::<_, bool>(0),
+                )
+                .unwrap(),
+            "operator queue columns belong to migration 29"
+        );
+        let catalog_schema: String = conn
+            .query_row("SELECT sql FROM sqlite_schema WHERE name='runtime_catalog'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute("INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,created_at,last_event_at) VALUES ('kept',?1,'host','hat','claude','/project','active','t','t')", [&owner]).unwrap();
+        conn.execute("INSERT INTO session_operations(owner_id,caller_id,operation_key,operation_id,digest,tool,child_id,state) VALUES (?1,'kept','key','op','digest','session_send','kept','queued')", [&owner]).unwrap();
+        conn.execute("INSERT INTO session_dispatch_queue(owner_id,operation_id,source_id,target_id,accepted_revision,payload,required_config) VALUES (?1,'op','kept','kept',0,?2,?3)", params![owner,"delegated work","{}"] ).unwrap();
+        hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..29]).unwrap();
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            29
+        );
+        assert_eq!(
+            conn.query_row("SELECT sql FROM sqlite_schema WHERE name='runtime_catalog'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            catalog_schema
+        );
+        let row: (String, String, String) = conn
+            .query_row(
+                "SELECT payload,state,origin FROM session_dispatch_queue WHERE owner_id = ?1 AND operation_id='op'",
+                [&owner],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("delegated work".into(), "queued".into(), "parent".into()));
+    }
+
+    #[test]
     fn operator_limits_migration27_preserves_budgets_and_the_endpoint_trigger() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("hennery.db");
@@ -5604,7 +5814,7 @@ mod tests {
             .unwrap();
         }
         assert!(
-            conn.execute("UPDATE delegation_budgets SET wakes=21 WHERE owner_id=?1", [&owner])
+            conn.execute("UPDATE delegation_budgets SET wakes=21 WHERE owner_id = ?1", [&owner])
                 .is_err()
         );
         let original: String = conn
@@ -5633,7 +5843,7 @@ mod tests {
             0
         );
         let rows: Vec<(i64, i64)> = conn
-            .prepare("SELECT epoch,wakes FROM delegation_budgets WHERE owner_id=?1 ORDER BY epoch")
+            .prepare("SELECT epoch,wakes FROM delegation_budgets WHERE owner_id = ?1 ORDER BY epoch")
             .unwrap()
             .query_map([&owner], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap()
@@ -5641,22 +5851,22 @@ mod tests {
             .collect();
         assert_eq!(rows, [(0, 20), (41, 20)]);
         assert_eq!(
-            conn.execute("UPDATE delegation_budgets SET wakes=64 WHERE owner_id=?1", [&owner])
+            conn.execute("UPDATE delegation_budgets SET wakes=64 WHERE owner_id = ?1", [&owner])
                 .unwrap(),
             2
         );
         assert!(
-            conn.execute("UPDATE delegation_budgets SET wakes=65 WHERE owner_id=?1", [&owner])
+            conn.execute("UPDATE delegation_budgets SET wakes=65 WHERE owner_id = ?1", [&owner])
                 .is_err()
         );
         conn.execute(
-            "UPDATE sessions SET lifecycle='deleted' WHERE owner_id=?1 AND id='root'",
+            "UPDATE sessions SET lifecycle='deleted' WHERE owner_id = ?1 AND id='root'",
             [&owner],
         )
         .unwrap();
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM delegation_budgets WHERE owner_id=?1",
+                "SELECT COUNT(*) FROM delegation_budgets WHERE owner_id = ?1",
                 [&owner],
                 |r| r.get::<_, i64>(0)
             )
@@ -5708,6 +5918,39 @@ mod tests {
             ]
         );
         hennery_kernel::db::migrate(&mut conn, MIGRATIONS).unwrap();
+    }
+
+    #[test]
+    fn runtime_catalog_migration28_preserves_v27_session_catalogs_without_inventing_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("hennery.db");
+        let mut conn = hennery_kernel::db::open(&db).unwrap();
+        let owner = hennery_kernel::db::kernel_owner(&mut conn).unwrap();
+        hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..27]).unwrap();
+        conn.execute("INSERT INTO sessions(id,owner_id,host_id,hat_id,agent,cwd,lifecycle,created_at,last_event_at) VALUES ('retained',?1,'host','hat','claude','/project','parked','t','t')",[&owner]).unwrap();
+        conn.execute("INSERT INTO session_catalog(session_id,owner_id,config_options,updated_at) VALUES ('retained',?1,'[{\"id\":\"model\"}]','t')",[&owner]).unwrap();
+        hennery_kernel::db::migrate(&mut conn, MIGRATIONS).unwrap();
+        let retained: String = conn
+            .query_row(
+                "SELECT config_options FROM session_catalog WHERE owner_id=?1 AND session_id='retained'",
+                [&owner],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, "[{\"id\":\"model\"}]");
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM runtime_catalog", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "old sessions have no host-owned adapter identity to backfill");
+        assert!(
+            conn.prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .query([])
+                .unwrap()
+                .next()
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

@@ -800,7 +800,7 @@ impl Harness {
     async fn catalog(&self, agent: &str) -> Result<HostCatalog> {
         let response = self
             .client
-            .get(format!("{}/api/hosts/{HOST}/runtime-catalog", self.url))
+            .post(format!("{}/api/hosts/{HOST}/runtime-catalog", self.url))
             .query(&[
                 ("agent", agent),
                 ("cwd", self.dir.path().to_str().context("cwd encoding")?),
@@ -1693,6 +1693,7 @@ fn busy_parent_prompt_specifies_new_task_tool_arguments_and_real_approval() {
 #[test]
 fn codex_parent_medium_is_explicit_catalog_checked_and_does_not_raise_child_effort() {
     let catalog = HostCatalog {
+        saved_at: None,
         agent: "codex".into(),
         adapter_revision: String::new(),
         config_options: vec![

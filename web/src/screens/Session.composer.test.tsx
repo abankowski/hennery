@@ -49,7 +49,7 @@ describe('SessionView: the composer', () => {
     send()
     await waitFor(() => expect(s.posted('/prompt')).toHaveLength(1), WAIT)
     expect(s.posted('/prompt')).toEqual([
-      { path: '/api/sessions/s1/prompt', body: { content: [{ type: 'text', text: 'hello there' }] } },
+      { path: '/api/sessions/s1/prompt', body: { request_key: expect.any(String), content: [{ type: 'text', text: 'hello there' }] } },
     ])
     await waitFor(() => expect(textarea().value).toBe(''), WAIT)
   })
@@ -87,11 +87,12 @@ describe('SessionView: the composer', () => {
     expect(screen.getByRole('button', { name: 'Attach images' })).toBeInTheDocument()
   })
 
-  it('offers Cancel, not Send, while the session runs a turn', async () => {
+  it('offers Send beside Cancel while the session runs a turn', async () => {
     const s = sessionServer({ detail: { activity: 'running' } })
     render(view('s1'), { wrapper: s.wrapper })
     await screen.findByRole('button', { name: 'Cancel' }, WAIT)
-    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
+    type('next prompt')
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
   })
 
   it('offers images on a host with the images capability', async () => {
@@ -122,6 +123,7 @@ describe('SessionView: the composer', () => {
       {
         path: '/api/sessions/s2/prompt',
         body: {
+          request_key: expect.any(String),
           content: [
             { type: 'text', text: 'second ' },
             { type: 'image', mimeType: 'image/png', data: base64('TWO') },
@@ -247,8 +249,8 @@ describe('SessionView: a send in flight when the composer is mounted again', () 
     await waitFor(() => expect(textarea().value).toBe(''), WAIT)
     expect(textarea().readOnly).toBe(false)
     expect(s.posted('/prompt').map((p) => p.body)).toEqual([
-      { content: [{ type: 'text', text: 'later' }] },
-      { content: [{ type: 'text', text: 'later' }] },
+      { request_key: expect.any(String), content: [{ type: 'text', text: 'later' }] },
+      { request_key: expect.any(String), content: [{ type: 'text', text: 'later' }] },
     ])
   })
 })
@@ -282,6 +284,7 @@ describe('SessionView: Send again', () => {
     send()
     await waitFor(() => expect(s.posted('/prompt')).toHaveLength(1), WAIT)
     expect(s.posted('/prompt')[0].body).toEqual({
+      request_key: expect.any(String),
       content: [
         { type: 'text', text: 'look at ' },
         { type: 'image', mimeType: 'image/png', data: base64('PNG!') },
@@ -310,6 +313,7 @@ describe('SessionView: Send again', () => {
     send()
     await waitFor(() => expect(s.posted('/prompt')).toHaveLength(1), WAIT)
     expect(s.posted('/prompt')[0].body).toEqual({
+      request_key: expect.any(String),
       content: [
         { type: 'text', text: 'see [Image #1] above ' },
         { type: 'image', mimeType: 'image/png', data: base64('PNG!') },
@@ -436,4 +440,14 @@ describe('SessionView: Send again', () => {
     expect(textarea().value).toBe('')
     expect(screen.queryByRole('list', { name: 'Images' })).toBeNull()
   })
+})
+
+it('places the parked notice and standalone Resume before the composer input', async () => {
+  const s = sessionServer({ detail: { lifecycle: 'parked', activity: undefined } })
+  render(view('s1'), { wrapper: s.wrapper })
+  const notice = await screen.findByText('This session is parked.', { exact: true })
+  const resume = screen.getByRole('button', { name: 'Resume' })
+  expect(notice.compareDocumentPosition(textarea()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(resume.compareDocumentPosition(textarea()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Resume and send' })).toBeInTheDocument()
 })

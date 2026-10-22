@@ -24,7 +24,7 @@ export function useMcpOauth(item: McpConnectionItem, refresh: () => Promise<McpC
     setState({ phase: 'idle' })
     return () => { version.current++; stop(true) }
   }, [item.id, item.url, item.cred_kind, item.oauth?.pending_client?.client_id])
-  const connect = (resource?: string) => {
+  const connect = (resource?: string, localRedirectUri?: string) => {
     if (current.current) return
     let popup: Window | null = null
     try {
@@ -76,7 +76,10 @@ export function useMcpOauth(item: McpConnectionItem, refresh: () => Promise<McpC
     // Listeners exist before navigation, but cannot complete a pending authorize.
     void (async () => {
       try {
-        const response = await authorize(client, item.id, resource === undefined ? {} : { accept_resource: resource }, a.abort.signal)
+        const response = await authorize(client, item.id, {
+          ...(resource === undefined ? {} : { accept_resource: resource }),
+          ...(localRedirectUri === undefined ? {} : { local_redirect_uri: localRedirectUri }),
+        }, a.abort.signal)
         if (current.current !== a) return
         const url = consentUrl(response.consent_url)
         const until = consentTimeout(response.expires_at, response.serverTime)

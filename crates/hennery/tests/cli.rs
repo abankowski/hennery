@@ -91,6 +91,92 @@ fn help_lists_the_skeleton_commands() {
 }
 
 #[test]
+fn oauth_callback_reports_occupied_port_and_refuses_nonlocal_or_foreign_configuration() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let local = format!("http://{}/callback", listener.local_addr().unwrap());
+    for (collector, redirect, expected) in [
+        ("https://collector.example", local.as_str(), "port may be in use"),
+        ("https://collector.example", "http://0.0.0.0:8976/callback", "loopback"),
+        (
+            "https://collector.example/path",
+            "http://localhost:8976/callback",
+            "invalid collector origin",
+        ),
+    ] {
+        let output = hennery()
+            .args(["oauth-callback", "--collector", collector, "--redirect-uri", redirect])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn oauth_callback_timeout_closes_the_listener_without_logging_the_response() {
+    hennery_testkit::first_exec(&hennery().get_program().to_string_lossy());
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let local = format!("http://{address}/callback");
+    let mut child = hennery()
+        .args([
+            "oauth-callback",
+            "--collector",
+            "https://collector.example",
+            "--redirect-uri",
+            &local,
+            "--timeout-secs",
+            "2",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut observed = false;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if let Ok(mut stream) = TcpStream::connect(address) {
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            write!(stream, "GET /callback?code=local-code-canary&state=local-state-canary HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 302"));
+            assert!(response.contains("location: https://collector.example/api/mcp/oauth/callback?code=local-code-canary&state=local-state-canary"));
+            assert!(response.contains("cache-control: no-store"));
+            assert!(response.contains("referrer-policy: no-referrer"));
+            observed = true;
+            break;
+        }
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let status = wait_with_timeout(&mut child, Duration::from_secs(15));
+    if status.is_none() {
+        child.kill().unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(observed, "receiver must actually serve a browser redirect");
+    assert!(status.is_some());
+    assert!(!output.status.success());
+    let diagnostic = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostic.contains("receiver timed out"), "{diagnostic}");
+    assert!(!diagnostic.contains("local-code-canary"));
+    assert!(!diagnostic.contains("local-state-canary"));
+    assert!(TcpStream::connect(address).is_err(), "listener must close at timeout");
+}
+
+#[test]
 fn host_help_lists_join_and_run() {
     let out = hennery().args(["host", "--help"]).output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout);

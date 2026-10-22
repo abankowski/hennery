@@ -289,6 +289,94 @@ async fn cold_catalog_uses_selected_adapter_without_prompt_or_mcp() {
     assert_eq!(requests.lines().count(), 1);
 }
 
+async fn wait_process_gone(pid: i32, group: bool) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            // SAFETY: signal zero only checks the process/group created by this test.
+            let alive = unsafe { libc::kill(if group { -pid } else { pid }, 0) == 0 };
+            if !alive {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("probe process subtree must be gone");
+}
+
+struct ProbeCleanup(std::path::PathBuf);
+impl Drop for ProbeCleanup {
+    fn drop(&mut self) {
+        // A failed removal probe must not strand its intentionally surviving child.
+        for (path, group) in [(&self.0, false), (&self.0.with_extension("group"), true)] {
+            if let Some(pid) = std::fs::read_to_string(path)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<i32>().ok())
+            {
+                // SAFETY: these files name only processes created by this test.
+                unsafe {
+                    libc::kill(if group { -pid } else { pid }, libc::SIGKILL);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn successful_catalog_probe_terminates_the_whole_process_group() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().canonicalize().unwrap();
+    let pid_file = cwd.join("grandchild.pid");
+    let mut cleanup = ProbeCleanup(pid_file.clone());
+    let mut s = script();
+    s.grandchild_pid_file = Some(pid_file.display().to_string());
+    let probes = CatalogProbes::new(1, Duration::from_secs(10));
+    probes
+        .catalog(
+            "chosen",
+            fake(s, &cwd),
+            Profile::Generic,
+            cwd.clone(),
+            vec![cwd.clone()],
+        )
+        .await
+        .unwrap();
+    let child = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+    let group = std::fs::read_to_string(pid_file.with_extension("group"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    wait_process_gone(child, false).await;
+    wait_process_gone(group, true).await;
+    cleanup.0.clear();
+    probes
+        .catalog("again", fake(script(), &cwd), Profile::Generic, cwd.clone(), vec![cwd])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn setsid_descendant_escapes_the_probe_group_and_requires_explicit_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().canonicalize().unwrap();
+    let pid_file = cwd.join("escaped.pid");
+    let cleanup = ProbeCleanup(pid_file.clone());
+    let mut s = script();
+    s.grandchild_pid_file = Some(pid_file.display().to_string());
+    s.grandchild_detached = true;
+    CatalogProbes::new(1, Duration::from_secs(10))
+        .catalog("chosen", fake(s, &cwd), Profile::Generic, cwd.clone(), vec![cwd])
+        .await
+        .unwrap();
+    let child: i32 = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+    assert!(
+        hennery_testkit::pid_alive(child),
+        "setsid is outside process-group containment"
+    );
+    drop(cleanup);
+    wait_process_gone(child, false).await;
+}
+
 #[tokio::test]
 async fn operator_catalog_probe_does_not_consume_the_following_sessions_mcp_delivery() {
     let root = tempfile::tempdir().unwrap();
@@ -669,6 +757,18 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
         cwd.join("host"),
     );
     cfg.agents.insert("chosen".into(), fake(script(), &cwd));
+    let cancelled_pid = cwd.join("cancelled.pid");
+    let disconnected_pid = cwd.join("disconnected.pid");
+    for (agent, pid_file) in [("hanging", &cancelled_pid), ("hanging-disconnect", &disconnected_pid)] {
+        cfg.agents.insert(
+            agent.into(),
+            AgentCommand {
+                program: "sh".into(),
+                args: vec!["-c".into(), "echo $$ > \"$PROBE_PID_FILE\"; sleep 600 & wait".into()],
+                env: vec![("PROBE_PID_FILE".into(), pid_file.display().to_string())],
+            },
+        );
+    }
     let mut signed_out = script();
     signed_out.new_session_error = Some(-32000);
     cfg.agents.insert("signed-out".into(), fake(signed_out, &cwd));
@@ -720,7 +820,16 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
             ..
         } => {
             assert!(capabilities.has(Capability::CatalogProbe));
+            assert!(
+                serde_json::to_value(&capabilities)
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("catalog_probe_cancel")),
+                "new host must advertise early cancellation"
+            );
             assert!(capabilities.has(Capability::DelegationConfig));
+            assert!(capabilities.has(Capability::OperatorResume));
             assert!(mcp_isolation.0.contains_key("chosen"));
             assert_eq!(
                 runtime_profiles["chosen"],
@@ -757,6 +866,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
     send(
         &mut ws,
         CollectorFrame::DelegatedAttach {
+            operator_initiated: false,
             request_id: "signed-out-attach".into(),
             session_id: "signed-out-child".into(),
             committed_seq: 0,
@@ -792,7 +902,55 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
     assert!(
         matches!(read(&mut ws).await,HostFrame::Catalog{catalog,..} if catalog.defaults.model.as_deref()==Some("small"))
     );
+    send(
+        &mut ws,
+        CollectorFrame::ProbeCatalog {
+            request_id: "cancel-me".into(),
+            agent: "hanging".into(),
+            cwd: cwd.display().to_string(),
+            operator_initiated: false,
+        },
+    )
+    .await;
+    let pid: i32 = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(pid) = std::fs::read_to_string(&cancelled_pid)
+                .ok()
+                .and_then(|raw| raw.trim().parse().ok())
+            {
+                break pid;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("probe exec signal");
+    // SAFETY: this test owns the running probe; getpgid only reads its group.
+    let group = unsafe { libc::getpgid(pid) };
+    assert!(group > 0);
+    send(
+        &mut ws,
+        CollectorFrame::CancelCatalogProbe {
+            request_id: "cancel-me".into(),
+        },
+    )
+    .await;
+    wait_process_gone(pid, false).await;
+    wait_process_gone(group, true).await;
+    // Cancellation is early (the normal probe bound is 30 s) and frees capacity.
+    send(
+        &mut ws,
+        CollectorFrame::ProbeCatalog {
+            request_id: "after-cancel".into(),
+            agent: "chosen".into(),
+            cwd: cwd.display().to_string(),
+            operator_initiated: false,
+        },
+    )
+    .await;
+    assert!(matches!(read(&mut ws).await, HostFrame::Catalog { request_id, .. } if request_id == "after-cancel"));
     let attach = |generation| CollectorFrame::DelegatedAttach {
+        operator_initiated: false,
         request_id: format!("attach-{generation}"),
         session_id: "wire-child".into(),
         committed_seq: 0,
@@ -860,6 +1018,35 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
             ..
         }
     ));
+    send(
+        &mut ws,
+        CollectorFrame::ProbeCatalog {
+            request_id: "disconnect-me".into(),
+            agent: "hanging-disconnect".into(),
+            cwd: cwd.display().to_string(),
+            operator_initiated: false,
+        },
+    )
+    .await;
+    let pid: i32 = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(pid) = std::fs::read_to_string(&disconnected_pid)
+                .ok()
+                .and_then(|raw| raw.trim().parse().ok())
+            {
+                break pid;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("probe exec before disconnect");
+    // SAFETY: reading the group of the probe this test owns.
+    let group = unsafe { libc::getpgid(pid) };
+    assert!(group > 0);
+    ws.close(None).await.unwrap();
+    wait_process_gone(pid, false).await;
+    wait_process_gone(group, true).await;
     shutdown_tx.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(20), task)
         .await

@@ -188,6 +188,7 @@ struct Refresh {
 
 #[derive(Default)]
 pub struct Recorded {
+    pub registered_redirects: Vec<Value>,
     /// Every request's method and path (with its query).
     pub requests: Vec<(String, String)>,
     pub registered: Vec<String>,
@@ -634,6 +635,10 @@ fn register(shared: &Shared, config: &Config, body: &[u8]) -> Response {
     inner.next += 1;
     let client_id = format!("client-{}", inner.next);
     inner.recorded.registered.push(client_id.clone());
+    inner
+        .recorded
+        .registered_redirects
+        .push(request["redirect_uris"].clone());
     if config.dcr_secret {
         let secret = format!("dcr-secret-{}", inner.next);
         inner.secrets.push((client_id.clone(), secret.clone()));

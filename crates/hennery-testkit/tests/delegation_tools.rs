@@ -20,6 +20,195 @@ const HOST: &str = "delegation-host";
 const BOUND: Duration = Duration::from_secs(30);
 
 #[tokio::test]
+async fn explicit_start_choices_never_become_agent_defaults_without_a_prior_probe() {
+    let h = Harness::new(modes("default", &["default", "bypassPermissions"])).await;
+    let (status, body) = h
+        .post(
+            "/api/sessions",
+            json!({"host_id":HOST,"agent":"worker","cwd":h.cwd,"model":"large","mode":"bypassPermissions"}),
+        )
+        .await;
+    assert_eq!(status, 202, "{body}");
+    let preview: Value = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(preview["defaults"]["model"], "small");
+    assert_eq!(preview["defaults"]["mode"], "default");
+    assert_eq!(preview["config_options"][0]["currentValue"], "large");
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn operator_catalog_reads_never_probe_and_real_start_resume_write_through() {
+    let h = Harness::new(modes("default", &["default", "plan", "bypassPermissions"])).await;
+    let path = format!("{}/api/hosts/{HOST}/runtime-catalog", h.url);
+    let query = [("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())];
+    let unknown: Value = h
+        .client
+        .get(&path)
+        .query(&query)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unknown["freshness"], "unknown");
+    let log = h.cwd.join("worker-sessions.jsonl");
+    assert!(!log.exists(), "reading an absent catalog must never spawn an adapter");
+    let refreshed: Value = h
+        .client
+        .post(&path)
+        .query(&query)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(refreshed["freshness"], "fresh");
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1);
+    for _ in 0..2 {
+        let saved: Value = h
+            .client
+            .get(&path)
+            .query(&query)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(saved["freshness"], "cached");
+        assert!(saved["saved_at"].is_number());
+    }
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().lines().count(),
+        1,
+        "saved reads never probe"
+    );
+    let (status, body) = h
+        .post(
+            "/api/sessions",
+            json!({"host_id":HOST,"agent":"worker","cwd":h.cwd,"model":"large","mode":"bypassPermissions"}),
+        )
+        .await;
+    assert_eq!(status, 202, "{body}");
+    let id = body["session_id"].as_str().unwrap();
+    eventually("real start snapshot", async || {
+        let value: Value = h
+            .client
+            .get(&path)
+            .query(&query)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        (value["config_options"][0]["currentValue"] == "large").then(|| {
+            assert_eq!(value["defaults"]["model"], "small");
+            assert_eq!(value["defaults"]["mode"], "default");
+        })
+    })
+    .await;
+    let (status, body) = h.post(&format!("/api/sessions/{id}/park"), json!({})).await;
+    assert_eq!(status, 202, "{body}");
+    // Clear only this test database's preview, so a resume must repopulate it.
+    rusqlite::Connection::open(h.cwd.join("hennery.db"))
+        .unwrap()
+        .execute("DELETE FROM runtime_catalog WHERE agent='worker'", [])
+        .unwrap();
+    let (status, body) = h.post(&format!("/api/sessions/{id}/resume"), json!({})).await;
+    assert_eq!(status, 202, "{body}");
+    eventually("real resume snapshot", async || {
+        let value: Value = h
+            .client
+            .get(&path)
+            .query(&query)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        (value["freshness"] == "cached").then(|| {
+            assert_eq!(value["defaults"], json!({}), "resume cannot invent an agent baseline");
+        })
+    })
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().lines().count(),
+        3,
+        "one explicit probe, one start, one resume"
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn aborted_operator_refresh_cancels_the_real_http_probe_early() {
+    let root = tempfile::tempdir().unwrap();
+    let pid_file = root.path().join("refresh.pid");
+    let command = AgentCommand {
+        program: "sh".into(),
+        args: vec!["-c".into(), "echo $$ > \"$PROBE_PID_FILE\"; sleep 600 & wait".into()],
+        env: vec![("PROBE_PID_FILE".into(), pid_file.display().to_string())],
+    };
+    let h = Harness::with_worker(script(), Some((command, Profile::Generic)), false).await;
+    let client = h.client.clone();
+    let path = format!("{}/api/hosts/{HOST}/runtime-catalog", h.url);
+    let cwd = h.cwd.to_str().unwrap().to_owned();
+    let refresh = tokio::spawn(async move {
+        client
+            .post(path)
+            .query(&[("agent", "worker"), ("cwd", cwd.as_str())])
+            .send()
+            .await
+    });
+    let pid: i32 = eventually("HTTP refresh started an adapter", async || {
+        std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|raw| raw.trim().parse().ok())
+    })
+    .await;
+    // SAFETY: this test owns the live probe. Reading its pgid has no side effects.
+    let group = unsafe { libc::getpgid(pid) };
+    assert!(group > 0);
+    struct Cleanup(i32);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            // SAFETY: clean up the test-owned group even if this regression fails.
+            unsafe {
+                libc::killpg(self.0, libc::SIGKILL);
+            }
+        }
+    }
+    let cleanup = Cleanup(group);
+    refresh.abort();
+    assert!(refresh.await.unwrap_err().is_cancelled());
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            // SAFETY: signal zero only checks the test-owned process group.
+            if unsafe { libc::killpg(group, 0) } != 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("aborted HTTP refresh must cancel before its 30-second probe timeout");
+    std::mem::forget(cleanup);
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn operator_limits_are_reported_by_session_capabilities_and_enforced_on_next_spawn() {
     let h = Harness::new(script()).await;
     for method in [reqwest::Method::GET, reqwest::Method::PATCH] {
@@ -84,7 +273,7 @@ async fn operator_limits_dispatch_failure_warns_with_notice_id_without_content()
     // host catalog, which the operator endpoint returns.
     let catalog = h
         .client
-        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .post(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
         .query(&[("agent", "claude"), ("cwd", h.cwd.to_str().unwrap())])
         .send()
         .await
@@ -237,7 +426,7 @@ async fn binary_delegation_unauthenticated_spawn_returns_auth_required() {
     );
     let response = h
         .client
-        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .post(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
         .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
         .send()
         .await
@@ -330,6 +519,17 @@ async fn binary_delegation_claude_catalog_allows_bypass_permissions_end_to_end()
     ]);
     let command = fake(root.path(), "claude-bypass", worker);
     let h = Harness::with_worker(script(), Some((command, Profile::Claude)), true).await;
+    let before: Value = h
+        .client
+        .post(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(before["defaults"]["mode"], "default");
     let caps = h.ok("session_capabilities", json!({"agent":"worker"})).await;
     let catalog = &caps["catalogs"][0];
     assert_eq!(catalog["freshness"], "fresh");
@@ -358,6 +558,33 @@ async fn binary_delegation_claude_catalog_allows_bypass_permissions_end_to_end()
     assert_eq!(status["actual"]["mode"], "bypassPermissions");
     assert!(status["questions"].as_array().unwrap().is_empty());
     assert_eq!(status["last_report"], "child-result");
+    let preview: Value = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        preview["defaults"]["mode"], "default",
+        "a delegated bypass choice must not become the operator baseline"
+    );
+    assert_eq!(preview["defaults"], before["defaults"]);
+    let baseline_source: Option<String> = rusqlite::Connection::open(h.cwd.join("hennery.db"))
+        .unwrap()
+        .query_row(
+            "SELECT defaults_source_session_id FROM runtime_catalog WHERE agent='worker'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        baseline_source, None,
+        "a delegated attachment cannot replace Refresh baseline provenance"
+    );
     h.finish().await;
 }
 
@@ -366,7 +593,7 @@ async fn operator_catalog_preview_does_not_require_delegation_workspace_roots() 
     let h = Harness::with_worker_options(script(), None, false, hennery_host::session::IDLE_TIMEOUT, false).await;
     let response = h
         .client
-        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .post(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
         .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
         .send()
         .await
@@ -403,7 +630,7 @@ async fn operator_catalog_preserves_adapter_failure_and_cwd_reason_codes() {
     let h = Harness::with_worker_options(broken, None, false, hennery_host::session::IDLE_TIMEOUT, false).await;
     let response = h
         .client
-        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .post(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
         .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
         .send()
         .await
@@ -411,7 +638,7 @@ async fn operator_catalog_preserves_adapter_failure_and_cwd_reason_codes() {
     assert_eq!(response.json::<Value>().await.unwrap()["code"], "adapter_failed");
     let response = h
         .client
-        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .post(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
         .query(&[("agent", "worker"), ("cwd", h.cwd.join("missing").to_str().unwrap())])
         .send()
         .await
@@ -1364,7 +1591,7 @@ async fn seven_handlers_share_launcher_catalog_and_choose_runtime_and_model_with
     assert_eq!(caps["catalogs"][0]["defaults"]["model"], "small");
     let catalog = h
         .client
-        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .post(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
         .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
         .send()
         .await
@@ -1376,6 +1603,14 @@ async fn seven_handlers_share_launcher_catalog_and_choose_runtime_and_model_with
     assert!(caps["catalogs"][0].get("security").is_none());
     assert!(caps["catalogs"][0].get("profile").is_none());
     operator_catalog.as_object_mut().unwrap().remove("security");
+    assert!(
+        operator_catalog
+            .as_object_mut()
+            .unwrap()
+            .remove("saved_at")
+            .unwrap()
+            .is_number()
+    );
     assert_eq!(operator_catalog, caps["catalogs"][0]);
     let receipt = h.spawn("spawn-large", json!({"model":"large"})).await;
     let child = receipt["child_id"].as_str().unwrap();
@@ -1735,7 +1970,68 @@ async fn busy_send_is_durable_and_parked_followup_resumes_with_fresh_readback() 
         json!({"operation_key":"resume-follow","child_id":child,"text":"continue after parking"}),
     )
     .await;
+    hennery_sessions::delegation_worker::drain(&h.state).await.unwrap();
+    assert_eq!(h.state.store.find_session(child).unwrap().unwrap().lifecycle, "parked");
+    let held = h
+        .ok(
+            "session_status",
+            json!({"child_id":child,"operation_key":"resume-follow"}),
+        )
+        .await;
+    assert_eq!(
+        held["operations"][0]["state"]["state"], "queued",
+        "operator Park holds delegated follow-ups too"
+    );
+    let (status, body) = h.post(&format!("/api/sessions/{child}/resume"), json!({})).await;
+    assert!(status.is_success(), "{body}");
     h.done(child, "resume-follow").await;
+    assert_eq!(h.status(child).await["actual"]["model"], "large");
+    let log = std::fs::read_to_string(h.cwd.join("worker-sessions.jsonl")).unwrap();
+    assert!(
+        log.lines()
+            .any(|line| serde_json::from_str::<Value>(line).unwrap()["method"] == "session/load")
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn idle_parked_delegated_followup_auto_resumes_with_fresh_model_readback() {
+    let h = Harness::with_worker_idle(script(), None, true, Duration::from_secs(1)).await;
+    // Keep the caller attached while the child parks through the real idle reaper.
+    let pinned = h
+        .client
+        .patch(format!("{}/api/sessions/{}/idle-hold", h.url, h.parent))
+        .json(&json!({"pinned":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pinned.status(), reqwest::StatusCode::OK);
+    let receipt = h.spawn("idle-park-start", json!({"model":"large"})).await;
+    let child = receipt["child_id"].as_str().unwrap();
+    h.done(child, "idle-park-start").await;
+    eventually("child idle parked", async || {
+        h.state
+            .store
+            .find_session(child)
+            .unwrap()
+            .filter(|s| s.lifecycle == "parked" && !s.presumed_parked)
+            .map(|_| ())
+    })
+    .await;
+    assert!(
+        h.state
+            .store
+            .events(child, 0, 1000)
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "session_parked" && event.body["reason"] == "idle")
+    );
+    h.ok(
+        "session_send",
+        json!({"operation_key":"idle-resume-follow","child_id":child,"text":"continue after idle parking"}),
+    )
+    .await;
+    h.done(child, "idle-resume-follow").await;
     assert_eq!(h.status(child).await["actual"]["model"], "large");
     let log = std::fs::read_to_string(h.cwd.join("worker-sessions.jsonl")).unwrap();
     assert!(
@@ -2321,6 +2617,10 @@ async fn background_answer_worker_advances_past_held_page_and_wraps_to_repaired_
 }
 
 async fn signout_worker() -> (Harness, tempfile::TempDir, PathBuf) {
+    signout_worker_with_idle(hennery_host::session::IDLE_TIMEOUT).await
+}
+
+async fn signout_worker_with_idle(idle: Duration) -> (Harness, tempfile::TempDir, PathBuf) {
     let root = tempfile::tempdir().unwrap();
     let marker = root.path().join("signed-out");
     let wrapper = root.path().join("auth.cjs");
@@ -2349,7 +2649,7 @@ child.on('exit',code=>process.exit(code??1));
         marker.display().to_string(),
     ];
     command.program = node.display().to_string();
-    let h = Harness::with_worker(script(), Some((command, Profile::Claude)), false).await;
+    let h = Harness::with_worker_idle(script(), Some((command, Profile::Claude)), false, idle).await;
     (h, root, marker)
 }
 
@@ -2409,7 +2709,16 @@ async fn accepted_start_signout_fails_operation_and_child_without_reprobing() {
 
 #[tokio::test]
 async fn parked_followup_signout_fails_operation_without_failing_existing_session() {
-    let (h, _root, marker) = signout_worker().await;
+    let (h, _root, marker) = signout_worker_with_idle(Duration::from_secs(1)).await;
+    // Keep the caller attached while waiting for the child's real idle park.
+    let pinned = h
+        .client
+        .patch(format!("{}/api/sessions/{}/idle-hold", h.url, h.parent))
+        .json(&json!({"pinned":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pinned.status(), reqwest::StatusCode::OK);
     let receipt = h.spawn("before-signout", json!({})).await;
     let child = receipt["child_id"].as_str().unwrap();
     eventually("initial child completes", async || {
@@ -2423,9 +2732,9 @@ async fn parked_followup_signout_fails_operation_without_failing_existing_sessio
         (status["operations"][0]["state"]["state"] == "completed").then_some(())
     })
     .await;
-    let (status, body) = h.post(&format!("/api/sessions/{child}/park"), json!({})).await;
-    assert!(status.is_success(), "{body}");
-    eventually("child parked", async || {
+    // Automatic parking allows background follow-ups; explicit operator Park
+    // instead holds the shared FIFO until Resume or a new operator Send.
+    eventually("child idle parked", async || {
         h.state
             .store
             .find_session(child)
@@ -2434,6 +2743,14 @@ async fn parked_followup_signout_fails_operation_without_failing_existing_sessio
             .map(|_| ())
     })
     .await;
+    assert!(
+        h.state
+            .store
+            .events(child, 0, 1000)
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "session_parked" && event.body["reason"] == "idle")
+    );
     h.ok(
         "session_send",
         json!({"operation_key":"after-signout","child_id":child,"text":"continue"}),
@@ -2600,4 +2917,121 @@ async fn delegated_host_signin_failure_retains_session_login_reason_and_tool_aut
         "{status}"
     );
     h.finish().await;
+}
+
+#[tokio::test]
+async fn review_real_adapter_catalog_limit_must_not_disconnect_host() {
+    let mut worker = script();
+    while worker.config_options.len() < 129 {
+        worker.config_options.push(json!({
+            "id": format!("setting-{}", worker.config_options.len()), "name": "Review setting",
+            "type": "select", "currentValue": "enabled", "options": [{"value":"enabled","name":"Enabled"}]
+        }));
+    }
+    let h = Harness::new(worker).await;
+    let (status, body) = h
+        .post("/api/sessions", json!({"host_id":HOST,"agent":"worker","cwd":h.cwd}))
+        .await;
+    let state = h.state.clone();
+    h.finish().await;
+    assert_eq!(status, 202, "valid real adapter catalog disconnected the host: {body}");
+    let id = body["session_id"].as_str().unwrap();
+    assert_eq!(state.store.find_session(id).unwrap().unwrap().lifecycle, "active");
+    assert_eq!(state.store.catalog(id).unwrap().unwrap().config_options.len(), 129);
+}
+
+#[tokio::test]
+async fn review_real_session_delete_must_forget_derived_preview() {
+    let h = Harness::new(script()).await;
+    let (status, body) = h
+        .post("/api/sessions", json!({"host_id":HOST,"agent":"worker","cwd":h.cwd}))
+        .await;
+    assert_eq!(status, 202, "{body}");
+    let id = body["session_id"].as_str().unwrap();
+    let deletion = h
+        .client
+        .delete(format!("{}/api/sessions/{id}", h.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deletion.status(), 200);
+    let remaining: Value = h
+        .client
+        .get(format!("{}/api/hosts/{HOST}/runtime-catalog", h.url))
+        .query(&[("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    h.finish().await;
+    assert_eq!(
+        remaining["freshness"], "unknown",
+        "deleted real session preview remains available: {remaining}"
+    );
+}
+#[tokio::test]
+async fn rereview_delete_old_session_preserves_later_sessions_http_preview() {
+    let h = Harness::new(script()).await;
+    let (status, first) = h
+        .post(
+            "/api/sessions",
+            json!({"host_id":HOST,"agent":"worker","cwd":h.cwd,"model":"small"}),
+        )
+        .await;
+    assert_eq!(status, 202, "{first}");
+    let first_id = first["session_id"].as_str().unwrap();
+    let (status, second) = h
+        .post(
+            "/api/sessions",
+            json!({"host_id":HOST,"agent":"worker","cwd":h.cwd,"model":"large"}),
+        )
+        .await;
+    assert_eq!(status, 202, "{second}");
+    let second_id = second["session_id"].as_str().unwrap();
+    let path = format!("{}/api/hosts/{HOST}/runtime-catalog", h.url);
+    let query = [("agent", "worker"), ("cwd", h.cwd.to_str().unwrap())];
+    let before: Value = h
+        .client
+        .get(&path)
+        .query(&query)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(before["freshness"], "cached");
+    assert_eq!(before["defaults"]["model"], "small");
+    assert_eq!(before["config_options"][0]["currentValue"], "large");
+    let deletion = h
+        .client
+        .delete(format!("{}/api/sessions/{first_id}", h.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deletion.status(), 200);
+    let kept = h.state.store.find_session(second_id).unwrap().unwrap();
+    assert_eq!(kept.lifecycle, "active");
+    assert_eq!(kept.config.model.as_deref(), Some("large"));
+    let after: Value = h
+        .client
+        .get(&path)
+        .query(&query)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    h.finish().await;
+    assert_eq!(
+        after["freshness"], "cached",
+        "deleting the earlier session removed the later session's preview: {after}"
+    );
+    assert_eq!(
+        after, before,
+        "the newer session's full preview and age must remain unchanged"
+    );
 }

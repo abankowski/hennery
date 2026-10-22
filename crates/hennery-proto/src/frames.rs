@@ -12,6 +12,9 @@ pub struct AttachedSession {
     pub last_seq: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_turn_id: Option<String>,
+    /// The actor is shutting down and still appears attached until its final fact is outboxed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ending: Option<bool>,
 }
 
 /// A feature a host implements, announced in `hello` (ACP core §3.3). The
@@ -43,8 +46,14 @@ pub enum Capability {
     McpServers,
     /// Disposable runtime catalog discovery without a user prompt.
     CatalogProbe,
+    /// Early cancellation of a disposable catalog probe by request id.
+    CatalogProbeCancel,
     /// Generation-bound evidence and serialized delegated prompt admission.
     DelegationConfig,
+    /// Collector-owned operator queue resume with operator authority (hennery 0.3.0).
+    OperatorResume,
+    /// Reconnect snapshots include unread prompt commands as well as running turns.
+    PromptMailboxSnapshot,
 }
 
 /// The longest agent data root a host may report (plan 9d, O12's shape
@@ -587,6 +596,10 @@ impl SessionConfig {
 /// mode deltas are ignored.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Indexed {
+    /// Host-owned adapter identity for authoritative start/resume snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub catalog_identity: Option<Box<crate::delegation_host::CatalogIdentity>>,
     /// Fresh host-produced configuration proof, never retained collector values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_evidence: Option<Box<crate::delegation_host::ConfigEvidence>>,
@@ -928,6 +941,7 @@ impl CollectorFrame {
             // Not a probe of state, but carried as one (`session_forgotten`).
             Self::ForgetSession { .. } => Ok(Some(Capability::ForgetSession)),
             Self::HelloAck { .. }
+            | Self::CancelCatalogProbe { .. }
             | Self::HelloError { .. }
             | Self::StartSession { .. }
             | Self::ResumeSession { .. }
@@ -956,6 +970,7 @@ impl CollectorFrame {
                 Some(mcp)
             }
             Self::HelloAck { .. }
+            | Self::CancelCatalogProbe { .. }
             | Self::HelloError { .. }
             | Self::Prompt { .. }
             | Self::DelegatedPrompt { .. }
@@ -1007,6 +1022,9 @@ impl HostFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CollectorFrame {
+    CancelCatalogProbe {
+        request_id: String,
+    },
     ProbeCatalog {
         request_id: String,
         agent: String,
@@ -1019,6 +1037,10 @@ pub enum CollectorFrame {
     /// A delegated attach uses an independently allocated, nonzero generation.
     /// `agent_session_id` absent starts a new adapter session; present loads it.
     DelegatedAttach {
+        /// A collector-accepted operator queue resume uses ordinary operator
+        /// path authorization, while retaining the attach/configuration fence.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        operator_initiated: bool,
         request_id: String,
         session_id: String,
         #[ts(type = "number")]

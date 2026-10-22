@@ -16,7 +16,9 @@ import { saveTheme } from '../lib/theme'
 import { navigate, useLocation, type Route } from '../router'
 import { useSessionList, type SessionList } from '../store/useSessionList'
 import type { StatusFilter } from '../lib/status'
-import { useRegisterContext } from '../app-actions'
+import { useRegisterAction, useRegisterContext, type SessionJumpActionId } from '../app-actions'
+import { useSessionHistory } from '../hooks/useSessionHistory'
+import { recentSessionTargets, useWindowSessionIds } from '../lib/sessionHistory'
 import type { ProjectGrouping, SessionGrouping, SessionSort } from '../lib/sessionGroups'
 import { useDismissedAttention } from '../lib/dismissedAttention'
 import { useAttentionSessions } from '../hooks/useAttentionSessions'
@@ -32,6 +34,8 @@ export const SEARCH_DEBOUNCE_MS = 250
 export const SEARCH_MAX_CHARS = 200
 
 export interface SessionScopeValue {
+  /** Recently visited, authorized sessions in the selected hat. */
+  recentSessions: SessionSummary[]
   attentionRows: SessionSummary[]
   isAttentionDismissed: (id: string) => boolean
   reportAttentionKey: (id: string, key: string) => void
@@ -124,11 +128,13 @@ export default function SessionScope({ route, children, onReconnect }: { route: 
   const list = useSessionList({ pageScope: attention ? 'attention' : 'overview', hat: hat || null, hideClosed: attention ? false : hideClosed, lifecycle: !attention && lifecycle ? [lifecycle] : undefined, q: attention ? '' : q })
   const recovering = useRef(false)
   const previouslyResynced = useRef(false)
+  const [historyEpoch, refreshHistory] = useState(0)
   useEffect(() => {
     if (list.stream === 'reconnecting' || (list.resynced && !previouslyResynced.current)) recovering.current = true
     previouslyResynced.current = list.resynced
     if (list.stream === 'open' && recovering.current) {
       recovering.current = false
+      refreshHistory(epoch => epoch + 1)
       onReconnect?.()
     }
   }, [list.stream, list.resynced, onReconnect])
@@ -138,8 +144,11 @@ export default function SessionScope({ route, children, onReconnect }: { route: 
   const reportAttentionKey = useCallback((id: string, key: string) => setAttentionKeys(before => before.get(id) === key ? before : new Map(before).set(id, key)), [])
   const isAttentionDismissed = useCallback((id: string) => Object.hasOwn(dismissed, id) && (!attentionKeys.has(id) || dismissed[id] === attentionKeys.get(id)), [dismissed, attentionKeys])
   const visibleWaiting = attentionRows.filter(row => !isAttentionDismissed(row.session_id)).length
-  useRegisterContext({ loadedSessions: list.all, hats: hats ?? undefined, hosts: hosts ?? undefined })
   const selectedId = route.name === 'session' && route.id !== undefined ? route.id : null
+  const recentSessions = useSessionHistory(list.all, selectedId, hat, !list.loading && !list.error, String(historyEpoch), list.queryKey)
+  const windowIds = useWindowSessionIds()
+  const previousSessionId = windowIds.find(id => id !== selectedId && recentSessions.some(row => row.session_id === id))
+  useRegisterContext({ loadedSessions: list.all, scopeHatId: hat, recentSessions, previousSessionId, hats: hats ?? undefined, hosts: hosts ?? undefined })
   useEffect(() => {
     if (route.name !== 'sessions') return
     const params = new URLSearchParams(search)
@@ -218,6 +227,7 @@ export default function SessionScope({ route, children, onReconnect }: { route: 
 
   const value = useMemo<SessionScopeValue>(
     () => ({
+      recentSessions,
       list: { ...list, counts: { waiting: visibleWaiting } },
       attentionRows, isAttentionDismissed, reportAttentionKey,
       hats,
@@ -233,9 +243,21 @@ export default function SessionScope({ route, children, onReconnect }: { route: 
       setQuery,
       selectedId,
     }),
-    [list, visibleWaiting, attentionRows, isAttentionDismissed, reportAttentionKey, hats, hat, chooseHat, hostNames, hosts, host, status, group, setGroup, subgroup, setSubgroup, sort, setSort, hideClosed, setHideClosed, lifecycle, query, selectedId],
+    [list, recentSessions, visibleWaiting, attentionRows, isAttentionDismissed, reportAttentionKey, hats, hat, chooseHat, hostNames, hosts, host, status, group, setGroup, subgroup, setSubgroup, sort, setSort, hideClosed, setHideClosed, lifecycle, query, selectedId],
   )
-  return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>
+  const targets = recentSessionTargets(recentSessions, selectedId)
+  return <ScopeContext.Provider value={value}>
+    <SessionJumpAction id="previous-session" target={recentSessions.find(row => row.session_id === previousSessionId)} />
+    {([1, 2, 3, 4, 5] as const).map((n) => <SessionJumpAction key={n} id={`recent-session-${n}`} target={targets[n - 1]} />)}
+    {children}
+  </ScopeContext.Provider>
+}
+
+function SessionJumpAction({ id, target }: { id: SessionJumpActionId; target?: SessionSummary }) {
+  const sessionId = target?.session_id
+  const run = useCallback(() => { if (sessionId) navigate(`/sessions/${encodeURIComponent(sessionId)}`) }, [sessionId])
+  useRegisterAction(id, { label: id === 'previous-session' ? 'Previous session' : `Recent session ${id.slice(-1)}`, enabled: !!sessionId, run })
+  return null
 }
 
 /** The rail's and the top bar's count of sessions waiting on you. */

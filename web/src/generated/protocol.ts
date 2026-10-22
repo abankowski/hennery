@@ -112,7 +112,7 @@ export type ConfigCompleteness = "complete" | "partial" | "unknown";
 
 export type ConfigEvidence = { attach_generation: number, config_revision: number, completeness: ConfigCompleteness, actual: SessionConfig, };
 
-export type CatalogFreshness = "fresh" | "stale" | "unknown";
+export type CatalogFreshness = "fresh" | "cached" | "stale" | "unknown";
 
 /**
  * Profile-owned security axes and their baseline values for operator warnings. `mode`
@@ -123,9 +123,24 @@ export type SecurityClassification = { known: boolean, axes: { [key in string]: 
 
 export type HostCatalog = { agent: string,
 /**
- * Opaque digest of the configured adapter command/environment and catalog.
+ * Opaque digest of the configured adapter command/environment and security profile.
  */
-adapter_revision: string, config_options: unknown[], defaults: SessionConfig, security: SecurityClassification, freshness: CatalogFreshness, };
+adapter_revision: string, config_options: unknown[],
+/**
+ * Adapter values before hennery switches. Empty when no baseline is known.
+ */
+defaults: SessionConfig, security: SecurityClassification, freshness: CatalogFreshness,
+/**
+ * Collector observation time (Unix seconds), absent for a live host reply.
+ */
+saved_at?: number, };
+
+export type CatalogIdentity = { adapter_revision: string, security: SecurityClassification,
+/**
+ * Only an operator's new attachment carries session/new's pre-switch values.
+ * Resume, restart and delegated attachments must leave this absent.
+ */
+agent_defaults?: SessionConfig, };
 
 /**
  * Host-owned adapter identity for cross-runtime permission-mode inheritance.
@@ -228,7 +243,7 @@ export type SessionConfig = { model?: string | null, mode?: string | null, axes?
  * collector never sends a frame that needs a capability to a host that
  * lacks it.
  */
-export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "delegation_config";
+export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "resolve_path" | "forget_session" | "mcp_servers" | "catalog_probe" | "catalog_probe_cancel" | "delegation_config" | "operator_resume" | "prompt_mailbox_snapshot";
 
 /**
  * `hello.capabilities`. Deserialized leniently: a capability this build
@@ -295,7 +310,11 @@ export type AgentIsolation = { [key in string]: McpIsolation };
 /**
  * A session that a host still has an adapter for, reported in `hello`.
  */
-export type AttachedSession = { session_id: string, last_seq: number, open_turn_id?: string | null, };
+export type AttachedSession = { session_id: string, last_seq: number, open_turn_id?: string | null,
+/**
+ * The actor is shutting down and still appears attached until its final fact is outboxed.
+ */
+ending?: boolean | null, };
 
 /**
  * How a turn ended. Exactly one `turn_ended` per accepted turn (ACP core §4.4).
@@ -357,6 +376,10 @@ title?: string | null, };
  * mode deltas are ignored.
  */
 export type Indexed = {
+/**
+ * Host-owned adapter identity for authoritative start/resume snapshots.
+ */
+catalog_identity?: CatalogIdentity,
 /**
  * Fresh host-produced configuration proof, never retained collector values.
  */
@@ -556,12 +579,17 @@ truncated: boolean, };
 /**
  * Collector -> host.
  */
-export type CollectorFrame = { "type": "probe_catalog", request_id: string, agent: string, cwd: string,
+export type CollectorFrame = { "type": "cancel_catalog_probe", request_id: string, } | { "type": "probe_catalog", request_id: string, agent: string, cwd: string,
 /**
  * Operator previews use ordinary session path rules. Delegated probes
  * retain the host workspace boundary. Set only by the collector.
  */
-operator_initiated: boolean, } | { "type": "delegated_attach", request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue },
+operator_initiated: boolean, } | { "type": "delegated_attach",
+/**
+ * A collector-accepted operator queue resume uses ordinary operator
+ * path authorization, while retaining the attach/configuration fence.
+ */
+operator_initiated?: boolean, request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue },
 /**
  * Passed in `session/new` / `session/load`. Only to a host that
  * announced `mcp_servers`.
@@ -647,9 +675,29 @@ export type StartSessionRequest = { host_id: string, agent: string, cwd: string,
 
 export type StartSessionResponse = { session_id: string, };
 
-export type PromptRequest = { content: unknown[], };
+export type PromptRequest = { content: unknown[],
+/**
+ * Reuse for retries of the same submit, including a lost response.
+ */
+request_key?: string | undefined, };
 
 export type PromptResponse = { turn_id: string, };
+
+/**
+ * An accepted durable prompt, delivered after earlier turns finish.
+ */
+export type QueuedPromptResponse = { queue_id: string, };
+
+export type QueuedPrompt = { id: string, content: Array<StoredBlock>,
+/**
+ * queued, delivering, or failed. Only queued items can be edited.
+ */
+state: string, reason: string | null, };
+
+/**
+ * Replace a queued item's text while retaining its stored images.
+ */
+export type EditQueuedPrompt = { text: string, };
 
 /**
  * One block of a prompt as the collector stores it (ACP core §7, plan 6a):
@@ -2167,6 +2215,12 @@ client_secret?: string | null | undefined, };
  * `oauth_error`.
  */
 export type McpAuthorizeRequest = {
+/**
+ * Optional local browser relay, `http://localhost:<port>/<path>` or
+ * an HTTP loopback IP. The collector callback and public URL stay fixed.
+ * The vendor must permit this exact URI for the selected client.
+ */
+local_redirect_uri?: string | undefined,
 /**
  * The mismatching `resource` the operator accepts, exactly as
  * `oauth.resource_mismatch` showed it (gateway spec §4.1, G-4).

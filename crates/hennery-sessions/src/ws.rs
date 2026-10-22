@@ -349,6 +349,11 @@ async fn serve(socket: WebSocket, state: AppState, nonce: [u8; 32]) {
                 if state.hub.probe_rejected(conn_id, &request_id, &code, &message) {
                     continue;
                 }
+                match state.store.reject_operator_prompt(&host_id, &request_id, &code) {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(_) => break,
+                }
                 match state.store.reject_delegation(&host_id, &request_id) {
                     Ok(true) => continue,
                     Ok(false) => {}

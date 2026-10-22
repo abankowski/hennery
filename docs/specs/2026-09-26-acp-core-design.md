@@ -410,7 +410,7 @@ host.)*
 
 | Type | Key fields | Notes |
 |---|---|---|
-| `hello` | protocol_version, host_version, host_id, proof, capabilities[], agents[], workspace_roots[], attached_sessions[{session_id, last_seq, turn_id?}] | First frame. |
+| `hello` | protocol_version, host_version, host_id, proof, capabilities[], agents[], workspace_roots[], attached_sessions[{session_id, last_seq, open_turn_id?, ending?}] | First frame. |
 | `resend_complete` | — | All unacknowledged outbox frames have been resent (§5.1). |
 | `session` | session_id, seq, body | Outboxed (§3.2). |
 | `error` | request_id, code, message | Rejection of a request. |
@@ -872,12 +872,100 @@ leaves the session `failed` like a failed start, and `failed` is resumable.
   timeline never shows a prompt the agent did not receive.
 - A turn left `sent` by a disconnect is reconciled after the host's resend: if
   no `turn_started` arrived, the turn becomes `not_delivered` and the UI
-  offers to send its content again. It is never shown as failed.
-- **One turn at a time.** A prompt while a turn is in flight is rejected with
-  409 `turn_in_progress`; the UI disables Send while `running`/`blocked`.
-  *(P-15: the predecessor allowed overlapping prompts; the first to finish
-  cleared the "running" flag while the second was in flight, and the reaper
-  could then reap mid-turn.)*
+  offers to send its content again for an immediate prompt. A durable queue
+  item instead returns to its original FIFO position after that proof of
+  non-delivery. It is never shown as failed merely for non-delivery.
+- **One turn at a time; durable queued input (operator, 2026-10-21).**
+  Sending while a turn is running or waiting on the operator accepts the
+  checked prompt into the collector's durable FIFO. A pending permission or
+  question, including one outside a turn, never consumes a queued prompt.
+  After the turn ends and all pending requests resolve, the worker reserves
+  one next turn and sends the head as ordinary operator input. No adapter
+  `promptQueueing` support is required. Cancel leaves the queue intact; the
+  next message follows the cancelled turn's end. A parked session is resumed
+  through the existing automatic attach/configuration gate before delivery.
+  Operator queue resumes carry server-issued `operator_initiated` on the
+  generation-bound attach: canonical path and hat checks remain, while path
+  authorization matches an ordinary operator resume rather than delegated
+  workspace roots. With no requested settings, attachment evidence is enough;
+  explicit requested settings still require confirmation.
+  Resumed operator delivery requires both host `operator_resume` and
+  `delegation_config` capabilities; older hosts leave a readable failure
+  asking for hennery 0.3.0. An explicit operator Park holds the whole prompt
+  FIFO until Resume or a new Send clears the durable hold. Send during the park
+  handshake waits for its acknowledgement before dispatching; proven rejection
+  releases only that Park's hold, preserving newer Park intent. Idle and
+  host-restart parks do not hold it. Adapter exit fails unsent items with retained input.
+  *(P-15: overlapping host prompts remain prohibited.)*
+- Queued operator prompts and delegated parent follow-ups share
+  `session_dispatch_queue` position order. Immediate operator prompts cannot
+  overtake an accepted head. Child report/question notices have lower dispatch
+  priority than that FIFO; none interrupts a turn. The per-session bounds are
+  32 active items / 1 MiB, counting stored payload and decoded image bytes.
+  Retained failed items do not consume these bounds. Prompt/image validation
+  still applies.
+- Queue acceptance survives collector restart and page reload. Sessions
+  migration 29 extends the shared queue independently of migration 28's
+  runtime catalog cache. A committed
+  turn/request association is never automatically resent after uncertain
+  handoff: existing host resend/reconciliation decides its disposition.
+  Delivery is acknowledged by `turn_started`, never a socket write. Failed
+  or closed sessions, runtime refusal and a failed preceding turn stop unsent
+  operator work with readable reasons; failed content remains until dismissed
+  or seven days after failure, when its unreferenced images are cleaned too.
+  Revoked hosts reject new prompts; revoked or offline hosts fail queued
+  parked input with readable reasons. A connected host still resending or
+  reconciling defers the queue; lack of readiness is not proof of being offline.
+  New parked-session prompts are refused with 409 `host_offline` before
+  acceptance while the host is offline. A `turn_in_progress` host refusal proves
+  non-admission and requeues the same head with persistent exponential backoff
+  (1, 2, 4, 8, then 10 seconds); its unsent turn and image links are removed.
+  Awaiting reconciliation fences every immediate, operator and delegated
+  head path; reconciliation settles its receipt in the same transaction.
+  Queue receipts stay stable while each delivery attempt receives a fresh
+  request UUID, also used for plugin startup evidence. Delayed errors from
+  earlier attempts cannot reject a newer reservation. The host's reconnect
+  snapshot includes the oldest prompt waiting in its actor mailbox before
+  falling back to the running turn. Its marker remains until rejection or
+  an outboxed `turn_started`; this makes absent-turn reconciliation a valid
+  non-admission proof even when the actor has not read its command channel.
+  Hosts announce this guarantee separately as `prompt_mailbox_snapshot`;
+  `operator_resume` alone does not imply it. Only complete snapshots permit
+  automatic retry of a reconciled not-delivered operator head. Legacy hosts
+  instead fail it and the waiting queue with retained input and a readable
+  delivery warning. A superseded attempt's late start is stored unapplied;
+  queue-owned not-delivered turns never offer transcript Send again or its
+  content endpoint. An actual admission racing session close/failure corrects
+  the queued item's disposition to delivered without reopening the session.
+  Explicit Park holds survive host restart. Reconciliation clears a Park hold
+  left by an ambiguous request when the host reports the session still attached
+  and continuing normally. The optional `attached_sessions[].ending` flag is
+  true while an actor is shutting down; it preserves the hold until Park
+  completes and the operator resumes. Legacy omitted flags retain their prior
+  reconciliation semantics. A late start that takes over another sent turn's
+  slot fails that displaced operator queue item with retained input: slot
+  takeover supplies no absent-mailbox proof, even on a snapshot-capable host.
+  A later real admission corrects the retained item's status to delivered.
+  One session's preparation failure does not abort other sessions' dispatch.
+  Session deletion and hat purge scrub queued content and attachments under
+  §4.10; deleted queue/transcript routes answer 404. The delete confirmation
+  counts queued/failed operator messages, excluding items already delivering.
+  Queued image references participate in the existing attachment lifecycle.
+- Prompt POST accepts an optional printable ASCII `request_key` (1–128 bytes).
+  The composer generates one per submission. An owner/session-scoped receipt
+  is committed atomically with either immediate admission or queue insertion;
+  retrying identical content returns the original `{turn_id}` or `{queue_id}`
+  across delivery, edits, restart and lifecycle changes while its queue item
+  exists. Dismissal/removal/expiry prunes that item's receipt. Reusing a key
+  for different checked content (including image hashes) is an operation conflict.
+  A proven unsent immediate admission refusal releases its receipt; an uncertain
+  or accepted delivery retains it. The browser stores the key with its uncertain
+  send marker and reuses it for an unchanged draft after reload. A receipt
+  conflict releases the key for the next explicit submission while preserving
+  the warning that the earlier submission may already have been sent. Deletion and
+  hat purge scrub receipts too.
+  Queue edit/remove return success after commit even if publication fails;
+  the existing dirty flag repairs the event snapshot.
 - **Empty prompts are rejected at the API** (400): no image, and no text
   but whitespace.
   *(P-16: an empty prompt reached the adapter and produced a `-32602 Invalid
@@ -1734,7 +1822,10 @@ All endpoints require an operator session (kernel spec §3). Types come from
 | `GET /api/sessions/{id}/events?after=<event_id>&limit` | Timeline page after an event (applied rows only, §8). |
 | `GET /api/sessions/{id}/catalog` | `SessionCatalog {session_id, config_options[], model?, mode?, axes{}}`; commands, plan and usage join it with the plans that produce them. |
 | `POST /api/sessions/{id}/resume` | 202 `LifecycleResponse {session_id, lifecycle}` once `session_started` is ingested; 409 `starting` / `active` (its lifecycle); 409 `agent_has_no_record` (no agent session id, host not contacted); 409 `host_offline` (nothing changes); 409 `hat_mismatch`, `cwd_moved`, `hat_ambiguous` (§4.3); 400 `invalid_cwd`; 409 `mcp_isolation_unavailable`, whether the hub or the host refused its MCP servers (the session becomes `failed` with it; plan 8e); 502 with the host's code for any other rejection or `start_failed` (the session becomes `failed` with it); 503 `delivery_unknown` (stays `starting`, reconciled like a start). |
-| `POST /api/sessions/{id}/prompt` | `{content[]}` → 202 `{turn_id}` once `turn_started` is ingested; 409 `not_attached` (not `active`) / `host_offline` (host not ready) / `turn_in_progress` / `images_unsupported` (the host lacks `images`, nothing sent; or its agent takes none); 400 `empty_prompt`, 400 `invalid_content` (a block other than text or image, an image of another type, or bytes that are not the type they claim), 400 `invalid` (host); 413 `content_too_large` (§11's image and text limits; a body over 24 MiB gets 413 `body_too_large`); 503 `delivery_unknown` (the turn stays open until reconciled). Everything the collector refuses is checked before a turn opens or a file is written, except the host's per-agent refusal, a failed send and a turn that opens between the files and the turn row, which leave the prompt's images stored but unreferenced. |
+| `POST /api/sessions/{id}/prompt` | `{content[]}` → 202 `{turn_id}` once `turn_started` is ingested for an immediate prompt, or 202 `{queue_id}` after durable queue acceptance when busy, waiting, parked or behind an accepted FIFO head; 409 `not_attached` (neither `active` nor `parked`) / `host_offline` (host not ready) / `queue_full` / `queue_unavailable` / `images_unsupported` (the host lacks `images`, nothing sent; or its agent takes none); 400 `empty_prompt`, 400 `invalid_content` (a block other than text or image, an image of another type, or bytes that are not the type they claim), 400 `invalid` (host); 413 `content_too_large` (§11's image and text limits; a body over 24 MiB gets 413 `body_too_large`); 503 `delivery_unknown` (the turn stays open until reconciled). Everything the collector refuses is checked before a turn opens or a file is written, except the host's per-agent refusal, a failed send and a turn that opens between the files and the turn row, which leave the prompt's images stored but unreferenced. |
+| `GET /api/sessions/{id}/queue` | Owner-scoped FIFO snapshot: `{id, content: StoredBlock[], state: queued \| delivering \| failed, reason?}[]`. Failed entries keep text and image references. |
+| `PATCH /api/sessions/{id}/queue/{queue_id}` | `{text}` replaces a queued item’s text, preserves its images and position, and repeats content/aggregate limits; refuses an item already delivering. |
+| `DELETE /api/sessions/{id}/queue/{queue_id}` | Removes a queued item or dismisses a failed item; cleans unreferenced images. Delivering items are immutable. |
 | `POST /api/sessions/{id}/cancel` | Cancel the open turn → 202 `CancelResponse {turn_id, outcome}` once that turn's `turn_ended` is ingested, with its real outcome (`cancelled`; `completed` or `failed` if it ended first; `interrupted` if the session was parked or closed meanwhile, or its adapter exited); 409 `not_attached` / `no_open_turn` / `not_running` (§4.4). |
 | `POST /api/sessions/{id}/park` | Explicit park → 202 `LifecycleResponse` once `session_parked` is ingested; 409 `not_attached` (not `active`, or host not ready); 409 `park_unsupported` (host lacks the `park` capability, nothing sent). |
 | `POST /api/sessions/{id}/close` | Close → 202 `LifecycleResponse` once closed (at once when unattached, parked, presumed parked, failed or the host is offline; on `session_closed` when attached); 409 `starting` while a start is in flight on a reachable host (§4.8). |
@@ -1752,8 +1843,10 @@ All endpoints require an operator session (kernel spec §3). Types come from
 `delivery_unknown` ("host disconnected; delivery unknown") whenever the host
 connection dropped or the request timed out after it was sent (§3.4); the
 fact, if it happened, still arrives and applies. 409 `host_offline` to a start,
-resume or prompt when the host is not connected, or connected but not yet
-reconciled; cancel, config and park answer `not_attached` then. A start
+resume or immediate prompt when the host is not connected, or connected but not
+yet reconciled. A parked prompt is accepted durably and then fails readably
+when its host is offline. Revoked hosts refuse new prompts with `host_revoked`.
+Cancel, config and park answer `not_attached` then. A start
 on a host that has not connected since it was paired says so in the
 `host_offline` message: its first start installs the agents before it
 connects (distribution §3.2), which can take minutes. Error bodies are
@@ -1900,7 +1993,10 @@ in-memory pipe and a real WebSocket:
 1. start with model+mode+axes; announced catalogue is post-switch; mode applied last.
 2. resume: replayed history kinds dropped, state kinds kept; no duplicate events.
 3. resume of a never-prompted session → `-32002` → `failed/agent_has_no_record`.
-4. prompt during a turn → 409; empty prompt → 400; prompt to a parked session → 409 `not_attached`.
+4. Prompt during a turn or pending permission → durable FIFO; parked prompt →
+   resume and deliver once; empty prompt → 400. Explicit Park holds existing
+   queued work until Resume/new Send; idle/restart park does not. Reconciliation,
+   busy refusal and per-session errors preserve FIFO; keyed retries deduplicate.
 5. adapter killed mid-turn → `turn_ended{interrupted}`, pending cancelled
    `adapter_lost`, `adapter_exited` with scrubbed stderr tail, `parked`.
 6. WS drop mid-turn → no session parked; outbox resent; no gap, no duplicate;

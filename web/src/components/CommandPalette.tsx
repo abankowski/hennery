@@ -19,9 +19,9 @@ export default function CommandPalette({ actions, loaded, close }: {
   const desktop = useMediaQuery('(min-width: 768px)')
   const client = useClient(), dialog = useRef<HTMLDivElement>(null), input = useRef<HTMLInputElement>(null)
   const { trap, holdFocus } = useModalLayer(dialog)
-  const [query, setQuery] = useState(''), [selected, select] = useState(0), [attempt, retry] = useState(0)
+  const [query, setQuery] = useState(''), [selected, select] = useState<number | null>(null), [attempt, retry] = useState(0)
   const context = actions.context()
-  const hat = context.hatId, q = query.trim(), key = JSON.stringify([hat, q])
+  const hat = (context.scopeHatId ?? context.hatId) || undefined, q = query.trim(), key = JSON.stringify([hat, q])
   const generation = useRef(0), controller = useRef<AbortController | null>(null)
   const [search, setSearch] = useState<SearchState>({ key: '', rows: [], loading: false })
   const listId = useId()
@@ -64,6 +64,11 @@ export default function CommandPalette({ actions, loaded, close }: {
     // strictly newer; the shared stream wins ties (including a hat change).
     if (!held || row.last_event_at > held.last_event_at) merged.set(row.session_id, row)
   }
+  const visits = (context.recentSessions ?? []).filter(row => !hat || row.hat_id === hat)
+  for (const row of visits) {
+    const held = merged.get(row.session_id)
+    if (!held || row.last_event_at > held.last_event_at) merged.set(row.session_id, row)
+  }
   const names = useSessionNames([...merged.values()])
   for (const row of merged.values()) if (!row.title && names(row).text.toLocaleLowerCase().includes(q.toLocaleLowerCase())) serverMatches.add(row.session_id)
   const rows = recentSessions(merged.values(), q, hat, serverMatches)
@@ -76,14 +81,20 @@ export default function CommandPalette({ actions, loaded, close }: {
     run: () => navigate(`/sessions/${encodeURIComponent(row.session_id)}`),
   })
   const primary = new Set(['new-session', 'rename-session', 'add-host', 'open-defaults'])
+  const route = match(pathname)
+  const previous = visits.filter(row => row.session_id !== (route.name === 'session' ? route.id : null))
+    .filter((row, index) => index < 5 || row.session_id === context.previousSessionId)
+  const recentIds = new Set(previous.map(row => row.session_id))
   const commands = registeredCommands(actions, desktop).map(action => ({ ...action, label: action.id === 'open-defaults' ? 'Edit defaults' : action.label })).filter(action => q || primary.has(action.id)).filter(action => action.label.toLocaleLowerCase().includes(q.toLocaleLowerCase()))
   const groups = [
-    { label: 'Needs you', results: rows.filter(row => row.operator_attention > 0).map(sessionResult) },
+    { label: 'Recent', results: q ? [] : previous.map(row => ({ ...sessionResult(row), hint: row.session_id === context.previousSessionId ? '↵' : '' })) },
+    { label: 'Needs you', results: rows.filter(row => row.operator_attention > 0 && (q || !recentIds.has(row.session_id))).map(sessionResult) },
     { label: 'Actions', results: commands.map(action => ({ id: `action:${action.id}`, label: action.id === 'open-defaults' ? 'Edit defaults' : action.label, hint: commandHint(action.id, match(pathname).name, desktop), detail: '', meta: '', provisional: false, icon: (action.id === 'add-host' ? 'server-stack' : action.id === 'new-session' ? 'plus-circle' : action.id === 'open-defaults' ? 'adjustments-horizontal' : 'arrow-right') as IconName, run: () => { actions.dispatch(action.id) } })) },
-    { label: q ? 'Matching sessions' : 'Recent sessions', results: rows.filter(row => row.operator_attention === 0).map(sessionResult) },
+    { label: q ? 'Matching sessions' : 'Sessions', results: rows.filter(row => row.operator_attention === 0 && (q || !recentIds.has(row.session_id))).map(sessionResult) },
   ]
   const results = groups.flatMap(group => group.results)
-  const active = Math.min(selected, results.length - 1)
+  const preferred = results.findIndex(result => result.id === `session:${context.previousSessionId}`)
+  const active = Math.min(selected ?? Math.max(0, preferred), results.length - 1)
   const activeId = results[active]?.id
   useEffect(() => { document.getElementById(`${listId}-${active}`)?.scrollIntoView?.({ block: 'nearest' }) }, [active, activeId, listId])
   const choose = (index: number) => { if (results[index]) run(results[index].run) }

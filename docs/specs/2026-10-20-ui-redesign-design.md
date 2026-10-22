@@ -81,7 +81,7 @@ Important source anchors at this base:
 |---|---|
 | Shell, routing, hat scope | `components/Shell.tsx`, `components/SessionScope.tsx`, `router.tsx`, `lib/views.ts`, `lib/hats.ts` |
 | Appearance | `lib/theme.ts`, `web/public/theme.js`, `index.css`, `manage.css`; `/theme.js` already runs before React |
-| Launcher catalog | `GET /api/hosts/{id}/runtime-catalog?agent=…&cwd=…`; `HostCatalog {agent, adapter_revision, config_options, defaults, security, freshness}` |
+| Launcher catalog | `GET /api/hosts/{id}/runtime-catalog?agent=…&cwd=…` reads the saved snapshot; `POST` on the same URL explicitly refreshes it; `HostCatalog {agent, adapter_revision, config_options, defaults, security, freshness, saved_at?}` |
 | Session configuration | `StartSessionRequest {host_id, agent, cwd, model?, mode?, axes?}`; `POST /api/sessions/{id}/config`; returned `SessionCatalog` is actual adapter state |
 | Attention | `SessionSummary.operator_attention`, `parent_handled_questions`, `question_waits`, `family`; `api/attention.ts` for real delegation fallback records |
 | Hat authorization | GET/PATCH `/api/hats/{id}/session-tools`; binary delegation enablement only |
@@ -582,6 +582,43 @@ the honest replacement instead of quietly adding another backend feature.
 | Parked/closed/failed/starting/offline footer, Resume/send-again/new-project flow | Restyle existing behavior; still reachable without the panel | `SessionFooter.tsx`, `items/Marker.tsx`, `Composer.tsx` |
 | Unsupported update, plugin context, boundaries, reconnect/load-earlier controls | Restyle; retain content, provenance, truncation and visible failures | `items/Unrecognised.tsx`, `ItemBoundary.tsx`, `Transcript.tsx` |
 
+**Operator prompt queue (2026-10-21; sessions migration 29).** Send remains available beside Cancel
+while a session is running or waiting. On a parked session its label, tooltip
+and accessible name are "Resume and send"; this submits one collector queue
+request, and the collector owns resume/delivery. Keep standalone Resume and
+show the parked notice above the input, including "N queued messages will be
+sent when you resume" when applicable. Explicit Park holds existing queued
+work; Resume or a new Send releases it. Ctrl+Enter and Cmd+Enter use the same
+submission handler in every state; ignore IME composition/keyCode 229 and
+autorepeat. Plain Enter retains its existing newline behavior. Accepted messages appear in a bounded
+"Queued" list under the composer, with a text preview, image count, Edit and
+Remove. Editing uses a separate inline draft and retains images; FIFO order
+cannot be changed. Once delivering, an item is immutable. If delivery wins
+while editing, keep the textarea visible with "Already sending; your edit
+wasn’t applied" and Copy edit/Dismiss edit actions, including a manual copy
+fallback. Failed items retain text/images for seven days, explain why, and
+offer Copy/Dismiss. Each submission carries one client request key, retained
+for retries of the same checked content so an uncertain response cannot duplicate it.
+The uncertain-send marker persists this key across page reload; an unchanged
+draft reuses it after network failures or 5xx. A receipt conflict releases that
+key for the next explicit submission, preserving a visible warning that the
+earlier submission may already have been sent. Editing or a
+definite refusal resolves that marker. A parked offline session's notice says
+to resume and send once the host is back; the API refuses new offline sends
+with `host_offline` and retains the draft. Queue-owned not-delivered transcript
+markers offer no separate Send again action.
+Deleting the session or purging its hat scrubs queued text and images with
+the transcript; the delete confirmation names the number of unsent messages
+that will also be deleted, excluding items already delivering. No recovery
+list remains after deletion.
+Queue state comes from the
+collector and its existing session view stream (`queue_changed` snapshots),
+so reload and multiple windows converge on one list; ordinary unsent drafts
+remain per-window. A pending permission is answered on its canonical card,
+never by a queued prompt. On a phone, "Write a prompt" exposes the composer
+without resolving that pending request. Both themes and phone/desktop widths
+keep Send reachable with the list visible.
+
 The mobile bottom action region is a presentation of the focused live
 question's existing controls, not a second independent form. Mount one
 interactive action set, associate it with that card, and return to the
@@ -627,7 +664,7 @@ Escape returns focus to the input. Composition Enter and held-Enter repeats do n
 or submit. Describe the choice button with the current path and announce a new
 directory politely; keep the path to one ellipsized line with its full title.
 Start or Cmd/Ctrl+Enter while browsing commits the shown directory, waits for its
-hat and session settings, then starts there. Resolution failure or intervening
+hat, then starts there without waiting for the settings preview. Resolution failure or intervening
 user interaction cancels this pending start. Close and Edit defaults retain the
 outside-choice rule. (Parent review ruling, 2026-10-21.)
 
@@ -790,18 +827,38 @@ Configuration must still be applied and confirmed before the child brief runs.
 
 ### 6.3 Deterministic inheritance and heterogeneous catalogs
 
-For a selected online host, agent and validated cwd, fetch the existing
-runtime-catalog endpoint. The backend resolves the cwd/hat; the launcher
+For a selected online host, agent and validated cwd, GET the existing
+runtime-catalog endpoint for its persistent snapshot. No catalog probe runs on
+open, in the background or on a timer. An explicit Refresh POST probes and
+saves a new snapshot. Both New session and Defaults show the saved age
+(for example, “saved 2 h ago”) and a Refresh button. Real starts and resumes
+also populate this exact-context cache. Cached previews survive reconnect and
+collector restart but never count as Fresh for delegation.
+The backend resolves the cwd/hat; the launcher
 also uses its existing hat-resolution preview. Fence responses by the
-whole context (host, agent, canonical cwd/resolved hat and request generation)
-and the catalog's `adapter_revision`. Never use the last session of another
+whole context (host, agent, canonical cwd/resolved hat and request generation).
+Only the active request generation may publish its response, including its
+`adapter_revision`; the web does not compare revisions to reject responses.
+The opaque revision identifies the adapter command/environment and installed
+security profile, not `config_options` or the session's chosen settings.
+Never use the last session of another
 hat, a display model name or another host's probe as the baseline.
 
 Resolve each field independently:
 
-1. The chosen catalog's `defaults` supplies the read-only agent baseline.
-2. A stored field/key for this hat and agent replaces that baseline only
-   when the exact id and value are supported by this catalog.
+1. The chosen catalog's `defaults` supplies the read-only agent baseline:
+   the adapter's own `session/new` values before any hennery switch, or the
+   equivalent explicit Refresh result. Resume/restart and delegated attaches
+   update offered options but never replace that baseline with current picks.
+   If no baseline is known, `defaults` is empty; send only deliberate overrides.
+2. A supported stored field/key for this hat and agent replaces that baseline.
+   Security axes (mode and the ids in the profile's `security.axes`) are strict:
+   always request those hat overrides, even when this catalog cannot offer
+   them. A refusal produces a readable configuration error and retains the
+   first prompt. For nonsecurity overrides, a cached catalog that does not
+   offer the value falls back to the supported baseline or agent default,
+   with a visible notice explaining that fallback. Never erase the stored record.
+   Without a catalog, including while loading, request every hat override.
 3. An explicit New session choice replaces the inherited value while the
    context supports it. Show its source as “Your choice”.
 
@@ -809,7 +866,8 @@ Missing keys inherit; do not use truthiness, since a boolean false is real.
 Use `lib/catalog.ts`'s category/id rules to identify model/mode and stable
 remaining axes. Reasoning effort is one catalog axis, not a special
 three-value hard-coded field. Render other select/boolean axes; unsupported
-shapes display unavailable and are never sent.
+catalog shapes display unavailable and cannot be chosen here. Existing hat
+security overrides remain requests even when this preview cannot represent them.
 
 **Model-dependent axis rule:** the pre-start endpoint accepts agent/cwd,
 not a model, and describes the probe's default model. Keep the origin of
@@ -825,7 +883,8 @@ because the model changed, or classify axes from display labels.
 After that pruning, overlay applicable **stored and explicit** axes; they
 are deliberate requests, not inherited probe defaults. A coarse pre-start
 catalog cannot prove they exist for the newly selected model. Send only
-choices offered by that context, then require the actual post-start
+explicit choices offered by that context, plus supported stored nonsecurity
+overrides and every stored security requirement, then require the actual post-start
 read-back to confirm every requested value before the first prompt (§6.4).
 Do not call an invented per-model catalog endpoint or silently erase a
 stored/explicit request merely to pass the read-back gate.
@@ -837,28 +896,42 @@ retain the required mode/security fields and any deliberate supported
 effort choice. The Sonnet session must start and receive its first prompt
 after its actual configuration is confirmed, without `config_failed` from
 the inherited `fast`. If `fast=false` was explicitly picked or stored as
-an override, preserve its provenance/request; Sonnet's refusal or missing
-read-back keeps the first prompt as a draft and visibly explains the
-unsupported requested axis. Never report success or substitute another
-axis/model to satisfy it.
+an override and the preview still offers it, preserve its provenance/request;
+Sonnet's refusal or missing read-back keeps the first prompt as a draft and
+visibly explains the unsupported requested axis. If a later saved catalog
+omits `fast`, show a fallback notice and omit that nonsecurity override.
 
 Example without private fixtures: a hat stores model A and effort High;
-the selected host offers only model B and Low/Medium. The launcher uses
-that host's baseline for both, lists “Saved model A is unavailable on this
-host; using B” and the effort equivalent, and omits the unavailable
-overrides from the request. The stored record is not erased. Keep the
+the selected host offers only model B and Low/Medium. The launcher lists
+the unavailable overrides: “Saved model A is unavailable on this host; using B”
+and the equivalent effort fallback (or “using agent default” if unknown).
+It requests supported baseline values instead. The stored record is not erased. Keep the
 notice visible through Start, not only as a fleeting toast. If the
-operator explicitly picked A and it later disappears, disable Start and
-ask for a new choice rather than treating that explicit choice as implicit.
+operator explicitly picked A and it later disappears, reject Start with a
+request for a new choice rather than treating that explicit choice as implicit.
 
 Do not map friendly labels or approximate model ids across pins. When a
 model choice changes which axes apply, recompute applicability, preserve
 still-valid explicit choices, and explain every discarded value. Offline,
-stale/unknown/unavailable catalog contexts never promise supported config:
-show the problem, retry, and offer an explicit “Use agent defaults for
-this start” choice that sends no unverified overrides. Do not silently
-switch into that path. Store editors may reset values without a catalog,
-but choosing a replacement requires a fresh usable context.
+stale/unknown/unavailable catalog contexts never promise supported config.
+With no usable snapshot, show “Agent defaults”, enable Start as soon as its
+host/runtime/cwd prerequisites hold, and send hat overrides and explicit picks.
+Read the hat record independently of the preview; a start waits for that
+record if necessary, never for a catalog probe or preview response.
+Loading or refreshing a preview never gates Start. A usable cached snapshot
+offers choices with its age visible; the real session still verifies them.
+If a start without a preview ends `config_unconfirmed`, show the configuration
+error and retain the first prompt. For each unconfirmed nonsecurity override,
+offer one explicit “Start with agent default for X” action that creates a new
+session omitting only that override, retaining other choices and all security
+requirements, and verifies the new session before sending the prompt. Keep
+the original started session accessible for review; never retry automatically.
+Use the real session's catalog for review labels, then the cached catalog,
+then the raw id. Protect mode and all security axes listed by the post-start
+profile, including when its baseline is marked unknown. An unknown boolean
+baseline displays “· agent default”, distinct from an explicit Off value.
+Store editors may reset values without a catalog, but choosing a replacement
+requires a usable saved or freshly refreshed context.
 
 Changing host resets agent/path/browser as the existing launcher does;
 show reset notices and recompute inherited config. Changing agent resets
@@ -894,17 +967,19 @@ successful first prompt. Read the newly created session and its actual
 post-start `SessionCatalog`; compare every requested field, including
 security axes, after it becomes active. An empty/missing catalog is not
 confirmation. If the actual config is absent/partial, a value is clamped,
-or a configuration failure is shown, open the visible session with
-the first prompt kept as its draft and a configuration-review notice.
+or a configuration failure is shown, keep the first prompt as its draft and
+show a configuration-review notice. Normally open the visible session;
+the no-preview nonsecurity recovery in §6.3 keeps New session open with the
+error, explicit retry actions and a link to that original session.
 Never release it automatically when a later update happens to match.
 
 Bound the post-start confirmation wait to 30 seconds and retain the draft
 on timeout. A newly created session has no earlier attachment to confuse
 with this read-back. Do not add automatic resume/repair or a new public
 config-evidence API for this launcher; existing delegated resume/evidence
-gates remain authoritative. The explicit unknown-catalog opt-out in §6.3
-uses the ordinary agent-default start without requesting overrides; explain
-that its config was not verified. Ambiguous delivery keeps the existing
+gates remain authoritative. The no-catalog path in §6.3 verifies every hat
+override and explicit pick against the actual session. With no requested
+values it checks the successful attachment and actual hat. Ambiguous delivery keeps the existing
 session id and draft and never retries Start automatically. Tests must
 exercise a real clamped/failed adapter config before the first prompt,
 not just mock a successful POST response.
@@ -1081,7 +1156,7 @@ builds. The following are requirements for the implementation plans.
 | Push navigation | `pwa/notification.test.ts`, `pwa/navigation.test.ts`, `pwa/worker.test.ts`, `web/e2e/pwa.spec.ts`, existing producer tests: real URL → worker data.url → click → exact session/card, auth return, older question, dirty/exact window, gateway and invalid URL cases. |
 | Session | Existing `screens/Session*.test.tsx`, Composer/Transcript/item/AnswerBook/FamilyPanel suites; `web/e2e/sessions.spec.ts`, `family.spec.ts`: panel/sheet, parent banner/takeover, actual option ids, multi-question input, queued/uncertain/conflict/withdrawn/delivered, cancel/resume/draft preservation. |
 | Defaults backend | New kernel storage/migration tests and sessions HTTP integration tests: upgrade/reopen, owner/foreign hat, atomic revision race, empty reset/false, purge freeze/cascade, all PUT step-up/expiry/Origin/body bounds/invalid fields; add owner-audit cases and generator checks. |
-| Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, missing stored ids visibly omitted, explicit invalid pick blocked, unknown catalog explicit opt-out, stale responses, config clamp/failure prevents first prompt. Exercise the real Opus→Sonnet case: inherited `fast=false` omitted, required security axes preserved, supported deliberate effort retained and first prompt delivered after read-back. An explicit/stored unsupported `fast` request remains visible and prevents first prompt on failed/missing read-back. Assert actual start frame and no prompt before confirmation. |
+| Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, unsupported security overrides still sent, unsupported nonsecurity overrides fall back with a visible notice, explicit invalid picks rejected, immediate starts with every hat override without a catalog, cached age and explicit Refresh, stale responses, config clamp/failure prevents first prompt. Exercise real Opus→Sonnet without a Refresh workaround: inherited `fast=false` omitted, required security axes preserved, supported deliberate effort retained and first prompt delivered after read-back. A no-preview unsupported `fast` request holds the prompt and offers one-click new start with agent default for only that axis. Assert actual start frames, live review labels, unknown boolean labels and no prompt before confirmation. |
 | Settings/management | Existing settings/manage/API tests, `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts` and new `delegation-settings.spec.ts`: new layout, default-hat controls, delegation enable/disable/step-up/cancel, binary delegation without catalog probes, per-hat privacy, secrets and device lifecycle intact. Actually spawn through enabled Settings with any offered mode, including an unknown-security profile. Enabling with an unauthenticated runtime succeeds; signing in later needs no re-toggle; an unauthenticated spawn returns auth_required. Defaults never enable delegation. |
 | Keyboard | New command/shortcut and palette tests plus browser checks: every key, editable/composed-path/select/IME guards, card-focus digits, dialog focus/return, typing never mutates an answer or starts a session. |
 | Rendering/CSP | Existing `security.test.ts`, `deps.test.ts`, browser CSP collectors and Markdown computed-style checks; no external assets, inline script, lost list markers or mobile controls. |
@@ -1241,5 +1316,76 @@ queue coverage, the read-only queue deviation, accent contrast and the
 parallel ownership seams. Record approval/amendments and scoped
 re-confirmation before writing R1's executable plan. No unresolved
 operator-level product question is introduced by this specification.
+
+## 12. Redesign v2 — session switching and hat scope (2026-10-21)
+
+The operator's local Desktop v2 prototype defines session switching. The
+sidebar has up to six most recently **visited** sessions, independent of
+agent activity. Each row has a status icon, an 8 px hat-colour dot before the
+title (hat name in its tooltip), and a highlight for the current session.
+Collapsed navigation retains 18 px status icons with a hat-colour badge,
+accessible names and full tooltips. Distinct glyphs and semantic foregrounds
+identify question, permission, reply, running, idle, parked, offline, failed,
+closed, starting, parent handling and waiting on children states. Phone uses
+the existing Jump to palette rather than a
+sidebar.
+
+The collapsed rail footer uses icon buttons for appearance and sign-out, with
+accessible names and tooltips; its version line is hidden. The automatic
+narrow desktop rail follows the same rules. Answer pending delivery uses a
+question bubble in the starting foreground, distinct from operator work.
+
+The existing summary contract exposes a pending-question flag but not its
+kind. An open pending question therefore uses the question bubble; blocked
+attention without a pending question uses the permission hand. Distinguishing
+permission requests from other pending questions requires a future summary
+contract addition; this UI lane does not add backend requests or fields.
+
+The current session stays pinned first and unnumbered, even when another
+window changes this browser's visit order. The other visible Recent entries are
+numbered Option/Alt+1–5 in visit order, as in the prototype. Backtick opens
+this window's previous visited session, using a two-id sessionStorage history.
+Other windows share only the browser-wide Recent order and numbered targets.
+The command palette puts **Recent** first in shared visit order and
+preselects that previous visit, so Command/Ctrl+K followed by Enter also goes
+back. Searching still searches authorized sessions through the existing API;
+unvisited loaded sessions are labelled Sessions rather than Recent. The
+shortcut help lists only enabled bindings, hides numbered shortcuts on touch
+layouts and labels backtick as US-layout only (dead keys do not fire it).
+Global shortcuts do not fire inside
+inputs, textareas, selects, editable content, active dialogs, during IME
+composition (including key code 229), on repeat or after preventDefault.
+
+The selected hat is shared browse scope: it filters the sessions list,
+Needs you, sidebar Recent, palette Recent/search and displayed counts.
+**All hats** restores all authorized sessions. A session opened by a direct
+link may be outside the browse scope; its session-local action context must
+not override that scope. Overview grouping, sorting and project subgroups
+are implemented independently and consume the same scope.
+
+Visit history is per browser in localStorage, bounded to 50 unique ids and
+never synced to the collector. The server creates UUIDv7 session ids; history
+validates UUID shape while retaining older/imported UUID versions. Summaries
+are rehydrated through authorized id searches and reconciled with the existing
+list stream; list filters and pagination cannot themselves prune a visit.
+Exact-id misses on an exhausted search, authorization/not-found refusals,
+stream removals and session deletion prune history. Transient read failures
+retain ids and retry once after a 500 ms backoff; they never mark an id as
+authoritatively checked. The retry resumes the failed page and preserves the
+pagination budget. Further attempts wait for reconnect/resync or targeted scope
+revalidation. Reads run on mount and after a
+resync/reconnect, with at most four in flight and three pages per id; a capped
+search does not prove deletion. Search, hat and Needs you query changes retain
+checked state and cached hats; known sessions outside the selected hat are
+skipped. The hat-scoped stream broadcasts removals for other hats as well.
+A new query anchor can still miss an outside-hat deletion: when a scope
+expands, absent cached entries that the old hat excluded are hidden and
+revalidated through exact-id lookup. A filtered/page miss cannot itself delete
+history, and entries included by the old scope are not needlessly reread.
+Storage ids are not owner-scoped: sign-out clears them and a new
+owner's authorized lookups prune inaccessible ids. Confirmed sign-out (including cross-tab
+sign-out) clears history with other local authenticated state; ordinary
+authentication expiry preserves it. Switching and scope need no backend addition;
+the pending-question-kind icon limitation is recorded above.
 
 Generated with Claude AI — please review before distribution.

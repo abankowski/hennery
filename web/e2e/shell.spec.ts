@@ -75,7 +75,7 @@ test('a passkey is registered right after setup, with no second password', async
   await expect(page.getByText(/^Your passkey is added/)).toBeVisible()
   await page.getByRole('button', { name: 'Continue' }).click()
   await expect(page).toHaveURL(`${collector.origin}/sessions`)
-  await expect(page.getByRole('heading', { name: 'Sessions' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
 })
 
 test('the shell: a rail from 1280 px, a bottom tab bar at 390 px', async () => {

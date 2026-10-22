@@ -390,7 +390,10 @@ async fn handshake(
                 Capability::ForgetSession,
                 Capability::McpServers,
                 Capability::CatalogProbe,
+                Capability::CatalogProbeCancel,
                 Capability::DelegationConfig,
+                Capability::OperatorResume,
+                Capability::PromptMailboxSnapshot,
                 Capability::PluginContext,
             ]),
             mcp_isolation: announce.mcp_isolation,
@@ -438,6 +441,13 @@ async fn connect_once(
     replies: &mut mpsc::UnboundedReceiver<HostFrame>,
     backoff: &mut Duration,
 ) -> Result<()> {
+    struct CancelCatalogs(crate::delegation::CatalogProbes);
+    impl Drop for CancelCatalogs {
+        fn drop(&mut self) {
+            self.0.cancel_all();
+        }
+    }
+    let _cancel_catalogs = CancelCatalogs(probes.catalog.clone());
     let (cfg, transport) = configured;
     let (mut sink, mut stream, answer) = handshake(
         transport,
@@ -552,6 +562,7 @@ fn attached_sessions(uplink: &Uplink, sessions: &Sessions) -> Result<Vec<Attache
         out.push(AttachedSession {
             last_seq: uplink.last_seq(&session_id)?,
             open_turn_id: handle.open_turn_id(),
+            ending: Some(handle.is_ending()),
             session_id,
         });
     }
@@ -766,6 +777,7 @@ fn handle(
     frame: CollectorFrame,
 ) -> Result<()> {
     match frame {
+        CollectorFrame::CancelCatalogProbe { request_id } => probes.catalog.cancel(&request_id),
         CollectorFrame::SetIdleHold { session_id, held } => {
             let mut map = sessions.lock().expect("sessions lock");
             if held {
@@ -785,6 +797,14 @@ fn handle(
             cwd,
             operator_initiated,
         } => {
+            let Ok(lease) = probes.catalog.begin(&request_id) else {
+                uplink.reply(HostFrame::Error {
+                    request_id,
+                    code: "busy".into(),
+                    message: "catalog probe busy".into(),
+                });
+                return Ok(());
+            };
             let Some(command) = cfg.agents.get(&agent).cloned() else {
                 uplink.reply(HostFrame::Error {
                     request_id,
@@ -800,7 +820,10 @@ fn handle(
                 uplink.clone(),
             );
             tokio::spawn(async move {
-                let result = if operator_initiated {
+                let result = tokio::select! {
+                    biased;
+                    _ = lease.token.cancelled() => return,
+                    result = async { if operator_initiated {
                     catalogs
                         .operator_catalog(&agent, command, profile, PathBuf::from(cwd))
                         .await
@@ -808,6 +831,7 @@ fn handle(
                     catalogs
                         .catalog(&agent, command, profile, PathBuf::from(cwd), roots)
                         .await
+                } } => result,
                 };
                 uplink.reply(match result {
                     Ok(catalog) => HostFrame::Catalog { request_id, catalog },
@@ -829,9 +853,11 @@ fn handle(
                         .into(),
                     },
                 });
+                drop(lease);
             });
         }
         CollectorFrame::DelegatedAttach {
+            operator_initiated,
             request_id,
             session_id,
             committed_seq,
@@ -849,7 +875,13 @@ fn handle(
             homes,
             AttachRequest {
                 generation: Some(attach_generation),
-                roots: cfg.workspace_roots.clone(),
+                // The collector has already authorized this existing operator
+                // session. Still require its exact canonical cwd at launch.
+                roots: if operator_initiated {
+                    vec![PathBuf::from(&cwd)]
+                } else {
+                    cfg.workspace_roots.clone()
+                },
                 request_id,
                 session_id,
                 committed_seq,
@@ -1201,6 +1233,28 @@ where
 mod tests {
     use super::*;
     use hennery_proto::frames::{ParkReason, SessionBody};
+
+    #[tokio::test]
+    async fn attached_snapshots_report_a_park_queued_before_the_actor_reads_it() {
+        let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+        // No await: the actor cannot poll or spawn an adapter before this snapshot.
+        let handle = session::start(
+            uplink.clone(),
+            "start".into(),
+            "s1".into(),
+            AgentCommand::parse("unused-snapshot-test-adapter").unwrap(),
+            "/tmp".into(),
+        );
+        let sessions = Arc::new(Mutex::new(SessionMap::default()));
+        sessions.lock().unwrap().handles.insert("s1".into(), handle.clone());
+        let snapshot = serde_json::to_value(attached_sessions(&uplink, &sessions).unwrap()).unwrap();
+        assert_eq!(snapshot[0]["ending"], false);
+        assert!(handle.send(SessionCmd::Park {
+            request_id: "park".into()
+        }));
+        let snapshot = serde_json::to_value(attached_sessions(&uplink, &sessions).unwrap()).unwrap();
+        assert_eq!(snapshot[0]["ending"], true);
+    }
 
     #[tokio::test]
     async fn a_reply_goes_out_after_the_facts_already_in_the_outbox() {
