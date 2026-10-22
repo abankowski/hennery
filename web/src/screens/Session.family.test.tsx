@@ -9,6 +9,7 @@ it('loads family state for a notification deep link with no list summary, and in
   vi.stubGlobal('matchMedia', vi.fn((query: string) => ({ matches: query === '(max-width: 1023px)', addEventListener() {}, removeEventListener() {} })))
   const streams: ReturnType<typeof liveStream>[] = []
   const page = familyPage(); page.questions = []
+  page.summary = { ...page.summary, unseen: { event_id: 1 } }
   const s = routed(call => {
     const path = new URL(call.path, 'http://h').pathname
     if (path === '/api/view/sessions/parent/family') return json(page)
@@ -23,6 +24,7 @@ it('loads family state for a notification deep link with no list summary, and in
   fireEvent.click(screen.getByRole('button', { name: 'Session details' }))
   expect(await screen.findByRole('region', { name: 'Session family' })).toBeInTheDocument()
   expect(document.querySelector('.session-head .badge')).toHaveTextContent('Waiting on children')
+  expect(document.querySelector('.unseen-sentinel')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('tab', { name: 'Plan' }))
   fireEvent.click(screen.getByRole('button', { name: 'Family · 2' }))
   expect(screen.getByRole('tab', { name: 'Family' })).toHaveAttribute('aria-selected', 'true')

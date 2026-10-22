@@ -84,8 +84,8 @@ it('a hidden or scrolled-away result stays unread even after its content loads',
 
 it('review membership and labels preserve formal question precedence', () => {
   const row = { lifecycle: 'closed', presumed_parked: false, question_waits: false, operator_attention: 0, review }
-  expect(needsOperator(row)).toBe(true)
-  expect(statusOf(row).label).toBe('To review')
+  expect(needsOperator(row)).toBe(false)
+  expect(statusOf(row).label).toBe('Closed')
   expect(statusOf({ ...row, operator_attention: 1 }).label).toBe('Waiting on you')
   expect(needsOperator({ ...row, review: undefined })).toBe(false)
 })

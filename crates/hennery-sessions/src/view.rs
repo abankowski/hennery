@@ -112,6 +112,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/view/sessions/{id}/family", get(family))
         .route("/api/view/sessions/{id}/takeover", axum::routing::post(takeover))
         .route("/api/view/sessions/{id}/read", axum::routing::post(mark_read))
+        .route("/api/view/sessions/{id}/seen", axum::routing::post(mark_seen))
         .route("/api/view/sessions/{id}/questions/{pending_id}", get(question_card))
         .route("/api/view/sessions/{id}/turns/{turn_id}", get(undelivered_turn))
         .route("/api/stream/view/sessions/{id}", get(item_stream))
@@ -139,6 +140,31 @@ fn not_found() -> Response {
 #[serde(deny_unknown_fields)]
 struct ReadResult {
     event_id: i64,
+}
+async fn mark_seen(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    hennery_kernel::json::ApiJson(request): hennery_kernel::json::ApiJson<serde_json::Value>,
+) -> Response {
+    let Ok(request) = serde_json::from_value::<ReadResult>(request) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "invalid_arguments",
+            "expected an activity event",
+        );
+    };
+    if id.len() > 128 {
+        return not_found();
+    }
+    if request.event_id <= 0 || request.event_id > 9_007_199_254_740_991 {
+        return error(StatusCode::BAD_REQUEST, "invalid_arguments", "invalid activity event");
+    }
+    match state.store.mark_session_seen(&id, request.event_id, &state.hub) {
+        Ok(Some(true)) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Some(false)) => error(StatusCode::CONFLICT, "invalid_activity", "no such activity"),
+        Ok(None) => not_found(),
+        Err(err) => internal(err),
+    }
 }
 async fn mark_read(
     State(state): State<AppState>,

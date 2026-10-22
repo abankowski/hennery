@@ -36,10 +36,11 @@ export default function NavigationRail({ views, current, collapsed, toggle }: { 
           const colour = hat?.colour && HEX.test(hat.colour) ? hat.colour : DEFAULT_ACCENT
           const current = scope.selectedId === row.session_id, index = targets.findIndex(target => target.session_id === row.session_id)
           const hint = index >= 0 ? `${isMac() ? '⌥' : 'Alt+'}${index + 1}` : ''
-          const tip = [name.text, hat?.name ?? 'Unknown hat', status.label, hint].filter(Boolean).join(' · ')
-          return <Link key={row.session_id} to={sessionPath(row.session_id)} className={'recent-session' + (current ? ' on' : '')} aria-current={current ? 'page' : undefined} aria-label={tip} title={tip}>
+          const tip = [name.text, hat?.name ?? 'Unknown hat', status.label, row.unseen ? 'Unseen' : '', hint].filter(Boolean).join(' · ')
+          return <Link key={row.session_id} to={sessionPath(row.session_id)} className={'recent-session' + (current ? ' on' : '') + (row.unseen ? ' session-unseen' : '')} aria-current={current ? 'page' : undefined} aria-label={tip} title={tip}>
             <span className="recent-status" role="img" aria-label={status.label} style={{ color: `var(--st-${status.colour}-fg)` }}><Icon name={status.icon} size={18} /><span className="recent-hat-badge" title={hat?.name ?? 'Unknown hat'} style={{ backgroundColor: colour }} /></span>
             <span className="recent-hat nav-label" title={hat?.name ?? 'Unknown hat'} style={{ backgroundColor: colour }} />
+            {row.unseen && <span className="unseen-dot" role="img" aria-label="Unseen" />}
             <bdi className={'recent-title nav-label' + (name.provisional ? ' session-name-provisional' : '')}>{name.text}</bdi>
             {hint && <kbd className="nav-label">{hint}</kbd>}
           </Link>

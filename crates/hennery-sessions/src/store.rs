@@ -447,6 +447,14 @@ END;",
     "ALTER TABLE sessions ADD COLUMN project_root TEXT;",
     // Durable result reviews (31).
     include_str!("review.sql"),
+    // Unseen activity (32): preserve explicitly unread results, without
+    // retroactively marking historical transcript activity.
+    "ALTER TABLE sessions ADD COLUMN unseen_event_id INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE sessions ADD COLUMN seen_event_id INTEGER NOT NULL DEFAULT 0;
+     UPDATE sessions SET unseen_event_id=COALESCE((SELECT r.event_id FROM session_reviews r
+        WHERE r.owner_id=sessions.owner_id AND r.session_id=sessions.id
+          AND r.event_id>r.read_event_id),0)
+     WHERE delegated_child=0 AND lifecycle<>'deleted';",
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -4552,6 +4560,7 @@ impl Store {
             None => None,
         };
         if !created.is_empty() {
+            crate::unseen::record(&tx, &self.owner, session_id, fact_id, body)?;
             self.ingest_delegation_in(&tx, session_id, body)?;
             for event in &created {
                 crate::delegation_delivery::record_in(&tx, &self.owner, event)?;

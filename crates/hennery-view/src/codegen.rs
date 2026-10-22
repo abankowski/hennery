@@ -8,7 +8,8 @@
 
 use crate::api::{
     ChildCounts, FamilyChild, FamilyLink, FamilyOperation, FamilyPage, FamilyQuestion, FamilySummary, ItemPage,
-    ItemRemoved, ReviewResult, SessionRemoved, SessionSummary, SummaryPage, TurnContent, WaitingChanged,
+    ItemRemoved, ReviewResult, SessionRemoved, SessionSummary, SummaryPage, TurnContent, UnseenActivity,
+    WaitingChanged,
 };
 use crate::item::{
     Body, Field, FieldKind, FieldOption, Item, Location, Marker, MarkerKind, Pairing, PairingKind, PermissionOption,
@@ -145,6 +146,7 @@ pub fn render_ts() -> String {
     add!(
         SummaryPage,
         ReviewResult,
+        UnseenActivity,
         ItemRemoved,
         SessionRemoved,
         TurnContent,
@@ -189,7 +191,7 @@ export type SessionSummary = SessionItem & {
  * whether or not an answer is queued (a question outside a turn sets
  * no `blocked` activity).
  */
-question_waits: boolean, operator_attention: number, review?: ReviewResult, parent_handled_questions: number, family?: FamilySummary, configuration_error?: string, };
+question_waits: boolean, operator_attention: number, review?: ReviewResult, unseen?: UnseenActivity, parent_handled_questions: number, family?: FamilySummary, configuration_error?: string, };
 ";
 
 /// `SESSION_SUMMARY_TS` names every field of the summary: one more and
@@ -201,6 +203,7 @@ fn session_summary_ts_is_whole(summary: SessionSummary) {
         question_waits: _,
         operator_attention: _,
         review: _,
+        unseen: _,
         parent_handled_questions: _,
         family: _,
         configuration_error: _,

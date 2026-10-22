@@ -66,19 +66,19 @@ impl Store {
         if !valid {
             return Ok(Some(false));
         }
+        crate::unseen::acknowledge_in(&tx, self.owner_id(), session, event_id)?;
         let changed = tx.execute(
             "UPDATE session_reviews SET read_event_id = ?3
              WHERE owner_id = ?1 AND session_id = ?2 AND read_event_id<?3",
             params![self.owner_id(), session, event_id],
         )?;
         let event = if changed > 0 {
-            Some(crate::store::collector_event(
+            Some(crate::unseen::receipt_in(
                 &tx,
                 self.owner_id(),
                 session,
                 "result_read",
-                serde_json::json!({"event_id":event_id}),
-                &crate::store::stamp_ago(std::time::Duration::ZERO),
+                event_id,
             )?)
         } else {
             None

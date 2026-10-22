@@ -67,14 +67,14 @@ async fn reading_a_result_updates_another_devices_list_and_does_not_hide_a_newer
     c.session(&c.owner(), "result");
     let first = complete_review_turn(&c, "result", "one", 1);
     let page = c.summaries("").await;
-    assert_eq!(page.waiting, 1);
+    assert_eq!(page.waiting, 0);
     let mut other_device = c
         .stream(
             "/api/stream/sessions",
             Some(&format!("{}:{}", page.epoch, page.revision)),
         )
         .await;
-    assert_eq!(other_device.counted().await.0, 1);
+    assert_eq!(other_device.counted().await.0, 0);
     let reader = c.client();
     let response = reader
         .post(c.url("/api/view/sessions/result/read"))
@@ -84,7 +84,6 @@ async fn reading_a_result_updates_another_devices_list_and_does_not_hide_a_newer
         .unwrap();
     assert_eq!(response.status(), 204);
     assert!(other_device.message().await.summary().review.is_none());
-    assert_eq!(other_device.counted().await.0, 0);
     let second = complete_review_turn(&c, "result", "two", 3);
     assert_eq!(
         reader
@@ -97,7 +96,7 @@ async fn reading_a_result_updates_another_devices_list_and_does_not_hide_a_newer
         204
     );
     let page = c.summaries("").await;
-    assert_eq!(page.waiting, 1);
+    assert_eq!(page.waiting, 0);
     assert_eq!(page.sessions[0].review.as_ref().unwrap().event_id, second);
     let items = c.page("result", "").await;
     assert!(
@@ -105,6 +104,52 @@ async fn reading_a_result_updates_another_devices_list_and_does_not_hide_a_newer
             .items
             .iter()
             .all(|item| !matches!(&item.body, Body::Unrecognised(u) if u.update_kind == "result_read"))
+    );
+}
+
+#[tokio::test]
+async fn seeing_activity_updates_another_device_without_consuming_newer_work() {
+    let c = Collector::start().await;
+    c.session(&c.owner(), "result");
+    let first = complete_review_turn(&c, "result", "one", 1);
+    let page = c.summaries("").await;
+    assert_eq!(page.waiting, 0);
+    let mut other_device = c
+        .stream(
+            "/api/stream/sessions",
+            Some(&format!("{}:{}", page.epoch, page.revision)),
+        )
+        .await;
+    assert_eq!(other_device.counted().await.0, 0);
+    let reader = c.client();
+    let response = reader
+        .post(c.url("/api/view/sessions/result/seen"))
+        .json(&json!({"event_id":first}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert!(other_device.message().await.summary().unseen.is_none());
+    let second = complete_review_turn(&c, "result", "two", 3);
+    assert_eq!(
+        reader
+            .post(c.url("/api/view/sessions/result/seen"))
+            .json(&json!({"event_id":first}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    let page = c.summaries("").await;
+    assert_eq!(page.waiting, 0);
+    assert_eq!(page.sessions[0].unseen.as_ref().unwrap().event_id, second);
+    let items = c.page("result", "").await;
+    assert!(
+        items
+            .items
+            .iter()
+            .all(|item| !matches!(&item.body, Body::Unrecognised(u) if u.update_kind == "session_seen"))
     );
 }
 
@@ -158,7 +203,60 @@ async fn result_read_route_is_operator_only_scoped_and_rejects_invalid_event_ids
             .status(),
         409
     );
-    assert_eq!(c.summaries("").await.waiting, 1);
+    assert_eq!(c.summaries("").await.waiting, 0);
+}
+
+#[tokio::test]
+async fn seen_route_is_operator_only_scoped_and_rejects_invalid_event_ids() {
+    let c = Collector::start().await;
+    c.session(&c.owner(), "result");
+    c.other_owner("foreign");
+    let event = complete_review_turn(&c, "result", "one", 1);
+    let path = "/api/view/sessions/result/seen";
+    assert!(
+        !reqwest::Client::new()
+            .post(c.url(path))
+            .json(&json!({"event_id":event}))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    for id in ["foreign", "missing"] {
+        assert_eq!(
+            c.client()
+                .post(c.url(&format!("/api/view/sessions/{id}/seen")))
+                .json(&json!({"event_id":event}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    for body in [
+        json!({"event_id":0}),
+        json!({"event_id":-1}),
+        json!({"event_id":event,"extra":true}),
+        json!({"event_id":"1"}),
+    ] {
+        assert_eq!(
+            c.client().post(c.url(path)).json(&body).send().await.unwrap().status(),
+            400
+        );
+    }
+    assert_eq!(
+        c.client()
+            .post(c.url(path))
+            .json(&json!({"event_id":event+100}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    assert_eq!(c.summaries("").await.waiting, 0);
 }
 
 #[tokio::test]

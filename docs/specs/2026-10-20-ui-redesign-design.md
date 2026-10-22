@@ -393,11 +393,24 @@ applies. A scoped search must not make a push-selected session disappear.
 
 Only the server's waiting count is a complete attention total before all
 pages load; never display prototype fixture totals as real counts.
-Needs you selects summaries with `operator_attention > 0` or an unread
-`review` result. **Operator amendment, 2026-10-22; target v0.3.1, after v0.3.0
-is live:** completed and failed turns of non-delegated sessions create durable
-"To review" work, independently of pending permissions and questions. The
-queue and session offer "Mark as read" without requiring a reply. The server
+**Operator amendment, 2026-10-22: Unseen.** Needs you selects only summaries
+with `operator_attention > 0`; unseen activity is an independent axis.
+Agent messages/thinking, tool activity, plans, questions and turn completion
+or failure mark a session Unseen, including while it is running. Operator
+prompts, metadata and acknowledgement receipts do not. Unseen sessions have
+a bold title and a nonanimated accent dot in session rows, Recent, search
+and family summaries, with an Unseen filter. Lifecycle/activity and their
+status colours remain independent. No existing history is backfilled.
+The server persists an owner-scoped monotonic seen cursor and synchronizes
+it through list SSE. Only a visible transcript tail with the corresponding
+content already loaded in a focused visible tab acknowledges activity;
+opening a background tab, previews and reading older content do not.
+Stale acknowledgements never consume newer updates, change ordering or
+answer questions. State is shared across devices.
+
+Completed and failed turns of non-delegated sessions also retain durable
+result review metadata. The session offers "Mark as read" without requiring
+a reply; results alone never enter Needs you or its count. The server
 acknowledges a specific completion event monotonically; stale clients cannot
 consume a newer result. The state survives restart and synchronizes through
 ordinary list SSE. Automatic reading requires the actual final result's end
@@ -416,7 +429,7 @@ feature branch.
 Preserve
 `parent_handled_questions` and answer-pending-delivery distinctions; neither
 becomes operator work. Do not regex assistant prose for a final question.
-Read/unread applies only to completed results. A factual `question_waits` alone does not
+Unseen applies during work and after completion. A factual `question_waits` alone does not
 override modern operator-attention routing.
 
 **Needs you has its own effective page query:** the selected `hat` only,

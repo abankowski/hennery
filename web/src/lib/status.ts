@@ -20,6 +20,7 @@ export interface StatusInput {
   presumed_parked: boolean
   operator_attention?: number
   review?: { event_id: number }
+  unseen?: { event_id: number }
   parent_handled_questions?: number
   family?: { child_counts: { active: number } }
 }
@@ -33,7 +34,6 @@ export interface StatusInput {
  */
 export function statusOf(s: StatusInput): Marker {
   if (s.operator_attention !== undefined ? s.operator_attention > 0 : s.activity === 'blocked' || s.question_waits) return { tone: 'attn', label: s.operator_attention !== undefined ? 'Waiting on you' : 'Waiting on a question', resume: false }
-  if (s.review) return { tone: 'attn', label: 'To review', resume: s.lifecycle === 'parked' }
   if ((s.parent_handled_questions ?? 0) > 0) return { tone: 'wait', label: 'Parent is handling', resume: false }
   if (s.operator_attention === 0 && s.question_waits) return { tone: 'wait', label: 'Answer pending delivery', resume: false }
   if (s.lifecycle === 'active' && s.activity === 'idle' && (s.family?.child_counts.active ?? 0) > 0) return { tone: 'wait', label: 'Waiting on children', resume: false }
@@ -61,15 +61,16 @@ export function statusOf(s: StatusInput): Marker {
   }
 }
 
-export const STATUS_FILTERS = ['all', 'attention', 'running', 'idle', 'parked', 'failed'] as const
+export const STATUS_FILTERS = ['all', 'attention', 'unseen', 'running', 'idle', 'parked', 'failed'] as const
 export type StatusFilter = typeof STATUS_FILTERS[number]
-export const STATUS_LABEL: Record<StatusFilter, string> = { all: 'All', attention: 'Needs you', running: 'Running', idle: 'Idle', parked: 'Parked / offline', failed: 'Failed' }
+export const STATUS_LABEL: Record<StatusFilter, string> = { all: 'All', attention: 'Needs you', unseen: 'Unseen', running: 'Running', idle: 'Idle', parked: 'Parked / offline', failed: 'Failed' }
 /** Modern operator counts are authoritative, including closed status-only work. */
-export function needsOperator(s: StatusInput): boolean { return (s.operator_attention ?? 0) > 0 || !!s.review }
+export function needsOperator(s: StatusInput): boolean { return (s.operator_attention ?? 0) > 0 }
 export function matchesStatus(s: StatusInput, filter: StatusFilter): boolean {
   switch (filter) {
     case 'all': return true
     case 'attention': return needsOperator(s)
+    case 'unseen': return !!s.unseen
     case 'running': return s.lifecycle === 'active' && s.activity === 'running'
     case 'idle': return s.lifecycle === 'active' && s.activity === 'idle'
     case 'parked': return s.lifecycle === 'parked' || s.presumed_parked

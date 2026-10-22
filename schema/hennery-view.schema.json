@@ -1296,6 +1296,17 @@
               "type": "null"
             }
           ]
+        },
+        "unseen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UnseenActivity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Latest unseen agent activity, independent of operator attention."
         }
       },
       "required": [
@@ -1747,6 +1758,18 @@
       "required": [
         "update_kind",
         "raw"
+      ],
+      "type": "object"
+    },
+    "UnseenActivity": {
+      "properties": {
+        "event_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "event_id"
       ],
       "type": "object"
     },

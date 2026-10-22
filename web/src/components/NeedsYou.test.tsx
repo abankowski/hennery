@@ -11,17 +11,17 @@ const ts = '2026-10-20T10:00:00Z'
 const row = (id: string, patch: Partial<SessionSummary> = {}): SessionSummary => ({ session_id: id, host_id: 'host-1', hat_id: 'hat-b', agent: 'claude', cwd: '/project', title: id, lifecycle: 'active', activity: 'blocked', presumed_parked: false, question_waits: false, operator_attention: 1, parent_handled_questions: 0, created_at: ts, last_event_at: ts, ...patch })
 const page = (sessions: SessionSummary[], next?: string) => json({ sessions, next_cursor: next, waiting: 2, epoch: 'list', revision: 1 })
 
-it('an unread result bypasses an old local dismiss and reading it keeps formal work in the queue', async () => {
+it('unseen results stay outside Needs you while new formal work appears independently', async () => {
   history.replaceState(null, '', '/needs-you')
   localStorage.setItem('hennery.dismissedAttention', JSON.stringify({ result: `session:${ts}:0` }))
   const streams: LiveStream[] = []
-  let current = row('result', { title: 'Review result', activity: 'idle', operator_attention: 0, review: { event_id: 10, turn_id: 't', outcome: 'completed' } })
+  let current = row('result', { title: 'Review result', activity: 'idle', operator_attention: 0, unseen: { event_id: 10 }, review: { event_id: 10, turn_id: 't', outcome: 'completed' } })
   const server = routed(({ path, method }) => {
     const url = new URL(path, 'http://h')
     if (path === '/api/capabilities') return json({ mode: 'full', features: [] })
     if (path === '/api/hats') return json([hat()])
     if (path === '/api/hosts') return json([host()])
-    if (url.pathname === '/api/view/sessions') return json({ sessions: [current], waiting: 1, epoch: 'list', revision: 10 })
+    if (url.pathname === '/api/view/sessions') return json({ sessions: [current], waiting: current.operator_attention, epoch: 'list', revision: 10 })
     if (url.pathname === '/api/stream/sessions') { const live = liveStream(); streams.push(live); return live.response }
     if (url.pathname === '/api/view/sessions/result/read' && method === 'POST') {
       current = { ...current, review: undefined, operator_attention: 1, question_waits: true }
@@ -35,13 +35,18 @@ it('an unread result bypasses an old local dismiss and reading it keeps formal w
   })
   render(<App fetchImpl={server.fetch} />)
   const queue = await screen.findByRole('region', { name: 'Attention queue' })
-  const card = await within(queue).findByRole('article', { name: 'Review result' })
-  await within(card).findByText('Continue?', { exact: true })
+  await within(queue).findByText('Nothing needs you', { exact: true })
+  expect(within(queue).queryByRole('article', { name: 'Review result' })).not.toBeInTheDocument()
   await waitFor(() => expect(streams.length).toBeGreaterThan(0))
-  await userEvent.click(within(card).getByRole('button', { name: 'Mark as read' }))
+  await act(async () => {
+    current = { ...current, review: undefined, unseen: undefined, operator_attention: 1, question_waits: true }
+    streams.at(-1)!.event('session_upsert', current)
+    streams.at(-1)!.event('waiting_changed', { count: 1 })
+  })
+  const card = await within(queue).findByRole('article', { name: 'Review result' })
   await within(card).findByRole('button', { name: 'Allow' })
   expect(within(queue).getByRole('article', { name: 'Review result' })).toBeVisible()
-  expect(server.calls.filter(call => call.method === 'POST').map(call => call.path)).toEqual(['/api/view/sessions/result/read'])
+  expect(server.calls.filter(call => call.method === 'POST').map(call => call.path)).toEqual([])
 })
 it('keeps closed child attention/counts consistent, persists local dismiss and reveals new question attention', async () => {
   history.replaceState(null, '', '/needs-you')

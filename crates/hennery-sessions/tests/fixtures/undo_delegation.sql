@@ -1,3 +1,6 @@
+-- Test-only rollback of sessions migration 32 before historical fixtures.
+ALTER TABLE sessions DROP COLUMN unseen_event_id;
+ALTER TABLE sessions DROP COLUMN seen_event_id;
 -- Test-only rollback of sessions migration 31 before historical fixtures.
 DROP TRIGGER review_delete;
 DROP TABLE session_reviews;

@@ -128,7 +128,7 @@ export default function SessionList({ screen = false, attentionOnly = false }: {
         const total = hideClosed && !list.hasMore ? children.length : Math.max(children.length, (s.family?.child_counts.total ?? 0) - (hideClosed ? knownClosed : 0))
         const running = children.filter(c => c.activity === 'running').length, attention = children.filter(needsOperator).length, done = children.filter(c => c.lifecycle === 'closed').length
         const idle = children.filter(c => c.lifecycle === 'active' && c.activity === 'idle' && !needsOperator(c)).length
-        const states = [[attention, 'need you'], [running, 'running'], [done, 'done'], [idle, 'idle'], [children.filter(c => c.lifecycle === 'failed').length, 'failed']] as const
+        const states = [[attention, 'need you'], [children.filter(c => c.unseen).length, 'unseen'], [running, 'running'], [done, 'done'], [idle, 'idle'], [children.filter(c => c.lifecycle === 'failed').length, 'failed']] as const
         const summary = states.filter(([count]) => count).slice(0, 3).map(([count, label]) => `${count} ${label}`).join(' · ') + (children.length < total && states.some(([count]) => count) ? ' shown' : '')
         const preview = [...children].sort((a, b) => (sort === 'attention' ? childPriority(a) - childPriority(b) : 0) || (sort !== 'started' ? (Date.parse(b.last_event_at) || 0) - (Date.parse(a.last_event_at) || 0) : 0) || compareStarted(a, b)).slice(0, 5)
         return <Fragment key={s.session_id}>

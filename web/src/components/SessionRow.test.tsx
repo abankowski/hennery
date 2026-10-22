@@ -48,6 +48,17 @@ describe('rowText', () => {
 })
 
 describe('SessionRow', () => {
+  it('shows unseen independently of status and removes the dot and weight after reading', () => {
+    const row = summary({ title: 'A result', unseen: { event_id: 10 } })
+    const view = render(<SessionRow now={NOW} session={row} selected={false} />)
+    expect(screen.getByRole('img', { name: 'Unseen' })).toBeVisible()
+    expect(view.container.querySelector('.sess')).toHaveClass('session-unseen')
+    expect(screen.getByRole('img', { name: 'Idle' })).toBeVisible()
+    view.rerender(<SessionRow now={NOW} session={{ ...row, unseen: undefined, operator_attention: 1 }} selected={false} />)
+    expect(screen.queryByRole('img', { name: 'Unseen' })).not.toBeInTheDocument()
+    expect(view.container.querySelector('.sess')).not.toHaveClass('session-unseen')
+    expect(screen.getByRole('img', { name: 'Waiting on you' })).toBeVisible()
+  })
   it('reads its relative time from the list’s clock, not from the time it renders', () => {
     const { container, rerender } = render(<SessionRow now={NOW} session={summary()} selected={false} />)
     expect(container.querySelector('.sess-time')?.textContent).toBe('15m ago')
