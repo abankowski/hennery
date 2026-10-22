@@ -5,6 +5,10 @@ slice); everything else is design. The maintainer's decisions are recorded below
 
 ## Reading order
 
+For private ideas, screenshots, scoping and work pickup, use the
+[private intake workflow](private-intake.md) and its repo-local skill. Its
+state stays outside Git; public issues are separate approved projections.
+
 1. [Architecture (umbrella spec)](specs/2026-09-25-hennery-architecture-design.md)
    — product, topology, protocol principles, sessions, auth, hats, module
    boundaries, testing. Authoritative where subsystem specs disagree.
@@ -143,6 +147,8 @@ slice); everything else is design. The maintainer's decisions are recorded below
    - [Homebrew tap (R2)](plans/2026-11-02-homebrew-tap.md) — frozen cargo-dist formula, secret-free native local-tap install/upgrade/uninstall CI on macOS arm64 and both Linux architectures, registered owning channel, protected signed-inventory publisher, and service/PATH guidance. Local macOS 27/CLT 26.6 refusal is retained without bypass; the parent owns native CI acceptance and independent review. Publication remains disabled.
 
    - [Crates.io and cargo-binstall (R3)](plans/2026-10-28-crates-io.md) — seven package-local production crates and signed R1 gates; rebased onto C2/D2 main 7fe43fbe. Fresh tarball acceptance found and fixed Cargo basename include collisions at 1dc57fe4, with real Cargo regression, test-harness refusal and production feature auditing. All seven dry runs/offline builds, locked/unlocked registry installs, UI/browser checks and Rust 1.88 pass on the new candidate. All six Rust checks pass (2376 passed, one unchanged pinned-adapter test ignored); release129, packaging82, actionlint and native full Nix checks pass. Four RED regressions, exact-tree fresh replay and ten COPY probes are recorded. Opt-in hook source is retained, disabled in production. Native binstall and both publication switches remain off; R4 now supplies the registered GHCR aggregate; see its rebase record. Scoped parent review, current PR #144 status and maintainer-only setup remain.
+
+   - [Private intake workflow](plans/2026-10-22-private-intake.md) — repo-local skill and private queue shared by local worktrees, structured scoping, approved public projections and implementation/release tracking. Local verification passed: 18 integration tests, 23 removal probes, 4×3 concurrency and six Rust gates (2,953 passed, 9 ignored). The PR carries platform CI and review outcomes.
 
 ## Maintainer decisions (2026-09-27)
 
