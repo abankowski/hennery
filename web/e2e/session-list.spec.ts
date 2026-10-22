@@ -45,6 +45,11 @@ for (const width of [1280, 390]) for (const count of [1, 100]) test(`${count} ch
     await expect(chip).toHaveAttribute('aria-expanded', 'false')
     const rowHeight = (await page.locator('[data-session-id="parent"]').boundingBox())!.height
     expect(rowHeight).toBeLessThanOrEqual(width === 1280 ? 64 : 100)
+    const chipBox = (await chip.boundingBox())!
+    const menuBox = (await page.locator('[data-session-id="parent"]').getByRole('button', { name: 'Session actions', exact: true }).boundingBox())!
+    const rowBox = (await page.locator('[data-session-id="parent"]').boundingBox())!
+    expect(chipBox.x + chipBox.width).toBeLessThanOrEqual(menuBox.x)
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(rowBox.x + rowBox.width)
     await chip.click()
     const visible = ['Other project', 'Coordinator', 'Worker', ...(count === 100 ? ['Worker 98', 'Worker 97', 'Worker 96', 'Worker 95'] : [])]
     await expect(links.locator('.sess-name')).toHaveText(visible)

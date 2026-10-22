@@ -86,11 +86,12 @@
 .session-table .sess-time,.session-table .sess-agent,.session-table .sess-machine,.session-table .sess-flag { display:none; }
 .sess-resume { font-size:10px; color:var(--hn-accent-fg); }
 .sess-item { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:6px; }
-.session-row-actions { position:relative; align-self:start; padding-top:6px; }
+.sess-item:has(>.sess-children) { grid-template-columns:minmax(0,1fr) auto auto; }
+.session-row-actions { grid-column:-2; grid-row:1; position:relative; align-self:start; padding-top:6px; }
 .session-menu-list.session-row-menu { position:fixed; width:210px; right:auto; z-index:80; }
 .session-row-error { max-width:240px; overflow-wrap:anywhere; font-size:12px; }
 .session-like-pending { display:block; font-size:11px; color:var(--hn-fg-3); }
-.sess-children,.sess-why,.sess-reason { grid-column:1 / -1; }
+.sess-children { grid-column:2; grid-row:1; }
 @media (max-width:767px) {
   .session-row-actions { padding-top:0; }
   .session-row-actions .session-menu-btn { width:44px; height:44px; }

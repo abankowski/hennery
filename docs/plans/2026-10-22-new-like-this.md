@@ -2,7 +2,7 @@
 
 **Goal:** Create and open a standalone empty session from the source session's last reported host, agent, canonical cwd, model, mode and every configuration axis. The action is available in the header and session-list ellipsis menus, including a row context click. The empty composer receives focus. No first prompt is sent.
 
-**Base:** 7630ebc393a16656d0b3cb6a579321da122aa7f6. **Branch:** feat/new-like-this. One implementation task.
+**Base:** 1681f4fe37c110e574376a37a7b3dc101e2bcb10. **Original replay base:** 7630ebc393a16656d0b3cb6a579321da122aa7f6. **Branch:** feat/new-like-this. One implementation task; conflict-free rebase includes the independent rename-layout fix from PR #244.
 
 **Architecture:** A bodyless operator-only POST /api/sessions/{id}/new-like-this reads the existing owner-filtered SessionRow once, preserving its configuration snapshot. It reuses normal session start with an expected source hat, normal path resolution/MCP delivery and initial configuration tracking. NewLikeThisResponse returns the exact requested snapshot for existing client read-back. A shared React hook drives both menus, preserves known ids after failed/uncertain starts and fences navigation by view and sign-in lifetime. The list disclosure uses a portal to escape clipped project groups.
 
@@ -11,6 +11,8 @@
 Built first in an isolated worktree. API and UI regressions were observed failing before implementation (four API tests; seven UI tests). A later host-refusal regression was RED before preserving the allocated session id. Targeted checks and real mobile/desktop browser checks pass. Replay, guard probes and final gates are recorded below. Independent review approved the implementation after the navigation amendment. PR #245 carries CI and merge; no deployed service was changed.
 
 <!-- FINAL_EVIDENCE -->
+- Scoped independent re-review by `review_new_like_this` approved the exact three-file CSS/browser delta over rebased `e515b796`, including compact rows, non-overlap, touch targets, disclosure and failure details. No further actionable finding. This amendment and the rebase leave Rust/protocol source bytes unchanged.
+- Linux CI on `700f27dc` passed all Rust gates (job 120082842177, 14m56s) but caught four family-row height regressions and one outdated phone-menu expectation. The row now keeps the child chip and actions side by side, with an explicit third column for a family row. Existing height checks were RED locally; new geometry assertions also prevent chip/menu overlap or a menu outside the row. Final local browser checks passed **41 tests, 1 intentional desktop skip**, across all three affected files; the final geometry assertions passed all **4** list cases again. Removing the third-column guard in a separate copy reproduced all four overlap assertion failures after successful build/embed. **14 total guard probes**. No timing logic changed, so no extra load run was spent on this CSS amendment.
 - Independent whole-branch review by `review_new_like_this` found one Medium navigation defect: leaving and returning to the same URL revived a pending redirect. A per-operation sticky flag now observes the existing app/history navigation subscription and is cleaned up in finally. Four regressions (POST/read-back waits × app/history navigation) were RED, then green; removing the guard reproduced all four assertion failures in a separate copy. Scoped re-review approved the exact hook/test delta over `b0b772b4`, with no further actionable findings.
 - After that amendment, typecheck, full web suite (**2,674 tests in 158 files**), build, embedded binary build and **2 real-browser cases** exited 0. The 17-test asynchronous UI set passed **4×3 load**, 204 executions and 12 suite invocations, all exit 0. Rust bytes are unchanged from the six successful replay gates; no redundant full workspace replay was run for this UI amendment. Total removal guards exercised: **13**.
 - Implementation committed as `6e640cccfcef27e0145afae451ea3427d6885fa9` and pushed over SSH on `feat/new-like-this`. The parent review request covers `7630ebc3..6e640cccfcef27e0145afae451ea3427d6885fa9`; the follow-up documentation commit records this execution evidence only.
@@ -19,7 +21,7 @@ Built first in an isolated worktree. API and UI regressions were observed failin
 - Real browser acceptance passed **2 cases**, each exercising both menus: 390px/light and 1280px/dark. The collector/host/fake-adapter boundaries were real; resulting config matched the changed source despite conflicting hat defaults; closed-source creation worked; no prompt was submitted; the composer was empty and focused. Screenshots were visually inspected.
 - **12 removal probes** in a separate cloned copy failed assertions. Covered source config/availability, the hat check, failed-start id, returned snapshot, single admission, view and sign-in lifetime, read-back, requested-value notice, focus request and viewport target typing. No probe failure was credited for a compile error.
 - **4×3 load** passed for the asynchronous API/UI regression sets: 84 API and 144 UI test executions, 24 suite invocations, all exit 0. The later viewport case is synchronous and received its own RED/green/removal probe.
-- The final patch reconstructs the staged tree from the base using a separate Git index, with **20 extracted implementation files** and the plan copied as its input document. All **1,169 tracked files** are compared with the replay. Final Rust source bytes match the complete Rust gate run; the small UI amendment is replayed and checked separately as described above.
+- The final patch reconstructs the staged tree from the rebased main using a separate Git index, with **22 extracted implementation files** and the plan copied as its input document. The original full replay extracted 20 files and compared all **1,169 tracked files**; the two existing browser files were added in the CI amendment. Final Rust source bytes match the complete Rust gate run; UI amendments are replayed and checked separately as described above.
 - The viewport amendment was observed RED (Window is not a Node), fixed with a Node check and removal-probed. The source/header error is cleared when this new action starts, matching other menu actions.
 - Scratch trees retained for parent cleanup: new-like-this-replay-1, new-like-this-replay-2 and new-like-this-probes-1. Logs and screenshots are under .superpowers/sdd/new-like-this/ in the implementation/replay/probe trees.
 - Not run locally: unrelated Playwright suites, credentialed pinned/provider checks (the nine normal workspace skips), native Nix packaging or deployment. No adapter/runtime or package/dependency input changed. The parent is driving PR #245 through CI and merge using the personal GitHub account; child-only GitHub restrictions do not apply to that role.
@@ -62,6 +64,8 @@ Use the flake dev shell; keep targets separate and APFS-clone them into replay/p
 - docs/specs/2026-09-26-frontend-design.md
 - schema/hennery-protocol.schema.json
 - web/e2e/new-like-this.spec.ts
+- web/e2e/session-list.spec.ts
+- web/e2e/sessions.spec.ts
 - web/src/components/NewLikeThis.test.tsx
 - web/src/components/SessionMenu.tsx
 - web/src/components/SessionRow.test.tsx
@@ -78,7 +82,7 @@ Use the flake dev shell; keep targets separate and APFS-clone them into replay/p
 
 - [x] Write regressions and observe API/UI RED on the base; observe RED for the host-refusal id regression.
 - [x] Build the API/UI implementation and run targeted checks plus real browser acceptance.
-- [x] Extract and apply the exact patch below onto the base in a fresh worktree; copy this plan as the replay input document. Verify the extractor found 20 files and compare all tracked bytes, including generated artifacts.
+- [x] Extract and apply the original 20-file patch onto its base in a fresh worktree; copy this plan as the replay input document. Compare all tracked bytes, including generated artifacts. Subsequent UI amendments follow the verification budget and reconstruct the final 22-file patch against the rebased base in a separate Git index.
 - [x] Run targeted removal probes in a separate cloned copy. Every mutation is restored only inside that disposable copy.
 - [x] Run the web gates and all six Rust gates on the replay. Record actual exit statuses and test totals.
 - [x] Commit and push the tested bytes; independent whole-branch review and scoped re-confirmation approved the final implementation.
@@ -861,6 +865,35 @@ index 00000000..4d1539bc
 +    } finally { await context.close(); await host.stop(); await collector.stop() }
 +  })
 +}
+diff --git a/web/e2e/session-list.spec.ts b/web/e2e/session-list.spec.ts
+index 5e6dc4c8..dd67e1e8 100644
+--- a/web/e2e/session-list.spec.ts
++++ b/web/e2e/session-list.spec.ts
+@@ -45,6 +45,11 @@ for (const width of [1280, 390]) for (const count of [1, 100]) test(`${count} ch
+     await expect(chip).toHaveAttribute('aria-expanded', 'false')
+     const rowHeight = (await page.locator('[data-session-id="parent"]').boundingBox())!.height
+     expect(rowHeight).toBeLessThanOrEqual(width === 1280 ? 64 : 100)
++    const chipBox = (await chip.boundingBox())!
++    const menuBox = (await page.locator('[data-session-id="parent"]').getByRole('button', { name: 'Session actions', exact: true }).boundingBox())!
++    const rowBox = (await page.locator('[data-session-id="parent"]').boundingBox())!
++    expect(chipBox.x + chipBox.width).toBeLessThanOrEqual(menuBox.x)
++    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(rowBox.x + rowBox.width)
+     await chip.click()
+     const visible = ['Other project', 'Coordinator', 'Worker', ...(count === 100 ? ['Worker 98', 'Worker 97', 'Worker 96', 'Worker 95'] : [])]
+     await expect(links.locator('.sess-name')).toHaveText(visible)
+diff --git a/web/e2e/sessions.spec.ts b/web/e2e/sessions.spec.ts
+index 37b0c6f4..dc84db07 100644
+--- a/web/e2e/sessions.spec.ts
++++ b/web/e2e/sessions.spec.ts
+@@ -399,7 +399,7 @@ for (const width of [1280, 390]) {
+       // An active session: Close, Delete, and Park if its host can park.
+       const list = page.locator('.session-menu-list')
+       const names = await list.getByRole('button').allTextContents()
+-      expect(names.filter((n) => n !== 'Park')).toEqual(['Rename', 'Close', 'Delete session'])
++      expect(names.filter((n) => n !== 'Park')).toEqual(['Rename', 'New like this', 'Close', 'Delete session'])
+       expect((await list.getByRole('switch', { name: 'Do not park', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
+       for (const name of names) {
+         const box = await list.getByRole('button', { name, exact: true }).boundingBox()
 diff --git a/web/src/components/NewLikeThis.test.tsx b/web/src/components/NewLikeThis.test.tsx
 new file mode 100644
 index 00000000..7aa9d43f
@@ -1407,18 +1440,19 @@ index c67591d1..5b784170 100644
      setSelectedQuestion(null)
      setTimeout(() => composer.current?.focus(), 0)
 diff --git a/web/src/styles/shell.css b/web/src/styles/shell.css
-index e8fab204..ab1838ea 100644
+index e8fab204..f4243c7f 100644
 --- a/web/src/styles/shell.css
 +++ b/web/src/styles/shell.css
-@@ -86,6 +86,17 @@
+@@ -86,6 +86,18 @@
  .session-table .sess-time,.session-table .sess-agent,.session-table .sess-machine,.session-table .sess-flag { display:none; }
  .sess-resume { font-size:10px; color:var(--hn-accent-fg); }
  .sess-item { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:6px; }
-+.session-row-actions { position:relative; align-self:start; padding-top:6px; }
++.sess-item:has(>.sess-children) { grid-template-columns:minmax(0,1fr) auto auto; }
++.session-row-actions { grid-column:-2; grid-row:1; position:relative; align-self:start; padding-top:6px; }
 +.session-menu-list.session-row-menu { position:fixed; width:210px; right:auto; z-index:80; }
 +.session-row-error { max-width:240px; overflow-wrap:anywhere; font-size:12px; }
 +.session-like-pending { display:block; font-size:11px; color:var(--hn-fg-3); }
-+.sess-children,.sess-why,.sess-reason { grid-column:1 / -1; }
++.sess-children { grid-column:2; grid-row:1; }
 +@media (max-width:767px) {
 +  .session-row-actions { padding-top:0; }
 +  .session-row-actions .session-menu-btn { width:44px; height:44px; }
