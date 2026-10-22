@@ -26,14 +26,19 @@ function write(ids: readonly string[]) {
   try { localStorage.setItem(SESSION_HISTORY_KEY, text); volatile = undefined } catch { volatile = text }
   notify()
 }
-export function visitSession(id: string) {
+/** Revisiting a visible slot records Back without moving Recent. The caller
+ * supplies the visible ids after hat filtering and authorized hydration. */
+export function visitSession(id: string, visibleIds?: readonly string[]) {
   const held = parseSessionHistory(windowSnapshot())
   if (held[0] !== id) {
     const text = JSON.stringify(parseSessionHistory(JSON.stringify([id, ...held.filter(other => other !== id)])).slice(0, 2))
     try { sessionStorage.setItem(WINDOW_SESSION_KEY, text); windowVolatile = undefined } catch { windowVolatile = text }
     notify()
   }
-  write(parseSessionHistory(JSON.stringify([id, ...parseSessionHistory(snapshot()).filter(held => held !== id)])))
+  const ids = parseSessionHistory(snapshot())
+  if (!(visibleIds ?? ids.slice(0, RECENT_SESSION_LIMIT)).includes(id)) {
+    write(parseSessionHistory(JSON.stringify([id, ...ids.filter(held => held !== id)])))
+  }
 }
 export function forgetVisitedSession(id: string) { write(parseSessionHistory(snapshot()).filter(held => held !== id)) }
 export function clearSessionHistory() {
@@ -63,12 +68,10 @@ export function visitedSessions(ids: readonly string[], rows: ReadonlyMap<string
     return row && (!hat || row.hat_id === hat) ? [row] : []
   })
 }
-export function recentSessionTargets(rows: readonly SessionSummary[], selectedId: string | null) {
-  return rows.filter(row => row.session_id !== selectedId).slice(0, 5)
+export function recentSessionTargets(rows: readonly SessionSummary[]) {
+  return rows.slice(0, 5)
 }
-/** Each window keeps its current session first even when another window
- * changes the browser's shared visit order. */
-export function sidebarSessions(rows: readonly SessionSummary[], selectedId: string | null) {
-  const current = rows.find(row => row.session_id === selectedId)
-  return current ? [current, ...recentSessionTargets(rows, selectedId)] : rows.slice(0, RECENT_SESSION_LIMIT)
+/** Selection and summary updates change the row, never its position. */
+export function sidebarSessions(rows: readonly SessionSummary[]) {
+  return rows.slice(0, RECENT_SESSION_LIMIT)
 }

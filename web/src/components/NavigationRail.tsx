@@ -21,8 +21,8 @@ export default function NavigationRail({ views, current, collapsed, toggle }: { 
   const hosts = scope?.hosts?.filter(h => h.revoked_at == null)
   const navigation = (view: View) => <Link key={view} to={PATH[view]} aria-label={LABEL[view]} title={LABEL[view]} className={'nav-item' + (current === view && !scope?.selectedId ? ' on' : '')} aria-current={current === view && !scope?.selectedId ? 'page' : undefined}><Icon name={NAV_ICON[view]} size={18} /><span className="nav-label">{view === 'sessions' ? 'All sessions' : LABEL[view]}</span>{view === 'needs-you' && <WaitingBadge />}{view === 'mcp' && <McpBadge />}</Link>
   const hatLinks = scope ? [{ id: '', name: 'All hats', colour: undefined }, ...(scope.hats ?? [])] : []
-  const recent = sidebarSessions(scope?.recentSessions ?? [], scope?.selectedId ?? null)
-  const targets = recentSessionTargets(recent, scope?.selectedId ?? null)
+  const recent = sidebarSessions(scope?.recentSessions ?? [])
+  const targets = recentSessionTargets(recent)
   return <aside className={'rail' + (collapsed ? ' rail-collapsed' : '')} aria-label="Views">
     <div className="rail-head"><span className="brand-name" title="hennery">hennery</span><button type="button" className="rail-collapse" aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'} onClick={toggle}><Icon name={collapsed ? 'chevron-double-right' : 'chevron-double-left'} size={18} /></button></div>
     <CommandEntry compact={collapsed} />

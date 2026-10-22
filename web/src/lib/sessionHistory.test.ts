@@ -46,8 +46,8 @@ it('filters Recent by the selected hat before bounding shortcut targets, ignorin
   rows.set('old-visit', { ...row('old-visit'), last_event_at: '2099-01-01' })
   expect(visitedSessions(ids, rows, '019a0180-1234-7000-8000-000000000001').slice(0, 2).map(s => s.session_id)).toEqual(['newest-visit', 'old-visit'])
   expect(visitedSessions(ids, rows).map(s => s.session_id)).toContain('019a0180-1234-7000-8000-000000000009')
-  const targets = recentSessionTargets(visitedSessions(ids, rows, '019a0180-1234-7000-8000-000000000001'), 'newest-visit')
-  expect(targets.map(s => s.session_id)).toEqual(['old-visit', 'a0', 'a1', 'a2', 'a3'])
+  const targets = recentSessionTargets(visitedSessions(ids, rows, '019a0180-1234-7000-8000-000000000001'))
+  expect(targets.map(s => s.session_id)).toEqual(['newest-visit', 'old-visit', 'a0', 'a1', 'a2'])
   expect(ids).toContain('unknown') // a page/filter miss is never deletion
 })
 it('keeps in-memory history usable when localStorage is unavailable', () => {
@@ -57,10 +57,20 @@ it('keeps in-memory history usable when localStorage is unavailable', () => {
   vi.restoreAllMocks(); visitSession('019a0180-1234-7000-8000-000000000011')
   expect(parseSessionHistory(localStorage.getItem(SESSION_HISTORY_KEY)!)).toEqual(['019a0180-1234-7000-8000-000000000011', '019a0180-1234-7000-8000-000000000010'])
 })
-it('pins this window’s current session ahead of visits from other windows, with five numbered alternatives', () => {
+it('keeps visible visits in their slots while recording this window’s previous session', () => {
+  const ids = Array.from({ length: 7 }, (_, n) => `019a0180-1234-7000-8000-${String(n).padStart(12, '0')}`)
+  for (const id of ids.slice(0, 6).reverse()) visitSession(id)
+  visitSession(ids[2]); visitSession(ids[5]); visitSession(ids[0])
+  expect(parseSessionHistory(localStorage.getItem(SESSION_HISTORY_KEY)!)).toEqual(ids.slice(0, 6))
+  expect(JSON.parse(sessionStorage.getItem('hennery.windowSessions')!)).toEqual([ids[0], ids[5]])
+  visitSession(ids[6])
+  expect(parseSessionHistory(localStorage.getItem(SESSION_HISTORY_KEY)!)).toEqual([ids[6], ...ids.slice(0, 6)])
+  // The evicted row is still in stored history, but opening it adds it back on top.
+  visitSession(ids[5])
+  expect(parseSessionHistory(localStorage.getItem(SESSION_HISTORY_KEY)!)).toEqual([ids[5], ids[6], ...ids.slice(0, 5)])
+})
+it('keeps the numbered targets aligned with the first five visible slots, including the current session', () => {
   const rows = Array.from({ length: 8 }, (_, n) => row(String(n)))
-  expect(sidebarSessions(rows, '7').map(row => row.session_id)).toEqual(['7', '0', '1', '2', '3', '4'])
-  expect(recentSessionTargets(sidebarSessions(rows, '7'), '7').map(row => row.session_id)).toEqual(['0', '1', '2', '3', '4'])
-  expect(sidebarSessions(rows, null).map(row => row.session_id)).toEqual(['0', '1', '2', '3', '4', '5'])
-  expect(sidebarSessions(rows, 'outside-hat').map(row => row.session_id)).toEqual(['0', '1', '2', '3', '4', '5'])
+  expect(sidebarSessions(rows).map(row => row.session_id)).toEqual(['0', '1', '2', '3', '4', '5'])
+  expect(recentSessionTargets(sidebarSessions(rows)).map(row => row.session_id)).toEqual(['0', '1', '2', '3', '4'])
 })
