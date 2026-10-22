@@ -57,6 +57,16 @@ it('keeps in-memory history usable when localStorage is unavailable', () => {
   vi.restoreAllMocks(); visitSession('019a0180-1234-7000-8000-000000000011')
   expect(parseSessionHistory(localStorage.getItem(SESSION_HISTORY_KEY)!)).toEqual(['019a0180-1234-7000-8000-000000000011', '019a0180-1234-7000-8000-000000000010'])
 })
+it('excludes closed visits before filling sidebar and shortcut slots, retaining parked and failed sessions', () => {
+  const rows = Array.from({ length: 9 }, (_, n) => row(String(n)))
+  rows[0] = { ...rows[0], lifecycle: 'closed' }
+  rows[2] = { ...rows[2], lifecycle: 'closed' }
+  rows[3] = { ...rows[3], lifecycle: 'parked' }
+  rows[4] = { ...rows[4], lifecycle: 'failed' }
+  const recent = visitedSessions(rows.map(row => row.session_id), new Map(rows.map(row => [row.session_id, row])))
+  expect(sidebarSessions(recent).map(row => row.session_id)).toEqual(['1', '3', '4', '5', '6', '7'])
+  expect(recentSessionTargets(recent).map(row => row.session_id)).toEqual(['1', '3', '4', '5', '6'])
+})
 it('keeps visible visits in their slots while recording this window’s previous session', () => {
   const ids = Array.from({ length: 7 }, (_, n) => `019a0180-1234-7000-8000-${String(n).padStart(12, '0')}`)
   for (const id of ids.slice(0, 6).reverse()) visitSession(id)

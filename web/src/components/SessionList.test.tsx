@@ -1113,6 +1113,33 @@ it('keeps Recent slots and numbered shortcuts stable across clicks, switching ba
   expect(links().map(link => link.querySelector('kbd')?.textContent)).toEqual(hints)
 })
 
+it('removes closed visits live, fills Recent slots and updates numbered shortcuts, Back and palette Recent', async () => {
+  width(true); at('/sessions')
+  const rows = Array.from({ length: 8 }, (_, n) => summary(`019a0180-1234-7000-8000-${String(n).padStart(12, '0')}`, { title: `Visit ${n}` }))
+  rows[0] = { ...rows[0], lifecycle: 'closed' }
+  const ids = rows.map(row => row.session_id)
+  localStorage.setItem('hennery.visitedSessions', JSON.stringify(ids))
+  const s = server({ list: () => page(rows) })
+  render(<App fetchImpl={s.fetch} />)
+  const recent = await screen.findByRole('region', { name: 'Recent sessions' })
+  const order = () => within(recent).getAllByRole('link').map(link => link.getAttribute('href'))
+  await waitFor(() => expect(order()).toEqual(ids.slice(1, 7).map(id => `/sessions/${id}`)))
+  await userEvent.click(within(recent).getAllByRole('link')[0])
+  await userEvent.keyboard('{Alt>}2{/Alt}')
+  await waitFor(() => expect(location.pathname).toBe(`/sessions/${ids[2]}`))
+  act(() => s.streams[0].event('session_upsert', { ...rows[1], lifecycle: 'closed', activity: undefined, last_event_at: '2099-01-01T00:00:00Z' }, 'e1:2'))
+  await waitFor(() => expect(order()).toEqual(ids.slice(2).map(id => `/sessions/${id}`)))
+  await userEvent.keyboard('`')
+  expect(location.pathname).toBe(`/sessions/${ids[2]}`)
+  await userEvent.keyboard('{Alt>}2{/Alt}')
+  await waitFor(() => expect(location.pathname).toBe(`/sessions/${ids[3]}`))
+  await userEvent.keyboard('{Control>}k{/Control}')
+  const palette = await screen.findByRole('dialog', { name: 'Command palette' })
+  const visits = within(palette).getByRole('group', { name: 'Recent' })
+  expect(within(visits).queryByRole('option', { name: /^Visit [01] / })).not.toBeInTheDocument()
+  expect(within(visits).getByRole('option', { name: /^Visit 2 / })).toBeInTheDocument()
+})
+
 it('does not repeat history id lookups for search keystrokes or hat switches', async () => {
   width(true); at('/sessions')
   const id = '019a0180-1234-7000-8000-000000000001'
