@@ -11,6 +11,7 @@
 Built first in an isolated worktree. API and UI regressions were observed failing before implementation (four API tests; seven UI tests). A later host-refusal regression was RED before preserving the allocated session id. Targeted checks and real mobile/desktop browser checks pass. Replay, guard probes and final gates are recorded below. Independent review and platform CI are parent-owned; no deployed service was changed.
 
 <!-- FINAL_EVIDENCE -->
+- Implementation committed as `6e640cccfcef27e0145afae451ea3427d6885fa9` and pushed over SSH on `feat/new-like-this`. The parent review request covers `7630ebc3..6e640cccfcef27e0145afae451ea3427d6885fa9`; the follow-up documentation commit records this execution evidence only.
 - All six Rust gates exited 0 in fresh replay 2: fmt, workspace/all-target clippy, production clippy, workspace tests, protocol generator and view generator. The workspace run passed **2,960 tests**, with **9 existing live/pinned tests ignored**, across 186 test-result summaries. It ran once; no full workspace run was spent on replay 1, which stopped at a needless borrow in the new test fixture.
 - Web typecheck, full suite (**2,670 tests in 158 files**) and build exited 0 after the viewport amendment. The final menu error reset then passed typecheck, **91 targeted tests**, build and the real-browser acceptance again. Replay 2's earlier full web suite had 2,669 tests before the new viewport regression.
 - Real browser acceptance passed **2 cases**, each exercising both menus: 390px/light and 1280px/dark. The collector/host/fake-adapter boundaries were real; resulting config matched the changed source despite conflicting hat defaults; closed-source creation worked; no prompt was submitted; the composer was empty and focused. Screenshots were visually inspected.
@@ -78,7 +79,8 @@ Use the flake dev shell; keep targets separate and APFS-clone them into replay/p
 - [x] Extract and apply the exact patch below onto the base in a fresh worktree; copy this plan as the replay input document. Verify the extractor found 20 files and compare all tracked bytes, including generated artifacts.
 - [x] Run targeted removal probes in a separate cloned copy. Every mutation is restored only inside that disposable copy.
 - [x] Run the web gates and all six Rust gates on the replay. Record actual exit statuses and test totals.
-- [ ] Commit and push the tested bytes, then request independent parent review of the base-to-head range.
+- [x] Commit and push the tested bytes; independent parent review is requested in the handoff.
+- [ ] Parent: independent review, platform CI, PR/merge and release.
 
 **Verification commands** (inside nix develop, from the replay root):
 
