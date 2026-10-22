@@ -1359,7 +1359,7 @@ title (hat name in its tooltip), and a highlight for the current session.
 Collapsed navigation retains 18 px status icons with a hat-colour badge,
 accessible names and full tooltips. Distinct glyphs and semantic foregrounds
 identify question, permission, reply, running, idle, parked, offline, failed,
-closed, starting, parent handling and waiting on children states. Phone uses
+starting, parent handling and waiting on children states. Phone uses
 the existing Jump to palette rather than a
 sidebar.
 
@@ -1381,6 +1381,11 @@ leaves the visible set but remains in the bounded history. Determine visibility
 after hat filtering and authorized hydration. Existing persisted history is
 used in place, without a reset or a new storage format. Other windows share
 this order; new entries from either window can change the visible set.
+Operator amendment (2026-10-23): closed sessions are excluded from sidebar
+Recent, palette Recent and its navigation targets, including Back. Apply this
+filter before filling visible slots, on hydration and live summary updates.
+Parked and failed sessions remain eligible; closed transcripts remain reachable
+through the session list, search and direct links.
 Option/Alt+1–5 target the first five visible positions, including the current
 session; the sixth entry remains clickable. Backtick opens
 this window's previous visited session, using a two-id sessionStorage history.

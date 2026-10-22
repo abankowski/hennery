@@ -61,11 +61,12 @@ export function useVisitedSessionIds() {
   return useMemo(() => parseSessionHistory(value), [value])
 }
 /** Unknown ids are hidden, not removed: a filtered/paginated list is not an
- * authorization verdict. Only an authoritative read/removal prunes history. */
+ * authorization verdict. Only an authoritative read/removal prunes history.
+ * Closed sessions stay out of Recent, including its shortcuts and palette. */
 export function visitedSessions(ids: readonly string[], rows: ReadonlyMap<string, SessionSummary>, hat = '') {
   return ids.flatMap(id => {
     const row = rows.get(id)
-    return row && (!hat || row.hat_id === hat) ? [row] : []
+    return row && row.lifecycle !== 'closed' && (!hat || row.hat_id === hat) ? [row] : []
   })
 }
 export function recentSessionTargets(rows: readonly SessionSummary[]) {

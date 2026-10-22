@@ -121,6 +121,20 @@ it('records direct links only after an authorized exact-id read; cancels stale r
   await waitFor(() => expect(view.result.current.map(s => s.session_id)).toEqual(['019a0180-1234-7000-8000-000000000005']))
   view.unmount(); expect(signal?.aborted).toBe(true)
 })
+it('hides hydrated closed visits and retains live closure across a later filtered baseline', async () => {
+  const a = row('019a0180-1234-7000-8000-000000000001'), b = row('019a0180-1234-7000-8000-000000000002')
+  visitSession(b.session_id); visitSession(a.session_id)
+  const closedB = { ...b, lifecycle: 'closed' as const }
+  let finish!: (response: Response) => void
+  const view = setup(vi.fn(() => new Promise<Response>(resolve => { finish = resolve })), new Map([[a.session_id, a]]), b.session_id)
+  await act(async () => finish(page([closedB])))
+  expect(view.result.current).toEqual([a])
+  const closedA = { ...a, lifecycle: 'closed' as const, last_event_at: '2026-10-21' }
+  view.rerender({ loaded: new Map([[a.session_id, closedA]]), selectedId: a.session_id, hat: '' })
+  expect(view.result.current).toEqual([])
+  view.rerender({ loaded: new Map(), selectedId: a.session_id, hat: '' })
+  expect(view.result.current).toEqual([])
+})
 it('does not restore deleted history when a read ignores abort', async () => {
   visitSession('019a0180-1234-7000-8000-000000000004')
   let finish!: (response: Response) => void
