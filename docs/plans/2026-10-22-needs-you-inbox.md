@@ -4,7 +4,15 @@ Base: `3a101767`. Feature branch: `feat/needs-you-inbox`.
 
 ## Execution status
 
-Built first on an isolated worktree. Local verification and one fresh replay are in progress. Independent review is requested from the fleet parent after verification. This branch must remain unreleased until v0.3.0 is live; v0.3.1 is the agreed target. No version bump, release tag, publication or deployment is part of this plan.
+Built and committed on `feat/needs-you-inbox` (implementation `0bb698f0`), based on `3a101767`. Independent review remains parent-owned. The operator holds this feature for v0.3.1 until v0.3.0 is live. No version bump, release tag, publication, PR, merge or deployment was performed.
+
+All six Rust commands were run. Formatting, both clippy commands and both generator checks exited 0. The full command was `cargo test --workspace --locked --no-fail-fast`: **2835 passed, 9 ignored, 1 failed** (exit 101). The sole remaining failure was the foreign-owner projection fixture, which moved a session without its new owner-bound inbox row. That test-only fixture now moves both rows under a deferred composite constraint, validated at commit; its entire suite was rerun with **30 passed, 0 failed** (exit 0). Together the full run and corrected suite cover **2836 passed and 9 ignored**. The full workspace was not repeated after this final fixture-only correction, in keeping with the verification budget. The no-fail-fast flag changes continuation on failure, not the tests selected. Initial attempts exposed historical test rollback fixtures missing the new migration's table/trigger; both fixture families were repaired and their owner/store/delegation migration tests rerun before the completed no-fail-fast run.
+
+Web install, typecheck, test and build exited 0: **2599 tests in 155 files**. Binary build and the local Chromium attention/review checks exited 0: **4 tests**, covering desktop/mobile queue behavior, independent browser profiles, explicit acknowledgement and actual scrolling. Store review regressions: 9; new HTTP regressions: 2; owner SQL audit: 3, all passed. Focus/visibility/SSE checks passed 4 concurrent copies for 3 rounds (132 test executions).
+
+All **17 guard-removal probes** failed as expected in the copied tree, then restored baselines passed. Initial publish, final-content-version and dismissed-result probes exposed weak assertions; the tests were strengthened, observed RED with the safeguards removed, then GREEN with the actual code. The final embedded patch was replayed from its base in the same fresh copy; **1,145 tracked files matched byte-for-byte**. The copied target directory was APFS-cloned, never shared.
+
+Scratch copy retained for parent cleanup: `.claude/worktrees/needs-you-inbox-replay-1`. Native aarch64-darwin Nix package evaluation exited 0. Linux/macOS CI, a native Nix package build and independent review were not run here. The new SQL file is included in Nix's source fileset. Review should check migration 29 against the eventual v0.3.0 main, stale acknowledgement ordering, child/owner/deletion fences, ordinary SSE invalidation, and actual final-result visibility. Rebase and resolve any migration conflict before a later merge.
 
 ## Scope
 
