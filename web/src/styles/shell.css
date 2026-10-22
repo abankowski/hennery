@@ -309,6 +309,10 @@
   .session-columns th { border-bottom:0; }
   .session-columns th:first-child { padding-left:34px; }
   .session-table col:first-child { width:36%; }.session-table col:nth-child(2) { width:27%; }.session-table col:last-child { width:7%; }
+  /* Rows under a project heading sit under its folder icon; the divider starts past the chevron. */
+  .session-table.project-rows td:first-child { position:relative; padding-left:36px; border-bottom-color:transparent; }
+  .session-table.project-rows tr:not(:last-child) td:first-child::after { content:''; position:absolute; left:28px; right:0; bottom:-1px; border-bottom:1px solid var(--hn-line); }
+  .overview:has(.project-rows) .session-columns th:first-child { padding-left:58px; }
 }
 @media(min-width:768px) { .overview-head { flex-wrap:nowrap; }.sort-choice { position:static; } }
 @media(max-width:767px) {
