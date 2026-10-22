@@ -547,7 +547,7 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
 .composer-settings-panel .session-effort { flex-wrap:wrap; }
 .session-title-button > bdi { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .session-head .session-rename-form { display:flex; overflow:visible; white-space:normal; }
-.session-rename-reset { flex-basis:100%; align-self:flex-start; text-align:left; }
+.session-rename-reset { text-align:left; }
 .session-rename-form input { border:1px solid var(--hn-control-strong); border-radius:6px; color:var(--hn-fg-1); background:var(--hn-surface); }
 .config-readback { margin:14px 0 0; color:var(--hn-fg-3); font:400 12px/1.5 var(--font-body); }
 @media(max-width:767px) {
@@ -564,6 +564,7 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
   .session-head .session-rename-form { grid-column:2 / 4; grid-row:1 / 3; align-self:center; }
   .session-head:has(.session-rename-form) .conv-title-row { grid-template-rows:auto auto; }
   .session-rename-form input { font-size:16px; }
+  .session-rename-reset { flex-basis:100%; }
   .session-rename-form button[aria-label="Cancel rename"] { min-width:44px; }
 }
 

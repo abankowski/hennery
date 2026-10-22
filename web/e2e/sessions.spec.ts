@@ -264,6 +264,14 @@ for (const width of [1280, 390]) {
       const reset = page.getByRole('button', { name: 'Reset to agent title', exact: true })
       await expect(reset).toBeInViewport()
       if (narrow) expect((await reset.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      else {
+        const inputBox = (await page.getByRole('textbox', { name: 'Session name', exact: true }).boundingBox())!
+        const resetBox = (await reset.boundingBox())!
+        const backBox = (await page.getByRole('link', { name: 'Back to sessions', exact: true }).boundingBox())!
+        const centre = (box: { y: number; height: number }) => box.y + box.height / 2
+        expect(Math.abs(centre(inputBox) - centre(resetBox))).toBeLessThan(2)
+        expect(Math.abs(centre(inputBox) - centre(backBox))).toBeLessThan(2)
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       await page.screenshot({ path: test.info().outputPath('rename-reset.png') })
       await reset.click()
