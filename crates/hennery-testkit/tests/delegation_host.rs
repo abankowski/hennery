@@ -773,7 +773,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
     signed_out.new_session_error = Some(-32000);
     cfg.agents.insert("signed-out".into(), fake(signed_out, &cwd));
     cfg.workspace_roots = vec![cwd.clone()];
-    cfg.git = None;
+    cfg.git = Some(hennery_host::git::find_git().expect("git in dev shell"));
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(hennery_host::run_until(cfg, async {
         let _ = shutdown_rx.await;
@@ -883,6 +883,12 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
     assert!(
         matches!(read(&mut ws).await, HostFrame::Session { body: SessionBody::StartFailed { code, message, .. }, .. } if code == "agent_not_logged_in" && message.contains("Authentication required"))
     );
+    let root = read(&mut ws).await;
+    assert!(
+        matches!(&root, HostFrame::Session { session_id, seq: 2, body: SessionBody::ProjectRoot { project_root }, .. }
+            if session_id == "signed-out-child" && project_root == cwd.to_str().unwrap()),
+        "{root:?}"
+    );
     send(
         &mut ws,
         CollectorFrame::ProbeCatalog {
@@ -965,6 +971,12 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
         other => panic!("{other:?}"),
     };
     assert_eq!(evidence.attach_generation, 3);
+    let root = read(&mut ws).await;
+    assert!(
+        matches!(&root, HostFrame::Session { session_id, seq: 2, body: SessionBody::ProjectRoot { project_root }, .. }
+            if session_id == "wire-child" && project_root == cwd.to_str().unwrap()),
+        "{root:?}"
+    );
     send(&mut ws, attach(4)).await;
     assert!(matches!(read(&mut ws).await,HostFrame::Error{code,..} if code=="attach_generation_conflict"));
     let prompt = |generation, id: &str| CollectorFrame::DelegatedPrompt {

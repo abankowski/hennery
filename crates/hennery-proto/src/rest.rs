@@ -158,7 +158,8 @@ pub struct OpenTurn {
 
 /// The session list's caps, in bytes as JSON writes each field (plan 6b
 /// decision 9, the review's A1). With every field at its cap, a list item
-/// stays under 1 KiB with room for a `hat_id` (P-23). The title and the
+/// stays under 1 KiB with room for a `hat_id` (P-23), excluding the optional
+/// complete project identity (at most 16 KiB). The title and the
 /// branch are stored within theirs; an agent past its cap is refused at
 /// the start; a model, mode or failure reason past its cap is left out of
 /// the item (the stored value is kept: a resume re-applies it); a cwd past
@@ -172,6 +173,14 @@ pub const MODE_MAX_JSON_BYTES: usize = 48;
 pub const FAILURE_REASON_MAX_JSON_BYTES: usize = 32;
 pub const AGENT_MAX_JSON_BYTES: usize = 32;
 pub const CWD_MAX_JSON_BYTES: usize = 128;
+/// A project identity is never shortened: doing so would merge unrelated roots.
+pub const PROJECT_ROOT_MAX_JSON_BYTES: usize = 16 * 1024;
+
+pub fn valid_project_root(root: &str) -> bool {
+    root.starts_with('/')
+        && json_width(root) <= PROJECT_ROOT_MAX_JSON_BYTES
+        && !root.chars().any(|c| c.is_control() || is_hidden_format(c))
+}
 /// A paired host's id is `host-` and 16 hex digits (21 bytes); an older
 /// row's, from before the start checked it, is cut to this.
 pub const HOST_ID_MAX_JSON_BYTES: usize = 32;
@@ -250,6 +259,11 @@ pub struct SessionItem {
     pub agent: String,
     /// Canonical on its host since hats (umbrella §8.2).
     pub cwd: String,
+    /// Main repository of the host's git common dir; cwd outside git. Absent
+    /// until a supporting host reports it. Complete identity, never truncated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "string | undefined", optional)]
+    pub project_root: Option<String>,
     /// The hat the session belongs to (umbrella §8.2), decided at its
     /// start: a hat's id, or empty for a session from before hats whose
     /// host and owner had no default hat to give it.
@@ -295,7 +309,7 @@ pub struct SessionItem {
 
 impl SessionItem {
     /// The item as the session list serves it, every field within its cap
-    /// (see `TITLE_MAX_CHARS`): with them, it stays under 1 KiB.
+    /// (see `TITLE_MAX_CHARS`): under 1 KiB plus the optional project root.
     pub fn bounded(mut self) -> Self {
         // Shown as they are in every row: one with a control or hidden
         // character is left out too (the second review's P1).
@@ -310,6 +324,7 @@ impl SessionItem {
         self.mode = within(self.mode, MODE_MAX_JSON_BYTES);
         self.failure_reason = within(self.failure_reason, FAILURE_REASON_MAX_JSON_BYTES);
         self.cwd = tail(&self.cwd, CWD_MAX_JSON_BYTES);
+        self.project_root = self.project_root.filter(|root| valid_project_root(root));
         // An older row's, from before the start checked them.
         self.agent = cut(&self.agent, usize::MAX, AGENT_MAX_JSON_BYTES);
         self.host_id = cut(&self.host_id, usize::MAX, HOST_ID_MAX_JSON_BYTES);

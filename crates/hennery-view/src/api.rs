@@ -255,6 +255,7 @@ mod tests {
             host_id: "h".into(),
             agent: "fake".into(),
             cwd: "/tmp".into(),
+            project_root: Some("/projects/repository".into()),
             hat_id: String::new(),
             title: None,
             title_source: None,

@@ -1,3 +1,5 @@
+-- Test-only rollback of sessions migration 30 before historical fixtures.
+ALTER TABLE sessions DROP COLUMN project_root;
 -- Test-only rollback of sessions migration 29 before historical fixtures.
 ALTER TABLE turns DROP COLUMN operator_queued;
 ALTER TABLE turns DROP COLUMN queue_retry_released;

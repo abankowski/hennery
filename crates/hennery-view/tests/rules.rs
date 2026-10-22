@@ -404,6 +404,10 @@ fn every_collector_and_host_divider_is_a_marker() {
 fn the_sessions_own_state_makes_no_item() {
     for (kind, body) in [
         (
+            "project_root",
+            json!({"kind":"project_root", "project_root":"/projects/repository"}),
+        ),
+        (
             "session_started",
             json!({"kind": "session_started", "request_id": "r", "agent_session_id": "a"}),
         ),

@@ -782,6 +782,10 @@ pub enum SessionBody {
         #[ts(type = "string | undefined", optional)]
         base_commit: Option<String>,
     },
+    /// Bounded, asynchronous local repository lookup after attachment. The
+    /// git common dir's parent joins linked worktrees and subdirectories;
+    /// outside git or on lookup failure this is cwd. Display metadata only.
+    ProjectRoot { project_root: String },
 }
 
 impl SessionBody {

@@ -458,7 +458,7 @@ head?: string | undefined,
  * On the first state after a new session's start: the commit it
  * started from. The collector records it once.
  */
-base_commit?: string | undefined, };
+base_commit?: string | undefined, } | { "kind": "project_root", project_root: string, };
 
 /**
  * One git repository `list_projects` found under a workspace root (ACP
@@ -768,6 +768,11 @@ export type SessionItem = { session_id: string, host_id: string, agent: string,
  */
 cwd: string,
 /**
+ * Main repository of the host's git common dir; cwd outside git. Absent
+ * until a supporting host reports it. Complete identity, never truncated.
+ */
+project_root?: string | undefined,
+/**
  * The hat the session belongs to (umbrella §8.2), decided at its
  * start: a hat's id, or empty for a session from before hats whose
  * host and owner had no default hat to give it.
@@ -839,6 +844,11 @@ mcp_delivery?: McpSessionDelivery | undefined, session_id: string, host_id: stri
  * Canonical on its host since hats (umbrella §8.2).
  */
 cwd: string,
+/**
+ * Main repository of the host's git common dir; cwd outside git. Absent
+ * until a supporting host reports it. Complete identity, never truncated.
+ */
+project_root?: string | undefined,
 /**
  * The hat the session belongs to (umbrella §8.2), decided at its
  * start: a hat's id, or empty for a session from before hats whose
