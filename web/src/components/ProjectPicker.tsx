@@ -139,7 +139,10 @@ export default function ProjectPicker({ ref, onBrowsePath, hostId, entries, brow
 
   // Mouse choices precede focus changes. Touch/pen choices wait for a click:
   // a pan produces pointerdown and pointercancel, but no click.
-  useEffect(() => {
+  // A layout effect: the listeners must see the listing as soon as it is on
+  // screen; a passive effect left the previous render's "loading" handler
+  // active for a moment, so an early outside tap closed instead of choosing.
+  useLayoutEffect(() => {
     if (!browsing) return
     function outside(event: MouseEvent) {
       if (!(event.target instanceof Element) || picker.current?.contains(event.target)) return
