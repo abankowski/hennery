@@ -190,12 +190,13 @@ impl World {
             .unwrap();
     }
     fn commit(&self, record: &mut Option<hennery_proto::plugin::StartupRecord>) {
+        assert!(self.try_commit(record));
+    }
+    fn try_commit(&self, record: &mut Option<hennery_proto::plugin::StartupRecord>) -> bool {
         let prompt = content::check(vec![json!({"type":"text","text":"real operator input"})]).unwrap();
-        assert!(
-            self.sessions
-                .open_prompt_with_startup("s", "t", &prompt, record)
-                .unwrap()
-        );
+        self.sessions
+            .open_prompt_with_startup("s", "t", &prompt, record)
+            .unwrap()
     }
     fn frame(&self, record: &Option<hennery_proto::plugin::StartupRecord>) -> CollectorFrame {
         CollectorFrame::Prompt {
@@ -1097,27 +1098,53 @@ async fn revoked_target_host_with_another_live_mount(before_commit: bool) {
         .unwrap();
     let mut record = w.runtime.startup_context("s", "request", true).await;
     if before_commit {
+        let fetched = record.clone();
+        assert_eq!(fetched.as_ref().unwrap().status, StartupStatus::Delivered);
+        assert!(fetched.as_ref().unwrap().block.is_some());
         assert!(matches!(
             hosts.revoke("host", unix_now()).unwrap(),
             hennery_kernel::hosts::Revoke::Revoked
         ));
+        let committed = w.try_commit(&mut record);
+        let mut sent = Vec::new();
+        // As in the prompt API, dispatch is possible only after admission.
+        if committed {
+            w.sessions
+                .dispatch_startup(&mut w.frame(&record), true, |frame| {
+                    sent.push(frame.clone());
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert!(!committed, "a revoked target must refuse the entire prompt");
+        assert!(
+            sent.is_empty(),
+            "neither the prompt nor startup context may reach the host"
+        );
+        assert!(w.sessions.find_session("s").unwrap().unwrap().open_turn_id.is_none());
+        assert!(w.sessions.turn_state("t").unwrap().is_none());
+        let db = hennery_kernel::db::open(&w.path).unwrap();
+        let turns: i64 = db
+            .query_row(
+                "SELECT count(*) FROM turns WHERE owner_id = ?1 AND session_id = 's'",
+                [w.sessions.owner_id()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(turns, 0, "no prompt or startup context was persisted or consumed");
+        assert_eq!(
+            record, fetched,
+            "refusal leaves fetched context undelivered and unchanged"
+        );
+        return;
     }
     w.commit(&mut record);
-    assert_eq!(
-        record.as_ref().unwrap().status,
-        if before_commit {
-            StartupStatus::Revoked
-        } else {
-            StartupStatus::Delivered
-        }
-    );
-    assert_eq!(record.as_ref().unwrap().block.is_none(), before_commit);
-    if !before_commit {
-        assert!(matches!(
-            hosts.revoke("host", unix_now()).unwrap(),
-            hennery_kernel::hosts::Revoke::Revoked
-        ));
-    }
+    assert_eq!(record.as_ref().unwrap().status, StartupStatus::Delivered);
+    assert!(record.as_ref().unwrap().block.is_some());
+    assert!(matches!(
+        hosts.revoke("host", unix_now()).unwrap(),
+        hennery_kernel::hosts::Revoke::Revoked
+    ));
     let mut frame = w.frame(&record);
     w.sessions
         .dispatch_startup(&mut frame, true, |frame| {
