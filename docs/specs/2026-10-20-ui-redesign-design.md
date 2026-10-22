@@ -546,7 +546,9 @@ fallback. Failed items retain text/images for seven days, explain why, and
 offer Copy/Dismiss. Each submission carries one client request key, retained
 for retries of the same checked content so an uncertain response cannot duplicate it.
 The uncertain-send marker persists this key across page reload; an unchanged
-draft reuses it after network failures, 5xx or a receipt conflict. Editing or a
+draft reuses it after network failures or 5xx. A receipt conflict releases that
+key for the next explicit submission, preserving a visible warning that the
+earlier submission may already have been sent. Editing or a
 definite refusal resolves that marker. A parked offline session's notice says
 to resume and send once the host is back; the API refuses new offline sends
 with `host_offline` and retains the draft. Queue-owned not-delivered transcript

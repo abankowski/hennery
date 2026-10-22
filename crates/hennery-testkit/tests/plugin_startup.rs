@@ -846,6 +846,7 @@ async fn real_http_prompt_and_socket_writer_recheck_revocation_after_commit() {
         workspace_roots: vec![],
         mcp_isolation: Default::default(),
         attached_sessions: vec![AttachedSession {
+            ending: None,
             session_id: "s".into(),
             last_seq: 1,
             open_turn_id: None,

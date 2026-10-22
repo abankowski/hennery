@@ -150,6 +150,7 @@ fn turn_started(turn: &str) -> SessionBody {
 
 fn attached(session: &str, open_turn: Option<&str>) -> AttachedSession {
     AttachedSession {
+        ending: None,
         session_id: session.into(),
         last_seq: 0,
         open_turn_id: open_turn.map(str::to_string),

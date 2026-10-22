@@ -2302,11 +2302,13 @@ fn d3_restart_keeps_uncertain_association_and_late_start_can_win() {
                     "host",
                     &[
                         hennery_proto::frames::AttachedSession {
+                            ending: None,
                             session_id: "parent".into(),
                             last_seq: 2,
                             open_turn_id: None,
                         },
                         hennery_proto::frames::AttachedSession {
+                            ending: None,
                             session_id: "child".into(),
                             last_seq: 2,
                             open_turn_id: None,

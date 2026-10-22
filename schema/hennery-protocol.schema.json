@@ -124,6 +124,13 @@
     "AttachedSession": {
       "description": "A session that a host still has an adapter for, reported in `hello`.",
       "properties": {
+        "ending": {
+          "description": "The actor is shutting down and still appears attached until its final fact is outboxed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "last_seq": {
           "format": "uint64",
           "minimum": 0,

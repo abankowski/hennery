@@ -43,7 +43,7 @@ import {
   type Attachment,
 } from '../lib/attachments'
 import { commands, configOptions, matchCommands, type Command, type ConfigOption } from '../lib/catalog'
-import { clearDraftSending, draftMayHaveBeenSent, draftSendingRequestKey, loadDraft, markDraftSending, saveDraft } from '../lib/drafts'
+import { clearDraftSending, draftMayHaveBeenSent, draftSendingRequestKey, loadDraft, markDraftConflicted, markDraftSending, saveDraft } from '../lib/drafts'
 import { sendingFor, track } from '../lib/sending'
 import { navigationGate } from '../pwa/navigation'
 import { undeliveredDraft, type DraftPart } from '../lib/sendAgain'
@@ -338,7 +338,8 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
       await prompt(client, sessionId, blocks, requestKey)
       void onQueueChange?.()
     } catch (err) {
-      if (err instanceof ApiFailure && err.status < 500 && err.code !== 'delivery_unknown' && err.code !== 'request_key_conflict') clearDraftSending(sessionId)
+      if (err instanceof ApiFailure && err.code === 'request_key_conflict') markDraftConflicted(sessionId, draft)
+      else if (err instanceof ApiFailure && err.status < 500 && err.code !== 'delivery_unknown') clearDraftSending(sessionId)
       return {
         sent: false,
         notice: { text: promptRefusal(err), resume: err instanceof ApiFailure && err.code === 'not_attached', busyTurn: isBusyTurn(err) },
@@ -360,6 +361,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
       setText('')
       setLabel(null)
     } else {
+      setRestoredSend(draftMayHaveBeenSent(sessionId))
       setNotice(outcome.notice)
     }
     // Whatever came of it, the draft is the operator's again.

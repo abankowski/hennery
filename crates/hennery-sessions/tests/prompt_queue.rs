@@ -709,6 +709,52 @@ fn reconnect_requeues_a_proven_unsent_head_before_any_later_prompt() {
 }
 
 #[test]
+fn late_slot_takeover_does_not_retry_a_displaced_queue_attempt_still_in_the_mailbox() {
+    let w = World::new();
+    w.complete_mailbox();
+    let (hub, mut rx) = host(vec![]);
+    w.store
+        .open_prompt("session", "original", &checked("original immediate prompt"))
+        .unwrap();
+    w.store
+        .reconcile_host(
+            "host",
+            &[serde_json::from_value(json!({
+                "session_id":"session", "last_seq":w.seq.get()
+            }))
+            .unwrap()],
+        )
+        .unwrap();
+    let id = w.queue("displaced queue attempt");
+    assert!(w.dispatch(&hub));
+    let (request, turn, _) = prompt(&mut rx);
+    w.start("original-request", "original");
+    w.end("original", TurnOutcome::Completed);
+    assert!(!w.dispatch(&hub), "slot takeover is not an absent-mailbox proof");
+    assert!(
+        rx.try_recv().is_err(),
+        "the displaced attempt may still be read by the actor"
+    );
+    let q = w.store.operator_prompt_queue("session").unwrap();
+    assert_eq!(q[0].id, id);
+    assert_eq!(q[0].state, "failed");
+    assert!(q[0].reason.as_deref().is_some_and(|reason| !reason.is_empty()));
+    w.start(&request, &turn);
+    let state: String = w
+        .conn()
+        .query_row(
+            "SELECT state FROM session_operations WHERE owner_id=?1 AND operation_id=?2",
+            params![w.store.owner_id(), id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        state, "delivered",
+        "a later real admission still corrects the retained failure"
+    );
+}
+
+#[test]
 fn legacy_mailbox_snapshots_never_auto_retry_an_unreported_prompt() {
     randomized_legacy_mailbox_interleaving(1);
 }
@@ -743,6 +789,7 @@ fn randomized_legacy_mailbox_interleaving(seed: u64) {
         .reconcile_host(
             "host",
             &[hennery_proto::frames::AttachedSession {
+                ending: None,
                 session_id: "session".into(),
                 last_seq: w.seq.get(),
                 open_turn_id: None,
@@ -760,6 +807,18 @@ fn randomized_legacy_mailbox_interleaving(seed: u64) {
     assert!(rx.try_recv().is_err(), "old mailbox plus retry would deliver twice");
     // Its actor can still admit the original after reconnect.
     w.start(&request, &turn);
+    let disposition: String = w
+        .conn()
+        .query_row(
+            "SELECT state FROM session_operations WHERE owner_id=?1 AND operation_id=?2",
+            params![w.store.owner_id(), id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        disposition, "delivered",
+        "late original start repairs the legacy head; seed {seed}"
+    );
     w.start(&request, &turn);
     w.end(&turn, TurnOutcome::Completed);
     let users: Vec<_> = w
@@ -786,6 +845,7 @@ fn a_superseded_queue_attempt_cannot_be_revived_by_a_late_turn_started() {
         .reconcile_host(
             "host",
             &[hennery_proto::frames::AttachedSession {
+                ending: None,
                 session_id: "session".into(),
                 last_seq: w.seq.get(),
                 open_turn_id: None,
@@ -845,6 +905,7 @@ fn queue_owned_not_delivered_turns_never_offer_a_parallel_send_again_path() {
             .reconcile_host(
                 "host",
                 &[hennery_proto::frames::AttachedSession {
+                    ending: None,
                     session_id: "session".into(),
                     last_seq: w.seq.get(),
                     open_turn_id: None,
@@ -862,6 +923,34 @@ fn queue_owned_not_delivered_turns_never_offer_a_parallel_send_again_path() {
 }
 
 #[test]
+fn reconciliation_preserves_a_park_hold_while_the_attached_actor_is_ending() {
+    let w = World::new();
+    let (hub, mut rx) = host(vec![]);
+    w.queue("wait for explicit resume");
+    w.store.record_park_request("session").unwrap();
+    // Decode the actual optional wire flag: pre-fix readers ignore it.
+    let ending = serde_json::from_value(json!({
+        "session_id":"session", "last_seq":w.seq.get(), "ending":true
+    }))
+    .unwrap();
+    w.store.reconcile_host("host", &[ending]).unwrap();
+    assert!(
+        !w.dispatch(&hub),
+        "an attached but ending actor must retain the Park hold"
+    );
+    assert!(rx.try_recv().is_err());
+    w.emit(SessionBody::SessionParked {
+        reason: hennery_proto::frames::ParkReason::Operator,
+    });
+    assert!(!w.dispatch(&hub), "the completed explicit Park still holds the queue");
+    let hat = w.store.find_session("session").unwrap().unwrap().hat_id;
+    w.store.request_resume("session", &hat).unwrap();
+    w.emit(SessionBody::session_started("resume", "agent-session"));
+    assert!(w.dispatch(&hub));
+    assert_eq!(prompt(&mut rx).2[0]["text"], "wait for explicit resume");
+}
+
+#[test]
 fn reconciliation_releases_an_unapplied_park_hold_when_the_host_remains_attached() {
     let w = World::new();
     let (hub, mut rx) = host(vec![]);
@@ -872,6 +961,7 @@ fn reconciliation_releases_an_unapplied_park_hold_when_the_host_remains_attached
         .reconcile_host(
             "host",
             &[hennery_proto::frames::AttachedSession {
+                ending: None,
                 session_id: "session".into(),
                 last_seq: w.seq.get(),
                 open_turn_id: None,
@@ -989,6 +1079,7 @@ fn lost_head_is_retried_in_order(restarted: bool) {
         vec![]
     } else {
         vec![hennery_proto::frames::AttachedSession {
+            ending: None,
             session_id: "session".into(),
             last_seq: w.seq.get(),
             open_turn_id: None,
@@ -1319,6 +1410,7 @@ fn stale_error_does_not_reject_retry(reconnected: bool) {
             .reconcile_host(
                 "host",
                 &[hennery_proto::frames::AttachedSession {
+                    ending: None,
                     session_id: "session".into(),
                     last_seq: w.seq.get(),
                     open_turn_id: None,
@@ -1648,6 +1740,7 @@ fn randomized_dispatch_drop_reconcile_edit_remove_preserves_a_unique_delivery_pr
                             vec![]
                         } else {
                             vec![hennery_proto::frames::AttachedSession {
+                                ending: None,
                                 session_id: "session".into(),
                                 last_seq: w.seq.get(),
                                 open_turn_id: None,

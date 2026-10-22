@@ -2067,6 +2067,7 @@ mod delete_race_tests {
 
     fn listed(id: &str) -> Vec<AttachedSession> {
         vec![AttachedSession {
+            ending: None,
             session_id: id.into(),
             last_seq: 1,
             open_turn_id: None,

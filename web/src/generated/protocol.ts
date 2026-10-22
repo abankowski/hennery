@@ -295,7 +295,11 @@ export type AgentIsolation = { [key in string]: McpIsolation };
 /**
  * A session that a host still has an adapter for, reported in `hello`.
  */
-export type AttachedSession = { session_id: string, last_seq: number, open_turn_id?: string | null, };
+export type AttachedSession = { session_id: string, last_seq: number, open_turn_id?: string | null,
+/**
+ * The actor is shutting down and still appears attached until its final fact is outboxed.
+ */
+ending?: boolean | null, };
 
 /**
  * How a turn ended. Exactly one `turn_ended` per accepted turn (ACP core §4.4).

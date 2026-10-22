@@ -192,7 +192,7 @@ describe('Composer: sending', () => {
     expect((restored.prompts()[0].body as { request_key: string }).request_key).not.toBe((c.prompts()[0].body as { request_key: string }).request_key)
   })
 
-  it.each([[503, 'delivery_unknown'], [500, 'internal'], [409, 'request_key_conflict']])('an unresolved %i %s keeps the retry key after reload', async (status, code) => {
+  it.each([[503, 'delivery_unknown'], [500, 'internal']])('an unresolved %i %s keeps the retry key after reload', async (status, code) => {
     const c = mount(() => json({ code, message: 'not resolved' }, Number(status)))
     type('possibly accepted')
     fireEvent.click(sendButton())
@@ -204,6 +204,57 @@ describe('Composer: sending', () => {
     fireEvent.click(sendButton())
     await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
     expect(restored.prompts()[0].body).toEqual(c.prompts()[0].body)
+  })
+
+  it.each(['same page', 'reload'])('a receipt conflict after image loss preserves the warning but releases the key for a %s retry', async via => {
+    const original = mount(async () => { throw new TypeError('response lost') })
+    type('inspect ')
+    paste(png('a.png', 'ONE'))
+    await screen.findByRole('img', { name: 'Image #1' }, WAIT)
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(original.prompts()).toHaveLength(1), WAIT)
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
+    const first = original.prompts()[0].body as { request_key: string, content: { type: string }[] }
+    expect(first.content.some(block => block.type === 'image')).toBe(true)
+    original.unmount()
+    // A document reload keeps the marker text/key but loses its image files.
+    forgetAllAttachments()
+    forgetAllSends()
+    let attempts = 0
+    const conflicted = mount(() => ++attempts === 1
+      ? json({ code: 'request_key_conflict', message: 'The previous submission has different content' }, 409)
+      : json({ queue_id: 'q1' }, 202))
+    expect(screen.queryByRole('img')).toBeNull()
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(conflicted.prompts()).toHaveLength(1), WAIT)
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
+    const conflict = conflicted.prompts()[0].body as { request_key: string, content: { type: string }[] }
+    expect(conflict.request_key).toBe(first.request_key)
+    expect(conflict.content.every(block => block.type !== 'image')).toBe(true)
+    expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
+    expect(JSON.parse(sessionStorage.getItem('hennery.draft-send.s1')!)).toEqual({ text: textarea().value })
+    let retry = conflicted
+    if (via === 'reload') {
+      conflicted.unmount()
+      forgetAllSends()
+      retry = mount()
+      expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
+    }
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(textarea()).toHaveValue(''), WAIT)
+    const last = retry.prompts().at(-1)!.body as { request_key: string, content: unknown }
+    expect(last.request_key).not.toBe(first.request_key)
+    expect(last.content).toEqual(conflict.content)
+    expect(sessionStorage.getItem('hennery.draft-send.s1')).toBeNull()
+    expect(screen.queryByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeNull()
+  })
+
+  it('shows the uncertainty warning immediately after a receipt conflict', async () => {
+    mount(() => json({ code: 'request_key_conflict', message: 'Different content' }, 409))
+    type('possibly accepted')
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(sendButton()).toBeEnabled(), WAIT)
+    expect(screen.getByText('This draft may already have been sent. Check the transcript before sending again.', { exact: true })).toBeVisible()
   })
 
   it('warns after a reload interrupts a prompt request, and clears the warning after acceptance', async () => {

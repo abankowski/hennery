@@ -410,7 +410,7 @@ host.)*
 
 | Type | Key fields | Notes |
 |---|---|---|
-| `hello` | protocol_version, host_version, host_id, proof, capabilities[], agents[], workspace_roots[], attached_sessions[{session_id, last_seq, turn_id?}] | First frame. |
+| `hello` | protocol_version, host_version, host_id, proof, capabilities[], agents[], workspace_roots[], attached_sessions[{session_id, last_seq, open_turn_id?, ending?}] | First frame. |
 | `resend_complete` | — | All unacknowledged outbox frames have been resent (§5.1). |
 | `session` | session_id, seq, body | Outboxed (§3.2). |
 | `error` | request_id, code, message | Rejection of a request. |
@@ -938,7 +938,14 @@ leaves the session `failed` like a failed start, and `failed` is resumable.
   content endpoint. An actual admission racing session close/failure corrects
   the queued item's disposition to delivered without reopening the session.
   Explicit Park holds survive host restart. Reconciliation clears a Park hold
-  left by an ambiguous request when the host reports the session still attached.
+  left by an ambiguous request when the host reports the session still attached
+  and continuing normally. The optional `attached_sessions[].ending` flag is
+  true while an actor is shutting down; it preserves the hold until Park
+  completes and the operator resumes. Legacy omitted flags retain their prior
+  reconciliation semantics. A late start that takes over another sent turn's
+  slot fails that displaced operator queue item with retained input: slot
+  takeover supplies no absent-mailbox proof, even on a snapshot-capable host.
+  A later real admission corrects the retained item's status to delivered.
   One session's preparation failure does not abort other sessions' dispatch.
   Session deletion and hat purge scrub queued content and attachments under
   §4.10; deleted queue/transcript routes answer 404. The delete confirmation
@@ -953,7 +960,9 @@ leaves the session `failed` like a failed start, and `failed` is resumable.
   for different checked content (including image hashes) is an operation conflict.
   A proven unsent immediate admission refusal releases its receipt; an uncertain
   or accepted delivery retains it. The browser stores the key with its uncertain
-  send marker and reuses it for an unchanged draft after reload. Deletion and
+  send marker and reuses it for an unchanged draft after reload. A receipt
+  conflict releases the key for the next explicit submission while preserving
+  the warning that the earlier submission may already have been sent. Deletion and
   hat purge scrub receipts too.
   Queue edit/remove return success after commit even if publication fails;
   the existing dirty flag repairs the event snapshot.

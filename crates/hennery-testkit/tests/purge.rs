@@ -282,6 +282,7 @@ async fn wait_for(what: &str, mut probe: impl FnMut() -> bool) {
 
 fn attached(session_id: &str, last_seq: u64) -> AttachedSession {
     AttachedSession {
+        ending: None,
         session_id: session_id.into(),
         last_seq,
         open_turn_id: None,

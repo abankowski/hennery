@@ -4068,6 +4068,20 @@ impl Store {
                                     )
                                     .optional()?;
                                 if other_state.as_deref() == Some("sent") {
+                                    // Slot takeover is not a reconnect snapshot:
+                                    // the displaced command may still be in the
+                                    // actor's mailbox. Even a snapshot-capable host
+                                    // supplies no non-admission proof here. Fail
+                                    // operator Q before settlement can requeue it;
+                                    // a real later start still repairs its state.
+                                    tx.execute(
+                                        "UPDATE session_operations SET state='failed',code='not_delivered'
+                                         WHERE owner_id = ?1 AND child_id=?2 AND turn_id=?3 AND tool='operator_prompt'
+                                         AND state='awaiting_reconciliation'
+                                         AND operation_id IN (SELECT operation_id FROM session_dispatch_queue
+                                             WHERE owner_id = ?1 AND target_id=?2 AND origin='operator' AND state='awaiting_reconciliation')",
+                                        params![self.owner_id(),session_id,other],
+                                    )?;
                                     created.push(turn_not_delivered(&tx, &self.owner, session_id, other, &ts)?);
                                     true
                                 } else {
@@ -4626,9 +4640,10 @@ impl Store {
                     } else if close_requested {
                         out.close.push(id.clone());
                     }
-                    if host.is_some() {
-                        // Resend is complete and the adapter remains attached:
-                        // an ambiguous Park did not apply. Release its hold.
+                    if host.is_some_and(|attached| attached.ending != Some(true)) {
+                        // An ending actor remains attached until its last fact
+                        // is outboxed. Only a continuing actor disproves Park.
+                        // Legacy snapshots omit ending and retain their prior semantics.
                         tx.execute(
                             "UPDATE sessions SET prompt_queue_held=0 WHERE owner_id = ?1 AND id=?2",
                             [&self.owner, &id],

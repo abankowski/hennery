@@ -32,6 +32,16 @@ export function saveDraft(sessionId: string, text: string): void {
 /** Persist before POSTing: losing the response on a reload leaves the send's
  * outcome unknown. A 202 or a changed/emptied draft clears this marker. */
 export function markDraftSending(sessionId: string, text: string, requestKey: string): void {
+  persistSendingDraft(sessionId, text, requestKey)
+}
+
+/** A receipt conflict proves this key cannot submit the current content,
+ * but the earlier message may have been accepted. Warn without reusing it. */
+export function markDraftConflicted(sessionId: string, text: string): void {
+  persistSendingDraft(sessionId, text)
+}
+
+function persistSendingDraft(sessionId: string, text: string, requestKey?: string): void {
   try {
     // Image preparation may finish after sign-out or a draft replacement.
     // Never recreate text that the operator already cleared.
@@ -47,7 +57,9 @@ function sendingDraft(sessionId: string): { requestKey?: string } | undefined {
     // Older pages stored only text. Keep their warning after an update.
     if (marker === text) return {}
     const saved: unknown = JSON.parse(marker)
-    if (typeof saved !== 'object' || saved === null || !('text' in saved) || saved.text !== text || !('requestKey' in saved) || typeof saved.requestKey !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(saved.requestKey)) return undefined
+    if (typeof saved !== 'object' || saved === null || !('text' in saved) || saved.text !== text) return undefined
+    if (!('requestKey' in saved)) return {}
+    if (typeof saved.requestKey !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(saved.requestKey)) return undefined
     return { requestKey: saved.requestKey }
   } catch { return undefined }
 }

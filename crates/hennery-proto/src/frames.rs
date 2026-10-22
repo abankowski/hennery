@@ -12,6 +12,9 @@ pub struct AttachedSession {
     pub last_seq: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_turn_id: Option<String>,
+    /// The actor is shutting down and still appears attached until its final fact is outboxed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ending: Option<bool>,
 }
 
 /// A feature a host implements, announced in `hello` (ACP core §3.3). The

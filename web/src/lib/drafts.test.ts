@@ -7,6 +7,18 @@ afterEach(() => {
 })
 
 describe('drafts', () => {
+  it('keeps a persisted conflict warning without reusing its request key', () => {
+    saveDraft('s1', 'possibly accepted')
+    sessionStorage.setItem('hennery.draft-send.s1', JSON.stringify({ text: 'possibly accepted' }))
+    expect(draftMayHaveBeenSent('s1')).toBe(true)
+    expect(draftSendingRequestKey('s1')).toBeUndefined()
+    saveDraft('s1', loadDraft('s1'))
+    expect(draftMayHaveBeenSent('s1')).toBe(true)
+    saveDraft('s1', 'deliberately edited')
+    expect(draftMayHaveBeenSent('s1')).toBe(false)
+    expect(sessionStorage.getItem('hennery.draft-send.s1')).toBeNull()
+  })
+
   it('persists the uncertain request key alongside its unchanged text', () => {
     saveDraft('s1', 'possibly accepted')
     markDraftSending('s1', 'possibly accepted', 'request-1')
