@@ -413,7 +413,7 @@ fn the_non_nix_build_runs_on_linux_prs_and_both_weekly_platforms_without_nix() {
     assert!(job.contains("runs-on: ${{ matrix.os }}"), "{job}");
     assert!(job.contains("timeout-minutes: 60"), "{job}");
     assert!(job.contains("toolchain: stable"), "{job}");
-    assert!(job.contains("node-version: 24"), "{job}");
+    assert!(job.contains("node-version: '>=24.22.1 <25'"), "{job}");
     assert!(
         !job.contains("install-nix-action") && !job.contains("nix develop"),
         "{job}"
