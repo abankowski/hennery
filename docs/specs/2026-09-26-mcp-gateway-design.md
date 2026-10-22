@@ -708,7 +708,11 @@ and nothing goes up.
   `application/json` and `text/event-stream` bodies; any other upstream content
   type becomes a 502. So does a body without a content type, more than one
   `Content-Type`, and any `Content-Encoding` but `identity`. A body-less
-  answer (202, 204, or `Content-Length: 0`) without a type passes, empty. The
+  answer (202, 204, or `Content-Length: 0`) passes, empty, without a type or
+  under any type but JSON or an event stream (some upstreams name
+  `text/plain` on a notification's 202; 2026-10-22). Its body is dropped and
+  its type never goes down. JSON and event streams are judged whatever the
+  status. The
   `Content-Type` sent down is the gateway's, the one type it judged the body
   by, without parameters: a parameter or a second header cannot make a
   client read as an event stream what the gateway passed as JSON.
