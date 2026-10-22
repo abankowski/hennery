@@ -441,6 +441,7 @@ BEGIN
 END;",
     // Persistent, exactly scoped operator previews (28).
     include_str!("runtime_catalog.sql"),
+    include_str!("review.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -4070,6 +4071,9 @@ impl Store {
                     mark_unapplied(&tx, &self.owner, fact_id)?;
                 } else {
                     edge = Some(PushEdge::TurnEnded(*outcome));
+                    if matches!(outcome, TurnOutcome::Completed | TurnOutcome::Failed) {
+                        crate::review::record(&tx, &self.owner, session_id, fact_id)?;
+                    }
                 }
             }
             SessionBody::SessionParked { reason } => {

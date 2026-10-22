@@ -946,6 +946,11 @@ fn foreign_owner_rows_and_future_cursor_never_reach_projection() {
         w.turn(id, &format!("turn-{id}"), 2, TurnOutcome::Completed);
     }
     w.core(|core| {
+        // Move the owner-bound inbox row together with the deliberately
+        // foreign session; validate the composite reference at commit.
+        core.execute_batch("PRAGMA defer_foreign_keys=ON;").unwrap();
+        core.execute("UPDATE session_reviews SET owner_id='other-owner' WHERE session_id='foreign-session'", [])
+            .unwrap();
         core.execute(
             "UPDATE sessions SET owner_id='other-owner' WHERE id='foreign-session'",
             [],

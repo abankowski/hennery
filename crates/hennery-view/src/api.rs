@@ -57,11 +57,24 @@ pub struct SessionSummary {
     pub question_waits: bool,
     #[serde(default)]
     pub operator_attention: u32,
+    /// A completed or failed result the operator has not read. Reading it
+    /// never answers a permission or an elicitation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub review: Option<ReviewResult>,
     #[serde(default)]
     pub parent_handled_questions: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub family: Option<FamilySummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ReviewResult {
+    #[ts(type = "number")]
+    pub event_id: i64,
+    pub turn_id: String,
+    pub outcome: hennery_proto::frames::TurnOutcome,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -270,6 +283,7 @@ mod tests {
             last_event_at: "2026-10-02T08:00:00.000Z".into(),
         };
         let summary = SessionSummary {
+            review: None,
             configuration_error: None,
             session: session.clone(),
             question_waits: true,

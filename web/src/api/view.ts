@@ -113,3 +113,8 @@ export function familyPage(client: Client, id: string, after?: string): Promise<
 export function takeOver(client: Client, id: string): Promise<void> {
   return client.request<void>('POST', `/api/view/sessions/${enc(id)}/takeover`, {})
 }
+
+/** A captured result only; a stale browser cannot acknowledge newer work. */
+export function markResultRead(client: Client, id: string, eventId: number): Promise<void> {
+  return client.request<void>('POST', `/api/view/sessions/${enc(id)}/read`, { event_id: eventId })
+}

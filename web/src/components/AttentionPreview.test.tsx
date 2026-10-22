@@ -7,6 +7,18 @@ import AttentionPreview, { AttentionPreviews, PreviewReader } from './AttentionP
 import { clearDismissedAttention } from '../lib/dismissedAttention'
 const session = (id: string): SessionSummary => ({ session_id: id, host_id: 'h', hat_id: 'hat', agent: 'claude', cwd: '/project', lifecycle: 'active', activity: 'blocked', presumed_parked: false, question_waits: true, operator_attention: 1, parent_handled_questions: 0, created_at: '2026-10-20T10:00:00Z', last_event_at: '2026-10-20T10:00:00Z' })
 const question = (pending: string): Item => ({ id: 'question:' + pending, version: 2, ts: '', kind: 'question', pending_id: pending, question_kind: 'permission', request: { type: 'permission', title: 'Typed read-only request', options: [{ option_id: 'allow', name: 'Allow', option_kind: 'allow_once' }] }, answerable: true, answered: false, state: 'open' })
+
+it('reads a completed result preview once per result instead of once per session token update', async () => {
+  const server = routed(() => json({ items: [{ id: 'm', kind: 'message', turn_id: 'turn', version: 9, text: 'Continue?' }], revision: 10, epoch: 'e', older: false }))
+  const reader = new PreviewReader(server.client)
+  const row = { ...session('s'), activity: 'idle', operator_attention: 0, question_waits: false, review: { event_id: 10, turn_id: 'turn', outcome: 'completed' as const } }
+  expect(await reader.read(row)).toEqual({ result: 'Continue?' })
+  expect(await reader.read({ ...row, last_event_at: 'new-token' })).toEqual({ result: 'Continue?' })
+  expect(server.calls.map(call => [call.method, call.path])).toEqual([['GET', '/api/view/sessions/s?limit=1']])
+  await reader.read({ ...row, review: { ...row.review, event_id: 20 } })
+  expect(server.calls).toHaveLength(2)
+  reader.stop()
+})
 it('cannot restore local dismiss records after sign-out unmounts a pending acknowledgement', async () => {
   let finish!: (response: Response) => void
   const ack = new Promise<Response>(resolve => { finish = resolve })

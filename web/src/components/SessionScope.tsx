@@ -124,7 +124,7 @@ export default function SessionScope({ route, children, onReconnect }: { route: 
   const dismissed = useDismissedAttention()
   const [attentionKeys, setAttentionKeys] = useState<ReadonlyMap<string, string>>(new Map())
   const reportAttentionKey = useCallback((id: string, key: string) => setAttentionKeys(before => before.get(id) === key ? before : new Map(before).set(id, key)), [])
-  const isAttentionDismissed = useCallback((id: string) => Object.hasOwn(dismissed, id) && (!attentionKeys.has(id) || dismissed[id] === attentionKeys.get(id)), [dismissed, attentionKeys])
+  const isAttentionDismissed = useCallback((id: string) => !list.all.get(id)?.review && !attentionRows.find(row => row.session_id === id)?.review && Object.hasOwn(dismissed, id) && (!attentionKeys.has(id) || dismissed[id] === attentionKeys.get(id)), [dismissed, attentionKeys, list.all, attentionRows])
   const visibleWaiting = attentionRows.filter(row => !isAttentionDismissed(row.session_id)).length
   const selectedId = route.name === 'session' && route.id !== undefined ? route.id : null
   const recentSessions = useSessionHistory(list.all, selectedId, hat, !list.loading && !list.error, String(historyEpoch), list.queryKey)

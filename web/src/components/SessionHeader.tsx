@@ -4,7 +4,7 @@
 // The session's menu (Park, Close, Delete) sits at the end of its title row.
 import type { SessionItem, SessionDetail, McpSessionDelivery } from '../generated/protocol'
 import { useRef, useState, type ReactNode, type RefObject } from 'react'
-import type { FamilySummary, PlanEntry } from '../generated/view'
+import type { FamilySummary, PlanEntry, ReviewResult } from '../generated/view'
 import { agentLabel } from '../lib/agent'
 import { statusOf } from '../lib/status'
 import { basename } from '../lib/time'
@@ -18,7 +18,7 @@ import SessionName, { useSessionName } from './SessionNames'
 import RenameSession from './RenameSession'
 
 /** What the header reads: a list summary or a session's detail. */
-export type HeaderInfo = SessionItem & { question_waits?: boolean; operator_attention?: number; parent_handled_questions?: number; family?: FamilySummary }
+export type HeaderInfo = SessionItem & { question_waits?: boolean; operator_attention?: number; review?: ReviewResult; parent_handled_questions?: number; family?: FamilySummary }
 
 export function titleOf(info: HeaderInfo | undefined, id: string): string {
   return info?.title || basename(info?.cwd ?? '') || id
@@ -63,6 +63,7 @@ export default function SessionHeader({ id, info, hostName, menu, detailsOpen, t
   const status = info
     ? statusOf({
         operator_attention: info.operator_attention,
+        review: info.review,
         parent_handled_questions: info.parent_handled_questions,
         family: info.family,
         lifecycle: info.lifecycle,

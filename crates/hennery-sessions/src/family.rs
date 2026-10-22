@@ -147,6 +147,7 @@ fn summary_in(conn: &Connection, owner: &str, s: SessionItem) -> Result<SessionS
         children: snippets,
         attention: family_attention,
     });
+    let review = crate::review::unread(conn, owner, &s.session_id)?;
     Ok(SessionSummary {
         configuration_error: conn.query_row(
             "SELECT configuration_error FROM sessions WHERE owner_id = ?1 AND id=?2",
@@ -156,6 +157,7 @@ fn summary_in(conn: &Connection, owner: &str, s: SessionItem) -> Result<SessionS
         session: s,
         question_waits,
         operator_attention,
+        review,
         parent_handled_questions,
         family,
     })
@@ -337,7 +339,9 @@ impl Store {
         Ok(self.conn().query_row("SELECT count(*) FROM sessions s WHERE s.owner_id = ?1 AND s.lifecycle<>'deleted'
             AND (?2 IS NULL OR s.hat_id = ?2)
             AND NOT EXISTS(SELECT 1 FROM purged_hats h WHERE h.owner_id = ?1 AND h.hat_id=s.hat_id)
-            AND (EXISTS(SELECT 1 FROM delegation_question_routing q WHERE q.owner_id = ?1 AND q.session_id=s.id AND q.handling='operator_required')
+            AND (EXISTS(SELECT 1 FROM session_reviews r WHERE r.owner_id = ?1 AND r.session_id=s.id
+                AND r.event_id>r.read_event_id AND s.delegated_child=0)
+              OR EXISTS(SELECT 1 FROM delegation_question_routing q WHERE q.owner_id = ?1 AND q.session_id=s.id AND q.handling='operator_required')
               OR EXISTS(SELECT 1 FROM delegation_attention a WHERE a.owner_id = ?1 AND a.child_id=s.id AND a.hat_id=s.hat_id AND a.state='open' AND a.pending_id IS NULL)
               OR (s.activity='blocked' AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=s.id AND p.state='open')))",params![self.owner_id(),hat],|r|r.get(0))?)
     }

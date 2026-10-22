@@ -1,3 +1,6 @@
+-- Test-only rollback of sessions migration 29 before historical fixtures.
+DROP TRIGGER review_delete;
+DROP TABLE session_reviews;
 -- Test-only rollback of sessions migrations 28/27: restore the v26 budget CHECK.
 DROP TABLE runtime_catalog;
 DROP TABLE delegation_limits;

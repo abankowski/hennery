@@ -90,6 +90,8 @@ export interface ComposerProps {
    *  one its footer's Resume goes through. */
   onResume: () => Promise<unknown>
   onJumpToQuestion?: () => void
+  /** Acknowledges only the result visible when this send began. */
+  onSent?: () => void
   /** The handle above, bound to the composer of the session shown. */
   handle?: Ref<ComposerHandle>
 }
@@ -116,7 +118,7 @@ interface Notice {
 /** How a send ended: sent (a 202), or refused, saying why. */
 type Outcome = { sent: true } | { sent: false; notice: Notice }
 
-function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, onJumpToQuestion, handle }: ComposerProps) {
+function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog, onResume, onJumpToQuestion, onSent, handle }: ComposerProps) {
   const client = useClient()
   const ids = useId()
   const [text, setText] = useState(() => loadDraft(sessionId))
@@ -342,6 +344,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, onCatalog,
     }
     saveDraft(sessionId, '')
     forgetAttachments(sessionId)
+    onSent?.()
     return { sent: true }
   }
 

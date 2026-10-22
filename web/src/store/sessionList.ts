@@ -175,7 +175,7 @@ export function carryWaiting(held: ReadonlySet<string>, state: ListState, hat: s
   return ids
 }
 
-const isWaiting = (s: SessionSummary) => s.operator_attention !== undefined ? s.operator_attention > 0 : s.activity === 'blocked' || s.question_waits
+const isWaiting = (s: SessionSummary) => !!s.review || (s.operator_attention !== undefined ? s.operator_attention > 0 : s.activity === 'blocked' || s.question_waits)
 
 /** `held` with a page's rows: a row the stream sent later is kept. */
 function merge(held: Map<string, SessionSummary>, rows: readonly unknown[]): { all: Map<string, SessionSummary>; ids: string[] } {
