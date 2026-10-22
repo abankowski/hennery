@@ -103,6 +103,7 @@ fn checked(text: &str) -> content::Checked {
 }
 fn operator_catalog() -> HostCatalog {
     HostCatalog {
+        saved_at: None,
         agent: "fake".into(),
         adapter_revision: "fixture".into(),
         freshness: CatalogFreshness::Fresh,
@@ -425,6 +426,7 @@ fn a_parent_origin_row_cannot_gain_operator_authority_from_equal_source_and_targ
         reason: ParkReason::Idle,
     });
     let catalog = HostCatalog {
+        saved_at: None,
         agent: "fake".into(),
         adapter_revision: "fixture".into(),
         freshness: CatalogFreshness::Fresh,
@@ -506,6 +508,7 @@ fn parked_operator_queue_uses_the_existing_attach_generation_and_confirmed_confi
     });
     let id = w.queue("resume then deliver");
     let catalog = HostCatalog {
+        saved_at: None,
         agent: "fake".into(),
         adapter_revision: "fixture".into(),
         freshness: CatalogFreshness::Fresh,
@@ -1161,6 +1164,7 @@ fn explicit_park_holds_existing_queue_while_idle_park_resumes_it() {
         }
         w.emit(SessionBody::SessionParked { reason });
         let catalog = HostCatalog {
+            saved_at: None,
             agent: "fake".into(),
             adapter_revision: "fixture".into(),
             freshness: CatalogFreshness::Fresh,
@@ -1605,6 +1609,7 @@ fn operator_resume_requires_a_host_capability_instead_of_opaque_failure() {
     });
     w.queue("resume");
     let catalog = HostCatalog {
+        saved_at: None,
         agent: "fake".into(),
         adapter_revision: "fixture".into(),
         freshness: CatalogFreshness::Fresh,

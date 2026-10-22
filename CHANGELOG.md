@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Cache runtime models and options per host, project, hat and adapter revision,
+  learning agent defaults from real sessions.
+- Send text and images while a turn is running: messages wait in a durable,
+  editable queue and are delivered in order. Parked sessions offer Resume and
+  send, including keyboard shortcuts. Failed messages stay available to copy;
+  deleting a session also deletes its unsent messages and images.
+
 ## 0.2.2
 
 - Updates replace immediately (#224). A new version takes over at once and

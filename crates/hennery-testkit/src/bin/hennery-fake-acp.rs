@@ -37,15 +37,34 @@ async fn main() -> agent_client_protocol::Result<()> {
         // stays in our process group, like an agent CLI's own subprocess.
         // Never waited on by design: it must outlive us unless the host kills
         // the whole group.
+        let mut command = std::process::Command::new("sleep");
+        command.arg("600");
+        let detach = script.grandchild_detached;
+        use std::os::unix::process::CommandExt;
+        // SAFETY: signal and setsid are async-signal-safe. Ignoring TERM in
+        // pre-exec makes the child ready before spawn returns; a shell trap
+        // after exec would race a successful probe's immediate termination.
+        unsafe {
+            command.pre_exec(move || {
+                libc::signal(libc::SIGTERM, libc::SIG_IGN);
+                if detach && libc::setsid() < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
         #[allow(clippy::zombie_processes)]
-        let child = std::process::Command::new("sleep")
-            .arg("600")
+        let child = command
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
             .expect("spawn grandchild");
         std::fs::write(path, child.id().to_string()).expect("write grandchild pid");
+        // SAFETY: reading our own process group has no side effects.
+        let group = unsafe { libc::getpgrp() };
+        std::fs::write(std::path::Path::new(path).with_extension("group"), group.to_string())
+            .expect("write adapter group");
     }
 
     let prompt_queueing = script.prompt_queueing;

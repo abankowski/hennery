@@ -2887,6 +2887,7 @@ fn rows_of(conn: &Connection, id: &str, events: &[i64], turns: &[String], hashes
             "delegation_budgets" => format!("root_id = '{id}'"),
             "delegation_attention" => format!("child_id = '{id}'"),
             "delegation_notices" => format!("child_id = '{id}' OR parent_id = '{id}' OR root_id = '{id}'"),
+            "runtime_catalog" => format!("source_session_id = '{id}' OR defaults_source_session_id = '{id}'"),
             "event_attachments" => format!("event_id IN ({})", list(events.iter().map(i64::to_string).collect())),
             "turn_attachments" => format!("turn_id IN ({})", quoted(turns)),
             "attachments" => format!("sha256 IN ({})", quoted(hashes)),
@@ -2913,6 +2914,19 @@ fn rows_of(conn: &Connection, id: &str, events: &[i64], turns: &[String], hashes
 fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
     let dir = tempfile::tempdir().unwrap();
     let (store, db) = file_store(dir.path());
+    hennery_kernel::hosts::Hosts::open(&db)
+        .unwrap()
+        .register(
+            "h1",
+            &hennery_kernel::hosts::Enrollment {
+                public_key: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a".into(),
+                name: "fixture".into(),
+                host_version: "0".into(),
+                platform: "linux".into(),
+            },
+            1,
+        )
+        .unwrap();
     let (a, b, kept) = (png(1, 300), png(2, 300), png(3, 300));
     for id in ["s1", "s2"] {
         active(&store, id, "/srv/app");
@@ -3003,7 +3017,12 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
          INSERT INTO delegation_notices(owner_id,delivery_id,child_id,parent_id,root_id,hat_id,source_event_id,
              source_events,kind,incident,accepted_revision,created_at,deadline,required_config)
              SELECT owner_id, 'delete-delivery', 'family-child', 's1', 's1', hat_id, 0, '[0]', 'turn_ended',
-             'delete-incident', 1, 0, 300, '{}' FROM sessions WHERE id = 's1';",
+             'delete-incident', 1, 0, 300, '{}' FROM sessions WHERE id = 's1';
+         INSERT INTO runtime_catalog(owner_id,host_id,hat_id,cwd,agent,adapter_revision,catalog,saved_at,observation,source_session_id,defaults_source_session_id)
+             SELECT owner_id,host_id,hat_id,cwd || '/' || id,agent,'pin',
+             json_object('agent',agent,'adapter_revision','pin','config_options',json_array(json_object('id','model','type','select','currentValue','small','options',json_array(json_object('value','small')))),
+                 'defaults',json_object('model','small'),'security',json_object('known',json('false'),'axes',json_object()),'freshness','fresh'),
+             0,1,id,id FROM sessions WHERE id IN ('s1','s2');",
     )
     .unwrap();
     store.close_now("s1").unwrap();
@@ -3017,6 +3036,7 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
         "pending",
         "session_catalog",
         "prompt_receipts",
+        "runtime_catalog",
         "session_families",
         "session_operations",
         "session_dispatch_queue",

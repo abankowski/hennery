@@ -50,9 +50,8 @@ BEGIN
       AND source_id IN (SELECT id FROM sessions WHERE owner_id = NEW.owner_id AND hat_id = NEW.hat_id)
       AND state IN ('queued','waiting_config');
 END;
--- Test-only rollback of sessions migration 28: runtime catalog cache.
+-- Test-only rollback of sessions migrations 28/27: restore the v26 budget CHECK.
 DROP TABLE runtime_catalog;
--- Test-only rollback of sessions migration 27: restore the v26 budget CHECK.
 DROP TABLE delegation_limits;
 DROP TRIGGER notice_endpoint_end;
 ALTER TABLE delegation_budgets RENAME TO delegation_budgets_old;

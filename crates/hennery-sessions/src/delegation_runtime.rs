@@ -1,7 +1,11 @@
 //! One host catalog service for launcher and tools; never infer models from a
-//! different session's retained catalog or from a model-name allowlist.
+//! different scope's retained catalog or from a model-name allowlist.
 use crate::AppState;
 use anyhow::{Result, ensure};
+use futures::{
+    FutureExt,
+    future::{BoxFuture, Shared},
+};
 use hennery_proto::{
     delegation_host::{CatalogFreshness, ConfigCompleteness, ConfigEvidence, HostCatalog},
     frames::{Capability, CollectorFrame, ConfigValue, HostFrame, SessionConfig},
@@ -21,10 +25,11 @@ pub(crate) fn same_hat_in(tx: &Transaction<'_>, owner: &str, host: &str, hat: &s
     )
 }
 type CatalogKey = (String, String, String, String, String, u64, bool);
+type InFlight = Shared<BoxFuture<'static, CachedCatalog>>;
 #[derive(Default)]
 struct CatalogCache {
     values: BTreeMap<CatalogKey, CachedCatalog>,
-    probes: BTreeMap<CatalogKey, Weak<Mutex<()>>>,
+    probes: BTreeMap<CatalogKey, Weak<InFlight>>,
 }
 #[derive(Clone)]
 struct CachedCatalog {
@@ -48,10 +53,10 @@ impl CachedCatalog {
             CatalogOrigin::Attach(not_before) | CatalogOrigin::OperatorAttach(not_before) => {
                 self.captured >= *not_before
             }
-            CatalogOrigin::Spawn => self.received >= requested,
+            CatalogOrigin::Spawn | CatalogOrigin::Operator => self.received >= requested,
             // Independent tool retries can observe sign-in immediately, while
             // callers already waiting on the same probe share its failure.
-            CatalogOrigin::Agent | CatalogOrigin::Operator => self.result.is_ok() || self.received >= requested,
+            CatalogOrigin::Agent => self.result.is_ok() || self.received >= requested,
         }
     }
 
@@ -132,8 +137,13 @@ impl Catalogs {
         cwd: &str,
         agent: &str,
     ) -> Result<HostCatalog> {
-        self.get_for_origin(state, host, hat, cwd, agent, CatalogOrigin::Operator)
-            .await
+        let mut catalog = self
+            .get_for_origin(state, host, hat, cwd, agent, CatalogOrigin::Operator)
+            .await?;
+        if catalog.freshness == CatalogFreshness::Fresh {
+            catalog.saved_at = Some(hennery_kernel::secret::unix_now().try_into()?);
+        }
+        Ok(catalog)
     }
     async fn get_for_origin(
         &self,
@@ -173,7 +183,8 @@ impl Catalogs {
             state.store.catalog_scope(host, hat, cwd)
         };
         // Hold the global cache lock only for map access. Independent keys can
-        // probe concurrently; identical in-flight requests share a per-key lock.
+        // probe concurrently. A shared future lives exactly as long as its
+        // waiters, so cancelling one waiter never kills another's discovery.
         let probe = {
             let mut cache = self.cache.lock().await;
             cache.values.retain(|_, catalog| catalog.live());
@@ -193,26 +204,43 @@ impl Catalogs {
                 probe
             } else {
                 ensure!(cache.probes.len() < 128, "busy");
-                let probe = Arc::new(Mutex::new(()));
+                let probe = Arc::new(Self::probe_once(state.clone(), key.clone()).boxed().shared());
                 cache.probes.insert(key.clone(), Arc::downgrade(&probe));
                 probe
             }
         };
-        let _in_flight = probe.lock().await;
-        check_scope()?;
-        {
-            let cache = self.cache.lock().await;
-            if let Some(catalog) = cache
-                .values
-                .get(&key)
-                .filter(|entry| entry.reusable(&origin, requested_at))
-            {
-                let catalog = catalog.clone();
-                drop(cache);
-                check_scope()?;
-                return origin.result(catalog.result());
-            }
+        let cached = probe.as_ref().clone().await;
+        state.store.catalog_scope(host, hat, cwd)?;
+        if state.hub.routable_conn(host) != Some(connection) {
+            return cached.result().and_then(|_| Err(anyhow::anyhow!("catalog_stale")));
         }
+        let mut cache = self.cache.lock().await;
+        if cache.values.len() >= 128 && !cache.values.contains_key(&key) {
+            cache.values.pop_first();
+        }
+        cache.values.insert(key, cached.clone());
+        origin.result(cached.result())
+    }
+
+    async fn probe_once(state: AppState, key: CatalogKey) -> CachedCatalog {
+        let (_, host, hat, cwd, agent, connection, operator_initiated) = &key;
+        let result = Self::discover(&state, host, hat, cwd, agent, *connection, *operator_initiated).await;
+        CachedCatalog {
+            received: Instant::now(),
+            captured: SystemTime::now(),
+            result: result.map_err(|error| error.to_string()),
+        }
+    }
+
+    async fn discover(
+        state: &AppState,
+        host: &str,
+        hat: &str,
+        cwd: &str,
+        agent: &str,
+        connection: u64,
+        operator_initiated: bool,
+    ) -> Result<HostCatalog> {
         let request_id = uuid::Uuid::now_v7().to_string();
         let frame = CollectorFrame::ProbeCatalog {
             request_id: request_id.clone(),
@@ -266,18 +294,10 @@ impl Catalogs {
                 Err(error) => Err(error),
             };
         }
-        let cached = CachedCatalog {
-            received: Instant::now(),
-            captured: SystemTime::now(),
-            result: result.as_ref().cloned().map_err(ToString::to_string),
-        };
-        let mut cache = self.cache.lock().await;
-        // Concurrent different-key probes may fill the cache while we await I/O.
-        if cache.values.len() >= 128 && !cache.values.contains_key(&key) {
-            cache.values.pop_first();
+        if operator_initiated && let Ok(catalog) = &result {
+            state.store.save_runtime_catalog(host, hat, cwd, catalog)?;
         }
-        cache.values.insert(key, cached);
-        origin.result(result)
+        result
     }
 }
 /// Host resolves canonical existence; the collector compares scope with its
@@ -418,6 +438,47 @@ pub fn evidence_satisfies(
         })
 }
 impl crate::store::Store {
+    pub fn saved_runtime_catalog(&self, host: &str, hat: &str, cwd: &str, agent: &str) -> Result<HostCatalog> {
+        self.catalog_scope(host, hat, cwd)?;
+        let row: Option<(String, i64)> = self
+            .conn()
+            .query_row(
+                "SELECT catalog,saved_at FROM runtime_catalog WHERE owner_id = ?1 AND host_id=?2
+             AND hat_id=?3 AND cwd=?4 AND agent=?5 ORDER BY observation DESC LIMIT 1",
+                params![self.owner_id(), host, hat, cwd, agent],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((raw, saved_at)) = row else {
+            return Ok(HostCatalog {
+                agent: agent.into(),
+                adapter_revision: String::new(),
+                config_options: vec![],
+                defaults: SessionConfig::default(),
+                security: hennery_proto::delegation_host::SecurityClassification {
+                    known: false,
+                    axes: BTreeMap::new(),
+                },
+                freshness: CatalogFreshness::Unknown,
+                saved_at: None,
+            });
+        };
+        let mut catalog: HostCatalog = serde_json::from_str(&raw)?;
+        catalog.freshness = CatalogFreshness::Cached;
+        catalog.saved_at = Some(u64::try_from(saved_at)?);
+        Ok(catalog)
+    }
+
+    pub fn save_runtime_catalog(&self, host: &str, hat: &str, cwd: &str, catalog: &HostCatalog) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        if same_hat_in(&tx, self.owner_id(), host, hat, cwd)? {
+            save_catalog_in(&tx, self.owner_id(), host, hat, cwd, catalog, CatalogSources::default())?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn catalog_scope(&self, host: &str, hat: &str, cwd: &str) -> Result<()> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -433,6 +494,123 @@ impl crate::store::Store {
         );
         Ok(())
     }
+}
+
+#[derive(Default)]
+struct CatalogSources<'a> {
+    options: Option<&'a str>,
+    defaults: Option<&'a str>,
+}
+
+fn save_catalog_in(
+    tx: &Transaction<'_>,
+    owner: &str,
+    host: &str,
+    hat: &str,
+    cwd: &str,
+    catalog: &HostCatalog,
+    sources: CatalogSources<'_>,
+) -> Result<()> {
+    if catalog.freshness != CatalogFreshness::Fresh
+        || catalog.adapter_revision.is_empty()
+        || catalog.config_options.is_empty()
+    {
+        return Ok(());
+    }
+    let mut value = serde_json::to_value(catalog)?;
+    hennery_kernel::redact::value(&mut value);
+    let raw = serde_json::to_string(&value)?;
+    // Preview admission must never roll back an authoritative session fact.
+    // Keep any earlier saved preview, with its original observation time.
+    if raw.len() > 256 * 1024 || catalog.adapter_revision.len() > 256 || catalog.config_options.len() > 128 {
+        return Ok(());
+    }
+    let written = tx.execute(
+        "INSERT INTO runtime_catalog(owner_id,host_id,hat_id,cwd,agent,adapter_revision,catalog,saved_at,observation,source_session_id,defaults_source_session_id)
+         SELECT ?1,?2,?3,?4,?5,?6,?7,?8,(SELECT COALESCE(MAX(observation),0)+1 FROM runtime_catalog WHERE owner_id = ?1),?9,?10
+         WHERE EXISTS(SELECT 1 FROM hosts WHERE owner_id = ?1 AND id=?2 AND revoked_at IS NULL)
+         AND NOT EXISTS(SELECT 1 FROM purged_hats WHERE owner_id = ?1 AND hat_id=?3)
+         ON CONFLICT(owner_id,host_id,hat_id,cwd,agent,adapter_revision)
+         DO UPDATE SET catalog=excluded.catalog,saved_at=excluded.saved_at,observation=excluded.observation,source_session_id=excluded.source_session_id,defaults_source_session_id=excluded.defaults_source_session_id",
+        params![
+            owner,
+            host,
+            hat,
+            cwd,
+            catalog.agent,
+            catalog.adapter_revision,
+            raw,
+            hennery_kernel::secret::unix_now(),
+            sources.options,
+            sources.defaults
+        ],
+    )?;
+    if written > 0 {
+        tx.execute(
+            "DELETE FROM runtime_catalog WHERE owner_id = ?1 AND host_id=?2 AND hat_id=?3 AND cwd=?4 AND agent=?5 AND adapter_revision<>?6",
+            params![owner, host, hat, cwd, catalog.agent, catalog.adapter_revision],
+        )?;
+    }
+    Ok(())
+}
+
+pub(crate) fn save_session_catalog_in(
+    tx: &Transaction<'_>,
+    owner: &str,
+    session: &str,
+    indexed: &hennery_proto::frames::Indexed,
+    identity: &hennery_proto::delegation_host::CatalogIdentity,
+) -> Result<()> {
+    let scope: Option<(String, String, String, String, bool)> = tx
+        .query_row(
+            "SELECT host_id,hat_id,cwd,agent,
+             NOT EXISTS(SELECT 1 FROM session_families WHERE owner_id = ?1 AND child_id=?2)
+             FROM sessions WHERE owner_id = ?1 AND id=?2 AND lifecycle <> 'deleted'",
+            params![owner, session],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()?;
+    if let Some((host, hat, cwd, agent, operator)) = scope
+        && same_hat_in(tx, owner, &host, &hat, &cwd)?
+        && indexed.current_config().is_some()
+    {
+        // The session snapshot describes current choices, never agent defaults.
+        // Only a pre-switch session/new snapshot or Refresh can supply those.
+        let previous: Option<(String, Option<String>)> = tx.query_row(
+            "SELECT catalog,defaults_source_session_id FROM runtime_catalog WHERE owner_id = ?1 AND host_id=?2 AND hat_id=?3 AND cwd=?4 AND agent=?5 AND adapter_revision=?6",
+            params![owner, host, hat, cwd, agent, identity.adapter_revision],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        let (defaults, defaults_source) = if let Some(defaults) = identity.agent_defaults.as_ref().filter(|_| operator)
+        {
+            (defaults.clone(), Some(session.to_owned()))
+        } else if let Some((raw, source)) = previous {
+            (serde_json::from_str::<HostCatalog>(&raw)?.defaults, source)
+        } else {
+            (SessionConfig::default(), None)
+        };
+        save_catalog_in(
+            tx,
+            owner,
+            &host,
+            &hat,
+            &cwd,
+            &HostCatalog {
+                agent,
+                adapter_revision: identity.adapter_revision.clone(),
+                security: identity.security.clone(),
+                defaults,
+                config_options: indexed.config_options.clone().unwrap_or_default(),
+                freshness: CatalogFreshness::Fresh,
+                saved_at: None,
+            },
+            CatalogSources {
+                options: Some(session),
+                defaults: defaults_source.as_deref(),
+            },
+        )?;
+    }
+    Ok(())
 }
 
 impl crate::store::Store {

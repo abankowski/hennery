@@ -573,6 +573,7 @@ mod tests {
                         HostFrame::Catalog {
                             request_id,
                             catalog: HostCatalog {
+                                saved_at: None,
                                 agent,
                                 adapter_revision: "fixture".into(),
                                 freshness: CatalogFreshness::Fresh,

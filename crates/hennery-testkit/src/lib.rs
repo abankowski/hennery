@@ -34,6 +34,9 @@ pub struct FakeScript {
     /// host) in the adapter's process group and write its pid to this file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grandchild_pid_file: Option<String>,
+    /// Test the documented process-group boundary by calling setsid in the child.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub grandchild_detached: bool,
     /// Raw ACP `update` objects streamed as `session/update` during
     /// `session/load`, in order, before the load is answered. Sent untyped,
     /// so unknown `sessionUpdate` kinds reach the host as they are.
@@ -303,6 +306,7 @@ impl Default for FakeScript {
             stderr_lines: Vec::new(),
             stdout_lines: Vec::new(),
             grandchild_pid_file: None,
+            grandchild_detached: false,
             replay: Vec::new(),
             load_error: None,
             new_session_error: None,
