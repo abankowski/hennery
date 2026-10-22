@@ -816,6 +816,120 @@ fn review_started(options: Vec<serde_json::Value>, identity: bool) -> hennery_pr
 }
 
 #[test]
+fn delegated_identity_never_supplies_agent_defaults_even_for_detached_edges() {
+    for known in [false, true] {
+        for detached in [false, true] {
+            let world = World::new();
+            let option = serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"},{"value":"large"}]});
+            for id in ["parent", "child"] {
+                world
+                    .state
+                    .store
+                    .create_session(id, "host", "claude", "/project", &world.hat, None)
+                    .unwrap();
+            }
+            world
+                .state
+                .store
+                .ingest("parent", 1, &review_started(vec![option.clone()], true))
+                .unwrap();
+            let conn = rusqlite::Connection::open(world._dir.path().join("hennery.db")).unwrap();
+            conn.execute("INSERT INTO session_families(owner_id,child_id,parent_id,root_id,hat_id,created_event_id,detached) VALUES(?1,'child','parent','parent',?2,0,?3)", rusqlite::params![world.state.store.owner_id(), world.hat, detached]).unwrap();
+            let expected = if known {
+                SessionConfig {
+                    model: Some("small".into()),
+                    mode: Some("default".into()),
+                    ..Default::default()
+                }
+            } else {
+                SessionConfig::default()
+            };
+            if known {
+                world
+                    .state
+                    .store
+                    .save_runtime_catalog(
+                        "host",
+                        &world.hat,
+                        "/project",
+                        &HostCatalog {
+                            config_options: vec![option.clone()],
+                            defaults: expected.clone(),
+                            ..catalog()
+                        },
+                    )
+                    .unwrap();
+            }
+            let mut forged = review_started(vec![option.clone()], true);
+            let hennery_proto::frames::SessionBody::SessionStarted { indexed, .. } = &mut forged else {
+                unreachable!()
+            };
+            indexed.catalog_identity.as_mut().unwrap().agent_defaults = Some(SessionConfig {
+                model: Some("large".into()),
+                mode: Some("bypassPermissions".into()),
+                ..Default::default()
+            });
+            world.state.store.ingest("child", 1, &forged).unwrap();
+            let saved = world
+                .state
+                .store
+                .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+                .unwrap();
+            assert_eq!(saved.defaults, expected, "known={known}, detached={detached}");
+            assert_eq!(saved.config_options, vec![option]);
+        }
+    }
+}
+
+#[test]
+fn deleting_baseline_source_clears_defaults_when_options_source_is_null() {
+    let world = World::new();
+    world
+        .state
+        .store
+        .create_session("baseline", "host", "claude", "/project", &world.hat, None)
+        .unwrap();
+    let mut started = review_started(
+        vec![
+            serde_json::json!({"id":"model","type":"select","currentValue":"small","options":[{"value":"small"},{"value":"large"}]}),
+        ],
+        true,
+    );
+    let hennery_proto::frames::SessionBody::SessionStarted { indexed, .. } = &mut started else {
+        unreachable!()
+    };
+    indexed.catalog_identity.as_mut().unwrap().agent_defaults = Some(SessionConfig {
+        model: Some("large".into()),
+        ..Default::default()
+    });
+    world.state.store.ingest("baseline", 1, &started).unwrap();
+    let conn = rusqlite::Connection::open(world._dir.path().join("hennery.db")).unwrap();
+    conn.execute(
+        "UPDATE runtime_catalog SET source_session_id=NULL WHERE owner_id=?1 AND defaults_source_session_id='baseline'",
+        [world.state.store.owner_id()],
+    )
+    .unwrap();
+    let before = world
+        .state
+        .store
+        .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+        .unwrap();
+    assert_eq!(before.defaults.model.as_deref(), Some("large"));
+    world.state.store.close_now("baseline").unwrap();
+    world.state.store.delete_session("baseline", None).unwrap();
+    let after = world
+        .state
+        .store
+        .saved_runtime_catalog("host", &world.hat, "/project", "claude")
+        .unwrap();
+    assert_eq!(after.config_options, before.config_options);
+    assert!(
+        after.defaults.is_empty(),
+        "a NULL options source must not preserve a deleted baseline"
+    );
+}
+
+#[test]
 fn session_without_pre_switch_values_keeps_baseline_unknown_or_preserves_refresh() {
     let world = World::new();
     world

@@ -15,14 +15,24 @@ describe('catalog-aware defaults', () => {
     expect(result.config.axes?.fast).toBe(false)
     expect(result.sources.fast).toBe(source === 'stored' ? 'Hat override' : 'Your choice')
   })
-  it('preserves unavailable stored requirements visibly without changing the stored record', () => {
+  it('falls back visibly for unavailable nonsecurity overrides without changing the stored record', () => {
     const saved = { model: 'removed', axes: { effort: 'medium' } }
     const result = resolveDefaults(catalog, saved)
-    expect(result.config.model).toBe('removed')
-    expect(result.config.axes?.effort).toBe('medium')
+    expect(result.config.model).toBe('opus')
+    expect(result.config.axes?.effort).toBe('low')
+    expect(result.notices).toContain('Saved model “removed” is unavailable on this host; using opus.')
+    expect(result.notices).toContain('Saved effort “medium” is unavailable on this host; using low.')
     expect(result.notices).toHaveLength(2)
     expect(result.blocked).toBe(false)
     expect(saved.model).toBe('removed')
+  })
+  it('falls back to unknown agent defaults for a missing nonsecurity axis, but always requests profile security axes', () => {
+    const result = resolveDefaults({ ...catalog, config_options: [], defaults: {}, security: { known: true, axes: { sandbox: [true] } } }, { model: 'removed', mode: 'safe', axes: { fast: false, sandbox: true } })
+    expect(result.config).toEqual({ mode: 'safe', axes: { sandbox: true } })
+    expect(result.notices).toContain('Saved fast “false” is unavailable on this host; using agent default.')
+    expect(result.sources.sandbox).toBe('Hat override')
+    expect(result.sources.mode).toBe('Hat override')
+    expect(result.blocked).toBe(false)
   })
   it('blocks invalid explicit choices instead of silently converting them to inheritance', () => {
     const result = resolveDefaults(catalog, {}, { model: 'removed', effort: 'medium' })

@@ -10,8 +10,11 @@ export interface ResolvedDefaults {
   blocked: boolean
   warnings: string[]
 }
-export function fieldsOf(catalog: HostCatalog | null) {
+export function fieldsOf(catalog: Pick<HostCatalog, 'config_options'> | null) {
   return catalogFields(configOptions(catalog ? { session_id: '', commands: [], config_options: catalog.config_options } : null))
+}
+export function securityKeys(catalog: Pick<HostCatalog, 'security'>): Set<string> {
+  return new Set(['mode', ...Object.keys(catalog.security.axes)])
 }
 export function flatConfig(config: SessionConfig): Record<string, ConfigValue> {
   return { ...(config.axes ?? {}), ...(config.model == null ? {} : { model: config.model }), ...(config.mode == null ? {} : { mode: config.mode }) }
@@ -44,7 +47,7 @@ export function resolveDefaults(catalog: HostCatalog, stored: SessionConfig, pic
   const baseline = flatConfig(catalog.defaults), saved = flatConfig(stored)
   const flat: Record<string, ConfigValue> = Object.create(null), sources: Record<string, Source> = Object.create(null), notices: string[] = []
   let blocked = false
-  const security = new Set(['mode', ...Object.keys(catalog.security.axes)])
+  const security = securityKeys(catalog)
   for (const [key, value] of Object.entries(baseline)) {
     const option = offered.get(key)
     if (option && supports(option, value)) { flat[key] = value; sources[key] = 'Agent default' }
@@ -60,9 +63,11 @@ export function resolveDefaults(catalog: HostCatalog, stored: SessionConfig, pic
     if (value === undefined || value === null) return
     const option = offered.get(key)
     if (!option || !supports(option, value)) {
-      notices.push(`${explicit ? 'Chosen' : 'Saved'} ${option?.name ?? key} “${String(value)}” is unavailable on this host; ${explicit ? 'choose another value before starting.' : 'it will still be requested and must be confirmed before the first prompt.'}`)
+      const strict = security.has(key)
+      const fallback = Object.hasOwn(flat, key) ? valueLabel(catalog, key, flat[key]) : 'agent default'
+      notices.push(`${explicit ? 'Chosen' : 'Saved'} ${option?.name ?? key} “${String(value)}” is unavailable on this host; ${explicit ? 'choose another value before starting.' : strict ? 'it will still be requested and must be confirmed before the first prompt.' : `using ${fallback}.`}`)
       if (explicit) blocked = true
-      else { flat[key] = value; sources[key] = 'Hat override' }
+      else if (strict) { flat[key] = value; sources[key] = 'Hat override' }
       return
     }
     flat[key] = value
@@ -79,7 +84,7 @@ export function resolveDefaults(catalog: HostCatalog, stored: SessionConfig, pic
   return { config, sources, notices, blocked, warnings: securityWarnings(catalog, config) }
 }
 /** Use adapter display labels in the UI; exact ids remain in requests. */
-export function valueLabel(catalog: HostCatalog | null, key: string, value: ConfigValue | undefined): string {
+export function valueLabel(catalog: Pick<HostCatalog, 'config_options'> | null, key: string, value: ConfigValue | undefined): string {
   if (value === undefined) return 'Agent default'
   if (typeof value === 'boolean') return value ? 'On' : 'Off'
   const option = fieldsOf(catalog).find(field => field.key === key)?.option

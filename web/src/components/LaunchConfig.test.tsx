@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import LaunchConfig, { catalogAge, requestFor } from './LaunchConfig'
+import LaunchConfig, { ConfigControl, catalogAge, requestFor } from './LaunchConfig'
 import type { LaunchContext } from './CatalogContext'
 import { catalog } from '../test-launch-catalog'
 
@@ -16,8 +16,8 @@ it('uses saved catalogs for operator choices without changing their freshness', 
 })
 
 it.each(['loading', 'ready', 'unavailable'] as const)('always sends hat overrides without a %s catalog', state => {
-  const context: LaunchContext = { key: 'context', state, catalog: null, defaults: { hat_id: 'hat', agent: 'claude', revision: 1, config: { mode: 'default' } } }
-  expect(requestFor(context, {})).toEqual({ mode: 'default' })
+  const context: LaunchContext = { key: 'context', state, catalog: null, defaults: { hat_id: 'hat', agent: 'claude', revision: 1, config: { mode: 'default', model: 'saved-model', axes: { fast: false } } } }
+  expect(requestFor(context, {})).toEqual({ mode: 'default', model: 'saved-model', axes: { fast: false } })
 })
 
 it('shows the saved catalog age and clamps future observations', () => {
@@ -38,6 +38,20 @@ it('keeps an unsupported saved permission requirement in the request', () => {
 it('preserves explicit false for opaque axis names without a catalog', () => {
   const context: LaunchContext = { key: 'context', state: 'loading', catalog: null, defaults: null }
   expect(requestFor(context, JSON.parse('{"__proto__":false}'))?.axes).toEqual(JSON.parse('{"__proto__":false}'))
+})
+
+it('distinguishes an unknown boolean baseline from an explicit Off', () => {
+  const option = { id: 'fast', name: 'Fast', kind: 'boolean' as const, current: false }
+  const view = render(<ConfigControl option={option} value={undefined} inherited onChange={vi.fn()} />)
+  expect(screen.getByRole('checkbox', { name: 'Fast · agent default' })).not.toBeChecked()
+  view.rerender(<ConfigControl option={option} value={false} inherited onChange={vi.fn()} />)
+  expect(screen.getByRole('checkbox', { name: 'Fast · inherited' })).not.toBeChecked()
+})
+
+it('keeps a nonsecurity fallback notice visible with settings collapsed', () => {
+  const context: LaunchContext = { key: 'context', state: 'ready', catalog, defaults: { hat_id: 'hat', agent: 'claude', revision: 1, config: { model: 'removed' } } }
+  render(<LaunchConfig context={context} picks={{}} onPicks={vi.fn()} expanded={false} onExpanded={vi.fn()} />)
+  expect(screen.getByRole('status')).toHaveTextContent('Saved model “removed” is unavailable on this host; using opus.')
 })
 
 it('updates saved age over time and cleans up its timer', () => {

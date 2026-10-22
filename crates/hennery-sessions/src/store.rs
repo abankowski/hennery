@@ -3170,7 +3170,7 @@ impl Store {
         // session's agent baseline. Forget only that baseline, not its options.
         tx.execute(
             "UPDATE runtime_catalog SET catalog=json_set(catalog,'$.defaults',json_object()),defaults_source_session_id=NULL
-             WHERE owner_id = ?1 AND defaults_source_session_id=?2 AND source_session_id<>?2",
+             WHERE owner_id = ?1 AND defaults_source_session_id=?2 AND source_session_id IS NOT ?2",
             params![self.owner, session_id],
         )?;
         // Includes previews supplied before a hat reassignment, without

@@ -8,7 +8,7 @@ import { modelLabel } from '../lib/agent'
 
 export function ConfigControl({ option, value, inherited, disabled, onChange }: { option: ConfigOption; value: ConfigValue | undefined; inherited: boolean; disabled?: boolean; onChange: (value: ConfigValue) => void }) {
   const id = useId()
-  if (option.kind === 'boolean') return <label className="config-boolean" htmlFor={id}><input id={id} type="checkbox" checked={value === true} disabled={disabled} onChange={e => onChange(e.target.checked)} />{option.name}{inherited ? ' · inherited' : ''}</label>
+  if (option.kind === 'boolean') return <label className="config-boolean" htmlFor={id}><input id={id} type="checkbox" checked={value === true} disabled={disabled} onChange={e => onChange(e.target.checked)} />{option.name}{value === undefined ? ' · agent default' : inherited ? ' · inherited' : ''}</label>
   const known = typeof value === 'string' && option.choices.some(c => c.value === value)
   return <div className="config-select"><label htmlFor={id}>{option.name}</label><select id={id} disabled={disabled} value={typeof value === 'string' ? value : ''} onChange={e => onChange(e.target.value)}>
     {!known && <option value={typeof value === 'string' ? value : ''}>{value === undefined ? 'Agent default' : `${String(value)} · unavailable`}</option>}
@@ -35,10 +35,10 @@ export default function LaunchConfig({ context, picks, onPicks, expanded, onExpa
       <p className="config-readback">Requested for this start: <bdi>{summary || 'Agent defaults'}</bdi></p>
       {fieldsOf(context.catalog).length < (context.catalog?.config_options.length ?? 0) && <p className="hint">Some reported settings cannot be represented here. Review them in the agent.</p>}
       {expanded && <div className="config-fields">{fieldsOf(context.catalog).map(({ key, option }) => <div className="config-field" key={key}><ConfigControl option={option} value={effective[key]} inherited={!requested.includes(key)} onChange={value => onPicks({ ...picks, [key]: value })} /><span className="config-source">{result?.sources[key] ?? 'Agent default'}</span>{(requested.includes(key) || result?.sources[key] === 'Hat override') && <button type="button" className="btn btn-ghost" onClick={() => onPicks({ ...picks, [key]: null })}>Use agent default for {option.name}</button>}</div>)}</div>}
-      {result?.notices.map(notice => <p role={result.blocked ? 'alert' : 'status'} key={notice}><bdi>{notice}</bdi></p>)}
       {!!result?.warnings.length && <p className="config-warning"><span aria-hidden="true">⚠ </span>{mode ? `${valueLabel(context.catalog, mode.key, effective[mode.key])}: the agent won't ask before acting.` : 'These settings give the agent more permission to act.'}</p>}
     </>}
     </ComposerSettings>}
+    {result?.notices.map(notice => <p role={result.blocked ? 'alert' : 'status'} key={notice}><bdi>{notice}</bdi></p>)}
   </section>
 }
 export function requestFor(context: LaunchContext, picks: Picks): SessionConfig | null {

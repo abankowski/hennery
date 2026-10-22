@@ -2,10 +2,11 @@ import '../styles/launch.css'
 import LaunchConfig, { requestFor } from '../components/LaunchConfig'
 import { useLaunchContext } from '../components/CatalogContext'
 import { sessionDefaults } from '../api/defaults'
+import { runtimeCatalog } from '../api/delegation'
 import { useAccentStyle } from '../lib/theme'
 import { useRegisterContext } from '../app-actions'
 import { confirmStart, rememberConfigurationReview } from '../lib/start'
-import { flatConfig, type Picks } from '../lib/defaults'
+import { fieldsOf, flatConfig, securityKeys, supports, type Picks } from '../lib/defaults'
 // New session (frontend spec §7): a host, an agent, a project, the hat the
 // project resolves to, an optional first prompt, then Start.
 //
@@ -31,6 +32,7 @@ import type {
   HatResolution,
   HostItem,
   HostProjects,
+  SessionCatalog,
   StartSessionRequest,
   StartSessionResponse,
 } from '../generated/protocol'
@@ -98,6 +100,7 @@ export default function NewSession() {
   const [sameLogin] = useState(() => launcherLogin(() => liveRef.current))
   useEffect(() => { liveRef.current = true; return () => { liveRef.current = false } }, [])
   const [error, setError] = useState<string | null>(null)
+  const [recovery, setRecovery] = useState<{ context: string; sessionId: string; choices: { key: string; label: string }[] } | null>(null)
   const picker = useRef<ProjectPickerHandle>(null)
   const [browsePath, setBrowsePath] = useState<string | null>(null)
   type PendingStart = { hostId: string; path: string; agent: string }
@@ -315,21 +318,23 @@ export default function NewSession() {
     void launch(e.currentTarget)
   }
 
-  async function launch(form: HTMLFormElement) {
+  async function launch(form: HTMLFormElement, launchPicks = picks) {
     if (!canStart || busyRef.current || !sameLogin()) return
+    const config = requestFor(context, launchPicks)
     if (config === null) { setError('Choose an available session setting before starting.'); return }
     busyRef.current = true
     setBusy(true)
     setExpanded(false)
     form.closest<HTMLElement>('[role="dialog"]')?.focus()
     setError(null)
+    setRecovery(null)
     let launchConfig = config
     let sessionId: string
     try {
-      // Hat requirements are independent of preview availability. Never send
-      // a start that silently omits them while either read is still pending.
+      // Read hat defaults independently of preview availability before resolving
+      // supported nonsecurity fallbacks and strict security requirements.
       const defaults = context.defaults ?? await sessionDefaults(client, current!.hat_id, agentName)
-      const requested = requestFor({ ...context, defaults }, picks)
+      const requested = requestFor({ ...context, defaults }, launchPicks)
       if (requested === null) throw new Error('Choose an available session setting before starting.')
       launchConfig = requested
       if (!sameLogin()) return
@@ -355,13 +360,42 @@ export default function NewSession() {
       // A default start has no requested configuration to verify; still check
       // the actual hat and successful attachment before releasing its prompt.
       const verifyConfig = context.catalog !== null || Object.keys(flatConfig(launchConfig)).length > 0
-      const confirmation = await confirmStart(client, sessionId, current!.hat_id, launchConfig, 30_000, verifyConfig)
+      let actual: SessionCatalog | null = null
+      const confirmation = await confirmStart(client, sessionId, current!.hat_id, launchConfig, 30_000, verifyConfig, catalog => { actual = catalog })
       if (!sameLogin()) return
       if (!liveRef.current) { retainClosedStart(sessionId); return }
       if (confirmation !== 'confirmed') {
         const code = !verifyConfig && confirmation === 'config_unconfirmed' ? 'start_unconfirmed' : confirmation
         keepDraft(sessionId, prompt)
-        if (code === 'config_unconfirmed') rememberConfigurationReview(sessionId, context.catalog, launchConfig)
+        if (code === 'config_unconfirmed') {
+          // A failed attachment may still have published its real catalog.
+          actual ??= await client.request<SessionCatalog>('GET', `/api/sessions/${encodeURIComponent(sessionId)}/catalog`, undefined, { timeoutMs: 3000 }).catch(() => null)
+          if (!sameLogin()) return
+          if (!liveRef.current) { retainClosedStart(sessionId); return }
+          const review = rememberConfigurationReview(sessionId, context.catalog, launchConfig, actual)
+          if (!context.catalog) {
+            // This GET reads the real start's write-through; it never probes.
+            // Profile security axes remain strict even when its baseline is unknown.
+            const observed = await runtimeCatalog(client, hostId, agentName, current!.canonical).catch(() => null)
+            if (!sameLogin()) return
+            if (!liveRef.current) { retainClosedStart(sessionId); return }
+            const security = observed ? securityKeys(observed) : new Set(['mode'])
+            const fields = new Map(fieldsOf(actual).map(field => [field.key, field.option]))
+            const values = flatConfig(actual ?? {})
+            const choices = Object.entries(flatConfig(launchConfig)).filter(([key, value]) => {
+              if (security.has(key)) return false
+              const option = fields.get(key)
+              return !option || !supports(option, value) || values[key] !== value || option.current !== value
+            }).map(([key]) => ({ key, label: fields.get(key)?.name ?? key }))
+            if (choices.length) {
+              setRecovery({ context: context.key, sessionId, choices })
+              setError(review ?? 'The requested session settings could not be confirmed. The first prompt was kept as a draft.')
+              busyRef.current = false
+              setBusy(false)
+              return
+            }
+          }
+        }
         clearLauncherDraft(draftOwner)
         openSession(sessionHref(sessionId, { kind: 'prompt_failed', code }))
         return
@@ -384,6 +418,13 @@ export default function NewSession() {
       }
     }
     openSession(sessionHref(sessionId))
+  }
+
+  function retryWithDefault(key: string) {
+    if (!form.current || recovery?.context !== context.key) return
+    const next = { ...picks, [key]: null }
+    setPicks(next)
+    void launch(form.current, next)
   }
 
   useEffect(() => {
@@ -554,10 +595,16 @@ export default function NewSession() {
 
           </>
         )}
-      </fieldset></div>
+      </fieldset>
+      {recovery?.context === context.key && <div className="config-recovery">
+        {error !== null && <p className="form-error" role="alert"><bdi>{error}</bdi></p>}
+        <p>The first prompt was kept as a draft. <Link to={sessionHref(recovery.sessionId)}>Review started session</Link></p>
+        {recovery.choices.map(choice => <button key={choice.key} type="button" className="btn btn-secondary" disabled={!canStart} onClick={() => retryWithDefault(choice.key)}>Start with agent default for {choice.label}</button>)}
+      </div>}
+      </div>
       <div className="modal-foot">
         {current && <Link className="btn btn-ghost launch-edit-defaults" inert={busy} aria-disabled={busy} tabIndex={busy ? -1 : undefined} onClick={event => { if (busy) event.preventDefault() }} to={`/defaults?${new URLSearchParams({ host: hostId, cwd: current.canonical, agent: agentName, hat: current.hat_id, return: 'new' })}`}>Edit defaults</Link>}
-        {error !== null && (
+        {error !== null && recovery?.context !== context.key && (
           <p className="form-error" role="alert">
             <bdi>{error}</bdi>
           </p>

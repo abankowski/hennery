@@ -328,10 +328,15 @@ catalogs, with its existing inheritance and configuration checks.
 Opening New session or Defaults only reads the saved preview; no automatic,
 background or timer-driven probe runs. Refresh is an explicit operator POST.
 No catalog means Agent defaults and an immediately enabled Start once host,
-runtime and canonical cwd are valid. Always send hat overrides and explicit
-picks, including while the preview loads; unsupported requirements fail with
-a readable configuration error. Saved
-choices remain subject to the real session's post-start verification.
+runtime and canonical cwd are valid. Without a catalog, send every hat override
+and explicit pick, including while the preview loads. With a catalog, keep
+security overrides strict even when unsupported; unsupported nonsecurity
+overrides fall back visibly to the supported baseline or agent default
+(UI spec §6.3). Configuration refusals are readable and keep the first prompt;
+the no-preview flow offers an explicit new start omitting only a selected
+unconfirmed nonsecurity override. Saved choices remain subject to the real
+session's post-start verification. The collector independently ignores
+`agent_defaults` from any child with a delegation edge, even a detached one.
 
 For a cold catalog, a new capability-gated host probe obtains the adapter's
 catalog in the validated cwd without a user prompt. If discovery requires

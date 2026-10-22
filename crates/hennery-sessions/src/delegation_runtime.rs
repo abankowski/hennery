@@ -546,14 +546,16 @@ pub(crate) fn save_session_catalog_in(
     indexed: &hennery_proto::frames::Indexed,
     identity: &hennery_proto::delegation_host::CatalogIdentity,
 ) -> Result<()> {
-    let scope: Option<(String, String, String, String)> = tx
+    let scope: Option<(String, String, String, String, bool)> = tx
         .query_row(
-            "SELECT host_id,hat_id,cwd,agent FROM sessions WHERE owner_id = ?1 AND id=?2 AND lifecycle <> 'deleted'",
+            "SELECT host_id,hat_id,cwd,agent,
+             NOT EXISTS(SELECT 1 FROM session_families WHERE owner_id = ?1 AND child_id=?2)
+             FROM sessions WHERE owner_id = ?1 AND id=?2 AND lifecycle <> 'deleted'",
             params![owner, session],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .optional()?;
-    if let Some((host, hat, cwd, agent)) = scope
+    if let Some((host, hat, cwd, agent, operator)) = scope
         && same_hat_in(tx, owner, &host, &hat, &cwd)?
         && indexed.current_config().is_some()
     {
@@ -564,7 +566,8 @@ pub(crate) fn save_session_catalog_in(
             params![owner, host, hat, cwd, agent, identity.adapter_revision],
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).optional()?;
-        let (defaults, defaults_source) = if let Some(defaults) = &identity.agent_defaults {
+        let (defaults, defaults_source) = if let Some(defaults) = identity.agent_defaults.as_ref().filter(|_| operator)
+        {
             (defaults.clone(), Some(session.to_owned()))
         } else if let Some((raw, source)) = previous {
             (serde_json::from_str::<HostCatalog>(&raw)?.defaults, source)

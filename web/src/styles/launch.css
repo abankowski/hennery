@@ -250,6 +250,8 @@
 .launch-edit-defaults { font-size:12px; }.launcher-frame .modal-foot { align-items:center; gap:12px; }.launcher-frame .modal-foot .spacer { display:block; }
 .catalog-age { display:flex; align-items:center; gap:8px; color:var(--hn-fg-3); font:400 11px var(--font-body); }
 .catalog-age .btn { min-height:32px; }
+.config-recovery { display:grid; gap:8px; margin-top:16px; min-width:0; }
+.config-recovery .btn { justify-self:start; max-width:100%; white-space:normal; text-align:left; }
 @media(max-width:767px) {
   .catalog-age .btn { min-height:44px; }
   .launcher-frame .modal-head,.launcher-frame .modal-foot { padding:14px 16px; }.launch-subtitle { display:inline; font-size:10px; }

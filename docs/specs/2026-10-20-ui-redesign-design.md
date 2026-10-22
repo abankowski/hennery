@@ -760,10 +760,14 @@ Resolve each field independently:
    equivalent explicit Refresh result. Resume/restart and delegated attaches
    update offered options but never replace that baseline with current picks.
    If no baseline is known, `defaults` is empty; send only deliberate overrides.
-2. A stored field/key for this hat and agent replaces that baseline. Always
-   send the hat's overrides, including when the preview is unavailable or
-   loading. Unsupported values produce a readable configuration refusal and
-   retain the first prompt; never silently discard an operator requirement.
+2. A supported stored field/key for this hat and agent replaces that baseline.
+   Security axes (mode and the ids in the profile's `security.axes`) are strict:
+   always request those hat overrides, even when this catalog cannot offer
+   them. A refusal produces a readable configuration error and retains the
+   first prompt. For nonsecurity overrides, a cached catalog that does not
+   offer the value falls back to the supported baseline or agent default,
+   with a visible notice explaining that fallback. Never erase the stored record.
+   Without a catalog, including while loading, request every hat override.
 3. An explicit New session choice replaces the inherited value while the
    context supports it. Show its source as “Your choice”.
 
@@ -772,7 +776,7 @@ Use `lib/catalog.ts`'s category/id rules to identify model/mode and stable
 remaining axes. Reasoning effort is one catalog axis, not a special
 three-value hard-coded field. Render other select/boolean axes; unsupported
 catalog shapes display unavailable and cannot be chosen here. Existing hat
-overrides remain requests even when this preview cannot represent them.
+security overrides remain requests even when this preview cannot represent them.
 
 **Model-dependent axis rule:** the pre-start endpoint accepts agent/cwd,
 not a model, and describes the probe's default model. Keep the origin of
@@ -788,7 +792,8 @@ because the model changed, or classify axes from display labels.
 After that pruning, overlay applicable **stored and explicit** axes; they
 are deliberate requests, not inherited probe defaults. A coarse pre-start
 catalog cannot prove they exist for the newly selected model. Send only
-explicit choices offered by that context, plus all stored requirements, then require the actual post-start
+explicit choices offered by that context, plus supported stored nonsecurity
+overrides and every stored security requirement, then require the actual post-start
 read-back to confirm every requested value before the first prompt (§6.4).
 Do not call an invented per-model catalog endpoint or silently erase a
 stored/explicit request merely to pass the read-back gate.
@@ -800,15 +805,16 @@ retain the required mode/security fields and any deliberate supported
 effort choice. The Sonnet session must start and receive its first prompt
 after its actual configuration is confirmed, without `config_failed` from
 the inherited `fast`. If `fast=false` was explicitly picked or stored as
-an override, preserve its provenance/request; Sonnet's refusal or missing
-read-back keeps the first prompt as a draft and visibly explains the
-unsupported requested axis. Never report success or substitute another
-axis/model to satisfy it.
+an override and the preview still offers it, preserve its provenance/request;
+Sonnet's refusal or missing read-back keeps the first prompt as a draft and
+visibly explains the unsupported requested axis. If a later saved catalog
+omits `fast`, show a fallback notice and omit that nonsecurity override.
 
 Example without private fixtures: a hat stores model A and effort High;
 the selected host offers only model B and Low/Medium. The launcher lists
-the unavailable overrides and still requests A and High; an unsupported
-configuration fails visibly. The stored record is not erased. Keep the
+the unavailable overrides: “Saved model A is unavailable on this host; using B”
+and the equivalent effort fallback (or “using agent default” if unknown).
+It requests supported baseline values instead. The stored record is not erased. Keep the
 notice visible through Start, not only as a fleeting toast. If the
 operator explicitly picked A and it later disappears, reject Start with a
 request for a new choice rather than treating that explicit choice as implicit.
@@ -823,6 +829,16 @@ Read the hat record independently of the preview; a start waits for that
 record if necessary, never for a catalog probe or preview response.
 Loading or refreshing a preview never gates Start. A usable cached snapshot
 offers choices with its age visible; the real session still verifies them.
+If a start without a preview ends `config_unconfirmed`, show the configuration
+error and retain the first prompt. For each unconfirmed nonsecurity override,
+offer one explicit “Start with agent default for X” action that creates a new
+session omitting only that override, retaining other choices and all security
+requirements, and verifies the new session before sending the prompt. Keep
+the original started session accessible for review; never retry automatically.
+Use the real session's catalog for review labels, then the cached catalog,
+then the raw id. Protect mode and all security axes listed by the post-start
+profile, including when its baseline is marked unknown. An unknown boolean
+baseline displays “· agent default”, distinct from an explicit Off value.
 Store editors may reset values without a catalog, but choosing a replacement
 requires a usable saved or freshly refreshed context.
 
@@ -860,8 +876,10 @@ successful first prompt. Read the newly created session and its actual
 post-start `SessionCatalog`; compare every requested field, including
 security axes, after it becomes active. An empty/missing catalog is not
 confirmation. If the actual config is absent/partial, a value is clamped,
-or a configuration failure is shown, open the visible session with
-the first prompt kept as its draft and a configuration-review notice.
+or a configuration failure is shown, keep the first prompt as its draft and
+show a configuration-review notice. Normally open the visible session;
+the no-preview nonsecurity recovery in §6.3 keeps New session open with the
+error, explicit retry actions and a link to that original session.
 Never release it automatically when a later update happens to match.
 
 Bound the post-start confirmation wait to 30 seconds and retain the draft
@@ -1047,7 +1065,7 @@ builds. The following are requirements for the implementation plans.
 | Push navigation | `pwa/notification.test.ts`, `pwa/navigation.test.ts`, `pwa/worker.test.ts`, `web/e2e/pwa.spec.ts`, existing producer tests: real URL → worker data.url → click → exact session/card, auth return, older question, dirty/exact window, gateway and invalid URL cases. |
 | Session | Existing `screens/Session*.test.tsx`, Composer/Transcript/item/AnswerBook/FamilyPanel suites; `web/e2e/sessions.spec.ts`, `family.spec.ts`: panel/sheet, parent banner/takeover, actual option ids, multi-question input, queued/uncertain/conflict/withdrawn/delivered, cancel/resume/draft preservation. |
 | Defaults backend | New kernel storage/migration tests and sessions HTTP integration tests: upgrade/reopen, owner/foreign hat, atomic revision race, empty reset/false, purge freeze/cascade, all PUT step-up/expiry/Origin/body bounds/invalid fields; add owner-audit cases and generator checks. |
-| Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, unavailable stored requirements visibly retained and sent, explicit invalid pick rejected, immediate starts with hat overrides without a catalog, cached age and explicit Refresh, stale responses, config clamp/failure prevents first prompt. Exercise the real Opus→Sonnet case without a Refresh workaround: inherited `fast=false` omitted, required security axes preserved, supported deliberate effort retained and first prompt delivered after read-back. An explicit/stored unsupported `fast` request remains visible and prevents first prompt on failed/missing read-back. Assert actual start frame and no prompt before confirmation. |
+| Defaults launch | New Defaults/NewSession/lib-defaults tests and `web/e2e/new-session.spec.ts`: save/reload/reset, inherited sources, two hosts with differing adapter catalogs, unsupported security overrides still sent, unsupported nonsecurity overrides fall back with a visible notice, explicit invalid picks rejected, immediate starts with every hat override without a catalog, cached age and explicit Refresh, stale responses, config clamp/failure prevents first prompt. Exercise real Opus→Sonnet without a Refresh workaround: inherited `fast=false` omitted, required security axes preserved, supported deliberate effort retained and first prompt delivered after read-back. A no-preview unsupported `fast` request holds the prompt and offers one-click new start with agent default for only that axis. Assert actual start frames, live review labels, unknown boolean labels and no prompt before confirmation. |
 | Settings/management | Existing settings/manage/API tests, `web/e2e/manage.spec.ts`, `mcp.spec.ts`, `mcp-oauth.spec.ts`, `mcp-delivery.spec.ts` and new `delegation-settings.spec.ts`: new layout, default-hat controls, delegation enable/disable/step-up/cancel, binary delegation without catalog probes, per-hat privacy, secrets and device lifecycle intact. Actually spawn through enabled Settings with any offered mode, including an unknown-security profile. Enabling with an unauthenticated runtime succeeds; signing in later needs no re-toggle; an unauthenticated spawn returns auth_required. Defaults never enable delegation. |
 | Keyboard | New command/shortcut and palette tests plus browser checks: every key, editable/composed-path/select/IME guards, card-focus digits, dialog focus/return, typing never mutates an answer or starts a session. |
 | Rendering/CSP | Existing `security.test.ts`, `deps.test.ts`, browser CSP collectors and Markdown computed-style checks; no external assets, inline script, lost list markers or mobile controls. |

@@ -106,12 +106,14 @@ function configurationReview(id: string): string | undefined {
     return message && message.length <= 2048 ? message : undefined
   } catch { return undefined }
 }
-export function rememberConfigurationReview(id: string, catalog: import('../generated/protocol').HostCatalog | null, requested: import('../generated/protocol').SessionConfig): void {
-  const fields = new Map(fieldsOf(catalog).map(field => [field.key, field.option.name]))
-  const parts = Object.entries(flatConfig(requested)).map(([key, value]) => `${fields.get(key) ?? key}: ${valueLabel(catalog, key, value)}`)
+export function rememberConfigurationReview(id: string, catalog: import('../generated/protocol').HostCatalog | null, requested: import('../generated/protocol').SessionConfig, actual: import('../generated/protocol').SessionCatalog | null = null): string | undefined {
+  const fields = new Map([...fieldsOf(catalog), ...fieldsOf(actual)].map(field => [field.key, field.option.name]))
+  const liveKeys = new Set(fieldsOf(actual).map(field => field.key))
+  const parts = Object.entries(flatConfig(requested)).map(([key, value]) => `${fields.get(key) ?? key}: ${valueLabel(liveKeys.has(key) ? actual : catalog, key, value)}`)
   if (!parts.length) return
   const message = `The requested session settings could not be confirmed. Requested: ${parts.join(' · ')}. Review the settings before sending the first prompt.`
   try { sessionStorage.setItem(REVIEW_PREFIX + id, message.slice(0, 2048)) } catch { /* The generic review notice remains. */ }
+  return message
 }
 
 /** A notice in words, for the session view. */
@@ -144,6 +146,7 @@ export async function confirmStart(
   requested: import('../generated/protocol').SessionConfig,
   timeoutMs = 30_000,
   verifyConfig = true,
+  onCatalog?: (catalog: import('../generated/protocol').SessionCatalog) => void,
 ): Promise<'confirmed' | 'hat_changed' | 'config_unconfirmed'> {
   const deadline = Date.now() + timeoutMs
   const path = `/api/sessions/${encodeURIComponent(id)}`
@@ -158,6 +161,7 @@ export async function confirmStart(
       if (detail.lifecycle === 'active') {
         if (!verifyConfig) return 'confirmed'
         const catalog = await client.request<import('../generated/protocol').SessionCatalog>('GET', `${path}/catalog`, undefined, { timeoutMs: Math.max(1, deadline - Date.now()) })
+        onCatalog?.(catalog)
         if (catalog.config_options.length > 0) {
           const actual = flatConfig(catalog)
           const offered = new Map(catalogFields(configOptions(catalog)).map(field => [field.key, field.option]))
