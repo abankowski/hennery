@@ -177,7 +177,7 @@ for (const width of [1280, 390]) for (const theme of ['dark', 'light'] as const)
   if (screen === 'overview' && width === 1280) {
    const choice = app.getByRole('article', { name: 'Choose provider fallback', exact: true })
    await expect(choice.getByRole('button', { name: 'Azure first', exact: true })).toHaveCount(0)
-   await expect(choice.getByRole('link', { name: 'Open Choose provider fallback', exact: true })).toHaveAttribute('href', '/sessions/question?pending=question')
+   await expect(choice.getByRole('link', { name: 'Open to answer Choose provider fallback', exact: true })).toHaveAttribute('href', '/sessions/question?pending=question')
    const permission = app.getByRole('article', { name: 'Port parser tests', exact: true })
    const post = app.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/pending/permission/answer'))
    await permission.getByRole('button', { name: 'Allow once', exact: true }).click()

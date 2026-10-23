@@ -9,6 +9,7 @@ import { Fragment, memo } from 'react'
 import { clockTime } from '../lib/time'
 import type { Item, ReviewResult } from '../generated/view'
 import ResultReadObserver from './ResultReadObserver'
+import ResultReview from './ResultReview'
 import ItemBoundary from './ItemBoundary'
 import AgentMessage from './items/AgentMessage'
 import Marker from './items/Marker'
@@ -79,7 +80,14 @@ export default function Transcript({ items, env, turnEnds, waiting = false, revi
       {items.map((item, index) => {
         const end = item.turn_id && item.turn_id !== items[index + 1]?.turn_id ? turnEnds?.get(item.turn_id) : undefined
         const reviewEnd = review && item.turn_id === review.turn_id && item.turn_id !== items[index + 1]?.turn_id
-        return <Fragment key={item.id}><Row item={item} env={env} />{end && <div className="divider turn-complete"><span>Turn complete{waiting && index === items.length - 1 ? ' — waiting for input' : ''} · <time dateTime={end}>{clockTime(end)}</time></span></div>}{reviewEnd && <ResultReadObserver key={review.event_id} id={env.sessionId} review={review} lastItem={item} />}</Fragment>
+        return <Fragment key={item.id}>
+          <Row item={item} env={env} />
+          {end && <div className="divider turn-complete"><span>Turn complete{waiting && index === items.length - 1 ? ' — waiting for input' : ''} · <time dateTime={end}>{clockTime(end)}</time></span></div>}
+          {reviewEnd && <div className="result-review-footer">
+            <ResultReview key={review.event_id} id={env.sessionId} review={review} />
+            <ResultReadObserver key={review.event_id} id={env.sessionId} review={review} lastItem={item} />
+          </div>}
+        </Fragment>
       })}
     </>
   )

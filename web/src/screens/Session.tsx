@@ -1,5 +1,5 @@
 import SessionName from '../components/SessionNames'
-import ResultReview, { useReadResult } from '../components/ResultReview'
+import { useReadResult } from '../components/ResultReview'
 import { useTurnEnds } from '../hooks/useTurnEnds'
 import '../styles/session.css'
 // One session (frontend spec §6): its header, its transcript, whose question
@@ -503,7 +503,6 @@ function SelectedSession({ id, summary, awaitSummary = false, tail = TAIL, timin
           />
         }
       />
-      {info?.review && <ResultReview key={info.review.event_id} id={id} review={info.review} />}
       {info?.family?.parent && family?.routing === 'active' && <div className="parent-banner" role="region" aria-label="Parent-driven session"><p>Driven by <Link to={`/sessions/${encodeURIComponent(info.family.parent.session_id)}`}><SessionName session={info.family.parent} fallback="parent session" /></Link>. Answers go to this child. A prompt from you takes over this session.</p><button type="button" className="btn btn-ghost btn-sm" disabled={taking} onClick={() => void takeover()}>{taking ? 'Taking over…' : 'Take over'}</button>{takeError && <p role="alert">{takeError}</p>}</div>}
       <div className="session-workspace">
       <div className="session-conversation">

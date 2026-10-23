@@ -32,7 +32,7 @@ export function useReadResult(id: string, review?: ReviewResult) {
 export default function ResultReview({ id, review }: { id: string; review: ReviewResult }) {
   const { read, state } = useReadResult(id, review)
   return <div className="result-review-actions">
-    <button type="button" className="btn btn-ghost btn-sm" disabled={state?.busy || state?.read} onClick={() => void read()}>{state?.read ? 'Read' : state?.busy ? 'Marking as read…' : 'Mark as read'}</button>
+    <button type="button" className="btn btn-secondary btn-sm" disabled={state?.busy || state?.read} onClick={() => void read()}>{state?.read ? 'Read' : state?.busy ? 'Marking as read…' : 'Mark as read'}</button>
     {state?.error && <p role="alert" className="form-error">{state.error}</p>}
   </div>
 }

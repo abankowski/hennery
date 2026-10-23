@@ -114,9 +114,9 @@
 .attention-dismiss { position:absolute; top:8px; right:8px; display:flex; align-items:center; justify-content:center; width:30px; height:30px; border:0; border-radius:6px; background:transparent; color:var(--hn-fg-3); font-size:19px; }
 .attention-dismiss:hover { background:var(--hn-hover); }.attention-dismissed { opacity:.7; }
 .attention-parent { margin:2px 0 8px; color:var(--hn-fg-3); font-size:11px; }
-.preview-elicitation { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden; max-height:3em; line-height:1.5; }
-.preview-permission { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.preview-actions { display:flex; gap:6px; align-items:center; }
+.attention-preview .preview-question { line-height:1.5; }
+.attention-preview .preview-question > bdi { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden; }
+.preview-actions { display:flex; gap:6px; align-items:center; margin-top:12px; }
 .preview-choices .q-opts { display:flex; flex-wrap:nowrap; gap:6px; }.preview-choices .q-opts .btn { min-width:0; white-space:nowrap; padding:6px 10px; }
 .queue-dismissed-toggle { font-size:11px; }
 @media(max-width:767px) { .attention-dismiss { min-width:44px; min-height:44px; top:2px; right:2px; }.attention-card-meta { padding-right:38px; }.preview-actions .btn,.preview-choices .q-opts .btn { min-height:44px; } }

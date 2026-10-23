@@ -48,12 +48,12 @@ it('unseen results stay outside Needs you while new formal work appears independ
   expect(within(queue).getByRole('article', { name: 'Review result' })).toBeVisible()
   expect(server.calls.filter(call => call.method === 'POST').map(call => call.path)).toEqual([])
 })
-it('keeps closed child attention/counts consistent, persists local dismiss and reveals new question attention', async () => {
+it('keeps closed child attention/counts consistent and dismisses new questions independently of unread results', async () => {
   history.replaceState(null, '', '/needs-you')
   let pending = 'one', acknowledged = false
   const streams: LiveStream[] = []
   const closed = row('closed-child', { title: 'Closed worker', lifecycle: 'closed', family: { revision: 1, parent: { session_id: 'parent', title: 'Coordinator', agent: 'claude' }, children: [], child_counts: { total: 0, active: 0, waiting: 0 }, attention: 1 } })
-  const question = row('question', { title: 'Choose parser' })
+  const question = row('question', { title: 'Choose parser', review: { event_id: 10, turn_id: 'previous', outcome: 'completed' } })
   const server = routed(({ path, method }) => {
     const url = new URL(path, 'http://h')
     if (path === '/api/capabilities') return json({ mode: 'full', features: [] })
