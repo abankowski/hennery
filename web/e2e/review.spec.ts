@@ -6,7 +6,7 @@ let collector: Collector
 test.beforeAll(async () => { collector = await startCollector() })
 test.afterAll(async () => { await collector?.stop() })
 
-for (const width of [1280, 390]) test(`durable review action and visible-result reading at ${width}px`, async ({ browser }) => {
+for (const width of [1280, 390]) test(`durable review action and visible-result reading at ${width}px`, async ({ browser }, testInfo) => {
   const contexts = await Promise.all([browser.newContext({ viewport: { width, height: 900 } }), browser.newContext({ viewport: { width, height: 900 } })])
   const held: Route[] = [], snapshots: Route[] = [], reads: number[] = []
   let eventId = 10, readId = 0, holdSnapshot = false
@@ -42,7 +42,13 @@ for (const width of [1280, 390]) test(`durable review action and visible-result 
     await expect(a.getByRole('article', { name: 'Parent handled worker', exact: true })).toHaveCount(0)
     holdSnapshot = true
     await b.goto(collector.origin + '/sessions/root')
-    await b.getByRole('button', { name: 'Mark as read', exact: true }).click()
+    const footer = b.locator('.transcript .result-review-footer')
+    await expect(footer).toHaveCount(1)
+    const lastMessage = b.locator('.transcript .bubble').last()
+    expect(await footer.evaluate((el, message) => !!(message.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING), await lastMessage.elementHandle())).toBe(true)
+    await footer.scrollIntoViewIfNeeded()
+    await b.screenshot({ path: testInfo.outputPath('result-footer.png'), fullPage: true })
+    await footer.getByRole('button', { name: 'Mark as read', exact: true }).click()
     expect(reads).toEqual([10])
     await b.goto(collector.origin + '/needs-you')
     await a.reload()

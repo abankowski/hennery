@@ -4,12 +4,27 @@ import { expect, it, vi } from 'vitest'
 import { json, routed } from '../test-stream'
 import ResultReview from './ResultReview'
 import ResultReadObserver from './ResultReadObserver'
+import Transcript from './Transcript'
 import type { Item, ReviewResult } from '../generated/view'
 import { needsOperator, statusOf } from '../lib/status'
 
 const review: ReviewResult = { event_id: 10, turn_id: 'turn', outcome: 'completed' }
 const message: Item = { id: 'result', version: 9, ts: '', turn_id: 'turn', kind: 'message', text: 'Continue?' }
 const rect = (top: number, bottom: number) => ({ x: 0, y: top, top, bottom, left: 0, right: 300, width: 300, height: bottom - top, toJSON: () => ({}) })
+
+it('places the manual action after its result and before the next turn', async () => {
+  const server = routed(call => call.method === 'POST' ? new Response(null, { status: 204 }) : json({ items: [message], revision: 10, epoch: 'e', older: false }))
+  const later: Item = { ...message, id: 'later', turn_id: 'next', text: 'Next turn' }
+  render(<div className="transcript"><Transcript items={[message, later]} env={{ sessionId: 's', agent: 'Claude' }} review={review} /></div>, { wrapper: server.wrapper })
+  const action = screen.getByRole('button', { name: 'Mark as read' })
+  expect(screen.getByText('Continue?').compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(action.compareDocumentPosition(screen.getByText('Next turn')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(action.closest('.result-review-footer')?.parentElement).toHaveClass('transcript')
+  await userEvent.click(action)
+  const acknowledgements = server.fetch.mock.calls.filter(([, options]) => options?.method === 'POST')
+  expect(acknowledgements).toHaveLength(1)
+  expect(JSON.parse(acknowledgements[0][1]!.body as string)).toEqual({ event_id: 10 })
+})
 
 it('marks a captured result read without sending a message and re-arms for a newer result', async () => {
   const server = routed(() => new Response(null, { status: 204 }))

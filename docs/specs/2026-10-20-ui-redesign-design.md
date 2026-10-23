@@ -430,6 +430,17 @@ A successful operator prompt acknowledges only the result captured when the
 send began. Reading never answers a formal pending request. Migration starts
 with an empty review inbox, avoiding a flood of historical results.
 
+**Operator amendment, 2026-10-23: compact attention cards.** Needs you shows
+only the current request, even when the session also has an unread result.
+Question and permission text is clamped to three lines at every width. The
+session link is prominent: "Open to answer" for a question, "Open" otherwise;
+existing inline permission choices remain available. Result excerpts and
+"Mark as read" stay outside the queue. Manual result acknowledgement is a
+secondary button with a visible border and background at the end of its
+completed turn in the session transcript, not below the session header.
+Automatic reading retains the focused, visible,
+loaded-final-content requirements above.
+
 Delegated children never produce operator review work, even after their
 parent or family edge disappears. Their ordinary completion pushes remain
 suppressed. Existing explicit operator-required questions and escalation

@@ -8,16 +8,15 @@ import { clearDismissedAttention } from '../lib/dismissedAttention'
 const session = (id: string): SessionSummary => ({ session_id: id, host_id: 'h', hat_id: 'hat', agent: 'claude', cwd: '/project', lifecycle: 'active', activity: 'blocked', presumed_parked: false, question_waits: true, operator_attention: 1, parent_handled_questions: 0, created_at: '2026-10-20T10:00:00Z', last_event_at: '2026-10-20T10:00:00Z' })
 const question = (pending: string): Item => ({ id: 'question:' + pending, version: 2, ts: '', kind: 'question', pending_id: pending, question_kind: 'permission', request: { type: 'permission', title: 'Typed read-only request', options: [{ option_id: 'allow', name: 'Allow', option_kind: 'allow_once' }] }, answerable: true, answered: false, state: 'open' })
 
-it('reads a completed result preview once per result instead of once per session token update', async () => {
-  const server = routed(() => json({ items: [{ id: 'm', kind: 'message', turn_id: 'turn', version: 9, text: 'Continue?' }], revision: 10, epoch: 'e', older: false }))
-  const reader = new PreviewReader(server.client)
-  const row = { ...session('s'), activity: 'idle', operator_attention: 0, question_waits: false, review: { event_id: 10, turn_id: 'turn', outcome: 'completed' as const } }
-  expect(await reader.read(row)).toEqual({ result: 'Continue?' })
-  expect(await reader.read({ ...row, last_event_at: 'new-token' })).toEqual({ result: 'Continue?' })
-  expect(server.calls.map(call => [call.method, call.path])).toEqual([['GET', '/api/view/sessions/s?limit=1']])
-  await reader.read({ ...row, review: { ...row.review, event_id: 20 } })
-  expect(server.calls).toHaveLength(2)
-  reader.stop()
+it('keeps completed-result controls out of a card with a new pending request', async () => {
+  const server = routed(call => call.path.includes('/questions/') ? json(question('p')) : json({ pending: [{ pending_id: 'p', state: 'open', answered: false }] }))
+  const row = { ...session('s'), review: { event_id: 10, turn_id: 'turn', outcome: 'completed' as const } }
+  render(<AttentionPreviews><AttentionPreview session={row} /></AttentionPreviews>, { wrapper: server.wrapper })
+  await screen.findByText('Typed read-only request', { exact: true })
+  expect(screen.queryByRole('button', { name: 'Mark as read' })).not.toBeInTheDocument()
+  expect(screen.queryByText('Result to review', { exact: true })).not.toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Open s' })).toHaveClass('btn-primary')
+  expect(server.calls.map(call => [call.method, call.path])).toEqual([['GET', '/api/sessions/s'], ['GET', '/api/view/sessions/s/questions/p']])
 })
 it('cannot restore local dismiss records after sign-out unmounts a pending acknowledgement', async () => {
   let finish!: (response: Response) => void
@@ -76,7 +75,7 @@ it('opens a question without any inline choices, Other field or decline control'
   expect(screen.queryByRole('radio')).toBeNull()
   expect(screen.queryByRole('textbox')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull()
-  expect(screen.getByRole('link', { name: 'Open s' })).toHaveAttribute('href', '/sessions/s?pending=q')
+  expect(screen.getByRole('link', { name: 'Open to answer s' })).toHaveAttribute('href', '/sessions/s?pending=q')
   expect(t.calls.every(call => call.method === 'GET')).toBe(true)
 })
 it('keeps the canonical session link when previews fail and aborts reads on unmount', async () => {
