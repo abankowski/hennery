@@ -31,7 +31,7 @@ The installed OMP command reports `omp/18.12.6` on 2026-10-23.
 1. Hennery supports OMP as an external program.
 2. Hennery does not install OMP, Bun, or provider credentials.
 3. An operator supplies an absolute program path and an OMP agent-data directory.
-4. The host starts the program as `<path> acp`.
+4. The host starts the program as `<path> --agent-dir <root> acp`.
 5. The configuration persists in `host.toml`.
 6. A persisted OMP command has local `Profile::Omp`. A user `--agent omp=…` command remains `Profile::Generic`.
 7. `Profile::Omp` maps to the existing wire `RuntimeProfile::Generic`. Hennery must not add a wire OMP profile.
@@ -77,9 +77,9 @@ agent_data_dir = "/absolute/path/to/omp-agent"
 
 The configured session root is `agent_data_dir/sessions`. The operator must configure OMP credentials in this agent-data directory.
 
-The OMP command receives `PI_CODING_AGENT_DIR=agent_data_dir`. The host removes `OMP_PROFILE`, `PI_PROFILE`, and session-directory overrides from the adapter environment.
+The OMP command gets `--agent-dir agent_data_dir`. This upstream flag must override every XDG and `.env` root value. The host also removes `OMP_PROFILE`, `PI_PROFILE`, and `PI_CODING_AGENT_SESSION_DIR`.
 
-The host must recheck the stored path and directory on every start. It must keep the literal path and must not canonicalize it.
+The host must recheck the stored path and directory on every start. It must keep the literal path and must not canonicalize it. Before it starts OMP, host and doctor must run `<path> --agent-dir <root> --help` in the service environment. A nonzero result must suppress OMP and report an external-OMP upgrade repair.
 
 A valid TOML file with an invalid `agents.omp` value must omit OMP and log one sanitized diagnostic. Invalid TOML, unsafe configuration-file metadata, and an invalid pairing remain fatal.
 
@@ -105,7 +105,7 @@ When valid OMP exists, a managed-set update must not block host startup. The nex
 
 Without valid OMP, managed-agent start behavior remains unchanged.
 
-The configured OMP command has `program = <path>`, `args = ["acp"]`, and `PI_CODING_AGENT_DIR`. The host keeps its environment scrub and process-group supervision.
+The configured OMP command has `program = <path>` and `args = ["--agent-dir", agent_data_dir, "acp"]`. The host keeps its environment scrub and process-group supervision.
 
 ## Profile and MCP behavior
 
@@ -133,7 +133,7 @@ Hennery must parse the logical `session` header. It must not assume that the phy
 
 Hennery must not pass `--provider-session-id`, `--session-dir`, or a named OMP profile. These options break the recorded ACP-ID mapping or session reload.
 
-Before `session_started`, Hennery records the ACP ID, JSONL path `P`, and agent-data root. It must refuse the start if the proof is absent or ambiguous.
+Before `session_started`, Hennery records the ACP ID, program path, literal root, canonical CWD, JSONL path `P`, and agent-data root. It also records the OMP agent home. It must refuse the start if any record write fails.
 
 The session tree is `P`, its sibling artifact directory, exact rewrite backups, and exact rewrite temporary files. Hennery must not delete blobs, databases, terminal breadcrumbs, independent forks, or unknown lock files.
 
@@ -141,7 +141,15 @@ On close, Hennery must send ACP `session/close`, wait for the response, stop the
 
 On delete, the collector must create `host_forgets` before it scrubs the session. The host must wait until no actor owns the ACP ID.
 
-The host must remove only recorded paths after ownership, mode, exact-ID, no-symlink, and no-writer checks. It must verify absence after removal.
+The host must recheck the stored program, root, and `P` through no-follow descriptors. It must then start `<path> --agent-dir <root> session lease hold P --json`.
+
+The successful line must have `schemaVersion: 1`, `state: "held"`, and the exact ACP ID. The process must hold the lease until Hennery stops it.
+
+While the holder runs, Hennery must recheck ownership, mode, exact ID, canonical CWD, no symlink, and parent descriptors. It may then remove only recorded paths and verify absence.
+
+The holder command must not write session data. It may create OMP's persistent lock sidecar. Hennery must not delete that sidecar.
+
+If the command is absent, rejects the path, gives invalid JSON, gives an unsupported schema, or cannot hold the lease, Hennery must remove nothing. It must report a retryable failure.
 
 The forget result must report kinds and counts, never paths. It must report failures and retry after host reconnect.
 
@@ -194,6 +202,7 @@ The document must state that terminal credentials do not prove service-visible c
 | R11 | Delete removes only the recorded JSONL family and retries a failed forget. | Forget tests for path, symlink, writer, retry, and count cases. |
 | R12 | README and setup document show checked Bash and Fish commands. | README block and documentation tests. |
 | R13 | Protocol artifacts remain current. | `hennery-proto` generation check. |
+| R14 | OMP supplies a holder process for its writer lease. | Upstream OMP held, free, error, and no-mutation tests. |
 
 ## Out of scope
 
@@ -214,17 +223,24 @@ The document must state that terminal credentials do not prove service-visible c
 | Mark all OMP ACP processes as strict | Rejected | A configured external path has no provenance proof. |
 | Use third-party `omp-acp` | Rejected | OMP provides `omp acp` itself. |
 | Leave OMP files after delete | Rejected | ACP core requires agent transcript removal and retry. |
+| Use a read-only OMP lease probe | Rejected | A writer can take the lease after the probe exits. |
 
 ## Verification commands
 
-Run these commands in Bash and Fish. The commands are the same.
+Run these commands in Bash and Fish. The commands are the same. Run the Linux-only lines on a Linux CI runner.
 
 ```sh
+env GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" python3 packaging/ci-paths.py --base "$BASE_SHA"
+env CI=1 HENNERY_WEB_REQUIRE=1 nix develop .#web -c sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web typecheck && pnpm --dir web test && pnpm --dir web build'
+env CI=1 nix develop -c pnpm --dir web e2e
+nix develop -c cargo build -p hennery -p hennery-testkit --bins --locked
 nix develop -c cargo fmt --all --check
 nix develop -c cargo clippy --workspace --all-targets --locked -- -D warnings
-nix develop -c sh packaging/ci-rust-tests.sh
+nix develop -c cargo clippy -p hennery --locked -- -D warnings
+env RUNNER_OS=Linux HENNERY_WEB_REQUIRE=1 HENNERY_REQUIRE_SHELLS=bash,zsh,fish HENNERY_REQUIRE_SYSTEMD_ANALYZE=1 nix develop -c sh packaging/ci-rust-tests.sh
 nix develop -c cargo run -p hennery-proto --bin gen --locked -- --check
 nix develop -c cargo run -p hennery-view --bin gen-view --locked -- --check
+nix develop -c cargo test -p hennery --test readme
 ```
 
 Run the repository pre-flight command on the final commit. Use the exact repository command that CI names.
