@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.2
+
+- New like this (#245). Start an empty, standalone session using another
+  session's last reported host, directory, agent, model, mode and options,
+  including from a closed session. Its history and family are not copied;
+  the new composer opens empty and focused.
+- Unseen activity (#249). A bold title and accent dot show unread agent
+  activity during work and after completion, with an Unseen filter. Reading
+  the transcript's end in a focused, visible window clears only the activity
+  already shown, and synchronizes across devices. Finished results alone no
+  longer enter Needs you; that queue is reserved for operator attention.
+- Pin sessions to the sidebar (#248). Persistent shortcuts across hats and
+  session states, independent of the "Do not park" idle hold.
+- Recent keeps its visible positions when switching sessions or receiving
+  updates (#246). Closed sessions leave Recent, its shortcuts and the command
+  palette's Recent section (#250).
+- Clearer Needs you cards and primary "Open to answer" actions for questions
+  (#252). "Mark as read" also appears beside the completed transcript result.
+  Session rename controls stay aligned on desktop (#244).
+- Security: ctutils 0.4.4 fixes non-constant-time mask generation and `u128`
+  comparisons (RUSTSEC-2026-0385, #251).
+- Repository workflow: private intake and a scoped work queue (#247).
+- Database migrations 32–33 run on first start. An older binary cannot open
+  the upgraded database: back it up before upgrading if you may roll back.
+
 ## 0.3.1
 
 - Results to review (#241). A finished operator-driven turn stays in Needs
