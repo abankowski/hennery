@@ -1,6 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Security: update the Web Push arithmetic stack to p256 0.14 and
+  crypto-bigint 0.7.6 (RUSTSEC-2026-0387). Replace web-push-native's older
+  dependency with a bounded RFC 8291 adapter and the existing record library.
+  Saved VAPID keys and browser subscriptions remain compatible.
+
 ## 0.3.2
+
+Not published: the final release audit caught RUSTSEC-2026-0387 before any
+channel published. The signed tag is retained; the next release includes
+the changes below.
 
 - New like this (#245). Start an empty, standalone session using another
   session's last reported host, directory, agent, model, mode and options,

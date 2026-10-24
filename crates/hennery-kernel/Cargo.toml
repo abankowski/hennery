@@ -21,6 +21,8 @@ hennery-proto.workspace = true
 hex.workspace = true
 libc = "0.2"
 p256.workspace = true
+ece-native.workspace = true
+hkdf.workspace = true
 password-auth.workspace = true
 png.workspace = true
 # Outbound HTTP (plan 8b): the egress policy's clients.
@@ -34,7 +36,6 @@ tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 webauthn-rs.workspace = true
-web-push-native.workspace = true
 zeroize.workspace = true
 
 # The web UI's build is embedded by `build.rs` (plan 4b): it hashes each file.
@@ -45,6 +46,8 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# Independent RFC 8291 receiver backed by OpenSSL.
+ece = { version = "=2.4.2", default-features = false, features = ["backend-openssl"] }
 tempfile = "3"
 # Delivery's retry waits run on a paused clock (plan 10b-ii).
 tokio = { workspace = true, features = ["test-util"] }

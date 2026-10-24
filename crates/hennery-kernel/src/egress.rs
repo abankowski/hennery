@@ -13,8 +13,8 @@
 //! - **No way around the check.** The only way to send is
 //!   [`EgressClient::send`] or [`EgressClient::send_streaming`], which run
 //!   [`check_url`] on the request's URL first. The `reqwest::Client` inside
-//!   is never handed out. A caller holding an `http::Request` (rmcp's
-//!   `OAuthHttpClient`, `web-push-native`) converts it with
+//!   is never handed out. A caller holding an `http::Request` (for example,
+//!   rmcp's `OAuthHttpClient`) converts it with
 //!   `Request::try_from` and sends it here.
 //! - **The URL check** ([`check_url`]): `https`, or plain `http` to
 //!   loopback (a loopback literal or `localhost`); under

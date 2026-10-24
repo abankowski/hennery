@@ -672,8 +672,7 @@ purged until they are moved to another hat: 409 `hat_is_default`). As built
   show the public key or the file name only, never the private key. The data
   directory belongs on a local filesystem (the link needs hard links).
 - **The VAPID token (RFC 8292)** is signed by the collector itself with
-  `p256::ecdsa`, not by `web-push-native` (whose `vapid` feature pulls in
-  `jwt-simple` → `superboring` → `rsa`; the maintainer agreed):
+  `p256::ecdsa`, without a JWT library or an RSA dependency:
   - ES256, deterministic (RFC 6979), as raw `r ‖ s`, 64 bytes, never DER;
     every part base64url without padding;
   - header `{"typ":"JWT","alg":"ES256"}`; the claims exactly `aud`, `exp`,
@@ -739,7 +738,8 @@ purged until they are moved to another hat: 409 `hat_is_default`). As built
   - the payload `PushPayload {title, body, url, tag}` (JSON) is padded with
     trailing spaces to the next 512 bytes, at most 3993 (RFC 8291's room in
     4096), and encrypted to the browser (RFC 8291, aes128gcm) with
-    `web-push-native`, default features off;
+    a bounded RFC 8291 adapter over `p256` ECDH and HKDF-SHA256, with
+    `ece-native` providing RFC 8188 record encryption;
   - headers `TTL: 3600`, `Urgency: high` for "needs your answer" and `normal`
     otherwise, `Content-Encoding: aes128gcm`,
     `Content-Type: application/octet-stream`, the VAPID `Authorization`;
@@ -761,6 +761,17 @@ purged until they are moved to another hat: 409 `hat_is_default`). As built
     not be reached"), never the endpoint or the service's answer;
   - a slow or silent push service holds the queue up 30 s per round of 8 at
     most; a notice whose every one of 32 services is silent, about 2 minutes.
+
+**Security amendment (2026-10-24):** `p256` 0.14 and `crypto-bigint` 0.7.6
+replace the vulnerable older arithmetic stack (RUSTSEC-2026-0387).
+`web-push-native` is removed because its current release requires the older
+`p256`. VAPID key storage and deterministic signatures stay compatible.
+Every encrypted message has a fresh ephemeral key and salt, one final record
+with `rs=4096`, and at most 4096 body bytes. The complete RFC 8291 example,
+the 3993-byte boundary, authentication failures and independent Mozilla ECE
+decryption cover the adapter; Mozilla ECE is a test-only dependency. Its
+default encryption padding would exceed the existing body limit at the
+largest accepted payload, so production retains the existing record library.
 
 ## 7. HTTP server
 
