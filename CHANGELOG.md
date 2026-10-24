@@ -2,20 +2,16 @@
 
 ## Unreleased
 
-- Fix the managed Claude adapter's body-parser and fast-uri security advisories
+## 0.3.3
+
+- Fix the managed Claude adapter's body-parser and fast-uri security advisories (#258)
   without changing the adapter or bundled CLI versions. Audit both managed
   adapter lockfiles in pins CI and before release packaging.
 
 - Security: update the Web Push arithmetic stack to p256 0.14 and
   crypto-bigint 0.7.6 (RUSTSEC-2026-0387). Replace web-push-native's older
   dependency with a bounded RFC 8291 adapter and the existing record library.
-  Saved VAPID keys and browser subscriptions remain compatible.
-
-## 0.3.2
-
-Not published: the final release audit caught RUSTSEC-2026-0387 before any
-channel published. The signed tag is retained; the next release includes
-the changes below.
+  Saved VAPID keys and browser subscriptions remain compatible (#257).
 
 - New like this (#245). Start an empty, standalone session using another
   session's last reported host, directory, agent, model, mode and options,
@@ -34,11 +30,16 @@ the changes below.
 - Clearer Needs you cards and primary "Open to answer" actions for questions
   (#252). "Mark as read" also appears beside the completed transcript result.
   Session rename controls stay aligned on desktop (#244).
-- Security: ctutils 0.4.4 fixes non-constant-time mask generation and `u128`
-  comparisons (RUSTSEC-2026-0385, #251).
+- Security: ctutils 0.4.5 includes fixes for non-constant-time mask generation
+  and `u128` comparisons (RUSTSEC-2026-0385, #251).
 - Repository workflow: private intake and a scoped work queue (#247).
 - Database migrations 32–33 run on first start. An older binary cannot open
   the upgraded database: back it up before upgrading if you may roll back.
+
+## 0.3.2
+
+Not published: the final release audit caught RUSTSEC-2026-0387 before any
+channel published. The signed tag is retained. Its intended changes ship in 0.3.3.
 
 ## 0.3.1
 
