@@ -124,10 +124,10 @@
           },
           {
             "path": "node_modules/body-parser",
-            "url": "https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz",
-            "integrity": "sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==",
-            "archive_size": 11135,
-            "unpacked_size": 42536
+            "url": "https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz",
+            "integrity": "sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==",
+            "archive_size": 11417,
+            "unpacked_size": 42899
           },
           {
             "path": "node_modules/body-parser/node_modules/content-type",
@@ -327,10 +327,10 @@
           },
           {
             "path": "node_modules/fast-uri",
-            "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz",
-            "integrity": "sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==",
-            "archive_size": 44269,
-            "unpacked_size": 220886
+            "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz",
+            "integrity": "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==",
+            "archive_size": 50086,
+            "unpacked_size": 241202
           },
           {
             "path": "node_modules/finalhandler",
@@ -883,10 +883,10 @@
           },
           {
             "path": "node_modules/body-parser",
-            "url": "https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz",
-            "integrity": "sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==",
-            "archive_size": 11135,
-            "unpacked_size": 42536
+            "url": "https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz",
+            "integrity": "sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==",
+            "archive_size": 11417,
+            "unpacked_size": 42899
           },
           {
             "path": "node_modules/body-parser/node_modules/content-type",
@@ -1086,10 +1086,10 @@
           },
           {
             "path": "node_modules/fast-uri",
-            "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz",
-            "integrity": "sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==",
-            "archive_size": 44269,
-            "unpacked_size": 220886
+            "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz",
+            "integrity": "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==",
+            "archive_size": 50086,
+            "unpacked_size": 241202
           },
           {
             "path": "node_modules/finalhandler",
@@ -1642,10 +1642,10 @@
           },
           {
             "path": "node_modules/body-parser",
-            "url": "https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz",
-            "integrity": "sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==",
-            "archive_size": 11135,
-            "unpacked_size": 42536
+            "url": "https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz",
+            "integrity": "sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==",
+            "archive_size": 11417,
+            "unpacked_size": 42899
           },
           {
             "path": "node_modules/body-parser/node_modules/content-type",
@@ -1845,10 +1845,10 @@
           },
           {
             "path": "node_modules/fast-uri",
-            "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz",
-            "integrity": "sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==",
-            "archive_size": 44269,
-            "unpacked_size": 220886
+            "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz",
+            "integrity": "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==",
+            "archive_size": 50086,
+            "unpacked_size": 241202
           },
           {
             "path": "node_modules/finalhandler",
