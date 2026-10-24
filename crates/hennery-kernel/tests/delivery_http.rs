@@ -18,7 +18,7 @@ use hennery_kernel::operator::{Operator, SetupOutcome};
 use hennery_kernel::push::{Notice, Urgency, VapidKey};
 use hennery_kernel::secret::unix_now;
 use hennery_proto::rest::PushPayload;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -101,8 +101,11 @@ impl Browser {
     }
 
     fn read(&self, body: &[u8]) -> PushPayload {
-        let auth = web_push_native::Auth::clone_from_slice(&self.auth);
-        let plain = web_push_native::decrypt(body.to_vec(), &self.secret, &auth).unwrap();
+        let key = ece::EcKeyComponents::new(
+            self.secret.to_bytes().to_vec(),
+            self.secret.public_key().to_sec1_point(false).as_bytes().to_vec(),
+        );
+        let plain = ece::decrypt(&key, &self.auth, body).unwrap();
         serde_json::from_slice(&plain).unwrap()
     }
 }
@@ -138,7 +141,7 @@ impl Setup {
     /// A subscription at `endpoint`, written straight into the file: a
     /// loopback `http` endpoint is never one `subscribe` accepts.
     fn subscribe_at(&self, id: &str, endpoint: &str, browser: &Browser) {
-        let p256dh = URL_SAFE_NO_PAD.encode(browser.secret.public_key().to_encoded_point(false).as_bytes());
+        let p256dh = URL_SAFE_NO_PAD.encode(browser.secret.public_key().to_sec1_point(false).as_bytes());
         rusqlite::Connection::open(self.dir.path().join("hennery.db"))
             .unwrap()
             .execute(

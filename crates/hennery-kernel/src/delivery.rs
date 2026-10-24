@@ -406,9 +406,7 @@ impl<T: Transport> Delivery<T> {
             .decode(auth)?
             .try_into()
             .map_err(|_| anyhow::anyhow!("keys.auth is not 16 bytes"))?;
-        let auth = web_push_native::Auth::from(auth);
-        let body =
-            web_push_native::encrypt(plaintext.to_vec(), &ua_public, &auth).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let body = crate::push_crypto::encrypt(plaintext, &ua_public, &auth)?;
         Ok(PushRequest {
             headers: vec![
                 ("TTL", PUSH_TTL_SECS.to_string()),

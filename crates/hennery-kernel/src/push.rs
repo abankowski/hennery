@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail, ensure};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use p256::ecdsa::signature::Signer;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -132,7 +132,7 @@ impl VapidKey {
     }
 
     fn from_secret(secret: p256::SecretKey) -> Self {
-        let public = URL_SAFE_NO_PAD.encode(secret.public_key().to_encoded_point(false).as_bytes());
+        let public = URL_SAFE_NO_PAD.encode(secret.public_key().to_sec1_point(false).as_bytes());
         Self { secret, public }
     }
 }
@@ -158,10 +158,10 @@ pub fn subject(contact: Option<&str>, public_url: &crate::operator::PublicUrl) -
 
 /// A random scalar from the OS: a draw out of range (zero, or the group
 /// order or more, about 2^-32 likely) is drawn again.
-fn fresh_secret() -> p256::SecretKey {
+pub(crate) fn fresh_secret() -> p256::SecretKey {
     loop {
         let bytes = Zeroizing::new(random_bytes::<32>());
-        if let Ok(secret) = p256::SecretKey::from_bytes(p256::FieldBytes::from_slice(&bytes[..])) {
+        if let Ok(secret) = p256::SecretKey::from_slice(&bytes[..]) {
             return secret;
         }
     }
@@ -198,7 +198,7 @@ fn load(path: &Path) -> Result<Option<VapidKey>> {
             path.display()
         );
     }
-    let secret = p256::SecretKey::from_bytes(p256::FieldBytes::from_slice(&bytes[..]))
+    let secret = p256::SecretKey::from_slice(&bytes[..])
         .map_err(|_| anyhow::anyhow!("{} does not hold a valid P-256 key", path.display()))?;
     Ok(Some(VapidKey::from_secret(secret)))
 }
@@ -1118,7 +1118,7 @@ mod tests {
     #[test]
     fn signatures_are_rfc_6979_and_raw_r_s() {
         let x = hex::decode("C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721").unwrap();
-        let key = VapidKey::from_secret(p256::SecretKey::from_bytes(p256::FieldBytes::from_slice(&x)).unwrap());
+        let key = VapidKey::from_secret(p256::SecretKey::from_slice(&x).unwrap());
         let expected = hex::decode(
             "EFD48B2AACB6A8FD1140DD9CD45E81D69D2C877B56AAF991C34D0EA84EAF3716\
              F7CB1C942D657C41D436C7A1B6E29F65F3E900DBB9AFF4064DC4AB2F843ACDA8",
@@ -1275,7 +1275,7 @@ mod tests {
         let compressed = URL_SAFE_NO_PAD.encode(
             p256::PublicKey::from_sec1_bytes(&URL_SAFE_NO_PAD.decode(P256DH).unwrap())
                 .unwrap()
-                .to_encoded_point(true)
+                .to_sec1_point(true)
                 .as_bytes(),
         );
         assert!(parse_keys(&compressed, AUTH).is_err());

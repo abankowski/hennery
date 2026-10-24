@@ -23,6 +23,7 @@ pub mod origin;
 pub mod passkeys;
 pub mod plugin_context;
 pub mod push;
+mod push_crypto;
 pub mod ratelimit;
 pub mod recents;
 pub mod redact;

@@ -13,7 +13,7 @@ use hennery_kernel::push::{NewSubscription, Notice, Push, PushPolicy, Subscribed
 use hennery_kernel::secret::unix_now;
 use hennery_proto::rest::PushPayload;
 use p256::ecdsa::signature::Verifier;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -106,7 +106,7 @@ impl Browser {
     }
 
     fn p256dh(&self) -> String {
-        URL_SAFE_NO_PAD.encode(self.secret.public_key().to_encoded_point(false).as_bytes())
+        URL_SAFE_NO_PAD.encode(self.secret.public_key().to_sec1_point(false).as_bytes())
     }
 
     fn auth(&self) -> String {
@@ -115,8 +115,11 @@ impl Browser {
 
     /// The payload, as the browser reads it: decrypted, then parsed.
     fn read(&self, request: &PushRequest) -> PushPayload {
-        let auth = web_push_native::Auth::clone_from_slice(&self.auth);
-        let plain = web_push_native::decrypt(request.body.clone(), &self.secret, &auth).unwrap();
+        let key = ece::EcKeyComponents::new(
+            self.secret.to_bytes().to_vec(),
+            self.secret.public_key().to_sec1_point(false).as_bytes().to_vec(),
+        );
+        let plain = ece::decrypt(&key, &self.auth, &request.body).unwrap();
         assert_eq!(plain.len(), PAD_TO, "padded to its bucket");
         serde_json::from_slice(&plain).unwrap()
     }
