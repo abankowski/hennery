@@ -22,6 +22,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - .github/workflows/pins.yml
+      - packaging/audit-adapters.sh
   push:
     branches: [main]
     paths:
@@ -33,6 +34,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - .github/workflows/pins.yml
+      - packaging/audit-adapters.sh
 
 permissions:
   contents: read
@@ -79,6 +81,8 @@ jobs:
         run: cargo run -p hennery-pins --locked -- check --node-shasums SHASUMS256.txt
       - name: Every pinned package is its pinned size and digest, and extracts as a host extracts it
         run: cargo run -p hennery-pins --locked -- extract
+      - name: Managed adapters have no known dependency vulnerabilities
+        run: sh packaging/audit-adapters.sh
       - name: Registry signatures, and npm installs exactly the manifest's files, per platform
         run: |
           : > "$RUNNER_TEMP/npmrc-user"

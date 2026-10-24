@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix the managed Claude adapter's body-parser and fast-uri security advisories
+  without changing the adapter or bundled CLI versions. Audit both managed
+  adapter lockfiles in pins CI and before release packaging.
+
 - Security: update the Web Push arithmetic stack to p256 0.14 and
   crypto-bigint 0.7.6 (RUSTSEC-2026-0387). Replace web-push-native's older
   dependency with a bounded RFC 8291 adapter and the existing record library.

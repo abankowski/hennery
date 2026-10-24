@@ -67,6 +67,15 @@ sh packaging/check-linkage.sh target/dist/hennery
 
 ## Pin bumps
 
+For security fixes confined to compatible transitive dependencies, update only
+the affected names in the committed adapter lockfile with `npm update --package-lock-only
+--ignore-scripts --no-audit --no-fund <names>`, then run `hennery-pins generate`.
+Keep the adapter, bundled CLI and Node pins unchanged, inspect every lockfile
+version change, and run the pins CI and `sh packaging/audit-adapters.sh`.
+The `npm_before` cutoff describes a full resolution by `hennery-pins lock`;
+such a resolution replaces security-only lockfile refreshes, so audit it before
+committing. Both pin CI and release preparation audit the committed lockfiles.
+
 A bump of `adapters/pins.toml` is `hennery-pins lock`, then `generate`,
 then the pin-bump job (`.github/workflows/pins.yml`). These checks are
 live, with logged-in agents, and the operator's to run before it merges:

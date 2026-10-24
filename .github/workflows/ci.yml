@@ -45,7 +45,7 @@ jobs:
     - name: Workflow and shell lint
       run: |
         nix develop .#release -c actionlint .github/workflows/*.yml
-        nix develop .#release -c shellcheck packaging/ci-*.sh packaging/image-build.sh packaging/image-ci.sh packaging/test-image-registry.sh packaging/smoke-image.sh
+        nix develop .#release -c shellcheck packaging/ci-*.sh packaging/image-build.sh packaging/image-ci.sh packaging/test-image-registry.sh packaging/smoke-image.sh packaging/audit-adapters.sh
     - name: Git path classification regressions
       run: nix develop .#release -c python3 -m unittest discover -s packaging -p test_ci_paths.py
     - name: Private intake workflow regressions
