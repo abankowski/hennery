@@ -378,6 +378,7 @@ fn the_teardown_migration_upgrades_skeleton_turns() {
     {
         let conn = rusqlite::Connection::open(&db).unwrap();
         conn.execute_batch(concat!(
+            include_str!("fixtures/undo_external.sql"),
             include_str!("fixtures/undo_usage.sql"),
             include_str!("fixtures/undo_delegation.sql")
         ))
@@ -2723,6 +2724,7 @@ fn the_hat_migration_gives_each_session_its_hosts_default_hat() {
     // migration (version 11) and plan 9a's (version 13) undone too.
     let conn = rusqlite::Connection::open(&db).unwrap();
     conn.execute_batch(concat!(
+        include_str!("fixtures/undo_external.sql"),
         include_str!("fixtures/undo_usage.sql"),
         include_str!("fixtures/undo_delegation.sql")
     ))
@@ -3134,6 +3136,14 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
              FROM sessions WHERE id = 's1';
          INSERT INTO session_attach_evidence(owner_id,session_id,attach_generation,requested_config)
              SELECT owner_id, 's1', 1, '{}' FROM sessions WHERE id = 's1';
+         INSERT INTO external_clients(owner_id,id,label,hat_id,token_hash,read_metadata,existing_sessions,revision,expires_at)
+             SELECT owner_id,'delete-external','External fixture',hat_id,'fixture-hash',1,1,1,9999999999
+             FROM sessions WHERE id = 's1';
+         INSERT INTO external_client_sessions(owner_id,client_id,session_id)
+             SELECT owner_id,'delete-external',id FROM sessions WHERE id IN ('s1','s2');
+         INSERT INTO external_operations(owner_id,id,client_id,revision,request_key_hash,digest,tool,session_id,state,args,created_at)
+             SELECT owner_id,'external-op-'||id,'delete-external',1,'key-'||id,'digest','session_prompt',id,'completed','{}',0
+             FROM sessions WHERE id IN ('s1','s2');
          INSERT INTO delegation_start_budgets(owner_id,caller_id,epoch,starts)
              SELECT owner_id, 's1', 0, 1 FROM sessions WHERE id = 's1';
          INSERT INTO delegation_attention(owner_id,attention_id,child_id,hat_id,reason,incident)
@@ -3167,6 +3177,8 @@ fn a_deleted_session_leaves_only_its_tombstone_row_and_one_event() {
         "session_operations",
         "session_dispatch_queue",
         "session_attach_evidence",
+        "external_client_sessions",
+        "external_operations",
         "delegation_start_budgets",
         "delegation_budgets",
         "delegation_attention",

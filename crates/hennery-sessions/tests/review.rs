@@ -202,6 +202,7 @@ fn upgrading_restores_existing_child_reviews_and_preserves_already_seen_results(
     conn.execute("DELETE FROM session_reviews WHERE owner_id=?1", [store.owner_id()])
         .unwrap();
     conn.execute_batch(concat!(
+        include_str!("fixtures/undo_external.sql"),
         include_str!("fixtures/undo_usage.sql"),
         "PRAGMA user_version=34;"
     ))
@@ -341,12 +342,14 @@ fn upgrading_from_v30_starts_empty_and_keeps_historical_transcripts() {
     drop(store);
     rusqlite::Connection::open(&db)
         .unwrap()
-        .execute_batch(concat!(include_str!("fixtures/undo_usage.sql"),
+        .execute_batch(
+            concat!(include_str!("fixtures/undo_external.sql"), include_str!("fixtures/undo_usage.sql"),
             "ALTER TABLE sessions DROP COLUMN mcp_source_requested; ALTER TABLE sessions DROP COLUMN mcp_source_applied;
              DROP INDEX sessions_sidebar_pinned; ALTER TABLE sessions DROP COLUMN sidebar_pinned;
             ALTER TABLE sessions DROP COLUMN unseen_event_id; ALTER TABLE sessions DROP COLUMN seen_event_id;
              DROP TRIGGER review_delete; DROP TABLE session_reviews; PRAGMA user_version=30;",
-        ))
+        ),
+        )
         .unwrap();
     let upgraded = Store::open(&db).unwrap();
     assert_eq!(upgraded.events("s", 0, 100).unwrap(), history);

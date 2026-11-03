@@ -124,6 +124,7 @@ fn the_owner_id_migration_gives_every_row_the_owner() {
         // 10) and 6b's (version 9) undone first, their indexes on `owner_id`
         // included; the events index (version 12) is made again if missing.
         conn.execute_batch(concat!(
+            include_str!("fixtures/undo_external.sql"),
             include_str!("fixtures/undo_usage.sql"),
             include_str!("fixtures/undo_delegation.sql")
         ))

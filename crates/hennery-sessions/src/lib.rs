@@ -17,6 +17,12 @@ pub mod delegation_queue;
 pub mod delegation_runtime;
 pub mod delegation_settings;
 pub mod delegation_worker;
+pub mod external_clients;
+pub mod external_control;
+mod external_control_store;
+pub mod external_mcp;
+pub mod external_oauth;
+mod external_oauth_store;
 pub mod family;
 pub mod forget;
 pub mod hats;
@@ -68,6 +74,9 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub(crate) external_admission: Arc<hennery_kernel::server::Admission>,
+    pub(crate) external_oauth: Arc<external_oauth::Runtime>,
+    pub(crate) external_commands: Arc<external_control::Runtime>,
     pub handshakes: Arc<hennery_kernel::server::Admission>,
     #[cfg(feature = "test-hooks")]
     pub startup_dispatch: Arc<startup::DispatchHold>,
@@ -110,6 +119,9 @@ impl AppState {
         let hub = Arc::new(hub::Hub::new());
         store.set_idle_hub(&hub);
         Self {
+            external_admission: Arc::new(hennery_kernel::server::Admission::new(16, 4)),
+            external_oauth: Arc::new(external_oauth::Runtime::new()),
+            external_commands: Arc::default(),
             handshakes: Arc::new(hennery_kernel::server::Admission::new(64, 4)),
             #[cfg(feature = "test-hooks")]
             startup_dispatch: Arc::default(),
@@ -170,6 +182,7 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> std::i
 /// Serve `router(state)` on every listener until `state.shutdown` is
 /// cancelled (kernel spec §7).
 pub async fn serve_on(listeners: Vec<tokio::net::TcpListener>, state: AppState) -> std::io::Result<()> {
+    external_control::after_startup(&state);
     offline::after_startup(&state);
     sweep::after_startup(&state);
     serve_all(listeners, router(state.clone()), state.shutdown.clone()).await
@@ -193,6 +206,8 @@ pub async fn serve_all(
 /// the client's address.
 pub fn router(state: AppState) -> Router {
     api::router(state.clone())
+        .merge(external_mcp::router(state.clone()))
+        .merge(external_oauth::router(state.clone()))
         .merge(delegation_api::router(state.clone()))
         .merge(builtin::policy_router(state.clone()))
         .merge(hosts::router(state.clone()))

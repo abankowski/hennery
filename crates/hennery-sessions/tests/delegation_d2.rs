@@ -259,6 +259,7 @@ fn closed_attention_migration_repairs_existing_closed_and_deleted_rows() {
         }
         let conn = raw(&w);
         conn.execute_batch(concat!(
+            include_str!("fixtures/undo_external.sql"),
             include_str!("fixtures/undo_usage.sql"),
             include_str!("fixtures/undo_delegation_limits.sql")
         ))
@@ -6508,6 +6509,7 @@ fn reviewer_migration20_recovers_preexisting_orphan_questions() {
     // edge are scrubbed, while the surviving child's callback is still open.
     raw(&w)
         .execute_batch(concat!(
+            include_str!("fixtures/undo_external.sql"),
             include_str!("fixtures/undo_usage.sql"),
             include_str!("fixtures/undo_delegation_limits.sql"),
             include_str!("fixtures/undo_family.sql"),
@@ -6689,6 +6691,7 @@ fn d3b_migration20_filters_answers_terminal_and_root_questions() {
     w.store.delete_session("parent", None).unwrap();
     raw(&w)
         .execute_batch(concat!(
+            include_str!("fixtures/undo_external.sql"),
             include_str!("fixtures/undo_usage.sql"),
             include_str!("fixtures/undo_delegation_limits.sql"),
             include_str!("fixtures/undo_family.sql"),

@@ -222,12 +222,14 @@ fn upgrade_preserves_explicit_unread_results_without_backfilling_old_activity() 
     drop(store);
     rusqlite::Connection::open(&path)
         .unwrap()
-        .execute_batch(concat!(include_str!("fixtures/undo_usage.sql"),
+        .execute_batch(
+            concat!(include_str!("fixtures/undo_external.sql"), include_str!("fixtures/undo_usage.sql"),
             "ALTER TABLE sessions DROP COLUMN mcp_source_requested; ALTER TABLE sessions DROP COLUMN mcp_source_applied;
              DROP INDEX sessions_sidebar_pinned; ALTER TABLE sessions DROP COLUMN sidebar_pinned;
          ALTER TABLE sessions DROP COLUMN unseen_event_id;
          ALTER TABLE sessions DROP COLUMN seen_event_id; PRAGMA user_version=31;",
-        ))
+        ),
+        )
         .unwrap();
     let upgraded = Store::open(&path).unwrap();
     assert_eq!(unseen(&upgraded, "result"), Some(event));
