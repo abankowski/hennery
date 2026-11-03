@@ -35,6 +35,8 @@ pub enum Capability {
     IdleHold,
     /// Per-session Claude cache-retention requests applied at attach.
     CacheRetention,
+    /// Global, live idle parking timeout updates.
+    IdleTimeout,
     /// Resolving typed paths (`resolve_path`, kernel spec §5.4).
     ResolvePath,
     /// Removing a deleted session's transcript from the agent's own data
@@ -979,6 +981,7 @@ impl CollectorFrame {
             | Self::CancelTurn { .. }
             | Self::SetConfig { .. }
             | Self::SetIdleHold { .. }
+            | Self::SetIdleTimeout { .. }
             | Self::AnswerPermission { .. }
             | Self::AnswerElicitation { .. }
             | Self::Ack { .. }
@@ -1006,6 +1009,7 @@ impl CollectorFrame {
             | Self::CancelTurn { .. }
             | Self::SetConfig { .. }
             | Self::SetIdleHold { .. }
+            | Self::SetIdleTimeout { .. }
             | Self::AnswerPermission { .. }
             | Self::AnswerElicitation { .. }
             | Self::Ack { .. }
@@ -1221,6 +1225,11 @@ pub enum CollectorFrame {
     SetIdleHold {
         session_id: String,
         held: bool,
+    },
+    /// Host-wide parking override; null restores the host startup setting,
+    /// zero disables automatic parking. Only sent with `idle_timeout`.
+    SetIdleTimeout {
+        seconds: Option<u32>,
     },
     /// Completed by `session_parked{operator}` (ACP core §4.8).
     ParkSession {

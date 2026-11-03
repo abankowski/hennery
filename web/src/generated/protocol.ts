@@ -42,6 +42,12 @@ export type PutHatSessionDefaults = { revision: number, config: SessionConfig, }
 export type SetIdlePinRequest = { pinned: boolean, };
 
 /**
+ * Global idle parking override. Null uses each host's startup setting;
+ * zero disables automatic parking. Positive values are seconds.
+ */
+export type IdleParkingSettings = { idle_timeout_secs: number | null, };
+
+/**
  * Collector-derived reasons for retaining a session's adapter.
  */
 export type IdleHoldState = { pinned: boolean, family_active: boolean, notices_pending: boolean, held: boolean, };
@@ -275,7 +281,7 @@ export type SessionConfig = { cache_retention?: CacheRetention, model?: string |
  * collector never sends a frame that needs a capability to a host that
  * lacks it.
  */
-export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "cache_retention" | "resolve_path" | "forget_session" | "mcp_servers" | "mcp_source_policy" | "mcp_native_sources" | "catalog_probe" | "catalog_probe_cancel" | "delegation_config" | "operator_resume" | "prompt_mailbox_snapshot";
+export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "cache_retention" | "idle_timeout" | "resolve_path" | "forget_session" | "mcp_servers" | "mcp_source_policy" | "mcp_native_sources" | "catalog_probe" | "catalog_probe_cancel" | "delegation_config" | "operator_resume" | "prompt_mailbox_snapshot";
 
 /**
  * `hello.capabilities`. Deserialized leniently: a capability this build
@@ -712,7 +718,7 @@ isolation_waived?: boolean, } | { "type": "prompt", request_id: string, session_
 /**
  * ACP ContentBlocks, built by the frontend.
  */
-content: unknown[], } | { "type": "cancel_turn", request_id: string, session_id: string, turn_id: string, } | { "type": "set_config", request_id: string, session_id: string, config_id: string, value: ConfigValue, } | { "type": "answer_permission", request_id: string, session_id: string, pending_id: string, option_id: string, } | { "type": "answer_elicitation", request_id: string, session_id: string, pending_id: string, action: ElicitationAction, content?: unknown, } | { "type": "ack", session_id: string, ack_seq: number, } | { "type": "resolve_path", request_id: string, path: string, } | { "type": "set_idle_hold", session_id: string, held: boolean, } | { "type": "park_session", request_id: string, session_id: string, } | { "type": "close_session", request_id: string, session_id: string, } | { "type": "list_projects", request_id: string, } | { "type": "browse_directory", request_id: string, path: string, } | { "type": "forget_hat", hat_id: string, } | { "type": "forget_session", request_id: string, agent: string, agent_session_id: string, agent_home: AgentHome,
+content: unknown[], } | { "type": "cancel_turn", request_id: string, session_id: string, turn_id: string, } | { "type": "set_config", request_id: string, session_id: string, config_id: string, value: ConfigValue, } | { "type": "answer_permission", request_id: string, session_id: string, pending_id: string, option_id: string, } | { "type": "answer_elicitation", request_id: string, session_id: string, pending_id: string, action: ElicitationAction, content?: unknown, } | { "type": "ack", session_id: string, ack_seq: number, } | { "type": "resolve_path", request_id: string, path: string, } | { "type": "set_idle_hold", session_id: string, held: boolean, } | { "type": "set_idle_timeout", seconds: number | null, } | { "type": "park_session", request_id: string, session_id: string, } | { "type": "close_session", request_id: string, session_id: string, } | { "type": "list_projects", request_id: string, } | { "type": "browse_directory", request_id: string, path: string, } | { "type": "forget_hat", hat_id: string, } | { "type": "forget_session", request_id: string, agent: string, agent_session_id: string, agent_home: AgentHome,
 /**
  * Plan 9d-ii, B5 as ruled (the hybrid): the record's last
  * `APP_SERVER_TIMEOUTS_BEFORE_FALLBACK` answers were all

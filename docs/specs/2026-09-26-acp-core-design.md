@@ -1181,7 +1181,23 @@ post-switch-catalogue rule of §4.3.)*
 ### 4.7 Idle reaper
 
 Host-side, default 30 minutes, configurable (`--idle-timeout-secs`), off with
-`0`. Reaps only sessions with no turn in flight, **no question open** (in a
+`0`. The operator can override this for all hosts in Settings → Automatic
+session parking. `GET /api/settings/idle-parking` and `PUT` on the same route
+read/replace `{ idle_timeout_secs: null | u32 }`: null uses each host's startup
+setting, zero disables automatic parking globally, positive values are seconds.
+The override is owner-scoped in `settings` and survives collector restarts.
+It applies to existing and new sessions. Changes to the effective timeout start
+a fresh idle window; identical updates do not extend it. Explicit Park/Close
+and idle holds keep their existing behavior.
+
+The collector sends host-wide `set_idle_timeout { seconds: null | u32 }` only
+to hosts announcing `idle_timeout`, on save and after reconnect reconciliation.
+Snapshot and publication share the owner gate. Hosts retain the override over
+reconnects, apply it to attached actors and read the latest override when an
+actor actually launches. Offline hosts apply changes on reconnect; older hosts
+keep their startup setting until upgraded. No override is the compatible default.
+
+Reaps only sessions with no turn in flight, **no question open** (in a
 turn or not: a question has no timeout), no config switch out and no orphaned
 switch pending, and no activity for the window. Its clock restarts at session
 start, at each turn end, on a `set_config`, on an answer, when an orphaned

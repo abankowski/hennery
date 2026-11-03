@@ -146,6 +146,8 @@ struct SessionMap {
     /// arrive before attachment; false removes it rather than accumulating
     /// entries for every unheld session this host has ever seen.
     idle_holds: HashSet<String>,
+    /// Collector override retained across reconnects and actor restarts.
+    idle_timeout_secs: Option<u32>,
     /// Set by host shutdown when it takes `handles`: from then on no actor
     /// is spawned. A start or resume that was waiting behind an ending actor
     /// would otherwise attach an adapter that shutdown never sees, and that
@@ -396,6 +398,7 @@ async fn handshake(
                 Capability::Park,
                 Capability::IdleHold,
                 Capability::CacheRetention,
+                Capability::IdleTimeout,
                 Capability::Images,
                 Capability::Projects,
                 Capability::ResolvePath,
@@ -788,6 +791,9 @@ fn spawn_or_restart(
     // Read at the actual launch under the same lock as hold updates: an
     // attach waiting for an old actor's teardown must take the latest state.
     options.idle_held = map.idle_holds.contains(&req.session_id);
+    if let Some(seconds) = map.idle_timeout_secs {
+        options.idle_timeout = (seconds != 0).then(|| Duration::from_secs(u64::from(seconds)));
+    }
     let launch = Launch {
         request_id: req.request_id,
         session_id: req.session_id.clone(),
@@ -815,6 +821,16 @@ fn handle(
     frame: CollectorFrame,
 ) -> Result<()> {
     match frame {
+        CollectorFrame::SetIdleTimeout { seconds } => {
+            let mut map = sessions.lock().expect("sessions lock");
+            map.idle_timeout_secs = seconds;
+            let timeout = seconds.map_or(cfg.idle_timeout, |s| Duration::from_secs(u64::from(s)));
+            for handle in map.handles.values() {
+                handle.send(SessionCmd::SetIdleTimeout {
+                    timeout: (!timeout.is_zero()).then_some(timeout),
+                });
+            }
+        }
         CollectorFrame::CancelCatalogProbe { request_id } => probes.catalog.cancel(&request_id),
         CollectorFrame::SetIdleHold { session_id, held } => {
             let mut map = sessions.lock().expect("sessions lock");

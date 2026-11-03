@@ -103,6 +103,8 @@ const STATE_KINDS: &[&str] = &[
 pub enum SessionCmd {
     /// Collector's effective family/operator hold; no correlated reply.
     SetIdleHold { held: bool },
+    /// Live host-wide setting. A changed timeout starts a fresh idle window.
+    SetIdleTimeout { timeout: Option<Duration> },
     FencedPrompt {
         request_id: String,
         turn_id: String,
@@ -1134,7 +1136,7 @@ impl Actor {
         while let Some(cmd) = commands.recv().await {
             let _pending_prompt = PendingPromptGuard::for_command(&self.turns, &cmd);
             match cmd {
-                SessionCmd::SetIdleHold { .. } => {}
+                SessionCmd::SetIdleHold { .. } | SessionCmd::SetIdleTimeout { .. } => {}
                 SessionCmd::Prompt { request_id, .. }
                 | SessionCmd::FencedPrompt { request_id, .. }
                 | SessionCmd::Restart { request_id }
@@ -1434,6 +1436,7 @@ impl Actor {
         // turn ends; it never runs while a turn (or a pending question
         // inside one) is in flight.
         let mut idle_since = Instant::now();
+        let mut idle_timeout = self.options.idle_timeout;
         let mut idle_held = self.options.idle_held;
         let mut configs = PendingConfigs {
             uplink: self.uplink.clone(),
@@ -1483,6 +1486,12 @@ impl Actor {
                     return self.adapter_exited(info, &mut adapter, &mut updates, turn.take(), &mut configs).await;
                 }
                 cmd = commands.recv() => match cmd {
+                    Some(SessionCmd::SetIdleTimeout { timeout }) => {
+                        if idle_timeout != timeout {
+                            idle_timeout = timeout;
+                            idle_since = Instant::now();
+                        }
+                    }
                     Some(SessionCmd::SetIdleHold { held }) => {
                         // A release starts a whole idle window. Repeated
                         // false updates after reconnect are not activity.
@@ -1713,7 +1722,7 @@ impl Actor {
                 }
                 // Never with a question open, in a turn or not: it has no
                 // timeout (ACP core §4.6).
-                _ = idle_deadline(self.options.idle_timeout, idle_since),
+                _ = idle_deadline(idle_timeout, idle_since),
                     if !idle_held && turn.is_none() && configs.out.is_none() && configs.orphan.is_none() && !self.has_questions() =>
                 {
                     tracing::info!(session_id = %self.session_id, "reaping idle session");

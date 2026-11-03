@@ -625,6 +625,7 @@ pub(crate) fn ready(
     // delete committed between the two is closed by neither side, and no
     // test would notice (plan 9a's whole-branch review).
     state.hub.mark_ready(host_id, conn_id);
+    state.store.resend_idle_parking(host_id, &state.hub)?;
     state.store.resend_idle_holds(host_id, &state.hub)?;
     // A delete that judged a listed session unattached (this host not ready
     // yet) and committed after the reconciliation: nothing above closed its

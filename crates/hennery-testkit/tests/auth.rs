@@ -154,6 +154,8 @@ const OPERATOR_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/api/hats/hat-9/logo"),
     ("DELETE", "/api/hats/hat-9/logo"),
     ("GET", "/api/settings/host-removals"),
+    ("GET", "/api/settings/idle-parking"),
+    ("PUT", "/api/settings/idle-parking"),
     ("DELETE", "/api/settings/host-removals/f-1"),
     ("POST", "/api/auth/step-up/password"),
     ("GET", "/api/auth/sessions"),

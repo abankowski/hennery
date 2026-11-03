@@ -31,6 +31,7 @@ pub mod hats;
 pub mod hosts;
 pub mod hub;
 pub mod idle_hold;
+pub mod idle_parking;
 pub mod mcp_source;
 pub mod notify;
 pub mod offline;
@@ -215,6 +216,7 @@ pub fn router(state: AppState) -> Router {
         .merge(hosts::router(state.clone()))
         .merge(hats::router(state.clone()))
         .merge(session_defaults_api::router(state.clone()))
+        .merge(idle_parking::router(state.clone()))
         .merge(projects::router(state.clone()))
         .merge(push::router(state.clone()))
         .merge(view::router(state.clone()))

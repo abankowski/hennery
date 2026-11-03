@@ -353,6 +353,11 @@
           "type": "string"
         },
         {
+          "const": "idle_timeout",
+          "description": "Global, live idle parking timeout updates.",
+          "type": "string"
+        },
+        {
           "const": "resolve_path",
           "description": "Resolving typed paths (`resolve_path`, kernel spec §5.4).",
           "type": "string"
@@ -1246,6 +1251,27 @@
             "type",
             "session_id",
             "held"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Host-wide parking override; null restores the host startup setting,\nzero disables automatic parking. Only sent with `idle_timeout`.",
+          "properties": {
+            "seconds": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "set_idle_timeout",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
           ],
           "type": "object"
         },
@@ -2872,6 +2898,21 @@
         "notices_pending",
         "held"
       ],
+      "type": "object"
+    },
+    "IdleParkingSettings": {
+      "additionalProperties": false,
+      "description": "Global idle parking override. Null uses each host's startup setting;\nzero disables automatic parking. Positive values are seconds.",
+      "properties": {
+        "idle_timeout_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "Indexed": {

@@ -362,6 +362,14 @@ and accepts comma-separated addresses, as does `HENNERY_LISTEN`.
 `--public-url` / `HENNERY_PUBLIC_URL` sets the browser's origin, not the bind
 address; it does not enable TLS on the collector.
 
+Automatic idle parking can be configured globally under **Settings → Automatic
+session parking**: choose a timeout in seconds, disable it for all sessions,
+or use each host's startup setting (30 minutes by default, configurable with
+`hennery host run --idle-timeout-secs`; `0` disables it). The global setting
+applies to existing and new sessions on updated hosts, including remote hosts.
+Offline hosts receive it when they reconnect. Changing the effective timeout
+starts a fresh idle window; manual Park and Close remain available.
+
 Instead of passing flags each time, create `config.toml` in the collector's
 data directory (alongside `master.key`):
 

@@ -144,6 +144,91 @@ fn text(s: &str) -> Value {
     json!([{ "type": "text", "text": s }])
 }
 
+#[tokio::test]
+async fn global_idle_parking_updates_existing_and_new_sessions() {
+    hennery_testkit::first_exec(env!("CARGO_BIN_EXE_hennery-fake-acp"));
+    let dir = tempfile::tempdir().unwrap();
+    let collector = Collector::start(&dir.path().join("hennery.db"), None).await;
+    let c = client(&collector);
+    let url = collector.url("/api/settings/idle-parking");
+    let initial: Value = c.get(&url).send().await.unwrap().json().await.unwrap();
+    assert_eq!(initial, json!({"idle_timeout_secs": null}));
+    let fake = AgentCommand::parse(env!("CARGO_BIN_EXE_hennery-fake-acp")).unwrap();
+    let mut cfg = host_config(collector.addr, &dir.path().join("host"), fake);
+    cfg.idle_timeout = Duration::ZERO;
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let host = tokio::spawn(async move {
+        hennery_host::run_until(cfg, async {
+            let _ = stopped.await;
+        })
+        .await
+        .unwrap()
+    });
+    wait_host_connected(&c, &collector).await;
+    let existing = start_session(&c, &collector).await;
+    for value in [json!(-1), json!(1.5), json!(4294967296_u64), json!("never")] {
+        let response = c
+            .put(&url)
+            .json(&json!({"idle_timeout_secs": value}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 422);
+    }
+    let response = c.put(&url).json(&json!({"idle_timeout_secs": 1})).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    wait_for("existing session parked by global setting", || async {
+        events(&c, &collector, &existing)
+            .await
+            .iter()
+            .any(|e| e.kind == "session_parked" && e.body["reason"] == "idle")
+            .then_some(())
+    })
+    .await;
+    let new = start_session(&c, &collector).await;
+    wait_for("new session inherits global setting", || async {
+        events(&c, &collector, &new)
+            .await
+            .iter()
+            .any(|e| e.kind == "session_parked" && e.body["reason"] == "idle")
+            .then_some(())
+    })
+    .await;
+    let disabled = c.put(&url).json(&json!({"idle_timeout_secs": 0})).send().await.unwrap();
+    assert_eq!(disabled.status(), 200);
+    let retained = start_session(&c, &collector).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(
+        !events(&c, &collector, &retained)
+            .await
+            .iter()
+            .any(|e| e.kind == "session_parked")
+    );
+    let reenabled = c.put(&url).json(&json!({"idle_timeout_secs": 1})).send().await.unwrap();
+    assert_eq!(reenabled.status(), 200);
+    let reset = c
+        .put(&url)
+        .json(&json!({"idle_timeout_secs": null}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reset.status(), 200);
+    assert_eq!(reset.json::<Value>().await.unwrap(), initial);
+    let inherited = start_session(&c, &collector).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    for session in [&retained, &inherited] {
+        assert!(
+            !events(&c, &collector, session)
+                .await
+                .iter()
+                .any(|e| e.kind == "session_parked")
+        );
+    }
+    stop.send(()).unwrap();
+    host.await.unwrap();
+    collector.stop().await;
+}
+
 async fn events(c: &reqwest::Client, collector: &Collector, session: &str) -> Vec<EventDto> {
     c.get(collector.url(&format!("/api/sessions/{session}/events")))
         .send()

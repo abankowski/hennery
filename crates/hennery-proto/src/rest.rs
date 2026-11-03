@@ -7,6 +7,14 @@ use crate::frames::{
     ConfigValue, ElicitationAction, ForgetKind, ForgetReason, PendingKind, PendingReason, SessionConfig,
 };
 
+/// Global idle parking override. Null uses each host's startup setting;
+/// zero disables automatic parking. Positive values are seconds.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct IdleParkingSettings {
+    pub idle_timeout_secs: Option<u32>,
+}
+
 /// Operator preference for automatic idle parking; explicit Park/Close still work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]

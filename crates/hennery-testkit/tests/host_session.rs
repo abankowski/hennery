@@ -935,6 +935,25 @@ async fn idle_hold_barrier(uplink: &Uplink, handle: &SessionHandle, request: &st
 }
 
 #[tokio::test]
+async fn live_idle_timeout_can_be_disabled_then_enabled_with_a_fresh_window() {
+    let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
+    let handle = idle_held_session(&uplink, true);
+    wait_until(&uplink, has("session_started")).await;
+    assert!(handle.send(SessionCmd::SetIdleTimeout { timeout: None }));
+    assert!(handle.send(SessionCmd::SetIdleHold { held: false }));
+    idle_hold_barrier(&uplink, &handle, "disabled").await;
+    tokio::time::sleep(IDLE_WINDOW * 2).await;
+    assert!(!handle.is_ending(), "live disable was ignored");
+    assert!(handle.send(SessionCmd::SetIdleTimeout {
+        timeout: Some(IDLE_WINDOW)
+    }));
+    idle_hold_barrier(&uplink, &handle, "enabled").await;
+    assert!(!handle.is_ending(), "enabling reused the old expired idle clock");
+    wait_until(&uplink, has("session_parked:idle")).await;
+    wait_ended(&handle).await;
+}
+
+#[tokio::test]
 async fn an_idle_hold_blocks_reaping_and_release_starts_a_fresh_window() {
     let (uplink, _replies) = Uplink::new(Outbox::open_in_memory().unwrap());
     let handle = idle_held_session(&uplink, true);
