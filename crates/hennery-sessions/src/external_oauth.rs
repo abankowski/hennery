@@ -271,8 +271,25 @@ async fn metadata(state: &AppState, id: &str) -> anyhow::Result<Metadata> {
     metadata_document(&bytes, id)
 }
 fn metadata_document(bytes: &[u8], id: &str) -> anyhow::Result<Metadata> {
-    let m: Metadata = serde_json::from_slice(bytes).map_err(|_| anyhow::anyhow!("invalid_client_metadata"))?;
-    anyhow::ensure!(m.client_id.as_deref() == Some(id), "invalid_client");
+    let parsed: Metadata = serde_json::from_slice(bytes).map_err(|_| anyhow::anyhow!("invalid_client_metadata"))?;
+    anyhow::ensure!(parsed.client_id.as_deref() == Some(id), "invalid_client");
+    // The client hosts this document for every server it talks to, so it may
+    // list grants we never issue (Claude lists jwt-bearer). Keep only ours;
+    // the token endpoint refuses any other grant_type on its own.
+    let supported: Vec<String> = parsed
+        .grant_types
+        .iter()
+        .filter(|g| matches!(g.as_str(), "authorization_code" | "refresh_token"))
+        .cloned()
+        .collect();
+    anyhow::ensure!(
+        parsed.grant_types.is_empty() || !supported.is_empty(),
+        "invalid_client_metadata"
+    );
+    let m = Metadata {
+        grant_types: supported,
+        ..parsed
+    };
     validate_metadata(&m)?;
     Ok(m)
 }
@@ -410,6 +427,16 @@ async fn revoke(State(state): State<AppState>, addr: ClientAddress, req: Request
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cimd_grant_types_this_server_does_not_support_are_dropped_not_fatal() {
+        // Claude's published document (fetched 2026-11-04) also lists jwt-bearer.
+        let id = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+        let claude = json!({"client_id":id,"client_name":"Claude","client_uri":"https://claude.ai","redirect_uris":["https://claude.ai/api/mcp/auth_callback"],"grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:jwt-bearer"],"response_types":["code"],"token_endpoint_auth_method":"none"});
+        let m = metadata_document(&serde_json::to_vec(&claude).unwrap(), id).unwrap();
+        assert_eq!(m.grant_types, ["authorization_code", "refresh_token"]);
+        let only_unsupported = json!({"client_id":id,"client_name":"Claude","redirect_uris":["https://claude.ai/api/mcp/auth_callback"],"grant_types":["urn:ietf:params:oauth:grant-type:jwt-bearer"],"token_endpoint_auth_method":"none"});
+        assert!(metadata_document(&serde_json::to_vec(&only_unsupported).unwrap(), id).is_err());
+    }
     #[test]
     fn cimd_identity_and_redirects_are_verified_without_trusting_extra_branding() {
         let id = "https://client.example/metadata.json";
