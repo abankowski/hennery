@@ -364,6 +364,7 @@ async fn endpoint(
                         "request_key_conflict" => "request_key_conflict",
                         "operation_limit" => "operation_limit",
                         "session_limit" => "session_limit",
+                        "session_rate_limit" => "session_rate_limit",
                         "configuration_unavailable" => "configuration_unavailable",
                         "chunk_conflict" => "chunk_conflict",
                         "invalid_offset" => "invalid_offset",

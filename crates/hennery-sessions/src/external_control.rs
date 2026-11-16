@@ -1714,4 +1714,139 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.to_string(), "session_limit");
     }
+
+    #[test]
+    fn rate_fuse_refuses_seventeenth_creation_in_window_even_with_large_capacity() {
+        let (_d, state, identity) = world_with_capacity(1024);
+        for n in 0..16 {
+            state
+                .store
+                .external_admit(&identity, "session_create", &format!("k{n}"), &create_args(&format!("k{n}")))
+                .unwrap();
+        }
+        let err = state
+            .store
+            .external_admit(&identity, "session_create", "k16", &create_args("k16"))
+            .unwrap_err();
+        assert_eq!(err.to_string(), "session_rate_limit");
+        let r = err.downcast_ref::<crate::external_control_store::LimitRefusal>().unwrap();
+        assert_eq!(r.data["used"], 16);
+        assert_eq!(r.data["limit"], 16);
+        assert_eq!(r.data["window_secs"], 60);
+        let retry = r.data["retry_after"].as_i64().unwrap();
+        assert!((1..=60).contains(&retry), "{retry}");
+        assert!(
+            r.text
+                .starts_with("session_rate_limit: 16 sessions created in the last 60 s; retry after ")
+        );
+        state
+            .store
+            .conn()
+            .execute("UPDATE external_operations SET created_at = created_at - 61", [])
+            .unwrap();
+        state
+            .store
+            .external_admit(&identity, "session_create", "k16", &create_args("k16"))
+            .unwrap();
+    }
+    #[test]
+    fn same_key_retry_does_not_consume_rate_budget() {
+        let (_d, state, identity) = world_with_capacity(1024);
+        for n in 0..16 {
+            state
+                .store
+                .external_admit(&identity, "session_create", &format!("k{n}"), &create_args(&format!("k{n}")))
+                .unwrap();
+        }
+        let again = state
+            .store
+            .external_admit(&identity, "session_create", "k0", &create_args("k0"))
+            .unwrap();
+        assert_eq!(
+            again.request_key_hash,
+            state
+                .store
+                .external_admit(&identity, "session_create", "k0", &create_args("k0"))
+                .unwrap()
+                .request_key_hash
+        );
+        let total: i64 = state
+            .store
+            .conn()
+            .query_row("SELECT count(*) FROM external_operations WHERE tool='session_create'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total, 16);
+    }
+    #[test]
+    fn clone_counts_toward_rate() {
+        let (_d, state, identity) = world_with_capacity(1024);
+        let source = bind(&state, &identity, "src", "/project");
+        for n in 0..15 {
+            state
+                .store
+                .external_admit(&identity, "session_create", &format!("k{n}"), &create_args(&format!("k{n}")))
+                .unwrap();
+        }
+        // 16 creations so far (1 bound + 15); the clone is the 17th.
+        let err = state
+            .store
+            .external_admit(
+                &identity,
+                "session_clone",
+                "cl",
+                &json!({"request_key":"cl","source_session_id":source}),
+            )
+            .unwrap_err();
+        assert_eq!(err.to_string(), "session_rate_limit");
+    }
+    #[test]
+    fn prompts_do_not_count_toward_rate() {
+        let (_d, state, identity) = world_with_capacity(1024);
+        for n in 0..16 {
+            state
+                .store
+                .external_admit(
+                    &identity,
+                    "session_prompt",
+                    &format!("p{n}"),
+                    &json!({"request_key":format!("p{n}"),"session_id":"session","text":"hi"}),
+                )
+                .unwrap();
+        }
+        state
+            .store
+            .external_admit(&identity, "session_create", "k", &create_args("k"))
+            .unwrap();
+    }
+    #[test]
+    fn guard_in_does_not_apply_rate() {
+        let (_d, state, identity) = world_with_capacity(1024);
+        let r = state
+            .store
+            .external_admit(&identity, "session_create", "k", &create_args("k"))
+            .unwrap();
+        let (command, _) = state
+            .store
+            .external_pending()
+            .unwrap()
+            .into_iter()
+            .find(|(c, _)| c.operation_id == r.operation_id)
+            .unwrap();
+        state
+            .store
+            .conn()
+            .execute("UPDATE external_operations SET created_at = created_at - 61", [])
+            .unwrap();
+        for n in 0..16 {
+            state
+                .store
+                .external_admit(&identity, "session_create", &format!("k{n}"), &create_args(&format!("k{n}")))
+                .unwrap();
+        }
+        let hat = state.hosts.host("host").unwrap().unwrap().default_hat_id;
+        state
+            .store
+            .external_guard_in(&state.store.conn(), &command, Some(("host", "/project", &hat)))
+            .unwrap();
+    }
 }

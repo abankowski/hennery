@@ -45,6 +45,44 @@ pub(crate) fn capacity_refusal(live: i64, limit: u32) -> LimitRefusal {
         data: json!({"code":"session_limit","live":live,"limit":limit}),
     }
 }
+/// Creation rate fuse: admissions of `session_create`/`session_clone` per
+/// client in a rolling window. Fixed in code on purpose; a runaway client
+/// must stop no matter how high the operator set its capacity.
+pub const CREATE_RATE_LIMIT: i64 = 16;
+pub const CREATE_RATE_WINDOW_SECS: i64 = 60;
+
+/// (creations admitted inside the window, oldest such admission time).
+pub(crate) fn creations_in_window_in(
+    conn: &Connection,
+    owner: &str,
+    client_id: &str,
+    now: i64,
+) -> Result<(i64, Option<i64>)> {
+    Ok(conn.query_row(
+        "SELECT count(*), MIN(created_at) FROM external_operations
+         WHERE owner_id = ?1 AND client_id = ?2 AND tool IN ('session_create','session_clone') AND created_at > ?3",
+        params![owner, client_id, now - CREATE_RATE_WINDOW_SECS],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?)
+}
+pub(crate) fn rate_refusal(used: i64, retry_after: i64) -> LimitRefusal {
+    LimitRefusal {
+        code: "session_rate_limit",
+        text: format!(
+            "session_rate_limit: {used} sessions created in the last {CREATE_RATE_WINDOW_SECS} s; retry after {retry_after} s"
+        ),
+        data: json!({"code":"session_rate_limit","limit":CREATE_RATE_LIMIT,"window_secs":CREATE_RATE_WINDOW_SECS,"used":used,"retry_after":retry_after}),
+    }
+}
+fn ensure_create_rate_in(conn: &Connection, owner: &str, client_id: &str) -> Result<()> {
+    let now = unix_now();
+    let (used, oldest) = creations_in_window_in(conn, owner, client_id, now)?;
+    if used >= CREATE_RATE_LIMIT {
+        let retry_after = (oldest.unwrap_or(now) + CREATE_RATE_WINDOW_SECS - now).max(1);
+        return Err(rate_refusal(used, retry_after).into());
+    }
+    Ok(())
+}
 fn ensure_capacity_in(conn: &Connection, owner: &str, client: &ClientRecord) -> Result<()> {
     let live = live_sessions_in(conn, owner, &client.client_id)?;
     if live >= i64::from(client.session_capacity) {
@@ -323,6 +361,7 @@ impl Store {
         // checked before anything that could fail for other reasons.
         if matches!(tool, "session_create" | "session_clone") {
             ensure_capacity_in(&tx, self.owner_id(), client)?;
+            ensure_create_rate_in(&tx, self.owner_id(), &client.client_id)?;
         }
         let source = if tool == "session_clone" {
             Some(
