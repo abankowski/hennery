@@ -34,7 +34,9 @@ export default function ExternalMcp({ consent = false }: { consent?: boolean }) 
   const [metadata, setMetadata] = useState(false)
   const [transcript, setTranscript] = useState(false)
   const [control, setControl] = useState(false)
-  const [capacity, setCapacity] = useState(32)
+  const [capacity, setCapacity] = useState('32')
+  const capacityValue = /^\d+$/.test(capacity) ? Number(capacity) : NaN
+  const capacityValid = Number.isInteger(capacityValue) && capacityValue >= 1 && capacityValue <= 1024
   const [existing, setExisting] = useState(false)
   const [days, setDays] = useState(7)
   const [error, setError] = useState('')
@@ -46,7 +48,7 @@ export default function ExternalMcp({ consent = false }: { consent?: boolean }) 
     const epoch = ++generation.current
     const abort = new AbortController()
     locked.current = null
-    setBusy(false); setPending(null); setGrants([]); setAfter(null); setError(''); setHats([]); setHosts([]); setHatMode('selected'); setHostMode('selected'); setAllWorkspaces(false); setRoot(''); setExisting(false); setMetadata(false); setTranscript(false); setControl(false); setDays(7)
+    setBusy(false); setPending(null); setGrants([]); setAfter(null); setError(''); setHats([]); setHosts([]); setHatMode('selected'); setHostMode('selected'); setAllWorkspaces(false); setRoot(''); setExisting(false); setMetadata(false); setTranscript(false); setControl(false); setCapacity('32'); setDays(7)
     const operation = consent
       ? client.request<Pending>('GET', '/api/external-oauth/requests/' + encodeURIComponent(requestId), undefined, { signal: abort.signal }).then(p => {
         if (abort.signal.aborted || epoch !== generation.current) return
@@ -73,7 +75,7 @@ export default function ExternalMcp({ consent = false }: { consent?: boolean }) 
         } } : {}),
         read_metadata: metadata, existing_sessions: existing && metadata, expires_in_days: days,
         ...(transcript && metadata ? { read_transcript: true } : {}),
-        ...(control && metadata ? { control_sessions: true, session_capacity: capacity } : {}),
+        ...(control && metadata ? { control_sessions: true, session_capacity: capacityValue } : {}),
       }, { signal: controller.signal })
       if (!controller.signal.aborted && epoch === generation.current) window.location.assign(result.redirect_uri)
     } catch (err) { if (!controller.signal.aborted && epoch === generation.current) setError(messageOf(err)) }
@@ -141,13 +143,13 @@ export default function ExternalMcp({ consent = false }: { consent?: boolean }) 
         <label className="field"><span><input type="checkbox" checked={control} disabled={busy || !metadata || !pending.request.scope.split(' ').includes('hennery:sessions:control')} onChange={e => setControl(e.target.checked)} /> Create, prompt and control sessions</span></label>
         {control && <p>Session control includes changing the model and permission mode, answering ordinary forms, sending images, editing queued prompts, and renaming, pinning or cloning sessions. Agent actions follow that mode; permission requests still require approval in Hennery.</p>}
         {control && <>
-          <label className="field"><span className="field-label">Live sessions this client may hold</span><input className="text-input" type="number" min={1} max={1024} aria-label="Live sessions this client may hold" disabled={busy} value={capacity} onChange={e => setCapacity(Number(e.target.value))} /></label>
+          <label className="field"><span className="field-label">Live sessions this client may hold</span><input className="text-input" type="number" min={1} max={1024} aria-label="Live sessions this client may hold" disabled={busy} value={capacity} onChange={e => setCapacity(e.target.value)} /></label>
           <p>Parked sessions count. Closed sessions do not.</p>
         </>}
         <label className="field"><span><input type="checkbox" checked={existing} disabled={busy || !metadata} onChange={e => setExisting(e.target.checked)} /> Also allow existing sessions within the selected scope</span></label>
         <p>By default, access is limited to sessions created by this client. Including existing sessions also allows the selected read and control actions on those sessions.</p>
         <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void decide(false)}>Deny</button>
-        <button type="submit" className="btn btn-primary" disabled={busy || (hatMode === 'selected' && !hats.length) || (hostMode === 'selected' && !hosts.length) || (hostMode !== 'future' && !allWorkspaces && !root.startsWith('/')) || (control && !(capacity >= 1 && capacity <= 1024))}>Allow selected access</button>
+        <button type="submit" className="btn btn-primary" disabled={busy || (hatMode === 'selected' && !hats.length) || (hostMode === 'selected' && !hosts.length) || (hostMode !== 'future' && !allWorkspaces && !root.startsWith('/')) || (control && !capacityValid)}>Allow selected access</button>
       </form>
     </>}
     {!consent && <ul aria-label="Client grants">{grants.map(g => <li key={g.client_id}>
