@@ -52,6 +52,10 @@ pub(crate) fn capacity_refusal(live: i64, limit: u32) -> LimitRefusal {
 /// must stop no matter how high the operator set its capacity.
 pub const CREATE_RATE_LIMIT: i64 = 16;
 pub const CREATE_RATE_WINDOW_SECS: i64 = 60;
+/// Operations a client may have queued, running or uncertain at once.
+pub const PENDING_OPERATION_LIMIT: i64 = 32;
+/// Receipts the per-client ledger retains over the grant's lifetime.
+pub const OPERATION_RECEIPT_LIMIT: i64 = 4096;
 
 /// (creations admitted inside the window, oldest such admission time).
 pub(crate) fn creations_in_window_in(
@@ -410,7 +414,9 @@ impl Store {
         };
         let (pending,bytes,total):(i64,i64,i64)=tx.query_row("SELECT COALESCE(SUM(state IN ('queued','running','uncertain')),0),COALESCE(SUM(length(CAST(args AS BLOB))),0),count(*) FROM external_operations WHERE owner_id = ?1 AND client_id=?2",params![self.owner_id(),client.client_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
         ensure!(
-            pending < 32 && bytes + raw.len() as i64 <= 1024 * 1024 && total < 4096,
+            pending < PENDING_OPERATION_LIMIT
+                && bytes + raw.len() as i64 <= 1024 * 1024
+                && total < OPERATION_RECEIPT_LIMIT,
             "operation_limit"
         );
         let id = uuid::Uuid::now_v7().to_string();
