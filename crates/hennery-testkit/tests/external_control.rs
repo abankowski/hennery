@@ -122,6 +122,7 @@ impl Harness {
                 existing_sessions: existing,
                 read_transcript: transcript,
                 control_sessions: control,
+                session_capacity: None,
                 expires_in_days: 1,
             })
             .unwrap()
@@ -1241,6 +1242,7 @@ async fn one_mcp_connection_controls_two_hats_on_two_real_hosts() {
             read_transcript: true,
             control_sessions: true,
             existing_sessions: false,
+            session_capacity: None,
             expires_in_days: 1,
         })
         .unwrap()

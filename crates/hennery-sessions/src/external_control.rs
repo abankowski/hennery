@@ -844,6 +844,7 @@ mod tests {
                 read_transcript: true,
                 control_sessions: true,
                 existing_sessions: true,
+                session_capacity: None,
                 expires_in_days: 1,
             })
             .unwrap();
@@ -878,6 +879,7 @@ mod tests {
                 read_transcript: true,
                 control_sessions: true,
                 existing_sessions: true,
+                session_capacity: None,
                 expires_in_days: 1,
             })
             .unwrap();
@@ -967,6 +969,7 @@ mod tests {
                 read_transcript: true,
                 control_sessions: true,
                 existing_sessions: true,
+                session_capacity: None,
                 expires_in_days: 1,
             })
             .unwrap();
