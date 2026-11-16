@@ -884,7 +884,12 @@ mod tests {
     fn bind(state: &AppState, identity: &ExternalIdentity, key: &str, cwd: &str) -> String {
         let receipt = state
             .store
-            .external_admit(identity, "session_create", key, &json!({"request_key":key,"host_id":"host","cwd":cwd,"agent":"fake"}))
+            .external_admit(
+                identity,
+                "session_create",
+                key,
+                &json!({"request_key":key,"host_id":"host","cwd":cwd,"agent":"fake"}),
+            )
             .unwrap();
         let (command, _) = state
             .store
@@ -1644,7 +1649,9 @@ mod tests {
             .external_admit(&identity, "session_create", "c", &create_args("c"))
             .unwrap_err();
         assert_eq!(err.to_string(), "session_limit");
-        let r = err.downcast_ref::<crate::external_control_store::LimitRefusal>().unwrap();
+        let r = err
+            .downcast_ref::<crate::external_control_store::LimitRefusal>()
+            .unwrap();
         assert_eq!(r.data, json!({"code":"session_limit","live":2,"limit":2}));
         assert_eq!(
             r.text,
@@ -1678,7 +1685,10 @@ mod tests {
         state
             .store
             .conn()
-            .execute("UPDATE sessions SET lifecycle='active', close_requested=1 WHERE id=?1", [&s])
+            .execute(
+                "UPDATE sessions SET lifecycle='active', close_requested=1 WHERE id=?1",
+                [&s],
+            )
             .unwrap();
         state
             .store
@@ -1721,7 +1731,12 @@ mod tests {
         for n in 0..16 {
             state
                 .store
-                .external_admit(&identity, "session_create", &format!("k{n}"), &create_args(&format!("k{n}")))
+                .external_admit(
+                    &identity,
+                    "session_create",
+                    &format!("k{n}"),
+                    &create_args(&format!("k{n}")),
+                )
                 .unwrap();
         }
         let err = state
@@ -1729,7 +1744,9 @@ mod tests {
             .external_admit(&identity, "session_create", "k16", &create_args("k16"))
             .unwrap_err();
         assert_eq!(err.to_string(), "session_rate_limit");
-        let r = err.downcast_ref::<crate::external_control_store::LimitRefusal>().unwrap();
+        let r = err
+            .downcast_ref::<crate::external_control_store::LimitRefusal>()
+            .unwrap();
         assert_eq!(r.data["used"], 16);
         assert_eq!(r.data["limit"], 16);
         assert_eq!(r.data["window_secs"], 60);
@@ -1755,7 +1772,12 @@ mod tests {
         for n in 0..16 {
             state
                 .store
-                .external_admit(&identity, "session_create", &format!("k{n}"), &create_args(&format!("k{n}")))
+                .external_admit(
+                    &identity,
+                    "session_create",
+                    &format!("k{n}"),
+                    &create_args(&format!("k{n}")),
+                )
                 .unwrap();
         }
         let again = state
@@ -1773,7 +1795,11 @@ mod tests {
         let total: i64 = state
             .store
             .conn()
-            .query_row("SELECT count(*) FROM external_operations WHERE tool='session_create'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM external_operations WHERE tool='session_create'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(total, 16);
     }
@@ -1784,7 +1810,12 @@ mod tests {
         for n in 0..15 {
             state
                 .store
-                .external_admit(&identity, "session_create", &format!("k{n}"), &create_args(&format!("k{n}")))
+                .external_admit(
+                    &identity,
+                    "session_create",
+                    &format!("k{n}"),
+                    &create_args(&format!("k{n}")),
+                )
                 .unwrap();
         }
         // 16 creations so far (1 bound + 15); the clone is the 17th.
@@ -1840,7 +1871,12 @@ mod tests {
         for n in 0..16 {
             state
                 .store
-                .external_admit(&identity, "session_create", &format!("k{n}"), &create_args(&format!("k{n}")))
+                .external_admit(
+                    &identity,
+                    "session_create",
+                    &format!("k{n}"),
+                    &create_args(&format!("k{n}")),
+                )
                 .unwrap();
         }
         let hat = state.hosts.host("host").unwrap().unwrap().default_hat_id;

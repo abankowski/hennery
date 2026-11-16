@@ -363,9 +363,9 @@ sessions count. Changing it requires fresh consent (revoke and reconnect).
 Independently, a client may be admitted for at most 16 `session_create` or
 `session_clone` operations in any rolling 60 s window; this fuse is fixed in
 code and cannot be raised by configuration. Refusals are tool results:
-`session_limit` (`structuredContent.live`, `.limit`) and `session_rate_limit`
-(`.limit`, `.window_secs`, `.used`, `.retry_after`), with the same numbers in
-the text. `hennery_capabilities.limits` reports both, the pending-operation
+`session_limit` (`structuredContent.data.live`, `.limit`) and
+`session_rate_limit` (`.limit`, `.window_secs`, `.used`, `.retry_after`),
+wrapped in `data` like every tool result, with the same numbers in the text. `hennery_capabilities.limits` reports both, the pending-operation
 cap (32), the receipt cap (4096) and the page size (50).
 Busy external prompts use a
 durable FIFO per session and yield to the existing session dispatch queue.

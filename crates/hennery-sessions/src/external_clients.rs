@@ -412,7 +412,9 @@ pub(crate) fn issue_in(
     );
     ensure!((1..=90).contains(&input.expires_in_days), "invalid_grant");
     ensure!(
-        input.session_capacity.is_none_or(|c| (1..=MAX_SESSION_CAPACITY).contains(&c)),
+        input
+            .session_capacity
+            .is_none_or(|c| (1..=MAX_SESSION_CAPACITY).contains(&c)),
         "invalid_grant"
     );
     ensure!(!input.existing_sessions || input.read_metadata, "invalid_grant");
@@ -1246,7 +1248,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            record(&w.store.conn(), w.store.owner_id(), "old").unwrap().unwrap().session_capacity,
+            record(&w.store.conn(), w.store.owner_id(), "old")
+                .unwrap()
+                .unwrap()
+                .session_capacity,
             32
         );
     }

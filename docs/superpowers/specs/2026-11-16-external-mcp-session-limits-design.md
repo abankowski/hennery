@@ -185,16 +185,19 @@ For these two codes the result carries more than the bare code:
 
 - `content[0].text` is a plain sentence with the numbers, because it is not
   verified that the claude.ai client shows anything but text to the model.
-- `structuredContent` holds the same numbers as JSON for clients that read it.
+- `structuredContent` holds the same numbers as JSON for clients that read it,
+  wrapped as `{"data": {...}}` so it conforms to the `outputSchema` every tool
+  declares (`{"data": {}}` only, no additional properties); a validating MCP
+  client would otherwise reject the refusal. (Added after review.)
 
 Shapes:
 
 - `session_limit` — text:
   `session_limit: 32 of 32 live sessions in use; close sessions created by this client to free capacity`
-  structuredContent: `{ "code": "session_limit", "live": 32, "limit": 32 }`
+  structuredContent: `{ "data": { "code": "session_limit", "live": 32, "limit": 32 } }`
 - `session_rate_limit` — text:
   `session_rate_limit: 16 sessions created in the last 60 s; retry after 23 s`
-  structuredContent: `{ "code": "session_rate_limit", "limit": 16, "window_secs": 60, "used": 16, "retry_after": 23 }`
+  structuredContent: `{ "data": { "code": "session_rate_limit", "limit": 16, "window_secs": 60, "used": 16, "retry_after": 23 } }`
 
 `session_rate_limit` must be added to the code `match` in `external_mcp.rs`;
 an unknown string there falls through to `-32603 internal_error`. The other

@@ -353,7 +353,7 @@ async fn endpoint(
                     if let Some(refusal) = e.downcast_ref::<crate::external_control_store::LimitRefusal>() {
                         return result(
                             id,
-                            json!({"content":[{"type":"text","text":refusal.text}],"structuredContent":refusal.data,"isError":true}),
+                            json!({"content":[{"type":"text","text":refusal.text}],"structuredContent":{"data":refusal.data},"isError":true}),
                         );
                     }
                     let code = match e.to_string().as_str() {

@@ -1385,7 +1385,12 @@ async fn capabilities_report_limits_and_tool_descriptions_mention_them() {
     assert_eq!(caps["max_page"], 50);
     let tools = h.tools_as(&token).await;
     for name in ["session_create", "session_clone"] {
-        let d = tools.iter().find(|t| t["name"] == name).unwrap()["description"].as_str().unwrap();
-        assert!(d.contains("live session capacity") && d.contains("hennery_capabilities.limits"), "{name}: {d}");
+        let d = tools.iter().find(|t| t["name"] == name).unwrap()["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            d.contains("live session capacity") && d.contains("hennery_capabilities.limits"),
+            "{name}: {d}"
+        );
     }
 }

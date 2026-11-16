@@ -41,7 +41,9 @@ pub(crate) fn live_sessions_in(conn: &Connection, owner: &str, client_id: &str) 
 pub(crate) fn capacity_refusal(live: i64, limit: u32) -> LimitRefusal {
     LimitRefusal {
         code: "session_limit",
-        text: format!("session_limit: {live} of {limit} live sessions in use; close sessions created by this client to free capacity"),
+        text: format!(
+            "session_limit: {live} of {limit} live sessions in use; close sessions created by this client to free capacity"
+        ),
         data: json!({"code":"session_limit","live":live,"limit":limit}),
     }
 }

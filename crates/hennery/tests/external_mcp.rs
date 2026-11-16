@@ -564,8 +564,10 @@ async fn limit_refusals_are_tool_results_with_text_and_structured_content() {
         .unwrap();
     assert_eq!(body["result"]["isError"], true);
     assert!(body.get("error").is_none());
-    assert_eq!(body["result"]["structuredContent"]["code"], "session_limit");
-    assert_eq!(body["result"]["structuredContent"]["live"], 1);
+    // Conforms to every tool's declared outputSchema: one `data` property.
+    assert_eq!(body["result"]["structuredContent"]["data"]["code"], "session_limit");
+    assert_eq!(body["result"]["structuredContent"]["data"]["live"], 1);
+    assert_eq!(body["result"]["structuredContent"].as_object().unwrap().len(), 1);
     assert!(
         body["result"]["content"][0]["text"]
             .as_str()
