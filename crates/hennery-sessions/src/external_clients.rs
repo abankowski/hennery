@@ -1237,18 +1237,24 @@ mod tests {
         assert_eq!(c.session_capacity, 5);
     }
     #[test]
-    fn rows_without_capacity_read_back_as_32() {
-        // Simulates a grant issued before the column existed: the DEFAULT applies.
+    fn upgrading_a_store_without_the_capacity_column_reads_grants_back_as_32() {
+        // A grant issued before the column existed: wind the schema back one
+        // migration, drop the column, and reopen so the migration reapplies.
         let w = World::new();
-        w.store
-            .conn()
-            .execute(
-                "INSERT INTO external_clients(owner_id,id,label,hat_id,token_hash,read_metadata,existing_sessions,revision,expires_at) VALUES(?1,'old','Old',?2,'hash',1,0,1,9999999999)",
-                params![w.store.owner_id(), w.hat],
-            )
+        let (before, _) = w.store.issue_external_client(&w.grant(true)).unwrap();
+        {
+            let conn = w.store.conn();
+            let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+            conn.execute_batch(&format!(
+                "ALTER TABLE external_clients DROP COLUMN session_capacity; PRAGMA user_version = {};",
+                version - 1
+            ))
             .unwrap();
+            assert!(record(&conn, w.store.owner_id(), &before.client_id).is_err());
+        }
+        let reopened = Store::open(&w.dir.path().join("test.db")).unwrap();
         assert_eq!(
-            record(&w.store.conn(), w.store.owner_id(), "old")
+            record(&reopened.conn(), reopened.owner_id(), &before.client_id)
                 .unwrap()
                 .unwrap()
                 .session_capacity,

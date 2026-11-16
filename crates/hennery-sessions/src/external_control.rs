@@ -852,7 +852,7 @@ mod tests {
         (dir, state, identity)
     }
     fn world_with_capacity(capacity: u32) -> (tempfile::TempDir, AppState, ExternalIdentity) {
-        let (dir, state, identity) = world();
+        let (dir, state, _) = world();
         let hat = state.hosts.host("host").unwrap().unwrap().default_hat_id;
         let (_, token) = state
             .store
@@ -872,7 +872,6 @@ mod tests {
                 expires_in_days: 1,
             })
             .unwrap();
-        let _ = identity;
         let identity = state.store.authenticate_external(&token).unwrap().unwrap();
         (dir, state, identity)
     }
@@ -881,15 +880,10 @@ mod tests {
     }
     /// Admits a create, dispatches it far enough to own a live session row
     /// bound to the client, and completes the operation.
-    fn bind(state: &AppState, identity: &ExternalIdentity, key: &str, cwd: &str) -> String {
+    fn bind(state: &AppState, identity: &ExternalIdentity, key: &str) -> String {
         let receipt = state
             .store
-            .external_admit(
-                identity,
-                "session_create",
-                key,
-                &json!({"request_key":key,"host_id":"host","cwd":cwd,"agent":"fake"}),
-            )
+            .external_admit(identity, "session_create", key, &create_args(key))
             .unwrap();
         let (command, _) = state
             .store
@@ -906,7 +900,7 @@ mod tests {
                 &receipt.session_id,
                 "host",
                 "fake",
-                cwd,
+                "/project",
                 &hat,
                 None,
                 crate::store::McpContext::NONE,
@@ -1637,8 +1631,8 @@ mod tests {
     #[test]
     fn capacity_refuses_at_limit_and_reports_numbers() {
         let (_d, state, identity) = world_with_capacity(2);
-        bind(&state, &identity, "a", "/project");
-        let parked = bind(&state, &identity, "b", "/project");
+        bind(&state, &identity, "a");
+        let parked = bind(&state, &identity, "b");
         state
             .store
             .conn()
@@ -1671,7 +1665,7 @@ mod tests {
     #[test]
     fn closed_session_frees_capacity() {
         let (_d, state, identity) = world_with_capacity(1);
-        let s = bind(&state, &identity, "a", "/project");
+        let s = bind(&state, &identity, "a");
         state.store.close_now(&s).unwrap();
         state
             .store
@@ -1681,7 +1675,7 @@ mod tests {
     #[test]
     fn close_requested_session_frees_capacity() {
         let (_d, state, identity) = world_with_capacity(1);
-        let s = bind(&state, &identity, "a", "/project");
+        let s = bind(&state, &identity, "a");
         state
             .store
             .conn()
@@ -1700,7 +1694,7 @@ mod tests {
         // The identity snapshot carries capacity 2 at admission; the dispatch
         // guard re-reads the stored client, which by then says 1.
         let (_d, state, identity) = world_with_capacity(2);
-        bind(&state, &identity, "a", "/project");
+        bind(&state, &identity, "a");
         let r = state
             .store
             .external_admit(&identity, "session_create", "b", &create_args("b"))
@@ -1806,7 +1800,7 @@ mod tests {
     #[test]
     fn clone_counts_toward_rate() {
         let (_d, state, identity) = world_with_capacity(1024);
-        let source = bind(&state, &identity, "src", "/project");
+        let source = bind(&state, &identity, "src");
         for n in 0..15 {
             state
                 .store
