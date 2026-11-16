@@ -851,6 +851,66 @@ mod tests {
         let identity = state.store.authenticate_external(&token).unwrap().unwrap();
         (dir, state, identity)
     }
+    fn world_with_capacity(capacity: u32) -> (tempfile::TempDir, AppState, ExternalIdentity) {
+        let (dir, state, identity) = world();
+        let hat = state.hosts.host("host").unwrap().unwrap().default_hat_id;
+        let (_, token) = state
+            .store
+            .issue_external_client(&NewClient {
+                scope: None,
+                label: "capped".into(),
+                hat_id: hat,
+                roots: vec![RootGrant {
+                    host_id: "host".into(),
+                    root: "/project".into(),
+                }],
+                read_metadata: true,
+                read_transcript: true,
+                control_sessions: true,
+                existing_sessions: true,
+                session_capacity: Some(capacity),
+                expires_in_days: 1,
+            })
+            .unwrap();
+        let _ = identity;
+        let identity = state.store.authenticate_external(&token).unwrap().unwrap();
+        (dir, state, identity)
+    }
+    fn create_args(key: &str) -> Value {
+        json!({"request_key":key,"host_id":"host","cwd":"/project","agent":"fake"})
+    }
+    /// Admits a create, dispatches it far enough to own a live session row
+    /// bound to the client, and completes the operation.
+    fn bind(state: &AppState, identity: &ExternalIdentity, key: &str, cwd: &str) -> String {
+        let receipt = state
+            .store
+            .external_admit(identity, "session_create", key, &json!({"request_key":key,"host_id":"host","cwd":cwd,"agent":"fake"}))
+            .unwrap();
+        let (command, _) = state
+            .store
+            .external_pending()
+            .unwrap()
+            .into_iter()
+            .find(|(c, _)| c.operation_id == receipt.operation_id)
+            .unwrap();
+        state.store.external_begin(&command).unwrap();
+        let hat = state.hosts.host("host").unwrap().unwrap().default_hat_id;
+        state
+            .store
+            .create_session_authorized(
+                &receipt.session_id,
+                "host",
+                "fake",
+                cwd,
+                &hat,
+                None,
+                crate::store::McpContext::NONE,
+                Some(&command),
+            )
+            .unwrap();
+        state.store.external_finish(&command, "completed", None, None).unwrap();
+        receipt.session_id
+    }
     #[test]
     fn multi_hat_create_freezes_actual_hat_at_admission_and_fences_rule_changes() {
         use crate::external_clients::GrantScope;
@@ -1567,5 +1627,91 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn capacity_refuses_at_limit_and_reports_numbers() {
+        let (_d, state, identity) = world_with_capacity(2);
+        bind(&state, &identity, "a", "/project");
+        let parked = bind(&state, &identity, "b", "/project");
+        state
+            .store
+            .conn()
+            .execute("UPDATE sessions SET lifecycle='parked' WHERE id=?1", [&parked])
+            .unwrap();
+        let err = state
+            .store
+            .external_admit(&identity, "session_create", "c", &create_args("c"))
+            .unwrap_err();
+        assert_eq!(err.to_string(), "session_limit");
+        let r = err.downcast_ref::<crate::external_control_store::LimitRefusal>().unwrap();
+        assert_eq!(r.data, json!({"code":"session_limit","live":2,"limit":2}));
+        assert_eq!(
+            r.text,
+            "session_limit: 2 of 2 live sessions in use; close sessions created by this client to free capacity"
+        );
+        let err = state
+            .store
+            .external_admit(
+                &identity,
+                "session_clone",
+                "d",
+                &json!({"request_key":"d","source_session_id":parked}),
+            )
+            .unwrap_err();
+        assert_eq!(err.to_string(), "session_limit");
+    }
+    #[test]
+    fn closed_session_frees_capacity() {
+        let (_d, state, identity) = world_with_capacity(1);
+        let s = bind(&state, &identity, "a", "/project");
+        state.store.close_now(&s).unwrap();
+        state
+            .store
+            .external_admit(&identity, "session_create", "b", &create_args("b"))
+            .unwrap();
+    }
+    #[test]
+    fn close_requested_session_frees_capacity() {
+        let (_d, state, identity) = world_with_capacity(1);
+        let s = bind(&state, &identity, "a", "/project");
+        state
+            .store
+            .conn()
+            .execute("UPDATE sessions SET lifecycle='active', close_requested=1 WHERE id=?1", [&s])
+            .unwrap();
+        state
+            .store
+            .external_admit(&identity, "session_create", "b", &create_args("b"))
+            .unwrap();
+    }
+    #[test]
+    fn guard_in_uses_client_capacity() {
+        // The identity snapshot carries capacity 2 at admission; the dispatch
+        // guard re-reads the stored client, which by then says 1.
+        let (_d, state, identity) = world_with_capacity(2);
+        bind(&state, &identity, "a", "/project");
+        let r = state
+            .store
+            .external_admit(&identity, "session_create", "b", &create_args("b"))
+            .unwrap();
+        let (command, _) = state
+            .store
+            .external_pending()
+            .unwrap()
+            .into_iter()
+            .find(|(c, _)| c.operation_id == r.operation_id)
+            .unwrap();
+        state
+            .store
+            .conn()
+            .execute("UPDATE external_clients SET session_capacity=1", [])
+            .unwrap();
+        let hat = state.hosts.host("host").unwrap().unwrap().default_hat_id;
+        let err = state
+            .store
+            .external_guard_in(&state.store.conn(), &command, Some(("host", "/project", &hat)))
+            .unwrap_err();
+        assert_eq!(err.to_string(), "session_limit");
     }
 }

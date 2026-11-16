@@ -350,6 +350,12 @@ async fn endpoint(
                 ),
                 Err(e) if e.to_string() == "unknown_tool" => rpc(id, -32602, "unknown_tool"),
                 Err(e) => {
+                    if let Some(refusal) = e.downcast_ref::<crate::external_control_store::LimitRefusal>() {
+                        return result(
+                            id,
+                            json!({"content":[{"type":"text","text":refusal.text}],"structuredContent":refusal.data,"isError":true}),
+                        );
+                    }
                     let code = match e.to_string().as_str() {
                         "invalid_arguments" => "invalid_arguments",
                         "not_found" => "not_found",

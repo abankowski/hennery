@@ -12,6 +12,47 @@ use hennery_kernel::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
+/// A refusal at one of the per-client admission limits. `Display` is the
+/// bare code so string-matched error plumbing keeps working; the MCP
+/// endpoint reads `text` and `data` for the client.
+#[derive(Debug)]
+pub struct LimitRefusal {
+    pub code: &'static str,
+    pub text: String,
+    pub data: Value,
+}
+impl std::fmt::Display for LimitRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code)
+    }
+}
+impl std::error::Error for LimitRefusal {}
+
+/// Sessions this client created that still hold capacity: not closed,
+/// deleted or failed, and not already asked to close.
+pub(crate) fn live_sessions_in(conn: &Connection, owner: &str, client_id: &str) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT count(*) FROM external_client_sessions x JOIN sessions s ON s.owner_id=x.owner_id AND s.id=x.session_id
+         WHERE x.owner_id = ?1 AND x.client_id=?2 AND s.lifecycle NOT IN ('closed','deleted','failed') AND s.close_requested = 0",
+        params![owner, client_id],
+        |r| r.get(0),
+    )?)
+}
+pub(crate) fn capacity_refusal(live: i64, limit: u32) -> LimitRefusal {
+    LimitRefusal {
+        code: "session_limit",
+        text: format!("session_limit: {live} of {limit} live sessions in use; close sessions created by this client to free capacity"),
+        data: json!({"code":"session_limit","live":live,"limit":limit}),
+    }
+}
+fn ensure_capacity_in(conn: &Connection, owner: &str, client: &ClientRecord) -> Result<()> {
+    let live = live_sessions_in(conn, owner, &client.client_id)?;
+    if live >= i64::from(client.session_capacity) {
+        return Err(capacity_refusal(live, client.session_capacity).into());
+    }
+    Ok(())
+}
+
 fn contains(root: &str, path: &str) -> bool {
     path == root
         || root == "/" && path.starts_with('/')
@@ -220,8 +261,7 @@ impl Store {
                 self.external_target_hat_in(conn, command)?.as_deref() == Some(hat),
                 "not_found"
             );
-            let live:i64=conn.query_row("SELECT count(*) FROM external_client_sessions x JOIN sessions s ON s.owner_id=x.owner_id AND s.id=x.session_id WHERE x.owner_id = ?1 AND x.client_id=?2 AND s.lifecycle NOT IN ('closed','deleted','failed')",params![self.owner_id(),client.client_id],|r|r.get(0))?;
-            ensure!(live < 32, "session_limit");
+            ensure_capacity_in(conn, self.owner_id(), &client)?;
             placement(conn, self.owner_id(), &client, host, cwd, hat)
         } else {
             if matches!(command.tool.as_str(), "session_create" | "session_clone") {
@@ -279,6 +319,11 @@ impl Store {
             ensure!(stored == digest, "request_key_conflict");
             return self.external_receipt_in(&tx, identity, &id);
         }
+        // Capacity is the actionable refusal (close sessions), so it is
+        // checked before anything that could fail for other reasons.
+        if matches!(tool, "session_create" | "session_clone") {
+            ensure_capacity_in(&tx, self.owner_id(), client)?;
+        }
         let source = if tool == "session_clone" {
             Some(
                 args["source_session_id"]
@@ -314,8 +359,6 @@ impl Store {
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("invalid_arguments"))?;
             target_hat = Some(resolved_hat(&tx, self.owner_id(), client, host, cwd)?);
-            let live:i64=tx.query_row("SELECT count(*) FROM external_client_sessions x JOIN sessions s ON s.owner_id=x.owner_id AND s.id=x.session_id WHERE x.owner_id = ?1 AND x.client_id=?2 AND s.lifecycle NOT IN ('closed','deleted','failed')",params![self.owner_id(),client.client_id],|r|r.get(0))?;
-            ensure!(live < 32, "session_limit");
             uuid::Uuid::now_v7().to_string()
         } else {
             let id = args["session_id"]
