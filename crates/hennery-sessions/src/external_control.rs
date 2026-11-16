@@ -232,14 +232,14 @@ pub(crate) fn tools(identity: &ExternalIdentity) -> Vec<Value> {
         for (name, description, properties, required, read_only) in [
             (
                 "session_create",
-                "Create a standalone ACP session on a granted host/root. Returns a durable operation; poll operation_get for admission and launch outcome.",
+                "Create a standalone ACP session on a granted host/root. Returns a durable operation; poll operation_get for admission and launch outcome. Counts toward this client's live session capacity (parked sessions included) and a fixed creation rate limit; see hennery_capabilities.limits.",
                 json!({"request_key":id,"host_id":id,"agent":id,"cwd":{"type":"string","maxLength":4096},"config":{"type":"object","properties":{"model":{"type":"string"},"mode":{"type":"string"},"axes":{"type":"object"},"cache_retention":{"enum":["inherit","5m","1h"]}},"additionalProperties":false}}),
                 vec!["request_key", "host_id", "agent", "cwd"],
                 false,
             ),
             (
                 "session_clone",
-                "Create a fresh standalone session from a scoped source session's reported configuration. Copies settings only; no transcript, native session identity or family relationship.",
+                "Create a fresh standalone session from a scoped source session's reported configuration. Copies settings only; no transcript, native session identity or family relationship. Counts toward this client's live session capacity (parked sessions included) and a fixed creation rate limit; see hennery_capabilities.limits.",
                 json!({"request_key":id,"source_session_id":id}),
                 vec!["request_key", "source_session_id"],
                 false,
