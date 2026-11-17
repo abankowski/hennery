@@ -339,3 +339,26 @@ async fn a_reconnect_resyncs_from_the_registry() {
         }
     );
 }
+
+#[tokio::test]
+async fn a_new_connection_accepts_a_lower_revision() {
+    let setup = Setup::new().await;
+    let _host = setup.start_host();
+    let (mut collector, _) = Collector::accept(&setup.listener).await;
+    collector.sync(5, vec![]).await;
+    assert!(matches!(
+        collector.skill_frame().await,
+        HostFrame::SkillState { revision: 5, .. }
+    ));
+    drop(collector);
+    let (mut collector, _) = Collector::accept(&setup.listener).await;
+    collector.sync(1, vec![]).await;
+    assert_eq!(
+        collector.skill_frame().await,
+        HostFrame::SkillState {
+            revision: 1,
+            applied: vec![],
+            failed: vec![]
+        }
+    );
+}

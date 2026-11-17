@@ -506,6 +506,7 @@ async fn connect_once(
             for (session_id, seq) in committed {
                 uplink.fast_forward(&session_id, seq)?;
             }
+            skills.reset();
         }
         CollectorFrame::HelloError { code, message } => return Err(HelloRejected { code, message }.into()),
         _ => bail!("unexpected collector hello response"),

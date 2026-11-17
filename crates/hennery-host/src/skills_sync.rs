@@ -35,13 +35,20 @@ impl SkillSync {
         }
     }
 
+    /// A new collector connection: its revisions are not comparable with
+    /// the last one's (the collector may have been restored), and it
+    /// resends `skill_sync` after every handshake.
+    pub fn reset(&self) {
+        *self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Pending::default();
+    }
+
     /// `skill_sync`: reconcile, ask for what is missing, and answer at once
     /// when nothing is. A new revision replaces the one in progress; an
-    /// older one is ignored.
+    /// older one is ignored while fetches are pending.
     pub fn on_sync(&self, uplink: &Uplink, revision: u64, items: Vec<SkillSyncItem>) {
         // Held throughout, so frames are applied one at a time.
-        let mut pending = self.pending.lock().expect("skill sync lock");
-        if revision < pending.revision {
+        let mut pending = self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if revision < pending.revision && !pending.waiting.is_empty() {
             return;
         }
         let (applied, failed, fetch) = self.store.reconcile(&items, &self.dirs);
@@ -63,7 +70,7 @@ impl SkillSync {
     /// `skill_archive`: install what was fetched. An archive nobody waits
     /// for (an older revision, another hash) is dropped.
     pub fn on_archive(&self, uplink: &Uplink, id: &str, content_hash: &str, data: &str) {
-        let mut pending = self.pending.lock().expect("skill sync lock");
+        let mut pending = self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(item) = pending
             .waiting
             .get(id)
