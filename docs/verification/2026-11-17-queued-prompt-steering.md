@@ -88,11 +88,22 @@ performed as part of this change.
 
 The final scoped whole-feature review approved all three corrections: refreshed
 capability after reattachment, accurate late admission after dismissal, and
-rejected image recovery. Source commits use Conventional Commits:
+rejected image recovery. The original verified source commits use Conventional Commits:
 
 - `f89cc19d` — `feat(web): add explicit steering for queued messages`
 - `d9b57dc8` — `feat(sessions): steer queued prompts into active turns`
 - `09320f33` — `fix(sessions): preserve steering history after dismissal`
 
-Work remains on the pre-existing feature branch
-`fix/external-mcp-hat-defaults`. The implementation is committed locally.
+## Upstream pull request preparation
+
+The four commits were cherry-picked onto upstream `main` at `3630fc70` on
+`feat/queued-prompt-steering`, without the earlier hat-defaults change (already
+merged upstream). The conflict in `external_clients.rs` retained upstream's
+current capacity migration regression test unchanged. Feature commits are
+`945432a1`, `e1aa8b9b`, `a796e4e2`, and `1c2b5893`.
+
+An additional current-base integration run with `cargo test --offline --locked
+-p hennery-testkit --test e2e queued_steering` stopped before compilation because
+`phc`, required by upstream's updated password dependencies, is absent from the
+local Cargo cache. The test totals above describe the reviewed original source;
+current-base compilation and dependency compatibility require CI confirmation.
