@@ -61,6 +61,7 @@ fn kinds(frames: &[HostFrame]) -> Vec<String> {
                     Some(reason) => format!("pending_resolved:{}:{}", tag(resolution), tag(reason)),
                     None => format!("pending_resolved:{}", tag(resolution)),
                 },
+                SessionBody::SteeringResult { .. } => "steering_result".into(),
                 SessionBody::AnswerResult { delivered, .. } => format!("answer_result:{delivered}"),
                 SessionBody::GitState { .. } => "git_state".to_string(),
                 SessionBody::ProjectRoot { .. } => "project_root".to_string(),

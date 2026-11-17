@@ -328,6 +328,7 @@ pub fn render_ts() -> String {
         frames::AgentIsolation,
         frames::AttachedSession,
         frames::TurnOutcome,
+        frames::SteeringOutcome,
         frames::ParkReason,
         frames::PendingKind,
         frames::PendingResolution,

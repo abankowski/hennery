@@ -541,7 +541,7 @@ describe('useSessionItems', () => {
   })
 })
 
-it('a queue stream snapshot wins over a delayed initial GET and reaches both windows', async () => {
+it.each(['queued', 'uncertain'])('a %s queue stream snapshot wins over a delayed initial GET and reaches both windows', async state => {
   const pending = deferred<Response>()
   const streams: LiveStream[] = []
   const fixture = routed(call => {
@@ -555,7 +555,7 @@ it('a queue stream snapshot wins over a delayed initial GET and reaches both win
   one.start(); two.start()
   try {
     await waitFor(() => expect(streams).toHaveLength(2))
-    const queued = [{ id: 'q', state: 'queued', reason: null, content: [{ type: 'text', text: 'From another window' }] }]
+    const queued = [{ id: 'q', state, reason: state === 'uncertain' ? 'Check the transcript before sending again.' : null, content: [{ type: 'text', text: 'From another window' }] }]
     for (const stream of streams) stream.event('queue_changed', queued, 'e1:2')
     await waitFor(() => expect(one.getSnapshot().queue).toEqual(queued))
     await waitFor(() => expect(two.getSnapshot().queue).toEqual(queued))

@@ -62,6 +62,8 @@ pub enum Capability {
     OperatorResume,
     /// Reconnect snapshots include unread prompt commands as well as running turns.
     PromptMailboxSnapshot,
+    /// Routes explicit queue steering to a supporting attached adapter.
+    Steering,
 }
 
 /// The longest agent data root a host may report (plan 9d, O12's shape
@@ -494,6 +496,16 @@ pub enum TurnOutcome {
     Interrupted,
 }
 
+/// Admission reported by the steering extension, independent of turn completion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SteeringOutcome {
+    Injected,
+    PromptRequired,
+    Rejected { reason: String },
+    Uncertain,
+}
+
 /// Why a session was parked (ACP core §3.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -610,6 +622,10 @@ impl SessionConfig {
 /// mode deltas are ignored.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Indexed {
+    /// The attached adapter advertised the steering extension in initialize.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub steering_supported: bool,
     /// Host-owned launch support and requested retention, not provider readback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_retention: Option<crate::usage::CacheRetention>,
@@ -709,6 +725,11 @@ pub enum SessionBody {
         request_id: String,
         code: String,
         message: String,
+    },
+    /// Outboxed so a late admission acknowledgement survives a reconnect.
+    SteeringResult {
+        request_id: String,
+        outcome: SteeringOutcome,
     },
     /// The prompt reached the adapter. Resolves the collector's prompt waiter.
     TurnStarted { request_id: String, turn_id: String },
@@ -975,6 +996,7 @@ impl CollectorFrame {
             | Self::HelloError { .. }
             | Self::StartSession { .. }
             | Self::ResumeSession { .. }
+            | Self::Steer { .. }
             | Self::Prompt { .. }
             | Self::DelegatedAttach { .. }
             | Self::DelegatedPrompt { .. }
@@ -1003,6 +1025,7 @@ impl CollectorFrame {
             Self::HelloAck { .. }
             | Self::CancelCatalogProbe { .. }
             | Self::HelloError { .. }
+            | Self::Steer { .. }
             | Self::Prompt { .. }
             | Self::DelegatedPrompt { .. }
             | Self::ProbeCatalog { .. }
@@ -1160,6 +1183,13 @@ pub enum CollectorFrame {
         /// `session/load` (the spike).
         #[serde(flatten)]
         mcp: McpDelivery,
+    },
+    Steer {
+        request_id: String,
+        session_id: String,
+        turn_id: String,
+        #[ts(type = "unknown[]")]
+        content: Vec<Value>,
     },
     Prompt {
         request_id: String,

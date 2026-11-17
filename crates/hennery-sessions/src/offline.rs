@@ -16,6 +16,11 @@ pub const OFFLINE_THRESHOLD: std::time::Duration = std::time::Duration::from_sec
 /// Called when a host connection ends: presume its sessions parked if the
 /// host has not connected again within the threshold.
 pub fn after_disconnect(state: &AppState, host_id: String, conn_id: u64) {
+    if let Some(Err(error)) = state.hub.if_offline_since(&host_id, Some(conn_id), || {
+        state.store.uncertain_steering_for_host(&host_id)
+    }) {
+        tracing::warn!(%host_id, %error, "steering uncertainty deferred");
+    }
     watch(state.clone(), host_id, Some(conn_id));
 }
 

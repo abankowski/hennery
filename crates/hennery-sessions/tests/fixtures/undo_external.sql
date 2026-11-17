@@ -1,3 +1,12 @@
+-- Rewind steering (v45) before rebuilding a historical fixture.
+DROP TRIGGER steering_detached;
+DROP TRIGGER steering_endpoint_end;
+DROP INDEX steering_deadlines;
+ALTER TABLE session_dispatch_queue DROP COLUMN steering_failure;
+ALTER TABLE session_dispatch_queue DROP COLUMN steering_deadline;
+DROP INDEX steering_admission_request;
+DROP INDEX steering_attempt_request;
+ALTER TABLE sessions DROP COLUMN steering_supported;
 DROP INDEX IF EXISTS events_work_last_message;
 DROP INDEX IF EXISTS events_work_last_activity;
 DROP TRIGGER external_scope_purge;

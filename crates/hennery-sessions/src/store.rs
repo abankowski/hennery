@@ -480,6 +480,7 @@ END;",
     include_str!("external_scope.sql"),
     include_str!("work.sql"),
     include_str!("external_capacity.sql"),
+    include_str!("steering.sql"),
 ];
 
 /// The most distinct (agent session id, roots) pairs a session records
@@ -1039,7 +1040,7 @@ fn image_hashes<'a>(blocks: impl IntoIterator<Item = &'a Value>) -> Vec<(usize, 
 
 /// Link a `user_turn` event to the images it shows (ACP core §8): one row
 /// per image block, at its index in the content.
-fn link_attachments(tx: &Transaction<'_>, owner: &str, event_id: i64, content: &Value) -> Result<()> {
+pub(crate) fn link_attachments(tx: &Transaction<'_>, owner: &str, event_id: i64, content: &Value) -> Result<()> {
     for (position, sha256) in image_hashes(content.as_array().into_iter().flatten()) {
         tx.execute(
             "INSERT INTO event_attachments(event_id, sha256, position, owner_id)
@@ -2686,16 +2687,17 @@ impl Store {
         self.catalog_in(&self.conn(), session_id)
     }
     pub(crate) fn catalog_in(&self, conn: &Connection, session_id: &str) -> Result<Option<SessionCatalog>> {
-        let row: Option<(ConfigColumns, Option<String>, Option<String>)> = conn
+        let row: Option<(ConfigColumns, Option<String>, Option<String>, bool)> = conn
             .query_row(
-                "SELECT s.model, s.mode, s.config_axes, c.config_options, c.commands
+                "SELECT s.model, s.mode, s.config_axes, c.config_options, c.commands,
+                 s.steering_supported AND s.lifecycle='active' AND s.presumed_parked=0 AND s.close_requested=0
                  FROM sessions s LEFT JOIN session_catalog c ON c.session_id = s.id AND c.owner_id = s.owner_id
                  WHERE s.id = ?1 AND s.lifecycle <> 'deleted' AND s.owner_id = ?2",
                 [session_id, &self.owner],
-                |r| Ok(((r.get(0)?, r.get(1)?, r.get(2)?), r.get(3)?, r.get(4)?)),
+                |r| Ok(((r.get(0)?, r.get(1)?, r.get(2)?), r.get(3)?, r.get(4)?, r.get(5)?)),
             )
             .optional()?;
-        let Some((config, options, commands)) = row else {
+        let Some((config, options, commands, steering_supported)) = row else {
             return Ok(None);
         };
         let list = |json: Option<String>| -> Result<Vec<Value>> {
@@ -2705,6 +2707,7 @@ impl Store {
             })
         };
         Ok(Some(SessionCatalog {
+            steering_supported,
             session_id: session_id.to_string(),
             config_options: list(options)?,
             commands: list(commands)?,
@@ -3008,7 +3011,7 @@ impl Store {
              AND NOT EXISTS(SELECT 1 FROM hosts h WHERE h.owner_id = ?3 AND h.id=sessions.host_id AND h.revoked_at IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM purged_hats p
                 WHERE p.owner_id = ?3 AND p.hat_id = sessions.hat_id)
-             AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?3 AND q.target_id = ?1 AND q.state IN ('queued','waiting_config','awaiting_reconciliation'))
+             AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?3 AND q.target_id = ?1 AND q.state IN ('queued','waiting_config','awaiting_reconciliation','steering'))
              AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?3 AND p.session_id = ?1 AND p.state='open')",
             params![session_id, turn_id, self.owner],
         )?;
@@ -4270,9 +4273,9 @@ impl Store {
                     mark_unapplied(&tx, &self.owner, fact_id)?;
                 } else {
                     tx.execute(
-                        "UPDATE sessions SET mcp_source_applied = mcp_source_requested
+                        "UPDATE sessions SET mcp_source_applied = mcp_source_requested, steering_supported=?3
                          WHERE owner_id = ?1 AND id = ?2",
-                        params![self.owner, session_id],
+                        params![self.owner, session_id, indexed.steering_supported],
                     )?;
                     // The catalogue after the start's switches (P-13).
                     store_catalogue(&tx, &self.owner, session_id, indexed, &ts)?;
@@ -4321,6 +4324,9 @@ impl Store {
                     // resume's fresh token.
                     cut = mcp.revoke_in(&tx, session_id)?;
                 }
+            }
+            SessionBody::SteeringResult { request_id, outcome } => {
+                created.extend(self.settle_steering_in(&tx, session_id, request_id, outcome)?);
             }
             SessionBody::TurnStarted { turn_id, .. } => {
                 // A released queue attempt has a replacement at the same FIFO
@@ -5038,10 +5044,19 @@ impl Store {
     }
 }
 
-/// A range of a session's applied events, in order (`events_between`).
-const EVENTS_BETWEEN: &str = "SELECT event_id, host_seq, kind, body, ts FROM events
-     WHERE session_id = ?1 AND event_id > ?2 AND event_id <= ?3 AND applied = 1 AND owner_id = ?4
-     ORDER BY event_id LIMIT ?5";
+/// Fold a late admission at its attempt's position. Its canonical event
+/// invalidates streams past that position. Raw cursors always see the
+/// immutable attempt and admission in append order.
+const EVENTS_BETWEEN: &str = "SELECT e.event_id,e.host_seq,
+    CASE WHEN admitted.event_id IS NOT NULL THEN 'user_steering'
+         WHEN e.kind='user_steering' AND json_extract(e.body,'$.display_at') IS NOT NULL THEN 'steering_history_changed'
+         ELSE e.kind END,COALESCE(admitted.body,e.body),e.ts
+    FROM events e LEFT JOIN events admitted ON e.kind='steering_attempt'
+        AND admitted.owner_id = ?4 AND admitted.session_id=?1 AND admitted.kind='user_steering'
+        AND json_extract(admitted.body,'$.request_id')=json_extract(e.body,'$.request_id')
+        AND json_extract(admitted.body,'$.display_at')=e.event_id AND admitted.event_id<=?6
+    WHERE e.owner_id = ?4 AND e.session_id=?1 AND e.event_id>?2 AND e.event_id<=?3
+      AND e.applied=1 ORDER BY e.event_id LIMIT ?5";
 
 /// A session's group starts before an event, newest first (`group_starts`).
 const GROUP_STARTS: &str = "SELECT event_id FROM events
@@ -5230,9 +5245,25 @@ impl Store {
     /// oldest first, at most `limit`: the view folds them a batch at a
     /// time.
     pub fn events_between(&self, session_id: &str, after: i64, until: i64, limit: u32) -> Result<Vec<EventDto>> {
+        self.view_events_between(session_id, after, until, limit, until)
+    }
+
+    /// A historical page ends before the next group but may include admissions
+    /// confirmed up to the page revision.
+    pub(crate) fn view_events_between(
+        &self,
+        session_id: &str,
+        after: i64,
+        until: i64,
+        limit: u32,
+        revision: i64,
+    ) -> Result<Vec<EventDto>> {
         let conn = self.view_conn();
         let mut stmt = conn.prepare(EVENTS_BETWEEN)?;
-        let rows = stmt.query_map(params![session_id, after, until, self.owner, limit], EventRow::read)?;
+        let rows = stmt.query_map(
+            params![session_id, after, until, self.owner, limit, revision],
+            EventRow::read,
+        )?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?.event(session_id)?);
@@ -5470,6 +5501,7 @@ fn body_kind(body: &SessionBody) -> &'static str {
         SessionBody::PendingOpened { .. } => "pending_opened",
         SessionBody::PendingResolved { .. } => "pending_resolved",
         SessionBody::AnswerResult { .. } => "answer_result",
+        SessionBody::SteeringResult { .. } => "steering_result",
         SessionBody::GitState { .. } => "git_state",
         SessionBody::ProjectRoot { .. } => "project_root",
     }
@@ -5612,7 +5644,7 @@ mod tests {
     /// index of that session's, and sort nothing; the owner's changed
     /// sessions are a range of the table. The indexes are those plan
     /// 10b-iii (`events_by_kind`) and the smoke test's F2 fix
-    /// (`events_by_session`) made: the view adds none.
+    /// (`events_by_session`) made, plus the indexed steering admission lookup.
     #[test]
     fn the_views_reads_walk_their_indexes() {
         let dir = tempfile::tempdir().unwrap();
@@ -5632,9 +5664,10 @@ mod tests {
         for (sql, args, uses) in [
             (
                 EVENTS_BETWEEN,
-                5,
+                6,
                 "USING INDEX events_by_session (session_id=? AND event_id>? AND event_id<?)",
             ),
+            (EVENTS_BETWEEN, 6, "USING INDEX steering_admission_request"),
             (
                 GROUP_STARTS,
                 4,
@@ -6348,6 +6381,24 @@ mod tests {
             ]
         );
         hennery_kernel::db::migrate(&mut conn, MIGRATIONS).unwrap();
+    }
+
+    #[test]
+    fn upgrading_a_store_without_the_capacity_column_reads_grants_back_as_32() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("upgrade.db");
+        let mut conn = hennery_kernel::db::open(&db).unwrap();
+        let owner = hennery_kernel::db::kernel_owner(&mut conn).unwrap();
+        hennery_kernel::db::migrate(&mut conn, &MIGRATIONS[..43]).unwrap();
+        conn.execute("INSERT INTO external_clients(owner_id,id,label,token_hash,read_metadata,existing_sessions,revision,expires_at)
+                VALUES (?1,'legacy','Desktop','hash',1,1,1,0)",[&owner]).unwrap();
+        assert!(crate::external_clients::record(&conn, &owner, "legacy").is_err());
+        drop(conn);
+        let reopened = Store::open(&db).unwrap();
+        let grant = crate::external_clients::record(&reopened.conn(), &owner, "legacy")
+            .unwrap()
+            .unwrap();
+        assert_eq!(grant.session_capacity, 32);
     }
 
     #[test]

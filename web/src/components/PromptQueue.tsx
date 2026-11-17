@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useClient } from '../app-client'
 import { messageOf } from '../api/errors'
-import { editQueuedPrompt, removeQueuedPrompt } from '../api/turns'
+import { editQueuedPrompt, removeQueuedPrompt, steerQueuedPrompt } from '../api/turns'
+import { attachmentHref } from './items/UserTurn'
 import type { QueuedPrompt } from '../generated/protocol'
 
 export function queuedText(item: QueuedPrompt): string {
@@ -15,7 +16,7 @@ interface EditDraft {
 }
 
 /** Queue edits have their own draft; they never replace the ordinary composer. */
-export default function PromptQueue({ sessionId, items, changed }: { sessionId: string; items: QueuedPrompt[]; changed?: () => Promise<void> }) {
+export default function PromptQueue({ sessionId, items, changed, canSteer = false }: { sessionId: string; items: QueuedPrompt[]; canSteer?: boolean; changed?: () => Promise<void> }) {
   const client = useClient()
   const [drafts, setDrafts] = useState<Record<string, EditDraft>>({})
   const [busy, setBusy] = useState(false)
@@ -99,7 +100,7 @@ export default function PromptQueue({ sessionId, items, changed }: { sessionId: 
         const saveEdit = () => {
           if (draft && !interrupted && !busy) void mutate(() => editQueuedPrompt(client, sessionId, id, draft.text), id)
         }
-        return <li key={id} className={item?.state === 'failed' ? 'queue-failed' : undefined}>
+        return <li key={id} className={item?.state === 'failed' || item?.state === 'uncertain' ? 'queue-failed' : undefined}>
           <div className="queue-copy">
             <span className="queue-number">{number}</span>
             <div>
@@ -112,6 +113,11 @@ export default function PromptQueue({ sessionId, items, changed }: { sessionId: 
               }} disabled={busy} /> : <p><bdi>{preview.length > 240 ? `${preview.slice(0, 240)}…` : preview || 'Image message'}</bdi></p>}
               {interrupted && <p className="queue-reason" role="status">Already sending; your edit wasn’t applied.</p>}
               {images > 0 && <small>{images} {images === 1 ? 'image' : 'images'}</small>}
+              {(item?.state === 'failed' || item?.state === 'uncertain') && images > 0 && <div className="queue-attachments">{item.content.filter(block => block.type === 'image').map((block, index) => {
+                const href = attachmentHref(block.sha256)
+                return href && <a key={`${block.sha256}-${index}`} href={href} target="_blank" rel="noopener noreferrer" aria-label={`Open image ${index + 1} from queued message ${number}`}>Open image {index + 1}</a>
+              })}</div>}
+              {item?.state === 'uncertain' && <small role="status">Delivery uncertain</small>}
               {item?.state === 'delivering' && <small role="status">Delivering…</small>}
               {item?.reason && <p className="queue-reason"><bdi>{item.reason}</bdi></p>}
               {manualCopy === id && <textarea readOnly aria-label={`Full text of queued message ${number}`} value={preview} onFocus={event => event.currentTarget.select()} />}
@@ -125,8 +131,9 @@ export default function PromptQueue({ sessionId, items, changed }: { sessionId: 
               <button className="btn btn-ghost btn-sm" disabled={busy} onClick={saveEdit}>Save</button>
               <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => dismissEdit(id)}>Cancel edit</button>
             </> : item?.state === 'queued' && <button className="btn btn-ghost btn-sm" disabled={busy} aria-label={`Edit queued message ${number}`} onClick={() => { setDrafts(previous => ({ ...previous, [id]: { text: preview, number, interrupted: false } })); setError(null); setCopied(null) }}>Edit</button>}
-            {item?.state === 'failed' && <button className="btn btn-ghost btn-sm" onClick={() => void copy(id, preview)}>{copied === id ? 'Copied' : 'Copy'}</button>}
-            {item && item.state !== 'delivering' && <button className="btn btn-ghost btn-sm" disabled={busy} aria-label={`${item.state === 'failed' ? 'Dismiss' : 'Remove'} queued message ${number}`} onClick={() => void mutate(() => removeQueuedPrompt(client, sessionId, id), interrupted ? undefined : id)}>{item.state === 'failed' ? 'Dismiss' : 'Remove'}</button>}
+            {!draft && canSteer && item?.state === 'queued' && <button className="btn btn-ghost btn-sm" disabled={busy} aria-label={`Send queued message ${number} as steering`} onClick={() => void mutate(() => steerQueuedPrompt(client, sessionId, id))}>Send as steering</button>}
+            {(item?.state === 'failed' || item?.state === 'uncertain') && preview.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => void copy(id, preview)}>{copied === id ? 'Copied' : 'Copy'}</button>}
+            {item && item.state !== 'delivering' && <button className="btn btn-ghost btn-sm" disabled={busy} aria-label={`${item.state === 'failed' || item.state === 'uncertain' ? 'Dismiss' : 'Remove'} queued message ${number}`} onClick={() => void mutate(() => removeQueuedPrompt(client, sessionId, id), interrupted ? undefined : id)}>{item.state === 'failed' || item.state === 'uncertain' ? 'Dismiss' : 'Remove'}</button>}
           </div>
         </li>
       })}

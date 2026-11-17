@@ -114,7 +114,7 @@ pub(crate) fn snapshot_in(
     let (operator, delegation) = conn.query_row(
         "SELECT COALESCE(sum(q.origin='operator'),0),COALESCE(sum(q.origin='parent'),0)
          FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2
-         AND q.state IN ('queued','waiting_config','awaiting_reconciliation')",
+         AND q.state IN ('queued','waiting_config','awaiting_reconciliation','steering')",
         params![owner, session],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;

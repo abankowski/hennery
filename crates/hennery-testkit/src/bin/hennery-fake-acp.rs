@@ -68,6 +68,7 @@ async fn main() -> agent_client_protocol::Result<()> {
             .expect("write adapter group");
     }
 
+    let steering = script.steering_outcome.is_some();
     let prompt_queueing = script.prompt_queueing;
     let load_session = !script.no_load_session;
     let images = !script.no_images;
@@ -123,19 +124,25 @@ async fn main() -> agent_client_protocol::Result<()> {
                         booleans_as_selects(&mut catalogue.lock().unwrap());
                     }
                     responder.respond(
-                        InitializeResponse::new(req.protocol_version).agent_capabilities(
-                            AgentCapabilities::new()
-                                .meta(prompt_queueing.then(|| {
-                                    [("promptQueueing".into(), serde_json::json!(true))]
-                                        .into_iter()
-                                        .collect::<serde_json::Map<String, serde_json::Value>>()
-                                }))
-                                .load_session(load_session)
-                                .session_capabilities(
-                                    SessionCapabilities::new().delete(SessionDeleteCapabilities::new()),
-                                )
-                                .prompt_capabilities(PromptCapabilities::new().image(images)),
-                        ),
+                        InitializeResponse::new(req.protocol_version)
+                            .meta(steering.then(|| {
+                                [("steering".into(), serde_json::json!({"supported":true}))]
+                                    .into_iter()
+                                    .collect()
+                            }))
+                            .agent_capabilities(
+                                AgentCapabilities::new()
+                                    .meta(prompt_queueing.then(|| {
+                                        [("promptQueueing".into(), serde_json::json!(true))]
+                                            .into_iter()
+                                            .collect::<serde_json::Map<String, serde_json::Value>>()
+                                    }))
+                                    .load_session(load_session)
+                                    .session_capabilities(
+                                        SessionCapabilities::new().delete(SessionDeleteCapabilities::new()),
+                                    )
+                                    .prompt_capabilities(PromptCapabilities::new().image(images)),
+                            ),
                     )
                 }
             },
@@ -571,6 +578,33 @@ async fn main() -> agent_client_protocol::Result<()> {
                         responder.respond(response)
                     })
                 }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: UntypedMessage, responder, cx| {
+                if req.method() != "_session/steering" || !steering {
+                    return responder.respond_with_error(agent_client_protocol::Error::method_not_found());
+                }
+                log_session(&script, req.method(), req.params());
+                let script = script.clone();
+                cx.spawn(async move {
+                    if let Some(path) = &script.steering_gate {
+                        while !std::path::Path::new(path).exists() {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    }
+                    match script.steering_outcome.as_deref() {
+                        Some("internal_error") => {
+                            responder.respond_with_error(agent_client_protocol::Error::internal_error())
+                        }
+                        Some("invalid_params") => {
+                            responder.respond_with_error(agent_client_protocol::Error::new(-32602, "Rejected input"))
+                        }
+                        Some("disconnect") => std::process::exit(3),
+                        _ => responder.respond(serde_json::json!({"outcome": script.steering_outcome})),
+                    }
+                })
             },
             agent_client_protocol::on_receive_request!(),
         )

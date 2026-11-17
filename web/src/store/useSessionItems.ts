@@ -144,7 +144,7 @@ function isCatalog(value: unknown): value is SessionCatalog {
 }
 
 function isQueue(value: unknown): value is QueuedPrompt[] {
-  return Array.isArray(value) && value.every(item => item && typeof item === 'object' && typeof item.id === 'string' && Array.isArray(item.content) && ['queued', 'delivering', 'failed'].includes(item.state) && (item.reason === null || typeof item.reason === 'string'))
+  return Array.isArray(value) && value.every(item => item && typeof item === 'object' && typeof item.id === 'string' && Array.isArray(item.content) && ['queued', 'delivering', 'failed', 'uncertain'].includes(item.state) && (item.reason === null || typeof item.reason === 'string'))
 }
 
 export class SessionItemsController {

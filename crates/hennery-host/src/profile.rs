@@ -215,6 +215,16 @@ impl Secrets {
     /// into one is redacted is plan 8e's open question.
     pub fn redact_body(&self, body: SessionBody) -> SessionBody {
         match body {
+            SessionBody::SteeringResult { request_id, outcome } => {
+                use hennery_proto::frames::SteeringOutcome;
+                let outcome = match outcome {
+                    SteeringOutcome::Rejected { reason } => SteeringOutcome::Rejected {
+                        reason: crate::adapter::scrub(&self.redact(&reason)).chars().take(512).collect(),
+                    },
+                    other => other,
+                };
+                SessionBody::SteeringResult { request_id, outcome }
+            }
             SessionBody::StartFailed {
                 request_id,
                 code,

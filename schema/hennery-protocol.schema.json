@@ -406,6 +406,11 @@
           "const": "prompt_mailbox_snapshot",
           "description": "Reconnect snapshots include unread prompt commands as well as running turns.",
           "type": "string"
+        },
+        {
+          "const": "steering",
+          "description": "Routes explicit queue steering to a supporting attached adapter.",
+          "type": "string"
         }
       ]
     },
@@ -1034,6 +1039,35 @@
             "agent",
             "cwd",
             "agent_session_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "content": {
+              "items": true,
+              "type": "array"
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "turn_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "steer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id",
+            "session_id",
+            "turn_id",
+            "content"
           ],
           "type": "object"
         },
@@ -3016,6 +3050,10 @@
             }
           ],
           "description": "On `pending_opened`: the request's id, kind, option ids and title."
+        },
+        "steering_supported": {
+          "description": "The attached adapter advertised the steering extension in initialize.",
+          "type": "boolean"
         },
         "title": {
           "description": "On a `session_info_update` that names a title: the title the agent\nreported, as it sent it; empty when it cleared it (ACP `null`). The\ncollector normalises and caps it for the session list.",
@@ -5399,7 +5437,7 @@
           ]
         },
         "state": {
-          "description": "queued, delivering, or failed. Only queued items can be edited.",
+          "description": "queued, delivering, uncertain, or failed. Only queued items can be edited.",
           "type": "string"
         }
       },
@@ -5782,6 +5820,27 @@
           "type": "object"
         },
         {
+          "description": "Outboxed so a late admission acknowledgement survives a reconnect.",
+          "properties": {
+            "kind": {
+              "const": "steering_result",
+              "type": "string"
+            },
+            "outcome": {
+              "$ref": "#/$defs/SteeringOutcome"
+            },
+            "request_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "request_id",
+            "outcome"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The prompt reached the adapter. Resolves the collector's prompt waiter.",
           "properties": {
             "kind": {
@@ -6144,6 +6203,10 @@
         },
         "session_id": {
           "type": "string"
+        },
+        "steering_supported": {
+          "description": "The active attachment supports delivery into a running turn.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -6926,6 +6989,63 @@
         "child_id"
       ],
       "type": "object"
+    },
+    "SteeringOutcome": {
+      "description": "Admission reported by the steering extension, independent of turn completion.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "injected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "prompt_required",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "rejected",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "uncertain",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "StepUpRequest": {
       "description": "`POST /api/auth/step-up/password` (kernel spec §3.4): the owner's\npassword again, within a session. 204 on success. `Debug` leaves the\npassword out.",

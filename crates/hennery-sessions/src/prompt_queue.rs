@@ -18,7 +18,7 @@ fn bounds(tx: &Transaction<'_>, owner: &str, target: &str, exclude: &str, bytes:
     let (count, used): (i64, i64) = tx.query_row(
         "SELECT COUNT(*),COALESCE(SUM(length(CAST(payload AS BLOB))+image_bytes),0)
          FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id=?2 AND operation_id<>?3
-         AND state IN ('queued','waiting_config','awaiting_reconciliation')",
+         AND state IN ('queued','waiting_config','awaiting_reconciliation','steering','uncertain')",
         params![owner, target, exclude],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
@@ -34,6 +34,9 @@ fn hashes(tx: &Transaction<'_>, owner: &str, operation: &str) -> Result<BTreeSet
 }
 
 pub fn failure_reason(code: &str) -> String {
+    if let Some(reason) = code.strip_prefix("steering_rejected:") {
+        return format!("Steering was rejected. {reason}");
+    }
     match code {
         "session_closed" | "endpoint_unavailable" => {
             "The session was closed. Copy this message to send it in another session."
@@ -59,12 +62,39 @@ pub fn failure_reason(code: &str) -> String {
 }
 
 impl Store {
+    /// Rehydrate the stored queue payload for either ordinary or steering admission.
+    pub(crate) fn queued_content(
+        &self,
+        blocks: &[StoredBlock],
+        images: bool,
+    ) -> Result<Option<Vec<serde_json::Value>>> {
+        let mut sent = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            match block {
+                StoredBlock::Text { text } => sent.push(serde_json::json!({"type":"text","text":text})),
+                StoredBlock::Image { mime_type, sha256, .. } => {
+                    let Some(bytes) = self
+                        .attachments
+                        .as_deref()
+                        .filter(|_| images)
+                        .and_then(|dir| crate::attachments::read(dir, sha256).ok().flatten())
+                    else {
+                        return Ok(None);
+                    };
+                    sent.push(serde_json::json!({"type":"image","mimeType":mime_type,"data":STANDARD.encode(bytes)}));
+                }
+                StoredBlock::PluginContext { .. } => anyhow::bail!("invalid queued content"),
+            }
+        }
+        Ok(Some(sent))
+    }
+
     /// Also used to keep immediate prompts behind an accepted FIFO head.
     pub fn prompt_must_queue(&self, session: &str) -> Result<bool> {
         Ok(self.conn().query_row(
             "SELECT open_turn_id IS NOT NULL OR lifecycle='parked' OR activity='blocked' OR prompt_queue_held<>0
              OR EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=?2 AND p.state='open')
-             OR EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.state IN ('queued','waiting_config','awaiting_reconciliation'))
+             OR EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.state IN ('queued','waiting_config','awaiting_reconciliation','steering'))
              FROM sessions WHERE owner_id = ?1 AND id=?2", params![self.owner_id(),session], |r| r.get(0),
         )?)
     }
@@ -153,7 +183,7 @@ impl Store {
             "SELECT q.operation_id,q.payload,q.state,o.code FROM session_dispatch_queue q
              JOIN session_operations o ON o.owner_id = ?1 AND o.operation_id=q.operation_id
              WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.origin='operator'
-             AND q.state IN ('queued','waiting_config','awaiting_reconciliation','failed') ORDER BY q.position",
+             AND q.state IN ('queued','waiting_config','awaiting_reconciliation','steering','uncertain','failed') ORDER BY q.position",
         )?;
         let raw = stmt
             .query_map(params![self.owner_id(), session], |r| {
@@ -170,9 +200,17 @@ impl Store {
                 Ok(QueuedPrompt {
                     id,
                     content: serde_json::from_str(&payload)?,
-                    reason: (state == "failed").then(|| failure_reason(code.as_deref().unwrap_or("failed"))),
+                    reason: match state.as_str() {
+                        "uncertain" => Some(
+                            "The host could not confirm steering delivery. Check the transcript before resending."
+                                .into(),
+                        ),
+                        "failed" => Some(failure_reason(code.as_deref().unwrap_or("failed"))),
+                        _ => None,
+                    },
                     state: match state.as_str() {
-                        "awaiting_reconciliation" => "delivering",
+                        "awaiting_reconciliation" | "steering" => "delivering",
+                        "uncertain" => "uncertain",
                         "failed" => "failed",
                         _ => "queued",
                     }
@@ -212,7 +250,7 @@ impl Store {
         let images = hashes(&tx, self.owner_id(), id)?;
         let changed=tx.execute(
             "DELETE FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id=?2 AND operation_id=?3 AND origin='operator'
-             AND state IN ('queued','waiting_config','failed')",params![self.owner_id(),session,id],
+             AND state IN ('queued','waiting_config','failed','uncertain')",params![self.owner_id(),session,id],
         )?;
         if changed == 0 {
             return Ok(false);
@@ -280,7 +318,7 @@ impl Store {
              AND s.open_turn_id IS NULL AND COALESCE(s.activity,'idle')<>'blocked' AND s.close_requested=0
              AND s.configuration_error IS NULL AND s.presumed_parked=0 AND s.prompt_queue_held=0
              AND NOT EXISTS(SELECT 1 FROM hosts h WHERE h.owner_id = ?1 AND h.id=s.host_id AND h.revoked_at IS NOT NULL)
-             AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.origin='operator' AND q.state='awaiting_reconciliation')
+             AND NOT EXISTS(SELECT 1 FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2 AND q.origin='operator' AND q.state IN ('awaiting_reconciliation','steering'))
              AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.owner_id = ?1 AND p.session_id=?2 AND p.state='open')
              AND (SELECT origin FROM session_dispatch_queue q WHERE q.owner_id = ?1 AND q.target_id=?2
                  AND q.state IN ('queued','waiting_config') ORDER BY position LIMIT 1)='operator'
@@ -375,40 +413,11 @@ impl Store {
             };
         }
         let stored: Vec<StoredBlock> = serde_json::from_str(&payload)?;
-        let mut sent = Vec::new();
-        for block in &stored {
-            match block {
-                StoredBlock::Text { text } => sent.push(serde_json::json!({"type":"text","text":text})),
-                StoredBlock::Image { mime_type, sha256, .. } => {
-                    if !hub.has_capability(&host, Capability::Images) {
-                        self.fail_operator_item_in(&tx, &id, "image_unavailable")?;
-                        tx.commit()?;
-                        return Ok(false);
-                    }
-                    let bytes = self
-                        .attachments
-                        .as_deref()
-                        .map(|dir| crate::attachments::read(dir, sha256))
-                        .transpose();
-                    let bytes = match bytes {
-                        Ok(bytes) => bytes,
-                        Err(_) => {
-                            self.fail_operator_item_in(&tx, &id, "image_unavailable")?;
-                            tx.commit()?;
-                            return Ok(false);
-                        }
-                    }
-                    .flatten();
-                    let Some(bytes) = bytes else {
-                        self.fail_operator_item_in(&tx, &id, "image_unavailable")?;
-                        tx.commit()?;
-                        return Ok(false);
-                    };
-                    sent.push(serde_json::json!({"type":"image","mimeType":mime_type,"data":STANDARD.encode(bytes)}));
-                }
-                StoredBlock::PluginContext { .. } => anyhow::bail!("invalid queued content"),
-            }
-        }
+        let Some(sent) = self.queued_content(&stored, hub.has_capability(&host, Capability::Images))? else {
+            self.fail_operator_item_in(&tx, &id, "image_unavailable")?;
+            tx.commit()?;
+            return Ok(false);
+        };
         let turn = uuid::Uuid::now_v7().to_string();
         tx.execute(
             "UPDATE sessions SET open_turn_id=?3 WHERE owner_id = ?1 AND id=?2",
@@ -467,13 +476,18 @@ impl Store {
     }
 
     pub(crate) fn fail_operator_queue_in(&self, tx: &Transaction<'_>, session: &str, code: &str) -> Result<()> {
+        tx.execute(
+            "UPDATE session_dispatch_queue SET steering_failure=COALESCE(steering_failure,?3)
+             WHERE owner_id = ?1 AND target_id=?2 AND state IN ('steering','uncertain')",
+            params![self.owner_id(), session, code],
+        )?;
         tx.execute("UPDATE session_operations SET state='failed',code=?3 WHERE owner_id = ?1 AND child_id=?2 AND tool='operator_prompt' AND state IN ('queued','waiting_config')",params![self.owner_id(),session,code])?;
         tx.execute("UPDATE session_dispatch_queue SET state='failed' WHERE owner_id = ?1 AND target_id=?2 AND origin='operator' AND state IN ('queued','waiting_config')",params![self.owner_id(),session])?;
         Ok(())
     }
 
     pub(crate) fn operator_queue_fenced_in(&self, tx: &Transaction<'_>, session: &str) -> Result<bool> {
-        Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id=?2 AND origin='operator' AND state='awaiting_reconciliation')",params![self.owner_id(),session],|r|r.get(0))?)
+        Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM session_dispatch_queue WHERE owner_id = ?1 AND target_id=?2 AND origin='operator' AND state IN ('awaiting_reconciliation','steering'))",params![self.owner_id(),session],|r|r.get(0))?)
     }
 
     pub(crate) fn fail_operator_item_in(&self, tx: &Transaction<'_>, id: &str, code: &str) -> Result<()> {

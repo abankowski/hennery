@@ -1081,3 +1081,29 @@ fn review_answer_cancellation_reopens_only_undelivered_open_questions() {
         "terminal questions never reopen"
     );
 }
+
+#[test]
+fn confirmed_steering_adds_operator_input_without_resetting_the_group() {
+    let items = fold(
+        &[
+            turn(1, "original"),
+            chunk(2, "agent_message_chunk", "before"),
+            ev(
+                3,
+                "steering_result",
+                json!({"request_id":"r","outcome":{"kind":"injected"}}),
+            ),
+            ev(
+                4,
+                "user_steering",
+                json!({"turn_id":"original","content":[{"type":"text","text":"steer"}],"origin":{"kind":"operator"}}),
+            ),
+            chunk(5, "agent_message_chunk", "after"),
+        ],
+        &none,
+    );
+    assert_eq!(kinds(&items), ["user_turn", "message", "user_turn", "message"]);
+    assert_eq!(items[2].id, "original:2");
+    assert_eq!(serde_json::to_value(&items[2]).unwrap()["content"][0]["text"], "steer");
+    assert!(items.iter().all(|i| i.turn_id.as_deref() == Some("original")));
+}

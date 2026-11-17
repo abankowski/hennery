@@ -281,7 +281,7 @@ export type SessionConfig = { cache_retention?: CacheRetention, model?: string |
  * collector never sends a frame that needs a capability to a host that
  * lacks it.
  */
-export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "cache_retention" | "idle_timeout" | "resolve_path" | "forget_session" | "mcp_servers" | "mcp_source_policy" | "mcp_native_sources" | "catalog_probe" | "catalog_probe_cancel" | "delegation_config" | "operator_resume" | "prompt_mailbox_snapshot";
+export type Capability = "plugin_context" | "projects" | "images" | "park" | "idle_hold" | "cache_retention" | "idle_timeout" | "resolve_path" | "forget_session" | "mcp_servers" | "mcp_source_policy" | "mcp_native_sources" | "catalog_probe" | "catalog_probe_cancel" | "delegation_config" | "operator_resume" | "prompt_mailbox_snapshot" | "steering";
 
 /**
  * `hello.capabilities`. Deserialized leniently: a capability this build
@@ -375,6 +375,11 @@ ending?: boolean | null, };
 export type TurnOutcome = "completed" | "cancelled" | "failed" | "interrupted";
 
 /**
+ * Admission reported by the steering extension, independent of turn completion.
+ */
+export type SteeringOutcome = { "kind": "injected" } | { "kind": "prompt_required" } | { "kind": "rejected", reason: string, } | { "kind": "uncertain" };
+
+/**
  * Why a session was parked (ACP core §3.2).
  */
 export type ParkReason = "idle" | "adapter_exited" | "operator";
@@ -429,6 +434,10 @@ title?: string | null, };
  * mode deltas are ignored.
  */
 export type Indexed = {
+/**
+ * The attached adapter advertised the steering extension in initialize.
+ */
+steering_supported?: boolean,
 /**
  * Host-owned launch support and requested retention, not provider readback.
  */
@@ -497,7 +506,7 @@ export type SessionBody = { "kind": "session_started", request_id: string, agent
  * Absent from an older host, for an agent hennery cannot forget
  * for, or when the host could not resolve or register it.
  */
-agent_home?: AgentHome | undefined, } | { "kind": "start_failed", request_id: string, code: string, message: string, } | { "kind": "turn_started", request_id: string, turn_id: string, } | { "kind": "acp_update", indexed: Indexed, payload: unknown, } | { "kind": "turn_ended", usage?: TurnUsage | null, turn_id: string, outcome: TurnOutcome, stop_reason?: string | null, error?: string | null, } | { "kind": "session_parked", reason: ParkReason, } | { "kind": "session_closed" } | { "kind": "adapter_exited", code?: number | null, signal?: number | null, stderr_tail: string, } | { "kind": "host_note", note: string, text: string, } | { "kind": "config_applied", request_id: string, indexed: Indexed, } | { "kind": "pending_opened", pending_id: string, indexed: Indexed, payload: unknown, } | { "kind": "pending_resolved", pending_id: string, resolution: PendingResolution, reason?: PendingReason | null, } | { "kind": "answer_result", pending_id: string, request_id: string, delivered: boolean, } | { "kind": "git_state",
+agent_home?: AgentHome | undefined, } | { "kind": "start_failed", request_id: string, code: string, message: string, } | { "kind": "steering_result", request_id: string, outcome: SteeringOutcome, } | { "kind": "turn_started", request_id: string, turn_id: string, } | { "kind": "acp_update", indexed: Indexed, payload: unknown, } | { "kind": "turn_ended", usage?: TurnUsage | null, turn_id: string, outcome: TurnOutcome, stop_reason?: string | null, error?: string | null, } | { "kind": "session_parked", reason: ParkReason, } | { "kind": "session_closed" } | { "kind": "adapter_exited", code?: number | null, signal?: number | null, stderr_tail: string, } | { "kind": "host_note", note: string, text: string, } | { "kind": "config_applied", request_id: string, indexed: Indexed, } | { "kind": "pending_opened", pending_id: string, indexed: Indexed, payload: unknown, } | { "kind": "pending_resolved", pending_id: string, resolution: PendingResolution, reason?: PendingReason | null, } | { "kind": "answer_result", pending_id: string, request_id: string, delivered: boolean, } | { "kind": "git_state",
 /**
  * The branch checked out; absent when detached.
  */
@@ -714,7 +723,7 @@ mcp_servers?: Array<McpServer>,
  * umbrella §8.5). Absent, the host refuses servers for such an agent
  * (`mcp_isolation_unavailable`): isolation is never lost by omission.
  */
-isolation_waived?: boolean, } | { "type": "prompt", request_id: string, session_id: string, turn_id: string, plugin_context?: StartupContext,
+isolation_waived?: boolean, } | { "type": "steer", request_id: string, session_id: string, turn_id: string, content: unknown[], } | { "type": "prompt", request_id: string, session_id: string, turn_id: string, plugin_context?: StartupContext,
 /**
  * ACP ContentBlocks, built by the frontend.
  */
@@ -757,7 +766,7 @@ export type QueuedPromptResponse = { queue_id: string, };
 
 export type QueuedPrompt = { id: string, content: Array<StoredBlock>,
 /**
- * queued, delivering, or failed. Only queued items can be edited.
+ * queued, delivering, uncertain, or failed. Only queued items can be edited.
  */
 state: string, reason: string | null, };
 
@@ -986,7 +995,11 @@ export type ConfigRequest = { config_id: string, value: ConfigValue, };
  * core §9), always as it stands when sent. Plan and usage join it with
  * the plans that produce them.
  */
-export type SessionCatalog = { session_id: string,
+export type SessionCatalog = {
+/**
+ * The active attachment supports delivery into a running turn.
+ */
+steering_supported?: boolean, session_id: string,
 /**
  * The adapter's ACP `SessionConfigOption` objects, as last reported.
  */

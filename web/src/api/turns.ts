@@ -67,3 +67,8 @@ export function editQueuedPrompt(client: Client, id: string, queueId: string, te
 export function removeQueuedPrompt(client: Client, id: string, queueId: string): Promise<QueuedPrompt[]> {
   return client.request('DELETE', `/api/sessions/${enc(id)}/queue/${enc(queueId)}`)
 }
+
+/** Inject a stored queued message into the active turn; the server owns fallback. */
+export function steerQueuedPrompt(client: Client, id: string, queueId: string): Promise<QueuedPrompt[]> {
+  return client.request('POST', `/api/sessions/${enc(id)}/queue/${enc(queueId)}/steer`)
+}
