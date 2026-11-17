@@ -329,7 +329,7 @@ integration and acceptance above require no desktop binary.
 
 | Tool | Contract |
 | --- | --- |
-| `session_create(request_key, host_id, cwd, agent, config?)` | Durable creation of one standalone session; optional model, mode, axes and cache retention. |
+| `session_create(request_key, host_id, cwd, agent, config?)` | Durable creation of one standalone session; optional model, mode, axes and cache retention. A model, mode or axis left unset takes the hat’s saved default for that agent, exactly as the operator launcher prefills it; named values win. |
 | `session_prompt(request_key, session_id, text?, attachments?)` | Durable text/image admission, queues while busy and auto-resumes a parked session. |
 | `operation_get(operation_id? or request_key?)` | Recover this client's operation, delivery state, session/turn IDs and outcome. Supply exactly one lookup key. |
 | `session_wait(operation_id, timeout_ms?)` | Bounded wait, up to ten seconds, returning operation state and whether operator input is needed. |

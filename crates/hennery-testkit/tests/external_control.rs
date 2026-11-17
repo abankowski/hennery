@@ -1394,3 +1394,50 @@ async fn capabilities_report_limits_and_tool_descriptions_mention_them() {
         );
     }
 }
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_applies_hat_defaults_under_explicit_config_like_the_launcher() {
+    use hennery_kernel::secret::unix_now;
+    use hennery_testkit::{PUBLIC_URL, owner_phc};
+    let h = Harness::new(FakeScript {
+        config_options: hennery_testkit::sample_config_options(),
+        ..Default::default()
+    })
+    .await;
+    let hat = h.state.hosts.host("host").unwrap().unwrap().default_hat_id;
+    let operator = h
+        .state
+        .operator
+        .open_session("test", &owner_phc(&h.state.operator), unix_now())
+        .unwrap()
+        .unwrap();
+    let saved = h
+        .http
+        .put(format!("{}/api/hats/{hat}/session-defaults?agent=fake", h.url))
+        .header("origin", PUBLIC_URL)
+        .header("cookie", format!("__Host-hennery_session={operator}"))
+        .json(&json!({"revision":0,"config":{"model":"large","mode":"bypass","axes":{"fast":true}}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), 200);
+    let defaulted = h.create("defaulted").await;
+    let session = defaulted["session_id"].as_str().unwrap();
+    let detail = h.rpc("session_get", json!({"session_id":session})).await;
+    assert_eq!(detail["detail"]["catalog"]["mode"], "bypass", "{detail}");
+    assert_eq!(detail["detail"]["catalog"]["model"], "large", "{detail}");
+    assert_eq!(detail["detail"]["catalog"]["axes"]["fast"], true, "{detail}");
+    let explicit = h
+        .rpc(
+            "session_create",
+            json!({"request_key":"explicit","host_id":"host","cwd":h.root,"agent":"fake","config":{"mode":"plan"}}),
+        )
+        .await;
+    let explicit = h.done(explicit["operation_id"].as_str().unwrap()).await;
+    let other = explicit["session_id"].as_str().unwrap();
+    let detail = h.rpc("session_get", json!({"session_id":other})).await;
+    assert_eq!(detail["detail"]["catalog"]["mode"], "plan", "{detail}");
+    assert_eq!(detail["detail"]["catalog"]["model"], "large", "{detail}");
+    h.action("session_close", "close-defaulted", session).await;
+    h.action("session_close", "close-explicit", other).await;
+    h.finish().await;
+}
