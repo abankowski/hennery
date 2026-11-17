@@ -39,6 +39,9 @@ pub enum Refusal {
     NotTarGz,
     /// An entry that is not allowed, or too many entries.
     Entry(String),
+    /// Bytes after the one gzip member (a second member, or garbage): an
+    /// extractor that reads further would see what was never inspected.
+    Trailing,
     NoSkillMd,
     Frontmatter(FrontmatterError),
 }
@@ -62,8 +65,30 @@ pub fn inspect(tgz: &[u8]) -> Result<Inspected, Refusal> {
     if tgz.len() > MAX_COMPRESSED {
         return Err(Refusal::TooLarge);
     }
-    let decoder = flate2::read::GzDecoder::new(tgz).take(MAX_UNCOMPRESSED + STREAM_SLACK);
-    let mut archive = tar::Archive::new(decoder);
+    let mut rest = tgz;
+    let decoder = flate2::bufread::GzDecoder::new(&mut rest).take(MAX_UNCOMPRESSED + STREAM_SLACK);
+    let (skill_md, mut decoder) = walk(decoder)?;
+    // Read the gzip member to its end; nothing may be left of the input
+    // after it, or an extractor reading further would see entries that were
+    // never inspected.
+    std::io::copy(&mut decoder, &mut std::io::sink()).map_err(|_| Refusal::NotTarGz)?;
+    drop(decoder);
+    if !rest.is_empty() {
+        return Err(Refusal::Trailing);
+    }
+    let skill_md = skill_md.ok_or(Refusal::NoSkillMd)?;
+    let frontmatter = frontmatter(&skill_md).map_err(Refusal::Frontmatter)?;
+    Ok(Inspected {
+        frontmatter,
+        skill_md,
+        content_hash: sha256_hex(tgz),
+    })
+}
+
+/// Check every entry of the tar stream `reader`; returns the root
+/// `SKILL.md`'s text and the reader back.
+fn walk<R: Read>(reader: R) -> Result<(Option<String>, R), Refusal> {
+    let mut archive = tar::Archive::new(reader);
     let mut count = 0usize;
     let mut total = 0u64;
     let mut skill_md: Option<String> = None;
@@ -110,13 +135,7 @@ pub fn inspect(tgz: &[u8]) -> Result<Inspected, Refusal> {
             skill_md = Some(text);
         }
     }
-    let skill_md = skill_md.ok_or(Refusal::NoSkillMd)?;
-    let frontmatter = frontmatter(&skill_md).map_err(Refusal::Frontmatter)?;
-    Ok(Inspected {
-        frontmatter,
-        skill_md,
-        content_hash: sha256_hex(tgz),
-    })
+    Ok((skill_md, archive.into_inner()))
 }
 
 /// `name` with one optional leading `./` removed, when it is a plain
@@ -181,6 +200,18 @@ mod tests {
         assert_eq!(got.frontmatter.name, "pdf");
         assert!(got.skill_md.starts_with("---"));
         assert_eq!(got.content_hash.len(), 64);
+        let dotted = tgz(&[("./SKILL.md", SKILL), ("./", b"")]);
+        assert_eq!(inspect(&dotted).unwrap().frontmatter.name, "a");
+    }
+
+    #[test]
+    fn trailing_bytes_after_the_archive_are_refused() {
+        let mut second_member = tgz(&[("SKILL.md", SKILL)]);
+        second_member.extend(tgz(&[("../x", b"x")]));
+        assert_eq!(inspect(&second_member).unwrap_err(), Refusal::Trailing);
+        let mut garbage = tgz(&[("SKILL.md", SKILL)]);
+        garbage.extend(b"garbage");
+        assert_eq!(inspect(&garbage).unwrap_err(), Refusal::Trailing);
     }
 
     #[test]
