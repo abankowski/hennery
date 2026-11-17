@@ -28,21 +28,21 @@
 **Files:** Modify protocol frames/rest and generated schemas, sessions queue/API/store/ws/hub, host connection/session actor; create focused steering modules and integration tests as appropriate to existing patterns.
 **Interfaces:** Consumes existing queued prompt ids and attachments. Produces POST `/api/sessions/{id}/queue/{queue_id}/steer` and a browser-visible steering capability for attached sessions, plus durable queue delivery/error updates. Exact DTO fields follow existing session catalogue conventions and must be recorded in the task report for Task 2.
 
-- [ ] Read spec and trace ordinary queue dispatch, host requests, capability publication, acknowledgement ingestion, reconnect reconciliation.
-- [ ] Write failing tests for successful injection during an active turn, idle fallback, unsupported adapter, concurrency, unknown delivery, and late acknowledgement.
-- [ ] Run focused tests and record expected failures before production changes.
-- [ ] Implement minimal correlated durable operation and host extension request without blocking the session actor. Preserve ordinary turn guard and pending permission handling.
-- [ ] Run focused tests, protocol generation, formatting, and relevant crate suites. Record any environment limitations accurately.
-- [ ] Self-review and commit with Conventional Commits.
+- [x] Read spec and trace ordinary queue dispatch, host requests, capability publication, acknowledgement ingestion, reconnect reconciliation.
+- [x] Write failing tests for successful injection during an active turn, idle fallback, unsupported adapter, concurrency, unknown delivery, and late acknowledgement.
+- [x] Run focused tests and record expected failures before production changes.
+- [x] Implement minimal correlated durable operation and host extension request without blocking the session actor. Preserve ordinary turn guard and pending permission handling.
+- [x] Run focused tests, protocol generation, formatting, and relevant crate suites. Record any environment limitations accurately.
+- [x] Self-review and commit with Conventional Commits.
 
 ### Task 2: Queue UI and final integration
 
 **Files:** web/src/components/PromptQueue.tsx, its tests, web/src/api/turns.ts, session-view wiring and generated types as required.
 **Interfaces:** Consumes Task 1 endpoint and capability field documented in report. Adds explicit selected-message action.
 
-- [ ] Add failing UI tests for visible supported action, unsupported/idle hiding, busy/edit disabled state, correct encoded request and error refresh.
-- [ ] Run focused test and record RED.
-- [ ] Implement action and minimal session capability wiring; preserve queue editing and copying.
-- [ ] Run focused and full frontend tests, typecheck, and relevant backend integration checks.
-- [ ] Review whole change against spec and fix material findings; record remaining limitations.
-- [ ] Commit with Conventional Commits and report verified result.
+- [x] Add failing UI tests for visible supported action, unsupported/idle hiding, busy/edit disabled state, correct encoded request and error refresh.
+- [x] Run focused test and record RED.
+- [x] Implement action and minimal session capability wiring; preserve queue editing and copying.
+- [x] Run focused and full frontend tests, typecheck, and relevant backend integration checks.
+- [x] Review whole change against spec and fix material findings; record remaining limitations.
+- [x] Commit with Conventional Commits and report verified result.

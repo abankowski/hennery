@@ -38,6 +38,12 @@ interrupts work). Neither matches the selected explicit action.
 - If a connection is lost after dispatch, delivery is uncertain. Do not
   automatically retry or restore ordinary delivery, which could duplicate the
   instruction. Expose the uncertainty and preserve the content for recovery.
+- Dismissing an uncertain delivery hides its recovery notice and releases
+  ordinary queue capacity. Retain the dispatched attempt as session history
+  so a later admission can still record the input and its images exactly once.
+  A later idle response must not revive dismissed input.
+- Provide image recovery links for uncertain and rejected messages. Refresh
+  adapter support when a running session reattaches after a presumed park.
 - Publish queue changes through the existing refresh/SSE path so other browser
   windows converge on the same state.
 
