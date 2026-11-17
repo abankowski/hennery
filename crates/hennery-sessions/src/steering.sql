@@ -1,10 +1,15 @@
 -- Support belongs to the current attachment. Old hosts and sessions default off.
 ALTER TABLE sessions ADD COLUMN steering_supported INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE session_dispatch_queue ADD COLUMN steering_anchor INTEGER;
-ALTER TABLE session_dispatch_queue ADD COLUMN steering_turn_id TEXT;
 ALTER TABLE session_dispatch_queue ADD COLUMN steering_deadline INTEGER;
 ALTER TABLE session_dispatch_queue ADD COLUMN steering_failure TEXT;
 CREATE INDEX steering_deadlines ON session_dispatch_queue(owner_id,steering_deadline) WHERE state='steering';
+
+-- Requests are immutable session history. Both indexes support exact lookups
+-- after queue dismissal. Only one admission can represent each dispatch.
+CREATE UNIQUE INDEX steering_attempt_request ON events(owner_id,session_id,json_extract(body,'$.request_id'))
+WHERE kind='steering_attempt';
+CREATE UNIQUE INDEX steering_admission_request ON events(owner_id,session_id,json_extract(body,'$.request_id'))
+WHERE kind='user_steering';
 
 -- An idle response can arrive after a close, hat change, or failed turn.
 -- Preserve the ordinary queue's failure decision until the adapter answers.
@@ -15,7 +20,6 @@ BEGIN
         CASE WHEN NEW.hat_id<>OLD.hat_id THEN 'hat_changed' ELSE COALESCE(NEW.failure_reason,'session_closed') END)
     WHERE owner_id=NEW.owner_id AND target_id=NEW.id AND state IN ('steering','uncertain');
 END;
-
 
 CREATE TRIGGER steering_detached AFTER UPDATE OF lifecycle ON sessions
 WHEN NEW.lifecycle IN ('parked','closed','failed') AND OLD.lifecycle<>NEW.lifecycle

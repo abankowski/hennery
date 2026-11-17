@@ -113,7 +113,7 @@ export default function PromptQueue({ sessionId, items, changed, canSteer = fals
               }} disabled={busy} /> : <p><bdi>{preview.length > 240 ? `${preview.slice(0, 240)}…` : preview || 'Image message'}</bdi></p>}
               {interrupted && <p className="queue-reason" role="status">Already sending; your edit wasn’t applied.</p>}
               {images > 0 && <small>{images} {images === 1 ? 'image' : 'images'}</small>}
-              {item?.state === 'uncertain' && <div className="queue-attachments">{item.content.filter(block => block.type === 'image').map((block, index) => {
+              {(item?.state === 'failed' || item?.state === 'uncertain') && images > 0 && <div className="queue-attachments">{item.content.filter(block => block.type === 'image').map((block, index) => {
                 const href = attachmentHref(block.sha256)
                 return href && <a key={`${block.sha256}-${index}`} href={href} target="_blank" rel="noopener noreferrer" aria-label={`Open image ${index + 1} from queued message ${number}`}>Open image {index + 1}</a>
               })}</div>}

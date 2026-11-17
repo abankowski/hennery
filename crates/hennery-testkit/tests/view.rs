@@ -2194,11 +2194,14 @@ async fn every_item_and_marker_kind_is_served() {
     let mut resumed = Vec::new();
     loop {
         let message = stream.message().await;
-        let last = message.id.is_some();
-        resumed.push(message.item());
-        if last {
+        // The attachment transitions in the resumed history close this
+        // burst with the catalogue as it stands after those changes.
+        if message.event == "catalog_changed" {
+            assert!(message.id.is_some());
             break;
         }
+        assert!(message.id.is_none());
+        resumed.push(message.item());
     }
     let ids = |items: &[Item]| -> Vec<(String, String)> {
         let mut ids: Vec<(String, String)> = items.iter().map(|i| (i.id.clone(), kind_of(i))).collect();
@@ -2505,6 +2508,74 @@ async fn a_catalogue_change_is_sent_live_as_catalog_changed() {
     assert_eq!(catalog["session_id"], "s");
     assert_eq!(catalog["commands"][0]["name"], "review");
     assert_eq!(message.id, Some(format!("{}:{}", epoch_of(&anchor), changed.event_id)));
+}
+
+/// A browser that opened its detail while the host was presumed parked
+/// receives the original live attachment's restored steering catalogue.
+#[tokio::test]
+async fn reattached_steering_support_reaches_parked_catalogue_readers() {
+    use hennery_proto::frames::{AttachedSession, SessionBody};
+    let c = Collector::start().await;
+    let store = &c.state.store;
+    store
+        .create_session("s", "host-1", "fake", "/tmp", "hat", None)
+        .unwrap();
+    let started = serde_json::from_value(json!({"kind":"session_started","agent_session_id":"native","request_id":"start","indexed":{"steering_supported":true}})).unwrap();
+    store.ingest("s", 1, &started).unwrap();
+    assert!(
+        store
+            .open_turn("s", "t1", &[json!({"type":"text","text":"work"})])
+            .unwrap()
+    );
+    store
+        .ingest(
+            "s",
+            2,
+            &SessionBody::TurnStarted {
+                request_id: "t1".into(),
+                turn_id: "t1".into(),
+            },
+        )
+        .unwrap();
+    assert!(store.catalog("s").unwrap().unwrap().steering_supported);
+    store.presume_parked("host-1").unwrap();
+    let cat: Value = c
+        .client()
+        .get(c.url("/api/sessions/s/catalog"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_ne!(cat["steering_supported"], true);
+    let page = c.page("s", "").await;
+    let anchor = format!("{}:{}", page.epoch, page.revision);
+    let mut stream = c.stream(&format!("{ITEMS}?after={anchor}"), None).await;
+    live(&c, &mut stream).await;
+    let reattached = store
+        .reconcile_host(
+            "host-1",
+            &[AttachedSession {
+                session_id: "s".into(),
+                last_seq: 2,
+                open_turn_id: Some("t1".into()),
+                ending: None,
+            }],
+        )
+        .unwrap();
+    for event in reattached.events {
+        c.state.hub.publish(event);
+    }
+    let marker = stream.message().await;
+    assert_eq!(marker.event, "item");
+    assert!(marker.id.is_none(), "restored catalogue must close the burst");
+    let changed = stream.message().await;
+    assert_eq!(changed.event, "catalog_changed");
+    assert_eq!(
+        serde_json::from_str::<Value>(&changed.data).unwrap()["steering_supported"],
+        true
+    );
 }
 
 /// A source-only attach acknowledgement must also reach the bounded detail

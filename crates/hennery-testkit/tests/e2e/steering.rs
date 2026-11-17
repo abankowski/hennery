@@ -33,11 +33,23 @@ async fn queued_steering_admission_keeps_current_turn_and_permission() {
     exercise_steering(Scenario::Active).await;
 }
 
+#[tokio::test]
+async fn queued_steering_dismissed_then_injected_preserves_content_until_session_deletion() {
+    exercise_steering(Scenario::DismissedInjected).await;
+}
+
+#[tokio::test]
+async fn queued_steering_dismissed_then_idle_never_enqueues_another_prompt() {
+    exercise_steering(Scenario::DismissedIdle).await;
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Scenario {
     Active,
     Late,
     Idle,
+    DismissedInjected,
+    DismissedIdle,
     Unsupported,
     InternalError,
     InvalidParams,
@@ -47,8 +59,8 @@ enum Scenario {
 async fn exercise_steering(scenario: Scenario) {
     use Scenario::*;
     let outcome = match scenario {
-        Active | Late => Some("injected"),
-        Idle => Some("promptRequired"),
+        Active | Late | DismissedInjected => Some("injected"),
+        Idle | DismissedIdle => Some("promptRequired"),
         Unsupported => None,
         InternalError => Some("internal_error"),
         InvalidParams => Some("invalid_params"),
@@ -130,6 +142,82 @@ async fn exercise_steering(scenario: Scenario) {
             assert_eq!(facts.iter().filter(|e| e.kind == "user_steering").count(), 1);
             assert_eq!(log().iter().filter(|r| r["method"] == "session/prompt").count(), 1);
             assert_eq!(facts.iter().filter(|e| e.kind == "user_turn").count(), 1);
+        } else if matches!(scenario, DismissedInjected | DismissedIdle) {
+            collector.state.hub.disconnect("host-1");
+            wait_for("uncertain recovery", || async {
+                (queue()[1].state == "uncertain").then_some(())
+            })
+            .await;
+            let original_content = serde_json::to_value(&queue()[1].content).unwrap();
+            let sha = original_content[1]["sha256"].as_str().unwrap();
+            let image_url = collector.url(&format!("/api/attachments/{sha}"));
+            assert_eq!(c.delete(&url).send().await.unwrap().status(), 200);
+            assert_eq!(queue().len(), 1);
+            collector
+                .state
+                .store
+                .sweep_attachments(std::time::SystemTime::now(), &Default::default())
+                .unwrap();
+            assert_eq!(
+                c.get(&image_url).send().await.unwrap().status(),
+                200,
+                "dispatched image survives dismissal"
+            );
+            std::fs::write(&gate, "").unwrap();
+            let ack = wait_for("outboxed result after dismissal", || async {
+                events(&c, &collector, &session)
+                    .await
+                    .into_iter()
+                    .find(|e| e.kind == "steering_result")
+            })
+            .await;
+            let facts = events(&c, &collector, &session).await;
+            let attempt = facts
+                .iter()
+                .find(|e| e.kind == "steering_attempt")
+                .expect("dispatched evidence");
+            assert_eq!(attempt.body["request_id"], ack.body["request_id"]);
+            assert_eq!(attempt.body["content"], original_content);
+            assert_eq!(
+                attempt.body["turn_id"],
+                facts.iter().find(|e| e.kind == "user_turn").unwrap().body["turn_id"]
+            );
+            // A replay on a new host sequence must also be idempotent.
+            let seq = facts.iter().filter_map(|e| e.host_seq).max().unwrap() + 1;
+            let body = serde_json::from_value(ack.body.clone()).unwrap();
+            collector.state.store.ingest(&session, seq, &body).unwrap();
+            let facts = events(&c, &collector, &session).await;
+            let admitted: Vec<_> = facts.iter().filter(|e| e.kind == "user_steering").collect();
+            if scenario == DismissedInjected {
+                assert_eq!(admitted.len(), 1);
+                assert_eq!(admitted[0].body["turn_id"], attempt.body["turn_id"]);
+                assert_eq!(admitted[0].body["request_id"], ack.body["request_id"]);
+                assert_eq!(admitted[0].body["content"], original_content);
+            } else {
+                assert!(admitted.is_empty());
+            }
+            assert_eq!(queue().len(), 1);
+            assert_eq!(queue()[0].id, first["queue_id"]);
+            assert_eq!(log().iter().filter(|r| r["method"] == "session/prompt").count(), 1);
+            // Session deletion removes the attempt, the admission and their shared bytes.
+            let judged = hennery_sessions::store::Unattached {
+                lifecycle: "active".into(),
+                presumed_parked: false,
+            };
+            assert!(matches!(
+                collector.state.store.delete_session(&session, Some(&judged)).unwrap(),
+                hennery_sessions::store::Deletion::Done { .. }
+            ));
+            assert_eq!(c.get(&image_url).send().await.unwrap().status(), 404);
+            assert!(
+                collector
+                    .state
+                    .store
+                    .events(&session, 0, 100)
+                    .unwrap()
+                    .iter()
+                    .all(|e| !matches!(e.kind.as_str(), "steering_attempt" | "user_steering"))
+            );
         } else if scenario == Late {
             collector.state.hub.disconnect("host-1");
             wait_for("uncertain delivery", || async {

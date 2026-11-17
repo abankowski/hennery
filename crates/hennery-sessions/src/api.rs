@@ -1990,11 +1990,19 @@ fn pending_in(store: &Store, e: &EventDto) -> Option<PendingItem> {
     store.pending_item(pending_id).ok().flatten()
 }
 
-/// Whether a stored host fact changed the catalogue: its extracts carry a
-/// config snapshot or the commands. Listed events only reach here, and a
-/// listed one with either changed the stored catalogue.
+/// Attachment transitions change the available steering capability. Host
+/// extracts can also replace the configuration, commands, or source policy.
 pub(crate) fn changes_catalogue(e: &EventDto) -> bool {
-    if e.kind == "session_started" {
+    if matches!(
+        e.kind.as_str(),
+        "session_started"
+            | "presumed_parked"
+            | "reattached"
+            | "session_parked"
+            | "operator_closed"
+            | "session_closed"
+            | "host_restarted"
+    ) {
         return true;
     }
     if !matches!(e.kind.as_str(), "config_applied" | "acp_update") {

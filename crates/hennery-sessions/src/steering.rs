@@ -46,27 +46,31 @@ impl Store {
             return Ok(());
         };
         let request_id = uuid::Uuid::now_v7().to_string();
-        // An unlisted collector-owned position in this turn. Only an injected
-        // acknowledgement arriving after a later turn has begun needs it.
-        tx.execute(
-            "INSERT INTO events(owner_id,session_id,kind,body,ts,applied)
-             VALUES(?1,?2,'steering_position','null',?3,0)",
-            params![self.owner_id(), session, crate::store::now()],
+        // A dispatched attempt belongs to the session history even if its
+        // recovery row is dismissed before the host can report admission.
+        let attempt = crate::store::collector_event(
+            &tx,
+            self.owner_id(),
+            session,
+            "steering_attempt",
+            serde_json::json!({"request_id":request_id,"turn_id":turn,"content":stored}),
+            &crate::store::now(),
         )?;
-        let anchor = tx.last_insert_rowid();
+        crate::store::link_attachments(&tx, self.owner_id(), attempt.event_id, &attempt.body["content"])?;
         tx.execute(
             "UPDATE session_operations SET state='steering',request_id=?3,turn_id=NULL,code=NULL
              WHERE owner_id = ?1 AND operation_id=?2",
             params![self.owner_id(), id, request_id],
         )?;
         tx.execute(
-            "UPDATE session_dispatch_queue SET state='steering',steering_turn_id=?3,steering_anchor=?4,steering_deadline=unixepoch()+30,steering_failure=NULL
+            "UPDATE session_dispatch_queue SET state='steering',steering_deadline=unixepoch()+30,steering_failure=NULL
              WHERE owner_id = ?1 AND operation_id=?2",
-            params![self.owner_id(), id, turn, anchor],
+            params![self.owner_id(), id],
         )?;
         // Commit before handoff so a collector crash can only leave an uncertain
         // delivery. Holding the store guard through notify orders it with close/revoke.
         tx.commit()?;
+        hub.publish(attempt);
         let frame = CollectorFrame::Steer {
             request_id: request_id.clone(),
             session_id: session.into(),
@@ -105,13 +109,15 @@ impl Store {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        let Some((id, prior_failure)) = row else {
-            return Ok(None);
-        };
         let admitted = if *outcome == SteeringOutcome::Injected {
-            Some(self.record_steered_input(tx, session, &id)?)
+            self.record_steered_input(tx, session, request)?
         } else {
             None
+        };
+        let Some((id, prior_failure)) = row else {
+            // Dismissal released the queue slot. A late admission belongs in
+            // history, while an idle reply must leave the item dismissed.
+            return Ok(admitted);
         };
         let (queue_state, op_state, code) = match outcome {
             SteeringOutcome::Injected => ("settled", "delivered", None),
@@ -138,18 +144,25 @@ impl Store {
         Ok(admitted)
     }
 
-    fn record_steered_input(&self, tx: &Transaction<'_>, session: &str, id: &str) -> Result<EventDto> {
-        let (turn,payload,anchor):(String,String,i64)=tx.query_row(
-            "SELECT steering_turn_id,payload,steering_anchor FROM session_dispatch_queue WHERE owner_id = ?1 AND operation_id=?2",
-            params![self.owner_id(),id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+    fn record_steered_input(&self, tx: &Transaction<'_>, session: &str, request: &str) -> Result<Option<EventDto>> {
+        let attempt: Option<(i64, String)> = tx.query_row(
+            "SELECT a.event_id,a.body FROM events a WHERE a.owner_id = ?1 AND a.session_id=?2 AND a.kind='steering_attempt'
+             AND json_extract(a.body,'$.request_id')=?3 AND NOT EXISTS (
+                SELECT 1 FROM events e WHERE e.owner_id = ?1 AND e.session_id=?2 AND e.kind='user_steering'
+                AND json_extract(e.body,'$.request_id')=?3)",
+            params![self.owner_id(),session,request], |r| Ok((r.get(0)?,r.get(1)?)),
+        ).optional()?;
+        let Some((anchor, payload)) = attempt else {
+            return Ok(None);
+        };
         let late: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM events WHERE owner_id = ?1 AND session_id=?2 AND
                 kind='user_turn' AND applied=1 AND event_id>?3)",
             params![self.owner_id(), session, anchor],
             |r| r.get(0),
         )?;
-        let content: serde_json::Value = serde_json::from_str(&payload)?;
-        let mut body = serde_json::json!({"turn_id":turn,"content":content,"origin":{"kind":"operator"}});
+        let mut body: serde_json::Value = serde_json::from_str(&payload)?;
+        body["origin"] = serde_json::json!({"kind":"operator"});
         if late {
             body["display_at"] = anchor.into();
         }
@@ -164,13 +177,7 @@ impl Store {
             &crate::store::now(),
         )?;
         crate::store::link_attachments(tx, self.owner_id(), event.event_id, &event.body["content"])?;
-        if late {
-            let changed = tx.execute("UPDATE events SET kind='steering_view_position',body=?4
-                WHERE owner_id = ?1 AND session_id=?2 AND event_id=?3 AND applied=0 AND host_seq IS NULL AND kind='steering_position'",
-                params![self.owner_id(),session,anchor,event.event_id.to_string()])?;
-            ensure!(changed == 1, "missing reserved steering position");
-        }
-        Ok(event)
+        Ok(Some(event))
     }
 
     /// An actor that ended before consuming its mailbox rejects the frame as

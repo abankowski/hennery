@@ -200,8 +200,12 @@ it('preserves an uncertain delivery for copy and dismissal without resending', a
   expect(m.fetch).toHaveBeenCalledExactlyOnceWith('/api/sessions/s%2F1/queue/q%2F1', expect.objectContaining({ method: 'DELETE' }))
 })
 
-it.each([false, true])('offers uncertain image recovery and only copies available text: mixed=%s', mixed => {
-  mount([{ ...item, state: 'uncertain', reason: 'Check the transcript.', content: mixed ? item.content : item.content.filter(block => block.type === 'image') }], 200, true)
+it.each([
+  ['uncertain', false], ['uncertain', true], ['failed', false], ['failed', true],
+] as const)('offers %s image recovery and only copies available text: mixed=%s', (state, mixed) => {
+  const reason = state === 'failed' ? 'The adapter rejected this input.' : 'Check the transcript.'
+  mount([{ ...item, state, reason, content: mixed ? item.content : item.content.filter(block => block.type === 'image') }], 200, true)
+  expect(screen.getByText(reason)).toBeVisible()
   const image = screen.getByRole('link', { name: 'Open image 1 from queued message 1' })
   expect(image).toHaveAttribute('href', `/api/attachments/${'a'.repeat(64)}`)
   expect(screen.queryByRole('button', { name: 'Copy' }) !== null).toBe(mixed)

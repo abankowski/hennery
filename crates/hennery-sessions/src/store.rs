@@ -5044,18 +5044,19 @@ impl Store {
     }
 }
 
-/// Fold-only projection. A late admission displays at its reserved position,
-/// while its canonical event invalidates any stream past that position. Raw
-/// event APIs use EVENTS_AFTER and see only the canonical admission.
+/// Fold a late admission at its attempt's position. Its canonical event
+/// invalidates streams past that position. Raw cursors always see the
+/// immutable attempt and admission in append order.
 const EVENTS_BETWEEN: &str = "SELECT e.event_id,e.host_seq,
     CASE WHEN admitted.event_id IS NOT NULL THEN 'user_steering'
          WHEN e.kind='user_steering' AND json_extract(e.body,'$.display_at') IS NOT NULL THEN 'steering_history_changed'
          ELSE e.kind END,COALESCE(admitted.body,e.body),e.ts
-    FROM events e LEFT JOIN events admitted ON e.kind='steering_view_position'
-        AND admitted.event_id=CAST(e.body AS INTEGER) AND admitted.owner_id = ?4 AND admitted.session_id=?1
-        AND admitted.kind='user_steering' AND admitted.applied=1 AND admitted.event_id<=?6
+    FROM events e LEFT JOIN events admitted ON e.kind='steering_attempt'
+        AND admitted.owner_id = ?4 AND admitted.session_id=?1 AND admitted.kind='user_steering'
+        AND json_extract(admitted.body,'$.request_id')=json_extract(e.body,'$.request_id')
+        AND json_extract(admitted.body,'$.display_at')=e.event_id AND admitted.event_id<=?6
     WHERE e.owner_id = ?4 AND e.session_id=?1 AND e.event_id>?2 AND e.event_id<=?3
-      AND (e.applied=1 OR admitted.event_id IS NOT NULL) ORDER BY e.event_id LIMIT ?5";
+      AND e.applied=1 ORDER BY e.event_id LIMIT ?5";
 
 /// A session's group starts before an event, newest first (`group_starts`).
 const GROUP_STARTS: &str = "SELECT event_id FROM events
@@ -5643,7 +5644,7 @@ mod tests {
     /// index of that session's, and sort nothing; the owner's changed
     /// sessions are a range of the table. The indexes are those plan
     /// 10b-iii (`events_by_kind`) and the smoke test's F2 fix
-    /// (`events_by_session`) made: the view adds none.
+    /// (`events_by_session`) made, plus the indexed steering admission lookup.
     #[test]
     fn the_views_reads_walk_their_indexes() {
         let dir = tempfile::tempdir().unwrap();
@@ -5666,6 +5667,7 @@ mod tests {
                 6,
                 "USING INDEX events_by_session (session_id=? AND event_id>? AND event_id<?)",
             ),
+            (EVENTS_BETWEEN, 6, "USING INDEX steering_admission_request"),
             (
                 GROUP_STARTS,
                 4,
