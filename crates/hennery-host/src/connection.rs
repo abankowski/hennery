@@ -411,6 +411,7 @@ async fn handshake(
                 Capability::DelegationConfig,
                 Capability::OperatorResume,
                 Capability::PromptMailboxSnapshot,
+                Capability::Steering,
                 Capability::PluginContext,
             ]),
             mcp_isolation: announce.mcp_isolation,
@@ -1021,6 +1022,20 @@ fn handle(
                 mcp,
             },
         )?,
+        CollectorFrame::Steer {
+            request_id,
+            session_id,
+            turn_id,
+            content,
+        } => match live_session(sessions, &session_id) {
+            Some(handle)
+                if handle.send(SessionCmd::Steer {
+                    request_id: request_id.clone(),
+                    turn_id,
+                    content,
+                }) => {}
+            _ => not_attached(uplink, request_id),
+        },
         CollectorFrame::Prompt {
             request_id,
             session_id,

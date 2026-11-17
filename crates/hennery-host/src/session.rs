@@ -24,7 +24,7 @@ use agent_client_protocol::{Agent, ByteStreams, Client, ErrorCode, UntypedMessag
 use hennery_proto::delegation_host::{ConfigCompleteness, ConfigEvidence, PromptFence};
 use hennery_proto::frames::{
     ConfigValue, ElicitationAction, HostFrame, Indexed, McpServer, ParkReason, PendingExtract, PendingKind,
-    PendingReason, PendingResolution, SessionBody, SessionConfig, TurnOutcome,
+    PendingReason, PendingResolution, SessionBody, SessionConfig, SteeringOutcome, TurnOutcome,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet, VecDeque};
@@ -106,6 +106,11 @@ pub enum SessionCmd {
     SetIdleHold { held: bool },
     /// Live host-wide setting. A changed timeout starts a fresh idle window.
     SetIdleTimeout { timeout: Option<Duration> },
+    Steer {
+        request_id: String,
+        turn_id: String,
+        content: Vec<Value>,
+    },
     FencedPrompt {
         request_id: String,
         turn_id: String,
@@ -578,6 +583,10 @@ type Reply = Pin<Box<dyn Future<Output = agent_client_protocol::Result<PromptRes
 /// the dispatch loop, so it gives no ordering guarantee relative to
 /// notifications the adapter sends right before or after answering.
 enum Inbound {
+    SteeringAnswer {
+        request_id: String,
+        outcome: SteeringOutcome,
+    },
     Update(Value),
     SwitchAnswer {
         token: u64,
@@ -885,7 +894,8 @@ impl Replay {
             Inbound::Question(question) => self.kept.push(Early::Question(question)),
             // No switch is sent, no question is open and no probe runs
             // before the actor's main loop starts.
-            Inbound::SwitchAnswer { .. }
+            Inbound::SteeringAnswer { .. }
+            | Inbound::SwitchAnswer { .. }
             | Inbound::QuestionWithdrawn { .. }
             | Inbound::Git { .. }
             | Inbound::ProjectRoot(_) => {}
@@ -974,6 +984,77 @@ struct Catalogue {
 }
 
 impl Actor {
+    fn send_steering(
+        &self,
+        conn: &ConnectionTo<Agent>,
+        session: &SessionId,
+        request_id: String,
+        content: Vec<Value>,
+        images: bool,
+        replies: &mpsc::UnboundedSender<Inbound>,
+    ) {
+        let blocks = parse_prompt(content).and_then(|blocks| {
+            if !images && blocks.iter().any(|block| matches!(block, ContentBlock::Image(_))) {
+                Err("This adapter does not accept images.".into())
+            } else {
+                Ok(blocks)
+            }
+        });
+        let blocks = match blocks {
+            Ok(blocks) => blocks,
+            Err(reason) => {
+                return self.emit(SessionBody::SteeringResult {
+                    request_id,
+                    outcome: SteeringOutcome::Rejected { reason },
+                });
+            }
+        };
+        let params = serde_json::json!({"sessionId":session,"prompt":blocks,"_meta":{"steering":{"idleBehavior":"promptRequired"}}});
+        let request = UntypedMessage::new("_session/steering", params).expect("JSON value is serializable");
+        let replies = replies.clone();
+        let id = request_id.clone();
+        // Wire-ordered callback. A transport loss without an adapter reply is
+        // handled by the collector's durable uncertainty deadline.
+        if conn
+            .prepare_request(request)
+            .on_receiving_result(move |result| async move {
+                let outcome = match result {
+                    Ok(value) => match value.get("outcome").and_then(Value::as_str) {
+                        Some("injected") => SteeringOutcome::Injected,
+                        Some("promptRequired") => SteeringOutcome::PromptRequired,
+                        _ => SteeringOutcome::Uncertain,
+                    },
+                    Err(error)
+                        if matches!(
+                            error.code,
+                            ErrorCode::InvalidRequest
+                                | ErrorCode::InvalidParams
+                                | ErrorCode::MethodNotFound
+                                | ErrorCode::AuthRequired
+                                | ErrorCode::ResourceNotFound
+                        ) =>
+                    {
+                        SteeringOutcome::Rejected {
+                            reason: error.message.to_string(),
+                        }
+                    }
+                    Err(_) => SteeringOutcome::Uncertain,
+                };
+                let _ = replies.send(Inbound::SteeringAnswer {
+                    request_id: id,
+                    outcome,
+                });
+                Ok(())
+            })
+            .is_err()
+        {
+            self.emit(SessionBody::SteeringResult {
+                request_id,
+                outcome: SteeringOutcome::Uncertain,
+            });
+        }
+    }
+
     /// The catalogue extracts to announce: none while the options may be
     /// stale.
     fn catalogue_extracts(&self) -> Indexed {
@@ -1034,6 +1115,7 @@ impl Actor {
         env: &[(String, String)],
         loaded: bool,
         agent_defaults: Option<&SessionConfig>,
+        steering_supported: bool,
     ) {
         *self.agent_session_id.lock().expect("agent session id lock") = Some(agent_session.to_string());
         let mut moved = false;
@@ -1051,6 +1133,7 @@ impl Actor {
             }
         });
         let mut indexed = self.catalogue_extracts();
+        indexed.steering_supported = steering_supported;
         indexed.cache_retention = self.cache_retention;
         indexed.mcp_source_policy = self.mcp_source_policy.clone();
         if indexed.current_config().is_some() {
@@ -1138,7 +1221,8 @@ impl Actor {
             let _pending_prompt = PendingPromptGuard::for_command(&self.turns, &cmd);
             match cmd {
                 SessionCmd::SetIdleHold { .. } | SessionCmd::SetIdleTimeout { .. } => {}
-                SessionCmd::Prompt { request_id, .. }
+                SessionCmd::Steer { request_id, .. }
+                | SessionCmd::Prompt { request_id, .. }
                 | SessionCmd::FencedPrompt { request_id, .. }
                 | SessionCmd::Restart { request_id }
                 | SessionCmd::Park { request_id }
@@ -1310,7 +1394,7 @@ impl Actor {
         let mut replay = Replay::default();
         let started = tokio::select! {
             result = async {
-                let (session, catalogue, images) =
+                let (session, catalogue, images, steering_supported) =
                     match tokio::time::timeout_at(deadline, negotiate(&conn, cwd, &attach, &mcp, &mut updates, &mut replay)).await {
                         Ok(result) => result?,
                         Err(_) => {
@@ -1327,14 +1411,14 @@ impl Actor {
                     None
                 };
                 let applied = apply_config(&conn, &session, catalogue, &config, self.options.config_timeout, deadline).await;
-                Ok((session, applied, images, agent_defaults))
+                Ok((session, applied, images, agent_defaults, steering_supported))
             } => result,
             info = adapter.exited() => {
                 let tail = adapter.stderr_tail().await;
                 Err(StartError::other(format!("adapter exited during start ({}): {}", describe(info), last_lines(&tail, 5))))
             }
         };
-        let (agent_session, applied, images, agent_defaults) = match started {
+        let (agent_session, applied, images, agent_defaults, steering_supported) = match started {
             Ok(started) => started,
             Err(error) => {
                 self.begin_ending();
@@ -1375,6 +1459,7 @@ impl Actor {
             &agent_env,
             loaded,
             agent_defaults.as_ref(),
+            steering_supported,
         );
         // A load's state updates follow the start they belong to, and so do
         // updates the adapter sent while the start's switches ran. They are
@@ -1393,7 +1478,8 @@ impl Actor {
                 Ok(Inbound::Update(payload)) => early.push(Early::Update(payload)),
                 Ok(Inbound::Question(question)) => early.push(Early::Question(question)),
                 Ok(
-                    Inbound::SwitchAnswer { .. }
+                    Inbound::SteeringAnswer { .. }
+                    | Inbound::SwitchAnswer { .. }
                     | Inbound::QuestionWithdrawn { .. }
                     | Inbound::Git { .. }
                     | Inbound::ProjectRoot(_),
@@ -1506,6 +1592,17 @@ impl Actor {
                         adapter.terminate(self.options.kill_grace).await;
                         return;
                     }
+                    Some(SessionCmd::Steer { request_id, turn_id, content }) => {
+                        if !steering_supported {
+                            self.emit(SessionBody::SteeringResult { request_id, outcome: SteeringOutcome::Rejected {
+                                reason: "This adapter does not support steering.".into()
+                            }});
+                        } else if turn.as_ref().is_none_or(|current| current.id != turn_id) {
+                            self.emit(SessionBody::SteeringResult {request_id, outcome: SteeringOutcome::PromptRequired});
+                        } else {
+                            self.send_steering(&conn, &agent_session, request_id, content, images, &switch_tx);
+                        }
+                    }
                     Some(command @ SessionCmd::Prompt { .. }) | Some(command @ SessionCmd::FencedPrompt { .. }) => {
                         let _pending_prompt = PendingPromptGuard::for_command(&self.turns, &command);
                         let (request_id, turn_id, content, expected, plugin_context) = match command {
@@ -1592,7 +1689,7 @@ impl Actor {
                         _ => self.reject(request_id, "not_running", "that turn is not running".into()),
                     },
                     Some(SessionCmd::Restart { request_id }) => {
-                        self.announce(request_id, &agent_session.to_string(), &agent_env, loaded, None)
+                        self.announce(request_id, &agent_session.to_string(), &agent_env, loaded, None, steering_supported)
                     }
                     // A switch may run during a turn; it is answered in order.
                     Some(SessionCmd::SetConfig { request_id, config_id, value }) => {
@@ -1959,6 +2056,10 @@ impl Actor {
         match inbound {
             Inbound::Update(payload) => {
                 self.emit(self.live_update(payload, turn));
+                false
+            }
+            Inbound::SteeringAnswer { request_id, outcome } => {
+                self.emit(SessionBody::SteeringResult { request_id, outcome });
                 false
             }
             Inbound::SwitchAnswer { token, result } => self.route_switch_answer(token, result, configs),
@@ -2498,12 +2599,19 @@ async fn negotiate(
     mcp: &SessionMcp,
     updates: &mut mpsc::UnboundedReceiver<Inbound>,
     replay: &mut Replay,
-) -> Result<(SessionId, Announced, bool), StartError> {
+) -> Result<(SessionId, Announced, bool, bool), StartError> {
     let init = conn
         .send_request(InitializeRequest::new(ProtocolVersion::V1).client_capabilities(client_capabilities()))
         .block_task()
         .await
         .map_err(|err| StartError::acp(err, false))?;
+    let steering_supported = init
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("steering"))
+        .and_then(|s| s.get("supported"))
+        .and_then(Value::as_bool)
+        == Some(true);
     let images = init.agent_capabilities.prompt_capabilities.image;
     let agent_session_id = match attach {
         Attach::New => {
@@ -2526,7 +2634,8 @@ async fn negotiate(
                     Ok(Inbound::Update(payload)) => replay.kept.push(Early::Update(payload)),
                     Ok(Inbound::Question(question)) => replay.kept.push(Early::Question(question)),
                     Ok(
-                        Inbound::SwitchAnswer { .. }
+                        Inbound::SteeringAnswer { .. }
+                        | Inbound::SwitchAnswer { .. }
                         | Inbound::QuestionWithdrawn { .. }
                         | Inbound::Git { .. }
                         | Inbound::ProjectRoot(_),
@@ -2535,7 +2644,7 @@ async fn negotiate(
                 }
             }
             let catalogue = announced_options(created.config_options, replay.updates());
-            return Ok((created.session_id, catalogue, images));
+            return Ok((created.session_id, catalogue, images, steering_supported));
         }
         Attach::Load { agent_session_id } => agent_session_id,
     };
@@ -2574,7 +2683,7 @@ async fn negotiate(
                 }
                 let loaded = result.map_err(|err| StartError::acp(err, true))?;
                 let catalogue = announced_options(loaded.config_options, replay.updates());
-                return Ok((id, catalogue, images));
+                return Ok((id, catalogue, images, steering_supported));
             }
         }
     }
@@ -2629,7 +2738,7 @@ pub(crate) async fn probe_catalog(
             servers: vec![],
             meta: profile.session_meta(),
         };
-        let (_, catalog, _) = negotiate(&conn, cwd, &Attach::New, &mcp, &mut updates, &mut replay)
+        let (_, catalog, _, _) = negotiate(&conn, cwd, &Attach::New, &mcp, &mut updates, &mut replay)
             .await
             .map_err(anyhow::Error::new)?;
         Ok(if catalog.authoritative {

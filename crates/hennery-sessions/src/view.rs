@@ -386,7 +386,7 @@ pub(crate) fn read_page(
     let mut fold = Fold::new();
     let mut after = start - 1;
     loop {
-        let batch = store.events_between(id, after, until, BATCH)?;
+        let batch = store.view_events_between(id, after, until, BATCH, revision)?;
         let Some(last) = batch.last() else { break };
         after = last.event_id;
         for event in &batch {
@@ -883,6 +883,9 @@ impl ItemStream {
                     self.deleted = true;
                     continue;
                 }
+                if event.kind == "steering_history_changed" && event.event_id > after {
+                    return Ok(None);
+                }
                 self.catalog |= event.event_id > after && changes_catalogue(event);
                 self.queue |= event.event_id > after && event.kind == "queue_changed";
                 if event.kind == "user_turn" {
@@ -987,6 +990,10 @@ impl ItemStream {
         if event.kind == SESSION_DELETED {
             self.cursor = event.event_id;
             self.deleted = true;
+            return Ok(());
+        }
+        if event.kind == "steering_history_changed" {
+            self.overflow = true;
             return Ok(());
         }
         let changed = self.fold.apply(event, &unanswerable);

@@ -437,6 +437,11 @@ async fn serve(mut socket: WebSocket, state: AppState, nonce: [u8; 32], permit: 
                 if state.hub.probe_rejected(conn_id, &request_id, &code, &message) {
                     continue;
                 }
+                match state.store.reject_steering(&host_id, &request_id, &code) {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(_) => break,
+                }
                 match state.store.reject_operator_prompt(&host_id, &request_id, &code) {
                     Ok(true) => continue,
                     Ok(false) => {}
@@ -624,6 +629,7 @@ pub(crate) fn ready(
     // The read below must stay after `mark_ready`: moved before it, a
     // delete committed between the two is closed by neither side, and no
     // test would notice (plan 9a's whole-branch review).
+    state.store.uncertain_steering_for_host(host_id)?;
     state.hub.mark_ready(host_id, conn_id);
     state.store.resend_idle_parking(host_id, &state.hub)?;
     state.store.resend_idle_holds(host_id, &state.hub)?;

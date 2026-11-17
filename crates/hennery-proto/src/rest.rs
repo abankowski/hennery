@@ -81,7 +81,7 @@ pub struct QueuedPromptResponse {
 pub struct QueuedPrompt {
     pub id: String,
     pub content: Vec<StoredBlock>,
-    /// queued, delivering, or failed. Only queued items can be edited.
+    /// queued, delivering, uncertain, or failed. Only queued items can be edited.
     pub state: String,
     pub reason: Option<String>,
 }
@@ -489,6 +489,10 @@ pub struct ConfigRequest {
 /// the plans that produce them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SessionCatalog {
+    /// The active attachment supports delivery into a running turn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub steering_supported: bool,
     pub session_id: String,
     /// The adapter's ACP `SessionConfigOption` objects, as last reported.
     #[ts(type = "unknown[]")]

@@ -41,11 +41,13 @@ pub const SILENT_UPDATES: [&str; 5] = [
 
 /// Event kinds that make no item: the session's own state, shown by the
 /// session list and the header.
-pub const SILENT_EVENTS: [&str; 12] = [
+pub const SILENT_EVENTS: [&str; 14] = [
     "session_seen",
     "sidebar_pin_changed",
     "family_changed",
     "queue_changed",
+    "steering_result",
+    "steering_history_changed",
     "result_read",
     "session_started",
     "turn_started",
@@ -283,6 +285,8 @@ impl Fold {
             return;
         }
         match kind {
+            "user_steering" if self.turn.as_deref() == str_at(body, "turn_id") => self.user_content(event),
+            "user_steering" => {}
             "acp_update" => self.acp_update(event),
             kind if SILENT_EVENTS.contains(&kind) => {}
             "turn_ended" => match str_at(body, "outcome") {
@@ -323,6 +327,12 @@ impl Fold {
         self.run = None;
         self.tools.clear();
         self.plan = None;
+        self.user_content(event);
+    }
+
+    /// A confirmed steering instruction adds an operator message at its admission
+    /// without resetting the original turn's plan, tool calls, or ordinal ids.
+    fn user_content(&mut self, event: &EventDto) {
         // Collector-written provenance is data, never inferred from display
         // labels. D2 also produces typed Parent turns; plug-in context is a
         // separate block and can never become the outer turn author.

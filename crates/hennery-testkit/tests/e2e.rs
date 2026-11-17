@@ -2115,3 +2115,6 @@ async fn deleting_a_session_scrubs_queued_text_images_and_transcript_routes() {
     }
     collector.stop().await;
 }
+
+#[path = "e2e/steering.rs"]
+mod steering;

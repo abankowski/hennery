@@ -93,6 +93,7 @@ pub fn router(state: AppState) -> Router {
             post(prompt).layer(DefaultBodyLimit::max(content::PROMPT_BODY_LIMIT)),
         )
         .route("/api/sessions/{id}/queue", get(prompt_queue))
+        .route("/api/sessions/{id}/queue/{queue_id}/steer", post(steer_queued_prompt))
         .route(
             "/api/sessions/{id}/queue/{queue_id}",
             axum::routing::patch(edit_queued_prompt).delete(remove_queued_prompt),
@@ -1244,6 +1245,17 @@ fn queue_error(err: anyhow::Error) -> Response {
             "host_revoked",
             crate::prompt_queue::failure_reason("host_revoked"),
         ),
+        "steering_unsupported" => error(
+            StatusCode::CONFLICT,
+            "steering_unsupported",
+            "The attached adapter does not support steering.",
+        ),
+        "steering_unavailable" => error(
+            StatusCode::CONFLICT,
+            "steering_unavailable",
+            "Steering needs an attached session with a running turn.",
+        ),
+        "host_offline" => error(StatusCode::CONFLICT, "host_offline", "The host is offline."),
         "invalid_request_key" => error(
             StatusCode::BAD_REQUEST,
             "invalid_request_key",
@@ -1315,6 +1327,21 @@ async fn prompt_queue(State(state): State<AppState>, Path(id): Path<String>) -> 
         Err(err) => internal(err),
     }
 }
+async fn steer_queued_prompt(State(state): State<AppState>, Path((id, queue_id)): Path<(String, String)>) -> Response {
+    match state.store.find_session(&id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "no such session"),
+        Err(err) => return internal(err),
+    }
+    if let Err(err) = state.store.steer_operator_prompt(&id, &queue_id, &state.hub) {
+        return queue_error(err);
+    }
+    if let Err(err) = state.store.flush_prompt_queue_changes(&state.hub) {
+        tracing::warn!(session_id=id, error=%err, "steering notification deferred");
+    }
+    prompt_queue(State(state), Path(id)).await
+}
+
 async fn edit_queued_prompt(
     State(state): State<AppState>,
     Path((id, queue_id)): Path<(String, String)>,
@@ -1967,7 +1994,10 @@ fn pending_in(store: &Store, e: &EventDto) -> Option<PendingItem> {
 /// config snapshot or the commands. Listed events only reach here, and a
 /// listed one with either changed the stored catalogue.
 pub(crate) fn changes_catalogue(e: &EventDto) -> bool {
-    if !matches!(e.kind.as_str(), "session_started" | "config_applied" | "acp_update") {
+    if e.kind == "session_started" {
+        return true;
+    }
+    if !matches!(e.kind.as_str(), "config_applied" | "acp_update") {
         return false;
     }
     let Some(indexed) = e.body.get("indexed") else {

@@ -21,6 +21,12 @@ pub struct FakeScript {
     /// Advertise the Claude-like promptQueueing extension; collector queues must not depend on it.
     #[serde(default)]
     pub prompt_queueing: bool,
+    /// Advertise steering and answer the extension with this outcome.
+    #[serde(default)]
+    pub steering_outcome: Option<String>,
+    /// Hold the steering response after logging admission until this file exists.
+    #[serde(default)]
+    pub steering_gate: Option<String>,
     /// Crash mid-turn: after sending this many chunks of a prompt, write a
     /// line to stderr and exit with status 3 without answering the prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -313,6 +319,8 @@ impl Default for FakeScript {
             chunks: vec!["Hello".into(), " world".into()],
             chunk_delay_ms: 0,
             prompt_queueing: false,
+            steering_outcome: None,
+            steering_gate: None,
             exit_after_chunks: None,
             stderr_lines: Vec::new(),
             stdout_lines: Vec::new(),

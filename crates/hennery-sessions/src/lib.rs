@@ -40,6 +40,7 @@ pub mod plugin_api;
 pub mod projects;
 pub mod prompt_queue;
 pub mod prompt_receipts;
+mod steering;
 pub mod usage;
 
 #[cfg(test)]
