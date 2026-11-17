@@ -9,9 +9,10 @@ use crate::runtime::extract::{self, Limits, replace_symlink};
 use anyhow::{Context, Result};
 use hennery_proto::frames::{SkillFailed, SkillFailure, SkillSyncItem};
 use hennery_proto::skills::{frontmatter, valid_name};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -20,11 +21,11 @@ pub const DIR: &str = "skills";
 /// The registry's file in the host's data directory.
 pub const FILE: &str = "skills.db";
 
-/// Bounds on an extracted skill (spec §5: 8 MiB, 512 files, 2 MiB a file;
-/// the entry bound also counts directories).
+/// Bounds on an extracted skill (spec §5: 8 MiB, 512 entries, 2 MiB a file;
+/// the entry bound counts files and directories together, as the collector does).
 const LIMITS: Limits = Limits {
     max_bytes: 8 << 20,
-    max_entries: 1024,
+    max_entries: 512,
     max_file: 2 << 20,
 };
 
@@ -116,10 +117,10 @@ impl Store {
     }
 
     /// The directory name the registry holds for `id`.
-    fn dir_of(&self, id: &str) -> Option<String> {
+    fn dir_of(&self, id: &str) -> rusqlite::Result<Option<String>> {
         let conn = self.registry.lock().expect("skills registry lock");
         conn.query_row("SELECT dir FROM skills WHERE id = ?1", [id], |row| row.get(0))
-            .ok()
+            .optional()
     }
 
     /// Which of `items` the host holds already: the same id with the same hash.
@@ -161,6 +162,7 @@ impl Store {
             }
         }
         let extracted = std::fs::create_dir(&store_dir)
+            .and_then(|()| std::fs::set_permissions(&store_dir, std::fs::Permissions::from_mode(0o755)))
             .map_err(anyhow::Error::from)
             .and_then(|()| extract::tree(tgz, &skill_dir, LIMITS));
         if let Err(err) = extracted {
@@ -200,13 +202,17 @@ impl Store {
 
         match self.record(item, &dir_name, &made) {
             Ok(previous) => {
+                let mut leftover = false;
                 for stale in previous.links {
                     if !made.iter().any(|(_, path)| *path == stale) {
-                        self.unlink_ours(&stale);
+                        leftover |= self.unlink_ours(&stale).is_err();
                     }
                 }
                 if let Some(old) = previous.dir.filter(|old| *old != dir_name) {
-                    self.remove_store_dir(&old);
+                    leftover |= self.remove_store_dir(&old).is_err();
+                }
+                if leftover {
+                    failures.push(failed(&item.id, SkillFailure::Io, None));
                 }
             }
             Err(err) => {
@@ -284,64 +290,94 @@ impl Store {
         }
     }
 
-    /// `path` is a symlink into the store (it may dangle).
+    /// `path` is a symlink into the store (it may dangle). The target must
+    /// be a plain descendant of the store root: `..` and `.` make it foreign.
     fn is_ours(&self, path: &Path) -> bool {
+        use std::path::Component;
         std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
-            && std::fs::read_link(path).is_ok_and(|target| target.starts_with(&self.root))
+            && std::fs::read_link(path).is_ok_and(|target| {
+                target.starts_with(&self.root)
+                    && !target
+                        .components()
+                        .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
+            })
     }
 
     /// Remove `path` if it is a symlink into the store; never follows it.
-    fn unlink_ours(&self, path: &Path) {
-        if self.is_ours(path)
-            && let Err(err) = std::fs::remove_file(path)
-        {
-            tracing::warn!(error = %err, path = %path.display(), "cannot remove a skill link");
+    fn unlink_ours(&self, path: &Path) -> std::io::Result<()> {
+        if !self.is_ours(path) {
+            return Ok(());
         }
+        std::fs::remove_file(path).inspect_err(|err| {
+            tracing::warn!(error = %err, path = %path.display(), "cannot remove a skill link");
+        })
     }
 
     /// Remove a store directory by its name in the registry.
-    fn remove_store_dir(&self, dir: &str) {
+    fn remove_store_dir(&self, dir: &str) -> std::io::Result<()> {
         let name = Path::new(dir);
         if name.components().count() != 1 || dir.starts_with('.') {
             tracing::warn!(dir, "a registry directory name is not plain; not removed");
-            return;
+            return Ok(());
         }
         let path = self.root.join(name);
-        if let Err(err) = std::fs::remove_dir_all(&path)
-            && err.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(error = %err, path = %path.display(), "cannot remove a skill's store directory");
+        match std::fs::remove_dir_all(&path) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+                tracing::warn!(error = %err, path = %path.display(), "cannot remove a skill's store directory");
+                Err(err)
+            }
+            _ => Ok(()),
         }
     }
 
     /// Unlink what hennery linked for `id`, delete its files and rows. A link
-    /// path that is something else now is left and reported as a conflict.
+    /// path that is something else now is left and reported as a conflict. A
+    /// link or directory that cannot be removed is an `Io` failure and its
+    /// rows stay, so a later pass retries.
     pub fn remove(&self, id: &str) -> Vec<SkillFailed> {
-        let dir = self.dir_of(id);
-        let links = {
+        let io = || vec![failed(id, SkillFailure::Io, None)];
+        let Ok(dir) = self.dir_of(id) else {
+            return io();
+        };
+        let links: rusqlite::Result<Vec<(String, String)>> = {
             let conn = self.registry.lock().expect("skills registry lock");
-            (|| -> rusqlite::Result<Vec<(String, String)>> {
-                let mut stmt = conn.prepare("SELECT agent, path FROM links WHERE id = ?1")?;
-                stmt.query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))?.collect()
-            })()
-            .unwrap_or_default()
+            conn.prepare("SELECT agent, path FROM links WHERE id = ?1")
+                .and_then(|mut stmt| stmt.query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))?.collect())
+        };
+        let Ok(links) = links else {
+            return io();
         };
         let mut failures = Vec::new();
+        let mut kept = Vec::new();
         for (agent, path) in links {
             let path = PathBuf::from(path);
             if self.is_ours(&path) {
-                self.unlink_ours(&path);
+                if self.unlink_ours(&path).is_err() {
+                    failures.push(failed(id, SkillFailure::Io, Some(&agent)));
+                    kept.push(agent);
+                }
             } else if std::fs::symlink_metadata(&path).is_ok() {
                 failures.push(failed(id, SkillFailure::Conflict, Some(&agent)));
             }
         }
-        if let Some(dir) = dir {
-            self.remove_store_dir(&dir);
+        let mut keep_skill = !kept.is_empty();
+        if let Some(dir) = dir
+            && self.remove_store_dir(&dir).is_err()
+        {
+            failures.push(failed(id, SkillFailure::Io, None));
+            keep_skill = true;
         }
         let conn = self.registry.lock().expect("skills registry lock");
-        let deleted = conn
-            .execute("DELETE FROM links WHERE id = ?1", [id])
-            .and_then(|_| conn.execute("DELETE FROM skills WHERE id = ?1", [id]));
+        let mut deleted = Ok(0);
+        for agent in ["claude", "codex"] {
+            if !kept.iter().any(|k| k == agent) {
+                deleted = deleted
+                    .and_then(|_| conn.execute("DELETE FROM links WHERE id = ?1 AND agent = ?2", params![id, agent]));
+            }
+        }
+        if !keep_skill {
+            deleted = deleted.and_then(|_| conn.execute("DELETE FROM skills WHERE id = ?1", [id]));
+        }
         if let Err(err) = deleted {
             tracing::warn!(id, error = %err, "cannot delete a skill's registry rows");
             failures.push(failed(id, SkillFailure::Io, None));
@@ -358,13 +394,18 @@ impl Store {
         dirs: &AgentDirs,
     ) -> (Vec<String>, Vec<SkillFailed>, Vec<SkillSyncItem>) {
         let listed: BTreeSet<&str> = items.iter().map(|item| item.id.as_str()).collect();
-        let held: Vec<String> = {
+        let held: rusqlite::Result<Vec<String>> = {
             let conn = self.registry.lock().expect("skills registry lock");
-            (|| -> rusqlite::Result<Vec<String>> {
-                let mut stmt = conn.prepare("SELECT id FROM skills")?;
-                stmt.query_map([], |row| row.get(0))?.collect()
-            })()
-            .unwrap_or_default()
+            conn.prepare("SELECT id FROM skills")
+                .and_then(|mut stmt| stmt.query_map([], |row| row.get(0))?.collect())
+        };
+        let Ok(held) = held else {
+            // The registry cannot be read: nothing is known about any skill.
+            let failures = items
+                .iter()
+                .map(|item| failed(&item.id, SkillFailure::Io, None))
+                .collect();
+            return (Vec::new(), failures, Vec::new());
         };
         let mut failures = Vec::new();
         for id in held.iter().filter(|id| !listed.contains(id.as_str())) {
@@ -372,15 +413,26 @@ impl Store {
         }
         let (mut applied, mut fetch) = (Vec::new(), Vec::new());
         for (item, need) in self.plan(items) {
-            let Some(dir) = self.dir_of(&item.id).filter(|_| need == Need::Have) else {
+            let dir = match self.dir_of(&item.id) {
+                Ok(dir) => dir.filter(|_| need == Need::Have),
+                Err(_) => {
+                    failures.push(failed(&item.id, SkillFailure::Io, None));
+                    continue;
+                }
+            };
+            let Some(dir) = dir else {
                 fetch.push(item);
                 continue;
             };
             let target = self.root.join(&dir).join(&item.name);
             if !target.is_dir() {
                 // The files are gone: fetch again.
-                self.remove(&item.id);
-                fetch.push(item);
+                let gone = self.remove(&item.id);
+                if gone.iter().any(|f| f.reason == SkillFailure::Io) {
+                    failures.extend(gone);
+                } else {
+                    fetch.push(item);
+                }
                 continue;
             }
             let mut ok = true;
@@ -420,7 +472,6 @@ impl Store {
 mod tests {
     use super::*;
     use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
 
     /// A gzip tarball of `(path, mode, body)` files.
     fn tgz(entries: &[(&str, u32, &[u8])]) -> Vec<u8> {
@@ -516,6 +567,9 @@ mod tests {
         );
         assert_eq!((env.rows("skills"), env.rows("links")), (1, 2));
         assert_eq!(env.store.plan(std::slice::from_ref(&it))[0].1, Need::Have);
+        let store_dir = env.store.root.join(format!("s1.{}", &it.content_hash[..12]));
+        assert_eq!(mode(store_dir.clone()), 0o755);
+        assert_eq!(mode(store_dir.join("pdf")), 0o755);
     }
 
     #[test]
@@ -665,6 +719,72 @@ mod tests {
         assert!(!dir.exists());
         assert_eq!(std::fs::read_link(env.codex("pdf")).unwrap(), elsewhere);
         assert_eq!(std::fs::read(elsewhere.join("keep")).unwrap(), b"k");
+        assert_eq!((env.rows("skills"), env.rows("links")), (0, 0));
+    }
+
+    #[test]
+    fn a_foreign_temp_named_file_survives_an_install() {
+        let env = Env::both();
+        std::fs::create_dir_all(env.claude("")).unwrap();
+        std::fs::write(env.claude(".pdf.tmp"), "mine").unwrap();
+        let archive = pdf();
+        let it = item("s1", "pdf", &archive);
+        assert_eq!(env.store.install(&it, &archive, &env.dirs), vec![]);
+        assert_eq!(std::fs::read(env.claude(".pdf.tmp")).unwrap(), b"mine");
+        assert!(env.claude("pdf").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn a_link_that_climbs_out_of_the_store_is_foreign() {
+        let env = Env::both();
+        let elsewhere = env.tmp.path().join("data/elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("keep"), "k").unwrap();
+        std::fs::create_dir_all(env.claude("")).unwrap();
+        let sneaky = env.store.root.join("../elsewhere");
+        std::os::unix::fs::symlink(&sneaky, env.claude("pdf")).unwrap();
+        let archive = pdf();
+        let it = item("s1", "pdf", &archive);
+        assert_eq!(
+            env.store.install(&it, &archive, &env.dirs),
+            vec![failed("s1", SkillFailure::Conflict, Some("claude"))]
+        );
+        assert_eq!(std::fs::read_link(env.claude("pdf")).unwrap(), sneaky);
+        assert_eq!(env.store.remove("s1"), vec![]);
+        assert_eq!(std::fs::read_link(env.claude("pdf")).unwrap(), sneaky);
+        assert_eq!(std::fs::read(elsewhere.join("keep")).unwrap(), b"k");
+    }
+
+    #[test]
+    fn a_removal_that_fails_is_an_io_failure_and_keeps_the_rows() {
+        let env = Env::both();
+        let archive = pdf();
+        let it = item("s1", "pdf", &archive);
+        assert_eq!(env.store.install(&it, &archive, &env.dirs), vec![]);
+        // The agent skills directory cannot be written: the link stays.
+        let dir = env.tmp.path().join("home/.claude/skills");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let failures = env.store.remove("s1");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            failures.contains(&failed("s1", SkillFailure::Io, Some("claude"))),
+            "{failures:?}"
+        );
+        assert!(std::fs::symlink_metadata(env.claude("pdf")).is_ok());
+        assert_eq!((env.rows("skills"), env.rows("links")), (1, 1));
+        // Once writable again a retry finishes.
+        assert_eq!(env.store.remove("s1"), vec![]);
+        assert_eq!((env.rows("skills"), env.rows("links")), (0, 0));
+
+        // The store directory cannot be removed.
+        let env = Env::both();
+        assert_eq!(env.store.install(&it, &archive, &env.dirs), vec![]);
+        std::fs::set_permissions(&env.store.root, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let failures = env.store.remove("s1");
+        std::fs::set_permissions(&env.store.root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(failures.contains(&failed("s1", SkillFailure::Io, None)), "{failures:?}");
+        assert_eq!(env.rows("skills"), 1);
+        assert_eq!(env.store.remove("s1"), vec![]);
         assert_eq!((env.rows("skills"), env.rows("links")), (0, 0));
     }
 }

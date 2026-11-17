@@ -83,6 +83,7 @@ pub fn tree(tgz: &[u8], dest: &Path, limits: Limits) -> Result<()> {
         bail!("{} exists already", dest.display());
     }
     create_dirs(dest)?;
+    std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))?;
     let mut written = 0u64;
     let mut dirs = vec![dest.to_path_buf()];
     for (count, entry) in archive.entries()?.enumerate() {
@@ -126,15 +127,35 @@ pub(crate) fn replace_symlink(link: &Path, target: &Path) -> std::io::Result<()>
     let name = link
         .file_name()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "a link name"))?;
-    let mut tmp_name = std::ffi::OsString::from(".");
-    tmp_name.push(name);
-    tmp_name.push(".tmp");
-    let tmp = link.with_file_name(tmp_name);
-    let _ = std::fs::remove_file(&tmp);
-    std::os::unix::fs::symlink(target, &tmp)?;
-    std::fs::rename(&tmp, link).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    // A name nobody else holds: `AlreadyExists` means another path is
+    // there, which is never removed, so try the next suffix.
+    for _ in 0..16 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut tmp_name = std::ffi::OsString::from(".");
+        tmp_name.push(name);
+        tmp_name.push(format!(
+            ".{:08x}.tmp",
+            nanos ^ (std::process::id() << 16) ^ (n as u32).wrapping_mul(0x9e37_79b9)
+        ));
+        let tmp = link.with_file_name(tmp_name);
+        match std::os::unix::fs::symlink(target, &tmp) {
+            Ok(()) => {
+                return std::fs::rename(&tmp, link).inspect_err(|_| {
+                    let _ = std::fs::remove_file(&tmp);
+                });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "no free temporary link name",
+    ))
 }
 
 /// Extract only `node-v<version>-<platform>/bin/node` from a Node archive
