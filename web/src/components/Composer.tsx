@@ -464,7 +464,7 @@ function SessionComposer({ sessionId, session, capabilities, catalog, configurat
             {label}
           </p>
         )}
-        <PromptQueue sessionId={sessionId} items={queue} changed={onQueueChange} />
+        <PromptQueue sessionId={sessionId} items={queue} changed={onQueueChange} canSteer={catalog?.steering_supported === true && session?.lifecycle === 'active' && (session.activity === 'running' || session.activity === 'blocked')} />
         {(configuration.pending || configuration.error) && <div className="composer-config-status" role="status">
           {configuration.pending ? 'Applying session settings…' : <><span>Settings need attention.</span><button type="button" className="btn btn-ghost btn-sm" onClick={e => onSettings(e.currentTarget)}>Check settings</button></>}
         </div>}

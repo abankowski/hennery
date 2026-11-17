@@ -606,6 +606,7 @@ li.q-opt-reject { border-color:var(--st-attn); color:var(--st-attn); }
 .queue-copy p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .queue-copy small, .queue-number { color: var(--fg-muted); font-size: 11px; }
 .queue-number { padding-top: 2px; font-variant-numeric: tabular-nums; }
+.queue-attachments { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .queue-actions { display: flex; gap: 4px; margin-left: auto; }
 .queue-copy textarea { width: 100%; min-height: 72px; resize: vertical; font: inherit; background: var(--bg); color: var(--fg-1); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
 .queue-copy .queue-reason { color: var(--fg-muted); font-size: 12px; margin-top: 4px; }

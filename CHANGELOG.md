@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Send selected queued messages as steering input to running Claude Code and
+  Codex sessions. Keep messages available when delivery cannot be confirmed.
+
 ## 0.5.3
 
 - Accept OAuth client metadata documents that support public authentication

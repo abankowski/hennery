@@ -1233,3 +1233,21 @@ it.each([{ isComposing: true }, { keyCode: 229 }, { repeat: true }])('does not s
   expect(c.prompts()).toEqual([])
   expect(textarea().value).toBe('keep this draft')
 })
+
+
+describe('steering a queued message from the composer', () => {
+  const queued = [{ id: 'q1', state: 'queued', reason: null, content: [{ type: 'text' as const, text: 'Adjust direction' }] }]
+  it.each(['running', 'blocked'] as const)('offers steering for a supported active %s session', async activity => {
+    const onQueueChange = vi.fn(async () => {})
+    const c = mount(() => json([]), { session: { lifecycle: 'active', activity }, initialCatalog: { ...catalogOf(), steering_supported: true } as SessionCatalog, queue: queued, onQueueChange })
+    fireEvent.click(screen.getByRole('button', { name: 'Send queued message 1 as steering' }))
+    await waitFor(() => expect(onQueueChange).toHaveBeenCalledOnce())
+    expect(c.posts).toEqual([{ path: '/api/sessions/s1/queue/q1/steer', body: undefined }])
+  })
+  it.each([
+    ['active', 'idle', true], ['parked', undefined, true], ['active', 'running', false], ['active', 'running', undefined],
+  ] as const)('hides steering for lifecycle=%s activity=%s support=%s', (lifecycle, activity, supported) => {
+    mount(accepted, { session: { lifecycle, activity }, initialCatalog: { ...catalogOf(), steering_supported: supported } as SessionCatalog, queue: queued })
+    expect(screen.queryByRole('button', { name: /as steering/ })).toBeNull()
+  })
+})

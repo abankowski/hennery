@@ -7,11 +7,11 @@ import type { QueuedPrompt } from '../generated/protocol'
 import PromptQueue from './PromptQueue'
 
 const item: QueuedPrompt = { id: 'q/1', state: 'queued', reason: null, content: [{ type: 'text', text: 'Read the notes' }, { type: 'image', mimeType: 'image/png', sha256: 'a'.repeat(64), size: 12 }] }
-function mount(items: QueuedPrompt[], status = 200) {
+function mount(items: QueuedPrompt[], status = 200, canSteer = false) {
   const fetch = vi.fn(async () => new Response(JSON.stringify(status === 200 ? [] : { code: 'queue_item_unavailable', message: 'Already delivering' }), { status, headers: { 'Content-Type': 'application/json' } }))
   const changed = vi.fn(async () => {})
   const client = new Client({ fetch: fetch as typeof globalThis.fetch, navigate: vi.fn(), here: () => ({ pathname: '/sessions/s1', search: '' }), stepUp: async () => {} })
-  const view = (next: QueuedPrompt[]) => <ClientContext.Provider value={client}><PromptQueue sessionId="s/1" items={next} changed={changed} /></ClientContext.Provider>
+  const view = (next: QueuedPrompt[]) => <ClientContext.Provider value={client}><PromptQueue sessionId="s/1" items={next} changed={changed} canSteer={canSteer} /></ClientContext.Provider>
   const rendered = render(view(items))
   return { fetch, changed, rerender: (next: QueuedPrompt[]) => rendered.rerender(view(next)) }
 }
@@ -138,4 +138,72 @@ describe('durable prompt queue', () => {
     await waitFor(() => expect(m.changed).toHaveBeenCalledOnce())
     expect(screen.getByRole('alert')).toHaveTextContent('Already delivering')
   })
+})
+
+
+describe('queued prompt steering', () => {
+  it('sends the selected stored message by encoded id and refreshes', async () => {
+    const m = mount([item, { ...item, id: 'q/2' }], 200, true)
+    fireEvent.click(screen.getByRole('button', { name: 'Send queued message 2 as steering' }))
+    await waitFor(() => expect(m.changed).toHaveBeenCalledOnce())
+    expect(m.fetch).toHaveBeenCalledExactlyOnceWith('/api/sessions/s%2F1/queue/q%2F2/steer', expect.objectContaining({ method: 'POST' }))
+    expect(screen.getAllByText('Read the notes')).toHaveLength(2)
+  })
+  it('hides steering when the session cannot accept it', () => {
+    mount([item])
+    expect(screen.queryByRole('button', { name: /as steering/ })).toBeNull()
+  })
+  it('offers steering only for queued messages', () => {
+    mount([{ ...item, state: 'delivering' }, { ...item, id: 'failed', state: 'failed', reason: 'Delivery unknown' }], 200, true)
+    expect(screen.queryByRole('button', { name: /as steering/ })).toBeNull()
+  })
+  it('does not steer a message with an unsaved edit', () => {
+    const m = mount([item], 200, true)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued message 1' }))
+    expect(screen.queryByRole('button', { name: /as steering/ })).toBeNull()
+    expect(m.fetch).not.toHaveBeenCalled()
+  })
+  it('prevents repeated steering and other mutations until refresh completes', async () => {
+    const m = mount([item], 200, true)
+    let resolve!: (response: Response) => void
+    m.fetch.mockImplementationOnce(() => new Promise<Response>(done => { resolve = done }))
+    const button = screen.getByRole('button', { name: 'Send queued message 1 as steering' })
+    fireEvent.click(button)
+    expect(button).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Remove queued message 1' })).toBeDisabled()
+    fireEvent.click(button)
+    expect(m.fetch).toHaveBeenCalledOnce()
+    resolve(new Response('{}', { headers: { 'Content-Type': 'application/json' } }))
+    await waitFor(() => expect(button).toBeEnabled())
+    expect(m.changed).toHaveBeenCalledOnce()
+  })
+  it('retains the message and refreshes after a refused steer', async () => {
+    const m = mount([item], 409, true)
+    fireEvent.click(screen.getByRole('button', { name: 'Send queued message 1 as steering' }))
+    await waitFor(() => expect(m.changed).toHaveBeenCalledOnce())
+    expect(screen.getByRole('alert')).toHaveTextContent('Already delivering')
+    expect(screen.getByText('Read the notes')).toBeVisible()
+  })
+})
+
+it('preserves an uncertain delivery for copy and dismissal without resending', async () => {
+  const writeText = vi.fn(async () => {})
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  const m = mount([{ ...item, state: 'uncertain', reason: 'Check the transcript before sending again.' }], 200, true)
+  expect(screen.getByText('Delivery uncertain')).toBeVisible()
+  expect(screen.queryByRole('button', { name: /as steering|Edit queued/ })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+  await screen.findByRole('button', { name: 'Copied' })
+  expect(writeText).toHaveBeenCalledWith('Read the notes')
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss queued message 1' }))
+  await waitFor(() => expect(m.changed).toHaveBeenCalledOnce())
+  expect(m.fetch).toHaveBeenCalledExactlyOnceWith('/api/sessions/s%2F1/queue/q%2F1', expect.objectContaining({ method: 'DELETE' }))
+})
+
+it.each([false, true])('offers uncertain image recovery and only copies available text: mixed=%s', mixed => {
+  mount([{ ...item, state: 'uncertain', reason: 'Check the transcript.', content: mixed ? item.content : item.content.filter(block => block.type === 'image') }], 200, true)
+  const image = screen.getByRole('link', { name: 'Open image 1 from queued message 1' })
+  expect(image).toHaveAttribute('href', `/api/attachments/${'a'.repeat(64)}`)
+  expect(screen.queryByRole('button', { name: 'Copy' }) !== null).toBe(mixed)
+  expect(screen.queryByRole('button', { name: /as steering/ })).toBeNull()
 })
