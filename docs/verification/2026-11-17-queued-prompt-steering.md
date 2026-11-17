@@ -107,3 +107,18 @@ An additional current-base integration run with `cargo test --offline --locked
 `phc`, required by upstream's updated password dependencies, is absent from the
 local Cargo cache. The test totals above describe the reviewed original source;
 current-base compilation and dependency compatibility require CI confirmation.
+
+## CI compatibility correction
+
+The first upstream CI run failed both `web` and `rust` while compiling
+`hennery-host`: ACP 5.2.0 exposes the transport-neutral `ErrorCode` constants
+as `INVALID_REQUEST`, `INVALID_PARAMS`, `METHOD_NOT_FOUND`, `AUTH_REQUIRED`
+and `RESOURCE_NOT_FOUND`. The steering error classification still used the
+older enum variant names after the upstream dependency update.
+
+The classification now uses the pinned API's constants. The CI compiler errors
+provide the failing regression evidence; existing rejection/internal-error and
+transport-loss cases exercise the behavior after the fix. After fetching the
+locked dependencies, all ten steering integration tests passed on the PR's
+current upstream base (2.98 seconds). Rust formatting and diff whitespace checks
+passed. This supersedes the earlier missing-cache limitation for these tests.

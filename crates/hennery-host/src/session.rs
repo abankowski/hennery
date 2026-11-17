@@ -1027,11 +1027,11 @@ impl Actor {
                     Err(error)
                         if matches!(
                             error.code,
-                            ErrorCode::InvalidRequest
-                                | ErrorCode::InvalidParams
-                                | ErrorCode::MethodNotFound
-                                | ErrorCode::AuthRequired
-                                | ErrorCode::ResourceNotFound
+                            ErrorCode::INVALID_REQUEST
+                                | ErrorCode::INVALID_PARAMS
+                                | ErrorCode::METHOD_NOT_FOUND
+                                | ErrorCode::AUTH_REQUIRED
+                                | ErrorCode::RESOURCE_NOT_FOUND
                         ) =>
                     {
                         SteeringOutcome::Rejected {
