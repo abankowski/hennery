@@ -570,6 +570,10 @@ async fn serve(mut socket: WebSocket, state: AppState, nonce: [u8; 32], permit: 
             | HostFrame::SessionForgotten { .. }) => {
                 state.hub.probe_reply(&host_id, conn_id, frame);
             }
+            // Skill delivery is wired in a later task.
+            HostFrame::SkillFetch { .. } | HostFrame::SkillState { .. } => {
+                tracing::debug!(%host_id, "skill frame not handled yet");
+            }
             HostFrame::Hello { .. } | HostFrame::Authenticate { .. } => {
                 tracing::warn!(%host_id, "ignoring repeated hello")
             }

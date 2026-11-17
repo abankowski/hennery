@@ -1171,6 +1171,10 @@ fn handle(
                 fallback,
             },
         ),
+        // Skill delivery is wired in a later task.
+        CollectorFrame::SkillSync { .. } | CollectorFrame::SkillArchive { .. } => {
+            tracing::debug!("skill frame not handled yet");
+        }
         CollectorFrame::HelloAck { .. } | CollectorFrame::HelloError { .. } => {}
     }
     Ok(())
