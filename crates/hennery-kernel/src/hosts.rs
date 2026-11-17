@@ -252,9 +252,9 @@ pub fn verify_proof(public_key: &str, nonce: &[u8], host_id: &str, protocol_vers
 }
 
 pub struct Hosts {
-    conn: crate::db::CoordinatedConnection,
+    pub(crate) conn: crate::db::CoordinatedConnection,
     /// The database's owner (`db::kernel_owner`), whom every query names.
-    owner: String,
+    pub(crate) owner: String,
 }
 
 impl Hosts {
