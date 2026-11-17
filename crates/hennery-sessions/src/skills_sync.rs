@@ -19,7 +19,6 @@ pub(crate) fn resend_skills(hosts: &Hosts, hub: &Hub, host_id: &str) -> Result<(
 }
 
 /// `resend_skills` for every connected host; after every skills write.
-#[allow(dead_code)] // called by the skills API (plan task 5)
 pub(crate) fn broadcast_skills(hosts: &Hosts, hub: &Hub) -> Result<()> {
     for host in hub.connected_hosts() {
         resend_skills(hosts, hub, &host)?;
