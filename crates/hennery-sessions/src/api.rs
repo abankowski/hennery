@@ -21,7 +21,7 @@ use hennery_kernel::hats::{Resolution, SessionHat};
 use hennery_kernel::json::ApiJson;
 use hennery_kernel::operator::Authenticated;
 use hennery_kernel::secret::unix_now;
-use hennery_proto::frames::{Capability, CollectorFrame, Indexed, SessionBody};
+use hennery_proto::frames::{Capability, CollectorFrame, Indexed, SessionBody, SessionConfig};
 use hennery_proto::rest::{
     AGENT_MAX_JSON_BYTES, AnswerRequest, AnswerResponse, ApiError, CancelResponse, ConfigRequest, DeleteResult,
     EventDto, HostRemovalItem, LifecycleResponse, NewLikeThisResponse, OpenTurn, PendingItem, PromptRequest,
@@ -387,7 +387,7 @@ async fn new_like_this(State(state): State<AppState>, Path(id): Path<String>) ->
 
 pub(crate) async fn start_in_hat(
     state: AppState,
-    req: StartSessionRequest,
+    mut req: StartSessionRequest,
     expected_hat: Option<String>,
     external: Option<crate::external_control::Command>,
 ) -> Response {
@@ -447,6 +447,17 @@ pub(crate) async fn start_in_hat(
             "hat_mismatch",
             "the project now belongs to a different hat; review its path rules before starting a session like this one",
         );
+    }
+    // The launcher prefills the hat's saved defaults for this agent and sends
+    // the merged result; an external create names only what it chose, so the
+    // same defaults fill in underneath here. Clones carry their source's
+    // configuration and are left alone, as in the launcher.
+    if external.as_ref().is_some_and(|c| c.tool == "session_create") {
+        match state.hosts.session_defaults(&hat.hat_id, &req.agent) {
+            Ok(Some(defaults)) => fill_defaults(&mut req.config, defaults.config),
+            Ok(None) => {}
+            Err(err) => return internal(err),
+        }
     }
     let mcp_context = match mcp_context(&state, &req.host_id, &req.agent) {
         Ok(context) => context,
@@ -548,6 +559,20 @@ pub(crate) async fn start_in_hat(
         // The socket task has already failed the session with the host's
         // code (`Undo::Start`).
         Err(err) => request_failed_for_session(err, expected_hat.map(|_| session_id)),
+    }
+}
+
+/// Every model, mode and axis the request leaves unset takes the saved
+/// default; what it names wins. Cache retention is not a saved default.
+fn fill_defaults(config: &mut SessionConfig, defaults: SessionConfig) {
+    if config.model.is_none() {
+        config.model = defaults.model;
+    }
+    if config.mode.is_none() {
+        config.mode = defaults.mode;
+    }
+    for (axis, value) in defaults.axes {
+        config.axes.entry(axis).or_insert(value);
     }
 }
 

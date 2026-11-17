@@ -232,7 +232,7 @@ pub(crate) fn tools(identity: &ExternalIdentity) -> Vec<Value> {
         for (name, description, properties, required, read_only) in [
             (
                 "session_create",
-                "Create a standalone ACP session on a granted host/root. Returns a durable operation; poll operation_get for admission and launch outcome. Counts toward this client's live session capacity (parked sessions included) and a fixed creation rate limit; see hennery_capabilities.limits.",
+                "Create a standalone ACP session on a granted host/root. Any model, mode or axis config omits takes the hat's saved default for that agent, as in the operator launcher; what config names wins. Returns a durable operation; poll operation_get for admission and launch outcome. Counts toward this client's live session capacity (parked sessions included) and a fixed creation rate limit; see hennery_capabilities.limits.",
                 json!({"request_key":id,"host_id":id,"agent":id,"cwd":{"type":"string","maxLength":4096},"config":{"type":"object","properties":{"model":{"type":"string"},"mode":{"type":"string"},"axes":{"type":"object"},"cache_retention":{"enum":["inherit","5m","1h"]}},"additionalProperties":false}}),
                 vec!["request_key", "host_id", "agent", "cwd"],
                 false,
