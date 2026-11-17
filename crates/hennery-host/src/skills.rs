@@ -360,8 +360,10 @@ impl Store {
                 failures.push(failed(id, SkillFailure::Conflict, Some(&agent)));
             }
         }
+        // A link that stays needs the files it points at.
         let mut keep_skill = !kept.is_empty();
         if let Some(dir) = dir
+            && !keep_skill
             && self.remove_store_dir(&dir).is_err()
         {
             failures.push(failed(id, SkillFailure::Io, None));
@@ -772,6 +774,8 @@ mod tests {
         );
         assert!(std::fs::symlink_metadata(env.claude("pdf")).is_ok());
         assert_eq!((env.rows("skills"), env.rows("links")), (1, 1));
+        assert!(env.claude("pdf").join("SKILL.md").is_file(), "the link still resolves");
+        assert!(env.store.root.join(format!("s1.{}", &it.content_hash[..12])).is_dir());
         // Once writable again a retry finishes.
         assert_eq!(env.store.remove("s1"), vec![]);
         assert_eq!((env.rows("skills"), env.rows("links")), (0, 0));
