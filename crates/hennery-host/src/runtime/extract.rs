@@ -65,6 +65,78 @@ pub fn package(tgz: &Path, dest: &Path, max_bytes: u64) -> Result<()> {
     Ok(())
 }
 
+/// Bounds for [`tree`]: total file bytes, entries, and bytes in one file.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    pub max_bytes: u64,
+    pub max_entries: usize,
+    pub max_file: u64,
+}
+
+/// Extract a gzip tarball held in memory into `dest`, which must not exist
+/// yet (skills spec §5): the same refusals as [`package`], but no first
+/// component is stripped and a file is executable only below `scripts/`;
+/// every other file is 0644, every directory 0755.
+pub fn tree(tgz: &[u8], dest: &Path, limits: Limits) -> Result<()> {
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(tgz));
+    if std::fs::symlink_metadata(dest).is_ok() {
+        bail!("{} exists already", dest.display());
+    }
+    create_dirs(dest)?;
+    let mut written = 0u64;
+    let mut dirs = vec![dest.to_path_buf()];
+    for (count, entry) in archive.entries()?.enumerate() {
+        if count >= limits.max_entries {
+            bail!("more than {} entries", limits.max_entries);
+        }
+        let mut entry = entry.context("read the archive")?;
+        let kind = entry.header().entry_type();
+        if kind.is_pax_global_extensions() {
+            continue;
+        }
+        let raw = entry.path_bytes().into_owned();
+        let name = std::str::from_utf8(&raw).map_err(|_| anyhow::anyhow!("an entry name is not UTF-8"))?;
+        if !kind.is_dir() && !kind.is_file() {
+            bail!("{name:?} is not a regular file or a directory ({kind:?}); links and special files are refused");
+        }
+        let relative = name.strip_suffix('/').unwrap_or(name);
+        super::manifest::check_relative_path(relative).with_context(|| format!("entry {name:?}"))?;
+        let target = dest.join(relative);
+        if kind.is_dir() {
+            create_dirs_below(dest, &target)?;
+            dirs.push(target);
+        } else {
+            let parent = target.parent().expect("a joined path has a parent");
+            create_dirs_below(dest, parent)?;
+            let executable = relative.starts_with("scripts/") && entry.header().mode()? & 0o111 != 0;
+            let budget = limits.max_bytes.saturating_sub(written).min(limits.max_file);
+            written +=
+                write_file(&mut entry, &target, executable, budget).with_context(|| format!("extract {relative}"))?;
+        }
+    }
+    for dir in dirs {
+        sync_dir(&dir)?;
+    }
+    Ok(())
+}
+
+/// Point `link` at `target`, atomically: a new link beside it, renamed over
+/// it. Replaces a link or a file, never a directory.
+pub(crate) fn replace_symlink(link: &Path, target: &Path) -> std::io::Result<()> {
+    let name = link
+        .file_name()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "a link name"))?;
+    let mut tmp_name = std::ffi::OsString::from(".");
+    tmp_name.push(name);
+    tmp_name.push(".tmp");
+    let tmp = link.with_file_name(tmp_name);
+    let _ = std::fs::remove_file(&tmp);
+    std::os::unix::fs::symlink(target, &tmp)?;
+    std::fs::rename(&tmp, link).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
 /// Extract only `node-v<version>-<platform>/bin/node` from a Node archive
 /// (gzip) to `dest`, a file that must not exist yet: a regular file of
 /// exactly `size` bytes, mode 0755.

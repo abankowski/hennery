@@ -19,6 +19,7 @@ pub mod profile;
 pub mod projects;
 pub mod runtime;
 pub mod session;
+pub mod skills;
 pub mod transport;
 pub mod uplink;
 pub mod usage;
