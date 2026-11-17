@@ -570,9 +570,22 @@ async fn serve(mut socket: WebSocket, state: AppState, nonce: [u8; 32], permit: 
             | HostFrame::SessionForgotten { .. }) => {
                 state.hub.probe_reply(&host_id, conn_id, frame);
             }
-            // Skill delivery is wired in a later task.
-            HostFrame::SkillFetch { .. } | HostFrame::SkillState { .. } => {
-                tracing::debug!(%host_id, "skill frame not handled yet");
+            // Skill delivery (skills spec §6).
+            HostFrame::SkillFetch { id, content_hash } => {
+                if let Err(err) = crate::skills_sync::on_fetch(&state.hosts, &state.hub, &host_id, &id, &content_hash) {
+                    tracing::warn!(%host_id, error = %err, "answering a skill fetch failed");
+                }
+            }
+            HostFrame::SkillState {
+                revision,
+                applied,
+                failed,
+            } => {
+                if let Err(err) =
+                    crate::skills_sync::on_state(&state.hosts, &host_id, revision, applied, failed, unix_now())
+                {
+                    tracing::warn!(%host_id, error = %err, "recording a skill state failed");
+                }
             }
             HostFrame::Hello { .. } | HostFrame::Authenticate { .. } => {
                 tracing::warn!(%host_id, "ignoring repeated hello")
@@ -639,6 +652,7 @@ pub(crate) fn ready(
     state.hub.mark_ready(host_id, conn_id);
     state.store.resend_idle_parking(host_id, &state.hub)?;
     state.store.resend_idle_holds(host_id, &state.hub)?;
+    crate::skills_sync::resend_skills(&state.hosts, &state.hub, host_id)?;
     // A delete that judged a listed session unattached (this host not ready
     // yet) and committed after the reconciliation: nothing above closed its
     // adapter. Read after `mark_ready`, so a delete committed before this

@@ -59,6 +59,7 @@ pub mod review;
 mod session_defaults_api;
 pub mod session_tools;
 mod shared_files;
+mod skills_sync;
 pub mod startup;
 pub mod store;
 pub mod sweep;
