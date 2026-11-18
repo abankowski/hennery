@@ -975,7 +975,10 @@ pub enum HostFrame {
     ResendComplete,
     /// Ask for the archive of a skill listed in `skill_sync`; answered by
     /// `skill_archive`. Only from a host with the `skills` capability.
-    SkillFetch { id: String, content_hash: String },
+    SkillFetch {
+        id: String,
+        content_hash: String,
+    },
     /// What the host applied of a `skill_sync` revision (skills spec §6).
     SkillState {
         #[ts(type = "number")]
