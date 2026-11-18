@@ -7278,16 +7278,33 @@
       "oneOf": [
         {
           "enum": [
-            "applied",
-            "pending",
-            "failed",
             "unknown"
           ],
           "type": "string"
         },
         {
+          "const": "applied",
+          "description": "The host's report for the current revision lists the skill.",
+          "type": "string"
+        },
+        {
+          "const": "pending",
+          "description": "The host has not yet reported the current revision, or its report\ndoes not list the skill.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The host's report for the current revision lists it as failed.",
+          "type": "string"
+        },
+        {
           "const": "unsupported",
           "description": "The host lacks the `skills` capability.",
+          "type": "string"
+        },
+        {
+          "const": "offline",
+          "description": "The host has no ready connection to the collector.",
           "type": "string"
         }
       ]

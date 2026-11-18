@@ -102,6 +102,30 @@ it('a revoked assigned host is not sent on the next tick', async () => {
   expect(sent(server, 'PUT', '/api/skills/s1/hosts').map((s) => s.body)).toEqual([{ host_ids: ['host-a'] }])
 })
 
+it('replacing the archive reads the host states again', async () => {
+  const server = open({
+    'GET /api/skills/s1/hosts': [
+      json(200, { skill_id: 's1', hosts: [state('host-a', 'applied')] }),
+      json(200, { skill_id: 's1', hosts: [state('host-a', 'pending')] }),
+    ],
+    'PUT /api/skills/s1/archive': json(200, skill({ content_hash: 'f'.repeat(64) })),
+  })
+  const detail = await select()
+  const row = (await within(detail).findByRole('checkbox', { name: /alpha/ })).closest('label')!
+  await waitFor(() => expect(row).toHaveTextContent('applied'))
+  const file = new File([new Uint8Array([31, 139, 8, 0])], 'pdf.tar.gz', { type: 'application/gzip' })
+  fireEvent.change(screen.getByTestId('skill-replace-input'), { target: { files: [file] } })
+  await waitFor(() => expect(row).toHaveTextContent('pending'))
+  expect(sent(server, 'GET', '/api/skills/s1/hosts')).toHaveLength(2)
+})
+
+it('an offline host is marked', async () => {
+  open({ 'GET /api/skills/s1/hosts': json(200, { skill_id: 's1', hosts: [state('host-a', 'offline')] }) })
+  const detail = await select()
+  const row = (await within(detail).findByRole('checkbox', { name: /alpha/ })).closest('label')!
+  await waitFor(() => expect(row).toHaveTextContent('host offline'))
+})
+
 it('a_host_without_the_capability_is_marked', async () => {
   open({ 'GET /api/skills/s1/hosts': json(200, { skill_id: 's1', hosts: [state('host-a', 'unsupported')] }) })
   const detail = await select()

@@ -2,7 +2,7 @@
 // with what that host last reported. A tick saves at once, as the whole set;
 // one more tick while a save runs is ignored. Above the list, a hat's hosts
 // can be added to the set in one go.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { messageOf } from '../api/errors'
 import { hatHosts, setSkillHosts, skillHosts } from '../api/skills'
 import { useClient } from '../app-client'
@@ -19,6 +19,8 @@ function statusWord(state: SkillHostState | undefined): string | null {
       return state.status
     case 'unsupported':
       return 'unsupported (host too old)'
+    case 'offline':
+      return 'host offline'
     case 'failed': {
       const f = state.failure
       return f ? `failed: ${f.reason}${f.agent ? ` (${f.agent})` : ''}` : 'failed'
@@ -33,12 +35,22 @@ interface Props {
   /** `null` while they load or when they could not be read. */
   hosts: HostItem[] | null
   hats: HatItem[] | null
+  /** Changes when the skill's archive was replaced: the states are read
+   *  again, since they were for the old content. */
+  refresh?: number
   onChanged?(): void
 }
 
-export default function SkillHosts({ skillId, hosts, hats, onChanged }: Props) {
+export default function SkillHosts({ skillId, hosts, hats, refresh = 0, onChanged }: Props) {
   const client = useClient()
   const states = useResource(() => skillHosts(client, skillId), [skillId])
+  const { reload } = states
+  const seen = useRef(refresh)
+  useEffect(() => {
+    if (seen.current === refresh) return
+    seen.current = refresh
+    reload()
+  }, [refresh, reload])
   // A ref, not state: two ticks in one frame both see the first.
   const running = useRef(false)
   const [busy, setBusy] = useState(false)

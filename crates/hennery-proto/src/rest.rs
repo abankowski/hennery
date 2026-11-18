@@ -871,11 +871,17 @@ pub struct SetSkillHostsRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillHostStatus {
+    /// The host's report for the current revision lists the skill.
     Applied,
+    /// The host has not yet reported the current revision, or its report
+    /// does not list the skill.
     Pending,
+    /// The host's report for the current revision lists it as failed.
     Failed,
     /// The host lacks the `skills` capability.
     Unsupported,
+    /// The host has no ready connection to the collector.
+    Offline,
     Unknown,
 }
 

@@ -9,7 +9,7 @@ use hennery_kernel::operator::Operator;
 use hennery_kernel::secret::unix_now;
 use hennery_kernel::skill_archive::MAX_COMPRESSED;
 use hennery_kernel::skills::SkillHostReport;
-use hennery_proto::frames::{Capabilities, Capability};
+use hennery_proto::frames::{AgentIsolation, Capabilities, Capability, CollectorFrame, SkillFailed, SkillFailure};
 use hennery_proto::rest::{
     ApiError, CapabilitiesResponse, CreateSkillRequest, HatHostsResponse, SetSkillHostsRequest, SkillDetail,
     SkillHostStatus, SkillHostsResponse, SkillItem,
@@ -101,6 +101,24 @@ impl Collector {
         self.state.hosts.register(id, &enrollment, 1).unwrap();
         let capabilities = Capabilities(if skills { vec![Capability::Skills] } else { vec![] });
         self.state.hosts.record_hello(id, "0", &capabilities, 2).unwrap();
+    }
+
+    /// A ready hub connection for `id`, announcing `skills`; it lasts as
+    /// long as the receiver.
+    fn connect(&self, id: &str) -> tokio::sync::mpsc::UnboundedReceiver<CollectorFrame> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let registration = self
+            .state
+            .hub
+            .register(
+                id,
+                tx,
+                Capabilities(vec![Capability::Skills]),
+                AgentIsolation::default(),
+            )
+            .unwrap();
+        self.state.hub.mark_ready(id, registration.conn_id);
+        rx
     }
 
     async fn set_hosts(&self, skill: &str, hosts: &[&str]) -> reqwest::Response {
@@ -219,6 +237,7 @@ async fn hosts_are_assigned_and_reported() {
     let c = Collector::start().await;
     c.pair("host-a", KEY_A, true);
     c.pair("host-b", KEY_B, false);
+    let _host_a = c.connect("host-a");
     let item: SkillItem = c.create(&pdf()).await.json().await.unwrap();
 
     let resp = c.set_hosts(&item.id, &["nope"]).await;
@@ -259,6 +278,74 @@ async fn hosts_are_assigned_and_reported() {
     c.state.hosts.record_skill_state("host-a", &report(vec![])).unwrap();
     let got: SkillHostsResponse = c.get(&path).await;
     assert_eq!(got.hosts[0].status, SkillHostStatus::Pending);
+}
+
+/// A report for an older revision says nothing about the current content
+/// (final review, finding 5): after a Replace it is `pending`, not
+/// `applied` or `failed`.
+#[tokio::test]
+async fn a_report_of_an_older_revision_is_pending() {
+    let c = Collector::start().await;
+    c.pair("host-a", KEY_A, true);
+    let _host_a = c.connect("host-a");
+    let item: SkillItem = c.create(&pdf()).await.json().await.unwrap();
+    assert_eq!(c.set_hosts(&item.id, &["host-a"]).await.status(), 200);
+    let path = format!("/api/skills/{}/hosts", item.id);
+    let old = c.state.hosts.skills_revision().unwrap();
+    let applied = SkillHostReport {
+        revision: old,
+        applied: vec![item.id.clone()],
+        failed: vec![],
+        reported_at: 5,
+    };
+    c.state.hosts.record_skill_state("host-a", &applied).unwrap();
+    let got: SkillHostsResponse = c.get(&path).await;
+    assert_eq!(got.hosts[0].status, SkillHostStatus::Applied);
+
+    // Another skill is created: the revision moves on, the report does not.
+    let other = tgz(&[("SKILL.md", b"---\nname: docx\ndescription: d\n---")]);
+    assert_eq!(c.create(&other).await.status(), 201);
+    assert!(c.state.hosts.skills_revision().unwrap() > old);
+    let got: SkillHostsResponse = c.get(&path).await;
+    assert_eq!(got.hosts[0].status, SkillHostStatus::Pending);
+    assert_eq!(got.hosts[0].reported_at, Some(5));
+
+    let failed = SkillHostReport {
+        applied: vec![],
+        failed: vec![SkillFailed {
+            id: item.id.clone(),
+            reason: SkillFailure::Io,
+            agent: None,
+        }],
+        ..applied
+    };
+    c.state.hosts.record_skill_state("host-a", &failed).unwrap();
+    let got: SkillHostsResponse = c.get(&path).await;
+    assert_eq!(got.hosts[0].status, SkillHostStatus::Pending);
+    assert_eq!(got.hosts[0].failure, None);
+}
+
+/// A host with no ready connection is `offline`, whatever it last reported.
+#[tokio::test]
+async fn a_disconnected_host_is_offline() {
+    let c = Collector::start().await;
+    c.pair("host-a", KEY_A, true);
+    let item: SkillItem = c.create(&pdf()).await.json().await.unwrap();
+    assert_eq!(c.set_hosts(&item.id, &["host-a"]).await.status(), 200);
+    let report = SkillHostReport {
+        revision: c.state.hosts.skills_revision().unwrap(),
+        applied: vec![item.id.clone()],
+        failed: vec![],
+        reported_at: 5,
+    };
+    c.state.hosts.record_skill_state("host-a", &report).unwrap();
+    let path = format!("/api/skills/{}/hosts", item.id);
+    let got: SkillHostsResponse = c.get(&path).await;
+    assert_eq!(got.hosts[0].status, SkillHostStatus::Offline);
+    let host_a = c.connect("host-a");
+    let got: SkillHostsResponse = c.get(&path).await;
+    assert_eq!(got.hosts[0].status, SkillHostStatus::Applied);
+    drop(host_a);
 }
 
 #[tokio::test]

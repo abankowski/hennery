@@ -238,14 +238,19 @@ async fn remove(State(state): State<AppState>, Path(id): Path<String>) -> Respon
 }
 
 /// Each assigned host's state from its latest report; a report covers the
-/// host's whole set, so a skill it does not list was assigned after it.
+/// host's whole set, so a skill it does not list was assigned after it. A
+/// report older than the owner's current revision says nothing about the
+/// current content (`pending`); a host with no ready connection is
+/// `offline`, whatever it last reported.
 fn host_states(state: &AppState, id: &str) -> anyhow::Result<Vec<SkillHostState>> {
+    let revision = state.hosts.skills_revision()?;
     let mut states = Vec::new();
     for host_id in state.hosts.skill_hosts(id)? {
         let supported = state
             .hosts
             .host(&host_id)?
             .is_some_and(|host| host.capabilities.has(Capability::Skills));
+        let live = state.hub.ready_capability(&host_id, Capability::Skills);
         let report = state.hosts.skill_state(&host_id)?;
         let mut entry = SkillHostState {
             host_id,
@@ -253,11 +258,17 @@ fn host_states(state: &AppState, id: &str) -> anyhow::Result<Vec<SkillHostState>
             failure: None,
             reported_at: None,
         };
-        if !supported {
-            entry.status = SkillHostStatus::Unsupported;
-        } else if let Some(report) = report {
+        if let Some(report) = &report {
             entry.reported_at = Some(report.reported_at);
-            if report.applied.iter().any(|applied| applied == id) {
+        }
+        if !supported || live == Some(false) {
+            entry.status = SkillHostStatus::Unsupported;
+        } else if live.is_none() {
+            entry.status = SkillHostStatus::Offline;
+        } else if let Some(report) = report {
+            if report.revision < revision {
+                entry.status = SkillHostStatus::Pending;
+            } else if report.applied.iter().any(|applied| applied == id) {
                 entry.status = SkillHostStatus::Applied;
             } else if let Some(failed) = report.failed.into_iter().find(|failed| failed.id == id) {
                 entry.status = SkillHostStatus::Failed;

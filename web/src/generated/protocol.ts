@@ -1484,7 +1484,7 @@ export type SetSkillHostsRequest = { host_ids: Array<string>, };
 /**
  * A skill's delivery state on one host.
  */
-export type SkillHostStatus = "applied" | "pending" | "failed" | "unsupported" | "unknown";
+export type SkillHostStatus = "applied" | "pending" | "failed" | "unsupported" | "offline" | "unknown";
 
 /**
  * One host's state for a skill in a `SkillHostsResponse`.

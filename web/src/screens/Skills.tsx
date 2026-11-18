@@ -25,6 +25,8 @@ export default function Skills() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<SkillItem | null>(null)
+  // Counts archive replacements, so the host states are read again.
+  const [replaced, setReplaced] = useState(0)
   // Refs, not state: two presses in one frame both see the first.
   const working = useRef(false)
   const uploadRef = useRef<HTMLInputElement>(null)
@@ -57,6 +59,8 @@ export default function Skills() {
       const next = await replaceSkillArchive(client, item.id, data)
       list.set((prev) => (prev ?? []).map((s) => (s.id === next.id ? next : s)))
       detail.reload()
+      // The hosts' states were for the old archive: read them again.
+      setReplaced((n) => n + 1)
     })
 
   // The list holds the host count: read it again after a host change.
@@ -135,6 +139,7 @@ export default function Skills() {
             skillId={current.id}
             hosts={hosts.data}
             hats={hats.data}
+            refresh={replaced}
             onChanged={hostsChanged}
           />
           <input
