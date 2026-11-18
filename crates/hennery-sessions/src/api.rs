@@ -629,7 +629,7 @@ const MCP_UNDELIVERABLE: &str = "mcp_isolation_unavailable";
 
 /// The code a start or resume the hub refused for its hook sets fails with
 /// (skills spec §8).
-const HOOK_SETS_UNSUPPORTED: &str = "hook_sets_unsupported";
+pub(crate) const HOOK_SETS_UNSUPPORTED: &str = "hook_sets_unsupported";
 
 /// The hook sets assigned to `host_id`, as a start, resume or delegated
 /// attach carries them (skills spec §8); `None` when none are assigned.

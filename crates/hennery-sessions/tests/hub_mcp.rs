@@ -259,8 +259,8 @@ async fn a_frame_without_a_delivery_goes_out_on_any_connection() {
 }
 
 /// Skills spec §8: hook sets go only to a connection that announced
-/// `hook_sets`; the refusal is its own, even when the servers would be
-/// refused too, and a start without hook sets is unaffected.
+/// `hook_sets`; the refusal is its own unless the servers are refused
+/// too, which is reported as MCP; a start without hook sets is unaffected.
 #[tokio::test]
 async fn hook_sets_go_only_where_they_are_announced() {
     use hennery_proto::frames::{HookDelivery, HookSetDelivery};
@@ -292,7 +292,7 @@ async fn hook_sets_go_only_where_they_are_announced() {
         (
             vec![],
             with_hooks(start("claude", true, false)),
-            Err(RequestError::HookSetsUnsupported),
+            Err(RequestError::McpUndeliverable),
         ),
         (
             vec![Capability::HookSets],

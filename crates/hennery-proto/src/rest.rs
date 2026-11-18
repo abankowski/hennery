@@ -942,7 +942,7 @@ pub struct HookSetDetail {
 }
 
 /// `POST /api/hook-sets` (skills spec §9): a name (the skill-name rules) and
-/// its `hooks`. Step-up. 200 with the `HookSetItem`.
+/// its `hooks`. Step-up. 201 with the `HookSetItem`.
 ///
 /// Its own codes: 400 `invalid_body`; 400 `invalid_hook_set` (a bad name, or
 /// `hooks` that break the limits; the message names the `HookSetError`); 409

@@ -1876,7 +1876,7 @@
     },
     "CreateHookSetRequest": {
       "additionalProperties": false,
-      "description": "`POST /api/hook-sets` (skills spec §9): a name (the skill-name rules) and\nits `hooks`. Step-up. 200 with the `HookSetItem`.\n\nIts own codes: 400 `invalid_body`; 400 `invalid_hook_set` (a bad name, or\n`hooks` that break the limits; the message names the `HookSetError`); 409\n`hook_set_exists` (the name is taken); 409 `too_many_hook_sets`.",
+      "description": "`POST /api/hook-sets` (skills spec §9): a name (the skill-name rules) and\nits `hooks`. Step-up. 201 with the `HookSetItem`.\n\nIts own codes: 400 `invalid_body`; 400 `invalid_hook_set` (a bad name, or\n`hooks` that break the limits; the message names the `HookSetError`); 409\n`hook_set_exists` (the name is taken); 409 `too_many_hook_sets`.",
       "properties": {
         "hooks": {
           "$ref": "#/$defs/HookSetConfig"

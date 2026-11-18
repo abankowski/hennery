@@ -137,9 +137,12 @@ async fn drain_target(state: &AppState, target: &str) -> anyhow::Result<()> {
     let candidate = if session.lifecycle == "active" {
         None
     } else {
-        let head = match state.store.delegated_attach_candidate(target, &state.hub)? {
+        // Assigned hook sets go with the attach; a host that cannot apply
+        // them refuses it for good (skills spec §8).
+        let hooks = crate::api::hook_delivery(state, &session.host_id)?.is_some();
+        let head = match state.store.delegated_attach_candidate(target, &state.hub, hooks)? {
             Some(head) => Some(head),
-            None => state.store.notice_attach_candidate(target, &state.hub)?,
+            None => state.store.notice_attach_candidate(target, &state.hub, hooks)?,
         };
         let Some(head) = head else { return Ok(()) };
         if let Some(code) = head.refusal {
@@ -160,6 +163,7 @@ async fn drain_target(state: &AppState, target: &str) -> anyhow::Result<()> {
                 &state.hub,
                 &session.host_id,
                 code != "agent_has_no_record",
+                hooks,
             ) != Some(Some(code))
             {
                 return Ok(());

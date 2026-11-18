@@ -629,19 +629,28 @@ pub(crate) struct AttachCandidate {
 }
 // The outer None defers discovery for an offline/unreconciled host. A ready
 // host can either attach (inner None) or establish a permanent refusal.
-pub(crate) fn attach_availability(hub: &Hub, host: &str, record: bool) -> Option<Option<&'static str>> {
+// `hooks`: the host has hook sets assigned, which the attach carries
+// (skills spec §8); a ready host without `hook_sets` refuses it for good.
+pub(crate) fn attach_availability(hub: &Hub, host: &str, record: bool, hooks: bool) -> Option<Option<&'static str>> {
     let capable = hub.ready_capability(host, Capability::DelegationConfig)?;
     Some(if !record {
         Some("agent_has_no_record")
     } else if !capable {
         Some("configuration_unavailable")
+    } else if hooks && hub.ready_capability(host, Capability::HookSets) == Some(false) {
+        Some(crate::api::HOOK_SETS_UNSUPPORTED)
     } else {
         None
     })
 }
 
 impl Store {
-    pub(crate) fn delegated_attach_candidate(&self, target: &str, hub: &Hub) -> Result<Option<AttachCandidate>> {
+    pub(crate) fn delegated_attach_candidate(
+        &self,
+        target: &str,
+        hub: &Hub,
+        hooks: bool,
+    ) -> Result<Option<AttachCandidate>> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let head: Option<(String, String, i64, String,bool)> = tx
@@ -683,7 +692,7 @@ impl Store {
             }
             _ => return Ok(None),
         };
-        let Some(mut refusal) = attach_availability(hub, &host, possible) else {
+        let Some(mut refusal) = attach_availability(hub, &host, possible, hooks) else {
             return Ok(None);
         };
         if operator
@@ -721,8 +730,8 @@ mod availability_tests {
         hub.mark_ready("host", reg.conn_id);
         assert!(hub.is_ready("host"));
         hub.unregister("host", reg.conn_id);
-        assert_eq!(attach_availability(&hub, "host", true), None);
-        assert_eq!(attach_availability(&hub, "host", false), None);
+        assert_eq!(attach_availability(&hub, "host", true, false), None);
+        assert_eq!(attach_availability(&hub, "host", false, false), None);
     }
 
     #[test]
@@ -731,7 +740,7 @@ mod availability_tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         hub.register("host", tx, Capabilities::default(), AgentIsolation::default())
             .unwrap();
-        assert_eq!(attach_availability(&hub, "host", true), None);
+        assert_eq!(attach_availability(&hub, "host", true, false), None);
     }
 
     #[test]
@@ -752,7 +761,7 @@ mod availability_tests {
                 .register("host", tx, Capabilities(caps), AgentIsolation::default())
                 .unwrap();
             hub.mark_ready("host", reg.conn_id);
-            assert_eq!(attach_availability(&hub, "host", record), Some(expected));
+            assert_eq!(attach_availability(&hub, "host", record, false), Some(expected));
         }
     }
 }

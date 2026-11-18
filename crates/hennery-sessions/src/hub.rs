@@ -215,9 +215,12 @@ impl HostConn {
         {
             return false;
         }
-        if self.refuses_hooks(frame) {
-            return false;
-        }
+        self.takes_mcp(frame) && !self.refuses_hooks(frame)
+    }
+
+    /// The MCP part of `takes`: whether the servers (or the source policy)
+    /// the frame carries may go out on this connection.
+    fn takes_mcp(&self, frame: &CollectorFrame) -> bool {
         let Some(mcp) = frame.mcp_delivery() else {
             return true;
         };
@@ -665,7 +668,9 @@ impl Hub {
             };
             host.adapt_context(&mut frame);
             if !host.takes(&frame) {
-                return Err(if host.refuses_hooks(&frame) {
+                // An MCP refusal is reported as MCP; the hook sets' only
+                // when the servers would have gone out.
+                return Err(if host.takes_mcp(&frame) && host.refuses_hooks(&frame) {
                     RequestError::HookSetsUnsupported
                 } else if frame.mcp_delivery().is_some_and(|mcp| mcp.source_policy.is_some()) {
                     RequestError::McpSourceUnsupported
