@@ -79,6 +79,7 @@ fn start(agent: &str, servers: bool, waived: bool) -> CollectorFrame {
             },
             isolation_waived: waived,
         },
+        hooks: None,
     }
 }
 
@@ -196,6 +197,7 @@ fn resume(agent: &str, waived: bool) -> CollectorFrame {
         config,
         hat_id,
         mcp,
+        hooks,
     } = start(agent, true, waived)
     else {
         unreachable!()
@@ -210,6 +212,7 @@ fn resume(agent: &str, waived: bool) -> CollectorFrame {
         config,
         hat_id,
         mcp,
+        hooks,
     }
 }
 

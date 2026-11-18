@@ -290,6 +290,7 @@ impl Store {
             config,
             hat_id: hat,
             mcp: given.frame(),
+            hooks: None,
             attach_generation: u64::try_from(generation)?,
             agent_session_id: if new_start { None } else { agent_session },
         };

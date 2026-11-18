@@ -509,6 +509,7 @@ pub(crate) async fn start_in_hat(
         // The hat just stored, and what it was given (plan 8e).
         hat_id: hat.hat_id.clone(),
         mcp: mcp.frame(),
+        hooks: None,
     };
     let undo = Undo::Start {
         session_id: session_id.clone(),
@@ -801,6 +802,7 @@ async fn session_detail(State(state): State<AppState>, Path(id): Path<String>) -
         open_turn,
         pending,
         mcp_delivery,
+        hook_sets: Vec::new(),
     })
     .into_response()
 }
@@ -1042,6 +1044,7 @@ pub(crate) async fn resume_authorized(
         // what it was given, with a fresh token (plan 8e).
         hat_id: hat.hat_id.clone(),
         mcp: mcp.frame(),
+        hooks: None,
     };
     let undo = Undo::Start { session_id: id.clone() };
     match crate::external_control::guarded_request(

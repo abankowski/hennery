@@ -876,6 +876,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
             config: SessionConfig::default(),
             hat_id: "hat-test".into(),
             mcp: Default::default(),
+            hooks: None,
             attach_generation: 1,
             agent_session_id: None,
         },
@@ -960,6 +961,7 @@ async fn host_wire_routes_catalog_attach_and_fenced_prompt() {
         config: SessionConfig::default(),
         hat_id: "hat-test".into(),
         mcp: Default::default(),
+        hooks: None,
         attach_generation: generation,
         agent_session_id: None,
     };

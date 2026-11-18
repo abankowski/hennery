@@ -203,6 +203,7 @@ impl Store {
             config,
             hat_id: n.hat,
             mcp: given.frame(),
+            hooks: None,
             attach_generation: u64::try_from(generation)?,
             agent_session_id: agent_session,
         };

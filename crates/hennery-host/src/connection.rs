@@ -940,6 +940,7 @@ fn handle(
             config,
             hat_id: _,
             mcp,
+            hooks: _,
             attach_generation,
             agent_session_id,
         } => attach(
@@ -995,6 +996,7 @@ fn handle(
             // Carried for plan 8h's composed `CODEX_HOME`; unused here.
             hat_id: _,
             mcp,
+            hooks: _,
         } => attach(
             cfg,
             uplink,
@@ -1023,6 +1025,7 @@ fn handle(
             config,
             hat_id: _,
             mcp,
+            hooks: _,
         } => attach(
             cfg,
             uplink,
