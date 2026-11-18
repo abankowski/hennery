@@ -26,10 +26,15 @@ pub(crate) fn broadcast_skills(hosts: &Hosts, hub: &Hub) -> Result<()> {
     Ok(())
 }
 
-/// Answer a fetch with the archive when `content_hash` is still current. A
-/// stale or unknown hash gets no answer: the host receives a fresh manifest
-/// on the next change.
+/// Answer a fetch with the archive when the skill is assigned to `host_id`
+/// and `content_hash` is still current. A stale or unknown hash gets no
+/// answer: the host receives a fresh manifest on the next change. A skill
+/// not assigned to the host is never sent to it.
 pub(crate) fn on_fetch(hosts: &Hosts, hub: &Hub, host_id: &str, id: &str, content_hash: &str) -> Result<()> {
+    if !hosts.skill_hosts(id)?.iter().any(|assigned| assigned == host_id) {
+        tracing::info!(%host_id, %id, "ignoring a fetch of a skill not assigned to the host");
+        return Ok(());
+    }
     match hosts.skill_archive(id)? {
         Some((hash, bytes)) if hash == content_hash => {
             hub.notify(
@@ -167,6 +172,16 @@ mod tests {
         let mut rx = connect(&hub, vec![Capability::Skills]);
         on_fetch(&hosts, &hub, "h", &id, "old-hash").unwrap();
         on_fetch(&hosts, &hub, "h", "unknown", "hash-1").unwrap();
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_fetch_from_an_unassigned_host_gets_no_archive() {
+        let (hosts, id) = hosts_with_skill();
+        hosts.set_skill_hosts(&id, &[], 1).unwrap().unwrap();
+        let hub = Hub::new();
+        let mut rx = connect(&hub, vec![Capability::Skills]);
+        on_fetch(&hosts, &hub, "h", &id, "hash-1").unwrap();
         assert!(rx.try_recv().is_err());
     }
 
