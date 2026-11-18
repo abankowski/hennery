@@ -72,6 +72,20 @@ fn bump(tx: &Transaction<'_>, owner: &str) -> Result<u64> {
     Ok(revision as u64)
 }
 
+/// Drop every skill assignment of `host_id` inside the caller's
+/// transaction (skills spec §10: revoking a host deletes its assignments),
+/// bumping the owner's revision when there were any.
+pub(crate) fn drop_host_assignments(tx: &Transaction<'_>, owner: &str, host_id: &str) -> Result<()> {
+    let dropped = tx.execute(
+        "DELETE FROM skill_assignments WHERE owner_id = ?1 AND host_id = ?2",
+        [owner, host_id],
+    )?;
+    if dropped > 0 {
+        bump(tx, owner)?;
+    }
+    Ok(())
+}
+
 impl Hosts {
     /// Store a new skill from an inspected archive. `Exists` when the name
     /// is taken, `TooMany` at `MAX_SKILLS`.
@@ -521,6 +535,32 @@ mod tests {
             SkillWrite::Unknown
         );
         assert!(hosts.skill_hosts(&a.id).unwrap().is_empty());
+        assert_eq!(hosts.skills_revision().unwrap(), before);
+    }
+
+    /// A revoked host would otherwise lock the skill's host set: every later
+    /// write naming it answers `Unknown` (final review, finding 2).
+    #[test]
+    fn revoking_a_host_drops_its_assignments_and_bumps_the_revision() {
+        let hosts = Hosts::open_in_memory().unwrap();
+        host(&hosts, "host-1", 1);
+        host(&hosts, "host-2", 2);
+        let a = create(&hosts, "a");
+        hosts
+            .set_skill_hosts(&a.id, &["host-1".into(), "host-2".into()], NOW)
+            .unwrap()
+            .unwrap();
+        let before = hosts.skills_revision().unwrap();
+        hosts.revoke("host-2", NOW).unwrap();
+        assert_eq!(hosts.skill_hosts(&a.id).unwrap(), vec!["host-1".to_string()]);
+        assert_eq!(hosts.skills_revision().unwrap(), before + 1);
+        assert!(hosts.skill_sync_for_host("host-2").unwrap().1.is_empty());
+        // The remaining set can be written again.
+        hosts.set_skill_hosts(&a.id, &["host-1".into()], NOW).unwrap().unwrap();
+        // A host with no assignments is revoked without a bump.
+        let before = hosts.skills_revision().unwrap();
+        host(&hosts, "host-3", 3);
+        hosts.revoke("host-3", NOW).unwrap();
         assert_eq!(hosts.skills_revision().unwrap(), before);
     }
 

@@ -79,6 +79,20 @@ it('ticks hosts and saves the whole set', async () => {
   expect(within(detail).getByRole('checkbox', { name: 'beta' })).not.toBeChecked()
 })
 
+it('a revoked assigned host is not sent on the next tick', async () => {
+  const server = open({
+    'GET /api/hosts': json(200, [...HOSTS, host({ host_id: 'host-r', name: 'gone', revoked_at: '2026-11-01T00:00:00Z' })]),
+    'GET /api/skills/s1/hosts': json(200, { skill_id: 's1', hosts: [state('host-r', 'applied')] }),
+    'PUT /api/skills/s1/hosts': json(200, { skill_id: 's1', hosts: [state('host-a', 'pending')] }),
+  })
+  const detail = await select()
+  const alpha = await within(detail).findByRole('checkbox', { name: 'alpha' })
+  expect(within(detail).queryByRole('checkbox', { name: /gone/ })).toBeNull()
+  await userEvent.click(alpha)
+  await waitFor(() => expect(alpha).toBeChecked())
+  expect(sent(server, 'PUT', '/api/skills/s1/hosts').map((s) => s.body)).toEqual([{ host_ids: ['host-a'] }])
+})
+
 it('a_host_without_the_capability_is_marked', async () => {
   open({ 'GET /api/skills/s1/hosts': json(200, { skill_id: 's1', hosts: [state('host-a', 'unsupported')] }) })
   const detail = await select()

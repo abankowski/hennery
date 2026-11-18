@@ -254,7 +254,7 @@ const SOURCES: &[(&str, &str, usize)] = &[
     (
         "hennery-kernel/src/skills.rs",
         include_str!("../../hennery-kernel/src/skills.rs"),
-        20,
+        21,
     ),
     (
         "hennery-sessions/src/store.rs",

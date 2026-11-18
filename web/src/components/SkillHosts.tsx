@@ -45,11 +45,14 @@ export default function SkillHosts({ skillId, hosts, hats, onChanged }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [hatId, setHatId] = useState('')
   const live = (hosts ?? []).filter((h) => !h.revoked_at)
+  const liveIds = new Set(live.map((h) => h.host_id))
   const current = states.data?.hosts ?? null
-  const ticked = (current ?? []).map((s) => s.host_id)
+  // Only live hosts are sent: a revoked id in the set is refused as
+  // `unknown_host`, and would block every later save.
+  const ticked = (current ?? []).map((s) => s.host_id).filter((h) => liveIds.has(h))
 
   const save = async (next: (ticked: string[]) => Promise<string[]> | string[]) => {
-    if (running.current || current === null) return
+    if (running.current || current === null || hosts === null) return
     running.current = true
     setBusy(true)
     setError(null)
@@ -71,7 +74,7 @@ export default function SkillHosts({ skillId, hosts, hats, onChanged }: Props) {
     if (hatId === '') return
     void save(async (now) => {
       const { host_ids } = await hatHosts(client, hatId)
-      return [...now, ...host_ids.filter((h) => !now.includes(h))]
+      return [...now, ...host_ids.filter((h) => liveIds.has(h) && !now.includes(h))]
     })
   }
 
