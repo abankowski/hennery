@@ -13,7 +13,7 @@ use agent_client_protocol::v1::schema::{
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder, SentRequest};
 use agent_client_protocol::{Agent, Client, Stdio, UntypedMessage};
-use hennery_testkit::{CRASH_EXIT_CODE, FakeAsk, FakeCodexHooks, FakeScript, SCRIPT_ENV};
+use hennery_testkit::{CRASH_EXIT_CODE, FakeAsk, FakeCodexHooks, FakeHookEntry, FakeScript, SCRIPT_ENV};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -940,17 +940,31 @@ fn log_line(script: &FakeScript, line: serde_json::Value) {
 
 /// codex-acp's answer to its hook extension methods, in the shapes the
 /// pinned adapter answers (skills spec §8): `None` for any other method.
+/// The listing is that of the `CODEX_CONFIG` the fake actually started with
+/// (after any `env` wrapper: the fake is the program it runs), unless the
+/// script overrides it.
 fn codex_hooks(hooks: &FakeCodexHooks, method: &str, params: &serde_json::Value) -> Option<serde_json::Value> {
     match method {
-        "_codex/hooks/list" => Some(serde_json::json!({
-            "cwd": params["cwd"],
-            "hooks": hooks.list.iter().map(|entry| serde_json::json!({
-                "key": entry.key,
-                "currentHash": entry.current_hash,
-                "source": "sessionFlags",
-                "trustStatus": "untrusted",
-            })).collect::<Vec<_>>(),
-        })),
+        "_codex/hooks/list" => {
+            let entries = hooks.override_list.clone().unwrap_or_else(|| {
+                std::env::var("CODEX_CONFIG")
+                    .map(|config| FakeHookEntry::listed_from(&config))
+                    .unwrap_or_default()
+            });
+            Some(serde_json::json!({
+                "cwd": params["cwd"],
+                "hooks": entries.iter().map(|entry| serde_json::json!({
+                    "key": entry.key,
+                    "handlerType": entry.handler_type,
+                    "command": entry.command,
+                    "matcher": entry.matcher,
+                    "timeoutSec": entry.timeout_sec,
+                    "currentHash": entry.current_hash,
+                    "source": "sessionFlags",
+                    "trustStatus": "untrusted",
+                })).collect::<Vec<_>>(),
+            }))
+        }
         "_codex/hooks/trust" => Some(serde_json::json!({ "trusted": hooks.trusted })),
         _ => None,
     }

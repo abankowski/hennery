@@ -1318,13 +1318,24 @@ impl Actor {
                 },
             );
         }
-        // Before anything is spawned: the agent's own `CODEX_CONFIG` takes
-        // the hooks, or the start fails (skills spec §8, fail-closed).
+        // Before anything is spawned: the agent's own `CODEX_CONFIG` (in its
+        // environment, or the argument of an `env(1)` wrapper, which wins at
+        // exec time) takes the hooks, or the start fails (skills spec §8,
+        // fail-closed).
+        let codex_source = crate::hook_sets::operator_codex_config(&agent);
         let hooks = match hooks
             .as_ref()
             .map(|hooks| {
-                let existing = agent.env.iter().rev().find(|(name, _)| name == "CODEX_CONFIG");
-                crate::hook_sets::render(profile, hooks, existing.map(|(_, value)| value.as_str()))
+                let existing = match &codex_source {
+                    Ok(Some(source)) => Some(crate::hook_sets::codex_config_text(&agent, *source)),
+                    _ => None,
+                };
+                let rendered = crate::hook_sets::render(profile, hooks, existing)?;
+                match &codex_source {
+                    // An `env -i` wrapper would drop the config hennery passes.
+                    Err(error) if rendered.codex_config.is_some() => Err(error.clone()),
+                    _ => Ok(rendered),
+                }
             })
             .transpose()
         {
@@ -1346,8 +1357,7 @@ impl Actor {
         debug_assert_eq!(hooks.applied, self.hook_sets_applied);
         let codex_trust = hooks.codex_hooks;
         if let Some(config) = hooks.codex_config {
-            agent.env.retain(|(name, _)| name != "CODEX_CONFIG");
-            agent.env.push(("CODEX_CONFIG".into(), config));
+            crate::hook_sets::deliver_codex_config(&mut agent, codex_source.ok().flatten(), config);
         }
         let mcp = SessionMcp {
             servers: crate::profile::acp_servers(&mcp_servers),

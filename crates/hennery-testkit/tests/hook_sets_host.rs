@@ -25,7 +25,14 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
 const KEY: &str = "/<session-flags>/config.toml:pre_tool_use:0:0";
-const HASH: &str = "sha256:9107fc0c";
+const GUARD: &str = "/usr/local/bin/guard";
+const OPERATOR: &str = "/usr/local/bin/operator";
+
+/// The `currentHash` the fake lists for `command`.
+fn hash(command: &str) -> String {
+    use sha2::Digest;
+    format!("sha256:{}", hex::encode(sha2::Sha256::digest(command.as_bytes())))
+}
 
 fn set(id: &str, name: &str, hash: &str, hooks: Value) -> HookSetDelivery {
     HookSetDelivery {
@@ -37,7 +44,7 @@ fn set(id: &str, name: &str, hash: &str, hooks: Value) -> HookSetDelivery {
 }
 
 fn pre_tool_use() -> Value {
-    json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/usr/local/bin/guard"}]}]})
+    json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": GUARD}]}]})
 }
 
 fn user_prompt_submit() -> Value {
@@ -69,20 +76,30 @@ fn strict() -> Value {
     json!({"claudeCode": {"options": {"extraArgs": {"strict-mcp-config": ""}}}})
 }
 
+/// The fake lists the hooks of the `CODEX_CONFIG` it started with.
 fn trusting(trusted: bool) -> Option<FakeCodexHooks> {
-    listing(&[KEY], trusted)
+    Some(FakeCodexHooks {
+        override_list: None,
+        trusted,
+    })
 }
 
-/// The fake lists `keys` as session-flag hooks.
-fn listing(keys: &[&str], trusted: bool) -> Option<FakeCodexHooks> {
+/// A session-flag `command` hook at `key`.
+fn entry(key: &str, command: &str, matcher: Option<&str>) -> FakeHookEntry {
+    FakeHookEntry {
+        key: key.into(),
+        handler_type: "command".into(),
+        command: command.into(),
+        matcher: matcher.map(str::to_string),
+        timeout_sec: 600,
+        current_hash: hash(command),
+    }
+}
+
+/// The fake lists `entries`, whatever it started with.
+fn listing(entries: Vec<FakeHookEntry>, trusted: bool) -> Option<FakeCodexHooks> {
     Some(FakeCodexHooks {
-        list: keys
-            .iter()
-            .map(|key| FakeHookEntry {
-                key: key.to_string(),
-                current_hash: HASH.into(),
-            })
-            .collect(),
+        override_list: Some(entries),
         trusted,
     })
 }
@@ -258,7 +275,7 @@ async fn claude_meta_keeps_strict_mcp_and_adds_hooks() {
         );
         assert_eq!(
             meta["claudeCode"]["options"]["settings"]["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-            "/usr/local/bin/guard"
+            GUARD
         );
     }
     assert_eq!(codex_config(&lines), None);
@@ -284,7 +301,7 @@ async fn codex_gets_filtered_config_and_is_trusted() {
     assert_eq!(params(&lines, "_codex/hooks/list")["cwd"], cwd);
     assert_eq!(
         *params(&lines, "_codex/hooks/trust"),
-        json!({"cwd": cwd, "hooks": [{"key": KEY, "currentHash": HASH}]})
+        json!({"cwd": cwd, "hooks": [{"key": KEY, "currentHash": hash(GUARD)}]})
     );
     // Codex gets no Claude `_meta`.
     assert!(params(&lines, "session/new").get("_meta").is_none_or(Value::is_null));
@@ -315,11 +332,7 @@ async fn an_operator_codex_config_is_merged_with_the_hooks() {
 
     // The operator's own hooks come first and are trusted with hennery's.
     std::fs::remove_file(&log).unwrap();
-    let operator = json!({"hooks": [{"type": "command", "command": "/usr/local/bin/operator"}]});
-    let script = script_logging_to(
-        &log,
-        listing(&[KEY, "/<session-flags>/config.toml:pre_tool_use:1:0"], true),
-    );
+    let operator = json!({"hooks": [{"type": "command", "command": OPERATOR}]});
     let own = json!({"hooks": {"PreToolUse": [operator]}}).to_string();
     let agent = fake(&script, &[("CODEX_CONFIG", own.as_str())]);
     started(attach(agent, Attach::New, Profile::Codex, Some(delivery())).await);
@@ -328,8 +341,11 @@ async fn an_operator_codex_config_is_merged_with_the_hooks() {
     groups.extend(pre_tool_use()["PreToolUse"].as_array().unwrap().iter().cloned());
     assert_eq!(codex_config(&lines), Some(json!({"hooks": {"PreToolUse": groups}})));
     assert_eq!(
-        params(&lines, "_codex/hooks/trust")["hooks"].as_array().unwrap().len(),
-        2
+        params(&lines, "_codex/hooks/trust")["hooks"],
+        json!([
+            {"key": KEY, "currentHash": hash(OPERATOR)},
+            {"key": "/<session-flags>/config.toml:pre_tool_use:1:0", "currentHash": hash(GUARD)}
+        ])
     );
 
     std::fs::remove_file(&log).unwrap();
@@ -371,7 +387,8 @@ async fn a_listing_that_does_not_match_the_delivered_hooks_fails_the_start() {
         vec![KEY, "/<session-flags>/config.toml:pre_tool_use:0:1"],
     ] {
         let _ = std::fs::remove_file(&log);
-        let mut script = script_logging_to(&log, listing(&keys, true));
+        let entries = keys.iter().map(|key| entry(key, GUARD, Some("Bash"))).collect();
+        let mut script = script_logging_to(&log, listing(entries, true));
         script.grandchild_pid_file = Some(pid_file.to_string_lossy().into_owned());
         let (code, message) = failed(attach(fake(&script, &[]), Attach::New, Profile::Codex, Some(delivery())).await);
         assert_eq!(code, "hook_sets_refused", "{message}");
@@ -381,6 +398,97 @@ async fn a_listing_that_does_not_match_the_delivered_hooks_fails_the_start() {
             ["_codex/hooks/list"],
             "{keys:?}: nothing trusted"
         );
+        assert_adapter_gone(&pid_file).await;
+    }
+}
+
+/// The documented way to give Codex its own `CODEX_CONFIG` is an `env(1)`
+/// wrapper (`/usr/bin/env CODEX_CONFIG=… <cmd>`): the value in the argument
+/// is the one the adapter runs with, so hennery's hooks are merged into
+/// that argument, after the operator's.
+#[tokio::test]
+async fn an_env_wrapper_codex_config_is_merged_in_the_argument() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("sessions.jsonl");
+    let script = script_logging_to(&log, trusting(true));
+    // The operator's hook sits where hennery's would without the merge.
+    let operator = json!({"matcher": "Bash", "hooks": [{"type": "command", "command": OPERATOR}]});
+    let own = json!({"model": "x", "hooks": {"PreToolUse": [operator]}});
+    let mut agent = fake(&script, &[]);
+    agent.args = vec![format!("CODEX_CONFIG={own}"), agent.program.clone()];
+    agent.program = "/usr/bin/env".into();
+    let indexed = started(attach(agent, Attach::New, Profile::Codex, Some(delivery())).await);
+    let delivery = delivery();
+    assert_eq!(indexed.hook_sets_applied, applied(&[&delivery.sets[0]]));
+
+    let lines = logged(&log);
+    let mut groups = vec![operator];
+    groups.extend(pre_tool_use()["PreToolUse"].as_array().unwrap().iter().cloned());
+    assert_eq!(
+        codex_config(&lines),
+        Some(json!({"model": "x", "hooks": {"PreToolUse": groups}}))
+    );
+    assert_eq!(
+        params(&lines, "_codex/hooks/trust")["hooks"],
+        json!([
+            {"key": KEY, "currentHash": hash(OPERATOR)},
+            {"key": "/<session-flags>/config.toml:pre_tool_use:1:0", "currentHash": hash(GUARD)}
+        ])
+    );
+}
+
+/// `env -i` drops the environment, hennery's `CODEX_CONFIG` with it: with
+/// no `CODEX_CONFIG=` argument to merge into, the start is refused before
+/// anything is spawned.
+#[tokio::test]
+async fn an_env_wrapper_that_drops_the_environment_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let spawns = dir.path().join("spawns");
+    for options in [vec!["-i"], vec!["-u", "CODEX_CONFIG"], vec!["--ignore-environment"]] {
+        let mut args: Vec<String> = options.iter().map(|o| o.to_string()).collect();
+        args.extend([
+            "sh".into(),
+            "-c".into(),
+            format!("echo spawned >> {}", spawns.display()),
+        ]);
+        let agent = AgentCommand {
+            program: "/usr/bin/env".into(),
+            args,
+            env: Vec::new(),
+        };
+        let (code, message) = failed(attach(agent, Attach::New, Profile::Codex, Some(delivery())).await);
+        assert_eq!(code, "hook_sets_refused", "{options:?}: {message}");
+        assert!(message.contains("environment"), "{message}");
+    }
+    assert!(!spawns.exists(), "an adapter was spawned");
+}
+
+/// An adapter that lists hooks at hennery's positions that are not the
+/// ones it was given (another command, matcher or handler type) has
+/// replaced them: nothing is trusted, the start fails, and the message
+/// names the position, not the other command.
+#[tokio::test]
+async fn a_listing_with_other_commands_at_the_same_positions_fails_the_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("sessions.jsonl");
+    let pid_file = dir.path().join("grandchild.pid");
+    let mut prompt = entry(KEY, GUARD, Some("Bash"));
+    prompt.handler_type = "prompt".into();
+    for (listed, what) in [
+        (entry(KEY, "/usr/local/bin/other", Some("Bash")), "command"),
+        (entry(KEY, GUARD, None), "matcher"),
+        (entry(KEY, GUARD, Some("Edit")), "matcher"),
+        (prompt, "handler type"),
+    ] {
+        let _ = std::fs::remove_file(&log);
+        let mut script = script_logging_to(&log, listing(vec![listed], true));
+        script.grandchild_pid_file = Some(pid_file.to_string_lossy().into_owned());
+        let (code, message) = failed(attach(fake(&script, &[]), Attach::New, Profile::Codex, Some(delivery())).await);
+        assert_eq!(code, "hook_sets_refused", "{message}");
+        assert!(message.contains("pre_tool_use:0:0"), "{message}");
+        assert!(message.contains(what), "{what}: {message}");
+        assert!(!message.contains("/usr/local/bin/"), "{message}");
+        assert_eq!(methods(&logged(&log)), ["_codex/hooks/list"], "{what}: nothing trusted");
         assert_adapter_gone(&pid_file).await;
     }
 }
