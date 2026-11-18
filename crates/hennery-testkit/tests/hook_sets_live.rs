@@ -292,8 +292,13 @@ async fn codex_trusts_and_runs_delivered_hooks() -> Result<()> {
     assert_eq!(applied, ["hs-live"], "session_started acknowledges the delivered set");
     assert_eq!(lines(&marker), ["DELIVERED_HOOK"], "Codex ran the trusted hook once");
     let config = std::fs::read_to_string(home.join("codex/config.toml")).context("Codex wrote no config.toml")?;
+    let parsed: toml::Table = toml::from_str(&config).context("Codex wrote a config.toml that does not parse")?;
+    let state = parsed
+        .get("hooks")
+        .and_then(|hooks| hooks.get("state"))
+        .and_then(toml::Value::as_table);
     assert!(
-        config.contains("hooks.state"),
+        state.is_some_and(|state| !state.is_empty()),
         "trusting the hook persisted a hooks.state entry: {config}"
     );
     println!(
