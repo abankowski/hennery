@@ -77,12 +77,6 @@ fn safe_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-/// What the registry held for a skill before a new install.
-struct Previous {
-    dir: Option<String>,
-    links: Vec<PathBuf>,
-}
-
 impl Store {
     /// Open the store in `data_dir`: create `skills/` (0700) and the registry.
     pub fn open(data_dir: &Path) -> Result<Self> {
@@ -201,16 +195,16 @@ impl Store {
         }
 
         match self.record(item, &dir_name, &made) {
-            Ok(previous) => {
+            Ok(previous_links) => {
                 let mut leftover = false;
-                for stale in previous.links {
+                for stale in previous_links {
                     if !made.iter().any(|(_, path)| *path == stale) {
                         leftover |= self.unlink_ours(&stale).is_err();
                     }
                 }
-                if let Some(old) = previous.dir.filter(|old| *old != dir_name) {
-                    leftover |= self.remove_store_dir(&old).is_err();
-                }
+                // The previous `<id>.<hash>` directory stays: a session that
+                // loaded the old copy keeps working until it restarts (spec
+                // §7). The next `reconcile` collects it.
                 if leftover {
                     failures.push(failed(&item.id, SkillFailure::Io, None));
                 }
@@ -223,13 +217,10 @@ impl Store {
         failures
     }
 
-    /// Replace the registry rows of `item`; returns the rows it had before.
-    fn record(&self, item: &SkillSyncItem, dir: &str, made: &[(&str, PathBuf)]) -> Result<Previous> {
+    /// Replace the registry rows of `item`; returns the links it had before.
+    fn record(&self, item: &SkillSyncItem, dir: &str, made: &[(&str, PathBuf)]) -> Result<Vec<PathBuf>> {
         let mut conn = self.registry.lock().expect("skills registry lock");
         let tx = conn.transaction()?;
-        let old_dir = tx
-            .query_row("SELECT dir FROM skills WHERE id = ?1", [&item.id], |row| row.get(0))
-            .ok();
         let mut old_links = Vec::new();
         {
             let mut stmt = tx.prepare("SELECT path FROM links WHERE id = ?1")?;
@@ -249,10 +240,7 @@ impl Store {
             )?;
         }
         tx.commit()?;
-        Ok(Previous {
-            dir: old_dir,
-            links: old_links,
-        })
+        Ok(old_links)
     }
 
     /// Point `agent_dir/<name>` at `target`. `None` on success.
@@ -466,7 +454,37 @@ impl Store {
                 applied.push(item.id.clone());
             }
         }
+        self.collect_stale();
         (applied, failures, fetch)
+    }
+
+    /// Remove every `<id>.<hash12>` directory of the store that is not the
+    /// registry's current one: the copies an update left for the sessions
+    /// that had loaded them. Only names this store makes are touched; a
+    /// directory that cannot be removed is retried at the next reconcile.
+    fn collect_stale(&self) {
+        let current: rusqlite::Result<BTreeSet<String>> = {
+            let conn = self.registry.lock().expect("skills registry lock");
+            conn.prepare("SELECT dir FROM skills")
+                .and_then(|mut stmt| stmt.query_map([], |row| row.get(0))?.collect())
+        };
+        let Ok(current) = current else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(&self.root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            let ours = name.rsplit_once('.').is_some_and(|(id, hash)| {
+                safe_id(id) && hash.len() == 12 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+            });
+            if ours && !current.contains(&name) && entry.file_type().is_ok_and(|t| t.is_dir()) {
+                let _ = self.remove_store_dir(&name);
+            }
+        }
     }
 }
 
@@ -670,9 +688,34 @@ mod tests {
         assert_eq!(env.store.install(&i2, &v2, &env.dirs), vec![]);
         let after = std::fs::read_link(env.claude("pdf")).unwrap();
         assert_ne!(before, after);
-        assert!(!before.exists(), "the old directory is gone");
+        // A session that loaded the old copy keeps it until it restarts.
+        assert!(before.join("SKILL.md").is_file(), "the old directory stays after the update");
         assert!(env.codex("pdf").join("new.txt").is_file());
         assert_eq!((env.rows("skills"), env.rows("links")), (1, 2));
+        // The next sync collects it, and keeps the current copy.
+        let (applied, failures, fetch) = env.store.reconcile(std::slice::from_ref(&i2), &env.dirs);
+        assert_eq!((applied, failures, fetch), (vec!["s1".to_string()], vec![], vec![]));
+        assert!(!before.parent().unwrap().exists(), "the old directory is gone");
+        assert!(after.join("new.txt").is_file());
+    }
+
+    /// Only names the store makes are collected.
+    #[test]
+    fn reconcile_leaves_foreign_names_in_the_store() {
+        let env = Env::both();
+        for name in ["notes", "x.abc", ".hidden.0123456789ab"] {
+            std::fs::create_dir(env.store.root.join(name)).unwrap();
+        }
+        std::fs::write(env.store.root.join("s9.0123456789ab"), "a file").unwrap();
+        env.store.reconcile(&[], &env.dirs);
+        for name in ["notes", "x.abc", ".hidden.0123456789ab", "s9.0123456789ab"] {
+            assert!(env.store.root.join(name).exists(), "{name}");
+        }
+        std::fs::create_dir(env.store.root.join("s9.0123456789ab.d")).unwrap();
+        std::fs::create_dir(env.store.root.join("s8.0123456789ab")).unwrap();
+        env.store.reconcile(&[], &env.dirs);
+        assert!(!env.store.root.join("s8.0123456789ab").exists());
+        assert!(env.store.root.join("s9.0123456789ab.d").is_dir());
     }
 
     #[test]
