@@ -276,6 +276,7 @@ pub struct Launch {
 /// The connection task's handle on a session actor.
 #[derive(Clone)]
 pub struct SessionHandle {
+    pub(crate) cwd: PathBuf,
     mcp_source_policy: Option<hennery_proto::mcp_source::McpSourceSnapshot>,
     attach_generation: Option<u64>,
     commands: mpsc::UnboundedSender<SessionCmd>,
@@ -557,12 +558,14 @@ fn launch_inner(
     };
     let done = CancellationToken::new();
     let mcp_source_policy = launch.mcp_source_policy.clone();
+    let cwd = launch.cwd.clone();
     let finished = done.clone().drop_guard();
     tokio::spawn(async move {
         let _finished = finished;
         actor.run(launch, rx).await;
     });
     SessionHandle {
+        cwd,
         mcp_source_policy,
         attach_generation,
         commands: tx,
@@ -3219,6 +3222,7 @@ mod tests {
         let (commands, receiver) = mpsc::unbounded_channel();
         (
             SessionHandle {
+                cwd: PathBuf::from("/test"),
                 mcp_source_policy: None,
                 attach_generation: Some(1),
                 commands,

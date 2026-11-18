@@ -100,7 +100,7 @@ impl Store {
         }
         let live: i64 = tx.query_row(
             "SELECT COUNT(*) FROM session_families f JOIN sessions c ON c.owner_id = ?1 AND c.id = f.child_id
-            WHERE f.owner_id = ?1 AND f.parent_id = ?2 AND c.lifecycle NOT IN ('closed','deleted')",
+            WHERE f.owner_id = ?1 AND f.parent_id = ?2 AND c.lifecycle NOT IN ('closed','archived','deleted')",
             params![self.owner_id(), caller.session_id()],
             |r| r.get(0),
         )?;

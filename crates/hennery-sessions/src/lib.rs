@@ -66,6 +66,7 @@ pub mod tool_args;
 pub mod unseen;
 pub mod view;
 pub mod work;
+pub mod workspaces;
 pub mod ws;
 mod ws_transport;
 
