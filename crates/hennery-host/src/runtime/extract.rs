@@ -540,6 +540,9 @@ mod tests {
         assert!(!root.join("short.js").exists() && !root.join("pax_global_header").exists());
     }
 
+    /// One raw entry for `tarball`: name, kind, mode, body, link target.
+    type RawEntry<'a> = (&'a str, tar::EntryType, u32, &'a [u8], &'a str);
+
     const SKILL_LIMITS: Limits = Limits {
         max_bytes: 8 << 20,
         max_entries: 512,
@@ -552,7 +555,7 @@ mod tests {
     #[test]
     fn every_shape_the_collector_accepts_extracts() {
         let md: &[u8] = b"---\nname: a\ndescription: d\n---\n";
-        let shapes: [&[(&str, tar::EntryType, u32, &[u8], &str)]; 4] = [
+        let shapes: [&[RawEntry]; 4] = [
             &[
                 ("./", Directory, 0o755, b"", ""),
                 ("./SKILL.md", Regular, 0o644, md, ""),
