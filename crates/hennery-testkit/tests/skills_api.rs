@@ -198,6 +198,13 @@ async fn an_invalid_archive_names_its_problem() {
     let error: ApiError = resp.json().await.unwrap();
     assert_eq!(error.code, "invalid_skill");
     assert!(error.message.contains("SKILL.md"), "{}", error.message);
+    // The most common cause, a skill wrapped in its own directory, is named.
+    let resp = c
+        .create(&tgz(&[("pdf/SKILL.md", b"---\nname: pdf\ndescription: d\n---")]))
+        .await;
+    let error: ApiError = resp.json().await.unwrap();
+    assert!(error.message.contains("top-level directory"), "{}", error.message);
+    assert!(error.message.contains("tar czf pdf.tgz -C pdf ."), "{}", error.message);
 }
 
 #[tokio::test]

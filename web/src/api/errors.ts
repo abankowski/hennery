@@ -27,7 +27,6 @@ const MESSAGES: Record<string, string> = {
   invalid_ceremony: 'The passkey prompt expired. Try again.',
   already_registered: 'This authenticator holds a passkey for hennery already.',
   skill_exists: 'A skill with that name already exists.',
-  invalid_skill: 'The archive is not a valid skill.',
   skill_too_large: 'The skill archive is too large.',
   too_many_skills: 'The skill limit is reached.',
   skill_name_mismatch: 'The new archive has a different skill name.',

@@ -69,6 +69,15 @@ it('uploads a tar.gz behind step-up', async () => {
   expect(posts[1].body).toEqual(posts[0].body)
 })
 
+it('shows the server’s reason when an upload is refused as invalid_skill', async () => {
+  const reason = 'the archive has no SKILL.md at its root; most often the skill is wrapped in a top-level directory'
+  open({ 'POST /api/skills': json(400, { code: 'invalid_skill', message: reason }) })
+  await screen.findByRole('listitem', { name: 'pdf-tools' })
+  const file = new File([new Uint8Array([31, 139, 8, 0])], 'pdf.tar.gz', { type: 'application/gzip' })
+  fireEvent.change(screen.getByTestId('skill-input'), { target: { files: [file] } })
+  expect(await screen.findByRole('alert')).toHaveTextContent(reason)
+})
+
 it('ticks hosts and saves the whole set', async () => {
   const server = open({ 'PUT /api/skills/s1/hosts': json(200, { skill_id: 's1', hosts: [state('host-a', 'pending')] }) })
   const detail = await select()

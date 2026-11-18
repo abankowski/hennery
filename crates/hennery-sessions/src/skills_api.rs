@@ -83,7 +83,10 @@ fn refused(refusal: Refusal) -> Response {
         Refusal::NotTarGz => invalid("the archive is not a readable tar.gz"),
         Refusal::Entry(why) => invalid(format!("the archive has an entry that is not allowed: {why}")),
         Refusal::Trailing => invalid("the archive has bytes after its gzip stream"),
-        Refusal::NoSkillMd => invalid("the archive has no SKILL.md at its root"),
+        Refusal::NoSkillMd => invalid(
+            "the archive has no SKILL.md at its root; most often the skill is wrapped in a top-level \
+             directory (pdf/SKILL.md): archive the directory's contents instead, as in tar czf pdf.tgz -C pdf .",
+        ),
         Refusal::Frontmatter(why) => invalid(format!("SKILL.md frontmatter: {}", frontmatter_problem(why))),
     }
 }
