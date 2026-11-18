@@ -283,6 +283,30 @@ pub struct FakeScript {
     /// Echo the actual ACP content blocks for same-prompt delivery tests.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub echo_prompt: bool,
+    /// Answer codex-acp's hook extension methods (skills spec §8): with
+    /// `None` they are `-32601 Method not found`, as from an adapter
+    /// without them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_hooks: Option<FakeCodexHooks>,
+}
+
+/// What the fake answers `_codex/hooks/list` and `_codex/hooks/trust` with.
+/// Both calls are logged to `session_log` as `{"method", "params"}` lines,
+/// and a `CODEX_CONFIG` the fake starts with as an `{"env": {"CODEX_CONFIG"}}`
+/// line, whether or not this is set.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FakeCodexHooks {
+    /// Listed with `source: "sessionFlags"`, `trustStatus: "untrusted"`.
+    pub list: Vec<FakeHookEntry>,
+    /// `_codex/hooks/trust`'s `trusted`.
+    pub trusted: bool,
+}
+
+/// One `_codex/hooks/list` entry.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FakeHookEntry {
+    pub key: String,
+    pub current_hash: String,
 }
 
 /// One question the fake asks its client during a prompt, and the chunk it
@@ -372,6 +396,7 @@ impl Default for FakeScript {
             codex_archive_links_archived: None,
             echo_servers: false,
             echo_prompt: false,
+            codex_hooks: None,
         }
     }
 }

@@ -364,6 +364,7 @@ async fn live_claude_haiku_plan_configuration_survives_late_updates() -> Result<
             cwd: cwd.clone(),
             profile,
             mcp_servers: vec![],
+            hooks: None,
         },
         SessionOptions::default(),
         1,

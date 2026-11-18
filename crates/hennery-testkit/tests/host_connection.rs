@@ -848,6 +848,7 @@ async fn a_host_announces_that_it_can_park_take_images_and_serve_projects() {
             Capability::Steering,
             Capability::PluginContext,
             Capability::Skills,
+            Capability::HookSets,
         ])
     );
 }

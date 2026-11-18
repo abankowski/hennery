@@ -76,6 +76,7 @@ fn launch(root: &Path, script: FakeScript, attach: Attach) -> Launch {
         cwd: root.canonicalize().unwrap(),
         profile: Profile::Generic,
         mcp_servers: vec![],
+        hooks: None,
     }
 }
 fn prompt(expected: PromptFence, request: &str) -> SessionCmd {
