@@ -8,7 +8,7 @@ import { hatHosts, setSkillHosts, skillHosts } from '../api/skills'
 import { useClient } from '../app-client'
 import type { HatItem, HostItem, SkillHostState } from '../generated/protocol'
 import { useResource } from '../hooks/useResource'
-import { Text } from '../lib/text'
+import { Text, visible } from '../lib/text'
 
 function statusWord(state: SkillHostState | undefined): string | null {
   if (!state) return null
@@ -101,7 +101,7 @@ export default function SkillHosts({ skillId, hosts, hats, refresh = 0, onChange
         >
           <option value="">Pick a hat</option>
           {(hats ?? []).filter((h) => !h.purging).map((h) => (
-            <option key={h.id} value={h.id}>{h.name}</option>
+            <option key={h.id} value={h.id}>{visible(h.name)}</option>
           ))}
         </select>
         <button type="button" className="btn btn-ghost btn-sm" onClick={addHat} aria-disabled={hatId === '' || busy}>

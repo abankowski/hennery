@@ -146,6 +146,14 @@ it('select this hat’s hosts ticks the hat’s hosts', async () => {
   expect(sent(server, 'PUT', '/api/skills/s1/hosts').map((s) => s.body)).toEqual([{ host_ids: ['host-b'] }])
 })
 
+it('a hat name’s hidden characters are shown escaped', async () => {
+  open({ 'GET /api/hats': json(200, [hat({ id: 'hat-1', name: 'Work‮evil' })]) })
+  const detail = await select()
+  await within(detail).findByRole('checkbox', { name: 'alpha' })
+  const option = within(within(detail).getByRole('combobox', { name: 'Hat' })).getByRole('option', { name: /Work/ })
+  expect(option.textContent).toBe('Work<U+202E>evil')
+})
+
 it('is hidden without the feature', async () => {
   const server = open({}, FULL)
   expect(await screen.findByText('Skills are not part of this deployment.')).toBeInTheDocument()
