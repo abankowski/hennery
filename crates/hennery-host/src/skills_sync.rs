@@ -22,20 +22,28 @@ struct Pending {
     failed: Vec<SkillFailed>,
 }
 
-/// The store, the agents' directories and the revision in progress.
+/// The store, the environment the agents' directories are found in, and
+/// the revision in progress.
 pub struct SkillSync {
     store: skills::Store,
-    dirs: AgentDirs,
+    agent_env: Vec<(String, String)>,
     pending: Mutex<Pending>,
 }
 
 impl SkillSync {
-    pub fn new(store: skills::Store, dirs: AgentDirs) -> Self {
+    pub fn new(store: skills::Store, agent_env: Vec<(String, String)>) -> Self {
         Self {
             store,
-            dirs,
+            agent_env,
             pending: Mutex::default(),
         }
+    }
+
+    /// The agents' skill directories, found again for each frame: an agent
+    /// installed after the host started (a new `~/.codex`) is linked at
+    /// the next sync, without a restart.
+    fn dirs(&self) -> AgentDirs {
+        skills::agent_dirs(&self.agent_env)
     }
 
     /// A new collector connection: its revisions are not comparable with
@@ -75,7 +83,7 @@ impl SkillSync {
             tracing::debug!(revision, current = pending.revision, "an older skill sync");
             return;
         }
-        let (applied, failed, fetch) = self.store.reconcile(&items, &self.dirs);
+        let (applied, failed, fetch) = self.store.reconcile(&items, &self.dirs());
         for item in &fetch {
             uplink.reply(HostFrame::SkillFetch {
                 id: item.id.clone(),
@@ -111,7 +119,7 @@ impl SkillSync {
         };
         pending.waiting.remove(id);
         let failures = match base64::engine::general_purpose::STANDARD.decode(data) {
-            Ok(tgz) => self.store.install(&item, &tgz, &self.dirs),
+            Ok(tgz) => self.store.install(&item, &tgz, &self.dirs()),
             Err(_) => vec![SkillFailed {
                 id: id.to_string(),
                 reason: SkillFailure::Invalid,
@@ -191,7 +199,7 @@ mod tests {
             }
             let home = tmp.path().join("home").to_str().unwrap().to_string();
             let store = skills::Store::open(&tmp.path().join("data")).unwrap();
-            let sync = SkillSync::new(store, skills::agent_dirs(&[("HOME".into(), home)]));
+            let sync = SkillSync::new(store, vec![("HOME".into(), home)]);
             let (uplink, replies) = Uplink::new(Outbox::open_in_memory().unwrap());
             Self {
                 tmp,
@@ -238,6 +246,30 @@ mod tests {
         // The same revision again is answered, still for 6.
         env.sync.on_sync(&env.uplink, generation, 6, vec![alpha]);
         assert_eq!(env.reply(), state(6, &["s1"], vec![]));
+    }
+
+    /// An agent installed after the host started is linked at the next
+    /// sync, without a restart (final review, finding 7).
+    #[test]
+    fn an_agent_dir_made_after_start_is_linked_at_the_next_sync() {
+        let mut env = Env::new(&[".claude"]);
+        let archive = tgz("alpha");
+        let alpha = item("s1", "alpha", &archive);
+        let generation = env.sync.generation();
+        env.sync.on_sync(&env.uplink, generation, 1, vec![alpha.clone()]);
+        assert!(matches!(env.reply(), Some(HostFrame::SkillFetch { .. })));
+        env.sync
+            .on_archive(&env.uplink, generation, "s1", &alpha.content_hash, &b64(&archive));
+        let missing = SkillFailed {
+            id: "s1".into(),
+            reason: SkillFailure::AgentDirMissing,
+            agent: Some("codex".into()),
+        };
+        assert_eq!(env.reply(), state(1, &[], vec![missing]));
+        std::fs::create_dir(env.tmp.path().join("home/.codex")).unwrap();
+        env.sync.on_sync(&env.uplink, generation, 2, vec![alpha]);
+        assert_eq!(env.reply(), state(2, &["s1"], vec![]));
+        assert!(env.link(".codex", "alpha").join("SKILL.md").is_file());
     }
 
     /// A thread left over from a previous connection cannot act after

@@ -188,10 +188,11 @@ pub async fn run_until(cfg: HostConfig, shutdown: impl Future<Output = ()>) -> R
     let homes = Arc::new(crate::agent_home::Registry::open(
         &cfg.data_dir.join(crate::agent_home::FILE),
     )?);
-    // Skill delivery: the store, and the agents' skill directories, found once.
+    // Skill delivery: the store, and the environment the agents' skill
+    // directories are found in at each sync.
     let skills = Arc::new(crate::skills_sync::SkillSync::new(
         crate::skills::Store::open(&cfg.data_dir)?,
-        crate::skills::agent_dirs(&cfg.agent_env),
+        cfg.agent_env.clone(),
     ));
     let sessions: Sessions = Arc::new(Mutex::new(SessionMap::default()));
     // Outlives each connection, so its bounds hold across reconnects.
