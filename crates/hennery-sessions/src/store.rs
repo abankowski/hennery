@@ -4370,7 +4370,7 @@ impl Store {
                 )?;
                 // A presumed-parked session is still attached as far as its
                 // host's facts go (ACP core §5.3).
-                let terminal_operator: bool = matches!(lifecycle.as_str(), "closed" | "failed") && tx.query_row(
+                let terminal_operator: bool = matches!(lifecycle.as_str(), "closed" | "archived" | "failed") && tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM session_operations WHERE owner_id = ?1 AND child_id=?2 AND turn_id=?3 AND tool='operator_prompt' AND state='failed')",
                     params![self.owner_id(), session_id, turn_id], |r| r.get(0),
                 )?;

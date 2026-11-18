@@ -72,6 +72,27 @@ pub async fn create(source: &Path, destination: &Path, id: &str, base: &str) -> 
 mod tests {
     use super::*;
 
+    #[test]
+    fn preparation_copy_refuses_links_and_enforces_actual_read_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(temp.path().join("outside"), "private").unwrap();
+        std::os::unix::fs::symlink(temp.path().join("outside"), source.join("link")).unwrap();
+        assert!(copy_preparation_file(&source, &destination, Path::new("link"), 16).is_err());
+        assert!(!destination.join("link").exists());
+        std::fs::create_dir(source.join("sub")).unwrap();
+        std::fs::write(source.join("sub/file"), "content").unwrap();
+        std::os::unix::fs::symlink(temp.path(), destination.join("sub")).unwrap();
+        assert!(copy_preparation_file(&source, &destination, Path::new("sub/file"), 16).is_err());
+        assert!(!temp.path().join("file").exists());
+        std::fs::write(source.join("large"), "content").unwrap();
+        assert!(copy_preparation_file(&source, &destination, Path::new("large"), 2).is_err());
+        assert!(!destination.join("large").exists());
+    }
+
     #[tokio::test]
     async fn provisioning_is_idempotent_and_failed_preparation_remains_inspectable() {
         let temp = tempfile::tempdir().unwrap();
@@ -393,41 +414,11 @@ pub async fn operate(value: serde_json::Value, roots: &[PathBuf]) -> Result<serd
                                 .all(|part| matches!(part, std::path::Component::Normal(_))),
                         "invalid preparation path"
                     );
-                    let mut from = repository.clone();
-                    for part in file.components() {
-                        from.push(part.as_os_str());
-                        ensure!(
-                            !tokio::fs::symlink_metadata(&from).await?.file_type().is_symlink(),
-                            "preparation symlinks are not supported"
-                        );
-                    }
-                    let metadata = tokio::fs::metadata(&from).await?;
-                    ensure!(metadata.is_file(), "preparation entry must be a file");
-                    total += metadata.len();
-                    ensure!(total <= 16 * 1024 * 1024, "preparation files exceed 16 MiB");
-                    let to = destination.join(&file);
-                    // Do not overwrite checked-in files or traverse checkout links.
-                    let mut ancestor = destination.clone();
-                    for part in file.parent().unwrap_or(Path::new("")).components() {
-                        ancestor.push(part.as_os_str());
-                        match tokio::fs::symlink_metadata(&ancestor).await {
-                            Ok(meta) => ensure!(
-                                meta.is_dir() && !meta.file_type().is_symlink(),
-                                "invalid preparation destination"
-                            ),
-                            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                                tokio::fs::create_dir(&ancestor).await?
-                            }
-                            Err(err) => return Err(err.into()),
-                        }
-                    }
-                    let mut out = tokio::fs::OpenOptions::new()
-                        .create_new(true)
-                        .mode(0o600)
-                        .write(true)
-                        .open(&to)
-                        .await?;
-                    out.write_all(&tokio::fs::read(from).await?).await?;
+                    let from = repository.clone();
+                    let to = destination.clone();
+                    let remaining = 16 * 1024 * 1024 - total;
+                    total += tokio::task::spawn_blocking(move || copy_preparation_file(&from, &to, &file, remaining))
+                        .await??;
                 }
                 if let Some(command) = command {
                     ensure!(command.len() <= 8192, "preparation command is too long");
@@ -536,4 +527,66 @@ pub async fn operate(value: serde_json::Value, roots: &[PathBuf]) -> Result<serd
             Ok(serde_json::json!({"removed":true}))
         }
     }
+}
+
+/// Resolve each component exactly once through directory descriptors. Checking
+/// symlinks and reopening by pathname would allow a source/checkout swap race.
+fn copy_preparation_file(source: &Path, destination: &Path, path: &Path, limit: u64) -> Result<u64> {
+    use std::io::{Read, Write};
+    use std::os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::ffi::OsStrExt,
+    };
+    let io = std::io::Error::from_raw_os_error;
+    let mut from = crate::walk::open_root(source).map_err(io)?;
+    let mut to = crate::walk::open_root(destination).map_err(io)?;
+    let parts: Vec<_> = path.components().collect();
+    ensure!(
+        !parts.is_empty() && parts.iter().all(|part| matches!(part, std::path::Component::Normal(_))),
+        "invalid preparation path"
+    );
+    for part in &parts[..parts.len() - 1] {
+        let name = std::ffi::CString::new(part.as_os_str().as_bytes())?;
+        from = crate::walk::open_dir_at(from.as_raw_fd(), &name).map_err(io)?;
+        // SAFETY: live parent descriptor and NUL-terminated single component.
+        let made = unsafe { libc::mkdirat(to.as_raw_fd(), name.as_ptr(), 0o700) };
+        if made < 0 {
+            ensure!(
+                std::io::Error::last_os_error().raw_os_error() == Some(libc::EEXIST),
+                "cannot create preparation directory"
+            );
+        }
+        to = crate::walk::open_dir_at(to.as_raw_fd(), &name).map_err(io)?;
+    }
+    let name = std::ffi::CString::new(parts.last().unwrap().as_os_str().as_bytes())?;
+    // SAFETY: live parent descriptor; O_NOFOLLOW rejects replacement symlinks.
+    let input = unsafe {
+        libc::openat(
+            from.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+        )
+    };
+    ensure!(input >= 0, "cannot open preparation file without following links");
+    // SAFETY: this call owns the descriptor returned above.
+    let input = unsafe { std::fs::File::from_raw_fd(input) };
+    ensure!(input.metadata()?.is_file(), "preparation entry is not a regular file");
+    let mut bytes = Vec::new();
+    input.take(limit + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() as u64 <= limit, "preparation files exceed 16 MiB");
+    // SAFETY: live parent descriptor, exclusive creation cannot overwrite a
+    // checked-in file or a symlink, and no parent path is resolved again.
+    let output = unsafe {
+        libc::openat(
+            to.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o600,
+        )
+    };
+    ensure!(output >= 0, "preparation destination exists or is inaccessible");
+    // SAFETY: this call owns the descriptor returned above.
+    let mut output = unsafe { std::fs::File::from_raw_fd(output) };
+    output.write_all(&bytes)?;
+    Ok(bytes.len() as u64)
 }

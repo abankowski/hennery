@@ -106,3 +106,14 @@ Observed verification:
 Release validation still pending: live acceptance against both pinned,
 authenticated ACP adapters. The system Cargo installation has no Clippy command;
 no successful Clippy run is claimed. No merge or deployment was performed.
+
+Final upstream-base verification (the isolated PR branch contains only the
+workspace implementation, with no unrelated local steering commits):
+
+- Current main session library: 193 passing tests.
+- Current main host library: 148 passing tests, including four workspace
+  preparation, recovery, ownership and symlink regression tests.
+- Current main UI: 2896 passing tests across 174 files.
+- TypeScript, protocol generation check and compilation passed on this base.
+- Preparation copying now uses directory descriptors and exclusive no-follow
+  file creation rather than check-then-reopen path handling.
