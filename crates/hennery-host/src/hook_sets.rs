@@ -19,6 +19,9 @@ pub struct Rendered {
     /// Codex: the adapter's `CODEX_CONFIG`, as JSON. When set, the adapter's
     /// hooks must be trusted after `initialize`.
     pub codex_config: Option<String>,
+    /// Codex: the `hooks` inside `codex_config` (the operator's own first,
+    /// then hennery's), which the adapter's listing must match.
+    pub codex_hooks: Option<HookSetConfig>,
     /// The sets that reach the agent, in delivery order.
     pub applied: Vec<HookSetApplied>,
 }
@@ -31,10 +34,14 @@ pub enum HookSetsError {
     Unsupported,
     /// The agent's own `CODEX_CONFIG` is not a JSON object.
     CodexConfigNotObject,
+    /// The `hooks` in the agent's own `CODEX_CONFIG` are not a hook config.
+    CodexHooksInvalid(String),
     /// The adapter lacks `_codex/hooks/list` or `_codex/hooks/trust`.
     NoExtension,
-    /// The adapter listed none of the hooks it was given.
-    NotListed,
+    /// The adapter's session-flag hooks are not the ones it was given (an
+    /// agent command that sets its own `CODEX_CONFIG`, say): handler
+    /// positions `<event>:<group>:<handler>`, sorted.
+    Mismatch { expected: Vec<String>, listed: Vec<String> },
     /// The adapter's trust call did not answer `trusted: true`.
     NotTrusted,
     /// Any other failure of the adapter's hook calls.
@@ -47,7 +54,13 @@ impl std::fmt::Display for HookSetsError {
             Self::Unsupported => f.write_str("this agent cannot run hook sets"),
             Self::CodexConfigNotObject => f.write_str("the agent's CODEX_CONFIG is not a JSON object"),
             Self::NoExtension => f.write_str("the adapter does not offer _codex/hooks/list and _codex/hooks/trust"),
-            Self::NotListed => f.write_str("the adapter listed none of the hooks it was given"),
+            Self::CodexHooksInvalid(why) => write!(f, "the hooks in the agent's CODEX_CONFIG are invalid: {why}"),
+            Self::Mismatch { expected, listed } => write!(
+                f,
+                "the adapter lists other hooks than it was given: expected [{}], listed [{}]",
+                expected.join(", "),
+                listed.join(", ")
+            ),
             Self::NotTrusted => f.write_str("the adapter did not trust the hooks it was given"),
             Self::Adapter(message) => write!(f, "the adapter's hook call failed: {message}"),
         }
@@ -79,6 +92,9 @@ pub fn applied(profile: Profile, delivery: &HookDelivery) -> Vec<HookSetApplied>
 /// Render `delivery` for a `profile` agent: the sets merged event by event
 /// in delivery order, for Codex with only the events it runs and inside
 /// `existing_codex_config` (the agent's own `CODEX_CONFIG`) when it has one.
+/// Hooks already in that config come first, hennery's groups after them,
+/// and the trust call after `initialize` trusts both: that value comes from
+/// the operator's own agent command (`host.toml`), not from a third party.
 pub fn render(
     profile: Profile,
     delivery: &HookDelivery,
@@ -92,6 +108,7 @@ pub fn render(
             Ok(Rendered {
                 claude_meta_hooks: (!merged.0.is_empty()).then_some(merged),
                 codex_config: None,
+                codex_hooks: None,
                 applied,
             })
         }
@@ -115,13 +132,20 @@ pub fn render(
                     _ => return Err(HookSetsError::CodexConfigNotObject),
                 },
             };
+            let operator = match config.remove("hooks") {
+                None => HookSetConfig::default(),
+                Some(hooks) => serde_json::from_value::<HookSetConfig>(hooks)
+                    .map_err(|err| HookSetsError::CodexHooksInvalid(err.to_string()))?,
+            };
+            let hooks = merge([&operator, &merged]);
             config.insert(
                 "hooks".into(),
-                serde_json::to_value(&merged).expect("hook config serialises"),
+                serde_json::to_value(&hooks).expect("hook config serialises"),
             );
             Ok(Rendered {
                 claude_meta_hooks: None,
                 codex_config: Some(Value::Object(config).to_string()),
+                codex_hooks: Some(hooks),
                 applied,
             })
         }
@@ -131,30 +155,82 @@ pub fn render(
 /// Trust the hooks a Codex adapter was started with (skills spec §8):
 /// `_codex/hooks/list` for `cwd`, then `_codex/hooks/trust` with the
 /// `{key, currentHash}` of every hook it lists from the session's flags.
-/// Codex skips an untrusted hook silently, so anything but `trusted: true`
-/// is an error.
-pub async fn trust_codex(conn: &ConnectionTo<Agent>, cwd: &Path) -> Result<(), HookSetsError> {
+/// The listing must name exactly the handler positions of `sent` (the
+/// `hooks` of the `CODEX_CONFIG` hennery passed): an agent command that
+/// sets its own `CODEX_CONFIG` replaces hennery's, and those hooks must not
+/// be trusted in its place. Codex skips an untrusted hook silently, so
+/// anything but `trusted: true` is an error.
+pub async fn trust_codex(conn: &ConnectionTo<Agent>, cwd: &Path, sent: &HookSetConfig) -> Result<(), HookSetsError> {
     let listed = call(conn, "_codex/hooks/list", json!({ "cwd": cwd })).await?;
-    let hooks: Vec<Value> = listed
+    let entries: Vec<(&str, &str)> = listed
         .get("hooks")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter(|hook| hook.get("source").and_then(Value::as_str) == Some("sessionFlags"))
-        .filter_map(|hook| {
-            let key = hook.get("key")?.as_str()?;
-            let hash = hook.get("currentHash")?.as_str()?;
-            Some(json!({ "key": key, "currentHash": hash }))
-        })
+        .filter_map(|hook| Some((hook.get("key")?.as_str()?, hook.get("currentHash")?.as_str()?)))
         .collect();
-    if hooks.is_empty() {
-        return Err(HookSetsError::NotListed);
+    let expected = positions(sent);
+    let mut listed: Vec<String> = entries.iter().map(|(key, _)| position_of(key)).collect();
+    listed.sort();
+    if listed != expected {
+        return Err(HookSetsError::Mismatch { expected, listed });
     }
+    let hooks: Vec<Value> = entries
+        .iter()
+        .map(|(key, hash)| json!({ "key": key, "currentHash": hash }))
+        .collect();
     let answer = call(conn, "_codex/hooks/trust", json!({ "cwd": cwd, "hooks": hooks })).await?;
     match answer.get("trusted").and_then(Value::as_bool) {
         Some(true) => Ok(()),
         _ => Err(HookSetsError::NotTrusted),
     }
+}
+
+/// Every handler position Codex lists for `hooks`, sorted: the
+/// `<event>:<group>:<handler>` that ends its key, the event in snake case
+/// (`PreToolUse` is `pre_tool_use`). Events Codex does not run are not
+/// listed.
+fn positions(hooks: &HookSetConfig) -> Vec<String> {
+    let mut positions: Vec<String> = hennery_proto::hooks::render(hooks, CODEX_EVENTS)
+        .0
+        .iter()
+        .flat_map(|(event, groups)| {
+            let event = snake_case(event);
+            groups.iter().enumerate().flat_map(move |(group, matcher)| {
+                let event = event.clone();
+                (0..matcher.hooks.len()).map(move |handler| format!("{event}:{group}:{handler}"))
+            })
+        })
+        .collect();
+    positions.sort();
+    positions
+}
+
+/// The `<event>:<group>:<handler>` that ends a listed key
+/// (`/<session-flags>/config.toml:pre_tool_use:0:0`); the whole key when
+/// it has no such ending.
+fn position_of(key: &str) -> String {
+    let parts: Vec<&str> = key.rsplitn(4, ':').collect();
+    match parts.as_slice() {
+        [handler, group, event, _] => format!("{event}:{group}:{handler}"),
+        _ => key.to_string(),
+    }
+}
+
+fn snake_case(event: &str) -> String {
+    let mut out = String::with_capacity(event.len() + 4);
+    for (i, c) in event.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 async fn call(conn: &ConnectionTo<Agent>, method: &str, params: Value) -> Result<Value, HookSetsError> {
@@ -240,9 +316,25 @@ mod tests {
         let config: Value = serde_json::from_str(&rendered.codex_config.unwrap()).unwrap();
         assert_eq!(config, json!({"hooks": {"PreToolUse": pre}}));
 
-        let rendered = render(Profile::Codex, &delivery(), Some(r#"{"model":"x","hooks":{}}"#)).unwrap();
+        let operator = json!({"type": "command", "command": "/bin/operator"});
+        let rendered = render(
+            Profile::Codex,
+            &delivery(),
+            Some(&json!({"model": "x", "hooks": {"PreToolUse": [{"hooks": [operator]}]}}).to_string()),
+        )
+        .unwrap();
         let config: Value = serde_json::from_str(&rendered.codex_config.unwrap()).unwrap();
-        assert_eq!(config, json!({"model": "x", "hooks": {"PreToolUse": pre}}));
+        let mut merged = vec![json!({"hooks": [operator]})];
+        merged.extend(pre.as_array().unwrap().iter().cloned());
+        assert_eq!(config, json!({"model": "x", "hooks": {"PreToolUse": merged}}));
+        assert_eq!(
+            serde_json::to_value(rendered.codex_hooks.unwrap()).unwrap(),
+            config["hooks"]
+        );
+        assert!(matches!(
+            render(Profile::Codex, &delivery(), Some(r#"{"hooks":{"PreToolUse":"nope"}}"#)),
+            Err(HookSetsError::CodexHooksInvalid(_))
+        ));
 
         for bad in ["[]", "\"x\"", "not json", "null"] {
             assert_eq!(
@@ -260,6 +352,33 @@ mod tests {
         };
         let rendered = render(Profile::Codex, &only_prompts, Some("[]")).unwrap();
         assert_eq!(rendered, Rendered::default());
+    }
+
+    #[test]
+    fn codex_lists_handlers_by_snake_case_event_group_and_handler() {
+        let hooks: HookSetConfig = serde_json::from_value(json!({
+            "PreToolUse": [
+                {"hooks": [{"type": "command", "command": "/bin/a"}, {"type": "command", "command": "/bin/b"}]},
+                {"hooks": [{"type": "command", "command": "/bin/c"}]}
+            ],
+            "SessionStart": [{"hooks": [{"type": "command", "command": "/bin/d"}]}],
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/bin/e"}]}]
+        }))
+        .unwrap();
+        assert_eq!(
+            positions(&hooks),
+            [
+                "pre_tool_use:0:0",
+                "pre_tool_use:0:1",
+                "pre_tool_use:1:0",
+                "session_start:0:0"
+            ]
+        );
+        assert_eq!(
+            position_of("/<session-flags>/config.toml:pre_tool_use:0:1"),
+            "pre_tool_use:0:1"
+        );
+        assert_eq!(position_of("odd"), "odd");
     }
 
     #[test]

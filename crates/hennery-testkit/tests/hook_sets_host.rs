@@ -70,13 +70,39 @@ fn strict() -> Value {
 }
 
 fn trusting(trusted: bool) -> Option<FakeCodexHooks> {
+    listing(&[KEY], trusted)
+}
+
+/// The fake lists `keys` as session-flag hooks.
+fn listing(keys: &[&str], trusted: bool) -> Option<FakeCodexHooks> {
     Some(FakeCodexHooks {
-        list: vec![FakeHookEntry {
-            key: KEY.into(),
-            current_hash: HASH.into(),
-        }],
+        list: keys
+            .iter()
+            .map(|key| FakeHookEntry {
+                key: key.to_string(),
+                current_hash: HASH.into(),
+            })
+            .collect(),
         trusted,
     })
+}
+
+/// Waits until the adapter whose `grandchild_pid_file` is `pid_file`, and
+/// its process group, are gone.
+async fn assert_adapter_gone(pid_file: &Path) {
+    // The adapter leads its own process group: the group id is its pid.
+    let adapter: i32 = std::fs::read_to_string(pid_file.with_extension("group"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let grandchild: i32 = std::fs::read_to_string(pid_file).unwrap().trim().parse().unwrap();
+    assert!(!hennery_testkit::pid_alive(adapter), "the adapter still runs");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while hennery_testkit::pid_alive(grandchild) {
+        assert!(tokio::time::Instant::now() < deadline, "the adapter's group still runs");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 fn script_logging_to(path: &Path, codex_hooks: Option<FakeCodexHooks>) -> FakeScript {
@@ -287,6 +313,25 @@ async fn an_operator_codex_config_is_merged_with_the_hooks() {
         Some(json!({"model": "x", "hooks": pre_tool_use()}))
     );
 
+    // The operator's own hooks come first and are trusted with hennery's.
+    std::fs::remove_file(&log).unwrap();
+    let operator = json!({"hooks": [{"type": "command", "command": "/usr/local/bin/operator"}]});
+    let script = script_logging_to(
+        &log,
+        listing(&[KEY, "/<session-flags>/config.toml:pre_tool_use:1:0"], true),
+    );
+    let own = json!({"hooks": {"PreToolUse": [operator]}}).to_string();
+    let agent = fake(&script, &[("CODEX_CONFIG", own.as_str())]);
+    started(attach(agent, Attach::New, Profile::Codex, Some(delivery())).await);
+    let lines = logged(&log);
+    let mut groups = vec![operator];
+    groups.extend(pre_tool_use()["PreToolUse"].as_array().unwrap().iter().cloned());
+    assert_eq!(codex_config(&lines), Some(json!({"hooks": {"PreToolUse": groups}})));
+    assert_eq!(
+        params(&lines, "_codex/hooks/trust")["hooks"].as_array().unwrap().len(),
+        2
+    );
+
     std::fs::remove_file(&log).unwrap();
     let agent = fake(&script, &[("CODEX_CONFIG", "[]")]);
     let (code, message) = failed(attach(agent, Attach::New, Profile::Codex, Some(delivery())).await);
@@ -309,18 +354,34 @@ async fn a_codex_trust_refusal_fails_the_start() {
         ["_codex/hooks/list", "_codex/hooks/trust"],
         "no session was created"
     );
-    // The adapter leads its own process group: the group id is its pid.
-    let adapter: i32 = std::fs::read_to_string(pid_file.with_extension("group"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    let grandchild: i32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
-    assert!(!hennery_testkit::pid_alive(adapter), "the adapter still runs");
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while hennery_testkit::pid_alive(grandchild) {
-        assert!(tokio::time::Instant::now() < deadline, "the adapter's group still runs");
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_adapter_gone(&pid_file).await;
+}
+
+/// An agent command that sets its own `CODEX_CONFIG` (`/usr/bin/env
+/// CODEX_CONFIG=… <cmd>`) replaces hennery's: the adapter lists other
+/// hooks, and none of them is trusted.
+#[tokio::test]
+async fn a_listing_that_does_not_match_the_delivered_hooks_fails_the_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("sessions.jsonl");
+    let pid_file = dir.path().join("grandchild.pid");
+    for keys in [
+        vec![],
+        vec!["/<session-flags>/config.toml:session_start:0:0"],
+        vec![KEY, "/<session-flags>/config.toml:pre_tool_use:0:1"],
+    ] {
+        let _ = std::fs::remove_file(&log);
+        let mut script = script_logging_to(&log, listing(&keys, true));
+        script.grandchild_pid_file = Some(pid_file.to_string_lossy().into_owned());
+        let (code, message) = failed(attach(fake(&script, &[]), Attach::New, Profile::Codex, Some(delivery())).await);
+        assert_eq!(code, "hook_sets_refused", "{message}");
+        assert!(message.contains("pre_tool_use:0:0"), "{message}");
+        assert_eq!(
+            methods(&logged(&log)),
+            ["_codex/hooks/list"],
+            "{keys:?}: nothing trusted"
+        );
+        assert_adapter_gone(&pid_file).await;
     }
 }
 
@@ -328,10 +389,13 @@ async fn a_codex_trust_refusal_fails_the_start() {
 async fn an_adapter_without_the_hooks_extension_fails_the_start() {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("sessions.jsonl");
-    let script = script_logging_to(&log, None);
+    let pid_file = dir.path().join("grandchild.pid");
+    let mut script = script_logging_to(&log, None);
+    script.grandchild_pid_file = Some(pid_file.to_string_lossy().into_owned());
     let (code, message) = failed(attach(fake(&script, &[]), Attach::New, Profile::Codex, Some(delivery())).await);
     assert_eq!(code, "hook_sets_refused", "{message}");
     assert_eq!(methods(&logged(&log)), Vec::<&str>::new(), "no session was created");
+    assert_adapter_gone(&pid_file).await;
 }
 
 #[tokio::test]

@@ -1343,7 +1343,8 @@ impl Actor {
                 );
             }
         };
-        let codex_trust = hooks.codex_config.is_some();
+        debug_assert_eq!(hooks.applied, self.hook_sets_applied);
+        let codex_trust = hooks.codex_hooks;
         if let Some(config) = hooks.codex_config {
             agent.env.retain(|(name, _)| name != "CODEX_CONFIG");
             agent.env.push(("CODEX_CONFIG".into(), config));
@@ -1478,7 +1479,7 @@ impl Actor {
         let started = tokio::select! {
             result = async {
                 let (session, catalogue, images, steering_supported) =
-                    match tokio::time::timeout_at(deadline, negotiate(&conn, cwd, &attach, &mcp, codex_trust, &mut updates, &mut replay)).await {
+                    match tokio::time::timeout_at(deadline, negotiate(&conn, cwd, &attach, &mcp, codex_trust.as_ref(), &mut updates, &mut replay)).await {
                         Ok(result) => result?,
                         Err(_) => {
                             return Err(StartError::other(format!(
@@ -2674,14 +2675,15 @@ async fn next_reply(turn: &mut Option<Turn>) -> agent_client_protocol::Result<Pr
 /// Returns the config options the adapter announced (none if it announced
 /// none, or they did not parse), and whether its `initialize` offered
 /// images in prompts (plan 6a). What the adapter sends meanwhile goes into
-/// `replay`. With `codex_trust`, the hooks the adapter was started with are
-/// trusted before any session exists (skills spec §8).
+/// `replay`. With `codex_trust`, the hooks the adapter was started with
+/// (its `CODEX_CONFIG` `hooks`) are checked and trusted before any session
+/// exists (skills spec §8).
 async fn negotiate(
     conn: &ConnectionTo<Agent>,
     cwd: PathBuf,
     attach: &Attach,
     mcp: &SessionMcp,
-    codex_trust: bool,
+    codex_trust: Option<&hennery_proto::hooks::HookSetConfig>,
     updates: &mut mpsc::UnboundedReceiver<Inbound>,
     replay: &mut Replay,
 ) -> Result<(SessionId, Announced, bool, bool), StartError> {
@@ -2697,8 +2699,8 @@ async fn negotiate(
         .and_then(|s| s.get("supported"))
         .and_then(Value::as_bool)
         == Some(true);
-    if codex_trust {
-        crate::hook_sets::trust_codex(conn, &cwd)
+    if let Some(sent) = codex_trust {
+        crate::hook_sets::trust_codex(conn, &cwd, sent)
             .await
             .map_err(|error| StartError {
                 code: "hook_sets_refused",
@@ -2831,7 +2833,7 @@ pub(crate) async fn probe_catalog(
             servers: vec![],
             meta: profile.session_meta(),
         };
-        let (_, catalog, _, _) = negotiate(&conn, cwd, &Attach::New, &mcp, false, &mut updates, &mut replay)
+        let (_, catalog, _, _) = negotiate(&conn, cwd, &Attach::New, &mcp, None, &mut updates, &mut replay)
             .await
             .map_err(anyhow::Error::new)?;
         Ok(if catalog.authoritative {
