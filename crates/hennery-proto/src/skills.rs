@@ -127,7 +127,8 @@ pub enum FrontmatterError {
 /// Reads `name` and `description` from the first `---` block of a `SKILL.md`.
 ///
 /// This is not a YAML parser: it reads line-based `key: value` pairs, strips
-/// one pair of surrounding `"` or `'` quotes and ignores other keys. A
+/// one pair of surrounding `"` or `'` quotes and ignores other keys and
+/// every indented line (a nested map's keys are not top-level keys). A
 /// multi-line value ends at its first line.
 pub fn frontmatter(skill_md: &str) -> Result<Frontmatter, FrontmatterError> {
     let mut lines = skill_md.lines();
@@ -139,6 +140,11 @@ pub fn frontmatter(skill_md: &str) -> Result<Frontmatter, FrontmatterError> {
         if line.trim_end() == "---" {
             closed = true;
             break;
+        }
+        // An indented line belongs to a nested map (`metadata:` → `name:`)
+        // or a multi-line value, never to the top level.
+        if line.starts_with([' ', '\t']) {
+            continue;
         }
         let Some((key, value)) = line.split_once(':') else {
             continue;
@@ -228,6 +234,19 @@ mod tests {
                 .unwrap();
         assert_eq!(fm.name, "pdf");
         assert_eq!(fm.description, "Reads PDFs. Use when asked.");
+    }
+
+    #[test]
+    fn a_nested_key_does_not_override_a_top_level_one() {
+        let fm = frontmatter(
+            "---\nname: pdf\nmetadata:\n  name: other\n\tdescription: nested\ndescription: Reads PDFs\n---\n",
+        )
+        .unwrap();
+        assert_eq!((fm.name.as_str(), fm.description.as_str()), ("pdf", "Reads PDFs"));
+        assert!(matches!(
+            frontmatter("---\nmetadata:\n  name: pdf\ndescription: d\n---\n"),
+            Err(FrontmatterError::NoName)
+        ));
     }
 
     #[test]
