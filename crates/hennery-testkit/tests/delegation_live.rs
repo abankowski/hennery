@@ -2004,7 +2004,7 @@ async fn claude_child_configuration_without_inference(explicit_fast: bool) -> Re
             ).await?
         )?;
         let child = receipt.child_id.context("allocated child")?;
-        ensure!(h.state.store.attach_delegated(&child,mcp()?,&catalog,&h.state.hub)?,"attach handed off");
+        ensure!(h.state.store.attach_delegated(&child,mcp()?,None,&catalog,&h.state.hub)?,"attach handed off");
         let evidence = h.wait("configuration-only child readback", || {
             if let Some(row) = h.state.store.find_session(&child).ok().flatten().filter(|row|row.lifecycle=="failed") {
                 return Some(Err(row.failure_reason.unwrap_or_default()));

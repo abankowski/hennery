@@ -368,6 +368,7 @@ fn start(request_id: &str, session_id: &str) -> CollectorFrame {
         config: Default::default(),
         hat_id: String::new(),
         mcp: Default::default(),
+        hooks: None,
     }
 }
 
@@ -665,6 +666,7 @@ fn resume(request_id: &str, session_id: &str, committed_seq: u64, agent_session_
         config: Default::default(),
         hat_id: String::new(),
         mcp: Default::default(),
+        hooks: None,
     }
 }
 

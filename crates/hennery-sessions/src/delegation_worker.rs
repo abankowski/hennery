@@ -293,8 +293,14 @@ async fn drain_target(state: &AppState, target: &str) -> anyhow::Result<()> {
             state.store.dispatch_child_notice(target, &catalog, &state.hub)?;
         } else {
             let mcp = crate::api::mcp_context(state, &session.host_id, &session.agent)?;
-            state.store.attach_delegated(target, mcp, &catalog, &state.hub)?;
-            state.store.attach_notice_parent(target, mcp, &catalog, &state.hub)?;
+            // The host's hook sets, as a start carries them (skills spec §8).
+            let hooks = crate::api::hook_delivery(state, &session.host_id)?;
+            state
+                .store
+                .attach_delegated(target, mcp, hooks.clone(), &catalog, &state.hub)?;
+            state
+                .store
+                .attach_notice_parent(target, mcp, hooks, &catalog, &state.hub)?;
         }
         Ok::<_, anyhow::Error>(())
     };

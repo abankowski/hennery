@@ -8,7 +8,7 @@ use crate::{
 use anyhow::Result;
 use hennery_proto::{
     delegation_host::{ConfigEvidence, HostCatalog, PromptFence},
-    frames::{Capability, CollectorFrame, SessionBody, SessionConfig},
+    frames::{Capability, CollectorFrame, HookDelivery, SessionBody, SessionConfig},
     plugin::InputOrigin,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -188,7 +188,14 @@ impl Store {
             .query_map(params![self.owner_id(), after], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?)
     }
-    pub fn attach_delegated(&self, target: &str, mcp: McpContext, catalog: &HostCatalog, hub: &Hub) -> Result<bool> {
+    pub fn attach_delegated(
+        &self,
+        target: &str,
+        mcp: McpContext,
+        hooks: Option<HookDelivery>,
+        catalog: &HostCatalog,
+        hub: &Hub,
+    ) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let queue: Option<(String, i64, String, bool)> = tx
@@ -290,7 +297,7 @@ impl Store {
             config,
             hat_id: hat,
             mcp: given.frame(),
-            hooks: None,
+            hooks,
             attach_generation: u64::try_from(generation)?,
             agent_session_id: if new_start { None } else { agent_session },
         };

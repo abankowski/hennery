@@ -8,7 +8,7 @@ use crate::{
 use anyhow::Result;
 use hennery_proto::{
     delegation_host::{ConfigEvidence, HostCatalog, PromptFence},
-    frames::{Capability, CollectorFrame, SessionConfig},
+    frames::{Capability, CollectorFrame, HookDelivery, SessionConfig},
     plugin::InputOrigin,
     rest::EventDto,
 };
@@ -142,6 +142,7 @@ impl Store {
         &self,
         parent: &str,
         mcp: McpContext,
+        hooks: Option<HookDelivery>,
         catalog: &HostCatalog,
         hub: &Hub,
     ) -> Result<bool> {
@@ -203,7 +204,7 @@ impl Store {
             config,
             hat_id: n.hat,
             mcp: given.frame(),
-            hooks: None,
+            hooks,
             attach_generation: u64::try_from(generation)?,
             agent_session_id: agent_session,
         };
