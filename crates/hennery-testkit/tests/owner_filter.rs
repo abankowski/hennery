@@ -242,6 +242,11 @@ const SOURCES: &[(&str, &str, usize)] = &[
         17,
     ),
     (
+        "hennery-kernel/src/hook_sets.rs",
+        include_str!("../../hennery-kernel/src/hook_sets.rs"),
+        15,
+    ),
+    (
         "hennery-kernel/src/push.rs",
         include_str!("../../hennery-kernel/src/push.rs"),
         20,
