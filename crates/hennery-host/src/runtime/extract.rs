@@ -4,6 +4,7 @@
 //! normalised, sizes bounded.
 
 use anyhow::{Context, Result, bail};
+use hennery_proto::skills::{entry_key, entry_path};
 use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -86,22 +87,34 @@ pub fn tree(tgz: &[u8], dest: &Path, limits: Limits) -> Result<()> {
     std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))?;
     let mut written = 0u64;
     let mut dirs = vec![dest.to_path_buf()];
-    for (count, entry) in archive.entries()?.enumerate() {
-        if count >= limits.max_entries {
-            bail!("more than {} entries", limits.max_entries);
-        }
+    // Counted and checked as the collector's inspector does (`skill_archive`):
+    // a pax global header is not an entry; paths go through `entry_path`.
+    let mut count = 0usize;
+    let mut seen = std::collections::HashSet::new();
+    for entry in archive.entries()? {
         let mut entry = entry.context("read the archive")?;
         let kind = entry.header().entry_type();
         if kind.is_pax_global_extensions() {
             continue;
+        }
+        count += 1;
+        if count > limits.max_entries {
+            bail!("more than {} entries", limits.max_entries);
         }
         let raw = entry.path_bytes().into_owned();
         let name = std::str::from_utf8(&raw).map_err(|_| anyhow::anyhow!("an entry name is not UTF-8"))?;
         if !kind.is_dir() && !kind.is_file() {
             bail!("{name:?} is not a regular file or a directory ({kind:?}); links and special files are refused");
         }
-        let relative = name.strip_suffix('/').unwrap_or(name);
-        super::manifest::check_relative_path(relative).with_context(|| format!("entry {name:?}"))?;
+        let relative = match entry_path(name) {
+            Ok(Some(relative)) => relative,
+            Ok(None) if kind.is_dir() => continue,
+            Ok(None) => bail!("entry {name:?}: the root is not a directory"),
+            Err(why) => bail!("entry {name:?}: {why}"),
+        };
+        if !seen.insert(entry_key(relative)) {
+            bail!("entry {name:?} appears twice");
+        }
         let target = dest.join(relative);
         if kind.is_dir() {
             create_dirs_below(dest, &target)?;
@@ -525,6 +538,99 @@ mod tests {
         );
         assert_eq!(std::fs::read(root.join("from-pax.js")).unwrap(), b"pax");
         assert!(!root.join("short.js").exists() && !root.join("pax_global_header").exists());
+    }
+
+    const SKILL_LIMITS: Limits = Limits {
+        max_bytes: 8 << 20,
+        max_entries: 512,
+        max_file: 2 << 20,
+    };
+
+    /// Every archive shape the collector's inspector accepts extracts here
+    /// too (the final review's finding 1): `tar -C dir .` style, plain, with
+    /// `scripts/` and with directory entries.
+    #[test]
+    fn every_shape_the_collector_accepts_extracts() {
+        let md: &[u8] = b"---\nname: a\ndescription: d\n---\n";
+        let shapes: [&[(&str, tar::EntryType, u32, &[u8], &str)]; 4] = [
+            &[
+                ("./", Directory, 0o755, b"", ""),
+                ("./SKILL.md", Regular, 0o644, md, ""),
+                ("./scripts/", Directory, 0o755, b"", ""),
+                ("./scripts/x.py", Regular, 0o755, b"print()", ""),
+            ],
+            &[("SKILL.md", Regular, 0o644, md, "")],
+            &[
+                ("SKILL.md", Regular, 0o644, md, ""),
+                ("scripts/x.py", Regular, 0o755, b"print()", ""),
+            ],
+            &[
+                ("SKILL.md", Regular, 0o644, md, ""),
+                ("docs/", Directory, 0o755, b"", ""),
+                ("docs/a.md", Regular, 0o644, b"a", ""),
+            ],
+        ];
+        for (i, entries) in shapes.iter().enumerate() {
+            let dir = tempfile::tempdir().unwrap();
+            let dest = dir.path().join("skill");
+            tree(&tarball(entries), &dest, SKILL_LIMITS).unwrap_or_else(|err| panic!("shape {i}: {err:#}"));
+            assert_eq!(std::fs::read(dest.join("SKILL.md")).unwrap(), md, "shape {i}");
+        }
+    }
+
+    #[test]
+    fn a_skill_path_twice_or_unplain_is_refused() {
+        for entries in [
+            &[("a", Regular, 0o644, &b"x"[..], ""), ("./a", Regular, 0o644, b"y", "")][..],
+            &[("A", Regular, 0o644, b"x", ""), ("a", Regular, 0o644, b"y", "")],
+            &[("d/", Directory, 0o755, b"", ""), ("D/", Directory, 0o755, b"", "")],
+            &[("a//b", Regular, 0o644, b"x", "")],
+            &[("a/./b", Regular, 0o644, b"x", "")],
+            &[("../b", Regular, 0o644, b"x", "")],
+            &[(".", Regular, 0o644, b"x", "")],
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            assert!(
+                tree(&tarball(entries), &dir.path().join("skill"), SKILL_LIMITS).is_err(),
+                "{:?}",
+                entries.iter().map(|e| e.0).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// A pax global header is not an entry, as in the collector's count.
+    #[test]
+    fn a_pax_global_header_does_not_count_as_a_skill_entry() {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut global = tar::Header::new_ustar();
+        let record = b"18 comment=hello\n";
+        global.set_entry_type(tar::EntryType::XGlobalHeader);
+        global.set_size(record.len() as u64);
+        global.set_path("pax_global_header").unwrap();
+        global.set_cksum();
+        builder.append(&global, &record[..]).unwrap();
+        for name in ["a", "b"] {
+            let mut header = tar::Header::new_ustar();
+            header.set_path(name).unwrap();
+            header.set_mode(0o644);
+            header.set_size(1);
+            header.set_cksum();
+            builder.append(&header, &b"x"[..]).unwrap();
+        }
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&builder.into_inner().unwrap()).unwrap();
+        let bytes = gz.finish().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let limits = Limits {
+            max_entries: 2,
+            ..SKILL_LIMITS
+        };
+        tree(&bytes, &dir.path().join("skill"), limits).unwrap();
+        let limits = Limits {
+            max_entries: 1,
+            ..SKILL_LIMITS
+        };
+        assert!(tree(&bytes, &dir.path().join("again"), limits).is_err());
     }
 
     #[test]

@@ -19,6 +19,85 @@ pub fn valid_name(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
+/// Why an archive entry's path was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryPathError {
+    /// The name is empty.
+    Empty,
+    /// The path starts with `/`.
+    Absolute,
+    /// The path holds a backslash.
+    Backslash,
+    /// The path holds a NUL byte.
+    Nul,
+    /// The path has an empty component (`a//b`).
+    EmptyComponent,
+    /// The path has a `.` component (`a/./b`, or `./` twice at the start).
+    Dot,
+    /// The path has a `..` component.
+    DotDot,
+}
+
+impl std::fmt::Display for EntryPathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Empty => "an empty name",
+            Self::Absolute => "an absolute path",
+            Self::Backslash => "a path with a backslash",
+            Self::Nul => "a path with a NUL byte",
+            Self::EmptyComponent => "a path with an empty component",
+            Self::Dot => "a path with a . component",
+            Self::DotDot => "a path with a .. component",
+        })
+    }
+}
+
+impl std::error::Error for EntryPathError {}
+
+/// The path of a skill archive entry below the archive's root: the one rule
+/// the collector and the host both apply.
+///
+/// One leading `./` is removed (so a `tar -C dir .` archive is accepted) and
+/// one trailing `/` (a directory entry). The root itself (`./` or `.`) gives
+/// `None`. Every remaining component must be plain: not empty, not `.`, not
+/// `..`; the path must not be absolute or hold a backslash or a NUL byte.
+/// Duplicates are the caller's to refuse, by [`entry_key`].
+pub fn entry_path(raw: &str) -> Result<Option<&str>, EntryPathError> {
+    if raw.is_empty() {
+        return Err(EntryPathError::Empty);
+    }
+    if raw == "." || raw == "./" {
+        return Ok(None);
+    }
+    let relative = raw.strip_prefix("./").unwrap_or(raw);
+    let relative = relative.strip_suffix('/').unwrap_or(relative);
+    if relative.starts_with('/') {
+        return Err(EntryPathError::Absolute);
+    }
+    if relative.contains('\\') {
+        return Err(EntryPathError::Backslash);
+    }
+    if relative.contains('\0') {
+        return Err(EntryPathError::Nul);
+    }
+    for part in relative.split('/') {
+        match part {
+            "" => return Err(EntryPathError::EmptyComponent),
+            "." => return Err(EntryPathError::Dot),
+            ".." => return Err(EntryPathError::DotDot),
+            _ => {}
+        }
+    }
+    Ok(Some(relative))
+}
+
+/// The key under which two entry paths are one: paths that differ only in
+/// case land on one file on a case-insensitive filesystem, so both sides
+/// refuse the second entry with a key seen before.
+pub fn entry_key(path: &str) -> String {
+    path.to_lowercase()
+}
+
 /// The two frontmatter fields hennery needs from a `SKILL.md`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frontmatter {
@@ -111,6 +190,35 @@ mod tests {
         for bad in ["", "-a", "a-", "a--b", "PDF", "a_b", "a b", &"x".repeat(65), "ż"] {
             assert!(!valid_name(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn entry_paths_are_normalised_by_one_rule() {
+        assert_eq!(entry_path("./"), Ok(None));
+        assert_eq!(entry_path("."), Ok(None));
+        assert_eq!(entry_path("./SKILL.md"), Ok(Some("SKILL.md")));
+        assert_eq!(entry_path("SKILL.md"), Ok(Some("SKILL.md")));
+        assert_eq!(entry_path("./scripts/"), Ok(Some("scripts")));
+        assert_eq!(entry_path("scripts/"), Ok(Some("scripts")));
+        assert_eq!(entry_path("scripts/x.py"), Ok(Some("scripts/x.py")));
+        assert_eq!(entry_path(".hidden/x"), Ok(Some(".hidden/x")));
+        for (bad, why) in [
+            ("", EntryPathError::Empty),
+            ("/etc/x", EntryPathError::Absolute),
+            (".//x", EntryPathError::Absolute),
+            ("a\\b", EntryPathError::Backslash),
+            ("a\0b", EntryPathError::Nul),
+            ("a//b", EntryPathError::EmptyComponent),
+            ("a//", EntryPathError::EmptyComponent),
+            ("a/./b", EntryPathError::Dot),
+            ("././x", EntryPathError::Dot),
+            ("../x", EntryPathError::DotDot),
+            ("a/../../x", EntryPathError::DotDot),
+            ("./..", EntryPathError::DotDot),
+        ] {
+            assert_eq!(entry_path(bad), Err(why), "{bad:?}");
+        }
+        assert_eq!(entry_key("Scripts/X.py"), entry_key("scripts/x.py"));
     }
 
     #[test]

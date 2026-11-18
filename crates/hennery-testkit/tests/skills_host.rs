@@ -362,3 +362,60 @@ async fn a_new_connection_accepts_a_lower_revision() {
         }
     );
 }
+
+/// A gzip tarball as `tar -czf x.tgz -C dir .` writes it: a `./` root entry
+/// and every name under `./`. Names are written raw into the header.
+fn tar_c_dot(name: &str) -> Vec<u8> {
+    let skill_md = format!("---\nname: {name}\ndescription: does {name}\n---\nbody\n");
+    let entries: [(&str, tar::EntryType, u32, &[u8]); 4] = [
+        ("./", tar::EntryType::Directory, 0o755, b""),
+        ("./SKILL.md", tar::EntryType::Regular, 0o644, skill_md.as_bytes()),
+        ("./scripts/", tar::EntryType::Directory, 0o755, b""),
+        ("./scripts/run.sh", tar::EntryType::Regular, 0o755, b"#!/bin/sh\n"),
+    ];
+    let mut builder = tar::Builder::new(Vec::new());
+    for (path, kind, mode, body) in entries {
+        let mut header = tar::Header::new_gnu();
+        header.as_old_mut().name[..path.len()].copy_from_slice(path.as_bytes());
+        header.set_entry_type(kind);
+        header.set_mode(mode);
+        header.set_size(body.len() as u64);
+        header.set_cksum();
+        builder.append(&header, body).unwrap();
+    }
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    gz.write_all(&builder.into_inner().unwrap()).unwrap();
+    gz.finish().unwrap()
+}
+
+/// The collector and the host accept the same archives (final review,
+/// finding 1): a `tar -C dir .` archive the collector's inspector accepts
+/// is installed and linked by a real host.
+#[tokio::test]
+async fn an_archive_the_collector_accepts_is_installed_by_the_host() {
+    let archive = tar_c_dot("alpha");
+    let inspected = hennery_kernel::skill_archive::inspect(&archive).expect("the collector accepts it");
+    assert_eq!(inspected.frontmatter.name, "alpha");
+
+    let setup = Setup::new().await;
+    let _host = setup.start_host();
+    let (mut collector, _) = Collector::accept(&setup.listener).await;
+    let alpha = item("s1", "alpha", &archive);
+    assert_eq!(alpha.content_hash, inspected.content_hash);
+    collector.sync(1, vec![alpha.clone()]).await;
+    collector.skill_frame().await;
+    collector.archive("s1", &alpha.content_hash, b64(&archive)).await;
+    assert_eq!(
+        collector.skill_frame().await,
+        HostFrame::SkillState {
+            revision: 1,
+            applied: vec!["s1".into()],
+            failed: vec![]
+        }
+    );
+    for agent in [".claude", ".codex"] {
+        let link = setup.link(agent, "alpha");
+        assert!(link.join("SKILL.md").is_file());
+        assert!(link.join("scripts/run.sh").is_file());
+    }
+}

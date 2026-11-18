@@ -6,7 +6,8 @@
 
 use crate::secret::sha256_hex;
 use base64::Engine;
-use hennery_proto::skills::{Frontmatter, FrontmatterError, frontmatter};
+use hennery_proto::skills::{Frontmatter, FrontmatterError, entry_key, entry_path, frontmatter};
+use std::collections::HashSet;
 use std::io::Read;
 
 /// The largest compressed archive.
@@ -92,6 +93,7 @@ fn walk<R: Read>(reader: R) -> Result<(Option<String>, R), Refusal> {
     let mut count = 0usize;
     let mut total = 0u64;
     let mut skill_md: Option<String> = None;
+    let mut seen = HashSet::new();
     for entry in archive.entries().map_err(|_| Refusal::NotTarGz)? {
         let mut entry = entry.map_err(|_| Refusal::NotTarGz)?;
         let kind = entry.header().entry_type();
@@ -112,7 +114,18 @@ fn walk<R: Read>(reader: R) -> Result<(Option<String>, R), Refusal> {
                 "{name:?} is not a regular file or a directory; links and special files are refused"
             )));
         }
-        let relative = plain_path(&name)?;
+        let relative = match entry_path(&name) {
+            Ok(Some(relative)) => relative,
+            // The archive's root directory (`./`).
+            Ok(None) if kind.is_dir() => continue,
+            Ok(None) => return Err(Refusal::Entry(format!("{name:?}: the root is not a directory"))),
+            Err(why) => return Err(Refusal::Entry(format!("{name:?}: {why}"))),
+        };
+        if !seen.insert(entry_key(relative)) {
+            return Err(Refusal::Entry(format!(
+                "{name:?} appears twice (paths that differ only in case count as one)"
+            )));
+        }
         if kind.is_dir() {
             continue;
         }
@@ -125,9 +138,6 @@ fn walk<R: Read>(reader: R) -> Result<(Option<String>, R), Refusal> {
             return Err(Refusal::TooLarge);
         }
         if relative == "SKILL.md" {
-            if skill_md.is_some() {
-                return Err(Refusal::Entry("SKILL.md appears twice".into()));
-            }
             let mut text = String::new();
             entry
                 .read_to_string(&mut text)
@@ -136,24 +146,6 @@ fn walk<R: Read>(reader: R) -> Result<(Option<String>, R), Refusal> {
         }
     }
     Ok((skill_md, archive.into_inner()))
-}
-
-/// `name` with one optional leading `./` removed, when it is a plain
-/// relative path: not absolute, no `..`, no further `./` at the start.
-/// The archive root itself yields the empty string.
-fn plain_path(name: &str) -> Result<&str, Refusal> {
-    let bad = |why: &str| Refusal::Entry(format!("{name:?}: {why}"));
-    let relative = name.strip_prefix("./").unwrap_or(name);
-    if relative.starts_with('/') {
-        return Err(bad("an absolute path"));
-    }
-    if relative.starts_with("./") {
-        return Err(bad("a path that starts with ./ twice"));
-    }
-    if relative.split('/').any(|part| part == "..") {
-        return Err(bad("a path with .."));
-    }
-    Ok(relative.trim_end_matches('/'))
 }
 
 #[cfg(test)]
@@ -216,10 +208,43 @@ mod tests {
 
     #[test]
     fn a_path_outside_the_root_is_refused() {
-        for bad in ["../x", "/etc/x", "a/../../x", "././x"] {
+        for bad in ["../x", "/etc/x", "a/../../x", "././x", "a//b", "a/./b", "a\\b"] {
             let bytes = tgz(&[("SKILL.md", SKILL), (bad, b"x")]);
             assert!(matches!(inspect(&bytes), Err(Refusal::Entry(_))), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_path_twice_is_refused_whatever_its_case() {
+        for (first, second) in [
+            ("a.txt", "a.txt"),
+            ("a.txt", "./a.txt"),
+            ("A.txt", "a.txt"),
+            ("scripts/", "Scripts/"),
+            ("SKILL.md", "skill.md"),
+            ("SKILL.md", "./SKILL.md"),
+        ] {
+            let bytes = if first == "SKILL.md" {
+                tgz(&[(first, SKILL), (second, SKILL)])
+            } else {
+                tgz(&[("SKILL.md", SKILL), (first, b""), (second, b"")])
+            };
+            assert!(
+                matches!(inspect(&bytes), Err(Refusal::Entry(_))),
+                "{first:?} then {second:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tar_c_dir_dot_archive_is_inspected() {
+        let bytes = tgz(&[
+            ("./", b""),
+            ("./SKILL.md", SKILL),
+            ("./scripts/", b""),
+            ("./scripts/x.py", b"print()"),
+        ]);
+        assert_eq!(inspect(&bytes).unwrap().frontmatter.name, "a");
     }
 
     #[test]
