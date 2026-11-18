@@ -325,6 +325,35 @@ async fn a_report_of_an_older_revision_is_pending() {
     assert_eq!(got.hosts[0].failure, None);
 }
 
+/// Revoking a host drops its assignments and bumps the revision; the
+/// connected hosts get the new revision at once, or their states would read
+/// `pending` until the next skills write (re-review of the fix wave).
+#[tokio::test]
+async fn revoking_a_host_sends_the_others_the_new_revision() {
+    let c = Collector::start().await;
+    c.pair("host-a", KEY_A, true);
+    c.pair("host-b", KEY_B, true);
+    let mut host_a = c.connect("host-a");
+    let item: SkillItem = c.create(&pdf()).await.json().await.unwrap();
+    assert_eq!(c.set_hosts(&item.id, &["host-a", "host-b"]).await.status(), 200);
+    while host_a.try_recv().is_ok() {}
+    let before = c.state.hosts.skills_revision().unwrap();
+
+    let resp = c.client().delete(c.url("/api/hosts/host-b")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let revision = c.state.hosts.skills_revision().unwrap();
+    assert!(revision > before);
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), host_a.recv())
+        .await
+        .expect("a frame within 5s")
+        .expect("the connection is open");
+    let CollectorFrame::SkillSync { revision: got, items } = frame else {
+        panic!("expected skill_sync, got {frame:?}");
+    };
+    assert_eq!(got, revision);
+    assert_eq!(items.len(), 1);
+}
+
 /// A host with no ready connection is `offline`, whatever it last reported.
 #[tokio::test]
 async fn a_disconnected_host_is_offline() {
