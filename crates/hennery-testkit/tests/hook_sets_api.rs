@@ -314,6 +314,9 @@ async fn a_non_command_handler_is_refused() {
     let (status, err) = code_of(c.create(body).await).await;
     assert_eq!((status, err.code.as_str()), (400, "invalid_hook_set"));
     assert!(err.message.contains("command"), "{}", err.message);
+    // Never stored.
+    let list: Vec<HookSetItem> = c.get("/api/hook-sets").await;
+    assert!(list.is_empty(), "{list:?}");
 }
 
 #[tokio::test]
@@ -326,6 +329,9 @@ async fn an_unknown_event_is_refused() {
     let (status, err) = code_of(c.create(body).await).await;
     assert_eq!((status, err.code.as_str()), (400, "invalid_hook_set"));
     assert!(err.message.contains("BeforeEverything"), "{}", err.message);
+    // Never stored.
+    let list: Vec<HookSetItem> = c.get("/api/hook-sets").await;
+    assert!(list.is_empty(), "{list:?}");
 }
 
 #[tokio::test]
