@@ -369,6 +369,12 @@ Phase 2 (hook sets, §8) is implemented.
   unchanged `extraArgs` and `strictMcpConfig`. Codex gets `CODEX_CONFIG` with
   hennery's hooks merged after the operator's own `CODEX_CONFIG` hooks (which
   hennery then trusts too, since they come from the operator's agent command).
+  The operator's value is the one the adapter runs with: the `CODEX_CONFIG=`
+  argument of an `env(1)` wrapper (`/usr/bin/env CODEX_CONFIG=… <cmd>`, the
+  documented form) when there is one, rewritten in place with the merged
+  config, else the agent's environment. An `env` wrapper that drops the
+  environment (`-i`, `-u CODEX_CONFIG`) and sets no `CODEX_CONFIG` itself is
+  refused (`hook_sets_refused`) before spawning.
   Only `type: "command"` handlers are accepted. Codex receives only
   `SessionStart, SessionEnd, PreToolUse, PostToolUse, PermissionRequest,
   PreCompact, PostCompact, SubagentStart, SubagentStop`.
@@ -379,8 +385,9 @@ Phase 2 (hook sets, §8) is implemented.
   change on a live actor (`hook_sets_conflict`), and fails the start
   (`StartFailed hook_sets_refused`) when Codex's `_codex/hooks/list` does not
   list exactly the delivered handlers (by `<event_snake>:<group>:<handler>`
-  position), `_codex/hooks/trust` does not answer `trusted: true`, or the
-  adapter lacks the extension.
+  position, and at each position a `command` handler with the delivered
+  command and matcher; the error names positions only), `_codex/hooks/trust`
+  does not answer `trusted: true`, or the adapter lacks the extension.
 - Hook sets apply at the next session start; there is no live sync.
 
 Deviations from this design:
@@ -389,6 +396,8 @@ Deviations from this design:
   as §8 says; `start_failed` (`hook_sets_refused`) is used for refusals after
   the adapter exists.
 - No bundled files: commands must name programs already on the host.
+- The two hook-set JSON write routes take a body of 64 KiB plus 4 KiB of
+  room, not the plan's flat 64 KiB.
 - Per-host status for a hook set is `assigned | unsupported | offline`, shown
   on the Hook sets tab and in session details, instead of a host Settings
   listing of received sets.

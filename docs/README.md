@@ -19,7 +19,7 @@ state stays outside Git; public issues are separate approved projections.
      external runtime, exact transcript bindings and retry-safe removal;
      proposed only, with upstream ownership-contract qualification required
      before enablement.
-   - [Skills and hooks catalogue](specs/2026-11-17-skills-hooks-catalogue.md) — phases 1 and 2 built: one catalogue of Agent Skills directories and command hook sets, assigned per host (a hat only pre-selects hosts), delivered as symlinks into both agents' skill directories and as per-session hooks through the adapters, with Codex trust recorded by the host; fail-closed hook delivery is the one open owner call.
+   - [Skills and hooks catalogue](specs/2026-11-17-skills-hooks-catalogue.md) — phases 1 and 2 built: one catalogue of Agent Skills directories and command hook sets, assigned per host (a hat only pre-selects hosts), delivered as symlinks into both agents' skill directories and as per-session hooks through the adapters, with Codex trust recorded by the host; fail-closed delivery decided and built in phase 2.
    - [Shared session work observations](specs/2026-11-06-session-work.md) — common UI/MCP facts, bounded response and plan observations, waiting/queue counts and explicit missing background telemetry; presentation status rules remain separate.
    - [Session usage and cache retention](specs/2026-11-02-session-usage.md) —
      durable runtime observations, partial family accounting, responsive Usage

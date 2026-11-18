@@ -50,9 +50,9 @@ pub enum HookSetsError {
     EnvironmentDropped,
     /// The adapter lacks `_codex/hooks/list` or `_codex/hooks/trust`.
     NoExtension,
-    /// The adapter's session-flag hooks are not the ones it was given (an
-    /// agent command that sets its own `CODEX_CONFIG`, say): handler
-    /// positions `<event>:<group>:<handler>`, sorted.
+    /// The adapter's session-flag hooks are not at the positions it was
+    /// given (an agent command that replaces hennery's `CODEX_CONFIG`, say):
+    /// handler positions `<event>:<group>:<handler>`, sorted.
     Mismatch { expected: Vec<String>, listed: Vec<String> },
     /// The adapter lists a hook at one of the expected positions that is
     /// not the one it was given: each entry is the position and what
