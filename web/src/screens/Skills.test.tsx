@@ -126,6 +126,23 @@ it('an offline host is marked', async () => {
   await waitFor(() => expect(row).toHaveTextContent('host offline'))
 })
 
+it('an assigned host missing from the loaded list stays in the set', async () => {
+  const server = open({
+    'GET /api/skills/s1/hosts': json(200, { skill_id: 's1', hosts: [state('host-new', 'applied')] }),
+    'PUT /api/skills/s1/hosts': json(200, {
+      skill_id: 's1',
+      hosts: [state('host-new', 'applied'), state('host-a', 'pending')],
+    }),
+  })
+  const detail = await select()
+  const alpha = await within(detail).findByRole('checkbox', { name: 'alpha' })
+  await userEvent.click(alpha)
+  await waitFor(() => expect(alpha).toBeChecked())
+  expect(sent(server, 'PUT', '/api/skills/s1/hosts').map((s) => s.body)).toEqual([
+    { host_ids: ['host-new', 'host-a'] },
+  ])
+})
+
 it('a_host_without_the_capability_is_marked', async () => {
   open({ 'GET /api/skills/s1/hosts': json(200, { skill_id: 's1', hosts: [state('host-a', 'unsupported')] }) })
   const detail = await select()

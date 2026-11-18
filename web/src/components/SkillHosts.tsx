@@ -57,11 +57,12 @@ export default function SkillHosts({ skillId, hosts, hats, refresh = 0, onChange
   const [error, setError] = useState<string | null>(null)
   const [hatId, setHatId] = useState('')
   const live = (hosts ?? []).filter((h) => !h.revoked_at)
-  const liveIds = new Set(live.map((h) => h.host_id))
+  const revokedIds = new Set((hosts ?? []).filter((h) => h.revoked_at).map((h) => h.host_id))
   const current = states.data?.hosts ?? null
-  // Only live hosts are sent: a revoked id in the set is refused as
-  // `unknown_host`, and would block every later save.
-  const ticked = (current ?? []).map((s) => s.host_id).filter((h) => liveIds.has(h))
+  // A host known to be revoked is not sent: its id is refused as
+  // `unknown_host`, and would block every later save. A host absent from
+  // the loaded list stays in the set, so a save never unassigns it unseen.
+  const ticked = (current ?? []).map((s) => s.host_id).filter((h) => !revokedIds.has(h))
 
   const save = async (next: (ticked: string[]) => Promise<string[]> | string[]) => {
     if (running.current || current === null || hosts === null) return
@@ -86,7 +87,7 @@ export default function SkillHosts({ skillId, hosts, hats, refresh = 0, onChange
     if (hatId === '') return
     void save(async (now) => {
       const { host_ids } = await hatHosts(client, hatId)
-      return [...now, ...host_ids.filter((h) => liveIds.has(h) && !now.includes(h))]
+      return [...now, ...host_ids.filter((h) => !revokedIds.has(h) && !now.includes(h))]
     })
   }
 
