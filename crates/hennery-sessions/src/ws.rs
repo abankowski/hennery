@@ -652,7 +652,12 @@ pub(crate) fn ready(
     state.hub.mark_ready(host_id, conn_id);
     state.store.resend_idle_parking(host_id, &state.hub)?;
     state.store.resend_idle_holds(host_id, &state.hub)?;
-    crate::skills_sync::resend_skills(&state.hosts, &state.hub, host_id)?;
+    // A skills read that fails must not cost the connection or the closes
+    // below; the host gets its manifest on the next skills write or
+    // reconnect.
+    if let Err(err) = crate::skills_sync::resend_skills(&state.hosts, &state.hub, host_id) {
+        tracing::warn!(%host_id, error = %format!("{err:#}"), "cannot send the host its skills");
+    }
     // A delete that judged a listed session unattached (this host not ready
     // yet) and committed after the reconciliation: nothing above closed its
     // adapter. Read after `mark_ready`, so a delete committed before this
