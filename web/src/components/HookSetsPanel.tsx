@@ -49,8 +49,9 @@ export default function HookSetsPanel() {
   const replace = (item: HookSetItem, hooks: HookSetConfig) =>
     guarded(async () => {
       const next = await replaceHookSet(client, item.id, hooks)
+      // Read the saved set back before the list changes, so the editor shows what the server holds.
+      detail.set(await readHookSet(client, item.id))
       list.set((prev) => (prev ?? []).map((s) => (s.id === next.id ? next : s)))
-      detail.reload()
     })
 
   // The list holds the host count: read it again after a host change.
@@ -121,7 +122,7 @@ export default function HookSetsPanel() {
           )}
           {detail.data && (
             <HookSetEditor
-              key={`${current.id}:${current.content_hash}`}
+              key={`${current.id}:${detail.data.item.content_hash}`}
               initial={detail.data.hooks}
               events={events.data?.events ?? []}
               onSubmit={(_, hooks) => replace(current, hooks)}
@@ -148,7 +149,7 @@ export default function HookSetsPanel() {
             setSelected(null)
           }}
           onClose={() => setDeleting(null)}
-          returnFocus={() => document.getElementById('skills-heading')}
+          returnFocus={() => document.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')}
         >
           <p>
             <Text>{deleting.name}</Text> goes from the catalogue, and hosts stop getting it.

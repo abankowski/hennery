@@ -101,6 +101,41 @@ it('shows the server reason for an invalid hook set', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('handler type must be command')
 })
 
+it('sends valid JSON of any shape and shows the server reason', async () => {
+  const server = open({ 'POST /api/hook-sets': json(400, { code: 'invalid_hook_set', message: 'hooks must be an object' }) })
+  await openTab()
+  await userEvent.click(await screen.findByRole('button', { name: 'New hook set' }))
+  const form = await screen.findByRole('region', { name: 'New hook set' })
+  await userEvent.type(within(form).getByLabelText('Name'), 'guard')
+  const area = within(form).getByLabelText('Hooks (JSON)')
+  await userEvent.clear(area)
+  await userEvent.click(area)
+  await userEvent.paste('[]')
+  await userEvent.click(within(form).getByRole('button', { name: 'Create hook set' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('hooks must be an object')
+  expect(sent(server, 'POST', '/api/hook-sets')[0].body).toEqual({ name: 'guard', hooks: [] })
+})
+
+it('replacing a hook set shows the saved JSON', async () => {
+  const saved = { PreToolUse: [{ hooks: [{ type: 'command', command: 'new' }] }] }
+  let replaced = false
+  const server = open({
+    'PUT /api/hook-sets/h1': () => { replaced = true; return json(200, hookSet({ content_hash: 'newhash0123456789' })) },
+    'GET /api/hook-sets/h1': () =>
+      replaced
+        ? json(200, { item: hookSet({ content_hash: 'newhash0123456789' }), hooks: saved })
+        : json(200, { item: hookSet(), hooks: {} }),
+  })
+  const detail = await select()
+  const area = await within(detail).findByLabelText('Hooks (JSON)')
+  await userEvent.clear(area)
+  await userEvent.click(area)
+  await userEvent.paste(JSON.stringify(saved))
+  await userEvent.click(within(detail).getByRole('button', { name: 'Save hooks' }))
+  await waitFor(() => expect(sent(server, 'PUT', '/api/hook-sets/h1')).toHaveLength(1))
+  await waitFor(() => expect((within(detail).getByLabelText('Hooks (JSON)') as HTMLTextAreaElement).value).toBe(JSON.stringify(saved, null, 2)))
+})
+
 it('ticks hosts and saves the set', async () => {
   const server = open({
     'PUT /api/hook-sets/h1/hosts': [STEP_UP, json(200, { hook_set_id: 'h1', hosts: [{ host_id: 'host-a', status: 'assigned' }] })],

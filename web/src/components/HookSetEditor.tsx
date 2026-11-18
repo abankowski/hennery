@@ -28,9 +28,7 @@ function parse(text: string): { hooks: HookSetConfig } | { error: string } {
   } catch (err) {
     return { error: `The hooks are not valid JSON: ${err instanceof Error ? err.message : 'unreadable'}` }
   }
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return { error: 'The hooks must be a JSON object keyed by event name.' }
-  }
+  // Any other shape goes to the server, whose reason is shown as sent.
   return { hooks: value as HookSetConfig }
 }
 
@@ -40,11 +38,14 @@ export default function HookSetEditor({ initial, events, onSubmit, busy }: Props
   const [text, setText] = useState(replacing ? JSON.stringify(initial, null, 2) : '{\n  \n}')
   const [error, setError] = useState<string | null>(null)
   const parsed = parse(text)
-  const named = 'hooks' in parsed ? Object.keys(parsed.hooks) : []
+  const named =
+    'hooks' in parsed && parsed.hooks !== null && typeof parsed.hooks === 'object' && !Array.isArray(parsed.hooks)
+      ? Object.keys(parsed.hooks)
+      : []
 
   const submit = async () => {
     if (busy) return
-    if ('error' in parsed) return setError(parsed.error)
+    if ('error' in parsed) return
     if (!replacing && name.trim() === '') return setError('A hook set needs a name.')
     setError(null)
     try {
