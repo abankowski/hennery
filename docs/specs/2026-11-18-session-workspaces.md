@@ -92,6 +92,7 @@ Host tests exercise real temporary Git repositories, file preparation,
 idempotence, failed preparation recovery, root restrictions, cleanup refusal,
 branch preservation and source changes. Store tests cover membership and
 archival fences. Existing host/session, MCP contract and launcher checks are
-part of verification. Full live acceptance against authenticated Claude and
-Codex adapters remains a release check; source-level ACP compatibility is not
-claimed as a completed live test.
+part of verification. The workspace lifecycle also passed real-provider acceptance
+with both pinned adapters; see [live acceptance evidence](../spikes/2026-11-18-workspace-live-acceptance.md)
+for the matrix, assertions, reproduction and the observed Codex transport fallback.
+This is workspace acceptance, not a claim that all runtime release checks ran.

@@ -103,8 +103,8 @@ Observed verification:
   checks passed. Independent review's reported P1 findings were addressed;
   the last review reported no remaining P1.
 
-Release validation still pending: live acceptance against both pinned,
-authenticated ACP adapters. The system Cargo installation has no Clippy command;
+At the initial checkpoint, live acceptance against both pinned, authenticated
+ACP adapters was pending; its completion is recorded below. The system Cargo installation has no Clippy command;
 no successful Clippy run is claimed. No merge or deployment was performed.
 
 Final upstream-base verification (the isolated PR branch contains only the
@@ -117,3 +117,10 @@ workspace implementation, with no unrelated local steering commits):
 - TypeScript, protocol generation check and compilation passed on this base.
 - Preparation copying now uses directory descriptors and exclusive no-follow
   file creation rather than check-then-reopen path handling.
+
+Live workspace acceptance completed on 2026-11-18: Claude ACP 0.107.3 and
+Codex ACP 2.7.0 both passed the real-provider workspace lifecycle test, with
+two provider turns per accepted run. Evidence and reproduction are recorded in
+`docs/spikes/2026-11-18-workspace-live-acceptance.md`. This resolves the workspace
+live-acceptance item previously marked pending above; broader release checks
+and the noted Codex WebSocket fallback remain separate.
