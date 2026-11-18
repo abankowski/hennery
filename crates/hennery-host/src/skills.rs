@@ -689,7 +689,10 @@ mod tests {
         let after = std::fs::read_link(env.claude("pdf")).unwrap();
         assert_ne!(before, after);
         // A session that loaded the old copy keeps it until it restarts.
-        assert!(before.join("SKILL.md").is_file(), "the old directory stays after the update");
+        assert!(
+            before.join("SKILL.md").is_file(),
+            "the old directory stays after the update"
+        );
         assert!(env.codex("pdf").join("new.txt").is_file());
         assert_eq!((env.rows("skills"), env.rows("links")), (1, 2));
         // The next sync collects it, and keeps the current copy.

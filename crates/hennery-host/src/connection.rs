@@ -1188,13 +1188,15 @@ fn handle(
             },
         ),
         // Blocking work (extraction, symlinks, sqlite): off the read loop.
+        // The generation is read here, in frame order, so a thread that
+        // runs after a reconnect cannot act for the old connection.
         CollectorFrame::SkillSync { revision, items } => {
-            let (skills, uplink) = (skills.clone(), uplink.clone());
-            std::thread::spawn(move || skills.on_sync(&uplink, revision, items));
+            let (skills, uplink, generation) = (skills.clone(), uplink.clone(), skills.generation());
+            std::thread::spawn(move || skills.on_sync(&uplink, generation, revision, items));
         }
         CollectorFrame::SkillArchive { id, content_hash, data } => {
-            let (skills, uplink) = (skills.clone(), uplink.clone());
-            std::thread::spawn(move || skills.on_archive(&uplink, &id, &content_hash, &data));
+            let (skills, uplink, generation) = (skills.clone(), uplink.clone(), skills.generation());
+            std::thread::spawn(move || skills.on_archive(&uplink, generation, &id, &content_hash, &data));
         }
         CollectorFrame::HelloAck { .. } | CollectorFrame::HelloError { .. } => {}
     }
