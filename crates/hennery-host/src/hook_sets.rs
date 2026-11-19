@@ -144,6 +144,8 @@ pub fn render(
             })
         }
         Profile::Codex => {
+            // codex-acp ignores an empty CODEX_CONFIG; so does hennery.
+            let existing_codex_config = existing_codex_config.filter(|raw| !raw.is_empty());
             let rendered: Vec<HookSetConfig> = delivery
                 .sets
                 .iter()
@@ -529,6 +531,16 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn codex_treats_an_empty_config_as_none_like_the_adapter() {
+        // codex-acp reads `CODEX_CONFIG ? JSON.parse(CODEX_CONFIG) : undefined`,
+        // so an empty value is no config, not a malformed one.
+        assert_eq!(
+            render(Profile::Codex, &delivery(), Some("")),
+            render(Profile::Codex, &delivery(), None)
+        );
     }
 
     #[test]
