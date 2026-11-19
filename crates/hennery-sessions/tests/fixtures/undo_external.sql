@@ -1,3 +1,8 @@
+DROP VIEW external_steering_receipts;
+DROP TRIGGER external_steering_deleted;
+DROP VIEW external_prompt_heads;
+DROP TRIGGER external_steering_detached;
+DROP TRIGGER external_steering_endpoint_end;
 -- Rewind session files (v46) before rebuilding a historical fixture.
 DROP TRIGGER artifact_session_deleted;
 DROP TABLE artifact_revisions;
