@@ -480,27 +480,27 @@ async fn recover_provisioning(state: &crate::AppState) -> Result<()> {
                 std::time::Duration::from_secs(30),
             )
             .await;
-        if let Ok(HostFrame::WorkspaceResult { result, .. }) = reply {
-            if let (Some(root), Some(repository), Some(branch), Some(base_commit)) = (
+        if let Ok(HostFrame::WorkspaceResult { result, .. }) = reply
+            && let (Some(root), Some(repository), Some(branch), Some(base_commit)) = (
                 result["root"].as_str(),
                 result["repository"].as_str(),
                 result["branch"].as_str(),
                 result["base_commit"].as_str(),
-            ) {
-                state.store.register_workspace(WorkspaceRegistration {
-                    profile_source: &workspace_profile_key(&state.store, &host, &source)?,
-                    id: &id,
-                    host_id: &host,
-                    root,
-                    repository,
-                    branch,
-                    base_commit,
-                })?;
-                state.store.conn().execute(
-                    "DELETE FROM workspace_provisioning WHERE owner_id=?1 AND id=?2",
-                    params![state.store.owner_id(), id],
-                )?;
-            }
+            )
+        {
+            state.store.register_workspace(WorkspaceRegistration {
+                profile_source: &workspace_profile_key(&state.store, &host, &source)?,
+                id: &id,
+                host_id: &host,
+                root,
+                repository,
+                branch,
+                base_commit,
+            })?;
+            state.store.conn().execute(
+                "DELETE FROM workspace_provisioning WHERE owner_id=?1 AND id=?2",
+                params![state.store.owner_id(), id],
+            )?;
         }
     }
     // Provisioning can succeed before launch admission later fails. Give

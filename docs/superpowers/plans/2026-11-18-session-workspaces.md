@@ -124,3 +124,23 @@ two provider turns per accepted run. Evidence and reproduction are recorded in
 `docs/spikes/2026-11-18-workspace-live-acceptance.md`. This resolves the workspace
 live-acceptance item previously marked pending above; broader release checks
 and the noted Codex WebSocket fallback remain separate.
+
+## PR checks follow-up — 2026-11-19
+
+The PR's first Actions run failed on a collapsible-if Clippy warning and two
+browser cases that still assumed New like this submitted immediately. The
+recovery guard now uses a let-chain, and the browser cases explicitly submit
+the workspace dialog. In both mobile/light and desktop/dark they test shared
+cwd from the header and an isolated worktree from the list, committed-only
+contents, unchanged source-local files, copied settings and no automatic prompt.
+
+Observed local verification with the pinned Rust 1.98.1 tools:
+
+- `cargo fmt --all --check`: passed.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`: passed.
+- `cargo clippy -p hennery --locked -- -D warnings`: passed.
+- Built the real web UI, collector and fake adapter; both affected Chromium
+  cases passed (6.6 seconds total).
+- Browser-process/environment and source guards: 21 tests passed.
+
+This supersedes the earlier note that no successful Clippy run was available.
