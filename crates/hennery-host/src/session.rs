@@ -1027,7 +1027,10 @@ impl Actor {
             Err(reason) => {
                 return self.emit(SessionBody::SteeringResult {
                     request_id,
-                    outcome: SteeringOutcome::Rejected { reason },
+                    outcome: SteeringOutcome::Rejected {
+                        reason,
+                        steering_unavailable: false,
+                    },
                 });
             }
         };
@@ -1058,6 +1061,7 @@ impl Actor {
                     {
                         SteeringOutcome::Rejected {
                             reason: error.message.to_string(),
+                            steering_unavailable: error.code == ErrorCode::METHOD_NOT_FOUND,
                         }
                     }
                     Err(_) => SteeringOutcome::Uncertain,
@@ -1617,7 +1621,7 @@ impl Actor {
                     Some(SessionCmd::Steer { request_id, turn_id, content }) => {
                         if !steering_supported {
                             self.emit(SessionBody::SteeringResult { request_id, outcome: SteeringOutcome::Rejected {
-                                reason: "This adapter does not support steering.".into()
+                                reason: "This adapter does not support steering.".into(), steering_unavailable: true
                             }});
                         } else if turn.as_ref().is_none_or(|current| current.id != turn_id) {
                             self.emit(SessionBody::SteeringResult {request_id, outcome: SteeringOutcome::PromptRequired});
