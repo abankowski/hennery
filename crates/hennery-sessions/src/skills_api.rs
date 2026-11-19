@@ -139,7 +139,9 @@ fn broadcast(state: &AppState) {
     }
 }
 
-/// Decode and inspect off the async threads.
+/// Decode and inspect off the async threads. The `Err` is the HTTP
+/// response itself, returned once per request, so its size does not matter.
+#[allow(clippy::result_large_err)]
 async fn inspect(data: String) -> Result<(Vec<u8>, skill_archive::Inspected), Response> {
     match tokio::task::spawn_blocking(move || skill_archive::from_upload(&data)).await {
         Ok(Ok(done)) => Ok(done),
