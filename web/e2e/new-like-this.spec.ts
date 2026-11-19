@@ -108,10 +108,10 @@ for (const [width, appearance] of [[390, 'light'], [1280, 'dark']] as const) {
         await expect(createWorktree).toBeChecked({ checked: entry === 'header' })
         await createWorktree.setChecked(isolated)
         if (isolated) {
-          await expect(workspace.getByLabel('Base branch or commit')).toHaveValue(base)
-          await expect(workspace.getByText(`Resolved base commit: ${base}`)).toBeVisible()
+          await expect(workspace.getByLabel('Base branch or commit', { exact: true })).toHaveValue(base)
+          await expect(workspace.getByText(`Resolved base commit: ${base}`, { exact: true })).toBeVisible()
         } else {
-          await expect(workspace.getByText('Uses the existing directory, including its uncommitted changes.')).toBeVisible()
+          await expect(workspace.getByText('Uses the existing directory, including its uncommitted changes.', { exact: true })).toBeVisible()
         }
         const submit = workspace.getByRole('button', { name: 'Start session', exact: true })
         await expect(submit).toBeEnabled()
