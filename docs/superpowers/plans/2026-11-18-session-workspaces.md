@@ -144,3 +144,26 @@ Observed local verification with the pinned Rust 1.98.1 tools:
 - Browser-process/environment and source guards: 21 tests passed.
 
 This supersedes the earlier note that no successful Clippy run was available.
+
+The full Rust run subsequently exposed historical fixtures that retained the
+new workspace schema while rewinding the migration version. The shared rollback
+now removes workspace tables, triggers and the session column first. The deletion
+walk seeds a shared workspace and checks that deleting one member preserves it.
+The clone contract uses an empty request body for shared cwd and rejects unsupported
+launch fields without allocating a session. Host capability expectations include
+workspaces, and both preparation endpoints use the standard `ApiJson` extractor.
+
+All 22 production workspace SQL statements are now in the owner audit. The two
+membership triggers are audited from their installed SQL with row references
+bound as parameters. Mutation tests reject missing owner columns, unscoped reads
+and an unknown trigger's implicit insert.
+
+Verification after these fixes:
+
+- Full local Rust workspace: 3247 passed, 15 explicitly skipped; doctests passed.
+  The run used Rust 1.98.1, `umask 0022`, an fd cap of 65536, and the pinned shell
+  and proxy binaries from the development environment.
+- Both Clippy checks, formatting and both generated-file checks passed.
+- Owner audit after the final Clippy simplification: all four tests passed.
+- Actions run 44485724103: the complete web job passed, including 2896 unit tests,
+  209 browser tests (15 skipped) and two memory screen browser tests.
