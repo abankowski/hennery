@@ -274,7 +274,12 @@ export type ConfigValue = boolean | string;
  * holds every other option, by config id. Flattened into the frames and
  * the start request, so the wire stays `model?, mode?, axes{}`.
  */
-export type SessionConfig = { cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, };
+export type SessionConfig = { protocol?: AcpProtocolPreference, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, };
+
+/**
+ * Requested ACP wire protocol. Existing records remain on v1.
+ */
+export type AcpProtocolPreference = "v1" | "v2" | "v2-v1";
 
 /**
  * A feature a host implements, announced in `hello` (ACP core §3.3). The
@@ -433,7 +438,7 @@ title?: string | null, };
  * it never clears the model, other axes or option inventory. Early/replayed
  * mode deltas are ignored.
  */
-export type Indexed = {
+export type Indexed = { acp_protocol?: number, acp_fallback?: string,
 /**
  * The attached adapter advertised the steering extension in initialize.
  */
@@ -659,7 +664,7 @@ operator_initiated: boolean, } | { "type": "delegated_attach",
  * A collector-accepted operator queue resume uses ordinary operator
  * path authorization, while retaining the attach/configuration fence.
  */
-operator_initiated?: boolean, request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, source_policy?: McpSourceSnapshot,
+operator_initiated?: boolean, request_id: string, session_id: string, committed_seq: number, agent: string, cwd: string, hat_id: string, attach_generation: number, agent_session_id: string | null, protocol?: AcpProtocolPreference, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, source_policy?: McpSourceSnapshot,
 /**
  * Passed in `session/new` / `session/load`. Only to a host that
  * announced `mcp_servers`.
@@ -686,7 +691,7 @@ committed_seq: number, agent: string, cwd: string,
  * The session's hat (`sessions.hat_id`); empty for a session from
  * before hats. Carried, not yet used by the host (plan 8c).
  */
-hat_id?: string, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, source_policy?: McpSourceSnapshot,
+hat_id?: string, protocol?: AcpProtocolPreference, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, source_policy?: McpSourceSnapshot,
 /**
  * Passed in `session/new` / `session/load`. Only to a host that
  * announced `mcp_servers`.
@@ -711,7 +716,7 @@ agent_session_id: string,
 /**
  * As on `start_session`.
  */
-hat_id?: string, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, source_policy?: McpSourceSnapshot,
+hat_id?: string, protocol?: AcpProtocolPreference, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, source_policy?: McpSourceSnapshot,
 /**
  * Passed in `session/new` / `session/load`. Only to a host that
  * announced `mcp_servers`.
@@ -741,7 +746,7 @@ fallback?: boolean, };
 /**
  * `POST /api/sessions` (ACP core §9): `{host_id, agent, cwd, model?, mode?, axes?}`.
  */
-export type StartSessionRequest = { host_id: string, agent: string, cwd: string, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, };
+export type StartSessionRequest = { host_id: string, agent: string, cwd: string, protocol?: AcpProtocolPreference, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, };
 
 export type StartSessionResponse = { session_id: string, };
 
@@ -841,12 +846,7 @@ export type OpenTurn = { turn_id: string,
  */
 state: string, };
 
-/**
- * One session as the session list shows it (ACP core §8, §9; frontend
- * §5), read from `sessions` alone: never the catalogue, commands or plan
- * (P-23). The detail serves it as stored; the list, `bounded`.
- */
-export type SessionItem = { session_id: string,
+export type SessionItem = { background?: BackgroundInfo, acp_protocol?: number, acp_fallback?: string, session_id: string,
 /**
  * An operator shortcut in navigation; independent of idle parking holds.
  */
@@ -897,6 +897,15 @@ created_at: string,
  */
 last_event_at: string, };
 
+/**
+ * One session as the session list shows it (ACP core §8, §9; frontend
+ * §5), read from `sessions` alone: never the catalogue, commands or plan
+ * (P-23). The detail serves it as stored; the list, `bounded`.
+ */
+export type BackgroundInfo = { active: number, done: number, all: number, stale: boolean, items: Array<BackgroundItem>, };
+
+export type BackgroundItem = { id: string, title: string, status: string, kind: string, };
+
 export type TitleSource = "agent" | "operator" | "prompt";
 
 /**
@@ -932,7 +941,7 @@ pending: Array<PendingItem>,
  * What its latest start or resume was given (plan 8e decision E10);
  * absent for a session not started or resumed since plan 8e.
  */
-mcp_delivery?: McpSessionDelivery | undefined, session_id: string,
+mcp_delivery?: McpSessionDelivery | undefined, background?: BackgroundInfo, acp_protocol?: number, acp_fallback?: string, session_id: string,
 /**
  * An operator shortcut in navigation; independent of idle parking holds.
  */
@@ -1017,7 +1026,7 @@ config_options: unknown[],
  * last reported; empty until it reports any (ACP core §7). Always
  * sent, so the schema and the TypeScript type agree that it is there.
  */
-commands: unknown[], cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, };
+commands: unknown[], protocol?: AcpProtocolPreference, cache_retention?: CacheRetention, model?: string | null, mode?: string | null, axes?: { [key in string]: ConfigValue }, };
 
 /**
  * Where a pending request stands (ACP core §4.6): `open`, then
